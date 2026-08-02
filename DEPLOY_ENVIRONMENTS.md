@@ -24,10 +24,32 @@ the app (send an email, publish a scheduled post, spend agent credits) is a real
 against a real client. The deploy config in this repo defaults prep to **not** be able to
 do those things automatically:
 
-- **`AGENT_SERVICE_URL` is left empty for prep** — same mechanism the app already uses to
-  hide the managed-products UI when the agent service isn't configured (see
-  `cloudbuild.yaml`'s comment on `_AGENT_SERVICE_URL`). No agent service URL configured for
-  prep means jobs can't be submitted from prep, so no duplicate/double-billed AI runs.
+- **`AGENT_SERVICE_URL` is left empty for prep**, so no agent-service job can be submitted
+  from prep and no agent run is billed twice. The mechanism, by name, because this bullet
+  previously justified itself with a component (`src/components/managed-products.tsx`) that
+  was deleted in `fbecbbf` — leaving nothing a reader could check:
+  `isAgentServiceConfigured()` in `src/lib/agent-service/client.ts` is true only when
+  `AGENT_SERVICE_URL` *and* `AGENT_SERVICE_TOKEN` are both set, and it is the first
+  statement of all three submit cores — `submitManagedJob` (`src/lib/jobs/submit-managed.ts`),
+  `submitCustomAgentJob` (`src/lib/jobs/submit-custom.ts`) and `submitCustomAgentRun`
+  (`src/lib/agent-service/run-custom-agent.ts`) — each returning "Agent service is not
+  configured" before a job row exists or anything is charged. The backstop is structural
+  rather than a fourth copy of that check: `config()` in the same client module throws on an
+  empty URL, so `submitAgentServiceJob` (and every other call to the service) cannot reach
+  the network from prep even if a future caller forgets to ask. In the UI the same predicate
+  now *disables* the run control rather than hiding a surface — `serviceConfigured` in
+  `src/components/custom-agents.tsx`.
+- **⚠️ That guard covers agent-service runs, and nothing else.** A content-generation task
+  started in prep does not stop when the agent service is absent: `runTaskExecution`
+  (`src/lib/execution-engine.ts`) gates both dispatch paths on `isAgentServiceConfigured()`
+  and falls through both to an in-process `generateText` on prep's own
+  `ANTHROPIC_API_KEY`, writing the artifact into the shared Firestore. If a client session
+  started it, `chargeClientModelCall` (`src/lib/actions/task-actions.ts`) has already taken
+  the real client's credits — it runs BEFORE the execution is queued, so the charge lands
+  even when the run itself does not. The intel/SEO-GEO pipeline
+  and the copilot never route through the agent service either. Empty `AGENT_SERVICE_URL`
+  buys you "no duplicate agent runs", not "prep cannot spend AI money or touch a real
+  client".
 - **No Cloud Scheduler job should point at prep's `/api/publish`, `/api/analytics/sync`,
   `/api/*/reconcile`, etc.** Only wire Cloud Scheduler to production. Prep's `CRON_SECRET`
   exists so those routes don't 503, but nothing should ever call them there — don't create
@@ -219,8 +241,8 @@ gh variable set PREP_APP_URL --body "https://<prep-cloud-run-url>"
 gh variable set PROD_APP_URL --body "https://<prod-cloud-run-url-or-custom-domain>"
 gh variable set PREP_AGENT_SERVICE_URL --body ""
 gh variable set PROD_AGENT_SERVICE_URL --body "<existing prod agent service URL, if any>"
-gh variable set PREP_EMAIL_FROM --body "Karos CMO Prep <onboarding@resend.dev>"
-gh variable set PROD_EMAIL_FROM --body "Karos CMO <donotreply@karoslabs.com>"
+gh variable set PREP_EMAIL_FROM --body "Karos Labs Prep <onboarding@resend.dev>"
+gh variable set PROD_EMAIL_FROM --body "Karos Labs <donotreply@karoslabs.com>"
 gh variable set PREP_ADMIN_EMAIL --body "hello@karoslabs.com"
 gh variable set PROD_ADMIN_EMAIL --body "hello@karoslabs.com"
 ```

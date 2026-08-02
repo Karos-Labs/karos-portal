@@ -77,7 +77,9 @@ substitutions:
   _REGION: us-central1
   _REPO: karos-cmo
   _SERVICE: karos-cmo
-  # Set after the agent service is deployed (empty ⇒ managed products stay hidden):
+  # Set after the agent service is deployed. Empty ⇒ the three submit cores
+  # (submit-managed.ts, submit-custom.ts, run-custom-agent.ts) refuse before a job
+  # row exists or credits are charged, and the run control renders disabled:
   _AGENT_SERVICE_URL: ""
   _APP_URL: ""
   # Runway autopilot (src/app/api/runway) — off by default. Flip to "1" at the
@@ -97,7 +99,7 @@ substitutions:
   _RUNWAY_MAX_JOBS_PER_CLIENT: "14"
   # Per-environment sender identity — override for prep so test sends never
   # look like production mail (see DEPLOY_ENVIRONMENTS.md).
-  _EMAIL_FROM: "Karos CMO <donotreply@karoslabs.com>"
+  _EMAIL_FROM: "Karos Labs <donotreply@karoslabs.com>"
   _ADMIN_EMAIL: "hello@karoslabs.com"
   # Override at submit time: --substitutions _REGION=europe-west1,...
 
@@ -155,8 +157,9 @@ steps:
       - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest
       # Non-secret runtime env vars (not baked into image; can change without rebuild).
       # AGENT_SERVICE_URL + AGENT_SERVICE_AUDIENCE = the deployed agent api URL
-      # (both empty until the agent service is deployed; the managed-products UI
-      # stays hidden until AGENT_SERVICE_URL is set). NEXT_PUBLIC_APP_URL is the
+      # (both empty until the agent service is deployed; while unset,
+      # isAgentServiceConfigured() is false, so agent-service runs refuse and the
+      # run control is disabled — NOT hidden). NEXT_PUBLIC_APP_URL is the
       # webhook callback base.
       - --set-env-vars=EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT}
     waitFor: [docker-push]

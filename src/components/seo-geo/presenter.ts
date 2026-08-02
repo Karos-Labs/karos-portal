@@ -37,6 +37,7 @@ import {
   type SeoGeoInsights,
   type SubMetrics,
   type VisibilityGap,
+  type VisibilityIndexResult,
 } from "@/lib/seo-geo";
 import type { ManagedTaskType } from "@/lib/types";
 
@@ -128,6 +129,107 @@ function checkBreakdown(registry: typeof SEO_CHECKS, checks: SeoGeoInsights["seo
   }));
 }
 
+/**
+ * "N of M AI engines", off the SAME `computeVisibilityIndex` RESULT the headline
+ * score was read from — the whole point being that a caller cannot hand this the
+ * live index and the stored coverage pair at the same time (QA #123).
+ *
+ * The headline went live in 682e188 while every sentence describing its coverage
+ * stayed on the frozen `geoVisibilityEnginesScored` / `geoVisibilityEnginesTotal`
+ * fields, so a snapshot captured under an older scoring formula printed a real
+ * score directly above "based on 0 of 5 AI engines", or "no engines measured this
+ * run" directly above "based on 4 of 5 AI engines". Same shape as the bug the
+ * comment in buildScoreViews describes, one line further down the tile.
+ *
+ * THE INVARIANT, AS IT ACTUALLY HOLDS. Taking the RESULT OBJECT rather than the
+ * insights record is what keeps it closed: engine numbers may come from a
+ * `computeVisibilityIndex` result and from nowhere else — re-reading the stored
+ * fields "for the denominator" is exactly what re-opens the bug. It is NOT
+ * "derived exactly once per render", and this docstring used to say so:
+ * `buildContextLine` runs the derivation a second time for the capture strip,
+ * which sits above the tile and makes the same claim. That second call is safe
+ * for a different reason, and it is the reason worth keeping —
+ * `visibilityFromSnapshot` below is the SINGLE EXPRESSION in this module that maps
+ * a snapshot to these numbers, and it is pure over `insights.perEngine`, so two
+ * invocations on one snapshot cannot disagree. Add a second such expression and
+ * the guarantee is gone; the call count is not what protects it.
+ *
+ * WHAT IT DOES NOT TRUST. `enginesScored` counts the engines inside
+ * `perEngineScore`, so the numerator is exactly the number of rows the tile draws
+ * underneath the sentence — a client can count them. The denominator is not
+ * equally safe, and the old claim that "scored can never exceed total" was true of
+ * this file's two call sites, not of the type:
+ *   - `enginesTotal` is a roster size only when the caller leaves
+ *     `computeVisibilityIndex`'s default (`perEngine.length`). Both call sites here
+ *     do. `src/lib/intel/seo-geo.ts` passes `ENGINE_ROSTER.length` explicitly —
+ *     harmless today only because it maps that same roster to build `perEngine`, so
+ *     the explicit total equals the default. Nothing holds it there, and
+ *     `computeVisibilityIndex(rows, N)` with `N < rows.length` returns scored > total.
+ *   - the returned `enginesTotal` falls back to `live.length` (`enginesTotal ||
+ *     live.length`) while `dataCoveragePct` divides by the RAW parameter, so an
+ *     explicit `0` yields `{scored: 3, total: 3, pct: 0}` — one result object
+ *     carrying two different denominators, which is the #123 shape in miniature.
+ * So: the denominator is clamped to at least the number of scored rows on screen,
+ * and the percentage is recomputed from the pair this function prints. The meter
+ * and the sentence beneath it are one derivation whatever the caller passed.
+ *
+ * NO ROWS AT ALL is a different statement from no engine ANSWERING, and the tile
+ * must not merge them. `perEngine: []` is reachable (an imported bundle only has to
+ * carry an array — src/lib/seo-geo-import.ts), and it used to read "based on 0 of 0
+ * AI engines", which says we attempted nothing; two UNAVAILABLE rows honestly read
+ * "0 of 2", we asked two and got none. `fraction` is null in the no-rows state and
+ * every surface says the snapshot carries no engine data rather than print a
+ * fraction over zero.
+ *
+ * EXPORTED FOR ONE REASON: neither call site in this file can produce the
+ * divergent result described above, because both leave `enginesTotal` to default.
+ * Left private, the clamp and the recomputed percentage would be unenforceable —
+ * every assertion this module can make about them passes equally with them
+ * deleted, which is precisely how a stated mechanism stops being in force. The
+ * signature is unchanged and still refuses an insights record, so this does not
+ * reopen #123: a caller must still hand it a `computeVisibilityIndex` result.
+ * Pinned in src/lib/__tests__/stale-claims-visibility-coverage.test.ts.
+ */
+export function engineCoverage(live: VisibilityIndexResult): {
+  scored: number;
+  total: number;
+  pct: number;
+  /** "2 of 3"; null when the snapshot has no engine rows and no fraction is honest. */
+  fraction: string | null;
+  /** Agrees with the TOTAL, so a one-engine snapshot never says "1 of 1 engines". */
+  engineNoun: "engine" | "engines";
+} {
+  const scored = live.enginesScored;
+  const total = Math.max(live.enginesTotal, scored);
+  return {
+    scored,
+    total,
+    pct: total > 0 ? Math.round((scored / total) * 100) : 0,
+    fraction: total > 0 ? `${scored} of ${total}` : null,
+    engineNoun: total === 1 ? "engine" : "engines",
+  };
+}
+
+/**
+ * The one expression in this module that turns a snapshot into visibility numbers
+ * — see engineCoverage. Pure over `insights.perEngine`, which is what lets the
+ * tile and the capture strip agree without sharing a call.
+ */
+function visibilityFromSnapshot(insights: SeoGeoInsights): {
+  live: VisibilityIndexResult;
+  coverage: ReturnType<typeof engineCoverage>;
+} {
+  const live = computeVisibilityIndex(insights.perEngine ?? []);
+  return { live, coverage: engineCoverage(live) };
+}
+
+/** What every surface says when the snapshot carries no engine rows at all. */
+const NO_ENGINE_DATA = {
+  band: "no engine data in this snapshot",
+  line: "no AI engine data in this snapshot",
+  sentence: "This snapshot carries no AI engine data.",
+} as const;
+
 export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoBand = scoreBand(insights.seoScore);
   const geoBand = scoreBand(insights.geoReadiness);
@@ -142,7 +244,9 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   // from one computeVisibilityIndex call makes that contradiction structurally
   // impossible: the big number is always calculateOverallVisibilityScore() of
   // the same rounded integers shown in the cards beneath it.
-  const liveVisibility = computeVisibilityIndex(insights.perEngine);
+  // Every engine number on this tile — the band, the meter, the sentence under
+  // it and the tooltip — comes off this one result. See engineCoverage.
+  const { live: liveVisibility, coverage: visCoverage } = visibilityFromSnapshot(insights);
   const visBand = scoreBand(liveVisibility.index);
 
   const seoMeasured = insights.seoDataCoveragePct > 0;
@@ -153,6 +257,14 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   // the same set every card and gap below uses — not the full prompt set, which
   // includes the questions that name the client and hit by construction.
   const categoryCount = insights.categoryPresence?.total ?? 0;
+  // A snapshot with NO engine rows says so, rather than printing "0 of 0", which
+  // claims a measurement attempt that never happened. See engineCoverage.
+  const noEngineData = visCoverage.fraction === null;
+  /** The explainer's coverage sentence: "can" on a current snapshot, "could" on a legacy one. */
+  const coverageSentence = (verb: "can" | "could") =>
+    noEngineData
+      ? NO_ENGINE_DATA.sentence
+      : `Based on the ${visCoverage.fraction} ${visCoverage.engineNoun} we ${verb} measure.`;
 
   return [
     {
@@ -186,16 +298,25 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       label: "AI visibility today",
       // CD-J1 bounce 2b: only claim the category scope when the record carries it.
       explainer: basis.categoryScoped
-        ? `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`
-        : `How often AI assistants actually named or recommended you on this snapshot, measured across all the buyer questions we asked — including the ones naming your brand, which is why it isn't comparable with a current snapshot. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we could measure.`,
+        ? `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. ${coverageSentence("can")} This is the number the fixes below are designed to move.`
+        : `How often AI assistants actually named or recommended you on this snapshot, measured across all the buyer questions we asked — including the ones naming your brand, which is why it isn't comparable with a current snapshot. ${coverageSentence("could")}`,
       value: visibilityMeasured ? liveVisibility.index : null,
       tone: visibilityMeasured ? visBand.tone : "neutral",
-      bandLabel: visibilityMeasured ? visBand.label : "no engines measured this run",
-      coveragePct:
-        insights.geoVisibilityEnginesTotal > 0
-          ? Math.round((insights.geoVisibilityEnginesScored / insights.geoVisibilityEnginesTotal) * 100)
-          : 0,
-      coverageLine: `based on ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines`,
+      // Already live (`visibilityMeasured` is liveVisibility.enginesScored > 0);
+      // it was the coverage line beneath it that still read the frozen pair, which
+      // is how "no engines measured this run" came to sit above "based on 4 of 5
+      // AI engines". Both now answer to the same count. The two zero states are
+      // NOT the same sentence: engines that came back empty were measured and
+      // scored nothing; no rows at all means the snapshot never carried any.
+      bandLabel: visibilityMeasured
+        ? visBand.label
+        : noEngineData
+          ? NO_ENGINE_DATA.band
+          : "no engines measured this run",
+      coveragePct: visCoverage.pct,
+      coverageLine: noEngineData
+        ? NO_ENGINE_DATA.line
+        : `based on ${visCoverage.fraction} AI ${visCoverage.engineNoun}`,
       breakdownTitle: "Score by engine",
       // Same perEngineScore array the headline above was averaged from
       // (calculateOverallVisibilityScore) — the tile and its own breakdown can
@@ -268,10 +389,19 @@ export function buildContextLine(insights: SeoGeoInsights, now = Date.now()): st
   if (capturedNothing(insights)) {
     return `${dated} · AI answer capture did not complete this run`;
   }
+  // The capture strip sits a few centimetres above the visibility tile and makes
+  // the same claim, so it goes through the same derivation (QA #123). Left on the
+  // stored pair it was the third contradiction on the page: a strip saying "4 of 5
+  // AI engines measured" over a tile whose own count is 2. This is a second
+  // invocation, not a second derivation — see engineCoverage.
+  const { coverage } = visibilityFromSnapshot(insights);
+  const asked = insights.promptSet.length;
   return [
     dated,
-    `${insights.promptSet.length} real buyer questions`,
-    `${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines measured`,
+    `${asked} real buyer question${asked === 1 ? "" : "s"}`,
+    coverage.fraction
+      ? `${coverage.fraction} AI ${coverage.engineNoun} measured`
+      : NO_ENGINE_DATA.line,
   ].join(" · ");
 }
 

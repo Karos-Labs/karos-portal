@@ -16,6 +16,25 @@ export interface SendEmailInput {
 }
 
 /**
+ * The envelope — the FIRST thing a recipient reads, since an inbox shows the
+ * sender before it shows the subject.
+ *
+ * EXPORTED, AND A FUNCTION, BECAUSE IT WAS UNASSERTABLE. This was one inline
+ * expression inside `sendEmail`, which every mail test in the repo mocks away —
+ * so the wordmark on the envelope was the one string in this module that could
+ * be reverted with the whole suite green, while every masthead below it stayed
+ * correct. A guard can only key to a derivation it can call.
+ *
+ * THE DEPLOYED VALUE DOES NOT COME FROM HERE. `EMAIL_FROM` is set per
+ * environment from the `PROD_EMAIL_FROM` / `PREP_EMAIL_FROM` GitHub variables
+ * (see DEPLOY_ENVIRONMENTS.md) and overrides this default; what this line
+ * decides is what an environment that sets nothing sends as.
+ */
+export function emailFrom(): string {
+  return process.env.EMAIL_FROM || "Karos Labs <donotreply@karoslabs.com>";
+}
+
+/**
  * Sends an email via Resend. Returns { ok, id|error }.
  * Soft-fails (never throws) so an agent run can still succeed even if delivery is
  * misconfigured — the job records the email error instead.
@@ -24,7 +43,7 @@ export async function sendEmail(input: SendEmailInput): Promise<
   { ok: true; id: string } | { ok: false; error: string }
 > {
   const key = process.env.RESEND_API_KEY;
-  const from = process.env.EMAIL_FROM || "Karos CMO <donotreply@karoslabs.com>";
+  const from = emailFrom();
   if (!key) {
     return { ok: false, error: "RESEND_API_KEY is not set" };
   }
@@ -131,6 +150,10 @@ function renderValue(value: unknown): string {
  * STAFF COPY, not client copy: the only recipient is `ADMIN_EMAIL`. The client's
  * own identifiers are printed for triage, which is why `client` carries the id
  * as well as the name.
+ *
+ * The masthead follows the envelope (`emailFrom`) rather than the audience: this
+ * mail lands in the same inbox as the client-facing ones, and a From line and a
+ * masthead that disagree read as a spoof whoever the reader is.
  */
 export function supportRequestEmail(opts: {
   fromName: string;
@@ -144,7 +167,7 @@ export function supportRequestEmail(opts: {
     <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#07090b;padding:32px;color:#e8f0ec;">
       <div style="max-width:600px;margin:0 auto;background:#0d1117;border:1px solid #20303a;border-radius:16px;overflow:hidden;">
         <div style="padding:20px 28px;border-bottom:1px solid #20303a;display:flex;align-items:center;gap:10px;">
-          <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos<span style="color:#e8f0ec;">CMO</span></span>
+          <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos Labs</span>
           <span style="color:#5f7177;font-size:13px;">&#8250; Support Request</span>
         </div>
         <div style="padding:28px;">
@@ -172,34 +195,77 @@ export function supportRequestEmail(opts: {
 }
 
 /**
- * Branded HTML wrapper for client-facing deliveries.
+ * Branded HTML wrapper for a transactional email the platform sends to a person.
+ *
+ * WHAT IT STOPPED SAYING, AND WHY (QA #150). It was written "for client-facing
+ * deliveries" and hard-coded that occasion into every mail that reused it: an
+ * eyebrow reading "Prepared for <name>" and a closing line reading "Reply to
+ * this email to request changes — your Karos team is on it." No deliverable
+ * caller is left (`grep -rn "emailShell" src`): the only two are the account
+ * decisions in lib/actions/user-actions.ts. So a person who had just been
+ * APPROVED — or DECLINED, with their account already deleted — was addressed as
+ * the recipient of a deliverable and invited to request changes to a thing that
+ * had never been prepared.
+ *
+ * THE CLOSING LINE IS THE CALLER'S NOW, and `footer` is required rather than
+ * optional: `null` is how a caller states that its own body already closes the
+ * mail (the decline mail ends on a real reply path, so a footer repeating it
+ * would be one invitation printed twice). A DEFAULT footer is precisely what let
+ * one sentence be true of the mail it was written for and false of every later
+ * one — an optional slot would quietly restore that.
+ *
+ * THE MASTHEAD IS THE ENVELOPE'S, NOT THE APP'S. It read "KarosCMO" while
+ * `emailFrom()` says "Karos Labs", so the two lines a person reads first — the
+ * sender, then the header of what they opened — disagreed. An earlier draft of
+ * this note justified the rename by claiming "KarosCMO" appears nowhere else in
+ * the product, and that is FALSE: an approved CLIENT_USER meets "Welcome to
+ * Karos CMO" on `components/onboarding-wizard.tsx`, their very next screen, and
+ * the name is also on `request-access/page.tsx` and two tab titles. The product
+ * genuinely carries two wordmarks; which one its own screens should use is the
+ * owner's call and not this module's. What this module can settle is that a mail
+ * leaving the product speaks the name it was sent under, whichever name wins.
  *
  * `body` is typed `Html` rather than `string`: it is the one slot that carries
  * markup, so it is the one slot that has to have been built by the tag. It used
  * to take a string and interpolate it raw beside three hand-`esc`'d fields —
  * the same split-the-difference shape that produced the injection this tag
- * removes.
+ * removes. `footer` is plain text by contrast: the shell owns its styling, and
+ * a closing line has never needed markup.
  */
 export function emailShell(opts: {
-  clientName: string;
+  /** Greets the person by name. Dropped entirely when there is no name to use. */
+  recipientName: string;
   heading: string;
   intro: string;
   body: Html;
+  /** Closing line, or null when the body already closes the mail. */
+  footer: string | null;
 }): Html {
+  // `?? ""` IS NOT REDUNDANT, WHATEVER THE TYPE SAYS. The name is read straight
+  // off a Firestore user doc and the data layer does not enforce one, so a doc
+  // with no `name` reaches a bare `.trim()` and throws — from inside a mail that
+  // `notifyRegistrationDecision`'s own docstring promises will soft-fail, AFTER
+  // the upsert has landed, taking the `revalidatePath` with it and showing the
+  // admin an error over a decision that already happened. The shell this replaced
+  // never had that failure mode: it passed the value through `renderValue`, which
+  // renders `undefined` as "". Do not tidy this away.
+  const greeting = (opts.recipientName ?? "").trim();
   return html`
   <div style="background:#07090b;padding:32px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
     <div style="max-width:600px;margin:0 auto;background:#0d1117;border:1px solid #20303a;border-radius:16px;overflow:hidden;">
       <div style="padding:24px 28px;border-bottom:1px solid #20303a;">
-        <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos<span style="color:#e8f0ec;">CMO</span></span>
+        <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos Labs</span>
       </div>
       <div style="padding:28px;color:#e8f0ec;">
-        <p style="color:#9c9ca3;font-size:13px;margin:0 0 6px;">Prepared for ${opts.clientName}</p>
+        ${greeting ? html`<p style="color:#9c9ca3;font-size:13px;margin:0 0 6px;">Hi ${greeting},</p>` : null}
         <h1 style="font-size:22px;margin:0 0 12px;color:#e8f0ec;">${opts.heading}</h1>
         <p style="color:#aebfc4;font-size:15px;line-height:1.6;margin:0 0 20px;">${opts.intro}</p>
         <div style="background:#131a22;border:1px solid #20303a;border-radius:12px;padding:20px;color:#e8f0ec;font-size:15px;line-height:1.7;">
           ${opts.body}
         </div>
-        <p style="color:#5f7177;font-size:12px;margin:22px 0 0;">Reply to this email to request changes &mdash; your Karos team is on it.</p>
+        ${opts.footer
+          ? html`<p style="color:#5f7177;font-size:12px;margin:22px 0 0;">${opts.footer}</p>`
+          : null}
       </div>
     </div>
   </div>`;

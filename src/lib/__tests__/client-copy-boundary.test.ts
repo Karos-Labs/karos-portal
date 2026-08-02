@@ -47,8 +47,12 @@ import { queueCapacitySkipNote } from "@/lib/task-dedup";
  *     FOLLOWED THROUGH MODULE-PRIVATE HELPERS, because the export list is not
  *     the data flow — see the block comment on `CLIENT_REACHABLE_ACTIONS`.
  *
- *  3. THE BRANDED CLIENT EMAIL WRAPPER. `emailShell`, whose own docstring says
- *     "client-facing deliveries".
+ *  3. THE BRANDED CLIENT EMAIL WRAPPER. `emailShell` — the shared shell every
+ *     mail this product sends is rendered through. (It USED to describe itself
+ *     as being "for client-facing deliveries"; #150 removed that framing along
+ *     with the deliverable footer it justified. The channel is unchanged — the
+ *     shell is still the branded wrapper — so this guard stays keyed to the
+ *     symbol, not to the sentence that used to be above it.)
  *
  *  4. THE LAUNCH FORM a client fills in — `ALL_LAUNCH_PROFILES`, exported
  *     expressly "so guard tests can sweep the whole set".
@@ -133,7 +137,7 @@ import { queueCapacitySkipNote } from "@/lib/task-dedup";
  *    staff-gated JSX region), not by which file they are in. There is no path
  *    allowlist, because a narrower QUESTION did the work a path allowlist would
  *    have done badly — an earlier shape of this sweep flagged the admin alert
- *    email in `publishIntegrationAction` and the `[KarosCMO] New client access
+ *    email in `publishIntegrationAction` and the `[Karos Labs] New client access
  *    request` subject line, both operator mail sent from a client-reachable
  *    action, and the fix was to stop scanning side effects rather than to name
  *    two files.

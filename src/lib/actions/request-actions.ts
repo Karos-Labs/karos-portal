@@ -51,7 +51,7 @@ export async function submitClientRequestAction(input: {
     const to = process.env.KAROS_EMAIL || "hello@karoslabs.com";
     const result = await sendEmail({
       to,
-      subject: `[KarosCMO] New client access request - ${companyName}`,
+      subject: `[Karos Labs] New client access request - ${companyName}`,
       html: `
         <div style="font-family:-apple-system,Helvetica,Arial,sans-serif;background:#07090b;padding:32px;color:#e8f0ec;">
           <h2 style="color:#FF6B2C;margin:0 0 16px;">New Client Access Request</h2>
@@ -61,7 +61,7 @@ export async function submitClientRequestAction(input: {
             <tr><td style="padding:6px 12px 6px 0;color:#9c9ca3;">Admin Email</td><td style="padding:6px 0;">${adminEmail}</td></tr>
             <tr><td style="padding:6px 12px 6px 0;color:#9c9ca3;vertical-align:top;">Use Case</td><td style="padding:6px 0;">${useCase}</td></tr>
           </table>
-          <p style="margin:20px 0 0;color:#5f7177;font-size:13px;">Review this request in the KarosCMO Registrations dashboard.</p>
+          <p style="margin:20px 0 0;color:#5f7177;font-size:13px;">Review this request in the Karos Labs registrations dashboard.</p>
         </div>`,
     });
     // Email failure is non-fatal — the request is already saved to Firestore —

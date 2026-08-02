@@ -110,6 +110,14 @@ const insights = (patch: Partial<SeoGeoInsights> = {}): SeoGeoInsights => ({
   geoVisibilityCoveragePct: 60,
   geoVisibilityModel: "appearance-led (geo-score-v3): mean over engines",
   geoVisibilityEnginesMeasured: 3,
+  // DELIBERATELY CONTRADICTING `perEngine` below, and left that way (#123). These
+  // three stored fields were frozen at capture under whatever formula was current
+  // then; `perEngine` is what the tile is actually derived from now. The headline
+  // went live in 682e188 while the coverage line stayed on these, so a snapshot
+  // could print a real score above "based on 0 of 5 AI engines". Every visibility
+  // assertion below is therefore stated in terms of the ARRAY (1 row = 1 of 1). If
+  // a future edit "tidies" these to agree with `perEngine`, the fixture stops being
+  // able to catch the regression it exists for.
   geoVisibilityEnginesScored: 3,
   geoVisibilityEnginesTotal: 5,
   rosterSharePct: 18.3,
@@ -720,8 +728,14 @@ describe("score views + context line (fixes 2 + 3)", () => {
     const [seo, readiness, visibility] = buildScoreViews(insights());
     expect(seo.coverageLine).toBe("measured 75% of checks");
     expect(readiness.coverageLine).toBe("measured 94% of checks");
-    expect(visibility.coverageLine).toBe("based on 3 of 5 AI engines");
-    expect(visibility.coveragePct).toBe(60);
+    // From `perEngine` (one row, measured), NOT from the stored 3-of-5 the fixture
+    // still carries — see the note on those fields. The headline above this line
+    // and this line are now one derivation, so they cannot contradict each other.
+    // Singular denominator, singular noun: the fixture has exactly one engine row
+    // and this line read "1 of 1 AI engines" until the noun was made to agree.
+    expect(visibility.coverageLine).toBe("based on 1 of 1 AI engine");
+    expect(visibility.explainer).toContain("Based on the 1 of 1 engine we ");
+    expect(visibility.coveragePct).toBe(100);
   });
 
   it("renders absent data as null values, never a zero grade", () => {
@@ -731,7 +745,10 @@ describe("score views + context line (fixes 2 + 3)", () => {
     expect(views[0].value).toBeNull();
     expect(views[0].bandLabel).toBe("not measured yet");
     expect(views[2].value).toBeNull();
-    expect(views[2].bandLabel).toBe("no engines measured this run");
+    // No engine ROWS, which is not the same claim as "every engine came back
+    // empty" — that state still reads "no engines measured this run" and keeps a
+    // real denominator ("0 of 2"). Pinned in stale-claims-visibility-coverage.
+    expect(views[2].bandLabel).toBe("no engine data in this snapshot");
   });
 
   /**
@@ -808,10 +825,27 @@ describe("score views + context line (fixes 2 + 3)", () => {
   /** Two days after the fixture's capture, so the relative age is deterministic. */
   const NOW = Date.UTC(2026, 6, 14);
 
-  it("answers 'why only 3 models' in the context line", () => {
+  /**
+   * Renamed: this was "answers 'why only 3 models'", from when the fixture carried
+   * a three-engine roster. It carries one engine now, so what it actually pins is
+   * the whole strip — date, relative age, question count, engine coverage — and
+   * that the coverage noun agrees with a denominator of one.
+   */
+  it("states date, age, question count and engine coverage in the context line", () => {
     expect(buildContextLine(insights(), NOW)).toBe(
-      "Snapshot from July 12, 2026 (2 days ago) · 2 real buyer questions · 3 of 5 AI engines measured",
+      "Snapshot from July 12, 2026 (2 days ago) · 2 real buyer questions · 1 of 1 AI engine measured",
     );
+  });
+
+  it("keeps the strip's nouns agreeing with their own counts", () => {
+    const one = insights({ promptSet: ["best fintech tool for startups"] });
+    expect(buildContextLine(one, NOW)).toBe(
+      "Snapshot from July 12, 2026 (2 days ago) · 1 real buyer question · 1 of 1 AI engine measured",
+    );
+    const many = insights({
+      perEngine: [engineRow({ engine: "chatgpt" }), engineRow({ engine: "gemini" })],
+    });
+    expect(buildContextLine(many, NOW)).toContain("2 of 2 AI engines measured");
   });
 
   /** QA F23: a rejected capture substitutes an empty prompt set, and the counts

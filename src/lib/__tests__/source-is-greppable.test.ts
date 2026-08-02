@@ -26,18 +26,30 @@ import { describe, expect, it } from "vitest";
  * nothing and keeps the file readable; `"\x00"` typed literally costs the file's
  * visibility to every future sweep.
  *
- * `src/lib/seo-geo.ts` is the one pre-existing offender (2 NULs, inherited), and it
- * is allowlisted BY COUNT rather than by path: if it gains a third, or loses one,
- * this test speaks up. Ledger guard zone 12 is about that file, and the reason the
- * hazard is documented at all.
+ * `src/lib/seo-geo.ts` WAS the one pre-existing offender: two NULs joining a probe
+ * dedupe key, `${p.prompt}\x00${p.engine}`, typed as raw bytes. They were a
+ * consistent write/read pair, so nothing was broken — and that is precisely why
+ * the allowlist was the wrong shape. A tolerated offender is not inert: grep
+ * classifies the file as binary and prints NO MATCHES, silently, so every
+ * grep-based guard that swept the module owning `computeVisibilityIndex` reported
+ * clean over a file it could not read. The allowlist made that permanent and
+ * called it known.
+ *
+ * Both NULs are now written as `\x00` escapes. Identical key, identical runtime
+ * behaviour, and the file is legible to the sweeps that are supposed to police it.
+ * The allowlist is empty and stays empty: the rule is not "never use an unusual
+ * code point" — it is WRITE IT AS AN ESCAPE, never as a literal byte, and there is
+ * now no file in the tree that is exempt from it.
  */
 
 const SRC = join(process.cwd(), "src");
 
-/** Inherited offenders, pinned by count so the number cannot drift unnoticed. */
-const KNOWN: Record<string, number> = {
-  "lib/seo-geo.ts": 2,
-};
+/**
+ * Inherited offenders, pinned by count. Empty, and an empty allowlist is the
+ * assertion: no source file in the tree carries a literal NUL. Adding an entry
+ * here re-blinds every grep-based guard over that file — fix the file instead.
+ */
+const KNOWN: Record<string, number> = {};
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {

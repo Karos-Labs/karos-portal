@@ -287,13 +287,25 @@ async function latestXBatchAsset(
 
 
 /**
- * The next `days` days of an umbrella's plan, in date order — what the week
- * strip on the live card renders.
+ * The next `days` days of an umbrella's plan, in date order — the source the
+ * week strip on the live card is built FROM.
  *
- * Returns INTENT only (template key + day + whether the day has passed). No
- * asset id, no status beyond the slot's own, nothing that could tell a client
- * whether the post for next Tuesday already exists: two producers, one
- * projection (§4.1), and the indistinguishability is the churn guard.
+ * WHAT IT RETURNS: the stored `AgentSlot` documents, whole. That includes
+ * `assetId`, `jobId`, `optionRefs` and `optionPick` — every field that can tell
+ * a reader whether the post for next Tuesday already exists. This function is
+ * not a projection and it is NOT the churn guard; the docstring here used to
+ * say it was, which sent anyone hardening §4.1 to the wrong layer and told
+ * anyone adding a second consumer that they were being handed redacted data.
+ *
+ * WHERE THE REDACTION ACTUALLY HAPPENS: one layer up, in `toClientAgentRows`
+ * (src/lib/client-agent-rows.ts). Its `week` projection copies out a day, a
+ * label, the slot id and the note and nothing else, and its `today` block lets
+ * option texts cross for the CURRENT day only. That is the boundary the
+ * indistinguishability rule (A3/A4, §4.1) is enforced at, because that is where
+ * the payload the browser receives is built.
+ *
+ * So a second consumer of this function owns its own projection. Do not hand a
+ * value returned here to a client surface.
  */
 export async function upcomingSlots(
   clientAgentId: string,

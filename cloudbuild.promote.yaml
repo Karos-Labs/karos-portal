@@ -32,7 +32,7 @@ substitutions:
   _SHA: ""
   _APP_URL: ""
   _AGENT_SERVICE_URL: ""
-  _EMAIL_FROM: "Karos CMO <donotreply@karoslabs.com>"
+  _EMAIL_FROM: "Karos Labs <donotreply@karoslabs.com>"
   _ADMIN_EMAIL: "hello@karoslabs.com"
   # Runway autopilot — keep in step with cloudbuild.yaml's own substitutions.
   _RUNWAY_AUTOGEN_ENABLED: ""

@@ -6,6 +6,7 @@ import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
 import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
 import {
+  agentKeyMatchesClientSlug,
   clientSafeRefusal,
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
@@ -70,6 +71,44 @@ export function toSummary(agent: CustomAgent): RunnableAgentSummary {
     color: agent.color,
     creditCost: agent.creditCost ?? null,
   };
+}
+
+/**
+ * The agents the staff bind control may OFFER for this client.
+ *
+ * It asks the same questions `bindClientAgentAction` asks before it writes, and
+ * asks the binding one through the same predicate: enabled, not a per-client
+ * instance baked under a DIFFERENT client's lab folder
+ * (`agentKeyMatchesClientSlug` — the action refuses that pair outright, before
+ * any umbrella exists), and not already bound here.
+ *
+ * The binding question is the one the dropdown used to skip (#131). The roster
+ * rendered directly beneath it already dropped foreign instances, so one screen
+ * carried two lists that disagreed about which agents exist for this client —
+ * and choosing the extra one returned an error paragraph and wrote nothing. One
+ * rule governs the offer and the accept now.
+ *
+ * A PROJECTION, not just a filter: the control is a client component, so it
+ * receives id and name only. A `CustomAgent` carries the agent's instructions,
+ * its skill path and the lab manifest's own `description` (F127/CD-G2) — none
+ * of which may be serialized into a browser payload to populate a `<select>`.
+ */
+export function bindableAgents(args: {
+  /** The whole custom-agent catalogue, unfiltered (`listCustomAgents`). */
+  agents: CustomAgent[];
+  /** This client's lab-repo slug (`Client.agentsRepoSlug`). */
+  clientSlug: string | null | undefined;
+  /** `customAgentId`s this client already has an umbrella for. */
+  boundAgentIds: Set<string>;
+}): Array<{ id: string; name: string }> {
+  return args.agents
+    .filter(
+      (agent) =>
+        agent.enabled &&
+        agentKeyMatchesClientSlug(agent.key, args.clientSlug) &&
+        !args.boundAgentIds.has(agent.id),
+    )
+    .map((agent) => ({ id: agent.id, name: agent.name }));
 }
 
 /**
@@ -284,6 +323,71 @@ export async function buildAgentSetup(
 }
 
 /**
+ * The one run a card acknowledges: a manual "Run this template now" on a LIVE
+ * umbrella that is still queued or running.
+ *
+ * Scheduled fires are deliberately not matched (see `ClientAgentCardRow`), and
+ * for a client viewer the match also asks WHO pressed it — a staff "Run now"
+ * announced on the client's page is work the client did not ask for.
+ *
+ * Its own function so the boolean twin below cannot drift from the row it
+ * stands in for: the two must answer the same question, and they did not have
+ * to when one of them was a copy.
+ */
+function activeTemplateRun(args: {
+  umbrella: ClientAgent;
+  jobs: Job[];
+  viewerIsClient: boolean;
+  viewerUid: string;
+}): Job | undefined {
+  if (args.umbrella.launchState !== "live") return undefined;
+  return args.jobs.find(
+    (job) =>
+      job.clientAgentId === args.umbrella.id &&
+      job.runType === "manual_template" &&
+      (job.status === "queued" || job.status === "running") &&
+      (!args.viewerIsClient || job.createdBy === args.viewerUid),
+  );
+}
+
+/**
+ * Would `toClientAgentRows` return a row with a non-null `activeRun`? — the one
+ * bit the agents roster needs to decide whether to mount `<AutoRefresh />`.
+ *
+ * #130: the roster's client branch used to get that bit by awaiting the whole
+ * projection and discarding everything else. Per live umbrella that is a
+ * `listAgentSlots` query and a `listClientAgentFeedback` query, plus a
+ * `getAsset` on an options day, spent to build a week strip, template gates,
+ * today's option texts and a feedback list that the roster renders nowhere.
+ * This reads no Firestore at all: the umbrellas and the jobs are already in the
+ * caller's hand, and the answer only ever depended on those.
+ *
+ * It repeats the projection's own skip — an umbrella whose bound agent was
+ * deleted or disabled produces no row, so it cannot produce an active run
+ * either — and asks the shared predicate for the rest.
+ */
+export function hasActiveTemplateRun(args: {
+  umbrellas: ClientAgent[];
+  agentsById: Map<string, CustomAgent>;
+  jobs: Job[];
+  viewerIsClient: boolean;
+  viewerUid: string;
+}): boolean {
+  return args.umbrellas.some((umbrella) => {
+    const agent = args.agentsById.get(umbrella.customAgentId);
+    if (!agent || !agent.enabled) return false;
+    return (
+      activeTemplateRun({
+        umbrella,
+        jobs: args.jobs,
+        viewerIsClient: args.viewerIsClient,
+        viewerUid: args.viewerUid,
+      }) !== undefined
+    );
+  });
+}
+
+/**
  * Project each client-agent umbrella into the card row its surface may read.
  *
  * The launch GATE is evaluated here, server-side, with the same pure function
@@ -376,6 +480,13 @@ export async function toClientAgentRows(args: {
     // fulfilment status here would let a client tell a pre-generated day from a
     // day-of one, which is precisely the distinction the slot model exists to
     // erase (§4.1).
+    //
+    // THIS IS THE REDACTION LAYER, and `upcomingSlots` is not (#163). It hands
+    // back the stored AgentSlot documents whole — assetId, jobId, optionRefs,
+    // optionPick and all — so the `week` projection below, and the `today`
+    // block that lets option texts cross for the current day only, are what
+    // stand between those fields and the RSC payload. Harden A3/A4 here; a new
+    // consumer of `upcomingSlots` owns its own projection.
     const zone = args.scheduleZones.get(umbrella.customAgentId) ?? runtimeTimeZone();
     // The day boundary in the SCHEDULE's zone (F108), not the container's —
     // otherwise a client one timezone east is told today has passed.
@@ -430,20 +541,15 @@ export async function toClientAgentRows(args: {
       }
     }
 
-    // The one run the card acknowledges: a "Run now" the viewer just pressed.
-    // Scheduled fires are deliberately invisible here (see ClientAgentCardRow).
-    // For a client that scoping must include WHO pressed it: a staff "Run now"
-    // announced on the client's page is work the client did not ask for — the
-    // same viewer rule the legacy path already applies to its own run.
-    const pending = live
-      ? args.jobs.find(
-          (job) =>
-            job.clientAgentId === umbrella.id &&
-            job.runType === "manual_template" &&
-            (job.status === "queued" || job.status === "running") &&
-            (!args.viewerIsClient || job.createdBy === args.viewerUid),
-        )
-      : undefined;
+    // The one run the card acknowledges — see `activeTemplateRun` above for the
+    // rule, which `hasActiveTemplateRun` shares so the roster's AutoRefresh bit
+    // cannot disagree with the row it stands in for.
+    const pending = activeTemplateRun({
+      umbrella,
+      jobs: args.jobs,
+      viewerIsClient: args.viewerIsClient,
+      viewerUid: args.viewerUid,
+    });
 
     rows.push({
       id: umbrella.id,

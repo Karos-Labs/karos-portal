@@ -1,14 +1,12 @@
 import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
 import {
-  getClientCredits,
   listAssets,
   listCustomAgents,
   listJobs,
   listPlannedScheduledRuns,
   listScheduledRuns,
 } from "@/lib/data";
-import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AgentRunHistory } from "@/components/custom-agents";
@@ -28,9 +26,9 @@ import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
 import {
+  bindableAgents,
   buildAgentSetup,
-  scheduleZonesByAgent,
-  toClientAgentRows,
+  hasActiveTemplateRun,
   toRunRows,
   toScheduleRows,
   toSummary,
@@ -43,8 +41,9 @@ import {
  * admin granted them; staff can run every enabled custom agent. Neither list
  * may include a per-client agent instance belonging to a different client —
  * its skill is baked under that client's lab folder, so a run here would draft
- * the wrong company. Both branches filter on agentKeyMatchesClientSlug, and
- * the submit core refuses a mismatched pair regardless of how it was launched.
+ * the wrong company. Both branches filter on agentKeyMatchesClientSlug — as
+ * does the staff bind dropdown, through bindableAgents (#131) — and the submit
+ * core refuses a mismatched pair regardless of how it was launched.
  */
 export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -69,10 +68,14 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // attachment picker, and a client's run gesture has moved to the detail
     // page (CD-G1). The roster reads nothing from it, so the roster no longer
     // pays for it.
-    const [allAgents, jobs, credits, scheduledRuns, umbrellas, assets] = await Promise.all([
+    //
+    // No getClientCredits here either, and for the same reason: the spend gate
+    // it fed (#130) belonged to run controls that live on the agent's own page
+    // now. This roster quotes no price and offers no press, so it does not pay
+    // for the balance.
+    const [allAgents, jobs, scheduledRuns, umbrellas, assets] = await Promise.all([
       listCustomAgents(),
       listJobs({ clientId: id }),
-      getClientCredits(id),
       listPlannedScheduledRuns({ clientId: id }),
       listClientAgents({ clientId: id }),
       // The delivered-work read needs assets, not only jobs: a lab-imported
@@ -92,10 +95,9 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       listAssets({ clientId: id }),
     ]);
     const agentIdByName = new Map(allAgents.map((agent) => [agent.name, agent.id]));
-    // `now` rolls the spend windows on read (a schedule doc read after a week
-    // rollover would otherwise still count last week's spend and mis-name the
-    // limit) and it is also the clock the delivered-work read and every card's
-    // refusal window age against — resolved once so the whole page agrees.
+    // The clock the delivered-work read and every roster entry's refusal window
+    // age against — resolved once so the whole page agrees. (It used to roll the
+    // credit spend windows too; that read left with #130.)
     // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
     const now = Date.now();
     // Every agent that could ever appear on this roster: enabled, and bound to
@@ -129,23 +131,6 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const agents = candidateAgents
       .filter((agent) => allowedIds.has(agent.id) || completedAgentIds.has(agent.id))
       .map(toSummary);
-    // Impersonating admins see the client view but never spend real credits —
-    // show the gate only to billable client actors.
-    const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
-    // Which limit clips that number — computed PER AGENT, because the binding
-    // limit depends on the agent's price (F130 gives agents distinct costs): a
-    // cheap agent may be blocked by the weekly cap while a pricey one is blocked
-    // by the balance, and each must name the limit its own denial would. The
-    // card shows it beside a blocked Run button, where "ask for a top-up" is
-    // wrong advice for a client who is capped for the week.
-    const creditBlockReasons: Record<string, string> = {};
-    if (spendable !== undefined) {
-      for (const agent of agents) {
-        const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
-        if (spendable < cost) creditBlockReasons[agent.id] = creditBlockReason(credits, cost, now);
-      }
-    }
-    const agentSetup = await buildAgentSetup(id, agents);
     // ── Card selection: exactly one card per agent ──
     // An umbrella owns its agent's card as soon as it is bound — the launch
     // card while it is being set up, the live card once it is producing. The
@@ -171,33 +156,32 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // what each row prints is its resolved §7.3 identity (F147).
     const runs = toRunRows(jobs, false, umbrellas).filter((r) => runnableNames.has(r.agentName));
     const clientScheduleRows = toScheduleRows(scheduledRuns, true);
-    const clientAgentRows = await toClientAgentRows({
-      umbrellas: ownedByUmbrella,
-      agentsById: new Map(allAgents.map((a) => [a.id, a])),
-      viewerIsClient: true,
-      grantedAgentIds: new Set([...allowedIds, ...completedAgentIds]),
-      clientSlug: client.agentsRepoSlug,
-      agentSetup,
-      ...(spendable !== undefined ? { spendable } : {}),
-      creditBlockReasons,
-      scheduleRows: clientScheduleRows,
-      scheduleZones: scheduleZonesByAgent(scheduledRuns),
-      jobs,
-      viewerUid: user.uid,
-      viewerIsStaff: false,
-      now,
-    });
     // A client run takes 10–20 minutes and the client's rows carry no link, so
     // without this the page never moved again after "Start run". Mounted only
     // while something is actually in flight; it unmounts when the server
     // renders a terminal status. A setup run in flight moves the launch card
     // the same way — it is the same medicine for a longer wait.
+    //
+    // The third clause used to be `clientAgentRows.some(row => row.activeRun
+    // !== null)` — the whole card projection, awaited for one boolean and then
+    // thrown away (#130). This branch renders no card at all: it renders the
+    // CD-G1 roster below, whose entries carry a mark, a name, a blurb and a
+    // status word, and not one of them comes from that projection — the week
+    // strip, the template gates, today's option texts and the feedback list
+    // belong to the agent's own page. `hasActiveTemplateRun` asks the same
+    // question of the same two lists, both already in hand, with no query.
     const runInFlight =
       runs.some((run) => run.status === "queued" || run.status === "running") ||
       umbrellas.some((u) => isLaunchInFlight(u.launchState)) ||
       // An umbrella agent has no run row to watch any more, so its in-flight
       // template run has to be what moves the page.
-      clientAgentRows.some((row) => row.activeRun !== null);
+      hasActiveTemplateRun({
+        umbrellas: ownedByUmbrella,
+        agentsById: new Map(allAgents.map((a) => [a.id, a])),
+        jobs,
+        viewerIsClient: true,
+        viewerUid: user.uid,
+      });
     // ── The roster (CD-G1) ──
     // One card per GRANTED agent, umbrella-bound or not, carrying a mark, a
     // name, one line of what it gives you and one status word. No Run button
@@ -323,9 +307,20 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   const staffScheduleRows = toScheduleRows(scheduledRuns, false);
 
   const boundAgentIds = new Set(umbrellas.map((u) => u.customAgentId));
-  const bindable = customAgents
-    .filter((a) => a.enabled && !boundAgentIds.has(a.id))
-    .map((a) => ({ id: a.id, name: a.name }));
+  // THE BINDING FILTER BELONGS HERE TOO (#131). This list used to ask only
+  // "enabled, and not already bound", which offered per-client instances baked
+  // under ANOTHER client's lab folder — the very agents the roster rendered
+  // directly below it had already dropped, and the very pair
+  // `bindClientAgentAction` refuses outright. Two lists on one screen disagreed
+  // about which agents exist for this client, and choosing the extra one
+  // returned an error paragraph and wrote nothing. `bindableAgents` asks the
+  // same `agentKeyMatchesClientSlug` question the action does, so the dropdown
+  // cannot offer what the action refuses.
+  const bindable = bindableAgents({
+    agents: customAgents,
+    clientSlug: client.agentsRepoSlug,
+    boundAgentIds,
+  });
   const launchInFlight = umbrellas.some((u) => isLaunchInFlight(u.launchState));
   const nothingToShow = enabledAgents.length === 0 && staffRuns.length === 0;
 
