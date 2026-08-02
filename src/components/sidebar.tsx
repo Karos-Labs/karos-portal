@@ -752,7 +752,10 @@ export function Sidebar({
           />
 
           <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
-            <ClientProfilePanel client={clientCtx.client} compact />
+            {/* NOT compact: the clamp exists for the no-scroll desktop rail, and
+                this sheet scrolls. The real client's sheet (client-rail.tsx)
+                shows the full text — one look for both views (AF-3). */}
+            <ClientProfilePanel client={clientCtx.client} />
 
             <div className="border-t border-border pt-4">
               <ClientDocuments

@@ -225,12 +225,16 @@ describe("a long client description cannot break the no-scroll rail", () => {
     expect(flat(panel)).toContain('compact && "line-clamp-2"');
   });
 
-  it("passes compact at both no-scroll mounts and not at the scrolling one", () => {
+  it("passes compact at the no-scroll mount and not at the scrolling ones", () => {
     const mounts = [...railSrc.matchAll(/<ClientProfilePanel[^/]*\/>/g)].map((m) => m[0]);
     expect(mounts).toHaveLength(2);
     // The desktop aside is height-constrained; the mobile Company sheet scrolls.
     expect(mounts.filter((m) => m.includes("compact"))).toHaveLength(1);
-    expect(sidebarSrc).toContain("<ClientProfilePanel client={clientCtx.client} compact />");
+    // Staff's client-context mount is ALSO a mobile Company sheet — the same
+    // scrolling frame as the client's own — so it shows the same full text.
+    // Clamping only there was a one-word AF-3 parity break (audit, 6547959).
+    expect(sidebarSrc).toContain("<ClientProfilePanel client={clientCtx.client} />");
+    expect(sidebarSrc).not.toContain("<ClientProfilePanel client={clientCtx.client} compact />");
   });
 
   it("still renders the description — clamped, not removed", () => {
