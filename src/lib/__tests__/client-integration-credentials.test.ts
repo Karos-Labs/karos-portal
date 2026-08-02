@@ -68,6 +68,28 @@ describe("client integration credentials — encrypted at rest", () => {
     expect(integration.credentials).toEqual({ accessToken: "secret-at", refreshToken: "secret-rt" });
   });
 
+  it("survives reading production-encrypted credentials without a key", async () => {
+    // The state that crashed ClientDetailPage: blobs written WITH the key
+    // (production), listed by an environment WITHOUT it (local dev on the
+    // same Firestore). The row must come back — flagged, secrets dropped —
+    // not throw through every page that lists a client.
+    await upsertClientIntegration({
+      clientId: "c1",
+      platform: "linkedin",
+      credentials: { accessToken: "prod-at" },
+      method: "oauth",
+      connectedBy: "u1",
+      connectedAt: 0,
+      updatedAt: 0,
+    });
+    delete process.env.TOKEN_ENCRYPTION_KEY;
+
+    const [integration] = await listClientIntegrations("c1");
+    expect(integration.credentialsUnavailable).toBe(true);
+    expect(integration.credentials).toEqual({});
+    expect(integration.platform).toBe("linkedin");
+  });
+
   it("round-trips manually-pasted API keys the same way", async () => {
     await upsertClientIntegration({
       clientId: "c1",

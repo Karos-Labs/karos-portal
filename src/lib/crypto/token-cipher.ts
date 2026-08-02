@@ -79,3 +79,34 @@ export function encryptCredentials(creds: Record<string, string>): Record<string
 export function decryptCredentials(creds: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(creds).map(([k, v]) => [k, decryptToken(v)]));
 }
+
+/**
+ * Decrypt a credentials map for READ paths that must survive an environment
+ * without the key.
+ *
+ * Production writes `enc:v1:` blobs with a key a laptop pointed at the same
+ * Firestore has no business holding — so "cannot decrypt here" is a normal
+ * state for local dev, not corruption. A page listing integrations was crashing
+ * on it (ClientDetailPage via listClientIntegrations), taking down surfaces
+ * that never render a token at all. Values that cannot be decrypted are
+ * DROPPED and the caller is told, so the row can say "connected, secrets
+ * unreadable here" instead of the page dying.
+ *
+ * Callers that genuinely need the plaintext to do their job (publish cron,
+ * analytics sync) keep using decryptCredentials, which still fails loud.
+ */
+export function decryptCredentialsAvailable(creds: Record<string, string>): {
+  credentials: Record<string, string>;
+  unavailable: boolean;
+} {
+  const out: Record<string, string> = {};
+  let unavailable = false;
+  for (const [k, v] of Object.entries(creds)) {
+    try {
+      out[k] = decryptToken(v);
+    } catch {
+      unavailable = true;
+    }
+  }
+  return { credentials: out, unavailable };
+}

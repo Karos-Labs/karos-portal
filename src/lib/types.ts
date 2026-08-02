@@ -1056,6 +1056,13 @@ export interface ClientIntegration {
   accountName?: string;
   /** Credential key→value pairs matching the platform's field keys. Encrypted at rest — decrypted transparently by listClientIntegrations. */
   credentials: Record<string, string>;
+  /**
+   * True when stored credentials could not be decrypted in THIS environment
+   * (no TOKEN_ENCRYPTION_KEY — e.g. local dev reading production-written
+   * blobs). The connection exists; its secrets are unreadable here. Never
+   * persisted — set by listClientIntegrations at read time.
+   */
+  credentialsUnavailable?: boolean;
   /** "manual" = keys pasted by a staff member; "oauth" = OAuth flow */
   method: "manual" | "oauth";
   /**

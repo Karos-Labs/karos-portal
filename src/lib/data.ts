@@ -61,7 +61,11 @@ import { engagementScore, rankByEngagement } from "@/lib/analytics";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
-import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
+import {
+  encryptCredentials,
+  decryptCredentials,
+  decryptCredentialsAvailable,
+} from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 import { competitorBrandKeys, looksLikeUrlInput } from "@/lib/competitor-input";
@@ -1520,12 +1524,23 @@ export async function updateContextDocSummary(
 
 /* -------------------- client integrations --------------------------- */
 
-/** List all social/channel integrations for a client. Credentials are decrypted for the caller. */
+/**
+ * List all social/channel integrations for a client. Credentials are decrypted
+ * for the caller — leniently: a value this environment cannot decrypt (no
+ * TOKEN_ENCRYPTION_KEY, e.g. local dev reading production-written blobs) is
+ * dropped and the row flagged `credentialsUnavailable`, because every page that
+ * lists a client rides this and none of them render a token. The strict decrypt
+ * stays on the paths that consume the plaintext (publish, analytics sync).
+ */
 export async function listClientIntegrations(clientId: string): Promise<ClientIntegration[]> {
   const snap = await col.clientIntegrations().where("clientId", "==", clientId).get();
   return snap.docs
     .map((d) => withId<ClientIntegration>(d))
-    .map((i) => (i.credentials ? { ...i, credentials: decryptCredentials(i.credentials) } : i))
+    .map((i) => {
+      if (!i.credentials) return i;
+      const { credentials, unavailable } = decryptCredentialsAvailable(i.credentials);
+      return { ...i, credentials, ...(unavailable ? { credentialsUnavailable: true } : {}) };
+    })
     .sort((a, b) => a.platform.localeCompare(b.platform));
 }
 

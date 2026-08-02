@@ -8,6 +8,7 @@ import {
   isEncrypted,
   encryptCredentials,
   decryptCredentials,
+  decryptCredentialsAvailable,
 } from "@/lib/crypto/token-cipher";
 
 // 32-byte key as 64 hex chars.
@@ -65,5 +66,31 @@ describe("token-cipher without a key (dev)", () => {
 
   it("treats an unmarked legacy value as plaintext on decrypt", () => {
     expect(decryptToken("legacy-plaintext")).toBe("legacy-plaintext");
+  });
+
+  // The lenient READ path. Production writes enc:v1: blobs into the same
+  // Firestore local dev reads, and local dev holds no key — that state must
+  // degrade to "secrets unreadable here", never to a crashed page.
+  it("drops values it cannot decrypt and says so, keeping what it can read", () => {
+    process.env.TOKEN_ENCRYPTION_KEY = "0".repeat(64);
+    const enc = encryptToken("prod-secret");
+    delete process.env.TOKEN_ENCRYPTION_KEY;
+
+    const { credentials, unavailable } = decryptCredentialsAvailable({
+      accessToken: enc,
+      note: "plain:dev-note",
+      legacy: "legacy-plaintext",
+    });
+    expect(unavailable).toBe(true);
+    expect(credentials).toEqual({ note: "dev-note", legacy: "legacy-plaintext" });
+  });
+
+  it("reports nothing unavailable when every value decrypts", () => {
+    process.env.TOKEN_ENCRYPTION_KEY = "0".repeat(64);
+    const { credentials, unavailable } = decryptCredentialsAvailable(
+      encryptCredentials({ accessToken: "at" }),
+    );
+    expect(unavailable).toBe(false);
+    expect(credentials).toEqual({ accessToken: "at" });
   });
 });
