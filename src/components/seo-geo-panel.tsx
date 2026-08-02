@@ -383,7 +383,12 @@ export function SeoGeoPlan({
   // raw engineering labels the copy table exists to replace. Ids are stable, so
   // this heals them without a re-capture — and doing it here, rather than in the
   // client leaf, keeps those labels out of the RSC payload entirely.
-  const recommendations = healRecommendations(insights.recommendations ?? []);
+  // The approvals ride along for one reason only (AF-11): when two rec ids heal
+  // to identical copy they collapse to one row, and the row has to keep the id
+  // the client already approved, or a collapsed pair reads as un-approved work.
+  const recommendations = healRecommendations(insights.recommendations ?? [], {
+    approvedRecIds: insights.approvedRecIds ?? [],
+  });
   return (
     <Card>
       <CardTitle className="mb-1">What we&apos;re fixing</CardTitle>
