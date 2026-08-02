@@ -36,6 +36,7 @@ import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { ClientContextBar } from "@/components/client-context-bar";
 import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
+import { StaffShellMain } from "@/components/staff-shell-main";
 import type { ActionItemNotification, AgentReviewNotification, Client, ClientTask } from "@/lib/types";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -246,14 +247,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           )}
           {/* Client-context mode gets its own persistent bar — see F60. */}
           <ClientContextBar />
-          {/* Scroll reserve, same ladder as the client shell. The staff main had
-              none, so the last rows of a fully-scrolled page sat behind the
-              copilot strip. Below md the reserve covers the STACK — copilot
-              strip on top of the 54px bottom tab bar (MOBILE_TAB_BAR_H, client
-              context); at md+ the bar is gone and only the strip needs clearing. */}
-          <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pb-16 md:pt-8 lg:pb-8">
+          {/* Scroll reserve, and it is CONDITIONAL here where the client shell's
+              is flat — the bottom chrome it clears (tab bar + copilot strip)
+              only exists in client-context mode. StaffShellMain reads the same
+              context both of those gate on; see #127 in that file. */}
+          <StaffShellMain>
             <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
-          </main>
+          </StaffShellMain>
         </div>
         {/* Docked copilot right-rail — visible when admin selects a client via "View as Client" */}
         <StaffCopilotDock userName={user.name} viewerUid={user.uid} />

@@ -243,6 +243,104 @@ export function taskExecutionCost(productType?: ManagedTaskType | null): number 
   return TASK_EXECUTION_COSTS[productType] ?? CREDIT_COSTS.taskExecution;
 }
 
+/* ── The rate card ───────────────────────────────────────────────── */
+
+/**
+ * One row of the price list a client reads.
+ *
+ * `credits` is null ONLY where this module has no constant to quote, which
+ * today is the one-time agent setup charge: its price is per agent
+ * (`CustomAgent.launchCreditCost`) and there is deliberately NO default, so a
+ * null here means "ask the agent", never "free". `note` says where the real
+ * figure is; nothing in this file may fill one in.
+ */
+export interface ClientPriceRow {
+  /** Sentence case, the client's word for the thing being bought. */
+  label: string;
+  /** Credits per unit, or null when the price is per agent (see above). */
+  credits: number | null;
+  /** The number is a FLOOR — a per-agent override can sit above it. */
+  from?: boolean;
+  /** Short parenthetical: what makes this charge unusual, or where its real price lives. */
+  note?: string;
+}
+
+/**
+ * THE price list — the two surfaces that quote the WHOLE list both render this
+ * array: the client's rate card (components/credits-panel.tsx) and the
+ * copilot's system prompt (api/clients/[id]/chat). They each kept their own
+ * copy until 2026-08-01 and both left the SAME entry out: `agent_launch`, the
+ * one-time agent setup charge, which is the largest single thing a client is
+ * billed for. The copilot's block ends with "never invent credit figures beyond
+ * these", so with setup missing it answered a setup question with the per-run
+ * price or not at all. Two lists could each be completed; one list can only be
+ * completed once.
+ *
+ * SCOPE, so this is not read as more than it is. It is the list, not every
+ * quote: individual controls still price themselves at the point of the press
+ * (the three pressPrice helpers above, the run dialog's "Costs N credits", the
+ * launch card's one-time figure, the panel's own three-item teaser). Those quote
+ * ONE price each, from these same constants, and this array does not reach them.
+ *
+ * WHAT A ROW IS: a priced unit, not a ledger operation. The small in-app AI
+ * helpers (audience simulation, task map refresh, insights refresh, company
+ * description, X account suggestions) all bill `ai_tool` at a rate that already
+ * appears here, so they add charges rather than prices — and that is not left to
+ * a reader's word: credit-attribution.test.ts asserts every CREDIT_COSTS rate is
+ * quoted somewhere on this list, so a reprice that strands one fails.
+ *
+ * Every number is read off the constants above, so a reprice moves the card and
+ * the copilot together and neither can quote a stale figure. The one row with
+ * no number says so — see ClientPriceRow.
+ */
+export const CLIENT_PRICE_ROWS: readonly ClientPriceRow[] = [
+  { label: "Copilot message", credits: CREDIT_COSTS.chatMessage },
+  { label: "Correct one document", credits: CREDIT_COSTS.targetedCorrection },
+  { label: "Correct every document", credits: CREDIT_COSTS.globalCorrection },
+  {
+    label: "Agent setup",
+    credits: null,
+    // Reads in both registers, which is the point of one list: on the card it
+    // sits in brackets after the label, and in the copilot's prompt it is the
+    // whole of what the model may say about a figure it has not been given.
+    // "per agent" is deliberately not repeated from the price cell.
+    note: "one-time, when an agent is first set up for you — its own page shows the price",
+  },
+  {
+    label: "Agent run",
+    credits: CREDIT_COSTS.customAgentRun,
+    from: true,
+    note: "each agent shows its own price",
+  },
+  { label: "Blog article", credits: TASK_EXECUTION_COSTS.blog_article },
+  { label: "Newsletter issue", credits: TASK_EXECUTION_COSTS.newsletter_issue },
+  { label: "Social posts", credits: TASK_EXECUTION_COSTS.social_post },
+  { label: "Landing page", credits: TASK_EXECUTION_COSTS.landing_page },
+  { label: "Other task execution", credits: CREDIT_COSTS.taskExecution },
+  {
+    label: "Extra LinkedIn seat",
+    credits: CREDIT_COSTS.employeeSeat,
+    note: "one-time, beyond your plan's seats",
+  },
+];
+
+/** What a priced-per-agent row prints instead of a number. */
+const PER_AGENT_PRICE = "set per agent";
+
+/**
+ * The price side of a rate-card row, spelled once so the two surfaces cannot
+ * disagree about how a floor or a per-agent price reads.
+ *
+ * `withUnit` adds the word "credits" for prose readers (the copilot prompt);
+ * the card's price column leaves it off because its own heading already says
+ * credits. Both branches go through the same three cases, which is the point.
+ */
+export function clientPriceText(row: ClientPriceRow, opts?: { withUnit?: boolean }): string {
+  if (row.credits == null) return PER_AGENT_PRICE;
+  const amount = opts?.withUnit ? creditsLabel(row.credits) : String(row.credits);
+  return row.from ? `from ${amount}` : amount;
+}
+
 /** Applied to new clients on their first charge/grant (lazy doc creation). */
 export const CREDIT_DEFAULTS = {
   startingBalance: 200,
@@ -548,8 +646,17 @@ export const CREDIT_OPERATION_LABEL: Record<CreditOperation, string> = {
  * is spend they initiated. The job's `runType` is what separates them, so a row
  * whose job has been deleted (or predates run-type stamping) honestly falls
  * back to the undifferentiated "Agent runs" rather than guessing.
+ *
+ * "UNDIFFERENTIATED" AND "NOT A RUN AT ALL" ARE TWO ANSWERS, and collapsing
+ * them into one `other` bucket is what made a whole client's breakdown read
+ * "Other usage". runType is stamped only by callers that pass it, so every run
+ * fired before it existed — and every run through the scheduler core that still
+ * does not pass it — lands here; telling a client that the twelve agent runs
+ * they paid for were "other usage" is less true than saying they were runs
+ * whose kind we did not record. `other` now means what its label says: spend
+ * that is not an agent run (copilot, task executions, corrections, seats).
  */
-export type CreditBucket = "setup" | "scheduled" | "manual" | "other";
+export type CreditBucket = "setup" | "scheduled" | "manual" | "runs" | "other";
 
 export function creditBucketFor(
   operation: CreditOperation,
@@ -559,7 +666,7 @@ export function creditBucketFor(
   if (operation === "custom_agent_run" || operation === "agent_run") {
     if (runType === "scheduled") return "scheduled";
     if (runType === "manual_template" || runType === "manual") return "manual";
-    return "other";
+    return "runs";
   }
   return "other";
 }
@@ -568,5 +675,14 @@ export const CREDIT_BUCKET_LABEL: Record<CreditBucket, string> = {
   setup: "Setup",
   scheduled: "Scheduled runs",
   manual: "Runs you started",
+  // NOT "Agent runs". Sitting in the same row as "Scheduled runs" and "Runs you
+  // started" it reads as their TOTAL, not as the residual — so a client seeing
+  // Scheduled 25 · Started 25 · Agent runs 50 naturally reads 25+25 inside the
+  // 50, and the row looks like it double-counts and fails to add up. The bucket
+  // split is right; the WORD was more general than the data it labels, which is
+  // an over-broad label — the same defect as an over-specific one, pointed the
+  // other way. This says what is actually known: a run whose kind was not
+  // recorded.
+  runs: "Runs (kind not recorded)",
   other: "Other usage",
 };

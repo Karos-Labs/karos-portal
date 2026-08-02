@@ -51,13 +51,45 @@ interface NavItem {
   exact?: boolean;
 }
 
+/**
+ * The staff workspace nav — and, for the `CLIENT_USER` rows, the nav of the ONE
+ * client this shell ever serves.
+ *
+ * THAT VIEWER IS REAL AND THIS TABLE USED TO LIE TO THEM (#137). The app layout
+ * hands every CLIENT_USER the ClientRail — but only after `getClient(clientId)`
+ * RESOLVES. A client whose id is unset, or whose client document has gone,
+ * falls through to this shell, and the rows below are the whole of their
+ * navigation.
+ *
+ * Two of those rows were then REWRITTEN from `user.clientId`, on the assumption
+ * that the fallthrough could not happen: `/dashboard` was remapped to
+ * `/clients/${user.clientId}` and an `AI Agents` row was spliced in pointing at
+ * the same subtree. Both of those routes call `requireVisibleClient`, which
+ * `notFound()`s the instant the document does not load — the second half of the
+ * very condition that sent this viewer here. So the only two rows written FOR
+ * them were the only two that could 404 ON them. Nothing in this file reads
+ * `user.clientId` any more, and client-shell-nav.test.ts holds it to that.
+ *
+ * A CLIENT_USER ROW MUST NOT LEAD TO A PAGE THAT TURNS A CLIENT AWAY, which is
+ * the other half of the same rule and is derived rather than declared: the same
+ * test resolves each row below to its route and rejects any whose page
+ * redirects a CLIENT_USER. That is what dropped `/dashboard` (it redirects them
+ * to `/clients/<id>`, or to `/assets` with no id) and `/assets` (it redirects
+ * them to /tasks, which the Workspace row below already is).
+ *
+ * The three that survive all serve a client with no company context on purpose:
+ * /transcripts scopes and redacts to their client and renders empty without
+ * one, /calendar has an explicit no-clientId empty state, /tasks is theirs.
+ * Their real nav — Dashboard, AI agents, Meetings, Calendar, Workspace — is
+ * client-rail.tsx, which is the only place a resolvable client's shell is built.
+ */
 const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
+  { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/clients", label: "Clients", icon: "Building2", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/agents", label: "Agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/jobs", label: "Jobs", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/transcripts", label: "Meetings", icon: "Mic", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
-  { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
+  { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/calendar", label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/tasks", label: "Workspace", icon: "SquareCheck", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/team", label: "Team", icon: "Users", roles: ["KAROS_ADMIN"] },
@@ -72,7 +104,9 @@ const NAV: NavItem[] = [
 function clientViewNav(clientId: string): NavItem[] {
   return [
     { href: `/clients/${clientId}`, label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
-    { href: `/clients/${clientId}/agents`, label: "AI Agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+    /* Sentence case, like the client rail's own item and both headings on the
+       page they open — one destination, one spelling (#141). */
+    { href: `/clients/${clientId}/agents`, label: "AI agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: `/clients/${clientId}/tasks`, label: "Workspace", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   ];
@@ -436,29 +470,26 @@ export function Sidebar({
     dismissed: dismissals.dismissed,
   });
 
-  const clientHomePath =
-    user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
-
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
+  // The nav table, filtered by role and nothing else. It used to be filtered and
+  // then REWRITTEN for a client — a /dashboard remap and a spliced AI Agents
+  // row, both built from `user.clientId` — see the note above NAV for why those
+  // two rows could only ever 404 for the one viewer they rendered for (#137).
   const adminItems: NavItem[] = NAV.filter((n) => {
     if (n.roles.includes(user.role)) return true;
     if (n.href === "/team" && user.role === "CLIENT_USER" && user.isGroupAdmin) return true;
     return false;
-  }).map((n) => {
-    // exact — otherwise Dashboard stays lit on the AI Agents page below it.
-    if (n.href === "/dashboard" && clientHomePath) return { ...n, href: clientHomePath, exact: true };
-    return n;
   });
-  if (clientHomePath) {
-    // Client users run their granted custom agents from their own agents page.
-    adminItems.splice(1, 0, {
-      href: `${clientHomePath}/agents`,
-      label: "AI Agents",
-      icon: "Bot",
-      roles: ["CLIENT_USER"],
-    });
-  }
+
+  // Where the wordmark goes — the same question the nav table above answers,
+  // asked of the one control that is not in it. /dashboard is the STAFF home:
+  // it redirects a CLIENT_USER to /clients/<clientId>, or to /assets when they
+  // have no id. Neither ends anywhere for the client who reaches this shell —
+  // the first is the notFound() described above, and the second bounces on to
+  // /tasks. So the mark goes to /tasks directly: the Workspace is the page that
+  // actually holds their work.
+  const homeHref = isStaff ? "/dashboard" : "/tasks";
 
   // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
   // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.
@@ -628,7 +659,7 @@ export function Sidebar({
     <div className="flex h-full flex-col">
       {/* Logo — fixed top */}
       <div className="shrink-0 px-4 pb-2 pt-4">
-        <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
+        <Link href={homeHref} className="flex items-center gap-2.5 px-2 py-1">
           <Image
             src="/brand/kairos-head-disc-dark.svg"
             alt=""
@@ -810,7 +841,7 @@ export function Sidebar({
         <>
           {/* Mobile top bar */}
           <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-            <Link href="/dashboard" className="flex items-center gap-2.5">
+            <Link href={homeHref} className="flex items-center gap-2.5">
               <Image
                 src="/brand/kairos-head-disc-dark.svg"
                 alt=""

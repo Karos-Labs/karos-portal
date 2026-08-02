@@ -252,10 +252,11 @@ export async function GET(req: NextRequest) {
       const { jobId, error } = await submitCustomAgentJob(actor, {
         clientId: run.clientId,
         agentId: run.customAgentId,
-        prompt:
-          (run.outputsPerRun ?? 1) > 1
-            ? `Create exactly ${run.outputsPerRun} distinct outputs for this scheduled run.\n\n${run.prompt}`
-            : run.prompt,
+        // The "Create exactly N" instruction is composed by the submit core from
+        // the CLAMPED multiplier, so the number the model is told and the number
+        // the client is billed cannot differ. It was built here from the stored
+        // value while the core clamped the charge — see submit-custom.ts.
+        prompt: run.prompt,
         // WHO PAYS: the STORED flag, not the resolved actor.
         //
         // `billClientCredits` is documented as the switch for whether each fire

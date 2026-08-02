@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   CALIBRATION_MIN_SAMPLES,
+  UNNAMED_AGENT_LABEL,
   calibrateLaunchPrice,
+  spendAgentNames,
   summarizeAgentEconomics,
   summarizeClientSpend,
 } from "@/lib/credit-reporting";
+import { CREDIT_BUCKET_LABEL } from "@/lib/credits";
 import type { CreditLedgerEntry, Job } from "@/lib/types";
 
 /**
@@ -86,14 +89,37 @@ describe("summarizeClientSpend", () => {
     expect(rows[0].credits).toBe(25);
   });
 
-  it("buckets a charge whose job is gone as undifferentiated, not as a guess", () => {
+  it("buckets a charge whose job is gone as an undifferentiated RUN, not as a guess", () => {
     const rows = summarizeClientSpend({
       ledger: [entry({ jobId: "vanished" })],
       runTypeByJobId: {},
       agentNameById,
     });
 
-    expect(rows[0].buckets).toEqual([{ bucket: "other", credits: 25, entries: 1 }]);
+    // "runs", not "other". We do not know WHICH kind of run it was, but we know
+    // it was one — the operation says so — and telling a client that the agent
+    // runs they paid for were "other usage" is the less true of the two.
+    expect(rows[0].buckets).toEqual([{ bucket: "runs", credits: 25, entries: 1 }]);
+    expect(CREDIT_BUCKET_LABEL.runs).toBe("Runs (kind not recorded)");
+  });
+
+  it("keeps a run bucket and a non-run bucket apart on the same agent", () => {
+    const rows = summarizeClientSpend({
+      ledger: [
+        entry({ id: "a", jobId: "vanished", delta: -25 }),
+        entry({ id: "b", operation: "ai_tool", jobId: undefined, delta: -5 }),
+      ],
+      runTypeByJobId: {},
+      agentNameById,
+    });
+
+    // The whole point of splitting `runs` out of `other`: if both still landed
+    // in one bucket this row would read "Other usage 30" and the client would
+    // have no idea that 25 of it was the agent running.
+    expect(rows[0].buckets).toEqual([
+      { bucket: "runs", credits: 25, entries: 1 },
+      { bucket: "other", credits: 5, entries: 1 },
+    ]);
   });
 
   it("keeps unattributed spend in its own row, always last", () => {
@@ -110,14 +136,96 @@ describe("summarizeClientSpend", () => {
     expect(rows[1].agentId).toBeNull();
   });
 
-  it("names a deleted agent honestly rather than dropping its spend", () => {
+  it("keeps an unresolvable agent's spend, and claims nothing about why it is unresolvable", () => {
     const rows = summarizeClientSpend({
       ledger: [entry({ agentId: "gone" })],
       runTypeByJobId: {},
       agentNameById,
     });
-    expect(rows[0].agentName).toBe("Removed agent");
+    expect(rows[0].agentName).toBe(UNNAMED_AGENT_LABEL);
     expect(rows[0].credits).toBe(25);
+    // The label used to be "Removed agent", which is a statement about the
+    // client's library that this function cannot check — and was false for
+    // every agent whose runs carried no customAgentId. Whatever the wording
+    // becomes, it must not assert a removal.
+    expect(UNNAMED_AGENT_LABEL.toLowerCase()).not.toContain("remov");
+    expect(UNNAMED_AGENT_LABEL.toLowerCase()).not.toContain("delet");
+  });
+});
+
+describe("spendAgentNames", () => {
+  it("names an agent that is still in the library but has no job carrying its id", () => {
+    // Exactly the shape the scheduler core wrote until 2026-08-01: real jobs,
+    // real charges, no customAgentId on any of them.
+    const names = spendAgentNames({
+      customAgents: [{ id: "ag1", name: "Instagram Agent" }],
+      jobs: [{ customAgentId: undefined, agentName: "Instagram Agent" }],
+      umbrellas: [],
+    });
+    expect(names).toEqual({ ag1: "Instagram Agent" });
+
+    const rows = summarizeClientSpend({
+      ledger: [entry({ agentId: "ag1" })],
+      runTypeByJobId: {},
+      agentNameById: names,
+    });
+    expect(rows[0].agentName).toBe("Instagram Agent");
+  });
+
+  it("lets the umbrella's §7.3 display name outrank the job's and the library's", () => {
+    const names = spendAgentNames({
+      customAgents: [{ id: "ag1", name: "karos-instagram-content-agent" }],
+      jobs: [{ customAgentId: "ag1", agentName: "Instagram Agent" }],
+      umbrellas: [{ customAgentId: "ag1", displayName: "Your Instagram agent" }],
+    });
+    // One agent, one name, wherever the client reads it — the billing page must
+    // not introduce a second one.
+    expect(names.ag1).toBe("Your Instagram agent");
+  });
+
+  it("prefers the library's CURRENT name over the name a past run recorded", () => {
+    // THIS TEST ASSERTED THE OPPOSITE, and its name said so as intent. A run's
+    // recorded name is the name AT THE TIME; after a rename it is the one name
+    // no other surface uses. calendar-body resolves the same question
+    // library-first (`agentById.get(...)?.name ?? r.agentName`), so the old
+    // order had the credits panel and the calendar printing two different names
+    // for one agent — the double identity this helper exists to prevent, on the
+    // surface where it costs money.
+    const names = spendAgentNames({
+      customAgents: [{ id: "ag1", name: "Renamed in the library" }],
+      jobs: [{ customAgentId: "ag1", agentName: "Name on the run" }],
+    });
+    expect(names.ag1).toBe("Renamed in the library");
+  });
+
+  it("falls back to a run's name only for an id the library no longer knows", () => {
+    // The job rung still earns its place: an agent deleted from the library, or
+    // one whose charges predate it, has no other source of a name at all.
+    const names = spendAgentNames({
+      customAgents: [{ id: "ag-other", name: "Still here" }],
+      jobs: [{ customAgentId: "ag-gone", agentName: "What it was called" }],
+    });
+    expect(names["ag-gone"]).toBe("What it was called");
+  });
+
+  it("takes the MOST RECENT recorded name when only runs know it", () => {
+    // `listJobs` sorts newest-first, and the loop was last-wins — so the winner
+    // was the OLDEST name the agent ever ran under. First-wins over that order
+    // is the most recent answer, which is the only job-recorded one worth having.
+    const names = spendAgentNames({
+      jobs: [
+        { customAgentId: "ag1", agentName: "Newest name" },
+        { customAgentId: "ag1", agentName: "Older name" },
+        { customAgentId: "ag1", agentName: "Oldest name" },
+      ],
+    });
+    expect(names.ag1).toBe("Newest name");
+  });
+
+  it("takes each source as optional and never invents an entry", () => {
+    expect(spendAgentNames({})).toEqual({});
+    expect(spendAgentNames({ jobs: [{ customAgentId: undefined, agentName: "x" }] })).toEqual({});
+    expect(spendAgentNames({ umbrellas: [{ customAgentId: "ag9", displayName: "" }] })).toEqual({});
   });
 });
 

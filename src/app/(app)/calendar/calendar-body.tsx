@@ -264,7 +264,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
    * The filter below drops them from the day grid deliberately — painting days a
    * paused schedule will not run is the same class of lie the grid exists to
    * avoid. But dropping them from the PAGE is what made pausing a one-way door:
-   * the AI Agents page shows nothing for cadence "monthly" or "once"
+   * the AI agents page shows nothing for cadence "monthly" or "once"
    * (`weeklyFireDays` returns null and `toScheduleRows` drops the row), so those
    * two had no route back at all once the calendar forgot them. Identity and a
    * cadence label only; no occurrences.
@@ -369,7 +369,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // ONLY signal a future-projection card can show about whether the
         // schedule has actually been firing, since it has no job of its own.
         // Same redaction `toScheduleRows` already applies to this same field
-        // on the AI Agents page: staff get the raw refusal, a client gets the
+        // on the AI agents page: staff get the raw refusal, a client gets the
         // safe paraphrase (never the internal provider/credit/service detail).
         //
         // `lastRunAt` GOES TO BOTH VIEWERS, and must: the card prints it as "Ran
@@ -548,7 +548,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
           <EmptyState
             icon={<Icon name="CalendarClock" className="h-7 w-7" />}
             title="No runs on the calendar yet"
-            description="Schedules are set on the AI Agents page. Once an agent has one, its runs and everything they produce show up here."
+            description="Schedules are set on the AI agents page. Once an agent has one, its runs and everything they produce show up here."
             action={
               <Link
                 href={`/clients/${scopedClientId}/agents`}

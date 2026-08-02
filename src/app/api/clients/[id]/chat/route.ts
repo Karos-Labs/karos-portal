@@ -26,7 +26,13 @@ import {
 } from "@/lib/data";
 import { listClientAgents, listClientAgentFeedback } from "@/lib/data-client-agents";
 import { findDuplicateReason, queueCapacitySkipNote } from "@/lib/task-dedup";
-import { CREDIT_COSTS, TASK_EXECUTION_COSTS, availableCredits } from "@/lib/credits";
+import {
+  CLIENT_PRICE_ROWS,
+  CREDIT_COSTS,
+  availableCredits,
+  clientPriceText,
+  creditsLabel,
+} from "@/lib/credits";
 import { chargeClientModelCall } from "@/lib/client-model-charge";
 import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
@@ -297,12 +303,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Make the copilot credits-aware for client users: it can quote run costs,
   // warn on a low balance, and explain why an action was declined.
   //
-  // Custom agent runs are the dominant client spend and the only thing the
-  // Agents page charges, yet neither they nor the employee seat appeared in
-  // the price list the model is told never to go beyond — so it either
-  // declined or quoted the 5-credit task baseline against a real 25 (QA F95).
+  // THE PRICE LIST IS NOT WRITTEN HERE. It is CLIENT_PRICE_ROWS in lib/credits.ts,
+  // the same array the client's own rate card renders, because this block used to
+  // be a hand-assembled second copy of that card and the two had gone out of step
+  // in the same direction: neither carried `agent_launch`, the one-time agent
+  // setup charge — the largest single thing a client is billed for. Paired with
+  // the "never invent credit figures beyond these" instruction that closes this
+  // block, that omission meant a client asking what setup costs was quoted the
+  // per-RUN price or nothing at all.
+  //
+  // WHAT THE SETUP ROW CAN AND CANNOT SAY HERE. Its price is per agent
+  // (CustomAgent.launchCreditCost) and `ClientCustomAgentSummary` — what
+  // getClientCustomAgents hands this route — does not carry that field, so the
+  // per-agent figures are NOT available in this prompt and nothing below
+  // pretends otherwise. The row states the shape of the charge and names the
+  // page that shows the number, which is an answer; a guessed figure is not.
+  const priceLines = CLIENT_PRICE_ROWS.map(
+    (row) =>
+      `  - ${row.label}: ${clientPriceText(row, { withUnit: true })}` +
+      (row.note ? ` (${row.note})` : ""),
+  ).join("\n");
   const agentPriceLines = customAgents
-    .map((a) => `  - ${a.name}: ${a.creditCost ?? CREDIT_COSTS.customAgentRun} credits per run`)
+    .map((a) => `  - ${a.name}: ${creditsLabel(a.creditCost ?? CREDIT_COSTS.customAgentRun)} per run`)
     .join("\n");
   const creditsAppendix = credits
     ? `\n\n## Usage credits\n` +
@@ -314,15 +336,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `quote THIS figure when asked what they have; it is the balance already clipped by their spend caps. ` +
       `Used ${credits.weekSpent}${credits.weeklyLimit != null ? ` of ${credits.weeklyLimit}` : ""} this week, ` +
       `${credits.monthSpent}${credits.monthlyLimit != null ? ` of ${credits.monthlyLimit}` : ""} this month.\n` +
-      `Costs: chat message ${CREDIT_COSTS.chatMessage}; task execution ${CREDIT_COSTS.taskExecution} baseline, or by product — ` +
-      `blog article ${TASK_EXECUTION_COSTS.blog_article}, newsletter ${TASK_EXECUTION_COSTS.newsletter_issue}, ` +
-      `social posts ${TASK_EXECUTION_COSTS.social_post}, landing page ${TASK_EXECUTION_COSTS.landing_page}; ` +
-      `document correction ${CREDIT_COSTS.targetedCorrection} (global ${CREDIT_COSTS.globalCorrection}).\n` +
-      `AI agent runs (the Agents page) cost ${CREDIT_COSTS.customAgentRun} credits per run by default; some agents are priced individually. ` +
+      `What each action costs — this is the same price list the client reads on their settings page:\n${priceLines}\n` +
       (agentPriceLines
-        ? `This client's agents and their exact prices:\n${agentPriceLines}\n`
+        ? `This client's agents and the exact price of one run of each:\n${agentPriceLines}\n`
         : `This client has no AI agents assigned yet.\n`) +
-      `An extra LinkedIn employee-advocacy seat beyond the plan's limit costs ${CREDIT_COSTS.employeeSeat} credits, charged once — it is not a monthly subscription.\n` +
       `If spendable credits are under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
     : "";
 

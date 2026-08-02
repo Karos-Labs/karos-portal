@@ -39,7 +39,7 @@ import {
 
 
 /**
- * A client's AI Agents page. Clients can run only the custom agents that an
+ * A client's AI agents page. Clients can run only the custom agents that an
  * admin granted them; staff can run every enabled custom agent. Neither list
  * may include a per-client agent instance belonging to a different client —
  * its skill is baked under that client's lab folder, so a run here would draft
@@ -456,8 +456,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
 
   return (
     <>
+      {/* Sentence case, matching the client branch above and every nav label
+          that leads here — the rail's item and the staff shell's client-context
+          twin. One route rendered two headings and the label disagreed with
+          both (#141); this is the one spelling. */}
       <PageHeader
-        title="AI Agents"
+        title="AI agents"
         description="Run custom AI agents for this client and track their deliverables."
         action={
           <div className="flex items-center gap-3">

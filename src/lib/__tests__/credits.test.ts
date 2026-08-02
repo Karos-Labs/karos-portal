@@ -2,11 +2,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  CREDIT_BUCKET_LABEL,
   CREDIT_COSTS,
   CREDIT_OPERATION_LABEL,
   creditBucketFor,
+  type CreditBucket,
 } from "@/lib/credits";
-import type { CreditOperation } from "@/lib/types";
+import type { CreditOperation, JobRunType } from "@/lib/types";
 import { describe, expect, it } from "vitest";
 import {
   CREDIT_BLOCK_REASON,
@@ -347,13 +349,71 @@ describe("credit ledger presentation", () => {
   });
 
   it("falls back honestly when the job is gone or predates run-type stamping", () => {
-    // Not a guess at which kind it was — an undifferentiated bucket.
-    expect(creditBucketFor("custom_agent_run", null)).toBe("other");
-    expect(creditBucketFor("custom_agent_run")).toBe("other");
+    // Not a guess at which KIND of run it was — but still a run, because the
+    // operation says so. Collapsing this into "other" is what made a client
+    // whose history predates run-type stamping read "Other usage" and nothing
+    // else, for spend that was entirely agent runs.
+    expect(creditBucketFor("custom_agent_run", null)).toBe("runs");
+    expect(creditBucketFor("custom_agent_run")).toBe("runs");
+    expect(creditBucketFor("agent_run")).toBe("runs");
+    expect(CREDIT_BUCKET_LABEL.runs).toBe("Runs (kind not recorded)");
+    // AND IT MAY NOT READ AS A TOTAL. It sits in the same row as "Scheduled
+    // runs" and "Runs you started"; a residual named like their sum makes the
+    // row look as though it double-counts. Asked as the closed question rather
+    // than pinning one wording: the residual's label may not be a prefix of, or
+    // contained in, either sibling — which is what "Agent runs" was.
+    for (const sibling of [CREDIT_BUCKET_LABEL.scheduled, CREDIT_BUCKET_LABEL.manual]) {
+      const words = CREDIT_BUCKET_LABEL.runs.toLowerCase().split(/\s+/);
+      expect(
+        words.every((w) => sibling.toLowerCase().includes(w)),
+        `the residual bucket reads as a total of "${sibling}"`,
+      ).toBe(false);
+    }
   });
 
   it("leaves non-agent operations out of the agent buckets", () => {
     expect(creditBucketFor("chat_message")).toBe("other");
     expect(creditBucketFor("task_execution", "scheduled")).toBe("other");
+    // …including the run type they can never legitimately carry: `other` is
+    // "not an agent run", not "no run type".
+    expect(creditBucketFor("doc_correction", "manual")).toBe("other");
+    expect(creditBucketFor("ai_tool", "scheduled")).toBe("other");
+  });
+
+  it("labels every bucket creditBucketFor can return", () => {
+    const returned = new Set<CreditBucket>();
+    const operations: CreditOperation[] = [
+      "agent_launch",
+      "custom_agent_run",
+      "agent_run",
+      "chat_message",
+      "task_execution",
+      "doc_correction",
+      "seat_purchase",
+      "ai_tool",
+      "manual",
+    ];
+    const runTypes: Array<JobRunType | null | undefined> = [
+      "launch",
+      "scheduled",
+      "manual",
+      "manual_template",
+      "test",
+      null,
+      undefined,
+    ];
+    for (const op of operations) {
+      for (const rt of runTypes) returned.add(creditBucketFor(op, rt));
+    }
+    // Non-vacuity: the loops above must actually reach more than one bucket,
+    // or an unlabelled one could hide behind an empty set.
+    expect(returned.size).toBeGreaterThanOrEqual(5);
+    for (const bucket of returned) {
+      expect(CREDIT_BUCKET_LABEL[bucket], `no label for bucket "${bucket}"`).toBeTruthy();
+    }
+    // Two buckets rendered side by side on one row must not share a word for
+    // two different things.
+    const labels = Object.values(CREDIT_BUCKET_LABEL);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });

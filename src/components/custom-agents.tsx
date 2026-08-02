@@ -2601,7 +2601,7 @@ export function ClientAgentAccessCard({
       {error && <p className="text-xs text-danger">{error}</p>}
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-2">
-          {saved ? "Saved." : "Checked agents appear on the client's AI Agents page, billed per run."}
+          {saved ? "Saved." : "Checked agents appear on the client's AI agents page, billed per run."}
         </p>
         <Button size="sm" variant="accent" onClick={save} loading={pending} disabled={!dirty}>
           Save access

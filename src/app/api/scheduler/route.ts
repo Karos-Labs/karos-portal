@@ -96,6 +96,11 @@ export async function GET(req: NextRequest) {
         client,
         prompt: run.prompt,
         actor: { uid: "scheduler", name: SCHEDULER_ACTOR_NAME, role: "staff" },
+        // Stamped HERE rather than defaulted in the core: a default keyed to who
+        // happens to call a function becomes a lie about money the moment a
+        // second caller appears. This route is the scheduler, so this is the one
+        // place that can say so truthfully.
+        runType: "scheduled",
         extraMetadata: {
           asset_type: run.assetType,
           ...(run.platform ? { platform: run.platform } : {}),

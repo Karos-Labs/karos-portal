@@ -11,10 +11,11 @@ import {
   listTranscripts,
   getClientSettings,
 } from "@/lib/data";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
-import { summarizeClientSpend } from "@/lib/credit-reporting";
+import { spendAgentNames, summarizeClientSpend } from "@/lib/credit-reporting";
 
 /** Rows the "Recent activity" feed shows. */
 const LEDGER_FEED_LIMIT = 15;
@@ -68,7 +69,12 @@ export default async function ClientSettingsPage({
     // fifteen rows would be a breakdown of this week presented as a breakdown
     // of spend.
     listCreditLedger(id, LEDGER_SUMMARY_LIMIT),
-    isAdmin ? listCustomAgents() : Promise.resolve([]),
+    // Read for EVERY role now, not just admins. The admin-only cards below are
+    // still the only thing rendered from it, but the credits panel needs the
+    // library to name the agent behind a charge: with only the client's jobs to
+    // go on, an agent whose runs carry no `customAgentId` was billed to them as
+    // "Removed agent" while it sat in the library, enabled and firing.
+    listCustomAgents(),
     getClientSettings(id),
     isAdmin ? listScheduledRuns({ clientId: id }) : Promise.resolve([]),
   ])) as [ClientIntegration[], Transcript[], ClientCredits, CreditLedgerEntry[], CustomAgent[], ClientSettings | null, ScheduledRun[]];
@@ -77,17 +83,24 @@ export default async function ClientSettingsPage({
   // lives on the JOB, not the ledger row, so the jobs are joined here on the
   // server — the browser never needs them and a client payload carrying every
   // job would be both wasteful and a staff-detail leak.
-  const spendJobs = await listJobs({ clientId: id });
+  const [spendJobs, spendUmbrellas] = await Promise.all([
+    listJobs({ clientId: id }),
+    listClientAgents({ clientId: id }),
+  ]);
   const runTypeByJobId: Record<string, JobRunType | undefined> = {};
   for (const job of spendJobs) runTypeByJobId[job.id] = job.runType;
-  const agentNameById: Record<string, string> = {};
-  for (const job of spendJobs) {
-    if (job.customAgentId) agentNameById[job.customAgentId] = job.agentName;
-  }
   const spendByAgent = summarizeClientSpend({
     ledger: creditLedger,
     runTypeByJobId,
-    agentNameById,
+    // All three sources, resolved by the one helper — the jobs alone left every
+    // charge from an agent with no `customAgentId` on its runs unnamed, and the
+    // umbrella rung is what stops this page printing a second name for an agent
+    // the client already knows by their own (§7.3).
+    agentNameById: spendAgentNames({
+      customAgents,
+      jobs: spendJobs,
+      umbrellas: spendUmbrellas,
+    }),
   });
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
@@ -148,7 +161,7 @@ export default async function ClientSettingsPage({
         <Card>
           <CardTitle className="mb-1">AI agent access</CardTitle>
           <p className="mb-3 text-sm text-muted-2">
-            Agents this client&apos;s users can run from their AI Agents page. Each run charges the
+            Agents this client&apos;s users can run from their AI agents page. Each run charges the
             client&apos;s credits.
           </p>
           <ClientAgentAccessCard
@@ -170,7 +183,7 @@ export default async function ClientSettingsPage({
           </p>
           {/* Where these DON'T show up. A schedule nobody can see is a schedule
               nobody turns off, and this card creates rows that are absent from
-              the calendar entirely and separate from the pace on the AI Agents
+              the calendar entirely and separate from the pace on the AI agents
               page — so an agent can be running on both at once. Said here, on
               the only surface that can create one. */}
           <p className="mb-3 text-sm text-muted-2">

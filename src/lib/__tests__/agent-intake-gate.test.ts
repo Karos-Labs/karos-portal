@@ -155,7 +155,7 @@ describe("agent data setup gate", () => {
     for (const file of CORES) {
       const { x, linkedin, reddit } = gateMessages(file);
       for (const message of [x, linkedin, reddit]) {
-        expect(message).toContain("Open this agent on your AI Agents page");
+        expect(message).toContain("Open this agent on your AI agents page");
         expect(message).toContain('follow "Set it up" under "What it knows about you"');
         expect(message).not.toMatch(/Agent-specific documents/i);
         expect(message).not.toMatch(/data page/i);
