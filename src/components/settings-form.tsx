@@ -1,5 +1,3 @@
-/* eslint-disable @next/next/no-img-element */
-
 "use client";
 
 import { useState, useTransition } from "react";
@@ -8,9 +6,27 @@ import { Card, CardTitle, Button, Input, Label, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AvatarUploader } from "@/components/avatar-uploader";
 import { ResumeUploader } from "@/components/resume-uploader";
-import { cn, initials } from "@/lib/utils";
 import { updateUserProfileAction, updatePasswordAction } from "@/lib/actions";
 import type { AppUser, Role } from "@/lib/types";
+
+/**
+ * THE TWO ACCOUNT PANELS (AF-2).
+ *
+ * These used to be halves of a `SettingsForm` that owned its own page, its own
+ * identity header and its own tab switcher — the second tab strip in a product
+ * with one settings page. Both are now mounted as ordinary tabs by whichever
+ * settings surface belongs to the viewer (see lib/account-settings-tabs.ts), so
+ * what is left here is the panels themselves and nothing about where they sit.
+ *
+ * The identity header went with the wrapper rather than moving into a panel: it
+ * was an avatar, a name and an email stacked directly above the avatar
+ * uploader, the name field and the email field that say the same three things
+ * and can also edit them.
+ *
+ * `max-w-2xl` without `mx-auto` — these are forms, they want a readable column,
+ * and centring one under a left-aligned tab strip reads as a layout bug.
+ */
+const PANEL = "max-w-2xl space-y-5";
 
 /* ── Inline brand SVGs (no external deps needed) ─────────────────────── */
 
@@ -33,42 +49,9 @@ const ROLE_LABEL: Record<Role, string> = {
   CLIENT_USER: "Client",
 };
 
-type Tab = "profile" | "security";
+/* ── Profile information panel ────────────────────────────────────────── */
 
-function Avatar({
-  photoURL,
-  name,
-  size = "lg",
-}: {
-  photoURL?: string | null;
-  name: string;
-  size?: "sm" | "lg";
-}) {
-  const dim = size === "lg" ? "h-20 w-20 text-2xl" : "h-14 w-14 text-lg";
-  if (photoURL) {
-    return (
-      <img
-        src={photoURL}
-        alt={name}
-        className={cn("rounded-full object-cover ring-2 ring-border", dim)}
-      />
-    );
-  }
-  return (
-    <div
-      className={cn(
-        "flex shrink-0 items-center justify-center rounded-full bg-surface-3 font-semibold text-neon ring-2 ring-border",
-        dim,
-      )}
-    >
-      {initials(name)}
-    </div>
-  );
-}
-
-/* ── Profile tab ──────────────────────────────────────────────────────── */
-
-function ProfileTab({
+export function AccountProfilePanel({
   user,
   clientName,
 }: {
@@ -108,7 +91,7 @@ function ProfileTab({
   }
 
   return (
-    <div className="space-y-5">
+    <div className={PANEL}>
       {/* Avatar card */}
       <Card>
         <CardTitle className="mb-4">Profile picture</CardTitle>
@@ -223,7 +206,7 @@ function ProfileTab({
   );
 }
 
-/* ── Security tab ─────────────────────────────────────────────────────── */
+/* ── Account security panel ───────────────────────────────────────────── */
 
 const PROVIDER_META: Record<string, { label: string; sub: string; mark: React.ReactNode }> = {
   "google.com": {
@@ -233,7 +216,7 @@ const PROVIDER_META: Record<string, { label: string; sub: string; mark: React.Re
   },
 };
 
-function SecurityTab({ providers }: { providers: string[] }) {
+export function AccountSecurityPanel({ providers }: { providers: string[] }) {
   const hasPassword = providers.includes("password");
   const socialProviders = providers.filter((p) => p !== "password");
 
@@ -271,7 +254,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className={PANEL}>
       {/* Auth method overview */}
       <Card>
         <CardTitle className="mb-4">Authentication method</CardTitle>
@@ -367,57 +350,3 @@ function SecurityTab({ providers }: { providers: string[] }) {
   );
 }
 
-/* ── Root export ──────────────────────────────────────────────────────── */
-
-export function SettingsForm({
-  user,
-  providers,
-  clientName,
-}: {
-  user: AppUser;
-  providers: string[];
-  clientName: string | null;
-}) {
-  const [tab, setTab] = useState<Tab>("profile");
-
-  return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {/* Page header */}
-      <div className="flex items-center gap-4">
-        <Avatar photoURL={user.photoURL} name={user.name} size="sm" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{user.name}</h1>
-          <p className="text-sm text-muted">{user.email}</p>
-        </div>
-      </div>
-
-      {/* Tab switcher */}
-      <div className="flex gap-1 rounded-md border border-border bg-surface-2 p-1">
-        {(
-          [
-            { id: "profile", label: "Profile Information", icon: "User" },
-            { id: "security", label: "Account Security", icon: "Shield" },
-          ] as { id: Tab; label: string; icon: string }[]
-        ).map(({ id, label, icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={cn(
-              "flex flex-1 items-center justify-center gap-2 rounded-md py-2.5 text-sm font-medium transition-colors",
-              tab === id
-                ? "bg-surface text-foreground shadow-sm"
-                : "text-muted hover:text-foreground",
-            )}
-          >
-            <Icon name={icon} className="h-4 w-4" />
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "profile" && <ProfileTab user={user} clientName={clientName} />}
-      {tab === "security" && <SecurityTab providers={providers} />}
-    </div>
-  );
-}

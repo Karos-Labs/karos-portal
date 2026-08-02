@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { stripComments } from "./source-scan";
 
 /**
  * Navigation guards for the settings surfaces. All three of these were live
@@ -11,7 +12,9 @@ import { describe, expect, it } from "vitest";
  *  1. A client on a phone could not sign out at all: the only LogoutButton they
  *     could reach hung off the desktop rail, which is display:none below md.
  *  2. "Account settings" sat beside the settings row as a header link instead
- *     of in it.
+ *     of in it. It then became an entry ON the row that still navigated to a
+ *     second settings page — and the product owner ruled that hop out
+ *     altogether (AF-2), so the panels are tabs now and /settings redirects.
  *  3. `?tab=` was read by the page and written by the tab strip, but no link in
  *     the app ever set it, so "Credits" and "Manage channels" both landed on
  *     whichever tab survived role filtering first.
@@ -23,6 +26,16 @@ const source = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 const RAIL = "src/components/client-rail.tsx";
 const TABS = "src/components/settings-tabs.tsx";
 const SETTINGS_PAGE = "src/app/(app)/clients/[id]/settings/page.tsx";
+const ACCOUNT_PAGE = "src/app/(app)/settings/page.tsx";
+/** Whitespace-normalised — JSX and long conditions reflow under prettier. */
+const flat = (s: string) => s.replace(/\s+/g, " ");
+/**
+ * Source with the prose taken out, for the assertions that say a thing is GONE.
+ * These files explain at length what they used to do and why they stopped, so
+ * every removed name is still written down somewhere in them — asked of the
+ * raw text, "no href on the tab strip" is a rule its own changelog fails.
+ */
+const code = (rel: string) => stripComments(source(rel));
 
 /** The subtree that renders below `md`, where the desktop rail is hidden. */
 function mobileSheetOf(rel: string): string {
@@ -53,48 +66,89 @@ describe("a client can sign out at phone width", () => {
   });
 });
 
-describe("account settings is the last entry of the settings row", () => {
-  const page = source(SETTINGS_PAGE);
+/* ── AF-2: one settings surface per viewer ───────────────────────────────── */
 
-  it("appends it after the role-filtered sections", () => {
-    const row = page.slice(page.indexOf("const tabs: SettingsTab[] = ["));
-    const entry = row.slice(0, row.indexOf("];"));
-    expect(entry).toContain("...sections,");
-    expect(entry).toContain('label: "Account settings"');
-    expect(entry).toContain('href: "/settings"');
-    // Last, not first: the spread has to precede the entry.
-    expect(entry.indexOf("...sections,")).toBeLessThan(entry.indexOf('label: "Account settings"'));
+describe("account settings are TABS, not a page behind a button hop", () => {
+  const page = source(SETTINGS_PAGE);
+  const account = source(ACCOUNT_PAGE);
+  const tabs = source(TABS);
+
+  it("mounts both account panels on the client's own settings page", () => {
+    // The two panels the product owner named, on the page the rail's Settings
+    // link opens — not on a second page reached from it.
+    expect(page).toContain("AccountProfilePanel");
+    expect(page).toContain("AccountSecurityPanel");
+    expect(page).toContain('label: "Profile information"');
+    expect(page).toContain('label: "Account security"');
   });
 
-  it("no longer strands it beside the row as a header action", () => {
+  it("offers no entry that navigates off the row", () => {
+    // The hop, in every form it had: the header action it started as, and the
+    // link entry it became.
     const header = page.slice(page.indexOf("<PageHeader"), page.indexOf("<SettingsTabs"));
     expect(header).not.toContain("Account settings");
     expect(header).not.toContain("action=");
+    const pageCode = code(SETTINGS_PAGE);
+    expect(pageCode).not.toContain('href: "/settings"');
+    expect(pageCode).not.toContain('label: "Account settings"');
   });
 
-  it("renders a row entry with an href as a link, never as a tab", () => {
-    const tabs = source(TABS);
-    expect(tabs).toContain("href?: string");
-    // An anchor that leaves the page must not claim a tab's semantics, and a
-    // tablist's owned children must all be tabs — so the link renders OUTSIDE
-    // the role="tablist" element. Asserted on the rendered structure rather
-    // than on one spelling of the branch, so a refactor of the JSX that keeps
-    // both guarantees does not fail here.
-    const tablist = tabs.slice(tabs.indexOf('role="tablist"'), tabs.indexOf("</div>", tabs.indexOf('role="tablist"')));
-    expect(tablist).not.toContain("<Link");
+  it("builds them for the client whose page it is, and for nobody else", () => {
+    // Staff are looking at somebody else's company here; their own account is
+    // /settings. A password form on a client's page would be the hop again.
+    expect(flat(page)).toContain('user.role === "CLIENT_USER"');
+    expect(flat(page)).toContain("const accountTabs: SettingsTab[] | null =");
+  });
+
+  it("leaves the tab strip with tabs only", () => {
+    // No `href` entry means no ARIA carve-out: the tablist owns every child
+    // again, and nothing on the row leaves the page.
+    const tabsCode = code(TABS);
+    expect(tabsCode).not.toContain("href");
+    expect(tabsCode).not.toContain("<Link");
+    expect(tabsCode).not.toContain("next/link");
+    const tablist = tabsCode.slice(tabsCode.indexOf('role="tablist"'));
     expect(tablist).toContain('role="tab"');
-
-    const linkEntry = tabs.slice(tabs.indexOf("<Link"), tabs.indexOf("</Link>"));
-    expect(linkEntry).toContain("href={tab.href");
-    expect(linkEntry).not.toContain('role="tab"');
-    expect(linkEntry).not.toContain("aria-selected");
   });
 
-  it("keeps selection, the default tab and ?tab= over panels only", () => {
-    const tabs = source(TABS);
-    expect(tabs).toContain("const panels = tabs.filter((t) => !t.href)");
-    expect(tabs).toContain("const fallback = panels[0]?.id ?? \"\"");
-    expect(tabs).toContain("const current = panels.find((t) => t.id === active) ?? panels[0]");
+  it("keeps selection, the default tab and ?tab= over one list", () => {
+    expect(tabs).toContain('const fallback = tabs[0]?.id ?? ""');
+    expect(tabs).toContain("const current = tabs.find((t) => t.id === active) ?? tabs[0]");
+  });
+
+  it("redirects a client off the old route, carrying the tab", () => {
+    // Deep links to /settings are in histories and bookmarks; they still have
+    // to land on the panel they named.
+    expect(account).toContain("accountSettingsHref(user.clientId, initialTab)");
+    expect(flat(account)).toContain("if (href) redirect(href)");
+  });
+
+  it("keeps /settings for the viewer who has no client settings page", () => {
+    // Staff, and the CLIENT_USER whose client document did not resolve — for
+    // them this route is not a duplicate, it is the only one.
+    expect(account).toContain("AccountProfilePanel");
+    expect(account).toContain("AccountSecurityPanel");
+    expect(account).toContain("<SettingsTabs");
+  });
+
+  it("names the same two tab ids at both ends of the redirect", () => {
+    // The failure this guards is silent: a `?tab=` naming a tab the
+    // destination does not have lands on the fallback with no error at all.
+    // Both pages read the ids from the same module, so they cannot drift.
+    for (const src of [page, account]) {
+      expect(src).toContain('from "@/lib/account-settings-tabs"');
+      expect(src).toContain("ACCOUNT_TABS.profile");
+      expect(src).toContain("ACCOUNT_TABS.security");
+    }
+  });
+
+  it("leaves no second tab strip behind on the panels themselves", () => {
+    // The account page used to own a switcher of its own — two strips in a
+    // product with one settings page.
+    const form = code("src/components/settings-form.tsx");
+    expect(form).not.toContain("SettingsForm");
+    expect(form).not.toContain("useState<Tab>");
+    expect(form).not.toContain('"Profile Information"');
   });
 });
 
