@@ -169,6 +169,27 @@ export interface TemplatePostRow {
 }
 
 /**
+ * The one post a format shows WITHOUT being opened (AF-6).
+ *
+ * Albert: "clicking the Instagram agent shows the different templates we produce
+ * for that client and an example of each." The click-through already listed a
+ * format's posts; what it could not do is answer "what does By The Numbers
+ * actually look like" for someone reading the list, which is the question the
+ * rows exist to answer.
+ *
+ * It is `posts[0]` — the newest row of the same archive-filtered set — carried as
+ * its own field rather than left for the component to slice, so the rule that an
+ * example is a DELIVERED post lives on the server with every other rule about
+ * that set. `imageUrl` is one URL off `assetImages`, never the asset's `meta`:
+ * the meta of a lab-imported post carries the folder it came from and whatever
+ * else the importer wrote, and none of that has any business in this payload.
+ */
+export interface TemplateExample extends TemplatePostRow {
+  /** First image of that post, when it has one. Absent for text-only formats. */
+  imageUrl?: string;
+}
+
+/**
  * What clicking a template opens onto.
  *
  * Keyed by template key beside the registry rather than folded into
@@ -177,6 +198,12 @@ export interface TemplatePostRow {
  */
 export interface TemplateDetail {
   key: string;
+  /**
+   * The most recent delivered post under this format, shown on the COLLAPSED row
+   * (AF-6). Absent when the format has produced nothing this viewer may see —
+   * which is the honest state, not an empty frame.
+   */
+  example?: TemplateExample;
   /**
    * The launch run's full reasoning. The collapsed row clamps it to two lines;
    * this is what the expansion exists to show.

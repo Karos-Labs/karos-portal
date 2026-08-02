@@ -20,6 +20,7 @@ import {
   jobDeliveredWork,
   lastRunFailedAgentIds,
   rosterStatus,
+  IMPORTED_CONTENT_STAFF_NOTE,
   SCHEDULE_REFUSAL_FRESH_MS,
 } from "@/lib/client-agents";
 import type { ClientAgentTemplate } from "@/lib/types";
@@ -413,42 +414,75 @@ describe("rosterStatus", () => {
 
   /* ── a failed last run outranks Live ── */
 
-  it("stops badging Live when the most recent run failed", () => {
+  it("stops badging Live for STAFF when the most recent run failed", () => {
     // The production case: the pilot's Instagram Agent, green "Live" badge, one
     // run two days earlier reading "Failed". The refusal rung could not see it —
     // that run SUBMITTED fine and died at the agent service, which writes
     // job.error and never touches schedule.lastError.
-    expect(rosterStatus({ launchState: "live", lastRunFailed: true })).toEqual({
-      tone: "attention",
-      label: "Needs attention",
-    });
+    expect(
+      rosterStatus({ launchState: "live", lastRunFailed: true, viewerIsStaff: true }),
+    ).toEqual({ tone: "attention", label: "Needs attention" });
     // Same for the unbound-but-scheduled shape (Instagram's own): a schedule
     // that is firing does not make a failing agent live.
     expect(
+      rosterStatus({
+        launchState: null,
+        scheduleActive: true,
+        lastRunFailed: true,
+        viewerIsStaff: true,
+      }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+  });
+
+  it("never moves a CLIENT's badge for a run that broke on our side (AF-14)", () => {
+    // The green badge this rung was written to correct is on a STAFF surface. On
+    // a client's it asks them to attend to an internal failure they cannot see,
+    // did not cause and have no lever over — and AF-14 is absolute about it.
+    expect(rosterStatus({ launchState: "live", lastRunFailed: true })).toEqual({
+      tone: "live",
+      label: "Live",
+    });
+    expect(
       rosterStatus({ launchState: null, scheduleActive: true, lastRunFailed: true }),
+    ).toEqual({ tone: "live", label: "Live" });
+    // Explicitly false reads the same as omitted — the default is the quiet one.
+    expect(
+      rosterStatus({ launchState: "live", lastRunFailed: true, viewerIsStaff: false }),
+    ).toEqual({ tone: "live", label: "Live" });
+  });
+
+  it("keeps a schedule REFUSAL loud for a client, failed run or not (F24/F129)", () => {
+    // The viewer split is about failures that are ours. A refusal is the
+    // scheduler turning a fire away for a reason the client owns — out of
+    // credits, an empty intake — and telling them is the entire point of it.
+    expect(
+      rosterStatus({ launchState: "live", scheduleRefusal: "Out of credits." }),
     ).toMatchObject({ tone: "attention", label: "Needs attention" });
   });
 
   it("reuses 'Needs attention' rather than inventing a second failure phrase", () => {
     // One phrase for one answer. A second label here would also be a second
     // status-label map, which is a standing defect class in this codebase.
-    expect(rosterStatus({ launchState: "live", lastRunFailed: true }).label).toBe(
-      rosterStatus({ launchState: "live", scheduleRefusal: "Turned away." }).label,
-    );
+    expect(
+      rosterStatus({ launchState: "live", lastRunFailed: true, viewerIsStaff: true }).label,
+    ).toBe(rosterStatus({ launchState: "live", scheduleRefusal: "Turned away." }).label);
   });
 
   it("keeps the launch narration — it is newer, or more specific, than a finished run", () => {
     // A setup in flight is a NEWER event than any completed run, and the launch
-    // card is already narrating it in three phases.
-    expect(rosterStatus({ launchState: "launching", lastRunFailed: true })).toMatchObject({
+    // card is already narrating it in three phases. Asked as STAFF, so the rung
+    // is live and the launch states are demonstrably outranking it rather than
+    // winning by default.
+    const staff = { lastRunFailed: true, viewerIsStaff: true } as const;
+    expect(rosterStatus({ launchState: "launching", ...staff })).toMatchObject({
       tone: "progress",
     });
-    expect(rosterStatus({ launchState: "curating", lastRunFailed: true })).toMatchObject({
+    expect(rosterStatus({ launchState: "curating", ...staff })).toMatchObject({
       tone: "progress",
     });
     // Same alarm, more specific words — swapping in the generic phrase would
     // lose the fact that it is the SETUP that failed.
-    expect(rosterStatus({ launchState: "launch_failed", lastRunFailed: true })).toEqual({
+    expect(rosterStatus({ launchState: "launch_failed", ...staff })).toEqual({
       tone: "attention",
       label: "Setup needs attention",
     });
@@ -492,9 +526,102 @@ describe("rosterStatus", () => {
         scheduleRefusal: "Turned away.",
         scheduleRefusalAt: now - SCHEDULE_REFUSAL_FRESH_MS - 1,
         lastRunFailed: true,
+        viewerIsStaff: true,
         now,
       }),
     ).toMatchObject({ tone: "attention", label: "Needs attention" });
+  });
+
+  /* ── AF-5: live means live ── */
+
+  describe("upcoming content on the calendar (AF-5)", () => {
+    // Albert: "it should still show that it's live even though we're creating it
+    // internally… if there's items on the calendar like Instagram or TikTok
+    // items, it should show us live." The stream has no cron of its own — we
+    // produce its posts by hand and import them — so every other rung answers
+    // idle for an agent the client can watch filling next week.
+
+    it("turns 'Runs on request' into Live", () => {
+      const idle = { launchState: null, scheduleActive: false, hasDelivered: true } as const;
+      expect(rosterStatus(idle)).toMatchObject({ tone: "idle", label: "Runs on request" });
+      expect(rosterStatus({ ...idle, hasUpcomingContent: true })).toMatchObject({
+        tone: "live",
+        label: "Live",
+      });
+    });
+
+    it("turns 'Not set up yet' into Live, bound or unbound", () => {
+      // The imported-stream case in both of its shapes: an agent nobody ever
+      // bound an umbrella for, and one bound but never launched because the
+      // launch run is not how its posts get made.
+      expect(rosterStatus({ launchState: null })).toMatchObject({ label: "Not set up yet" });
+      expect(rosterStatus({ launchState: null, hasUpcomingContent: true })).toMatchObject({
+        tone: "live",
+        label: "Live",
+      });
+      expect(rosterStatus({ launchState: "not_launched" })).toMatchObject({
+        label: "Not set up yet",
+      });
+      expect(
+        rosterStatus({ launchState: "not_launched", hasUpcomingContent: true }),
+      ).toMatchObject({ tone: "live", label: "Live" });
+    });
+
+    it("carries a staff note saying WHY the word disagrees with the schedule", () => {
+      // The client sees the word; staff see the word plus the operational truth,
+      // which is the other half of the ruling. Only this rung sets it.
+      const promoted = rosterStatus({ launchState: null, hasUpcomingContent: true });
+      expect(promoted.staffNote).toBe(IMPORTED_CONTENT_STAFF_NOTE);
+      expect(rosterStatus({ launchState: "live" }).staffNote).toBeUndefined();
+      expect(
+        rosterStatus({ launchState: null, scheduleActive: true, hasUpcomingContent: true })
+          .staffNote,
+        "a schedule that IS firing needs no explanation",
+      ).toBeUndefined();
+    });
+
+    it("never reaches past a refusal, an alarm, or a launch narration", () => {
+      // The ruling is that we stop calling a PRODUCING agent idle, not that we
+      // start calling a broken one live. Only an idle outcome is eligible.
+      expect(
+        rosterStatus({
+          launchState: "live",
+          scheduleRefusal: "Out of credits.",
+          hasUpcomingContent: true,
+        }),
+      ).toMatchObject({ tone: "attention", label: "Needs attention" });
+      expect(
+        rosterStatus({
+          launchState: null,
+          lastRunFailed: true,
+          viewerIsStaff: true,
+          hasUpcomingContent: true,
+        }),
+      ).toMatchObject({ tone: "attention" });
+      expect(
+        rosterStatus({ launchState: "launching", hasUpcomingContent: true }),
+      ).toMatchObject({ tone: "progress", label: "Setting up" });
+      expect(
+        rosterStatus({ launchState: "launch_failed", hasUpcomingContent: true }),
+      ).toMatchObject({ tone: "attention", label: "Setup needs attention" });
+    });
+
+    it("gives a CLIENT Live where a failed fire would have said 'Needs attention'", () => {
+      // The two rulings meeting: AF-14 skips the failure rung for a client, so
+      // AF-5's promotion is reachable on exactly the agents it was written for —
+      // an imported stream whose last internal fire broke.
+      const state = { launchState: null, lastRunFailed: true, hasUpcomingContent: true } as const;
+      expect(rosterStatus(state)).toEqual({
+        tone: "live",
+        label: "Live",
+        staffNote: IMPORTED_CONTENT_STAFF_NOTE,
+      });
+      // Staff, same agent, same instant: the failure is theirs to see.
+      expect(rosterStatus({ ...state, viewerIsStaff: true })).toMatchObject({
+        tone: "attention",
+        label: "Needs attention",
+      });
+    });
   });
 });
 

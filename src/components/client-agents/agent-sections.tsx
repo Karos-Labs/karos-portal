@@ -49,10 +49,20 @@ export function AgentStatusStrip({
   status,
   running,
   facts,
+  staffNote,
 }: {
   /** From `rosterStatus` — never re-derived. The real union, so a tone typo
       is a type error rather than a silent fall-through to idle grey. */
   status: RosterStatus;
+  /**
+   * `RosterStatus.staffNote`, passed by the page ONLY for a staff viewer (AF-5).
+   *
+   * Taken as its own prop rather than read off `status` here, because this is a
+   * server component and "who may read this" is a decision for the boundary that
+   * knows the viewer, not for the component that paints. A client's page passes
+   * nothing and the line does not exist in their HTML at all.
+   */
+  staffNote?: string;
   /**
    * A run THIS viewer started is in flight. Deliberately narrow, and resolved
    * by the page from the same sources the run banners use: a scheduled fire is
@@ -120,6 +130,16 @@ export function AgentStatusStrip({
           ))}
         </dl>
       )}
+      {/* The operational truth beside the client-facing word (AF-5). It sits
+          UNDER the strip's own line rather than replacing it: the badge is what
+          the client sees and staff need to know that, so the fix is a second
+          sentence, not a different first one. */}
+      {staffNote && (
+        <p className="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-2">
+          <Icon name="Info" className="mr-1 inline h-3 w-3" aria-hidden="true" />
+          {staffNote}
+        </p>
+      )}
     </section>
   );
 }
@@ -136,10 +156,24 @@ export function AgentStatusStrip({
  * the URL. This band is the way back, and it deliberately does not FORK the
  * forms: every row's manage link lands on the one page that owns those writes.
  *
- * What each row carries is a label, a handle, a count and a date. The ANSWERS
- * stay behind the link, where the client-safe intake views already redact them
- * — a summary that quoted "what we must never post" would put the same text in
- * a second payload with a second set of rules to keep in step.
+ * WHAT EACH ROW CARRIES CHANGED WITH AF-7. Albert, walking the branch: "your X
+ * details — this is a button here, but realistically it should show on this
+ * page." So a row with answers is now a disclosure that opens onto them in place,
+ * and the WRITES still live where they always did: the expansion's own link lands
+ * on that row's card on the intake page, and the band's footer link lands on the
+ * page. Nothing here edits anything.
+ *
+ * The old rule was that the answers stayed behind the link "where the client-safe
+ * intake views already redact them", the worry being a second payload with a
+ * second set of rules. That worry is answered rather than overruled:
+ * `toAgentInputRows` builds `answers` by calling THOSE VERY VIEWS
+ * (toXIntakeView / toLiIntakeView / toRedditIntakeView), so there is still one
+ * whitelist and this band is downstream of it.
+ *
+ * A row with NOTHING saved keeps its old shape — a plain link straight to its own
+ * card on the form (#85, the empty-seat case). A disclosure that opens onto no
+ * answers would be a control that lied about having content, and the reader of an
+ * empty row wants the form, not a drawer.
  */
 export function AgentInputsSection({ view }: { view: AgentInputsView }) {
   const missing = view.rows.filter((row) => !row.filled).length;
@@ -153,46 +187,81 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
           {view.ready ? "Ready to run" : "Needs your answers"}
         </Badge>
       </div>
+      {/* The lead names the affordance the rows now have. It used to say "open
+          any of them to change what it knows", which described a link out; the
+          rows show the answers in place and the change happens on the form. */}
       <p className="mb-2.5 text-xs text-muted-2">
         {view.ready
-          ? "This agent writes from what you saved here. Open any of them to change what it knows."
+          ? "This agent writes from what you saved here. Open a row to read your answers back."
           : "This agent needs these before it can write for you."}
       </p>
-      {/* EVERY ROW IS A LINK, to its own card on the intake page (#85).
-          The copy above tells the reader to open them; they used to be plain
-          `<li>`s with no Link and no onClick, wearing a `hover:border-neon/40`
-          that made them look clickable, and the one real link went to the top
-          of the intake page with nothing identifying the row. Worst exactly
-          when the state was worst: a client with four empty seats clicked the
-          empty seat and got nothing.
+      {/* EVERY ROW IS REACHABLE, and its target is derived from the row's own id
+          through `intakeRowHref` — the same function the intake surfaces render
+          their anchors with, so a row cannot be added here with nowhere to land
+          and neither side can rename the anchor without the other (#85).
 
-          The target is derived from the row's own id through `intakeRowHref`,
-          the same function the intake surfaces render their anchors with — so a
-          row cannot be added here with nowhere to land, and neither side can
-          rename the anchor without the other. */}
+          A row with answers reaches it from INSIDE its disclosure (AF-7); a row
+          with none is still the link itself, which is the case #85 was about: a
+          client with four empty seats clicked the empty seat and got nothing.
+
+          `<details>` rather than state, because these bands are server components
+          and everything they paint was redacted at the RSC boundary. Making the
+          module a client one to hold a single open/closed boolean would ship the
+          whole band to the browser for an affordance the platform already has. */}
       <ul className="space-y-1.5">
-        {view.rows.map((row) => (
-          <li key={row.id}>
-            <Link
-              href={intakeRowHref(view.href, row.id)}
-              className="flex items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2 transition-colors hover:border-neon/40"
-            >
-              <Icon name={row.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs text-foreground">{row.label}</span>
-                <span className="block truncate text-[11px] text-muted-2">{row.detail}</span>
-              </span>
-              {/* A date on every row, which is the whole point of the band —
-                  "who has never filled theirs in" is not a question a list of
-                  names can answer. An empty document reads as empty rather than
-                  as a dash, because the two are different facts. */}
-              <span className="shrink-0 text-[11px] text-muted-2">
-                {row.updatedAt === null ? "Never saved" : relativeTime(row.updatedAt)}
-              </span>
-              {!row.filled && <Badge tone="warning">Empty</Badge>}
-            </Link>
-          </li>
-        ))}
+        {view.rows.map((row) =>
+          row.answers ? (
+            <li key={row.id}>
+              <details className="group rounded-[var(--radius)] border border-border bg-surface-2/50 transition-colors open:border-neon/30 hover:border-neon/40">
+                <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
+                  <Icon
+                    name="ChevronRight"
+                    className="h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform group-open:rotate-90"
+                    aria-hidden="true"
+                  />
+                  <Icon name={row.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                  <RowFace row={row} />
+                </summary>
+                <div className="animate-fade-up space-y-1.5 border-t border-border/60 px-3 py-2">
+                  <dl className="space-y-1.5">
+                    {row.answers.map((entry, index) => (
+                      <div key={`${entry.label}-${index}`}>
+                        <dt className="text-[11px] text-muted-2">{entry.label}</dt>
+                        {/* Whitespace preserved: these are the client's own
+                            sentences, and a multi-line "never post about" answer
+                            that collapses into one paragraph reads as a different
+                            answer from the one they typed. */}
+                        <dd className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+                          {entry.value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {/* The way to CHANGE any of this. Read-only in place, edited on
+                      the page that owns the writes — a second editor for a
+                      document that has one is how two screens start disagreeing
+                      about the same record. */}
+                  <Link
+                    href={intakeRowHref(view.href, row.id)}
+                    className="inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                  >
+                    Change this <Icon name="ArrowRight" className="h-3 w-3" />
+                  </Link>
+                </div>
+              </details>
+            </li>
+          ) : (
+            <li key={row.id}>
+              <Link
+                href={intakeRowHref(view.href, row.id)}
+                className="flex items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2 transition-colors hover:border-neon/40"
+              >
+                <Icon name={row.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                <RowFace row={row} />
+              </Link>
+            </li>
+          ),
+        )}
       </ul>
       <Link
         href={view.href}
@@ -210,6 +279,33 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * The part of an input row that reads the same whether the row opens or links.
+ *
+ * Shared so the two branches cannot drift: the disclosure and the plain link are
+ * two affordances over one row, and a date or a badge that appeared on only one
+ * of them would make the band's own state depend on whether a client had
+ * answered yet.
+ */
+function RowFace({ row }: { row: AgentInputsView["rows"][number] }) {
+  return (
+    <>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-xs text-foreground">{row.label}</span>
+        <span className="block truncate text-[11px] text-muted-2">{row.detail}</span>
+      </span>
+      {/* A date on every row, which is the whole point of the band — "who has
+          never filled theirs in" is not a question a list of names can answer.
+          An empty document reads as empty rather than as a dash, because the two
+          are different facts. */}
+      <span className="shrink-0 text-[11px] text-muted-2">
+        {row.updatedAt === null ? "Never saved" : relativeTime(row.updatedAt)}
+      </span>
+      {!row.filled && <Badge tone="warning">Empty</Badge>}
+    </>
   );
 }
 

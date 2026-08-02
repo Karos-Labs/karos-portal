@@ -201,6 +201,48 @@ export function TemplateRows({
                     {template.rationale}
                   </p>
                 )}
+                {/* ── AF-6: an example of each format, without opening it ──
+                    Albert asked to see "the different templates we produce for
+                    that client and an example of each". The expansion below has
+                    always listed a format's posts, but a reader scanning the list
+                    had a column of names and no idea what any of them look like.
+
+                    Collapsed only, deliberately: the expansion opens onto the
+                    same set with this very post at the top of it, so painting
+                    both would show one deliverable twice under two headings.
+
+                    Nothing here is a new permission — `detail.example` is the
+                    newest row of the same archive-filtered join the list uses, so
+                    a client sees an example only of work that has been delivered
+                    to them. */}
+                {detail?.example && !open && (
+                  <div className="mt-1.5 flex items-center gap-2 rounded-md border border-border/60 bg-surface-2 px-2 py-1.5">
+                    {detail.example.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={detail.example.imageUrl}
+                        alt=""
+                        className="h-9 w-9 shrink-0 rounded object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-surface-2/70 text-muted-2">
+                        <Icon name="FileText" className="h-3.5 w-3.5" aria-hidden="true" />
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                        Example
+                      </span>
+                      <span className="block truncate text-[11px] text-foreground">
+                        {detail.example.title}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-muted-2">
+                      {relativeTime(detail.example.at)}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-0.5">
                 <Button

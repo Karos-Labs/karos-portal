@@ -21,7 +21,7 @@ import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedules } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
-import { agentsWithDeliveredWork } from "@/lib/agent-detail-archetypes";
+import { agentsWithDeliveredWork, agentsWithUpcomingContent } from "@/lib/agent-detail-archetypes";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
@@ -128,6 +128,18 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // scheduler turned away before a job existed — so without this a green
     // "Live" badge sits above a run history whose last row says Failed.
     const failedAgentIds = lastRunFailedAgentIds(jobs, agentIdByName, { staff: false });
+    // AF-5. The third half of the same read: which agents have content sitting on
+    // this client's calendar for a day that has not happened. It reads the assets
+    // already in hand (no extra query) and returns ids only, so what reaches this
+    // page is one boolean per agent and nothing about the items themselves.
+    const producingAgentIds = agentsWithUpcomingContent({
+      assets,
+      jobs,
+      agents: candidateAgents,
+      umbrellas,
+      clientSlug: client.agentsRepoSlug,
+      now,
+    });
     const agents = candidateAgents
       .filter((agent) => allowedIds.has(agent.id) || completedAgentIds.has(agent.id))
       .map(toSummary);
@@ -220,7 +232,17 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           // "Not set up yet" beside a shelf of delivered work is the card
           // contradicting itself; an agent that has produced says so instead.
           hasDelivered: completedAgentIds.has(agent.id),
+          // Resolved, and then deliberately not acted on: `viewerIsStaff` is
+          // false on this branch, so the rung is skipped (AF-14). The value is
+          // still passed rather than dropped, because the flag is what decides
+          // and a caller that stopped computing it would hide the decision.
           lastRunFailed: failedAgentIds.has(agent.id),
+          viewerIsStaff: false,
+          // AF-5: an agent whose posts we produce internally has no schedule of
+          // its own to read Live from, and the client can see its work filling
+          // next week's calendar. The staff note the rung also returns is not
+          // painted here — this is the client's roster.
+          hasUpcomingContent: producingAgentIds.has(agent.id),
           now,
         }),
       };
@@ -374,6 +396,18 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // Same failed-last-run read the client branch makes, for the same reason: the
   // two rosters must not disagree about whether an agent needs someone.
   const staffFailedAgentIds = lastRunFailedAgentIds(jobs, staffAgentIdByName, { staff: true });
+  // AF-5, and deliberately the SAME call the client branch makes — no viewer
+  // argument. The word is the client-facing one by ruling, so a staff roster that
+  // asked a staff-flavoured version of the question would call an agent idle on
+  // one screen and live on the other. What staff get extra is the note below.
+  const staffProducingAgentIds = agentsWithUpcomingContent({
+    assets,
+    jobs,
+    agents: enabledAgents,
+    umbrellas,
+    clientSlug: client.agentsRepoSlug,
+    now: staffNow,
+  });
   // Drafts waiting on staff, per agent — the queue the retired card surfaced
   // as its "N ready" chip. Counted from the jobs already loaded.
   const reviewCountByAgentName = new Map<string, number>();
@@ -423,7 +457,29 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       legacy.length > 0
         ? `${legacy.length} settings-page schedule${legacy.length === 1 ? "" : "s"} (${legacy.filter((r) => r.enabled).length} on) — not billed to the client`
         : null;
-    const fullNote = [note, legacyNote].filter(Boolean).join(" · ") || null;
+    const status = rosterStatus({
+      launchState: umbrella?.launchState ?? null,
+      // Raw refusal + raw status — the pause and freshness rules are the
+      // helper's (see the client branch above).
+      scheduleRefusal: schedule?.lastError ?? null,
+      scheduleRefusalAt: schedule?.lastErrorAt ?? null,
+      scheduleActive: schedule?.status === "active",
+      hasDelivered: staffDeliveredAgentIds.has(agent.id),
+      lastRunFailed: staffFailedAgentIds.has(agent.id),
+      // The rung the client's branch skips. This is the surface it was written
+      // for: a green badge above a run history whose last row reads Failed.
+      viewerIsStaff: true,
+      hasUpcomingContent: staffProducingAgentIds.has(agent.id),
+      now: staffNow,
+    });
+    // LEADS the note (AF-5). When the badge says Live and the schedule row under
+    // it says nothing is firing, "why" is the first question an operator has —
+    // ahead of a review queue or a duplicate-schedule warning, both of which are
+    // still true and still appended. `status.staffNote` is set only on the rung
+    // that creates the discrepancy, so on every other agent this line adds
+    // nothing.
+    const fullNote =
+      [status.staffNote ?? null, note, legacyNote].filter(Boolean).join(" · ") || null;
     return {
       customAgentId: agent.id,
       identity: `${agent.key} ${agent.name}`,
@@ -434,17 +490,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         name: agent.name,
         clientBlurb: agent.clientBlurb ?? null,
       }),
-      status: rosterStatus({
-        launchState: umbrella?.launchState ?? null,
-        // Raw refusal + raw status — the pause and freshness rules are the
-        // helper's (see the client branch above).
-        scheduleRefusal: schedule?.lastError ?? null,
-        scheduleRefusalAt: schedule?.lastErrorAt ?? null,
-        scheduleActive: schedule?.status === "active",
-        hasDelivered: staffDeliveredAgentIds.has(agent.id),
-        lastRunFailed: staffFailedAgentIds.has(agent.id),
-        now: staffNow,
-      }),
+      status,
       note: fullNote,
     };
   });

@@ -38,6 +38,7 @@ import { agentArchetype } from "@/lib/agent-archetype";
 import {
   agentProducedAssets,
   agentsWithDeliveredWork,
+  agentsWithUpcomingContent,
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
@@ -344,6 +345,22 @@ export default async function ClientAgentDetailPage({
     // eight rows, so a client's page would answer this differently — or not at
     // all — from the card that opened it.
     lastRunFailed: lastRunFailedAgentIds(jobs, agentIdByName, { staff: isStaff }).has(agent.id),
+    // The same flag `lastRunFailedAgentIds` already takes, handed on rather than
+    // re-derived: a client's badge is never moved by a run that broke on our side
+    // (AF-14), and the two answers have to come off one boolean or this page and
+    // the card that opened it can disagree about which reader they are for.
+    viewerIsStaff: isStaff,
+    // AF-5, through the same helper both roster branches read, and with the same
+    // (viewer-independent) arguments — the strip, the header badge and the card
+    // that opened this page must all say one word.
+    hasUpcomingContent: agentsWithUpcomingContent({
+      assets,
+      jobs,
+      agents: [agent],
+      umbrellas,
+      clientSlug: client.agentsRepoSlug,
+      now,
+    }).has(agent.id),
     now,
   });
   const blurb = clientAgentBlurb({
@@ -570,13 +587,34 @@ export default async function ClientAgentDetailPage({
     : [];
 
   // The only work this page may announce as happening NOW: a run this viewer's
-  // own side started. Exactly the two the run banners already mount. A
-  // scheduled fire is deliberately excluded — it is not something the reader
-  // just asked for, and saying it is running states outright that production is
-  // not day-of (A3/A4). A launch in flight is excluded too: the launch card is
-  // already narrating it in three phases, and a second voice would be a second
-  // copy of that story to keep in step.
-  const running = Boolean(row?.activeRun || legacyRun);
+  // own side started. A scheduled fire is deliberately excluded — it is not
+  // something the reader just asked for, and saying it is running states outright
+  // that production is not day-of (A3/A4). A launch in flight is excluded too:
+  // the launch card is already narrating it in three phases, and a second voice
+  // would be a second copy of that story to keep in step.
+  //
+  // AF-9: it used to be exactly the two runs a BANNER is mounted for, and those
+  // two do not cover the run this page's own controls fire most. `row.activeRun`
+  // matches `runType: "manual_template"` only, and `legacyRun` is nulled outright
+  // for an umbrella-bound agent — so a staff "Run now" or "Test run" from the
+  // Control Room, on the flagship umbrella agent, left the page with no in-flight
+  // mark at all and no AutoRefresh. Pressing the button and being sent nowhere
+  // visible is exactly the post-gesture confusion this item is about.
+  //
+  // Same authorship rule as `legacyRun` (`createdBy === user.uid`), so it can
+  // still only ever announce work this reader asked for. Test runs count for
+  // staff, who are the only people who can fire one and the people waiting on it.
+  const viewerRunInFlight = jobs.some(
+    (job) =>
+      job.external?.taskType === "custom" &&
+      (job.status === "queued" || job.status === "running") &&
+      job.runType !== "launch" &&
+      (isStaff || job.runType !== "test") &&
+      job.createdBy === user.uid &&
+      (job.customAgentId === agent.id ||
+        (!job.customAgentId && job.agentName === agent.name)),
+  );
+  const running = Boolean(row?.activeRun || legacyRun) || viewerRunInFlight;
 
   // Order-independent: `produced` is sorted for a client and unsorted for
   // staff, and this line has to give the same answer to both.
@@ -603,7 +641,11 @@ export default async function ClientAgentDetailPage({
 
   return (
     <>
-      {(launchInFlight || row?.activeRun || legacyRun) && <AutoRefresh />}
+      {/* AF-9: `running` already is "a run this viewer started is in flight", so
+          the poller and the mark on the strip can no longer answer that question
+          differently — which they did, and which is why a staff run left a static
+          page behind it. */}
+      {(launchInFlight || running) && <AutoRefresh />}
       <div className="mb-4">
         <Link
           href={`/clients/${id}/agents`}
@@ -660,7 +702,14 @@ export default async function ClientAgentDetailPage({
               row. Both read the SAME resolved `status`, so the rule that a
               schedule refusal outranks Live (F24/F129) cannot hold in one place
               and not the other. */}
-          <AgentStatusStrip status={status} running={running} facts={statusFacts} />
+          {/* `staffNote` is AF-5's operational truth and is passed for staff
+              only — the client reads the word alone, which is the ruling. */}
+          <AgentStatusStrip
+            status={status}
+            running={running}
+            facts={statusFacts}
+            {...(isStaff && status.staffNote ? { staffNote: status.staffNote } : {})}
+          />
 
           {/* ── THE ARCHETYPE HERO (CD-I1) ──
               Deliberately ABOVE the controls band. Albert asked for the clip
