@@ -1,6 +1,6 @@
 # Deploy environments — prep & production
 
-Two independent GCP projects, one shared Firebase project.
+Two independent GCP projects, one shared Firebase project, isolated Firestore data.
 
 |                          | **prep**                                   | **production**                     |
 |--------------------------|---------------------------------------------|-------------------------------------|
@@ -8,45 +8,44 @@ Two independent GCP projects, one shared Firebase project.
 | Cloud Run service        | own, in its own project                     | own, in its own project             |
 | Artifact Registry        | own repo                                    | own repo                            |
 | Secret Manager           | own secrets (same *names*, own *values*)    | own secrets                         |
-| Firebase project (Auth + Firestore) | **same as production** — `karoscmo` | same                        |
+| Firebase project (Auth)  | **same as production** — `karoscmo`         | same                                |
+| Firestore database       | own named database (`prep`)                 | project default (`(default)`)       |
+| GCS media bucket         | own bucket                                  | own bucket                          |
+| Agent service            | own deployment (own Redis/VPC/proxy/runner) | own deployment                      |
 | Deploy trigger           | automatic, on every push to `main`          | **manual only** — a person runs it  |
 
-Firebase Auth and Firestore are shared on purpose (per your call), so prep and production
-see the same users and the same client/job/asset data. Everything else — compute, build,
-secrets — is fully isolated, so a bad prep deploy, a leaked prep secret, or a runaway prep
-process can't touch production infrastructure or its IAM.
+Only Firebase Auth is shared (same project, same login users). Everything that holds
+data — Firestore, GCS media, agent-service's Redis/artifacts — is a separate instance per
+environment, selected via `FIRESTORE_DATABASE_ID` / `GCS_MEDIA_BUCKET` / `AGENT_SERVICE_URL`
+substitutions in `cloudbuild.yaml` (see `src/lib/firebase/admin.ts` and `firebase.json` for
+the Firestore named-database wiring). A bad prep deploy, a leaked prep secret, a runaway
+prep agent job, or prep test data can't touch production's compute, secrets, or client data.
 
-## ⚠️ Shared data — what this means in practice
+## What's still shared, and what that means
 
-Because Firestore/Auth are shared, prep is not a sandbox with fake data — it's a second
-frontend on top of the *real* clients/jobs/assets. Anything prep does that reaches outside
-the app (send an email, publish a scheduled post, spend agent credits) is a real action
-against a real client. The deploy config in this repo defaults prep to **not** be able to
-do those things automatically:
-
-- **`AGENT_SERVICE_URL` is left empty for prep** — same mechanism the app already uses to
-  hide the managed-products UI when the agent service isn't configured (see
-  `cloudbuild.yaml`'s comment on `_AGENT_SERVICE_URL`). No agent service URL configured for
-  prep means jobs can't be submitted from prep, so no duplicate/double-billed AI runs.
-- **No Cloud Scheduler job should point at prep's `/api/publish`, `/api/analytics/sync`,
-  `/api/*/reconcile`, etc.** Only wire Cloud Scheduler to production. Prep's `CRON_SECRET`
-  exists so those routes don't 503, but nothing should ever call them there — don't create
-  a scheduler job against the prep URL.
+- **Firebase Auth users are shared.** The same login works on both `PREP_APP_URL` and
+  `PROD_APP_URL`. There is no separate prep signup.
+- **OAuth app credentials (LinkedIn/Twitter/Google/TikTok) are shared** — same client
+  id/secret in both environments' Secret Manager, by choice (simpler than registering
+  separate provider apps). Only add prep's callback domain to a provider's redirect-URI
+  allow-list if you actually plan to exercise that connect flow from prep.
+- **`TOKEN_ENCRYPTION_KEY` must be the *same value* in both environments** regardless of the
+  above — it's project-wide (not per-database), and if prep ever encrypted a token with a
+  different key, cross-environment decryption would break. Copy this one value verbatim.
 - **Use a separate, unverified Resend API key for prep's `RESEND_API_KEY`.** A Resend key
   with no verified sending domain can only deliver to the account owner's own verified
   addresses — so if a prep test run does hit `sendEmail()`, it physically cannot reach a
-  real client inbox. Don't reuse the production Resend key in prep.
-- **`TOKEN_ENCRYPTION_KEY` must be the *same value* in both environments.** It encrypts
-  LinkedIn seat OAuth tokens at rest in the shared Firestore — if prep ever wrote with a
-  different key, production would fail to decrypt those tokens. Copy this one value
-  verbatim into both projects' Secret Manager.
-- Everything else that's Firebase-specific (`FIREBASE_SERVICE_ACCOUNT_KEY`,
-  `NEXT_PUBLIC_FIREBASE_*`) is also identical in both environments, since it's the same
-  Firebase project.
+  real inbox outside your own team.
+- **No Cloud Scheduler job should point at prep's `/api/publish`, `/api/analytics/sync`,
+  `/api/*/reconcile`, etc.** Only wire Cloud Scheduler to production.
+- Firebase-project-level config (`FIREBASE_SERVICE_ACCOUNT_KEY`, `NEXT_PUBLIC_FIREBASE_*`)
+  is identical in both environments, since it's the same Firebase project — Firestore IAM
+  permissions on that service account apply project-wide, across every named database, so
+  no extra grant was needed to let it reach the new `prep` database.
 
-If you later want prep to exercise real publishing/agent flows deliberately, that's a
-one-line env var change (set `AGENT_SERVICE_URL` / add the scheduler job) — just do it
-knowingly.
+Since prep's Firestore data is now its own empty database, prep starts with **no clients**
+— seed test clients there directly (or via a Firestore export/import from production if you
+want realistic fixtures) before exercising agent runs, publishing, or credits flows.
 
 ---
 
