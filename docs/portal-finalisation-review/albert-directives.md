@@ -84,3 +84,52 @@ Audit every one of the 49 commits against this list → per-change ledger
 → Albert rules on strip candidates → strips land as surgical restore commits
 (never history rewrites) → gates (tsc/build/vitest/lint) after every merge.
 Nothing pushes without Albert.
+
+## Resolution status (2026-08-03, head 97a6f8e)
+
+Audit: docs/portal-finalisation-review/audit-ledger.md (d40b54c). Both build
+waves merged (builder B 2c1bbb9, builder A bca907b), gates green at every
+step: tsc clean · 3433 tests · build exit 0 · lint 0 errors.
+
+- AF-1 RESOLVED — Meetings out of the client rail and sheet; the pre-existing
+  Settings Meetings tab is the one entry point. The "#134" the rail entry
+  cited does not exist in the QA doc (audit-verified fabrication).
+- AF-2 RESOLVED — Profile Information + Account Security are real tabs of the
+  client settings page; /settings redirects clients (staff keep it).
+- AF-3 RESOLVED-REFRAMED — the orange is Albert's OWN Ember brand system
+  (7d53506, on main, pre-branch; Daniel touched no stylesheet). No revert.
+  Parity work done instead: nav tables asserted EQUAL, one favicon source,
+  wordmark identical at all mounts, staff Company sheet unclamped (97a6f8e).
+  CLAUDE.md's stale "dark + neon-green" line corrected to Ember.
+- AF-4 RESOLVED — social rows are platform mark + @handle (shortened on save,
+  idempotent), clickable, via the existing SocialPlatformMark set.
+- AF-5 RESOLVED — upcoming calendar content ⇒ LIVE (Set-of-ids boundary, no
+  counts); refusal still outranks; staff get the operational note. The
+  failed-run rung is staff-only now (was flipping a client's badge —
+  CONFLICTS-AF-14, resolved per the directive).
+- AF-6 RESOLVED — each format row carries its newest delivered post as the
+  example (archive-filtered).
+- AF-7 RESOLVED — intake answers render inline via the same client-safe views
+  the intake pages use; edits stay on the owning form.
+- AF-8 RESOLVED — both guards inverted (house rule: no em dashes in client
+  copy), 282 literals across 74 files swept, copilot prompt told the same.
+  Known residual: strings already PERSISTED in Firestore keep their dash
+  until rewritten (data script needs Albert's sign-off).
+- AF-9 RESOLVED — staff "Run now" stays on the agent page with an in-flight
+  banner; a run the viewer started keeps its In-progress card (cron ticks
+  stay invisible, A3/A4).
+- AF-10 RESOLVED — schedule dialog paints the shared credit refusal; paused
+  format no longer masks "out of credits"; task-plan errors surface.
+- AF-11 RESOLVED — Daniel's same-recId dedupe verified + the healed-copy twin
+  class closed; post-approve copy names the hand-off.
+- AF-12/13/14/15 — sourced keeps, verified by audit.
+- AF-16 (copilot task-map placement) and AF-18 (input rollback) — NOT BUILT,
+  deferred with Albert's list.
+- STRIP CANDIDATES held for Albert's ruling (kept in place meanwhile):
+  task-board delete-confirm + client run-price confirm (ff5c9ef/fb4f132),
+  "Remove this seat" (f1e8ecf), "AI Agents"→"AI agents" casing (6fad72d
+  rider). Everything else classified keep (sourced or invisible-correctness);
+  staff-only additions (ops links, library picker, bulk-upload, not-billed
+  badges) recommended keep.
+- Deploy note from the branch itself: run scripts/audit-schedule-billing-flags.ts
+  READ-ONLY before this branch deploys.
