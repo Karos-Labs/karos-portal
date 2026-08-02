@@ -79,19 +79,46 @@ function flat(src: string): string {
 /* ─────────────── claim 1: the register, pinned by value ──────────────── */
 
 describe("the task-status register", () => {
-  it("still reads exactly as the two maps it replaced did", () => {
-    // Lifting a map is only behaviour-preserving if the words are identical, and
-    // "identical" is not something a reviewer eyeballs across a file move. This
-    // is the pin: changing a word here is now a copy decision someone makes on
-    // purpose. All five came verbatim from `BOARD_COLUMNS` and the ticket's
-    // `STATUS_LABEL`, which agreed byte for byte.
+  it("reads in the house's sentence case, and says what the state is", () => {
+    // THIS TEST WAS NAMED "still reads exactly as the two maps it replaced did",
+    // and that premise stopped being true the moment the words were corrected —
+    // which is the shape this campaign has now shipped twice, so the name went
+    // with the words.
+    //
+    // The lift itself WAS byte-preserving, and that was the right call at the
+    // time: a file move and a copy change in one diff is a copy change nobody
+    // reviewed. Two of the five words it faithfully preserved were wrong —
+    // "In Progress" and "Review Pending" are Title Case against house rule 10,
+    // and "Review Pending" is the stored enum `review_pending` word-split rather
+    // than a phrase anyone would write. Corrected here, deliberately and on its
+    // own, with the pin kept so the next change is also a decision.
     expect(TASK_STATUS_LABEL).toEqual({
       pending: "Pending",
-      in_progress: "In Progress",
-      review_pending: "Review Pending",
+      in_progress: "In progress",
+      review_pending: "In review",
       completed: "Done",
       archived: "Archived",
     });
+  });
+
+  it("prints no stored enum, and no word split out of one", () => {
+    // The closed question behind the two corrections, asked of the whole union
+    // rather than of the two that were wrong.
+    //
+    // WHAT IS NOT ASSERTED, because it is not mechanically decidable: "is this
+    // phrase one a person would write, or the enum with its underscores taken
+    // out". `in_progress` → "In progress" is BOTH, and correct; `review_pending`
+    // → "Review pending" is both, and wrong ("In review" is what a person
+    // writes). A check for that shape fails on the first, which is the other way
+    // a guard is useless. What IS decidable — no stored value rendered, no
+    // underscore, and sentence case — catches both defects that were here.
+    for (const [key, label] of Object.entries(TASK_STATUS_LABEL)) {
+      expect(label, `${key} is rendered as its own stored value`).not.toBe(key);
+      expect(label, `${key} carries an underscore`).not.toMatch(/_/);
+      // SENTENCE CASE — house rule 10, and the half of this that IS mechanical.
+      // Both defects here were Title Case ("In Progress", "Review Pending").
+      expect(label, `${key} is Title Case`).not.toMatch(/\s[A-Z]/);
+    }
   });
 
   it("names every state the type allows, and never with its own enum", () => {

@@ -6,7 +6,7 @@ import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { renderAssetBody } from "@/lib/doc-render";
 import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
-import { TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
+import { taskPriorityLabel, TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
 import {
   getTaskCommentsAction,
   addTaskCommentAction,
@@ -738,11 +738,14 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, 
               </span>
               <span
                 className={cn(
-                  "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold capitalize",
+                  "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold",
                   prio,
                 )}
               >
-                {task.priority}
+                {/* The register, not the stored value under CSS `capitalize`.
+                    Casing is not a label: it renders whatever the database
+                    holds, and it cannot fix a value that is not already a word. */}
+                {taskPriorityLabel(task.priority)}
               </span>
               {failedUpload && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold text-danger">

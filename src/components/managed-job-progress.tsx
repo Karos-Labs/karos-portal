@@ -1,12 +1,31 @@
 import { Icon } from "@/components/icon";
+import { jobStatusLabel } from "@/lib/job-status-copy";
 import type { JobStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+/**
+ * The ladder, as STATES — no words of its own.
+ *
+ * It carried three: "Queued", "Agent working", "Ready for review", against the
+ * register's "Queued", "Running", "In review". Two of the three disagreed, and
+ * the strip is not somewhere obscure — legacy-agent-panel mounts it on a
+ * client's own agent page while that run's `JobStatusBadge` is a scroll away on
+ * the same screen, so one run state read two ways at once.
+ *
+ * ICONS STAY HERE, words do not: presentation belongs to the component and the
+ * name of a state does not, the same split `asset-status-copy` and
+ * `calendar-kind` made when they took the words and left the classes.
+ *
+ * The `satisfies` is what makes each key a real run state rather than a string
+ * that looks like one. Without it a mis-spelled key still compiles, and
+ * `jobStatusLabel`'s fallback would quietly paint that step "Queued" — a wrong
+ * word arriving through a typo instead of through a second map.
+ */
 const STEPS = [
-  { key: "queued", label: "Queued", icon: "Clock" },
-  { key: "running", label: "Agent working", icon: "Bot" },
-  { key: "review", label: "Ready for review", icon: "CircleCheckBig" },
-] as const;
+  { key: "queued", icon: "Clock" },
+  { key: "running", icon: "Bot" },
+  { key: "review", icon: "CircleCheckBig" },
+] as const satisfies readonly { key: JobStatus; icon: string }[];
 
 /**
  * Three-step progress strip for managed (agent-service) jobs. Server-safe —
@@ -74,7 +93,15 @@ export function ManagedJobProgress({
                       : "text-muted-2",
               )}
             >
-              {failedHere ? "Run failed" : cancelledHere ? "Cancelled" : step.label}
+              {/* The two OUTCOME states take the register's words too. "Run
+                  failed" was a fourth name for `failed`, one word off the
+                  register's "Failed" and on the same screen as the badge that
+                  prints it. */}
+              {failedHere
+                ? jobStatusLabel("failed")
+                : cancelledHere
+                  ? jobStatusLabel("cancelled")
+                  : jobStatusLabel(step.key)}
             </p>
             {i < STEPS.length - 1 && (
               <div className={cn("h-px flex-1", i < current ? "bg-success/40" : "bg-border")} />

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
+import { NO_FORMATS_YET } from "@/lib/client-agent-format-copy";
 import { moveTemplateKey } from "@/lib/client-agent-runs";
 import { markSlotNoteAppliedAction } from "@/lib/actions/slot-note-actions";
 import { formatDate, relativeTime } from "@/lib/utils";
@@ -80,10 +81,14 @@ export function TemplateRows({
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
+  // The launch card says this too, for the same empty registry — so the sentence
+  // lives in client-agent-format-copy and both read it. It used to be written
+  // twice, and the two copies had already drifted: the other one called a format
+  // a "template stream", which is the schema's word and not the client's.
   if (templates.length === 0) {
     return (
       <p className="mt-4 rounded-md border border-border bg-surface-2/70 px-3 py-2 text-xs text-muted-2">
-        This agent has no formats registered yet — your Karos team is setting them up.
+        {NO_FORMATS_YET}
       </p>
     );
   }

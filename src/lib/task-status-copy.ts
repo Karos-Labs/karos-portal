@@ -66,8 +66,8 @@ import type { ClientTask, TaskStatus } from "@/lib/types";
  */
 export const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
   pending: "Pending",
-  in_progress: "In Progress",
-  review_pending: "Review Pending",
+  in_progress: "In progress",
+  review_pending: "In review",
   completed: "Done",
   archived: "Archived",
 };
@@ -126,4 +126,24 @@ export const TASK_RUNNING_LABEL = "Agent running";
  */
 export function taskIsExecuting(task: Pick<ClientTask, "metadata">): boolean {
   return task.metadata?.executing === true;
+}
+
+/**
+ * A task's priority, in the client's words.
+ *
+ * The ticket printed `{task.priority}` inside a `capitalize` span — the stored
+ * enum, title-cased by CSS. That is the last instance in this file's family of
+ * the raw-enum-under-capitalize shape, and CSS casing is not a label: it cannot
+ * fix a value that is not already a word, and it renders whatever the database
+ * holds.
+ */
+export const TASK_PRIORITY_LABEL: Record<ClientTask["priority"], string> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
+/** The priority's word, never the stored value. */
+export function taskPriorityLabel(priority: ClientTask["priority"]): string {
+  return TASK_PRIORITY_LABEL[priority] ?? "Low";
 }

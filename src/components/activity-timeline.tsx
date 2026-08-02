@@ -269,76 +269,58 @@ function buildEvents(
 
 /* ── Event type config ───────────────────────────────────────────────── */
 
+/**
+ * The GLYPH each event type draws with. Presentation only — no words.
+ *
+ * IT CARRIED A `label` AND NOTHING RENDERED IT. `EventRow` reads `icon`,
+ * `dotClass` and `iconClass`; the eleven labels beside them were painted
+ * nowhere, on any surface, for either viewer. That is worse than dead weight
+ * here: it was a second vocabulary for `ActivityEventType`, in Title Case
+ * against the sentence-case rule, and one of its entries was the internal
+ * product name ("Intel Report") that `researchReportReadyTitle` exists to keep
+ * off a client's timeline. A row's words come from its `title` — written by the
+ * server (activity-titles.ts) or derived above — and an unrendered map of
+ * alternative names is exactly what somebody wires up later because it is
+ * sitting there looking authoritative.
+ *
+ * Deleted rather than corrected: correcting it would have kept a second answer
+ * to "what is this event called", spelled better.
+ */
 const EVENT_CONFIG: Record<
   ActivityEventType,
-  { icon: string; dotClass: string; iconClass: string; label: string }
+  { icon: string; dotClass: string; iconClass: string }
 > = {
-  SCRAPE: {
-    icon: "Globe",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Website Scraped",
-  },
+  SCRAPE: { icon: "Globe", dotClass: "bg-surface", iconClass: "text-foreground/70" },
   INTEL_GENERATION: {
     icon: "ChartNoAxesColumn",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "Intel Report",
   },
-  CAMPAIGN_CREATED: {
-    icon: "Bot",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Campaign",
-  },
-  CAMPAIGN_DELIVERED: {
-    icon: "Mail",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Delivered",
-  },
-  COMPETITOR_ADDED: {
-    icon: "UserPlus",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Competitor Added",
-  },
+  CAMPAIGN_CREATED: { icon: "Bot", dotClass: "bg-surface", iconClass: "text-foreground/70" },
+  CAMPAIGN_DELIVERED: { icon: "Mail", dotClass: "bg-surface", iconClass: "text-foreground/70" },
+  COMPETITOR_ADDED: { icon: "UserPlus", dotClass: "bg-surface", iconClass: "text-foreground/70" },
   COMPETITOR_REMOVED: {
     icon: "UserMinus",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "Competitor Removed",
   },
   COMPETITOR_ANALYZED: {
     icon: "Sparkles",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "AI Analysis",
   },
   CONTEXT_DOC_UPDATED: {
     icon: "FileText",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "Docs Updated",
   },
   MANUAL_NOTE: {
     icon: "MessageSquare",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "Note",
   },
-  CLIENT_CREATED: {
-    icon: "UserCheck",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Client Created",
-  },
-  BRANDING_UPDATED: {
-    icon: "Palette",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Branding",
-  },
+  CLIENT_CREATED: { icon: "UserCheck", dotClass: "bg-surface", iconClass: "text-foreground/70" },
+  BRANDING_UPDATED: { icon: "Palette", dotClass: "bg-surface", iconClass: "text-foreground/70" },
 };
 
 /* ── Date helpers ────────────────────────────────────────────────────── */

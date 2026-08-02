@@ -5,12 +5,16 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { ClientAnalyticsStats } from "@/components/client-analytics";
+import { ManagedJobProgress } from "@/components/managed-job-progress";
 import { CLIENT_ASSET_STATUS_LABEL, STAFF_ASSET_STATUS_LABEL } from "@/lib/asset-status-copy";
 import {
   ALL_CALENDAR_FILTER_KEYS,
   calendarFilterKeyMatchable,
   calendarFilterLabel,
+  postKindLabel,
+  type CalendarAssetKind,
 } from "@/lib/calendar-kind";
+import { TASK_STATUS_LABEL } from "@/lib/task-status-copy";
 import {
   ALL_JOB_BUCKETS,
   jobBucketLabel,
@@ -27,6 +31,7 @@ import {
   skipStringLiteral,
   staffOnlyIfRanges,
   staffOnlyJsxRanges,
+  stripComments,
 } from "./source-scan";
 
 /**
@@ -83,24 +88,24 @@ const FILES = walk(SRC).filter((f) => !f.includes("__tests__"));
  * Source with comments removed, so the docstrings that explain this rule — which
  * necessarily quote the shapes it forbids — are not themselves offenders.
  *
- * STATED HOLE, the same one every strip in this directory carries and for the same
- * reason it is not fixed locally: `//` is read as a comment opener wherever it
- * appears, INCLUDING inside a string, so a template literal holding a URL is
- * truncated at the `//` and loses its closing backtick. `skipStringLiteral` cannot
- * bound an unpaired backtick to a line (its docstring names
- * components/li-drafts-review.tsx as a live example), so from a mis-pairing onward
- * the brace walks in this file can read a bogus range.
+ * THE STATED HOLE IS CLOSED. This used to be a local
+ * `.replace(/\/\/.*$/gm, "")`, and its own note said so at length: `//` is a
+ * comment opener to that regex wherever it appears, INCLUDING inside a string, so
+ * a template literal holding a URL was truncated at the `//` and lost its closing
+ * backtick — the one stray `skipStringLiteral` cannot bound to a line, which
+ * mis-pairs every literal below it and lets the brace walks in this file read
+ * bogus ranges. Both failure modes were FAIL-OPEN (a swallowed region hides a raw
+ * render; an over-long guard range exempts one), which is the direction a green
+ * tick hides.
  *
- * WHAT IT COSTS THIS SWEEP, in the direction it costs it: the offender scan is a
- * regex over text, so a swallowed region can HIDE a raw render (fail open) but
- * cannot manufacture one. The guard ranges are brace walks, so a mis-pairing can
- * make a range too LONG and exempt a render that is not guarded — also fail open.
- * Both are the direction a green tick hides, which is why they are written down
- * here rather than described as handled. The fix is one string-aware strip shared
- * by every copy in this directory, verified against every sweep those copies feed.
+ * `stripComments` skips string literals whole, so it cannot manufacture that. It
+ * is the same strip the task-status suite already uses, and this file now shares
+ * it rather than carrying the third copy of a rule with a known hole — which
+ * matters more since the run-state sweep below is a scan for WORDS, and prose is
+ * exactly what a raw-source scan would be satisfied by.
  */
 function code(s: string): string {
-  return s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  return stripComments(s);
 }
 
 /* ─────────────────────── shape 1: a raw status, rendered ─────────────────── */
@@ -450,6 +455,227 @@ describe("an unrecognised run state has one answer", () => {
       "run.jobStatus ? jobStatusMeta(run.jobStatus) : NO_RUN_STATUS",
     );
     expect(Object.values(JOB_STATUS_META).map((m) => m.label)).not.toContain("Done");
+  });
+});
+
+/* ──────── shape 1c: a SECOND vocabulary for the run states, anywhere ─────── */
+
+/**
+ * The words that belong to the RUN-STATE register and to nothing else — derived
+ * by subtracting every other sanctioned register's words from its own.
+ *
+ * WHY SUBTRACT. The subtraction is over rendered VALUES, so a word another
+ * register also produces drops out however it got there: "Approved" and
+ * "Delivered" are the asset register's too, "Failed" is the calendar legend's,
+ * and "In review" is the calendar's `review` label — which is that word only
+ * because the entry CALLS `jobStatusLabel`, but a scan over text cannot tell a
+ * call from a copy once the label exists. A file spelling one of those has not
+ * necessarily said anything about a run. What is left is spoken by the run
+ * register alone, so a file writing TWO of them is naming run states in its own
+ * words — which is the shape, not the instance.
+ *
+ * DERIVED, not typed: every list below is read off a `Record` tsc keeps total or
+ * off an accessor, so renaming any register's word moves this set on its own. The
+ * price of the subtraction is stated rather than hidden — a second vocabulary
+ * written ENTIRELY in shared words ("Approved"/"Delivered"/"Failed") is not a
+ * shape this reads, and neither is one that invents words sharing none of the
+ * register's. The behavioural pin below covers the surface this was found on;
+ * this covers the next file.
+ */
+const OTHER_REGISTER_WORDS = new Set<string>([
+  ...Object.values(CLIENT_ASSET_STATUS_LABEL),
+  ...Object.values(STAFF_ASSET_STATUS_LABEL),
+  ...Object.values(TASK_STATUS_LABEL),
+  ...ALL_CALENDAR_FILTER_KEYS.flatMap((k) => [
+    calendarFilterLabel(k, true),
+    calendarFilterLabel(k, false),
+  ]),
+  ...ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "review").flatMap((k) => [
+    postKindLabel(k as CalendarAssetKind, true),
+    postKindLabel(k as CalendarAssetKind, false),
+  ]),
+]);
+
+const RUN_STATE_ONLY_WORDS = Object.values(JOB_STATUS_META)
+  .map((m) => m.label)
+  .filter((w) => !OTHER_REGISTER_WORDS.has(w));
+
+/**
+ * Does this source spell that word as a rendered string — a literal in any of the
+ * three quotes, or JSX text between tags?
+ *
+ * WHOLE VALUE, not a substring: `"Running"` is asked with its quotes so
+ * `"Running Agent"` (a real removed label, in the task domain) is not counted as
+ * this word, and `>Cancelled<` is anchored on both tags so a longer sentence
+ * containing it is not either. A prefix match here would be the campaign's own
+ * `toContain`-on-a-prefix trap, and this scan exists to be trusted.
+ */
+function spellsWord(src: string, word: string): boolean {
+  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(["'\`])${esc}\\1|>\\s*${esc}\\s*<`).test(src);
+}
+
+/**
+ * TWO is a vocabulary; one is a coincidence of English.
+ *
+ * The threshold lives here rather than inline at the sweep so the planted
+ * before/after texts below run through the SAME rule the repo walk does —
+ * otherwise raising it to three would leave every plant green while the real
+ * sweep stopped catching the defect it was written for.
+ */
+function isSecondVocabulary(words: string[]): boolean {
+  return words.length >= 2;
+}
+
+/** Files, and how many run-state-only words each one spells for itself. */
+function runStateSpellers(): Array<{ file: string; words: string[] }> {
+  const out: Array<{ file: string; words: string[] }> = [];
+  for (const file of FILES) {
+    if (file === join(SRC, "lib", "job-status-copy.ts")) continue;
+    const src = code(readFileSync(file, "utf8"));
+    const words = RUN_STATE_ONLY_WORDS.filter((w) => spellsWord(src, w));
+    if (words.length > 0) out.push({ file: relative(SRC, file), words });
+  }
+  return out;
+}
+
+describe("nobody writes a second vocabulary for the run states", () => {
+  it("finds no file outside the register spelling two of its own words", () => {
+    // THE DEFECT. components/managed-job-progress.tsx keyed a three-step strip by
+    // JobStatus and wrote its own words for them — "Queued / Agent working /
+    // Ready for review" against the register's "Queued / Running / In review",
+    // plus "Run failed" for `failed`. It is mounted on a client's agent page by
+    // legacy-agent-panel, a scroll away from the same run's JobStatusBadge, so
+    // one run state read two ways on one screen.
+    //
+    // Swept by SHAPE, because the finding named one file and the question is
+    // which OTHER file is doing it.
+    const offenders = runStateSpellers().filter((f) => isSecondVocabulary(f.words));
+    expect(
+      offenders.map((o) => `${o.file} → ${o.words.join(", ")}`),
+      "these name run states in their own words; ask jobStatusLabel",
+    ).toEqual([]);
+  });
+
+  it("is still looking at something, and at words it derived", () => {
+    // Non-vacuity in both halves, because this sweep's green is otherwise
+    // indistinguishable from a subtraction that emptied the word list or a walk
+    // that stopped matching.
+    expect(
+      RUN_STATE_ONLY_WORDS.length,
+      "every run-state word is now shared with another register — the subtraction ate the sweep",
+    ).toBeGreaterThan(1);
+    // Derived, not typed: these come off JOB_STATUS_META, so this asserts the
+    // derivation ran rather than re-listing what it produced.
+    for (const w of RUN_STATE_ONLY_WORDS) {
+      expect(Object.values(JOB_STATUS_META).map((m) => m.label)).toContain(w);
+      expect(OTHER_REGISTER_WORDS.has(w)).toBe(false);
+    }
+    // And the walk still SEES files spelling exactly one — the steady state, not
+    // a pending fix: lib/agent-detail-sections.ts says "Running" of a SCHEDULE
+    // and lib/job-error-taxonomy.ts says "Cancelled" of a failure reason, neither
+    // of which is a run state. One word is a coincidence; two is a vocabulary.
+    expect(
+      runStateSpellers().length,
+      "the sweep matched nothing at all, so the walk, the strip or the word scan is broken",
+    ).toBeGreaterThan(0);
+  });
+
+  it("catches the strip that was really there, and passes the strip that replaced it", () => {
+    // Teeth, planted rather than trusted — both directions, and through the SAME
+    // scanner AND the same threshold the repo walk uses.
+    const words = (src: string) => RUN_STATE_ONLY_WORDS.filter((w) => spellsWord(code(src), w));
+    const flagged = (src: string) => isSecondVocabulary(words(src));
+
+    // The pre-fix STEPS table, verbatim in shape.
+    expect(
+      flagged(`const STEPS = [
+        { key: "queued", label: "Queued", icon: "Clock" },
+        { key: "running", label: "Agent working", icon: "Bot" },
+        { key: "review", label: "Ready for review", icon: "CircleCheckBig" },
+      ] as const;
+      const out = failedHere ? "Run failed" : cancelledHere ? "Cancelled" : step.label;`),
+    ).toBe(true);
+
+    // The shipped shape: states as keys, words from the register.
+    expect(
+      flagged(`const STEPS = [
+        { key: "queued", icon: "Clock" },
+        { key: "running", icon: "Bot" },
+        { key: "review", icon: "CircleCheckBig" },
+      ] as const;
+      const out = failedHere ? jobStatusLabel("failed") : jobStatusLabel(step.key);`),
+    ).toBe(false);
+
+    // A keyed map, the other form the same defect is written in.
+    expect(
+      flagged(`const M = { queued: "Queued", running: "Running", cancelled: "Cancelled" };`),
+    ).toBe(true);
+    // And JSX text, which a scan for quoted literals alone would miss.
+    expect(flagged(`<p>Queued</p><p>Running</p>`)).toBe(true);
+
+    // PROSE MUST NOT SATISFY IT — the trap this campaign keeps paying for. The
+    // same two words in a comment are not a vocabulary, and `code()` is what makes
+    // that true.
+    expect(flagged(`// the register says "Queued" and "Running"\n/* and "Cancelled" */`)).toBe(
+      false,
+    );
+    // Nor is a LONGER string that merely contains one: whole value, not prefix.
+    expect(flagged(`const s = "Running Agent"; const t = "Queued up soon";`)).toBe(false);
+    // Nor is ONE word on its own, which is the near-miss two real files sit at.
+    expect(flagged(`const s = args.schedule.active ? "Running" : "Paused";`)).toBe(false);
+  });
+});
+
+/* ── shape 1d: the progress strip, asked of what it actually renders ──────── */
+
+describe("the managed-run progress strip", () => {
+  /** Every word the strip paints, in order — its three step captions. */
+  function captions(status: JobStatus): string[] {
+    const html = renderToStaticMarkup(createElement(ManagedJobProgress, { status }));
+    return [...html.matchAll(/<p[^>]*>([^<]*)<\/p>/g)].map((m) => m[1]!.trim());
+  }
+
+  it("paints no word that is not the register's, in any run state", () => {
+    // BEHAVIOURAL, and total over the union — the half a source sweep cannot give
+    // you. The strip renders exactly three captions, so "every caption is a
+    // register word" is a closed question about this component rather than a
+    // sample of it, and it holds for an invented word that shares nothing with
+    // the register (which the text sweep above cannot see).
+    const sanctioned = new Set(Object.values(JOB_STATUS_META).map((m) => m.label));
+    for (const status of Object.keys(JOB_STATUS_META) as JobStatus[]) {
+      const painted = captions(status);
+      expect(painted.length, `${status} did not render three steps`).toBe(3);
+      for (const word of painted) {
+        expect(sanctioned, `${status} paints "${word}", which no run state is called`).toContain(
+          word,
+        );
+      }
+    }
+  });
+
+  it("still says which state it is in, and marks the two that end a run", () => {
+    // RULE 6: the words came from the register, and the strip must not have lost
+    // what it was saying. The ladder is unchanged…
+    expect(captions("queued")).toEqual([
+      jobStatusLabel("queued"),
+      jobStatusLabel("running"),
+      jobStatusLabel("review"),
+    ]);
+    // …and the two outcome states still REPLACE the caption of the step they
+    // stopped on (the working step, which is index 1), rather than being dropped.
+    expect(captions("failed")[1]).toBe(jobStatusLabel("failed"));
+    expect(captions("cancelled")[1]).toBe(jobStatusLabel("cancelled"));
+    // Neighbouring case for those two: the steps around them are untouched, so
+    // the outcome is a substitution and not a whole-strip takeover.
+    expect(captions("failed")[0]).toBe(jobStatusLabel("queued"));
+    expect(captions("cancelled")[2]).toBe(jobStatusLabel("review"));
+    // And the four words it used to invent are gone by name, so a revert is
+    // caught here too rather than only by the shape sweep.
+    const everyWord = (Object.keys(JOB_STATUS_META) as JobStatus[]).flatMap(captions);
+    for (const gone of ["Agent working", "Ready for review", "Run failed"]) {
+      expect(everyWord, `"${gone}" is back`).not.toContain(gone);
+    }
   });
 });
 

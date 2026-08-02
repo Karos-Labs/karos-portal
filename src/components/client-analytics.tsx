@@ -3,6 +3,7 @@ import { Card, CardTitle, StatCard, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
+import { assetsInClientState } from "@/lib/client-state-domain";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
@@ -87,8 +88,21 @@ export function ClientAnalyticsStats({
   /** Whose counter row this is — see the note above (A3). */
   viewerIsClient: boolean;
 }) {
-  const published = assets.filter((a) => a.status === "published").length;
-  const scheduled = assets.filter((a) => a.status === "scheduled").length;
+  // THE FOUR TILES COUNT THIS CLIENT'S CONTENT, so they count only states this
+  // client's content can be in. "Deliverables" was `assets.length` over the
+  // dashboard's library projection, which keeps drafts by design — so the tile
+  // published a count of the unapproved work their team was holding, as the one
+  // number a client's dashboard opens with.
+  //
+  // NARROWED HERE, not at the page that feeds it. `clients/[id]/page.tsx` builds
+  // one asset set and hands it to two different components — this counter row,
+  // lifted to the top of Overview, and <ClientAnalytics/> for the Performance
+  // tab — so a narrowing applied where the set is built fixes whichever of them
+  // the next edit does not move. Each component asks the same shared question
+  // instead. Staff are handed the set unchanged.
+  const counted = assetsInClientState("performance", assets, viewerIsClient);
+  const published = counted.filter((a) => a.status === "published").length;
+  const scheduled = counted.filter((a) => a.status === "scheduled").length;
   const activeChannels = integrations.filter((i) => integrationIsUsable(i));
   // Read inside the staff branch below rather than here: nothing derived from a
   // job may be in scope on the client path, so that the tile cannot be
@@ -108,7 +122,7 @@ export function ClientAnalyticsStats({
       <StatCard label="Published" value={published} />
       <StatCard label="Scheduled" value={scheduled} />
       <StatCard label="Channels" value={activeChannels.length} />
-      <StatCard label="Deliverables" value={assets.length} />
+      <StatCard label="Deliverables" value={counted.length} />
       {/* QA F99: a whole bordered panel was spent on one sentence about agent
           runs. It's a counter — it belongs in the counter row. QA F123: the
           sentence also read "20 agent runs · last 9h ago", which isn't one.
@@ -150,9 +164,17 @@ export function ClientAnalytics({
   const activeChannels = integrations.filter((i) => integrationIsUsable(i));
   const staleChannels = integrations.filter((i) => integrationNeedsReconnect(i));
 
-  // Content-by-status breakdown
+  // Content-by-status breakdown, over the states this client's content can
+  // actually be in. It used to be built straight off the incoming set, which for
+  // a client is the library projection — drafts included — so the chart drew a
+  // Draft row WITH ITS COUNT on the one tab that summarises everything, beside a
+  // Workspace and a calendar that both hide drafts on purpose (A4). Same helper
+  // as the tiles, so the bars and the totals above them cannot disagree about
+  // what counts; it also drops a status the union has never heard of, which
+  // `assetStatusLabel` would otherwise render as its raw stored value.
+  const charted = assetsInClientState("performance", assets, viewerIsClient);
   const byStatus = new Map<string, number>();
-  for (const a of assets) byStatus.set(a.status, (byStatus.get(a.status) ?? 0) + 1);
+  for (const a of charted) byStatus.set(a.status, (byStatus.get(a.status) ?? 0) + 1);
   const statusRows = [...byStatus.entries()].sort((a, b) => b[1] - a[1]);
   const maxCount = Math.max(1, ...statusRows.map(([, n]) => n));
 

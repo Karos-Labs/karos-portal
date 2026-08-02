@@ -14,6 +14,7 @@ import {
   clientLaunchPhase,
   type ClientLaunchPhase,
 } from "@/lib/client-agents";
+import { NO_FORMATS_RUNNING, NO_FORMATS_YET } from "@/lib/client-agent-format-copy";
 import {
   resetClientAgentLaunchAction,
   submitClientAgentLaunchAction,
@@ -354,10 +355,25 @@ function FailureNote({
   );
 }
 
+/**
+ * The live agent's formats, as chips.
+ *
+ * The empty line said "No template streams registered yet." — the INTERNAL name
+ * for the object, on a card a client reads, while the detail panel one component
+ * over called the same empty registry "no formats". Both sentences now come from
+ * `client-agent-format-copy`, and which one is said is decided by which set is
+ * actually empty: an agent whose formats are all paused or retired has formats,
+ * so telling the client it has none would be a second wrong statement in place
+ * of the first.
+ */
 function TemplateSummary({ agent }: { agent: ClientAgentCardRow }) {
   const active = agent.templates.filter((t) => t.status === "active");
   if (active.length === 0) {
-    return <p className="text-xs text-muted">No template streams registered yet.</p>;
+    return (
+      <p className="text-xs text-muted">
+        {agent.templates.length === 0 ? NO_FORMATS_YET : NO_FORMATS_RUNNING}
+      </p>
+    );
   }
   return (
     <div className="flex flex-wrap gap-1.5">

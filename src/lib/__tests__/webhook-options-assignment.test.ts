@@ -59,9 +59,23 @@ const DRAFTS_MD = [
   "",
 ].join("\n");
 
+/**
+ * The tenant OUR job record names — the only one any write here may reach.
+ * Bound once so the fixtures below and the isolation tests at the bottom cannot
+ * drift into agreeing with the payload by accident.
+ */
+const JOB_CLIENT = "c1";
+
+/**
+ * A tenant the job does NOT belong to, used only by the isolation tests at the
+ * bottom. Deliberately not a near-miss of `JOB_CLIENT`: the two ids have to be
+ * distinguishable at a glance in a failure message.
+ */
+const OTHER_TENANT = "c-not-this-jobs-client";
+
 const X_UMBRELLA = {
   id: "ca-x",
-  clientId: "c1",
+  clientId: JOB_CLIENT,
   customAgentId: "agent-x",
   displayName: "X Agent",
   launchState: "live",
@@ -74,7 +88,7 @@ const X_UMBRELLA = {
 function slot(dateKey: string, patch: Record<string, any> = {}): any {
   return {
     id: `ca-x__${dateKey}`,
-    clientId: "c1",
+    clientId: JOB_CLIENT,
     clientAgentId: "ca-x",
     dateKey,
     kind: "options",
@@ -95,7 +109,7 @@ function payload(overrides: Record<string, any> = {}) {
     job_id: "svc-1",
     status: "done",
     task_type: "custom",
-    client_id: "c1",
+    client_id: JOB_CLIENT,
     artifacts: [
       {
         name: "DRAFTS.md",
@@ -146,7 +160,7 @@ beforeEach(() => {
 
   (data.getJobByExternalServiceId as any).mockResolvedValue({
     id: "job-1",
-    clientId: "c1",
+    clientId: JOB_CLIENT,
     agentId: "agent-service",
     agentName: "X Agent",
     title: "X Agent · Weekly drafts",
@@ -169,7 +183,7 @@ beforeEach(() => {
   ]);
   (dataClientAgents.updateAgentSlot as any).mockResolvedValue(undefined);
   (data.listPlannedScheduledRuns as any).mockResolvedValue([
-    { id: "pr1", clientId: "c1", customAgentId: "agent-x", clientAgentId: "ca-x", cadence: "weekly", status: "active", weekdays: [0, 1, 2, 3, 4, 5, 6], hour: 9, minute: 0, timeZone: "UTC" },
+    { id: "pr1", clientId: JOB_CLIENT, customAgentId: "agent-x", clientAgentId: "ca-x", cadence: "weekly", status: "active", weekdays: [0, 1, 2, 3, 4, 5, 6], hour: 9, minute: 0, timeZone: "UTC" },
   ]);
 });
 
@@ -230,10 +244,42 @@ describe("webhook → daily options assignment (B1)", () => {
     expect(dataClientAgents.updateAgentSlot).not.toHaveBeenCalled();
   });
 
+  /**
+   * THE TENANT FENCE, and the reason it is asked with two DIFFERENT ids.
+   *
+   * This test used to post `client_id: "c1"` against a job whose clientId was
+   * already "c1", so both candidate sources spelled the same string and
+   * `toHaveBeenCalledWith({ clientId: "c1" })` could not tell which one the
+   * route had read. It passed on the fix and would have passed on the bug.
+   *
+   * The HMAC proves the SENDER, not the body: a wrong tenant in `client_id`
+   * (a service-side mix-up, a replayed body from another run, a leaked signing
+   * key) must still not steer a write, because our own job record is the thing
+   * that says whose run this is. So the payload names a tenant the job does
+   * not, and every assertion below is on the JOB's.
+   */
   it("looks umbrellas up by the JOB's client, never the payload's", async () => {
-    // A crafted payload naming another tenant must not reach their plan.
-    await post(payload({ client_id: "c1" }));
+    await post(payload({ client_id: OTHER_TENANT }));
 
-    expect(dataClientAgents.listClientAgents).toHaveBeenCalledWith({ clientId: "c1" });
+    expect(dataClientAgents.listClientAgents).toHaveBeenCalledWith({ clientId: JOB_CLIENT });
+    // Every call, not just one of them — `toHaveBeenCalledWith` is satisfied by
+    // a single matching call and would ignore a second one naming the payload's
+    // tenant. The lookup is what reaches another client's plan, so it is asked
+    // as "no call anywhere named anyone else".
+    const lookups = (dataClientAgents.listClientAgents as any).mock.calls.map(
+      (c: any[]) => c[0]?.clientId,
+    );
+    expect(lookups).toEqual([JOB_CLIENT]);
+  });
+
+  it("writes the deliverable to the JOB's client, never the payload's", async () => {
+    // The sibling half: the umbrella lookup above decides whose PLAN gets
+    // sliced, this decides whose LIBRARY the batch asset lands in — and the
+    // slot rows the assignment writes carry the asset id, so a deliverable
+    // filed under the wrong tenant would be reachable from the right one.
+    await post(payload({ client_id: OTHER_TENANT }));
+
+    expect((data.createAsset as any).mock.calls).toHaveLength(1);
+    expect((data.createAsset as any).mock.calls[0][0].clientId).toBe(JOB_CLIENT);
   });
 });

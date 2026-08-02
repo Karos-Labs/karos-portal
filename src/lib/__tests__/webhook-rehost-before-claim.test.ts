@@ -55,6 +55,9 @@ const logUsageMock = vi.fn();
 vi.mock("@/services/logger", () => ({ logger: { logUsage: logUsageMock } }));
 
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { reflowClientChain } from "@/lib/chain";
+import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
+import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
 
 /**
  * `isJobInFlight` is pure, and the route's pre-claim filter reads it. Automocked
@@ -431,6 +434,74 @@ describe("#45 — a redelivery of a settled job pays nothing", () => {
     expect(res.status).toBe(200);
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(storage.uploadBytes).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #159 — THE FALSE BRANCH OF THE CLAIM, DRIVEN ON ITS OWN.
+ *
+ * The concurrent pair below already reaches this branch — the loser's claim
+ * returns false — and pins three of the writes behind it at exactly one: the
+ * asset, the job record and the usage row. It says nothing about the other
+ * three, because it never asserts on them: the calendar reflow, the daily
+ * options assignment and the Task Map sync are not named there at all.
+ *
+ * So this pair drives ONE delivery whose claim comes back false — the shape a
+ * redelivery takes when it slips past the advisory status filter (a stale read,
+ * or a settled job whose status write has not landed yet) — and asks the
+ * question as "what did it write", not "how many times was it written".
+ */
+describe("#159 — a delivery that loses the claim writes nothing after it", () => {
+  it("answers already-processed and performs no post-claim write at all", async () => {
+    (data.claimExternalJobCompletion as any).mockResolvedValue(false);
+
+    const res = await post(payload());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      skipped: true,
+      reason: "Already processed",
+    });
+
+    // NON-VACUITY, and it is the load-bearing line: this delivery did the whole
+    // pre-claim phase (it re-hosted bytes) and REACHED the claim. Without it,
+    // every assertion below would also hold for a delivery the advisory status
+    // filter turned away hundreds of lines earlier, which is a different gate.
+    expect(storage.uploadBytes).toHaveBeenCalled();
+    expect(data.claimExternalJobCompletion).toHaveBeenCalledTimes(1);
+
+    // Every persisted side effect the claim is the gate on. Enumerated rather
+    // than sampled: the deliverable, the job record, the calendar date, the
+    // daily options slice, the board ticket and the cost row are six different
+    // writes, and a duplicate of any one of them is a client seeing the same
+    // thing twice.
+    expect(data.createAsset).not.toHaveBeenCalled();
+    expect(data.updateJob).not.toHaveBeenCalled();
+    expect(reflowClientChain).not.toHaveBeenCalled();
+    expect(syncOptionsFromBatchAsset).not.toHaveBeenCalled();
+    expect(syncTaskForJobOutcome).not.toHaveBeenCalled();
+    expect(autoCompleteTasksByTrigger).not.toHaveBeenCalled();
+    expect(logUsageMock).not.toHaveBeenCalled();
+  });
+
+  it("takes the claim BEFORE it creates the deliverable, not after", async () => {
+    // The ordering the branch above depends on. If asset creation ever moved
+    // above the claim, the test above would still pass — the loser would return
+    // early having already written the asset — and two deliveries of one run
+    // would put two copies of the same deliverable in a client's library and
+    // charge for both.
+    const res = await post(payload());
+    expect(res.status).toBe(200);
+
+    // Asserted as invocation order rather than as "which appears first in the
+    // source", and the counts are pinned first so a NEVER-CALLED mock cannot
+    // satisfy the comparison by leaving an undefined on one side of it.
+    expect(data.claimExternalJobCompletion).toHaveBeenCalledTimes(1);
+    expect(data.createAsset).toHaveBeenCalledTimes(1);
+    const claimedAt = (data.claimExternalJobCompletion as any).mock.invocationCallOrder[0];
+    const assetAt = (data.createAsset as any).mock.invocationCallOrder[0];
+    expect(claimedAt).toBeLessThan(assetAt);
   });
 });
 
