@@ -1414,6 +1414,43 @@ export async function getClientContextDocByTier(
   return snap.empty ? null : withId<ClientContextDoc>(snap.docs[0]);
 }
 
+/**
+ * Read one context doc, accepting an ORDERED list of tiers and returning the
+ * first of them that exists.
+ *
+ * The tier list is an argument rather than a fallback baked into
+ * `getClientContextDocByTier`, and that is the whole design: a cross-tier
+ * fallback is WRONG at most of the places a context doc is read, so it may only
+ * exist where a caller has asked for it by name.
+ *
+ *  - `src/lib/branding.ts` and `src/lib/actions/branding-actions.ts` read a doc
+ *    and then write back at `doc.tier` (`tier: brandingDoc?.tier ?? "internal"`).
+ *    A read that quietly resolved to the client tier would publish internal
+ *    branding copy into the client-facing document.
+ *  - `src/lib/actions/intel-actions.ts` refuses cross-tier fallback outright for
+ *    anything a CLIENT_USER can trigger, so internal analyst copy can never
+ *    reach a client through a model. Its two comments say so in those words.
+ *
+ * So: only a caller reading for CONTEXT — never to target a write — may name
+ * more than one tier, and it names which ones. An ALLOWLIST in preference
+ * order, not "try the other one": a tier absent from the list is never read,
+ * which is what keeps `internal-only` (client-guidelines, action-plan — the
+ * never-published tier) out of every caller that does not spell it.
+ *
+ * One parallel round trip, not a chain: the preference order decides which
+ * result wins, not which query runs.
+ */
+export async function getClientContextDocInTierOrder(
+  clientId: string,
+  docType: string,
+  tiers: readonly ContextDocTier[],
+): Promise<ClientContextDoc | null> {
+  const found = await Promise.all(
+    tiers.map((tier) => getClientContextDocByTier(clientId, docType, tier)),
+  );
+  return found.find((doc) => doc !== null) ?? null;
+}
+
 /** Create or overwrite one context document (keyed on clientId + docType + tier). */
 export async function upsertClientContextDoc(
   doc: Omit<ClientContextDoc, "id">,

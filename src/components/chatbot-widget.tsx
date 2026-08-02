@@ -206,6 +206,59 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
 ];
 
+/**
+ * The "View" link on a task the copilot just added — written as MARKDOWN,
+ * because an assistant turn is rendered through `renderSectionBody`, which
+ * escapes the text first and then formats it, and turns a link into an anchor
+ * only when the href is http(s), mailto, a fragment, or a genuinely same-origin
+ * path (`isSafeHref`).
+ *
+ * KEYED ON `?task=`, NOT `?owner=`, and that is a ruling rather than a
+ * shorthand. The board's two tabs are split by owner and are DISJOINT:
+ * `?owner=client` selects the client tab and everything else — a bare `/tasks`
+ * included — selects "karos", so a link that guesses lands the reader on a board
+ * that does not hold the card it just named. `?task=` makes the board resolve
+ * the tab itself (`ownerTab(inferOwner(linkedTask))`, tasks-board.tsx) and open
+ * the ticket with it, so neither the owner→tab mapping nor the owner inference
+ * for a task with no stored owner is copied here. `taskBoardHref` in
+ * client-home-overview.tsx reached the same answer against the same two rules;
+ * this is that answer applied to the copilot, not a second opinion.
+ *
+ * WHY THE COPILOT NEEDS THE LINK AND QuickAddTaskBar DOES NOT. F65 put the named
+ * announcement on both, and the two recover differently: the quick-add bar sits
+ * ON the board and moves it to the right tab through `onAdded`, while the
+ * copilot is a dock over whatever page the reader is on. Without this the reply
+ * named a card with no way to reach it — and the id needed to reach it was being
+ * fetched from the action and thrown away.
+ *
+ * Empty string when the action returned no id, so the sentence just ends.
+ */
+function taskLink(taskId: string | undefined): string {
+  return taskId ? ` [View](/tasks?task=${encodeURIComponent(taskId)})` : "";
+}
+
+/**
+ * What the transcript says after `/add-task`.
+ *
+ * Pure and exported so the sentence and its link can be asserted as text and as
+ * RENDERED markup — the two ways this can silently stop working are the id going
+ * missing from the sentence and `renderSectionBody` declining to make an anchor
+ * of it.
+ */
+export function addTaskReply(
+  result: Pick<
+    Awaited<ReturnType<typeof ingestCustomUserTaskAction>>,
+    "ok" | "title" | "taskId" | "error" | "duplicate"
+  >,
+): string {
+  if (!result.ok) {
+    return result.duplicate
+      ? (result.error ?? "That's already on your task board.")
+      : (result.error ?? "Couldn't add that task — try again.");
+  }
+  return `Added${result.title ? ` "${result.title}"` : ""} to your task board.${taskLink(result.taskId)}`;
+}
+
 /* ── Copilot hook ────────────────────────────────────────────────────── */
 
 function useCopilot(
@@ -445,11 +498,7 @@ function useCopilot(
 
       try {
         const result = await ingestCustomUserTaskAction(clientId, trimmed);
-        const reply = result.ok
-          ? `Added${result.title ? ` "${result.title}"` : ""} to your task board.`
-          : result.duplicate
-            ? (result.error ?? "That's already on your task board.")
-            : (result.error ?? "Couldn't add that task — try again.");
+        const reply = addTaskReply(result);
         setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: reply } : m)));
         if (result.ok) onTasksCreated();
       } catch {

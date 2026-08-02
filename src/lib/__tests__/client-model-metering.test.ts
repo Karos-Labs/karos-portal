@@ -100,7 +100,12 @@ describe("#28 — the X intake's Propose accounts button", () => {
   };
 
   beforeEach(() => {
-    vi.mocked(data.getClientContextDoc).mockResolvedValue({ content: "Buyers are ops leads." } as any);
+    // The ordered, allowlisted read (#59) — which tiers each actor may draw on
+    // is x-roster-context-tier.test.ts's subject; here it only has to yield
+    // context so these cases are about the charge and the refund.
+    vi.mocked(data.getClientContextDocInTierOrder).mockResolvedValue({
+      content: "Buyers are ops leads.",
+    } as any);
     vi.mocked(generateText).mockResolvedValue({ text: ROSTER } as any);
   });
 

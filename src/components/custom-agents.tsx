@@ -271,6 +271,17 @@ function AgentBlurb({ text, className }: { text: string; className?: string }) {
  *
  * kind and data move together — a kind with no payload would render an empty
  * pane, and a payload with no kind has no form to render it in.
+ *
+ * WHAT A CALLER OWES RunCustomAgentModal (#113). That dialog collects the intake
+ * IN PLACE when it is handed a `kind`, and cannot when it is not: without the
+ * payload it cannot tell which of the three agents it is looking at, so all it
+ * can offer is `label` and `href` — the name of the form and the way to it. A
+ * surface that mounts the run dialog for a state with `ready: false` and NO
+ * `kind` should therefore refuse before opening it, which is what all three
+ * mounts do today (the library disables Run, StaffAgentControls paints "Run now
+ * needs the {label}" beside the agent's own href, and LegacyAgentPanel disables
+ * the run on `evaluateLegacyRunGate`'s `setup_missing` rung and links the form).
+ * That is why the dialog's own href gate is a backstop rather than a route.
  */
 export type AgentSetupState = {
   ready: boolean;
@@ -1799,15 +1810,35 @@ export function RunCustomAgentModal({
   // re-derives readiness from the agent key. When the page DID prefetch the
   // form (`intake`), the pane below collects it in place instead — a link out
   // would throw away the run the reader was setting up (ruling 7).
+  //
+  // IT NAMES THE FORM AND NOTHING ELSE (#113). It used to describe the shape of
+  // the intake — "the company page, a seat per person, and the ongoing drops" —
+  // which is the X and LinkedIn shape and wrong for the third agent it serves:
+  // Reddit's intake is one account plus how mentions are handled (INTAKE_ASKS
+  // holds all three, per kind). This branch cannot use that table, and the
+  // reason is its own condition: `intake` is null exactly when `setup.kind` is
+  // absent, so the one thing it does not know is WHICH agent it is looking at.
+  // `label` and `href` it does know — the caller resolved both per agent — so
+  // the copy is built from those and makes no claim about the form's contents.
+  //
+  // A BACKSTOP, NOT A ROUTE, and worth stating because it reads like a route.
+  // No mount can reach it today: the agent library passes no `setup`;
+  // StaffAgentControls is staff-only and the detail route prefetches the panes
+  // for staff, so its `setup` always carries a kind; and LegacyAgentPanel — the
+  // one mount a CLIENT reaches — is handed `evaluateLegacyRunGate`'s verdict,
+  // which refuses on `setup_missing` and disables "Create a new post" with the
+  // reason painted and the form linked. Making this reachable would mean
+  // loosening that gate, which is correct as it stands, so it stays a backstop:
+  // if a future mount does skip the gate, the reader meets a true sentence and a
+  // way out rather than the submit core's refusal after writing a brief.
   if (setup && !setup.ready && !intake) {
     return (
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
           <p className="text-sm text-foreground">Set up the {setup.label} first.</p>
           <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the {setup.label} page: the company page, a seat per
-            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
-            will not run without it.
+            This agent drafts from what is saved on the {setup.label} page, and it will not
+            run until that is there. It takes a few minutes to fill in, once.
           </p>
           <div className="flex items-center gap-2 pt-1">
             <a

@@ -25,7 +25,7 @@ import {
   createClientSeat,
   getAgentIntake,
   getClient,
-  getClientContextDoc,
+  getClientContextDocInTierOrder,
   getClientSeat,
   listClientSeats,
   upsertAgentIntake,
@@ -33,6 +33,7 @@ import {
 import { requireClientAccess } from "./_shared";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { withClientModelCharge } from "@/lib/client-model-charge";
+import type { ContextDocTier } from "@/lib/types";
 
 const MAX_TEXT = 2_000;
 const MAX_NAME = 120;
@@ -258,12 +259,39 @@ export async function proposeXRosterAction(input: {
   const client = await getClient(input.clientId);
   if (!client) return { error: "Client not found." };
 
-  // Client tier: this suggestion runs for client users too, so it must read the
-  // published copy — the one a correction updates and the one that carries no
-  // internal analyst notes.
+  // WHICH TIERS THIS ACTOR'S CONTEXT MAY COME FROM.
+  //
+  // A CLIENT_USER gets the published copy or nothing. The model's one-line
+  // reasons render on their screen (x-agent-intake.tsx paints `why` under the
+  // field), and the internal copy is the uncondensed analyst version — the
+  // condensation pass exists to strip internal methodology notes and
+  // competitor-derogatory labels out of it (src/lib/intel/condense.ts). Feeding
+  // it to a model whose output a client reads is the exact thing
+  // intel-actions.ts refuses in two places, in those words.
+  //
+  // STAFF may also read the internal copy, and that is what closes the defect:
+  // a client whose workspace was imported from the lab repo has internal-tier
+  // documents ONLY (scripts/import-lab-client.ts writes tier "internal" and
+  // nothing else), so an exact client-tier read returned nothing and staff were
+  // told to "finish onboarding" for a client whose onboarding is finished.
+  // Staff are already entitled to that copy and are the only reader of their own
+  // proposal, so for them it is a legitimate second source.
+  //
+  // ALLOWLIST, so it fails closed: the staff branch is the one that has to be
+  // named. Any role that is not one of the two staff roles — today only
+  // CLIENT_USER, and whatever is added tomorrow — falls to the client tier
+  // alone. `impersonatedBy` is written out rather than left implicit in the
+  // role: an admin in "View as Client" reaches this as a CLIENT_USER, and
+  // impersonation exists to see what the client sees, not to widen what a
+  // client's own screen is built from (the same call isStaffCopilotActor makes).
+  // "internal-only" (client-guidelines, action-plan) is in neither list and so
+  // is unreadable here for anybody.
+  const staffActor =
+    !user.impersonatedBy && (user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE");
+  const contextTiers: ContextDocTier[] = staffActor ? ["client", "internal"] : ["client"];
   const [audience, strategy] = await Promise.all([
-    getClientContextDoc(input.clientId, "target-audience", "client"),
-    getClientContextDoc(input.clientId, "market-strategy", "client"),
+    getClientContextDocInTierOrder(input.clientId, "target-audience", contextTiers),
+    getClientContextDocInTierOrder(input.clientId, "market-strategy", contextTiers),
   ]);
   const context = [
     `Company: ${client.name}${client.industry ? ` (${client.industry})` : ""}${client.website ? ` — ${client.website}` : ""}`,
@@ -274,7 +302,15 @@ export async function proposeXRosterAction(input: {
     .filter(Boolean)
     .join("\n\n");
   if (!audience?.content && !strategy?.content && !client.brief) {
-    return { error: "Not enough client context yet — finish onboarding first, or type accounts manually." };
+    // NOT "finish onboarding first". That named a remedy that is wrong for the
+    // case this refusal still covers: a client whose documents were imported at
+    // internal tier only has finished onboarding, and what is missing is the
+    // published copy this reader is allowed to draw on. The line now names work
+    // that actually unblocks it, and leaves the manual route where it was.
+    return {
+      error:
+        "Not enough about your brand on file yet to suggest accounts — ask your Karos team to finish your brand documents, or type accounts manually.",
+    };
   }
 
   const forWhom = input.seatName

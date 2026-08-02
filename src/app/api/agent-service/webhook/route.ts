@@ -20,7 +20,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { ExternalJobArtifact, JobStatus } from "@/lib/types";
+import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -218,9 +218,40 @@ export async function POST(req: NextRequest) {
     }
   }
   if (!job || !job.external) {
-    // Unknown job — 404 so the service's delivery queue retries: the write
-    // race window closes long before the retry schedule runs out.
-    return NextResponse.json({ error: "No matching platform job" }, { status: 404 });
+    // No job matched. This wants a RETRY — the submission race the fallback
+    // above exists for is exactly the window a second attempt closes — and it
+    // used to ask for one with a 404 and a comment saying so. The sender does
+    // not read comments: `deliverWebhook` classifies EVERY 4xx as "rejected"
+    // (agent-service/src/webhooks/deliver.ts), and the webhooks worker returns
+    // on "rejected" instead of throwing (agent-service/src/queue/webhooks.ts),
+    // so BullMQ never re-queues it. One attempt, then the delivery is gone.
+    //
+    // Gone is unrecoverable, not merely late: `reconcileOneJob` deliberately
+    // leaves a job the service reports as `done` alone so this webhook's
+    // redelivery can attach the deliverables (reconcile-job.ts). With no
+    // redelivery the run sits queued/running for ever, no asset is written, and
+    // a client-charged run is never refunded.
+    //
+    // So this joins the two conditions below it at 503, the code the sender
+    // does retry, with their wording. ONE rule holds the seam — 5xx retryable,
+    // 4xx permanent — instead of an exemption list inside the sender for the
+    // 4xx codes that secretly meant "try again". The receiver's remaining 4xx
+    // (400 malformed, 401 bad signature) are permanent for real.
+    //
+    // THE COST, STATED: a delivery that can never match — a deleted job, a
+    // payload from another environment, a client or serviceJobId mismatch — is
+    // now retried across the queue's full ~42-minute schedule instead of once.
+    // Bounded, and cheap: this check sits above every expensive phase, so an
+    // attempt costs one or two Firestore reads and no re-host.
+    console.error(
+      `[webhook] no platform job matched service job ${payload.job_id} ` +
+        `(client ${payload.client_id}, platform_job_id ${payload.metadata?.platform_job_id ?? "absent"}). ` +
+        `Delivery failed for retry.`,
+    );
+    return NextResponse.json(
+      { error: "No matching platform job — retry delivery" },
+      { status: 503 },
+    );
   }
 
   // Advisory pre-filter — an OPTIMISATION, not a second gate. The claim below
@@ -326,9 +357,14 @@ export async function POST(req: NextRequest) {
   // to touch a job the service reports as done. Fetching first means a kill
   // here costs a retry instead of a deliverable.
   //
-  // `events` is assembled from here on but persisted only after the claim, so a
-  // delivery that loses the race leaves no trace.
-  const events = [...job.events];
+  // `events` holds ONLY the lines THIS delivery adds. It is assembled from here
+  // on and persisted only after the claim, so a delivery that loses the race
+  // leaves no trace — and it is deliberately NOT seeded from `job.events`
+  // (finding #54): that array was read before the re-host, the re-host can take
+  // most of a minute, and the job doc is not this handler's alone. See the
+  // merge just above `updateJob` for what it is concatenated onto and why the
+  // base is re-read there rather than reused from here.
+  const events: JobRunEvent[] = [];
   const artifacts: ExternalJobArtifact[] = [];
   // ── The two lists the asset is built from (findings #47, #50, #51) ──
   // `artifacts` is the JOB's record: every entry the manifest declared, in
@@ -589,7 +625,13 @@ export async function POST(req: NextRequest) {
   }
 
   const now = Date.now();
-  const assetIds: string[] = [...job.assetIds];
+  // Only the id THIS delivery creates, for the same reason `events` above holds
+  // only this delivery's lines: both are merged onto a freshly-read base at the
+  // write below. Unlike `events`, no second writer appends here today — job
+  // creation seeds it empty and this handler is the only thing that ever adds
+  // to it — so this half is symmetry with the events merge, not a loss being
+  // repaired.
+  const newAssetIds: string[] = [];
   let createdAssetId: string | null = null;
 
   if (payload.status === "done") {
@@ -684,7 +726,7 @@ export async function POST(req: NextRequest) {
           createdAt: now,
           updatedAt: now,
         });
-        assetIds.push(assetId);
+        newAssetIds.push(assetId);
         createdAssetId = assetId;
         // Auto-assign the new post its one-per-day chain date. Best-effort: the
         // job is already claimed (single delivery), so a reflow failure must not
@@ -841,6 +883,37 @@ export async function POST(req: NextRequest) {
   const inputTokens = Object.values(payload.usage?.models ?? {}).reduce((s, m) => s + m.inputTokens, 0);
   const outputTokens = Object.values(payload.usage?.models ?? {}).reduce((s, m) => s + m.outputTokens, 0);
 
+  // ── The base the two arrays are merged onto (finding #54) ──
+  // `events` and `assetIds` are written as WHOLE ARRAYS, so whatever base they
+  // are built on is what survives — and `job` was read at the top of the
+  // handler, before a re-host that is budgeted to run for most of a minute.
+  // The job doc is not this handler's alone for that minute:
+  // `requestJobCancellation` (src/lib/actions/external-job-actions.ts) appends
+  // "Cancellation requested" with the same read-modify-write idiom and takes no
+  // claim, so a stop a staff member asked for mid-re-host was being erased by
+  // the write below. Re-reading here, as late as it can be read, shrinks the
+  // window that append can be lost in from the whole re-host to this one write.
+  //
+  // NOT re-read from the claim's own transaction snapshot, which was the other
+  // candidate: the claim happens before the asset write, the chain reflow and
+  // the options sync, so its snapshot is older than this one.
+  //
+  // WHAT THIS IS NOT: a transaction. An append landing between this read and
+  // the update is still overwritten. Closing that needs the merge to happen
+  // inside a transaction on the job doc, which is `src/lib/data.ts`'s to own.
+  //
+  // A failed read falls back to the array we already hold: the pre-re-host copy
+  // is stale but real, and dropping this delivery's own lines to punish a read
+  // failure would lose more than it protects.
+  let freshJob: Job | null = null;
+  try {
+    freshJob = await getJob(job.id);
+  } catch (e) {
+    console.error("[webhook] pre-write job re-read failed, merging onto the pre-re-host copy:", e);
+  }
+  const mergedEvents = [...(freshJob?.events ?? job.events), ...events];
+  const mergedAssetIds = [...(freshJob?.assetIds ?? job.assetIds), ...newAssetIds];
+
   // Best-effort like the blocks below it: the job is already claimed (single
   // delivery), so redelivery on a throw here would just be skipped as
   // "already processed" and never retry this write. Catching and continuing
@@ -850,8 +923,8 @@ export async function POST(req: NextRequest) {
   try {
     await updateJob(job.id, {
       status,
-      assetIds,
-      events,
+      assetIds: mergedAssetIds,
+      events: mergedEvents,
       error: payload.status === "done" ? null : (payload.error ?? payload.status),
       external: {
         ...job.external,
