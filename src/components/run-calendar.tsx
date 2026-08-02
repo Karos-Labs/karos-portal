@@ -62,7 +62,12 @@ export interface CalendarRun {
   /**
    * IANA zone this schedule's wall clock was set in. Present on scheduled runs
    * only: a past run is an instant, a schedule is an intent, and the intent is
-   * what has to be printed and bucketed consistently on server and browser.
+   * a wall clock that means nothing without its zone.
+   *
+   * PRINTED, NOT BUCKETED. It pins `timeStr` so the hour shown is the hour the
+   * schedule was set to, and `zoneLabel` names the clock beside it. Which day
+   * CELL the chip lands in is the viewer's question, not the schedule's — see
+   * `dayKey`.
    */
   timeZone?: string;
   /** Short zone label ("GMT-3") printed next to a schedule's wall clock. */
@@ -158,25 +163,38 @@ const MONTH_NAMES = [
 ];
 
 /**
- * Which day cell an entry belongs in.
+ * Which day cell an entry belongs in — ONE CLOCK FOR THE WHOLE GRID.
  *
- * With `timeZone` the day is resolved in that zone — the same answer on the
- * server render and in the browser, whatever either runtime's own zone is. A
- * scheduled run passes its stored zone (the day the person actually picked);
- * past runs and published posts are instants and stay in the viewer's day.
+ * The grid is drawn from the viewer's own `Date`: the month it opens on, the
+ * day numbers in the cells and the "today" ring all come from there, and a cell
+ * key is a viewer-local calendar date. So an entry's cell has to be decided on
+ * that same clock, or it lands in a cell whose number contradicts it.
+ *
+ * IT DID NOT USED TO BE. This took an optional `timeZone` and a scheduled run
+ * passed its own stored zone, so run chips were bucketed on the schedule's
+ * calendar while post chips, the day numbering and "today" were on the
+ * viewer's — three sources for one grid. Whenever the two zones put an instant
+ * on different dates (a Tokyo morning slot seen from São Paulo; a São Paulo
+ * evening slot seen from Tokyo) the chip for a run sat one cell away from the
+ * posts that run produces and from the day it will actually reach the viewer.
+ * The zone it was pinned to is not the viewer's either: a schedule's zone is
+ * the browser zone of whoever CREATED it, so on a staff-created schedule it is
+ * a staff member's clock, shown to a client.
+ *
+ * The schedule's own zone is still what gets PRINTED — `timeStr(run.at,
+ * run.timeZone)` plus the `zoneLabel` suffix — because the wall clock is the
+ * intent and the intent is worth showing. Cell answers "which of your days";
+ * label answers "on whose clock".
+ *
+ * RESIDUAL, stated rather than dodged: `new Date()` is the drawing runtime's,
+ * so a server render (UTC in production) and the browser can disagree about
+ * every one of the three at once, for the few hours a day their dates differ.
+ * That was already true of the day numbers, the "today" ring and every post
+ * chip; pinning run chips alone to the schedule's zone never removed it, it
+ * only made the run chip disagree with the cell it was sitting in. Everything
+ * now shifts together, which is the property that makes the grid readable.
  */
-function dayKey(at: number, timeZone?: string): string {
-  if (timeZone) {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-    }).formatToParts(new Date(at));
-    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
-    // Month is zero-based here to match the grid's `${year}-${month}-${day}` key.
-    return `${get("year")}-${get("month") - 1}-${get("day")}`;
-  }
+function dayKey(at: number): string {
   const d = new Date(at);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
@@ -1003,7 +1021,7 @@ function PostCard({
         {post.textPreview && <p className="mt-1 line-clamp-2 text-[11px] text-muted-2">{post.textPreview}</p>}
         {/* Day-card attestation: the client posts by hand, then says so here —
             the same single transition the detail modal offers (QA F149). */}
-        {asset && <MarkPostedRow asset={asset} compact />}
+        {asset && <MarkPostedRow asset={asset} variant="chip" />}
       </div>
     </div>
   );
@@ -1103,7 +1121,7 @@ export function RunCalendar({
   const runsByDay = useMemo(() => {
     const m = new Map<string, CalendarRun[]>();
     for (const r of visibleRuns) {
-      const k = dayKey(r.at, r.timeZone);
+      const k = dayKey(r.at);
       (m.get(k) ?? m.set(k, []).get(k)!).push(r);
     }
     return m;

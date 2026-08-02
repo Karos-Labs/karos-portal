@@ -21,10 +21,10 @@ import {
   recommendAssetScheduleAction,
   unscheduleAssetAction,
   publishAssetNowAction,
-  markAssetPostedAction,
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
+import { MarkPostedRow } from "@/components/mark-posted-row";
 import { AgentMark, SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { parseXDrafts } from "@/lib/x-drafts";
@@ -487,22 +487,19 @@ export function AssetCard({
   // isAssetPublishable — the shared rule the modal and publishAssetNowAction ask
   // too. This gate used to be "not already published" and nothing else, so the
   // one control that really posts to a live account was offered on unapproved
-  // drafts and on calendar-only placeholders, both of which canMarkPosted just
-  // below has always refused for the weaker by-hand attestation.
+  // drafts and on calendar-only placeholders.
   const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
     (connectedPlatforms ?? []).includes(p),
   );
   const canPublishNow =
     canApprove && compatibleConnected.length > 0 && isAssetPublishable(asset);
 
-  // Marking a by-hand post live needs no integration and no staff role — it's a
-  // statement about what the user already did, and for a client posting from
-  // their phone it's the ONLY thing that can move the asset off "approved".
-  // Drafts are excluded (nothing's been approved to post yet) as are
-  // placeholders (roadmap entries that were never meant to go out).
-  const canMarkPosted =
-    (asset.status === "approved" || asset.status === "scheduled" || asset.status === "delivered") &&
-    asset.publishMode !== "placeholder";
+  // "Mark as posted" is NOT decided here. This card used to carry its own
+  // eligibility test, its own handler and its own copy of the error text — and
+  // that test was missing the future-dated clause, so on the staff Assets list
+  // and the job detail page an upcoming post showed an enabled button that
+  // failed on click. It renders MarkPostedRow instead; the rule is
+  // lib/mark-posted, asked there and again by the server action.
 
   // Notes have no scheduling dimension; everything else can land on the calendar.
   const calendarEligible = asset.type !== "note";
@@ -615,22 +612,6 @@ export function AssetCard({
       router.refresh();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Approval failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /** Record a by-hand post. See markAssetPostedAction — this is the only route
-   *  to "published" that doesn't go through a platform integration. */
-  async function handleMarkPosted() {
-    setBusy(true);
-    setActionError(null);
-    try {
-      const result = await markAssetPostedAction(asset.id);
-      if (!result.ok) setActionError(result.error);
-      else router.refresh();
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Couldn't mark this as posted");
     } finally {
       setBusy(false);
     }
@@ -1074,18 +1055,9 @@ export function AssetCard({
                   Publish Now
                 </Button>
               )}
-              {canMarkPosted && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleMarkPosted}
-                  loading={busy}
-                  title="You posted this yourself — mark it live so the calendar and status reflect it"
-                >
-                  <Icon name="CheckCheck" className="h-3.5 w-3.5" />
-                  Mark as posted
-                </Button>
-              )}
+              {/* Renders itself, or nothing — see the note beside canPublishNow. */}
+              <MarkPostedRow asset={asset} variant="button" />
+
               {canApprove && asset.status === "draft" && !approving && (
                 <div className="flex items-center gap-2">
                   <Button

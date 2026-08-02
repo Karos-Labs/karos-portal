@@ -50,7 +50,48 @@ function offsetMsAt(timezone: string, atUtcMs: number): number {
   return asUtc - atUtcMs;
 }
 
-/** UTC epoch millis for a wall-clock (Y/M/D h:m) interpreted in `timezone`. */
+/**
+ * UTC epoch millis for a wall-clock (Y/M/D h:m) interpreted in `timezone`.
+ *
+ * ── THE RULE, one sentence: the EARLIEST instant at which `timezone` shows the
+ * requested wall clock; and when it never shows it, the requested time shifted
+ * later by the length of the gap. ──
+ *
+ * Most days that is one instant and there is nothing to decide. Twice a year
+ * there is, and the two cases pull opposite ways:
+ *
+ * AMBIGUOUS (fall back). 01:30 America/New_York happens twice on the day the
+ * clocks go back. "Earliest" picks the first one, so a daily schedule fires
+ * once, at the earlier of the two, and never skips the hour.
+ *
+ * NONEXISTENT (spring forward). 02:30 America/New_York does not happen at all
+ * on the day the clocks go forward. There is no "earliest instant showing it",
+ * so the intent is shifted later by the gap: 02:30 becomes 03:30. Later, never
+ * earlier — a post that goes out an hour EARLY is out at a time the client did
+ * not pick and cannot take back, while an hour late is the same day's post at
+ * the same distance past the transition. This also matches what the rest of the
+ * ecosystem does with a nonexistent wall clock (Temporal's default
+ * disambiguation, java.time's ZonedDateTime.of, RFC 5545), so nobody has to
+ * learn a rule specific to this product.
+ *
+ * WHAT THIS REPLACES, because the shape is instructive. The old body measured
+ * the offset at the naive instant and re-measured at the corrected one. Which
+ * side of a transition that first sample lands on depends on the SIGN of the
+ * zone's offset, so the two DST cases came out differently in the two
+ * hemispheres of the map: west of UTC a spring-forward 02:30 resolved to
+ * 01:30 — BEFORE the gap, an hour early, the direction that costs a client a
+ * post at the wrong time — while east of UTC the same input already shifted
+ * forward correctly; and the fall-back case picked the earlier occurrence west
+ * of UTC and the later one east of it, though the comment claimed "the earlier
+ * occurrence" flatly. Sampling on both sides of the wall time instead of once
+ * near it is what makes the answer independent of the zone's sign.
+ *
+ * The three-line residual: this returns an instant, and `computeNextRunAt` /
+ * `computeNextRun` pick the DAY. A gap shift can therefore carry a wall clock
+ * over midnight into the following day in a zone whose transition is at
+ * midnight (a 23:30 slot becoming 00:30) — one fire, on the next day, once in
+ * the years such a transition falls on a scheduled day.
+ */
 export function zonedWallToUtc(
   y: number,
   mo: number,
@@ -60,14 +101,25 @@ export function zonedWallToUtc(
   timezone: string,
 ): number {
   const naiveUtc = Date.UTC(y, mo - 1, d, hour, minute, 0);
-  // Two passes converge even across a DST boundary: the first offset is an
-  // approximation at the naive instant, the second re-measures at the corrected
-  // instant and wins when the two straddle a transition.
-  const off1 = offsetMsAt(timezone, naiveUtc);
-  let utc = naiveUtc - off1;
-  const off2 = offsetMsAt(timezone, utc);
-  if (off2 !== off1) utc = naiveUtc - off2;
-  return utc;
+  // The two offsets that can be in force at this wall clock: the one a day
+  // before it and the one a day after. Sampling BOTH sides is the point — a
+  // single sample near the target lands on whichever side the zone's offset
+  // sign happens to put it on.
+  const offBefore = offsetMsAt(timezone, naiveUtc - DAY_MS);
+  const offAfter = offsetMsAt(timezone, naiveUtc + DAY_MS);
+  const candBefore = naiveUtc - offBefore;
+  const candAfter = naiveUtc - offAfter;
+  if (offBefore === offAfter) return candBefore; // no transition in range
+
+  // A candidate is real only if the zone actually SHOWS the requested wall
+  // clock at it: local(t) === requested ⟺ offset(t) === naiveUtc - t.
+  const shows = (t: number) => offsetMsAt(timezone, t) === naiveUtc - t;
+  const real = [candBefore, candAfter].filter(shows);
+  if (real.length > 0) return Math.min(...real); // ambiguous → earliest occurrence
+  // Neither is real: the wall clock is inside a gap. The two candidates are the
+  // same instant read with the two offsets, so they are exactly one gap apart —
+  // the later one IS "shifted forward by the gap".
+  return Math.max(candBefore, candAfter);
 }
 
 /** Weekday (0=Sun..6=Sat) of a plain calendar date — timezone-independent as a label. */

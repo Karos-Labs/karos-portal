@@ -11,29 +11,31 @@
  * never pick up a chain-planned draft.
  *
  * CLIENT-SAFE: no firebase-admin, no data.ts. May be imported by client
- * components, server actions, and scripts alike. All day math is server-local
- * (matches scheduling.ts and the staff datetime-local form). Timestamps are
- * epoch millis.
+ * components, server actions, and scripts alike. All day math is runtime-local
+ * and comes from scheduling.ts — see the re-export below. Timestamps are epoch
+ * millis.
  */
 
 import type { Asset, AssetType, ManagedTaskType } from "@/lib/types";
 import { MANAGED_PRODUCTS, getManagedProduct } from "@/lib/agent-service/products";
-import { chainAllowsDay } from "@/lib/scheduling";
+import { chainAllowsDay, startOfDayMs } from "@/lib/scheduling";
 
 /* ────────────────────────── day / slot math ────────────────────────── */
 
-/** Hour of day (server-local) at which chain-assigned posts are slotted. */
+/**
+ * The local-day primitives, RE-EXPORTED, not restated.
+ *
+ * This file used to carry its own `sameLocalDay` beside scheduling.ts's — two
+ * exported functions, identical semantics, different bodies, and only one of
+ * them with a production caller. Both import paths stay live (this module is
+ * where the chain's callers already look for day math), but there is one body,
+ * in scheduling.ts, and its docstring is where the runtime-timezone cost is
+ * written down.
+ */
+export { startOfDayMs, sameLocalDay } from "@/lib/scheduling";
+
+/** Hour of day (runtime-local) at which chain-assigned posts are slotted. */
 export const CHAIN_SLOT_HOUR = 11;
-
-/** Server-local midnight of the day containing `t`. */
-export function startOfDayMs(t: number): number {
-  return new Date(t).setHours(0, 0, 0, 0);
-}
-
-/** True when both timestamps fall on the same server-local calendar day. */
-export function sameLocalDay(a: number, b: number): boolean {
-  return startOfDayMs(a) === startOfDayMs(b);
-}
 
 /** The chain publication slot within a day: local midnight + CHAIN_SLOT_HOUR. */
 export function chainSlotForDay(dayStartMs: number): number {
@@ -358,8 +360,15 @@ export function blockingPredecessor(candidate: Asset, assets: Asset[]): Asset | 
 
 /**
  * Whether a client may see this asset's actual content. Locked = future-dated:
- * the asset unlocks at server-local midnight of its scheduledAt day. Published
- * and undated (legacy) assets are always visible.
+ * the asset unlocks at midnight of its scheduledAt day. Published and undated
+ * (legacy) assets are always visible.
+ *
+ * WHOSE MIDNIGHT: `startOfDayMs`'s, i.e. the calling runtime's own zone. Every
+ * caller that decides what CROSSES to a browser runs on the server, so the
+ * boundary a client experiences is the server's. One caller runs on both sides
+ * — `markPostedBlock`, which the attestation control asks before it renders and
+ * the server action asks before it writes — and inside the offset between the
+ * two clocks they can disagree; the server's answer is the one that counts.
  */
 export function isAssetUnlockedForClient(
   a: Pick<Asset, "status" | "scheduledAt" | "publishedAt">,

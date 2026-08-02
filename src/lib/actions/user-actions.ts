@@ -16,9 +16,9 @@ import {
   stopImpersonation,
 } from "@/lib/auth";
 import { adminAuth } from "@/lib/firebase/admin";
-import { sendEmail, emailShell } from "@/lib/email";
+import { sendEmail, emailShell, html } from "@/lib/email";
 import type { AppUser, Role } from "@/lib/types";
-import { requireAdmin } from "./_shared";
+import { ownAccountSession, requireAdmin } from "./_shared";
 
 /** Where a stuck signup should write. Same fallback as sendSupportEmailAction. */
 const SUPPORT_EMAIL = process.env.ADMIN_EMAIL ?? "hello@karoslabs.com";
@@ -40,10 +40,14 @@ async function notifyRegistrationDecision(opts: {
   approved: boolean;
 }) {
   const heading = opts.approved ? "You're in" : "About your Karos Labs request";
+  // `html` rather than a bare template literal: `emailShell` now takes markup
+  // only from the tag, which is what keeps an interpolated value from reaching
+  // a client's mail unescaped. Both values here are ours (env-derived), so
+  // nothing changes about what these two mails render.
   const body = opts.approved
-    ? `<p style="margin:0 0 14px;">Your Karos Labs workspace is ready. Sign in to pick up where you left off.</p>
+    ? html`<p style="margin:0 0 14px;">Your Karos Labs workspace is ready. Sign in to pick up where you left off.</p>
        <p style="margin:0;"><a href="${signInUrl()}" style="color:#FF6B2C;font-weight:600;text-decoration:none;">Sign in to Karos Labs &#8250;</a></p>`
-    : `<p style="margin:0 0 14px;">We weren't able to approve access for this address at the moment.</p>
+    : html`<p style="margin:0 0 14px;">We weren't able to approve access for this address at the moment.</p>
        <p style="margin:0;">If you think this is a mistake, reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:#FF6B2C;text-decoration:none;">${SUPPORT_EMAIL}</a> and we'll take another look.</p>`;
 
   const result = await sendEmail({
@@ -225,10 +229,19 @@ export async function stopImpersonationAction() {
   redirect("/team");
 }
 
-/** Update the current user's display name (and optional phone) in Firestore + Firebase Auth. */
+/**
+ * Update the current user's display name (and optional phone) in Firestore +
+ * Firebase Auth.
+ *
+ * `ownAccountSession` rather than `getCurrentUser`: under "View as Client" the
+ * session's subject is the CLIENT, so this rewrote their display name and phone
+ * — and mirrored the name onto their Firebase Auth identity — with no marker on
+ * the write and no activity row. See the note on IMPERSONATED_SELF_WRITE_MESSAGE.
+ */
 export async function updateUserProfileAction(name: string, phone?: string): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Name cannot be empty.");
   if (trimmed.length > 100) throw new Error("Name is too long (max 100 characters).");
@@ -247,8 +260,15 @@ export async function updatePasswordAction(
   currentPassword: string,
   newPassword: string,
 ): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
+  // Through the same gate as its siblings, and NOT because this one was
+  // exploitable: the verification round trip below signs in as the SUBJECT's
+  // email, which an impersonating admin cannot pass without the client's
+  // current password. That is an accident of the verification step rather than
+  // a decision, and it is the only thing standing between "View as Client" and
+  // taking over the account. Stated here so the accident stops being the guard.
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
   if (newPassword.length < 6) throw new Error("New password must be at least 6 characters.");
 
   const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;

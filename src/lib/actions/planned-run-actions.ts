@@ -12,7 +12,6 @@ import {
   updatePlannedScheduledRun,
 } from "@/lib/data";
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
-import { canViewClient } from "@/lib/client-visibility";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import {
   computeNextRun,
@@ -23,7 +22,13 @@ import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { unfireableScheduleReason } from "@/lib/jobs/schedule-gate";
 import type { PlannedRunCadence } from "@/lib/types";
-import { logActivity, requireClientAccess, requireStaff } from "./_shared";
+import {
+  CLIENT_NOT_FOUND_MESSAGE,
+  clientAccessRefusal,
+  logActivity,
+  requireClientAccess,
+  requireStaff,
+} from "./_shared";
 
 const MAX_PROMPT_CHARS = 4_000;
 
@@ -70,25 +75,36 @@ function resolveTimeZone(requested: string | undefined): string {
 }
 
 /**
- * Staff can act on a client only if admin, or an employee assigned to it.
+ * WHICH CLIENT'S SCHEDULES A SESSION MAY TOUCH — for all four actions in this
+ * file, which is the point.
  *
- * Asks `canViewClient` rather than re-reading `assignedEmployeeIds`, which is
- * what this did: the assignment relationship is recorded on TWO documents (see
- * canViewClient) and a site that reads one of them fences out every employee
- * assigned through the other. That is exactly the drift the shared predicate
- * exists to prevent, and this was the site still drifting.
+ * This file enforced TWO rules. The create path resolved the client and refused
+ * an unassigned employee here; the other three asked `requireClientAccess` or a
+ * bare `requireStaff`, and both of those answer a ROLE question and pass any
+ * staff member for any client. So the same employee who was told "You are not
+ * assigned to this client." when creating a schedule could set that client's
+ * pace, pause, retire or delete their schedules — on a surface they are
+ * `notFound()`ed out of at `/clients/[id]` and refused by every
+ * `/api/clients/[id]` route.
  *
- * The role test stays where it is — `requireStaff` throws for a CLIENT_USER
- * before the predicate is reached, so the "own client" arm of canViewClient
- * cannot let one in here.
+ * The rule itself moved to `clientAccessRefusal` in _shared.ts, beside the other
+ * authorizers, because it is not a fact about scheduling: it is the actions
+ * layer's half of the fence the pages and the API routes already carry, and the
+ * next action to need it should find it there rather than copy this.
+ *
+ * The ROLE test stays with each caller, because it genuinely differs: create and
+ * delete are staff-only, while the pace and the pause/resume pair are things a
+ * client does for their own workspace. `canViewClient` admits a CLIENT_USER for
+ * their own client, so the pair composes — and `requireStaff` refuses a
+ * CLIENT_USER before this is reached on the two that are staff-only.
  */
 async function authorizeClient(clientId: string) {
   const user = await requireStaff();
   const client = await getClient(clientId);
-  if (!client) return { error: "Client not found." as const };
-  if (!canViewClient(user, client)) {
-    return { error: "You are not assigned to this client." as const };
-  }
+  const refusal = clientAccessRefusal(user, client);
+  // `client` is non-null whenever there is no refusal — the null case IS the
+  // first branch of clientAccessRefusal — but the compiler wants it said.
+  if (refusal || !client) return { error: refusal ?? CLIENT_NOT_FOUND_MESSAGE };
   return { user, client };
 }
 
@@ -206,7 +222,12 @@ export async function configureClientAgentScheduleAction(
     getClient(input.clientId),
     getCustomAgent(input.customAgentId),
   ]);
-  if (!client) return { error: "Client not found." };
+  // The assignment half — see authorizeClient above. `requireClientAccess` has
+  // already settled the role, and for a CLIENT_USER it has already settled the
+  // client too; this is what stops an employee assigned to nobody from setting
+  // any client's pace.
+  const refusal = clientAccessRefusal(user, client);
+  if (refusal || !client) return { error: refusal ?? CLIENT_NOT_FOUND_MESSAGE };
   if (!agent || !agent.enabled) return { error: "Agent not found." };
 
   if (user.role === "CLIENT_USER" && !(client.customAgentIds ?? []).includes(agent.id)) {
@@ -431,6 +452,18 @@ export async function setPlannedRunStatusAction(
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
   const user = await requireClientAccess(run.clientId);
+  // The assignment half — see authorizeClient above. The client id comes off
+  // the STORED row rather than the request, so this is not about a forged
+  // clientId: it is about which staff may act on the row it names. Read once,
+  // here, and reused by the resume checks below.
+  //
+  // A row whose client document is gone refuses rather than passing: the
+  // cascade delete sweeps `plannedScheduledRuns` and removes the client doc
+  // LAST (data.ts), so a live row with a missing client is not a state this
+  // app can reach — nothing is stranded by refusing it.
+  const client = await getClient(run.clientId);
+  const refusal = clientAccessRefusal(user, client);
+  if (refusal) return { error: refusal };
   // BOTH ends of the transition, not just the requested one. Testing only the
   // REQUESTED status let `completed → active` through for a client: retiring is
   // refused, un-retiring was not, so a client could bring back a schedule staff
@@ -463,13 +496,15 @@ export async function setPlannedRunStatusAction(
   // Resuming is an enable, so it clears the same gates a create does — a
   // schedule paused while its agent data was emptied, or while its agent moved
   // to another client's folder, must not go back to reading as live. Pausing and
-  // cancelling are always allowed. A deleted agent or client has nothing left to
-  // test, and that schedule cannot fire anyway.
+  // cancelling are always allowed. A deleted agent has nothing left to test, and
+  // that schedule cannot fire anyway.
+  //
+  // `client` is re-tested for the compiler's sake, not for the product's: the
+  // fence above returns on a missing client, so by here it is always present.
+  // The clause used to carry the same meaning as the agent's ("nothing left to
+  // test") and no longer does.
   if (status === "active") {
-    const [agent, client] = await Promise.all([
-      getCustomAgent(run.customAgentId),
-      getClient(run.clientId),
-    ]);
+    const agent = await getCustomAgent(run.customAgentId);
     if (agent && client) {
       const blocked = await unfireableScheduleReason(client, agent);
       if (blocked) return { error: blocked };
@@ -527,7 +562,12 @@ export async function setPlannedRunStatusAction(
 export async function deletePlannedRunAction(id: string): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  await requireStaff();
+  // `requireStaff` alone answered "is this a staff member", never "whose client
+  // is this" — the same bare-role gap the create path did not have. Through the
+  // file's one authorizer now, so the hardest of the four actions to undo is not
+  // the loosest.
+  const auth = await authorizeClient(run.clientId);
+  if ("error" in auth) return { error: auth.error };
   await deletePlannedScheduledRun(id);
   revalidatePath("/calendar");
   return {};

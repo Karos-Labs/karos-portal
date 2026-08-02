@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getCurrentUser } from "@/lib/auth";
+import { ownAccountSession } from "@/lib/actions/_shared";
 import { upsertUser, updateEmployeeSeat, clearUserResume } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 
@@ -15,13 +15,22 @@ const ALLOWED_TYPES = new Set([
 const MAX_BYTES = 8 * 1024 * 1024;
 
 /**
- * Upload/replace the current user's own resume/CV. Scoped to self. Mirrors the URL
- * onto the user's primary employee seat (best-effort) so the advocacy LLM voice
- * picks up the new resume immediately, without requiring a separate settings visit.
+ * Upload/replace the current user's own resume/CV. Scoped to self — and the
+ * session has to be its own subject for that to mean anything, which is what
+ * `ownAccountSession` establishes: under "View as Client" this replaced the
+ * CLIENT's CV, and mirrored the new URL onto their advocacy seat, unmarked and
+ * unlogged. See IMPERSONATED_SELF_WRITE_MESSAGE.
+ *
+ * Mirrors the URL onto the user's primary employee seat (best-effort) so the
+ * advocacy LLM voice picks up the new resume immediately, without requiring a
+ * separate settings visit.
  */
 export async function POST(req: Request) {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = await ownAccountSession();
+  if (!session.ok) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
+  }
+  const { user } = session;
 
   const form = await req.formData();
   const file = form.get("file");
@@ -48,8 +57,13 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE() {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Both handlers — see the avatar route's note; the delete is the half that
+  // destroys something.
+  const session = await ownAccountSession();
+  if (!session.ok) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
+  }
+  const { user } = session;
   if (!user.resumeUrl) return NextResponse.json({ ok: true });
 
   await clearUserResume(user.uid);

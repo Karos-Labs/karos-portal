@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { getCurrentUser } from "@/lib/auth";
+import { ownAccountSession } from "@/lib/actions/_shared";
 import { upsertUser, clearUserAvatar } from "@/lib/data";
 import { adminAuth } from "@/lib/firebase/admin";
 import { uploadBytes } from "@/lib/storage";
@@ -10,10 +10,22 @@ export const maxDuration = 60;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"]);
 const MAX_BYTES = 4 * 1024 * 1024;
 
-/** Upload/replace the current user's own avatar. Scoped to self — no clientId or role check needed. */
+/**
+ * Upload/replace the current user's own avatar.
+ *
+ * Scoped to self, which is why no clientId or role check appears here — and why
+ * the session has to actually BE its own subject. This comment used to end at
+ * "no clientId or role check needed", and under "View as Client" the subject is
+ * the client: an admin could replace their photo in Firestore AND on their
+ * Firebase Auth record, leaving no trace of who did it. `ownAccountSession` is
+ * the whole of that check; see IMPERSONATED_SELF_WRITE_MESSAGE for the rule.
+ */
 export async function POST(req: Request) {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = await ownAccountSession();
+  if (!session.ok) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
+  }
+  const { user } = session;
 
   const form = await req.formData();
   const file = form.get("file");
@@ -38,8 +50,14 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE() {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Both handlers, for the reason the sibling `/api/clients/[id]/context` note
+  // gives: a guard on the upload that leaves the delete open is not a guard,
+  // and clearing the photo is the half that destroys something.
+  const session = await ownAccountSession();
+  if (!session.ok) {
+    return NextResponse.json({ error: session.error }, { status: session.status });
+  }
+  const { user } = session;
   if (!user.photoURL) return NextResponse.json({ ok: true });
 
   await clearUserAvatar(user.uid);

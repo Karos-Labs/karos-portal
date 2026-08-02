@@ -2,7 +2,8 @@ import "server-only";
 
 import { getCurrentUser } from "@/lib/auth";
 import { createActivityLog, getClientTask } from "@/lib/data";
-import type { ActivityLog, AppUser, ClientTask } from "@/lib/types";
+import { canViewClient } from "@/lib/client-visibility";
+import type { ActivityLog, AppUser, Client, ClientTask } from "@/lib/types";
 
 import { SYSTEM_AI_ACTOR_NAME, sessionSafeActor } from "@/lib/activity-actors";
 import { needsOnboarding } from "@/lib/onboarding";
@@ -18,6 +19,110 @@ export async function requireAdmin(): Promise<AppUser> {
   if (!user || user.disabled) throw new Error("Unauthorized");
   if (user.role !== "KAROS_ADMIN") throw new Error("Forbidden");
   return user;
+}
+
+/**
+ * WHAT "SCOPED TO SELF" IS ACTUALLY WORTH — the one place that says so.
+ *
+ * A handful of endpoints authorize by taking the SUBJECT of the write from the
+ * session and checking nothing else: the profile action, the avatar route (its
+ * comment said "Scoped to self — no clientId or role check needed"), the resume
+ * route, the password change, and the three onboarding actions. That model has
+ * exactly one assumption — the session's subject IS the actor — and
+ * impersonation is the one thing in this app that breaks it. `getCurrentUser`
+ * returns the TARGET user under "View as Client" (auth.ts), so every one of
+ * those writes lands on the CLIENT's record while an admin is driving: their
+ * display name and phone, their avatar and their CV, and the name/photo
+ * mirrored onto the client's FIREBASE AUTH identity — with nothing marking the
+ * write and no activity row at all.
+ *
+ * REFUSED, not re-attributed, and the choice matters. Re-attribution is the
+ * right answer where the act is legitimate and only the byline is wrong — that
+ * is `sessionSafeActor`'s job for the timeline rows below. It is the wrong
+ * answer here, because there is nothing legitimate to attribute: "View as
+ * Client" exists so staff can SEE what a client sees, and Karos already has a
+ * proper surface for editing a person (the team page, `requireAdmin`). An
+ * activity row saying an admin replaced a client's CV does not un-replace it,
+ * and the Firebase Auth identity has no activity log at all. Refusing also
+ * fails closed: a self-write endpoint added tomorrow is safe the moment it
+ * takes its user from here, whereas an attribution rule has to be remembered.
+ *
+ * The three onboarding actions already refused this way, each with its own
+ * inline `if (user.impersonatedBy)` and its own sentence — the rule written
+ * three times, next to five siblings that did not write it at all. This is
+ * that rule, once.
+ *
+ * NOT the same question as `isBillableClientActor` (which asks who PAYS and
+ * deliberately lets the impersonated session through, free) — so both read
+ * `impersonatedBy` and neither is the other's answer.
+ */
+export const IMPERSONATED_SELF_WRITE_MESSAGE =
+  "You're viewing this workspace as another person. Exit impersonation before changing their account.";
+
+/**
+ * The session whose OWN account a self-scoped endpoint may write to.
+ *
+ * ONE function rather than a result form plus a throwing wrapper: half its
+ * callers are Route Handlers that need a status code and half are server
+ * actions that throw, and a wrapper that re-derived the status from the thrown
+ * message would key a guard to a string. The three lines at each action site
+ * are plumbing; the rule and the sentence live only here.
+ */
+export async function ownAccountSession(): Promise<
+  { ok: true; user: AppUser } | { ok: false; error: string; status: 401 | 403 }
+> {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) return { ok: false, error: "Unauthorized", status: 401 };
+  if (user.impersonatedBy) {
+    return { ok: false, error: IMPERSONATED_SELF_WRITE_MESSAGE, status: 403 };
+  }
+  return { ok: true, user };
+}
+
+/**
+ * WHICH CLIENT AN ALREADY-AUTHORIZED SESSION MAY ACT ON — the assignment half,
+ * asked of the predicate the whole campaign asks (`canViewClient`).
+ *
+ * `requireStaff` and `requireClientAccess` above answer a ROLE question. Neither
+ * answers "which clients", and `requireClientAccess` says so in its own comment:
+ * staff pass for ANY client. That is the gap this closes at its callers — an
+ * employee `notFound()`ed on `/clients/C` and refused by every `/api/clients/C`
+ * route could still reach C's data through an action that only asked the role.
+ *
+ * Returns a message rather than throwing, because these actions return
+ * `{ error }` and several render it verbatim.
+ *
+ * BOTH SENTENCES ADDRESS STAFF, and that is checked rather than assumed: every
+ * caller resolves its user through `requireStaff` (which refuses a CLIENT_USER
+ * outright) or `requireClientAccess` (which refuses a CLIENT_USER for any client
+ * but their own — and their own is exactly the case `canViewClient` passes). So
+ * a CLIENT_USER cannot reach either refusal today. A future caller that admits
+ * one needs its own sentence, the same way TASK_NOT_IN_REVIEW_MESSAGE exists.
+ *
+ * TWO SENTENCES, and NOT the one-answer idiom `requireVisibleClient` uses. That
+ * idiom exists so a refusal cannot be an oracle for which client ids are real,
+ * and it is right where a CLIENT_USER can reach the answer. Here both readers
+ * are staff, and the two conditions want opposite remedies: a missing client is
+ * a stale link, while an unassigned one is a person who needs to be assigned —
+ * and "You are not assigned to this client." is FALSE for an admin, who is
+ * assigned to everything and can only ever be refused by the first branch. A
+ * shared sentence would be false at one of the two sites, which is the whole
+ * argument the TASK_* pair above makes.
+ *
+ * Takes the client DOCUMENT, not an id: every caller has already loaded it, and
+ * a predicate that fetches its own subject hides a Firestore read inside what
+ * reads as a test.
+ */
+export const CLIENT_NOT_FOUND_MESSAGE = "Client not found.";
+export const NOT_ASSIGNED_TO_CLIENT_MESSAGE = "You are not assigned to this client.";
+
+export function clientAccessRefusal(
+  user: AppUser,
+  client: Pick<Client, "id" | "assignedEmployeeIds"> | null | undefined,
+): string | null {
+  if (!client) return CLIENT_NOT_FOUND_MESSAGE;
+  if (!canViewClient(user, client)) return NOT_ASSIGNED_TO_CLIENT_MESSAGE;
+  return null;
 }
 
 /**
@@ -40,7 +145,18 @@ export async function requireFirstOnboarding(user: AppUser): Promise<void> {
   if (!needsOnboarding(user)) throw new Error("This workspace has already been set up.");
 }
 
-/** Allows both staff (any client) and a CLIENT_USER (own client only). */
+/**
+ * Allows both staff (any client) and a CLIENT_USER (own client only).
+ *
+ * "ANY CLIENT" IS THE WHOLE ROLE ANSWER AND NOT THE WHOLE RULE. An employee
+ * assigned to nobody passes this for every client in the system, while the
+ * `/clients/[id]` pages `notFound()` them and every `/api/clients/[id]` route
+ * refuses them. `clientAccessRefusal` below is the missing half; planned-run
+ * actions pair the two, at 2 of this function's 30 call sites. The other 28 do
+ * not — folding the pairing into this function would close them all at once and
+ * is a decision about blast radius, not about this file, so it is Daniel's
+ * (D-77) rather than something to slip in here.
+ */
 export async function requireClientAccess(clientId: string): Promise<AppUser> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");

@@ -52,7 +52,7 @@ import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { getClientCustomAgents, buildAgentCatalog } from "@/lib/agent-roster";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
-import { sendEmail } from "@/lib/email";
+import { sendEmail, supportRequestEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
 import { logger } from "@/services/logger";
@@ -555,13 +555,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ subject, message }) => {
       const adminEmail = process.env.ADMIN_EMAIL;
-      const emailHtml = `
-        <p><strong>Client:</strong> ${client.name} (${clientId})</p>
-        <p><strong>Submitted by:</strong> ${user.name ?? user.email}</p>
-        <hr style="border:none;border-top:1px solid #20303a;margin:12px 0;" />
-        <p><strong>Message:</strong></p>
-        <p style="white-space:pre-wrap;">${message.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
-      `;
+      // ONE template for this email, shared with the Support form's action —
+      // they were two hand-written copies of the same mail to the same inbox,
+      // each carrying the same injection. This copy escaped `message` on the
+      // very next line and interpolated `client.name` and `user.name ?? user.email`
+      // raw, so a display name holding markup rendered as markup for whoever
+      // reads the Karos inbox. `supportRequestEmail` escapes every field it is
+      // given, so nothing here has to know which of them is hostile.
+      const emailHtml = supportRequestEmail({
+        fromName: user.name ?? user.email,
+        fromEmail: user.email,
+        subject,
+        message,
+        client: { name: client.name, id: clientId },
+      });
       if (adminEmail) {
         const result = await sendEmail({
           to: adminEmail,

@@ -3,8 +3,7 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
-import { logGenerationFailure, requireFirstOnboarding } from "./_shared";
+import { logGenerationFailure, ownAccountSession, requireFirstOnboarding } from "./_shared";
 import {
   upsertUser,
   completeOnboarding,
@@ -19,9 +18,13 @@ import { addEmployeeSeatAction } from "./seat-actions";
 /** Step 1 — persisted on "Next" (and before any LinkedIn OAuth redirect) so no
  * draft state is lost on the full-page round trip. */
 export async function saveOnboardingProfileAction(input: { name: string; phone?: string }): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.impersonatedBy) throw new Error("Cannot run onboarding while impersonating a client.");
+  // These three actions each wrote the impersonation rule out inline, with
+  // three sentences between them, while five sibling self-writes (the profile
+  // action, the password change, and the avatar and resume routes) did not
+  // write it at all. One rule, one sentence — see IMPERSONATED_SELF_WRITE_MESSAGE.
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
   const name = input.name.trim();
   if (!name) throw new Error("Name cannot be empty.");
   if (name.length > 100) throw new Error("Name is too long (max 100 characters).");
@@ -39,9 +42,11 @@ export async function saveOnboardingProfileAction(input: { name: string; phone?:
  * returns the existing seat if "Connect LinkedIn" is clicked more than once.
  */
 export async function ensureOwnEmployeeSeatAction(): Promise<{ seatId: string } | { error: string }> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) return { error: "Unauthorized" };
-  if (user.impersonatedBy) return { error: "Cannot run onboarding while impersonating a client." };
+  // The `{ error }` form of the same gate — this action returns rather than
+  // throws, so it takes the result shape instead of the throwing wrapper.
+  const session = await ownAccountSession();
+  if (!session.ok) return { error: session.error };
+  const { user } = session;
   if (user.role !== "CLIENT_USER" || !user.clientId) return { error: "Forbidden" };
   if (user.primarySeatId) return { seatId: user.primarySeatId };
 
@@ -69,9 +74,9 @@ export async function completeOnboardingAction(input: {
   industry?: string;
   brandVoice?: string;
 }): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
-  if (user.impersonatedBy) throw new Error("Cannot run onboarding while impersonating a client.");
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
   if (user.role !== "CLIENT_USER" || !user.clientId) throw new Error("Forbidden");
   // The gate that makes the free AI provisioning below affordable: this may run
   // once per account. Until now only the (app) layout's redirect enforced that,

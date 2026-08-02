@@ -5,10 +5,25 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/data");
 vi.mock("@/lib/actions/_shared", async (io) => {
   const a = await io<any>();
-  return { ...a, logActivity: vi.fn(), requireClientAccess: vi.fn(async () => ({
-    user: { uid: "u-client", role: "CLIENT_USER", clientId: "c1", createdAt: 0 },
-    client: { id: "c1", name: "Acme", status: "active", createdAt: 0 },
-  })) };
+  // `requireClientAccess` resolves to the AppUser, not to a { user, client }
+  // pair — it returned the pair here, so `user.role` read as undefined and
+  // every role branch in the action took its STAFF arm. That was invisible
+  // until the assignment fence (`clientAccessRefusal`, real in this file)
+  // started reading the role off the same value and refused the shapeless
+  // actor. Fixed to a well-formed staff user, ASSIGNED to c1, so the actor's
+  // effective behaviour in these four cases is exactly what it has always been
+  // — the save path, not the role branches, is what this file is about.
+  return {
+    ...a,
+    logActivity: vi.fn(),
+    requireClientAccess: vi.fn(async () => ({
+      uid: "u-staff",
+      role: "KAROS_EMPLOYEE",
+      clientId: null,
+      assignedClientIds: ["c1"],
+      createdAt: 0,
+    })),
+  };
 });
 vi.mock("@/lib/jobs/schedule-gate", () => ({ unfireableScheduleReason: vi.fn(async () => null) }));
 import * as data from "@/lib/data";

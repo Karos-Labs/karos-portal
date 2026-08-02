@@ -204,7 +204,13 @@ describe("planned-run-actions asks the shared predicate", () => {
   async function load(staff: unknown) {
     vi.doMock("server-only", () => ({}));
     vi.doMock("next/cache", () => ({ revalidatePath: () => {} }));
-    vi.doMock("@/lib/actions/_shared", () => ({
+    // Partial, not a replacement: the assignment rule itself now lives in
+    // `_shared.clientAccessRefusal` (beside the other authorizers, so the
+    // actions layer states it once), and stubbing the whole module out would
+    // leave this block driving a fence that had been replaced by a stub. Only
+    // the session readers are faked.
+    vi.doMock("@/lib/actions/_shared", async (io) => ({
+      ...(await io<typeof import("@/lib/actions/_shared")>()),
       requireStaff: async () => staff,
       requireClientAccess: async () => staff,
       logActivity: async () => {},

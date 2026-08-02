@@ -60,6 +60,7 @@ import {
   buildXAgentIntakeView,
 } from "@/lib/agent-intake-views";
 import {
+  agentKeyMatchesClientSlug,
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
@@ -173,6 +174,26 @@ export default async function ClientAgentDetailPage({
 
   const agent = await getCustomAgent(agentId);
   if (!agent || !agent.enabled) notFound();
+
+  // THE BINDING, on the surface that resolves the pair — not only on the three
+  // that LIST it. A per-client agent instance runs an entry skill baked under
+  // one client's lab folder (see agentKeyMatchesClientSlug), and the roster, the
+  // settings page and the delivered-work read all drop an instance belonging to
+  // another client. This route did not: `/clients/A/agents/<instance-of-B>`
+  // resolved, and rendered A's status strip, setup facts, intake panes, schedule
+  // controls and run gesture around an agent that can only ever draft for B. The
+  // submit core refuses the pair at run time, so nothing wrong could be
+  // GENERATED — what shipped was a page telling one client an agent was theirs.
+  //
+  // Refused for staff as well, and that is the same rule rather than an extra
+  // one: both branches of the roster filter on this predicate regardless of who
+  // is looking, and a staff run dialog opened here would build a submission both
+  // submit cores reject.
+  //
+  // `notFound()`, matching the client gate below: a client probing ids must not
+  // learn which agents the lab has, and a distinct refusal here would answer
+  // exactly that for every instance key it guessed.
+  if (!agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) notFound();
 
   const [jobs, credits, scheduledRuns, umbrellas, assets, integrations, contextItems] =
     await Promise.all([
@@ -292,16 +313,21 @@ export default async function ClientAgentDetailPage({
   // and it is also what the roster card that opened this page reads, so the two
   // pages cannot disagree.
   //
-  // The `|| produced.length > 0` is not redundant, and removing it reopens a
-  // real contradiction. `agentsWithDeliveredWork` filters its candidates by
-  // `agentKeyMatchesClientSlug` — a binding rung `agentProducedAssets` does not
-  // apply — so for an agent whose key does not match this client's slug the
-  // verdict can be false while the list is non-empty, which is a strip reading
-  // "Not set up yet" directly above a shelf of work. That contradiction was
-  // impossible before this rule was shared and a review pass constructed it
-  // twice; this keeps the invariant the page actually needs, which is that the
-  // strip never contradicts the list under it, rather than trusting the two
-  // computations to agree.
+  // WHAT THE `|| produced.length > 0` IS FOR, restated because its old reason
+  // has been closed above and a comment naming a cause that can no longer
+  // happen is worse than no comment. The reason given here used to be the
+  // binding: `agentsWithDeliveredWork` filters its candidates by
+  // `agentKeyMatchesClientSlug` and `agentProducedAssets` does not, so for an
+  // agent bound to another client the verdict could be false while the list was
+  // non-empty — a strip reading "Not set up yet" above a shelf of work. This
+  // route now refuses that pair outright, so that particular divergence is
+  // unreachable and this line no longer changes any rendered page.
+  //
+  // Kept anyway, and deliberately: the invariant the page needs is that the
+  // strip never contradicts the list under it, and the two answers are computed
+  // by two functions that a review pass has already made disagree twice. This
+  // costs a boolean OR; re-deriving the invariant from "the two computations
+  // agree today" is what let it break before.
   const stripHasDelivered = hasDelivered || produced.length > 0;
 
   const status = rosterStatus({

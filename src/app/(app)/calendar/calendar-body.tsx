@@ -73,9 +73,16 @@ function describeRunOutput(views: RunAssetView[]): string | undefined {
  * offset between them. A row written before `timeZone` existed had its
  * nextRunAt computed against the runtime's own zone (see the timezone contract
  * in lib/scheduled-runs), so that is the zone its hour was always expressed in.
- * Resolving it here means both halves of the line, the day bucket and the
- * printed zone suffix all come off the same clock, and a row WITH a stored zone
- * is unaffected.
+ * Resolving it here means both halves of the line — the cadence's stored hour
+ * and the printed zone suffix — come off the same clock, and a row WITH a
+ * stored zone is unaffected.
+ *
+ * NOT THE DAY BUCKET. This used to claim the bucket too, and the calendar
+ * bucketed run chips on this zone while everything else in the grid (post
+ * chips, the day numbers, the "today" ring) used the viewer's — so a chip could
+ * sit one cell away from the day it will actually reach the viewer. Which cell
+ * an entry lands in is now one question with one answer; see `dayKey` in
+ * components/run-calendar. This value is what the chip PRINTS.
  */
 const RUNTIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -351,10 +358,19 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         cadenceLabel: isClient
           ? clientCadenceLabel({ ...r, timeZone: runZone(r.timeZone) })
           : describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
-        // The zone the schedule's wall clock was set in. Sent to the browser so
-        // the chip's day bucket and printed time are computed there exactly as
-        // they were on the server — and so the card's cadence label and its
-        // "next" time are read off ONE clock (CD-H7c).
+        // The zone the schedule's wall clock was set in. PRINTED, NOT BUCKETED:
+        // `dayKey` takes one argument now, so the day a chip lands in comes from
+        // the VIEWER's clock — one calendar, one definition of a day — and this
+        // zone reaches only `timeStr` and `zoneLabel`, which is how a reader can
+        // still see the wall clock the schedule was actually set in.
+        //
+        // This sentence used to say the bucket was computed from it "exactly as
+        // on the server", and both halves stopped being true with that change.
+        // It is the THIRD copy of the claim; the other two were retired with the
+        // fix and this one, 280 lines below the first in the same file, was not.
+        // The residual is in `dayKey`'s own docstring: server and browser can
+        // now disagree about the day, and that is the trade the consolidation
+        // makes deliberately.
         timeZone: runZone(r.timeZone),
         // Per OCCURRENCE, not per row: a projection that crosses a DST boundary
         // prints the offset in force on that day.

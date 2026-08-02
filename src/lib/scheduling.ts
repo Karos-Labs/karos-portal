@@ -7,11 +7,60 @@
  * platform — rather than an extra model call: it's free, instant, testable, and
  * good enough as a default the user can always override in the schedule form.
  *
- * All times are computed in the server's local timezone (matches how the
- * datetime-local schedule form interprets times for staff).
+ * All times are computed in the runtime's local timezone (matches how the
+ * datetime-local schedule form interprets times for staff). This file also
+ * holds the one definition of "which calendar day is this instant on" — see the
+ * section immediately below.
  */
 
 import type { AssetType } from "@/lib/types";
+
+/* ══════════════════ the local calendar day (one definition) ══════════════════ */
+
+/**
+ * WHICH CALENDAR DAY AN INSTANT FALLS ON, written once.
+ *
+ * `startOfDayMs` is the bucket and `sameLocalDay` is the comparison, and the
+ * second is DEFINED from the first so the two cannot answer differently. They
+ * were two exported functions with two bodies — one here, one in post-chain.ts,
+ * the pair of them the "one definition of 'same day'" this comment used to
+ * claim on its own — and post-chain.ts now re-exports these rather than
+ * restating them, so every caller of either import path gets this code.
+ *
+ * WHOSE CLOCK, stated because it is a real cost and not a detail. "Local" here
+ * is THE RUNTIME'S OWN ZONE: server-local inside a server action, cron or
+ * script; the BROWSER's zone inside a client component. A day boundary is
+ * therefore the boundary of whichever machine asked, never the client's own.
+ *
+ * What that costs today, stated no wider than it is:
+ *  · The chain still places exactly ONE post per day per family, in every zone:
+ *    its slots are a fixed server-local hour a day apart, so they stay a day
+ *    apart wherever they are read. What can shift is WHICH day — a slot lands
+ *    on the client's next date when their offset carries CHAIN_SLOT_HOUR past
+ *    midnight (from a UTC container at 11:00, that is UTC+13 and beyond).
+ *  · `isAssetUnlockedForClient` (post-chain.ts) unlocks at SERVER midnight. For
+ *    a client west of the server that instant is still the previous afternoon
+ *    where they are — a post dated Tuesday becomes readable during their
+ *    Monday. East of it, some hours into their own Tuesday.
+ *  · A guard evaluated on BOTH sides — `markPostedBlock` is the one that is —
+ *    can disagree between browser and server inside that offset window. The
+ *    server's answer is the one that counts; the UI is never the guard.
+ *
+ * Fixing it properly means giving `Client` an IANA zone (it has none; only
+ * `RunCadence.timezone` and `PlannedScheduledRun.timeZone` carry one) and
+ * threading it through every caller of these two functions — a data change plus
+ * a decision about what a "day" means for a client with staff in three
+ * countries. Until that decision is made this is the behaviour, and it is
+ * pinned by test rather than left implicit — see local-day-one-definition.test.ts.
+ */
+export function startOfDayMs(t: number): number {
+  return new Date(t).setHours(0, 0, 0, 0);
+}
+
+/** True when both instants fall on the same runtime-local calendar day. */
+export function sameLocalDay(a: number, b: number): boolean {
+  return startOfDayMs(a) === startOfDayMs(b);
+}
 
 /** A recurring weekly engagement window: days 0=Sun..6=Sat at hour:minute. */
 interface OptimalWindow {
@@ -166,19 +215,6 @@ export function recommendPublishTime(opts: {
     }
   }
   return null; // unreachable in practice (60-day horizon)
-}
-
-/** Exported for callers outside this file that need the same day comparison
- *  the density recommender uses (e.g. the client reschedule action's
- *  same-day-same-family collision guard) — one definition of "same day". */
-export function sameLocalDay(a: number, b: number): boolean {
-  const da = new Date(a);
-  const db = new Date(b);
-  return (
-    da.getFullYear() === db.getFullYear() &&
-    da.getMonth() === db.getMonth() &&
-    da.getDate() === db.getDate()
-  );
 }
 
 /**

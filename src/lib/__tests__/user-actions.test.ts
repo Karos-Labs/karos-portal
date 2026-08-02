@@ -31,7 +31,11 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 vi.mock("@/lib/data");
-vi.mock("@/lib/email", () => ({
+// Partial: `html` (the escaping tag every template in that module is built
+// with) stays REAL, so this file mocks delivery rather than re-implementing
+// the escaping the mails depend on.
+vi.mock("@/lib/email", async (io) => ({
+  ...(await io<typeof import("@/lib/email")>()),
   sendEmail: vi.fn().mockResolvedValue({ ok: true }),
   emailShell: vi.fn(() => "<html></html>"),
 }));

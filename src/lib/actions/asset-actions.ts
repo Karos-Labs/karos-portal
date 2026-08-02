@@ -27,7 +27,8 @@ import {
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity, sameLocalDay } from "@/lib/scheduling";
-import { chainFamilyFor, isAssetUnlockedForClient } from "@/lib/post-chain";
+import { chainFamilyFor } from "@/lib/post-chain";
+import { type MarkPostedBlock, markPostedBlock } from "@/lib/mark-posted";
 import {
   type AssetPublishBlock,
   assetPublishBlock,
@@ -410,6 +411,23 @@ async function closeProducingJobIfReviewed(asset: Asset): Promise<void> {
 }
 
 /**
+ * What we tell the user when the attestation rule refuses, keyed by reason so
+ * the message cannot drift from the rule (same shape as PUBLISH_REFUSAL below).
+ * Rendered verbatim next to the button: sentence case, no internal vocabulary,
+ * each one names the way out.
+ *
+ * The control hides itself for every one of these, so a person only reaches
+ * this text from a stale page or a direct call — which is exactly why it has to
+ * read like something written for them.
+ */
+const MARK_POSTED_REFUSAL: Record<MarkPostedBlock, string> = {
+  published: "Already marked as posted",
+  placeholder: "This is a placeholder — put it on the calendar before marking it posted",
+  unapproved: "Only an approved, scheduled, or delivered post can be marked as posted",
+  locked: "This post is scheduled for a later day — you can mark it posted on the day it goes out.",
+};
+
+/**
  * "I posted this myself" — record that an asset went live by hand.
  *
  * Every other route to "published" runs through a platform integration: the
@@ -430,33 +448,22 @@ export async function markAssetPostedAction(
   id: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const asset = await requireAssetAccess(id);
-  if (asset.status === "published") return { ok: false, error: "Already marked as posted" };
-  if (asset.publishMode === "placeholder") {
-    return { ok: false, error: "This is a placeholder — put it on the calendar before marking it posted" };
-  }
-  // Only a post that has actually been approved onto the calendar can have been
-  // posted. Without this a CLIENT_USER could force one of their own DRAFTS
-  // straight to published — self-approving unreviewed work and completing the
-  // parent staff task with it — since force skips shouldReconcilePublished,
-  // which is what would otherwise reject a draft. The UI hides the button for
-  // drafts, but a server action is a public endpoint: the UI is not the guard.
-  // (Compare updateAssetAction and approveAssetAction, which keep every other
-  // status transition staff-only for exactly this reason.)
-  if (
-    asset.status !== "approved" &&
-    asset.status !== "scheduled" &&
-    asset.status !== "delivered"
-  ) {
-    return { ok: false, error: "Only an approved, scheduled, or delivered post can be marked as posted" };
-  }
-  // A post whose day hasn't come yet cannot have been posted. Without this a
-  // client could attest their way through the whole pre-generated batch — one
-  // click per future day — and each flip to published ends redactLockedAsset's
-  // redaction, revealing title, content and images ahead of time (churn rule
-  // A3/A4). The UI hides the control, but a server action is a public endpoint.
-  if (!isAssetUnlockedForClient(asset, Date.now())) {
-    return { ok: false, error: "This post is scheduled for a later day — you can mark it posted on the day it goes out." };
-  }
+  // THE rule — `markPostedBlock`, the same body the control asks before it
+  // renders. Every clause of it is load-bearing on this side of the wire, and a
+  // hidden button is not a guard: a server action is a public endpoint.
+  //
+  //  · status: without it a CLIENT_USER could force one of their own DRAFTS
+  //    straight to published — self-approving unreviewed work and completing
+  //    the parent staff task with it — since force skips
+  //    shouldReconcilePublished, which is what would otherwise reject a draft.
+  //    (Compare updateAssetAction and approveAssetAction, which keep every
+  //    other status transition staff-only for exactly this reason.)
+  //  · locked/future-dated: without it a client could attest their way through
+  //    the whole pre-generated batch — one click per future day — and each flip
+  //    to published ends redactLockedAsset's redaction, revealing title,
+  //    content and images ahead of time (churn rule A3/A4).
+  const block = markPostedBlock(asset, Date.now());
+  if (block !== null) return { ok: false, error: MARK_POSTED_REFUSAL[block] };
   // Don't race an in-flight push: the auto-cron may be mid-publish under a
   // claim right now, and flipping status to published here wouldn't stop it —
   // we'd attest "already posted by hand" AND post again for real.

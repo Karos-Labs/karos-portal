@@ -9,7 +9,7 @@ import {
   deleteScheduledRunAction,
   toggleScheduledRunAction,
 } from "@/lib/actions";
-import { describeCadence } from "@/lib/run-cadence";
+import { describeCadence, runtimeTimeZone } from "@/lib/run-cadence";
 import type { AssetType, RunCadence, ScheduledRun } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
 
@@ -28,13 +28,20 @@ const DAYS = [
 
 const ASSET_TYPES: AssetType[] = ["social_post", "instagram_post", "article", "email", "note"];
 
-// Sensible starting point for the first client (Karos Labs / LinkedIn Path A):
-// company-page cadence is Tue/Wed/Thu 09:00 BRT.
-const DEFAULT_CADENCE: RunCadence = {
+/**
+ * Starting point for a new schedule. Tue/Wed/Thu 09:00 is the LinkedIn
+ * engagement window this repo already uses ("LinkedIn reach is highest Tue–Thu
+ * at the start of the workday" — PLATFORM_SCHEDULES in lib/scheduling), which
+ * is the right default for a form whose platform field also starts on linkedin.
+ *
+ * NO ZONE HERE. It used to carry `America/Sao_Paulo`, hardcoded, for every
+ * client in the product — see `timezone` in ScheduledRunsCard for what replaced
+ * it and why.
+ */
+const DEFAULT_CADENCE: Omit<RunCadence, "timezone"> = {
   daysOfWeek: [2, 3, 4],
   hour: 9,
   minute: 0,
-  timezone: "America/Sao_Paulo",
 };
 
 /**
@@ -191,7 +198,27 @@ export function ScheduledRunsCard({
   const [days, setDays] = useState<number[]>(DEFAULT_CADENCE.daysOfWeek);
   const [hour, setHour] = useState(DEFAULT_CADENCE.hour);
   const [minute, setMinute] = useState(DEFAULT_CADENCE.minute);
-  const [timezone, setTimezone] = useState(DEFAULT_CADENCE.timezone);
+  /**
+   * THE ZONE THE HOUR ABOVE IS MEANT IN — this browser's, resolved once.
+   *
+   * It was a free-text field pre-filled with `America/Sao_Paulo`: every client
+   * in the product started on one country's clock, and a wall clock typed by
+   * someone in another one silently meant a different instant. It was also
+   * unvalidated, so "BRT" or "Brazil" reached `isValidCadence` and the schedule
+   * was simply refused with nothing pointing at the field.
+   *
+   * ONE ANSWER FOR BOTH SCHEDULERS. The planned scheduler (schedule-run-modal →
+   * createPlannedRunAction) already resolved this exact question the same way —
+   * the hour you type is the hour on your screen, and the zone travels with it
+   * so the stored instant matches the preview you just read. This form is the
+   * other schedule surface in the same product; a second answer here is the
+   * thing that goes wrong.
+   *
+   * Lazy initialiser rather than a constant: the form subtree is behind
+   * `showForm`, so this value is never rendered during a server pass, and on
+   * the client it is the viewer's own zone.
+   */
+  const [timezone] = useState(() => runtimeTimeZone());
   const [assetType, setAssetType] = useState<AssetType>("social_post");
   const [platform, setPlatform] = useState("linkedin");
   const [prompt, setPrompt] = useState("Draft the next post.");
@@ -305,13 +332,19 @@ export function ScheduledRunsCard({
                   />
                 </div>
                 <div className="min-w-[180px] flex-1">
-                  <Label htmlFor="sr-tz">Timezone</Label>
-                  <Input
-                    id="sr-tz"
-                    value={timezone}
-                    onChange={(e) => setTimezone(e.target.value)}
-                    placeholder="America/Sao_Paulo"
-                  />
+                  <Label id="sr-tz-label">Time zone</Label>
+                  {/* Read-only on purpose — the hour above means the hour on
+                      this screen. Shown rather than hidden so a person
+                      scheduling for a client in another country can see which
+                      clock they are setting. Not an <Input>: there is nothing
+                      to type, and `htmlFor` on a non-labelable element labels
+                      nothing. */}
+                  <p
+                    aria-labelledby="sr-tz-label"
+                    className="flex h-9 items-center truncate rounded-md border border-border bg-surface-2 px-2.5 text-xs text-muted"
+                  >
+                    {timezone}
+                  </p>
                 </div>
               </div>
 
