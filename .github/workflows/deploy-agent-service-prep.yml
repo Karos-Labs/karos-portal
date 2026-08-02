@@ -69,19 +69,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # PREP_AGENT_SERVICE_URL is NOT required here — it's this deploy's own
+      # output (Cloud Run assigns it), so it's unknown on the very first run.
+      # It's passed as _INTERNAL_API_URL below and simply blank until you set
+      # it after this first deploy succeeds (see DEPLOY_ENVIRONMENTS.md);
+      # re-run this workflow afterward so the worker picks it up.
       - name: Validate required repo variables
         run: |
           missing=()
-          for v in PREP_PROJECT_ID PREP_AGENT_SERVICE_URL; do
+          for v in PREP_PROJECT_ID; do
             [ -n "${!v}" ] || missing+=("$v")
           done
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Missing required repo variable(s): ${missing[*]} — has agent-service/deploy/bootstrap-gcp.sh been run for karoscmo-prep yet? See DEPLOY_ENVIRONMENTS.md."
+            echo "::error::Missing required repo variable(s): ${missing[*]}"
             exit 1
           fi
         env:
           PREP_PROJECT_ID: ${{ vars.PREP_PROJECT_ID }}
-          PREP_AGENT_SERVICE_URL: ${{ vars.PREP_AGENT_SERVICE_URL }}
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
