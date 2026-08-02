@@ -91,12 +91,18 @@ export function SeoGeoActionPlan({
     <>
       {error && <p className="mb-2 text-xs text-danger">{error}</p>}
       <ul className="space-y-2">
-        {recommendations.map((r, i) => {
+        {recommendations.map((r) => {
           const isApproved = approved.has(r.recId);
           const isBusy = busyId === r.recId;
           return (
             <li
-              key={`${r.recId}-${i}`}
+              // The recId alone (AF-11). It used to be suffixed with the index,
+              // which is what a list keys by when it EXPECTS duplicates — and
+              // the plan did have them, from two directions. Both are closed in
+              // `healRecommendations` now, at the server boundary, so a repeat
+              // here would be a React key collision rather than a silent second
+              // row: the duplicate becomes loud instead of shipping.
+              key={r.recId}
               // CD-J1 directive 6: an approved row LOOKS handed over. The state used
               // to be a few words of green text on an otherwise identical row, so a
               // plan with half its items approved read as one undifferentiated list
@@ -134,8 +140,17 @@ export function SeoGeoActionPlan({
               </div>
               {r.description && <p className="mt-1 text-xs text-muted">{r.description}</p>}
               {isApproved ? (
+                /* WHERE IT WENT (AF-11). Albert could not tell where an approval
+                   goes, and "With your Karos team, it'll show in your next
+                   snapshot" was half an answer: it named a destination but not
+                   the hand-off, so a client could still read it as something the
+                   system had queued. Three facts, in the order they happen: it
+                   was sent, a person makes the change, the result shows up. Same
+                   sentence as the footer's promise, in the past tense, so the
+                   row confirms exactly what the button offered. */
                 <p className="mt-1 text-[11px] text-success">
-                  With your Karos team — it&apos;ll show in your next snapshot.
+                  Sent to your Karos team. They make the change, and it shows in your next
+                  snapshot.
                 </p>
               ) : (
                 <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.06em] text-muted-2">
@@ -150,7 +165,7 @@ export function SeoGeoActionPlan({
           is authorization, not execution — a person makes the change — and the
           plan never said so anywhere. */}
       <p className="mt-3 text-[11px] text-muted-2">
-        Approving sends it to your Karos team — they make the change and it shows in your next
+        Approving sends it to your Karos team. They make the change, and it shows in your next
         snapshot. Nothing on your site changes when you click.
       </p>
     </>

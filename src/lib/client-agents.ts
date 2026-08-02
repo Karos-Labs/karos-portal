@@ -600,7 +600,29 @@ export type RosterStatusTone = "live" | "attention" | "progress" | "idle";
 export interface RosterStatus {
   tone: RosterStatusTone;
   label: string;
+  /**
+   * The operational truth behind a word that does not come from this agent's own
+   * machinery — today only the AF-5 rung, where "Live" is claimed on the strength
+   * of content already on the client's calendar rather than on a schedule that is
+   * firing.
+   *
+   * STAFF SURFACES ONLY. It is set unconditionally (the function has no viewer
+   * argument and does not want one: the CLIENT-FACING word is the same for both
+   * readers by ruling, and a status that changed shape per viewer is how two
+   * surfaces come to disagree). Callers decide whether to paint it, and the
+   * client's branches do not.
+   */
+  staffNote?: string;
 }
+
+/**
+ * Why a client-facing "Live" is being claimed for an agent whose own schedule is
+ * not firing (AF-5). Operator voice: it names the cause and the evidence, because
+ * the person reading it is the one who would otherwise open a ticket about a
+ * green badge on a paused schedule.
+ */
+export const IMPORTED_CONTENT_STAFF_NOTE =
+  "Schedule is not firing. The client-facing status reads Live because upcoming content for this agent is already on their calendar, produced internally.";
 
 /**
  * Whether a stored schedule refusal is recent enough to still be the client's
@@ -655,6 +677,9 @@ function refusalIsCurrent(input: {
  * came to show a green "Live" badge two days after its only run failed. The
  * verdict comes from `lastRunFailedAgentIds`, which every call site shares so
  * the card and the page it opens cannot hold two opinions of the ordering rule.
+ * It is a STAFF rung only — see `viewerIsStaff`, and AF-14 — because the green
+ * badge it was written to correct is on a staff surface, while on a client's it
+ * asks them to attend to a failure that is ours.
  *
  * Both rungs say "Needs attention" — one phrase, deliberately. The roster
  * answers "is this working for me right now", and "no" is one answer however it
@@ -673,6 +698,22 @@ function refusalIsCurrent(input: {
  * is not un-set-up; it is set up and idle, and it runs when somebody asks it to.
  * The distinction lives HERE rather than in the strip so the roster card and the
  * detail page cannot end up holding two different opinions of the same agent.
+ *
+ * LIVE MEANS LIVE (AF-5), and it is the last rung on purpose. Albert: "it should
+ * still show that it's live even though we're creating it internally… if there's
+ * items on the calendar like Instagram or TikTok items, it should show us live."
+ * A stream whose posts Karos produces by hand and imports has no cron of its own
+ * — its `clientAgents` row may never have been launched and its schedule may be
+ * paused for exactly that reason — so every rung above answers "idle" for an
+ * agent the client can plainly see filling their calendar next week.
+ *
+ * It is applied to the IDLE OUTCOME rather than written into each idle branch,
+ * which is what keeps it from becoming a fourth way to outrank an alarm. A
+ * refusal, a failed last run, a launch in flight and a failed launch all decide
+ * before it and are untouched by it: the ruling is that we stop calling a
+ * producing agent idle, not that we start calling a broken one live. The staff
+ * note rides along so the surfaces that carry operator state can say why the word
+ * disagrees with the schedule row underneath it.
  */
 export function rosterStatus(input: {
   /** Null for a granted agent with no umbrella bound. */
@@ -711,7 +752,66 @@ export function rosterStatus(input: {
    * means. That helper's doc states where the shared answer stops.
    */
   lastRunFailed?: boolean;
+  /**
+   * Whether the reader is STAFF — the gate on the `lastRunFailed` rung, and the
+   * only thing on this input that asks who is looking.
+   *
+   * AF-14 is absolute: "clients never see failed runs." The failed-last-run rung
+   * was added for the roster card that sat green above a run history whose last
+   * row read Failed, which is a STAFF complaint about a STAFF surface — but it
+   * was wired for both readers, so a production fire that failed at the agent
+   * service put "Needs attention" on the client's card. That badge asks the
+   * client to do something about an internal failure they cannot see, did not
+   * cause and have no lever over, and it does it on exactly the agents AF-5 is
+   * about: a stream we produce internally, whose posts are sitting on their
+   * calendar, is not something the client needs to attend to.
+   *
+   * A SCHEDULE REFUSAL IS NOT AFFECTED and still outranks Live for everyone
+   * (F24/F129). The two are different facts: a refusal is the scheduler turning a
+   * fire away for a reason the client owns (out of credits, an empty intake), and
+   * telling them is the whole point. A run that submitted cleanly and then broke
+   * is ours.
+   *
+   * DEFAULTS TO FALSE, which skips the rung — the quiet direction, opposite to
+   * `refusalIsCurrent`'s. The two defaults are chosen against their own failure
+   * modes: an undatable refusal that goes unsaid leaves a client stuck with no
+   * idea why, while an internal failure shown to a client is the thing AF-14
+   * forbids outright. Every staff call site passes it, and `lastRunFailedAgentIds`
+   * already takes the same `staff` flag, so the pair travels together.
+   */
+  viewerIsStaff?: boolean;
+  /**
+   * True when this agent's stream has content on the client's calendar for a day
+   * that has not happened yet (AF-5). Resolved by the callers through
+   * `agentsWithUpcomingContent`, which walks the SAME attribution rungs
+   * `agentsWithDeliveredWork` does, so "whose stream is this" is one answer here
+   * as everywhere else.
+   *
+   * A BOOLEAN, and that is the whole contract. How many items, which days and
+   * what they say are the calendar's business; this surface may only know that
+   * the client has some. Anything richer crossing the RSC boundary would publish
+   * the batch shape on a page whose entire job is to not (A3/A4).
+   */
+  hasUpcomingContent?: boolean;
   /** Clock, for the refusal's freshness window. Defaults to now. */
+  now?: number;
+}): RosterStatus {
+  const status = rosterStatusCore(input);
+  // The AF-5 rung. Only an IDLE outcome is eligible: see the doc above for why
+  // this may not reach past an alarm or a launch narration.
+  if (status.tone !== "idle" || !input.hasUpcomingContent) return status;
+  return { tone: "live", label: "Live", staffNote: IMPORTED_CONTENT_STAFF_NOTE };
+}
+
+/** The four original rungs — see `rosterStatus` for the ordering rules. */
+function rosterStatusCore(input: {
+  launchState: ClientAgentLaunchState | null;
+  scheduleRefusal?: string | null;
+  scheduleRefusalAt?: number | null;
+  scheduleActive?: boolean;
+  hasDelivered?: boolean;
+  lastRunFailed?: boolean;
+  viewerIsStaff?: boolean;
   now?: number;
 }): RosterStatus {
   const attention: RosterStatus = { tone: "attention", label: "Needs attention" };
@@ -721,8 +821,12 @@ export function rosterStatus(input: {
   // is already narrating them, and `launch_failed` is the same alarm in more
   // specific words. Replacing either with the generic phrase would lose
   // information, not add it.
+  //
+  // STAFF ONLY (AF-14) — see `viewerIsStaff` for why a client's badge may not be
+  // moved by a run that broke on our side of the wire.
   if (
     input.lastRunFailed &&
+    input.viewerIsStaff &&
     input.launchState !== "launching" &&
     input.launchState !== "curating" &&
     input.launchState !== "launch_failed"

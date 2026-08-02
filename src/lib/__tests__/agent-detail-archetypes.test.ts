@@ -18,6 +18,7 @@ const { jobDeliveredWork } = await import("@/lib/client-agents");
 const {
   agentProducedAssets,
   agentsWithDeliveredWork,
+  agentsWithUpcomingContent,
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
@@ -659,6 +660,143 @@ describe("agentsWithDeliveredWork", () => {
   });
 });
 
+/* ─────────────── upcoming calendar content (AF-5) ─────────────── */
+
+describe("agentsWithUpcomingContent", () => {
+  // Albert: "if there's items on the calendar like Instagram or TikTok items, it
+  // should show us live." The stream this answers for has no cron — we produce
+  // its posts by hand and import them — so its own machinery says idle while the
+  // client watches it fill next week.
+  const CLIENT_SLUG = "karoslabs";
+  const instagram = { id: "ca-ig", name: "Instagram Agent", key: "karos-instagram-agent" };
+  const SOON = NOW + 3 * DAY;
+
+  /** An imported post, attributed by folder — the shape that has no job at all. */
+  const imported = (overrides: Partial<Asset> = {}): Asset =>
+    makeAsset({
+      id: "up-1",
+      jobId: null,
+      agentId: null,
+      status: "approved",
+      scheduledAt: SOON,
+      meta: { source: "lab-import", agentFolder: "instagram-agent" },
+      ...overrides,
+    });
+
+  const ask = (args: {
+    assets?: Asset[];
+    jobs?: Job[];
+    agents?: readonly { id: string; name: string; key: string }[];
+    umbrellas?: ClientAgent[];
+    clientSlug?: string | null;
+  }): Set<string> =>
+    agentsWithUpcomingContent({
+      assets: args.assets ?? [],
+      jobs: args.jobs ?? [],
+      agents: args.agents ?? [instagram],
+      umbrellas: args.umbrellas ?? [],
+      clientSlug: args.clientSlug === undefined ? CLIENT_SLUG : args.clientSlug,
+      now: NOW,
+    });
+
+  it("finds an imported post scheduled for a day that has not happened", () => {
+    expect(ask({ assets: [imported()] }).has(instagram.id)).toBe(true);
+  });
+
+  it("answers the same for both readers, because the WORD is the client's", () => {
+    // There is no viewer argument by design: a staff roster asking a
+    // staff-flavoured version of this question would call one agent idle on one
+    // screen and live on the other, which is the disagreement the shared
+    // attribution rungs exist to remove.
+    expect(agentsWithUpcomingContent.length).toBe(1);
+    expect(source("src/lib/agent-detail-archetypes.ts")).not.toMatch(
+      /agentsWithUpcomingContent[\s\S]{0,600}viewerIsClient/,
+    );
+  });
+
+  it("ignores a post that has already gone out, or is due in the past", () => {
+    // Upcoming means upcoming. A past-due scheduled post is one that did NOT go
+    // out, which is not a reason to call an agent live.
+    expect(ask({ assets: [imported({ scheduledAt: NOW - DAY })] }).size).toBe(0);
+    expect(
+      ask({ assets: [imported({ status: "published", publishedAt: NOW - DAY })] }).size,
+    ).toBe(0);
+  });
+
+  it("ignores a draft, which never reaches a client's calendar", () => {
+    expect(ask({ assets: [imported({ status: "draft" })] }).size).toBe(0);
+  });
+
+  it("ignores launch and test-run output, which is on nobody's calendar", () => {
+    expect(
+      ask({
+        assets: [
+          imported({
+            meta: { source: "lab-import", agentFolder: "instagram-agent", launchDeliverable: true },
+          }),
+        ],
+      }).size,
+    ).toBe(0);
+    expect(
+      ask({
+        assets: [
+          imported({
+            meta: { source: "lab-import", agentFolder: "instagram-agent", testRun: true },
+          }),
+        ],
+      }).size,
+    ).toBe(0);
+  });
+
+  it("counts a placeholder, which is still an item on the day", () => {
+    // Karos never publishes one, but the client sees it on the calendar for a
+    // future day, and that is the trigger in the ruling.
+    expect(
+      ask({ assets: [imported({ publishMode: "placeholder" })] }).has(instagram.id),
+    ).toBe(true);
+  });
+
+  it("does not credit one agent's upcoming stream to another", () => {
+    // The same rungs `agentProducedAssets` uses, so the F147 rule holds here:
+    // normalisation, never fuzz. "instagram-agent" is a strict prefix of the
+    // other key and must not match it.
+    const pro = { id: "ca-pro", name: "Instagram Agent Pro", key: "karos-instagram-agent-pro" };
+    const found = ask({ assets: [imported()], agents: [instagram, pro] });
+    expect(found.has(instagram.id)).toBe(true);
+    expect(found.has(pro.id)).toBe(false);
+  });
+
+  it("drops a per-client instance belonging to somebody else", () => {
+    // The binding wins here as everywhere: no amount of upcoming work moves an
+    // instance off the client its key names.
+    const instance = {
+      id: "ca-li",
+      name: "LinkedIn Agent",
+      key: "karos-linkedin-company-xodigital",
+    };
+    const theirs = imported({
+      meta: { source: "lab-import", agentFolder: "linkedin-company-xodigital" },
+    });
+    expect(ask({ assets: [theirs], agents: [instance], clientSlug: "xodigital" }).size).toBe(1);
+    expect(ask({ assets: [theirs], agents: [instance], clientSlug: CLIENT_SLUG }).size).toBe(0);
+  });
+
+  it("returns ids and nothing else — no count, no date, no title", () => {
+    // The whole boundary contract. A caller can learn that SOME upcoming item
+    // exists and not one thing about it, so a client is told only what their own
+    // calendar already shows them (A3/A4).
+    const found = ask({
+      assets: [
+        imported({ id: "u1", title: "Next Tuesday's post" }),
+        imported({ id: "u2", title: "Next Thursday's post" }),
+      ],
+    });
+    expect(found).toBeInstanceOf(Set);
+    expect([...found]).toEqual([instagram.id]);
+    expect(JSON.stringify([...found])).not.toContain("Tuesday");
+  });
+});
+
 describe("deliverableStamp", () => {
   it("gives a client the DELIVERY moment and staff the generation instant", () => {
     // The batch tell in its purest form: seven posts generated in one minute,
@@ -767,6 +905,81 @@ describe("templateDetails", () => {
       "rationale",
       "source",
     ]);
+  });
+
+  /* ── AF-6: an example of each format, without opening it ── */
+
+  it("carries the newest delivered post as the format's example", () => {
+    // Albert asked to see "the different templates we produce for that client
+    // and an example of each". The example is the FIRST row of the list the
+    // format opens onto, so what a reader sees closed and what they see open
+    // cannot be two different posts.
+    const details = templateDetails({
+      templates,
+      assets: [
+        makeAsset({ id: "n1", title: "Older", templateKey: "numbers", updatedAt: 5_000 }),
+        makeAsset({ id: "n2", title: "Newest", templateKey: "numbers", updatedAt: 9_000 }),
+      ],
+      viewerIsClient: true,
+    });
+    expect(details.numbers.example).toEqual({ id: "n2", title: "Newest", at: 9_000 });
+    expect(details.numbers.example!.id).toBe(details.numbers.posts[0].id);
+  });
+
+  it("carries a thumbnail when the example has one, and no meta with it", () => {
+    // One URL off `assetImages`, never the asset's meta: a lab-imported post's
+    // meta holds the folder it came from and whatever else the importer wrote.
+    const details = templateDetails({
+      templates,
+      assets: [
+        makeAsset({
+          id: "n1",
+          templateKey: "numbers",
+          updatedAt: 9_000,
+          meta: { images: ["https://cdn.example/one.png"], agentFolder: "instagram-agent" },
+        }),
+      ],
+      viewerIsClient: true,
+    });
+    expect(details.numbers.example?.imageUrl).toBe("https://cdn.example/one.png");
+    expect(Object.keys(details.numbers.example!).sort()).toEqual([
+      "at",
+      "id",
+      "imageUrl",
+      "title",
+    ]);
+    expect(JSON.stringify(details)).not.toContain("agentFolder");
+    // A text-only format says so by absence rather than by an empty frame.
+    expect(details.story.example).toBeUndefined();
+  });
+
+  it("has no example for a format that has delivered this viewer nothing", () => {
+    // The set is already archive-filtered upstream (`agentProducedAssets`), so a
+    // format whose only work is undelivered has nothing to show and must not
+    // borrow another format's post to fill the space.
+    const details = templateDetails({ templates, assets: [], viewerIsClient: true });
+    expect(details.numbers.example).toBeUndefined();
+    expect(details.numbers.postCount).toBe(0);
+  });
+
+  it("never lets the example outlive the row it was drawn from", () => {
+    // The example must be a post this VIEWER may see: it is taken from the same
+    // filtered list, so a capped list still examples its own newest row.
+    const many = Array.from({ length: 9 }, (_, i) =>
+      makeAsset({ id: `a${i}`, templateKey: "numbers", updatedAt: 1_000 + i }),
+    );
+    const details = templateDetails({
+      templates,
+      assets: many,
+      viewerIsClient: true,
+      perTemplate: 3,
+    });
+    expect(details.numbers.example?.id).toBe("a8");
+    // And the row objects themselves stay the two-field shape — the asset the
+    // example was resolved from must not ride along on every post.
+    for (const post of details.numbers.posts) {
+      expect(Object.keys(post).sort()).toEqual(["at", "id", "title"]);
+    }
   });
 
   it("pins a post row to exactly three fields", () => {

@@ -1088,7 +1088,17 @@ export function buildRosterDrift(insights: SeoGeoInsights, tracked?: TrackedComp
  */
 const IMPACT_RANK: Record<RecImpact, number> = { high: 3, medium: 2, low: 1 };
 
-export function healRecommendations(recommendations: Recommendation[]): Recommendation[] {
+export function healRecommendations(
+  recommendations: Recommendation[],
+  /**
+   * The snapshot's approvals, when the caller has them.
+   *
+   * Only ever used to CHOOSE which member of a collapsed group keeps its recId
+   * (see the second pass below) — nothing here reads or writes approval state,
+   * and a caller that omits it gets the same rows in the same order.
+   */
+  opts?: { approvedRecIds?: readonly string[] },
+): Recommendation[] {
   // Dedupe BEFORE healing, and by the same rule `dedupeGapsByRecId` applies to
   // the gaps these rows are built from (src/lib/seo-geo.ts): keep the strongest
   // member, preserve first-seen order, and promote the vertical to "BOTH" when
@@ -1118,11 +1128,92 @@ export function healRecommendations(recommendations: Recommendation[]): Recommen
     }
   }
 
-  return order.map((recId) => {
+  const healed = order.map((recId) => {
     const rec = byId.get(recId)!;
     const seen = verticals.get(recId)!;
     const merged = seen.size > 1 ? { ...rec, vertical: "BOTH" as Lever } : rec;
     return { ...merged, ...resolveRecCopy(merged.recId, merged) };
+  });
+
+  return collapseIdenticalCopy(healed, opts?.approvedRecIds ?? []);
+}
+
+/**
+ * The SECOND duplicate class (AF-11): different rec ids that heal to the same
+ * words.
+ *
+ * Albert saw the same approved item twice. The pass above closes the case where
+ * one recId appears twice; this closes the one where two ids render byte for
+ * byte identically, which is a different defect wearing the same face:
+ *
+ *  • PER-ENGINE TWINS. `resolveRecCopy` keys on `recId.split(":")[0]`, so
+ *    `GEO-11:chatgpt` and `GEO-11:gemini` both resolve to one entry in REC_COPY.
+ *    `dedupeGapsByRecId` keeps them apart on purpose — five engines' findings
+ *    must not silently merge into one GAP — but that is a claim about the
+ *    technical detail staff read, not about the plain-English row a client
+ *    approves, and there is exactly one change to make either way.
+ *  • FALLBACK TWINS. Every id REC_COPY does not know resolves to the single
+ *    REC_FALLBACK, so N unmapped findings render as N rows all reading "A
+ *    technical finding your team is reviewing".
+ *
+ * WHY IT SHOWS UP AT APPROVAL. Each twin carries its own recId, and that is what
+ * `approveSeoGeoRecommendation` stores — so one row turns green while its
+ * identical neighbour keeps a grey Approve button. Before the click the pair
+ * reads as one undifferentiated list; the green treatment is what makes the
+ * duplicate visible, which is exactly where Albert met it.
+ *
+ * WHY IT SURVIVED AT ALL. `buildRecommendations` dedupes on the rendered TITLE
+ * at capture, this module deduped on recId at render, and the two keys disagree.
+ * Any snapshot that did not go through `buildRecommendations` therefore ships
+ * twins: an Ops-Import bundle (copied verbatim, validated for shape only) and
+ * anything captured before the title dedupe landed. Keying the render pass the
+ * same way the capture pass is keyed is what finally makes them agree.
+ *
+ * SAME MERGE RULES as the recId pass — strongest impact, verticals promoted to
+ * BOTH on disagreement, first-seen order — plus one of its own: an ALREADY
+ * APPROVED member keeps its recId as the survivor's. Without that, collapsing a
+ * pair whose approved half was not the first-seen one would show the client an
+ * un-approved row for something they had already approved, which is a worse lie
+ * than the duplicate. Approving the survivor stores one id, and the group renders
+ * as one row, so it cannot recur.
+ */
+function collapseIdenticalCopy(
+  healed: Recommendation[],
+  approvedRecIds: readonly string[],
+): Recommendation[] {
+  const approved = new Set(approvedRecIds);
+  const byCopy = new Map<string, Recommendation>();
+  const verticals = new Map<string, Set<Lever>>();
+  const order: string[] = [];
+
+  for (const rec of healed) {
+    // The copy a reader actually compares — both fields, because two rows with
+    // one title and two different explanations are two rows. Joined on U+FFFC,
+    // written as an ESCAPE and never as a byte so the file stays greppable: a
+    // separator that can occur in copy would let "ab" + "c" collide with "a" +
+    // "bc" and collapse two real findings into one.
+    const key = `${rec.title.trim().toLowerCase()}\uFFFC${(rec.description ?? "").trim().toLowerCase()}`;
+    const seen = verticals.get(key) ?? new Set<Lever>();
+    seen.add(rec.vertical);
+    verticals.set(key, seen);
+
+    const held = byCopy.get(key);
+    if (!held) {
+      byCopy.set(key, rec);
+      order.push(key);
+      continue;
+    }
+    // Identity first: whichever member the client already approved is the one
+    // whose id the surviving row must carry.
+    const recId = approved.has(rec.recId) && !approved.has(held.recId) ? rec.recId : held.recId;
+    const stronger = IMPACT_RANK[rec.impact] > IMPACT_RANK[held.impact] ? rec : held;
+    byCopy.set(key, { ...stronger, recId });
+  }
+
+  return order.map((key) => {
+    const rec = byCopy.get(key)!;
+    const seen = verticals.get(key)!;
+    return seen.size > 1 ? { ...rec, vertical: "BOTH" as Lever } : rec;
   });
 }
 

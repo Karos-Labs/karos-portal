@@ -228,8 +228,19 @@ function draftLabelOf(row: { draftRef?: string }): { draftLabel?: string } {
   return label ? { draftLabel: label } : {};
 }
 
-/** Strip an intake doc to the client-safe X view. */
-function toXIntakeView(intake: AgentIntake | null): XIntakeView | null {
+/**
+ * Strip an intake doc to the client-safe X view.
+ *
+ * EXPORTED for AF-7, and that export is load-bearing rather than convenience.
+ * The agent detail page now renders these answers inline (Albert: "your X details
+ * — this is a button here, but realistically it should show on this page"), and
+ * the only safe way to do that is to read the SAME whitelist the intake surface
+ * reads. A second projection of `AgentIntake` — a shared collection carrying a
+ * uid, a private CV path and URL, and every other family's fields — would be a
+ * second set of rules to keep in step, and the one that gets forgotten is the one
+ * that leaks.
+ */
+export function toXIntakeView(intake: AgentIntake | null): XIntakeView | null {
   if (!intake) return null;
   return {
     handle: intake.handle,
@@ -240,8 +251,13 @@ function toXIntakeView(intake: AgentIntake | null): XIntakeView | null {
   };
 }
 
-/** Strip an intake doc to the client-safe LinkedIn view (the CV itself stays private). */
-function toLiIntakeView(intake: AgentIntake | null): LiIntakeView | null {
+/**
+ * Strip an intake doc to the client-safe LinkedIn view (the CV itself stays
+ * private — `cvName` is the uploaded file's NAME, never its path or its URL).
+ * Exported for AF-7; see `toXIntakeView` for why the inline band reads this
+ * rather than projecting the document again.
+ */
+export function toLiIntakeView(intake: AgentIntake | null): LiIntakeView | null {
   if (!intake) return null;
   return {
     handle: intake.handle,
@@ -373,8 +389,11 @@ export async function buildLinkedInAgentIntakeView(
   };
 }
 
-/** Strip an intake doc to the client-safe Reddit view. */
-function toRedditIntakeView(intake: AgentIntake | null): RedditIntakeView | null {
+/**
+ * Strip an intake doc to the client-safe Reddit view. Exported for AF-7; see
+ * `toXIntakeView` for why the inline band reads this rather than the document.
+ */
+export function toRedditIntakeView(intake: AgentIntake | null): RedditIntakeView | null {
   if (!intake) return null;
   return {
     handle: intake.handle,

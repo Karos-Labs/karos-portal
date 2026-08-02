@@ -86,7 +86,16 @@ export function pastRunStatuses(opts: { isClient: boolean }): ReadonlySet<JobSta
 export interface PastRunJobLike {
   id: string;
   status: JobStatus;
+  /**
+   * Who pressed the button. Optional because most callers' judgements do not
+   * turn on it; rule 3's in-flight exception does, and a caller that omits it
+   * simply never qualifies for the exception (the quiet direction).
+   */
+  createdBy?: string;
 }
+
+/** Queued or working — a run with a verdict still to come. */
+const IN_FLIGHT_STATUSES: ReadonlySet<JobStatus> = new Set<JobStatus>(["queued", "running"]);
 
 /**
  * Only what this module needs from an Asset. `locked` marks a future-dated post
@@ -103,11 +112,17 @@ export interface PastRunEntry<J, V> {
    * already in the shape the card renders — `projectPastRuns` maps them itself
    * (see its `project`).
    *
-   * For a client this is NEVER empty. That is the invariant the drop in
-   * `projectPastRuns` exists for, and what makes "In review" and "nothing to
-   * review" mutually exclusive on a client's card — so it has to be THIS array,
-   * the one the card receives, rather than a raw list a caller then maps into a
-   * second array whose length nothing checks.
+   * For a client this is empty in exactly ONE case: a queued or running job they
+   * started themselves (see `viewerIsWatchingOwnRun`). Everywhere else the drop
+   * in `projectPastRuns` guarantees it non-empty, which is what makes "In review"
+   * and "nothing to review" mutually exclusive on a client's card — so it has to
+   * be THIS array, the one the card receives, rather than a raw list a caller
+   * then maps into a second array whose length nothing checks.
+   *
+   * The exception cannot reopen that: "In review" is `status === "review"`, and
+   * the exception admits only queued and running, so no card can badge a review
+   * it has nothing to review. The card renders its in-flight line ahead of its
+   * "produced no assets" line, so the empty case reads as the run it is.
    */
   deliveredAssets: V[];
 }
@@ -138,8 +153,15 @@ export interface PastRunEntry<J, V> {
  *    world — with rule 2 applied there is no honest card left to draw, only a
  *    row that contradicts its own badge. It costs the client no CONTENT: the
  *    work is still on the calendar as slots, and each delivered asset is its own
- *    card. What it does cost is the in-flight card — a queued or running run has
- *    delivered nothing, so a client no longer watches one execute. For a run
+ *    card.
+ *
+ *    ONE EXCEPTION, added with AF-9: a queued or running job the READER
+ *    THEMSELVES started keeps its card, because the cost this rule named — "a
+ *    client no longer watches one execute" — was being paid by the client's own
+ *    run gesture, which then had no visible trace anywhere outside the agent
+ *    page. `viewerIsWatchingOwnRun` holds the scope and the reasoning; the short
+ *    version is that a scheduled fire still does not qualify, so nothing here
+ *    tells a client that next week is being generated today. For a run
  *    fired by an ACTIVE schedule, that the agent ran is still on the schedule's
  *    own card under "Last fire" (`lastRunAt`) — and the SUBSTITUTE'S OWN SHAPE
  *    matters, because A3 came for that panel next: staff read "Ran 4 hours ago",
@@ -169,7 +191,7 @@ export interface PastRunEntry<J, V> {
 export function projectPastRuns<J extends PastRunJobLike, A extends PastRunAssetLike, V>(
   jobs: readonly J[],
   assetsByJob: ReadonlyMap<string, readonly A[]>,
-  opts: { isClient: boolean; project: (asset: A) => V },
+  opts: { isClient: boolean; viewerUid?: string; project: (asset: A) => V },
 ): PastRunEntry<J, V>[] {
   const statuses = pastRunStatuses(opts);
   const entries: PastRunEntry<J, V>[] = [];
@@ -180,10 +202,43 @@ export function projectPastRuns<J extends PastRunJobLike, A extends PastRunAsset
     // One view per shown deliverable, and the emptiness question asked of the
     // mapped array itself — see `project` above.
     const deliveredAssets = shown.map((a) => opts.project(a));
-    if (opts.isClient && deliveredAssets.length === 0) continue;
+    if (opts.isClient && deliveredAssets.length === 0 && !viewerIsWatchingOwnRun(job, opts)) {
+      continue;
+    }
     entries.push({ job, deliveredAssets });
   }
   return entries;
+}
+
+/**
+ * Rule 3's one exception: a run THIS client started, still executing (AF-9).
+ *
+ * Rule 3 drops an empty client card because a run that has given them nothing is
+ * not an event in their world, and it named the cost out loud — "a client no
+ * longer watches one execute". That cost turned out to be the whole feedback of
+ * the client's own run gesture: they press "Create a new post", the agent page
+ * says a run is in flight, and every other surface they own goes silent for the
+ * twenty minutes it takes. Pressing a button and finding no trace of it anywhere
+ * is indistinguishable from the press having done nothing (F31, one screen over).
+ *
+ * SCOPED THE SAME WAY THE AGENT PAGE'S BANNER IS, and for the same two reasons.
+ * `createdBy === viewerUid` is not politeness about authorship: a SCHEDULED fire
+ * shown as "In progress" on a client's calendar states outright that a batch is
+ * being generated now, which is the one fact the slot model exists to keep
+ * indistinguishable (A3/A4) — and a staff-fired run is work the client did not
+ * ask for and is not being charged for. Their own press is neither.
+ *
+ * The exception cannot widen what a card SAYS: the run has no deliverables to
+ * show, so what a client gets is the status line the card already renders first
+ * for this state ("In progress…"), and it disappears into an ordinary delivered
+ * card, or out of rule 3 again, the moment the run reaches a verdict.
+ */
+function viewerIsWatchingOwnRun(
+  job: PastRunJobLike,
+  opts: { viewerUid?: string },
+): boolean {
+  if (!IN_FLIGHT_STATUSES.has(job.status)) return false;
+  return opts.viewerUid !== undefined && job.createdBy === opts.viewerUid;
 }
 
 /**

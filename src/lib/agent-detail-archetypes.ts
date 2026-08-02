@@ -5,8 +5,14 @@ import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { projectRunOccurrences } from "@/lib/scheduled-runs";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import { resolveContentIdentity } from "@/lib/agent-identity-map";
-import { clientDeliveryStamp, getClientArchiveAssets } from "@/lib/asset-visibility";
-import { assetVideos } from "@/lib/asset-images";
+import {
+  clientDeliveryStamp,
+  getClientArchiveAssets,
+  isLaunchDeliverable,
+  isTestRunAsset,
+} from "@/lib/asset-visibility";
+import { isClientCalendarStatus, postKind } from "@/lib/calendar-kind";
+import { assetImages, assetVideos } from "@/lib/asset-images";
 import { parseRedditDrafts, type RedditParsedAccount } from "@/lib/reddit-drafts";
 import type { ClientAgentIdentity } from "@/lib/agent-identity-map";
 import type { TemplateDetail } from "@/components/client-agents/types";
@@ -350,6 +356,97 @@ export function agentsWithDeliveredWork(args: {
   return delivered;
 }
 
+/* ─────────────────── upcoming calendar content (AF-5) ─────────────────── */
+
+/**
+ * Is this asset an item the CLIENT's calendar shows on a day that has not
+ * happened yet?
+ *
+ * THE CLIENT'S CALENDAR RULE, whoever is asking. The status word it feeds is the
+ * client-facing one by ruling, so staff must be told the same thing the client is
+ * being told — and a staff-flavoured version of this predicate (drafts included,
+ * say) would give the two rosters different answers about the same agent, which
+ * is the one failure `agentsWithDeliveredWork` exists to prevent. The rules are
+ * therefore lifted from the surfaces that build a client's calendar rather than
+ * invented here:
+ *
+ *  • not a launch deliverable and not a test run — `getClientLibraryAssets` drops
+ *    both, so neither is ever on anyone's calendar;
+ *  • `isClientCalendarStatus` — the draft rule, in the one place it lives;
+ *  • a chip kind of `scheduled` or `placeholder`. Those are the two `postKind`
+ *    answers that mean "planned for a day, not yet done". `published` is history,
+ *    `failed` and `held` are a publish attempt that went wrong (an agent whose
+ *    posts will not go out is not the thing Albert asked to be called Live), and
+ *    `draft` cannot reach a client's calendar at all.
+ *  • `scheduledAt` strictly in the future. A past-due scheduled post is a post
+ *    that did not go out, not upcoming work.
+ *
+ * PLACEHOLDER COUNTS, deliberately. It is a planned item the client sees on their
+ * calendar for a future day, which is exactly the trigger in the ruling ("if
+ * there's items on the calendar like Instagram or TikTok items, it should show us
+ * live"), even though Karos never publishes one itself.
+ */
+function isUpcomingCalendarItem(asset: Asset, now: number): boolean {
+  if (isLaunchDeliverable(asset) || isTestRunAsset(asset)) return false;
+  if (!isClientCalendarStatus(asset.status)) return false;
+  if (asset.scheduledAt == null || asset.scheduledAt <= now) return false;
+  const kind = postKind(asset);
+  return kind === "scheduled" || kind === "placeholder";
+}
+
+/**
+ * Which of these agents have content waiting on this client's calendar (AF-5).
+ *
+ * The sibling of `agentsWithDeliveredWork`, over the same candidates, the same
+ * binding rung and the SAME attribution rungs — because it answers the other half
+ * of "is this agent working for me": that one reads history, this one reads the
+ * days ahead. Sharing `assetBelongsToAgent` is the point; a second join here would
+ * be a fourth chance to credit one agent's stream to another (F147).
+ *
+ * IT DOES NOT GO THROUGH `viewerVisibleAssets`, and that is the one deliberate
+ * difference. The archive filter drops future-dated posts by construction (rule 2
+ * of `getClientArchiveAssets`), so routing this through it would return the empty
+ * set for every client, every time — the very posts being asked about are the ones
+ * it exists to hide. What protects the boundary instead is the RETURN TYPE: a set
+ * of agent ids, from which a caller can learn that some upcoming item exists and
+ * nothing else. No count, no date, no title, no template leaves this function, so
+ * a client learns only what their own calendar already shows them (A3/A4).
+ *
+ * The job half of `agentsWithDeliveredWork` has no counterpart here on purpose. A
+ * job says an agent RAN; the question is whether content is on the calendar, and
+ * an imported stream has no job at all — reading jobs would answer a different
+ * question with the same name.
+ */
+export function agentsWithUpcomingContent(args: {
+  assets: Asset[];
+  jobs: Job[];
+  agents: readonly { id: string; name: string; key: string }[];
+  umbrellas: ClientAgent[];
+  /** `Client.agentsRepoSlug` — the binding rung, as everywhere else. */
+  clientSlug: string | null | undefined;
+  now: number;
+}): Set<string> {
+  const bound = args.agents.filter((agent) =>
+    agentKeyMatchesClientSlug(agent.key, args.clientSlug),
+  );
+  const upcoming = args.assets.filter((asset) => isUpcomingCalendarItem(asset, args.now));
+  if (upcoming.length === 0 || bound.length === 0) return new Set();
+
+  const jobById = new Map(args.jobs.map((job) => [job.id, job]));
+  const producing = new Set<string>();
+  for (const agent of bound) {
+    const attribution = agentAttribution({
+      agent,
+      umbrella: umbrellaForAgent(args.umbrellas, agent.id),
+      umbrellas: args.umbrellas,
+    });
+    if (upcoming.some((asset) => assetBelongsToAgent(asset, jobById, attribution))) {
+      producing.add(agent.id);
+    }
+  }
+  return producing;
+}
+
 /**
  * The stamp a deliverable row prints for this viewer.
  *
@@ -413,14 +510,34 @@ export function templateDetails(args: {
         // deliverable reads the same wherever it is listed.
         title: asset.title || "Untitled",
         at: deliverableStamp(asset, args.viewerIsClient),
+        // Carried alongside the row rather than mapped into it: only the newest
+        // post becomes the example, so resolving an image for all of them would
+        // be work for rows that never show one.
+        asset,
       }))
       .sort((a, b) => b.at - a.at);
+    // AF-6: the newest of exactly the set above, so the example a reader sees on
+    // the closed row is the first row of the list it opens onto. Nothing here
+    // widens what the join returned — if this viewer may not see a post, they may
+    // not see it as an example either.
+    const newest = posts[0];
+    const exampleImage = newest ? assetImages(newest.asset)[0]?.url : undefined;
     details[template.key] = {
       key: template.key,
+      ...(newest
+        ? {
+            example: {
+              id: newest.id,
+              title: newest.title,
+              at: newest.at,
+              ...(exampleImage ? { imageUrl: exampleImage } : {}),
+            },
+          }
+        : {}),
       ...(template.rationale ? { rationale: template.rationale } : {}),
       addedAt: template.addedAt,
       source: template.source,
-      posts: posts.slice(0, cap),
+      posts: posts.slice(0, cap).map(({ asset: _asset, ...row }) => row),
       postCount: posts.length,
     };
   }

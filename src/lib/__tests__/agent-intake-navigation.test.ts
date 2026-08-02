@@ -283,16 +283,47 @@ describe("#85 — every row the band paints has somewhere to land", () => {
     // the href on one element and the hover border on another, which is the
     // exact state #85 was: a `hover:border-neon/40` on something that was not
     // the link.
+    // TWO ROW SHAPES SINCE AF-7, and #85's rule has to hold for both. A row with
+    // saved answers is a `<details>` that shows them in place and carries the
+    // per-row link inside its expansion; a row with nothing saved is still the
+    // plain Link straight to its own card on the form, which is the case #85 was
+    // actually about (a client with four empty seats clicked the empty seat and
+    // got nothing).
     const linkAt = elementOpensAt(block, "Link");
     expect(linkAt, "the band paints no <Link> per row").toBeGreaterThan(-1);
-    const link = elementAt(block, "Link", linkAt);
-    expect(link, "the row's <Link> never closes").not.toBeNull();
-    // Derived through the shared function — not a hand-built hash, and not the
-    // bare page href every row used to share.
-    expect(hrefValues(link!.tag)).toEqual(["{intakeRowHref(view.href, row.id)}"]);
+
+    // EVERY per-row link, not just the first: two shapes means two links, and a
+    // rule that only held for whichever came first in the file is the shape the
+    // original finding had.
+    const links: string[] = [];
+    for (let at = linkAt; at > -1; at = elementOpensAt(block, "Link", at + 1)) {
+      const link = elementAt(block, "Link", at);
+      expect(link, "a row's <Link> never closes").not.toBeNull();
+      links.push(link!.tag);
+    }
+    expect(links.length, "both row shapes carry a link").toBeGreaterThanOrEqual(2);
+    for (const tag of links) {
+      // Derived through the shared function — not a hand-built hash, and not the
+      // bare page href every row used to share.
+      expect(hrefValues(tag)).toEqual(["{intakeRowHref(view.href, row.id)}"]);
+    }
+
     // The hover border that made the old `<li>`s look clickable is on the thing
-    // that IS clickable.
-    expect(link!.tag, "the hover border is not on the link").toContain("hover:border-neon/40");
+    // that IS clickable — the Link on the plain branch, the `<details>` on the
+    // disclosure branch. Asserted as a count over the row block so neither shape
+    // can lose it, and so it cannot drift onto some inner span again.
+    const hovers = block.match(/hover:border-neon\/40/g) ?? [];
+    expect(hovers.length, "each row shape wears the hover affordance").toBe(2);
+    const detailsAt = elementOpensAt(block, "details");
+    expect(detailsAt, "the answers row is not a disclosure").toBeGreaterThan(-1);
+    expect(
+      elementAt(block, "details", detailsAt)!.tag,
+      "the disclosure is not the thing that looks clickable",
+    ).toContain("hover:border-neon/40");
+    expect(
+      links.some((tag) => tag.includes("hover:border-neon/40")),
+      "the plain row's link is not the thing that looks clickable",
+    ).toBe(true);
   });
 });
 
