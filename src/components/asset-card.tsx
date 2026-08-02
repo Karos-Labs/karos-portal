@@ -266,7 +266,7 @@ function ApprovePanel({
                   })}
                 </button>
               )}
-              {suggestedReason ? ` — ${suggestedReason}` : ""}
+              {suggestedReason ? ` · ${suggestedReason}` : ""}
             </span>
           </p>
         )
@@ -751,7 +751,7 @@ export function AssetCard({
               </div>
             ) : (
               <p className="mt-1 text-sm text-muted">
-                {xDraftCount} drafts across {xBatch.accounts.length} accounts — about a week of posting.
+                {xDraftCount} drafts across {xBatch.accounts.length} accounts. About a week of posting.
                 Expand to read and pick favorites.
               </p>
             )
@@ -848,7 +848,7 @@ export function AssetCard({
                   ))}
                 </ul>
               ) : (
-                <p className="text-xs text-muted-2">No preview — this asset has no caption or photos yet.</p>
+                <p className="text-xs text-muted-2">No preview. This asset has no caption or photos yet.</p>
               )}
             </div>
           )}

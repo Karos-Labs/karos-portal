@@ -116,7 +116,7 @@ describe("publishAssetNowAction — the server refusals", () => {
 
     expect(res).toEqual({
       ok: false,
-      error: "Only an approved, scheduled, or delivered post can be published — approve it first.",
+      error: "Only an approved, scheduled, or delivered post can be published. Approve it first.",
     });
     expect(publishers.publishAssetToPlatform).not.toHaveBeenCalled();
     // Refused before the claim, so a refusal can't leave a claim behind either.
@@ -132,7 +132,7 @@ describe("publishAssetNowAction — the server refusals", () => {
 
     expect(res).toEqual({
       ok: false,
-      error: "This is a calendar-only placeholder — Karos never posts it.",
+      error: "This is a calendar-only placeholder. Karos never posts it.",
     });
     expect(publishers.publishAssetToPlatform).not.toHaveBeenCalled();
     expect(data.claimAssetForPublish).not.toHaveBeenCalled();
@@ -156,7 +156,10 @@ describe("publishAssetNowAction — the server refusals", () => {
     expect(publishers.publishAssetToPlatform).toHaveBeenCalledTimes(1);
   });
 
-  it("phrases its integration refusals with an em dash, not a spaced hyphen", async () => {
+  // AF-8 reversed the house style these two lines were written to: the em dash
+  // that replaced a spaced hyphen here is itself out of client copy now, so the
+  // clause break is a period.
+  it("phrases its integration refusals with neither dash", async () => {
     (data.getAsset as any).mockResolvedValue(makeAsset({ status: "approved" }));
     (data.listClientIntegrations as any).mockResolvedValue([]);
     (publishers.inferPlatform as any).mockReturnValue(undefined);
@@ -164,7 +167,7 @@ describe("publishAssetNowAction — the server refusals", () => {
     const noPlatform = await actions.publishAssetNowAction("a1");
     expect(noPlatform).toEqual({
       ok: false,
-      error: "No compatible platform connected — connect one in the Integrations tab",
+      error: "No compatible platform connected. Connect one in the Integrations tab",
     });
 
     (data.listClientIntegrations as any).mockResolvedValue([
@@ -173,7 +176,7 @@ describe("publishAssetNowAction — the server refusals", () => {
     const deadToken = await actions.publishAssetNowAction("a1", "twitter");
     expect(deadToken).toEqual({
       ok: false,
-      error: "No active twitter integration — connect or re-connect it first",
+      error: "No active twitter integration. Connect or re-connect it first",
     });
   });
 });

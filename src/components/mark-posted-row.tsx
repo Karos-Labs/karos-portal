@@ -115,7 +115,7 @@ export function MarkPostedRow({
           variant="outline"
           onClick={markPosted}
           loading={busy}
-          title="You posted this yourself — mark it live so the calendar and status reflect it"
+          title="You posted this yourself. Mark it live so the calendar and status reflect it"
         >
           <Icon name="CheckCheck" className="h-3.5 w-3.5" />
           Mark as posted

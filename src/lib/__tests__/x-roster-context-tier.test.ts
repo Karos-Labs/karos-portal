@@ -217,7 +217,7 @@ describe("proposeXRosterAction — a client whose documents are internal-tier on
 
     expect(out.handles).toBeUndefined();
     expect(out.error).toBe(
-      "Not enough about your brand on file yet to suggest accounts — ask your Karos team to finish your brand documents, or type accounts manually.",
+      "Not enough about your brand on file yet to suggest accounts. Ask your Karos team to finish your brand documents, or type accounts manually.",
     );
     // The old line sent them to finish an onboarding that is already finished.
     expect(out.error).not.toMatch(/onboarding/i);

@@ -86,7 +86,7 @@ function parseHandle(raw: string): string | null | { error: string } {
   if (!/^[A-Za-z0-9_]{1,15}$/.test(trimmed)) {
     return {
       error:
-        "That is not a valid X handle — letters, numbers and underscores only, up to 15 characters. Leave it empty if you do not have one yet.",
+        "That is not a valid X handle. Letters, numbers and underscores only, up to 15 characters. Leave it empty if you do not have one yet.",
     };
   }
   return `@${trimmed}`;
@@ -198,7 +198,7 @@ export async function addXSeatAction(input: {
   const existing = (await listClientSeats(input.clientId)).find((s) => s.slug === slug);
   let seatId = existing?.id;
   if (seatId && (await getAgentIntake(input.clientId, "x", seatId))) {
-    return { error: `An X seat for "${name}" already exists — edit it instead.` };
+    return { error: `An X seat for "${name}" already exists. Edit it instead.` };
   }
   const now = Date.now();
   if (!seatId) {
@@ -294,7 +294,7 @@ export async function proposeXRosterAction(input: {
     getClientContextDocInTierOrder(input.clientId, "market-strategy", contextTiers),
   ]);
   const context = [
-    `Company: ${client.name}${client.industry ? ` (${client.industry})` : ""}${client.website ? ` — ${client.website}` : ""}`,
+    `Company: ${client.name}${client.industry ? ` (${client.industry})` : ""}${client.website ? ` · ${client.website}` : ""}`,
     client.brief ? `About: ${client.brief}` : "",
     audience?.content ? `TARGET AUDIENCE (excerpt):\n${audience.content.slice(0, 4_000)}` : "",
     strategy?.content ? `MARKET STRATEGY (excerpt):\n${strategy.content.slice(0, 4_000)}` : "",
@@ -309,12 +309,12 @@ export async function proposeXRosterAction(input: {
     // that actually unblocks it, and leaves the manual route where it was.
     return {
       error:
-        "Not enough about your brand on file yet to suggest accounts — ask your Karos team to finish your brand documents, or type accounts manually.",
+        "Not enough about your brand on file yet to suggest accounts. Ask your Karos team to finish your brand documents, or type accounts manually.",
     };
   }
 
   const forWhom = input.seatName
-    ? `a personal X account belonging to ${input.seatName}, a person at ${client.name}. Favor respected operators, founders, and voices this person would credibly reply to — people a notch or two bigger than them in the same space.`
+    ? `a personal X account belonging to ${input.seatName}, a person at ${client.name}. Favor respected operators, founders, and voices this person would credibly reply to. People a notch or two bigger than them in the same space.`
     : `the company X page of ${client.name}. Favor the loudest credible voices their buyers already follow in this niche.`;
 
   const outcome = await withClientModelCharge(
@@ -338,13 +338,13 @@ export async function proposeXRosterAction(input: {
           model: anthropic(MODELS.SONNET),
           tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
           system:
-            "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active — well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
+            "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active, such as well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
           prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
         });
         const match = text.match(/\[[\s\S]*\]/);
         if (!match) {
           await refund("Refund · account suggestions came back empty");
-          return { error: "Could not build a proposal — try again or type accounts manually." };
+          return { error: "Could not build a proposal. Try again or type accounts manually." };
         }
         const parsed = JSON.parse(match[0]) as Array<{ handle?: string; why?: string }>;
         const handles = parsed
@@ -356,7 +356,7 @@ export async function proposeXRosterAction(input: {
           .slice(0, 15);
         if (handles.length < 5) {
           await refund("Refund · account suggestions came back empty");
-          return { error: "Proposal came back too thin — try again or type accounts manually." };
+          return { error: "Proposal came back too thin. Try again or type accounts manually." };
         }
         return { handles };
       } catch {
@@ -364,7 +364,7 @@ export async function proposeXRosterAction(input: {
         // wrapper: it swallows the throw to keep the client-safe sentence, so
         // the wrapper never sees a failure to pair a refund to.
         await refund("Refund · account suggestions failed");
-        return { error: "Could not build a proposal right now — try again or type accounts manually." };
+        return { error: "Could not build a proposal right now. Try again or type accounts manually." };
       }
     },
   );
@@ -454,7 +454,7 @@ export async function addXTakeAction(input: {
   const user = await requireClientAccess(input.clientId);
   const seat = await getClientSeat(input.seatId);
   if (!seat || seat.clientId !== input.clientId) return { error: "Seat not found." };
-  if (!input.take.trim()) return { error: "Write the take — one honest sentence is enough." };
+  if (!input.take.trim()) return { error: "Write the take. One honest sentence is enough." };
   if (!DATE_RE.test(input.date)) return { error: "Pick a date for this take." };
   if (input.take.length > MAX_TEXT) return { error: "Please keep the take under 2,000 characters." };
   await addXTake({
@@ -510,10 +510,10 @@ export async function addXDraftFeedbackAction(input: {
     return { error: "Paste the final text you actually posted." };
   }
   if (input.action === "not_posted" && !input.reason?.trim()) {
-    return { error: "Tell us why this one did not run — that is what teaches the agent." };
+    return { error: "Tell us why this one did not run. That is what teaches the agent." };
   }
   if (input.action === "note" && !input.reason?.trim()) {
-    return { error: "Write the feedback — as much detail as you like." };
+    return { error: "Write the feedback. As much detail as you like." };
   }
   if ((input.finalText?.length ?? 0) > MAX_TEXT || (input.reason?.length ?? 0) > MAX_TEXT) {
     return { error: "Please keep each answer under 2,000 characters." };

@@ -3,7 +3,10 @@
 # Karos CMO — agent notes
 
 AI marketing-agency OS. Next.js 16 (App Router, Turbopack) · Firebase Auth · Firestore
-(Admin SDK only) · Anthropic via AI SDK v6 · Resend · Fireflies. Dark + neon-green theme.
+(Admin SDK only) · Anthropic via AI SDK v6 · Resend · Fireflies. **Ember** brand system:
+two inks (warm charcoal ground + paper white) and ONE rationed orange accent, with a
+light mode that reverses every token except the orange. The scheme, its surface ladder
+and the rules for each token are documented in `src/app/globals.css`'s own header.
 
 ## Conventions
 - **All Firestore access is server-side** through `src/lib/data.ts` (Admin SDK). The browser
@@ -40,6 +43,9 @@ AI marketing-agency OS. Next.js 16 (App Router, Turbopack) · Firebase Auth · F
 - **UI primitives** in `src/components/ui.tsx`; icons via `src/components/icon.tsx`
   (lucide v1 — brand icons like Instagram/Twitter were removed, use Camera/Share2/AtSign).
 - Theme tokens are CSS vars in `src/app/globals.css`, exposed to Tailwind via `@theme inline`.
+  Token NAMES are inherited from the pre-Ember theme — `--neon` is the accent and is orange
+  (`#ff6b2c`), not green. Components stay portable by referring to the token, never the colour;
+  don't "fix" a `text-neon` to a green, and don't re-theme without a brand-guidelines change.
 
 ## Commands
 - `npm run dev` · `npm run build` · `npx tsc --noEmit`

@@ -421,7 +421,7 @@ export function BrandColorsSection({
                           shows the hex and the role. */}
                       {showUsage && (
                         <span className="ml-1 font-sans text-muted-2">
-                          · {color.usagePct != null ? `${color.usagePct}%` : "—"}
+                          · {color.usagePct != null ? `${color.usagePct}%` : "–"}
                         </span>
                       )}
                     </>

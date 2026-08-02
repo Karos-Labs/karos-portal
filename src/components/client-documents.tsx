@@ -549,7 +549,7 @@ function DocOverlay({
             )}
             {!body ? (
               <p className="mx-auto w-full max-w-2xl text-sm text-muted">
-                This document has not been generated yet — ask your Karos team to regenerate it.
+                This document has not been generated yet. Ask your Karos team to regenerate it.
               </p>
             ) : indexed ? (
               <div className="mx-auto flex w-full max-w-3xl gap-6">
@@ -735,7 +735,7 @@ export function RegenerateModal({
             highest priority if they conflict with global settings.
           </p>
           <p className="text-xs text-muted-2">
-            The run takes a few minutes and continues in the background — you can close this and
+            The run takes a few minutes and continues in the background. You can close this and
             keep working. Regenerate stays locked until it finishes.
           </p>
           <div className="space-y-1.5">
@@ -903,7 +903,7 @@ function ScheduleModal({
         <div className="space-y-4 px-5 py-4">
           <p className="text-sm text-muted">
             Automatically re-run the Intel Report + SEO/GEO pipeline on a recurring cadence.
-            This is the only automatic re-trigger besides creating the client — otherwise it
+            This is the only automatic re-trigger besides creating the client. Otherwise it
             only runs when an admin clicks Regenerate.
           </p>
 
@@ -1089,7 +1089,7 @@ export function ClientDocuments({
               disabled={isAiProcessing}
               title={
                 isAiProcessing
-                  ? "Karos Agents are already building this workspace — please wait for it to finish"
+                  ? "Karos Agents are already building this workspace. Please wait for it to finish"
                   : "Re-run the Intel Report pipeline to regenerate all documents"
               }
               className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-2"

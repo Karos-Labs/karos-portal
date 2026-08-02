@@ -140,7 +140,7 @@ describe("markAssetPostedAction — the server refusals, which are the ones that
 
     expect(res).toEqual({
       ok: false,
-      error: "This post is scheduled for a later day — you can mark it posted on the day it goes out.",
+      error: "This post is scheduled for a later day. You can mark it posted on the day it goes out.",
     });
     expect(data.reconcileAssetPublished).not.toHaveBeenCalled();
   });
@@ -157,7 +157,7 @@ describe("markAssetPostedAction — the server refusals, which are the ones that
     );
     expect(await actions.markAssetPostedAction("a1")).toEqual({
       ok: false,
-      error: "This is a placeholder — put it on the calendar before marking it posted",
+      error: "This is a placeholder. Put it on the calendar before marking it posted",
     });
 
     (data.getAsset as any).mockResolvedValue(makeAsset({ status: "published" }));

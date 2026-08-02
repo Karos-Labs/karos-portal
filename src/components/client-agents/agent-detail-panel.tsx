@@ -163,7 +163,7 @@ export function AgentDetailPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your {agent.activeRun.templateName ?? "next"} {noun} now — this takes 10–20
+              Making your {agent.activeRun.templateName ?? "next"} {noun} now. This takes 10–20
               minutes. Your Karos team reviews it when it lands, and finished work appears in your
               Workspace once approved.
             </p>

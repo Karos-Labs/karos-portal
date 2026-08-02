@@ -411,7 +411,7 @@ export function SeoGeoPlan({
       {!isClientViewer && gaps.length > 0 && (
         <Disclosure
           className="mt-4 border-t border-border pt-3"
-          summary={`Technical detail — the ${gaps.length} measured gap${gaps.length === 1 ? "" : "s"} behind this plan (staff only)`}
+          summary={`Technical detail. The ${gaps.length} measured gap${gaps.length === 1 ? "" : "s"} behind this plan (staff only)`}
         >
           <GapList gaps={gaps} />
         </Disclosure>
@@ -571,7 +571,7 @@ export function SeoGeoPanel({
         {strip.refreshing && (
           <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-neon">
             <Icon name="Loader" className="h-3 w-3 animate-spin" />
-            Refreshing this snapshot now — the numbers below are the previous run.
+            Refreshing this snapshot now. The numbers below are the previous run.
           </p>
         )}
         {!strip.refreshing && strip.nextLine && (
@@ -609,7 +609,7 @@ export function SeoGeoPanel({
         <p className="mb-4 text-xs text-muted-2">
           Whether AI engines name you when buyers ask by name versus when they ask open category
           questions. Click a score to see how it was measured. Only the category side feeds your
-          comparison against competitors — being named in a question about you isn&apos;t
+          comparison against competitors. Being named in a question about you isn&apos;t
           visibility.
         </p>
         <div className="grid gap-4 @xl:grid-cols-2">
@@ -677,7 +677,7 @@ export function SeoGeoPanel({
           {basis.categoryScoped ? "Measured on category questions only. " : ""}
           How often each brand gets named when we ask the engines{" "}
           {insights.categoryPresence.total} real buyer question
-          {insights.categoryPresence.total === 1 ? "" : "s"} — the{" "}
+          {insights.categoryPresence.total === 1 ? "" : "s"}, and the{" "}
           {insights.brandPresence.total} question{insights.brandPresence.total === 1 ? "" : "s"} that
           name{insights.brandPresence.total === 1 ? "s" : ""} you directly{" "}
           {insights.brandPresence.total === 1 ? "is" : "are"} left out, so the comparison is
@@ -715,7 +715,7 @@ export function SeoGeoPanel({
         <Card>
           <CardTitle className="mb-1">Also named by the engines</CardTitle>
           <p className="mb-4 text-xs text-muted-2">
-            Brands the AI engines brought up on their own that aren&apos;t on your tracked list —
+            Brands the AI engines brought up on their own that aren&apos;t on your tracked list,
             the strongest candidates for your competitor track. We fold the top ones into your
             competitor pool automatically.
           </p>

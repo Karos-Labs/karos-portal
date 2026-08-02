@@ -728,7 +728,7 @@ export async function applyChainAssignments(
           // Client-visible: asset-card renders recommendedReason as text and as a
           // tooltip, and redactLockedAsset withholds it only for locked future-dated
           // assets — so an unlocked draft carries it to the client. Em dash, per F71.
-          recommendedReason: "One post per day — assigned by the content chain",
+          recommendedReason: "One post per day. Assigned by the content chain",
           updatedAt: Date.now(),
         },
         { merge: true },

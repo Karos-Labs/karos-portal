@@ -132,11 +132,11 @@ export function copilotToolsFor<T extends Record<string, unknown>>(
  * actionable rather than a dead end.
  */
 export const BRANDING_TOOL_REFUSAL =
-  "Branding guidelines can't be changed from chat. You can edit them yourself from the brand panel in the left rail — the pencil beside Brand colors — or ask your Karos team to make the change.";
+  "Branding guidelines can't be changed from chat. You can edit them yourself from the brand panel in the left rail. The pencil beside Brand colors. Or ask your Karos team to make the change.";
 
 /** The line a non-allowlisted tool gives back when no better one is written. */
 export const COPILOT_TOOL_REFUSAL =
-  "That isn't something I can change from chat — ask your Karos team and they'll take care of it.";
+  "That isn't something I can change from chat. Ask your Karos team and they'll take care of it.";
 
 /** Tool-specific refusals, so the message can name the surface that DOES work. */
 const REFUSAL_BY_TOOL: Record<string, string> = {
@@ -226,6 +226,6 @@ export function integrationBelongsToCaller(
  */
 export const GMAIL_UNAVAILABLE_MESSAGE =
   "No Google Workspace integration found for this account. " +
-  "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) — " +
+  "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab)" +
   "you will be prompted to grant Gmail read access. " +
   "In the meantime, I can still build a task map from your meetings and context documents.";

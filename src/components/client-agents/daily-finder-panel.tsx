@@ -29,7 +29,7 @@ const EMPTY_TITLE: Record<FinderScheduleState, string> = {
 
 const EMPTY_HINT: Record<FinderScheduleState, string> = {
   active:
-    "It looks once a day and only brings back a thread worth answering — some days there is nothing good, and a forced reply is worse than none.",
+    "It looks once a day and only brings back a thread worth answering. Some days there is nothing good, and a forced reply is worse than none.",
   paused:
     "This agent has a schedule, but it is paused. It goes back to looking as soon as it is resumed.",
   none: "Your Karos team sets how often this agent goes looking. Nothing runs until they do.",
@@ -78,7 +78,7 @@ export function DailyFinderPanel({
       <section>
         <SectionHeading
           title="Found today"
-          hint="One thread a day, with a reply drafted in your voice. Tell it what you did with each one — that is what tunes the next find."
+          hint="One thread a day, with a reply drafted in your voice. Tell it what you did with each one. That is what tunes the next find."
         />
         {view.today.length > 0 ? (
           <div className="space-y-4">
@@ -141,8 +141,8 @@ function DailyStrip({ days, state }: { days: FinderDay[]; state: FinderScheduleS
     return (
       <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
         {state === "paused"
-          ? "Paused — it stops going looking until this schedule is resumed."
-          : "No schedule yet — your Karos team sets how often this agent goes looking."}
+          ? "Paused. It stops going looking until this schedule is resumed."
+          : "No schedule yet. Your Karos team sets how often this agent goes looking."}
       </p>
     );
   }

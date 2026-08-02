@@ -36,7 +36,7 @@ export default async function PendingPage() {
         </p>
         <p className="mx-auto mt-3 max-w-sm text-xs text-muted">
           This usually happens within one business day. We&rsquo;ll email you the moment it does,
-          and this page will let you in on its own — you can leave it open.
+          and this page will let you in on its own. You can leave it open.
         </p>
         <div className="mt-6 flex items-center justify-center gap-3">
           <a

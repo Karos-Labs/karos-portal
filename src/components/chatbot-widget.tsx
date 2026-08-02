@@ -178,7 +178,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
     id: "edit-output",
     label: "/edit-output",
     hint: "Revise a post or asset you already have",
-    scaffold: "I'd like to revise one of my generated posts — here's what to change: ",
+    scaffold: "I'd like to revise one of my generated posts. Here's what to change: ",
   },
   {
     id: "schedule-run",
@@ -254,7 +254,7 @@ export function addTaskReply(
   if (!result.ok) {
     return result.duplicate
       ? (result.error ?? "That's already on your task board.")
-      : (result.error ?? "Couldn't add that task — try again.");
+      : (result.error ?? "Couldn't add that task. Try again.");
   }
   return `Added${result.title ? ` "${result.title}"` : ""} to your task board.${taskLink(result.taskId)}`;
 }
@@ -504,7 +504,7 @@ function useCopilot(
       } catch {
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: "Couldn't add that task — try again." } : m,
+            m.id === assistantId ? { ...m, content: "Couldn't add that task. Try again." } : m,
           ),
         );
       } finally {
@@ -588,7 +588,7 @@ export function ActionChips({
               {/* Two lines, not `truncate`: the longest sublabels clipped
                   mid-phrase on a single line (QA F88). */}
               <p className="line-clamp-2 text-[11px] text-muted">
-                {locked ? "Locked — a workspace build is already running" : action.sublabel}
+                {locked ? "Locked. A workspace build is already running" : action.sublabel}
               </p>
               {/* Its own line rather than appended to the sublabel above, which
                   is `line-clamp-2` and would drop the price on a narrow chip. */}

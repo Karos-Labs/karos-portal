@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
+import { adminAuth } from "@/lib/firebase/admin";
 import {
   getClientCredits,
   listClientIntegrations,
@@ -32,6 +33,8 @@ import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
+import { AccountProfilePanel, AccountSecurityPanel } from "@/components/settings-form";
+import { ACCOUNT_TABS } from "@/lib/account-settings-tabs";
 import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { relativeTime } from "@/lib/utils";
 import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat, JobRunType, ScheduledRun } from "@/lib/types";
@@ -203,6 +206,15 @@ export default async function ClientSettingsPage({
     </div>
   );
 
+  /**
+   * THE MEETINGS SURFACE A CLIENT REACHES (AF-1).
+   *
+   * This tab predates the branch and is exactly where the product owner wants
+   * it — "I like that in the settings" — so nothing here changed when the rail
+   * lost its Meetings row. It is named here only because it is now the whole of
+   * a client's route to their calls, and a later edit that thins it out would
+   * be removing the destination rather than a duplicate of one.
+   */
   const meetingsSection = (
     <Card>
       <CardTitle className="mb-3">Meetings</CardTitle>
@@ -231,6 +243,38 @@ export default async function ClientSettingsPage({
     </Card>
   );
 
+  /**
+   * The viewer's own account panels — built only for the client whose page this
+   * is (see the block on `tabs`). The Firebase Auth record is read for the same
+   * reason /settings reads it: the security panel offers a password form only
+   * to an account that HAS a password, and which providers are linked lives on
+   * the auth record rather than on the app user.
+   */
+  const accountTabs: SettingsTab[] | null =
+    user.role === "CLIENT_USER"
+      ? await (async () => {
+          const firebaseUser = await adminAuth().getUser(user.uid);
+          return [
+            {
+              id: ACCOUNT_TABS.profile,
+              label: "Profile information",
+              icon: "User",
+              content: <AccountProfilePanel user={user} clientName={client.name} />,
+            },
+            {
+              id: ACCOUNT_TABS.security,
+              label: "Account security",
+              icon: "Shield",
+              content: (
+                <AccountSecurityPanel
+                  providers={firebaseUser.providerData.map((p) => p.providerId)}
+                />
+              ),
+            },
+          ];
+        })()
+      : null;
+
   // F56: the key is a standing credential — staff and the workspace's own group
   // admin only, and whoever can see it can rotate it.
   const teamSection =
@@ -253,14 +297,22 @@ export default async function ClientSettingsPage({
     { id: "team", label: "Team", icon: "Users", content: teamSection },
   ].filter((t) => t.content !== null);
 
-  // Account settings is the last entry of the same row, not a header link
-  // stranded beside it: someone scanning "everything settings related" should
-  // find it where the other settings are. It is the one entry that navigates —
-  // /settings is its own route — so SettingsTabs renders it as a link.
-  const tabs: SettingsTab[] = [
-    ...sections,
-    { id: "account", label: "Account settings", icon: "User", href: "/settings" },
-  ];
+  /**
+   * THE VIEWER'S OWN ACCOUNT, AS TABS ON THIS PAGE (AF-2).
+   *
+   * These were an "Account settings" entry that navigated to /settings — a
+   * second settings page with a second tab strip. "It's just supposed to be
+   * seamless", so the two panels are tabs here and /settings redirects a client
+   * back to them.
+   *
+   * CLIENT_USER only, and that is the whole distinction rather than a
+   * gate-by-default: this page is about the CLIENT, and for a client their
+   * company and their account are the same settings surface. For staff it is
+   * somebody else's company, and their own account is /settings — putting their
+   * password form on a client's page would be the hop back again, pointing the
+   * other way.
+   */
+  const tabs: SettingsTab[] = accountTabs ? [...sections, ...accountTabs] : sections;
 
   return (
     <>

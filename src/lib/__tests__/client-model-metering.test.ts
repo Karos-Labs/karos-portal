@@ -73,7 +73,7 @@ const STAFF = {
 };
 const DENIAL = new CreditError(
   "insufficient_balance",
-  "Not enough credits — this action costs 5 credits and 2 are left. Ask your Karos team for a top-up.",
+  "Not enough credits. This action costs 5 credits and 2 are left. Ask your Karos team for a top-up.",
 );
 
 const charges = () => vi.mocked(data.chargeClientCredits).mock.calls.map((c) => c[0]);
@@ -141,7 +141,7 @@ describe("#28 — the X intake's Propose accounts button", () => {
     asClient();
     vi.mocked(generateText).mockRejectedValueOnce(new Error("anthropic 529"));
     const out = await propose();
-    expect(out.error).toMatch(/try again or type accounts manually/);
+    expect(out.error).toMatch(/try again or type accounts manually/i);
     expect(refunds()).toEqual([
       expect.objectContaining({ kind: "refund", amount: CREDIT_COSTS.chatMessage }),
     ]);

@@ -88,7 +88,7 @@ export async function updateTaskStatusAction(
   // the board while still counting in the tab total (QA F54). Refuse the move
   // server-side, whichever UI path asks for it.
   if (status === "review_pending" && inferOwnerEngine(task) === "client_managed") {
-    return { ok: false, error: "Tasks you own go straight to Done — Review Pending is for Karos drafts." };
+    return { ok: false, error: "Tasks you own go straight to Done. Review Pending is for Karos drafts." };
   }
 
   const triggersExecution =
@@ -272,7 +272,7 @@ export async function deleteTaskAction(
   if (task.metadata?.executing === true) {
     return {
       ok: false,
-      error: "This task is currently executing — wait for the run to finish before dismissing it.",
+      error: "This task is currently executing. Wait for the run to finish before dismissing it.",
     };
   }
 
@@ -454,7 +454,7 @@ async function ingestRoutedTask(args: {
   const agents = await listCustomAgents();
   const agentSummary = agents
     .filter((a) => a.enabled)
-    .map((a) => (a.description ? `${a.name} — ${a.description}` : a.name))
+    .map((a) => (a.description ? `${a.name} · ${a.description}` : a.name))
     .join("; ") || "none configured";
 
   const routingSchema = z.object({

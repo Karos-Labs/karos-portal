@@ -93,25 +93,21 @@ export function ClientRail({
     { href: "/tasks", label: "Workspace", icon: "ListChecks" },
   ];
   /**
-   * Meetings, which this shell had no way into at all (#134).
+   * MEETINGS IS NOT A RAIL DESTINATION (AF-1).
    *
-   * /transcripts renders a client Meetings page — scoped to their client,
-   * redacted with `excludeHiddenFromClient`, with its own client copy — and the
-   * only client path to it was the notification bell's footer link, which
-   * renders only while the client happens to have an unread meeting action
-   * item. A page built and redacted for clients has to be in the client's nav.
+   * #134 read the /transcripts page — client-scoped, `excludeHiddenFromClient`
+   * redacted, with its own client copy — as a page whose absence from the
+   * client's nav was a defect, and put a Meetings row here to close it. The
+   * product owner ruled the other way: the feature stays ("it doesn't hurt")
+   * but it is reached FROM SETTINGS, not from the rail. "I like that in the
+   * settings."
    *
-   * IN THE RAIL, NOT IN `tabNav`, and that is a width decision rather than a
-   * demotion. The phone bar renders one cell per item plus Company, and the
-   * staff shell builds the SAME bar from its own four client-context tabs
-   * (CD-G9a's twin contract) — a sixth cell squeezes the labels in both shells
-   * at 375px. Below md this sits in the Company sheet beside Settings and Team,
-   * one tap from the bar.
+   * So the rail and the phone bar render the same four destinations, and the
+   * client's route to /transcripts is the Meetings tab on their Settings page,
+   * which lists their calls and links to the full page. Nothing about the page
+   * or its scoping changed — only which surface offers it.
    */
-  const meetingsItem: NavItem = { href: "/transcripts", label: "Meetings", icon: "Mic" };
   const settingsItem: NavItem = { href: `${home}/settings`, label: "Settings", icon: "Settings" };
-  /** The desktop rail, where there is room for every destination. */
-  const railNav: NavItem[] = [...tabNav, meetingsItem];
 
   // Bar + sheet frame are shared with the staff shell's client-context mode —
   // see components/mobile-shell.tsx (CD-G9a). The hook closes the sheet on
@@ -163,7 +159,7 @@ export function ClientRail({
               a whole section away. */}
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-4 pb-0 pt-4">
             <nav className="flex flex-col gap-0.5">
-              {railNav.map((item) => {
+              {tabNav.map((item) => {
                 const active = isActive(pathname, item);
                 return (
                   <Link
@@ -287,8 +283,7 @@ export function ClientRail({
 
       {/* ── Mobile bottom tab bar (last tab = Company sheet) ── */}
       <MobileTabBar
-        /* `tabNav`, not `railNav`: Meetings is in the sheet at this width —
-           see the note on `meetingsItem`. */
+        /* The same four the desktop rail renders: one nav, two widths. */
         items={tabNav}
         companyOpen={companyOpen}
         onOpenCompany={() => setCompanyOpen(true)}
@@ -322,17 +317,9 @@ export function ClientRail({
         />
 
         <div className="space-y-0.5 border-t border-border pt-4">
-          {/* Meetings lives here rather than in the tab bar (see `meetingsItem`),
-              so at phone width this row IS the client's entry to it. Same
-              explicit close as every other link in this group. */}
-          <Link
-            href={meetingsItem.href}
-            onClick={() => setCompanyOpen(false)}
-            className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-          >
-            <Icon name={meetingsItem.icon} className="h-4 w-4 text-muted-2" />
-            {meetingsItem.label}
-          </Link>
+          {/* No Meetings row here either (AF-1): the Settings row below is the
+              client's one route to it at every width, and the sheet must not
+              re-open a destination the rail was just told to stop offering. */}
           {/* Explicit close: the sheet's on-navigation effect never fires when
               the link's route is already current (same-route trap — twin of the
               staff sheet's CD-G9c bounce-3). */}

@@ -627,7 +627,7 @@ export function CustomAgentsHub({
                   </p>
                   {launchCost === null ? (
                     <p className="mt-0.5 text-xs text-warning">
-                      Setup not priced — clients cannot launch it themselves
+                      Setup not priced. Clients cannot launch it themselves
                     </p>
                   ) : (
                     <p className="mt-0.5 text-xs text-muted-2">
@@ -837,7 +837,7 @@ export function StaffAgentControls({
           </>
         ) : blockedSetup ? (
           <p className={cn("text-[11px] text-warning", !schedule && "text-xs")}>
-            Not running yet — your {blockedSetup.label} is still empty.
+            Not running yet. Your {blockedSetup.label} is still empty.
           </p>
         ) : schedule ? (
           <p className="mt-0.5 text-[11px] text-muted-2">
@@ -892,12 +892,12 @@ export function StaffAgentControls({
           never be shown. */}
       {blockedSetup && (
         <p className="mt-2 border-t border-border/60 pt-2 text-[11px] text-warning">
-          Run now needs the {blockedSetup.label} — this agent drafts from it.
+          Run now needs the {blockedSetup.label}. This agent drafts from it.
         </p>
       )}
       {scheduleNeedsData && intake && !blockedSetup && (
         <p className="mt-2 text-[11px] text-muted-2">
-          Add the {INTAKE_LABEL[intake.kind]} agent data before setting a schedule — every
+          Add the {INTAKE_LABEL[intake.kind]} agent data before setting a schedule. Every
           scheduled run drafts from it.
         </p>
       )}
@@ -998,7 +998,7 @@ export function TestRunButton({ agentId, clientId }: { agentId: string; clientId
               <Icon name="CircleCheck" className="mx-auto h-8 w-8 text-success" />
               <p className="text-sm text-foreground">Test run started</p>
               <p className="text-xs text-muted-2">
-                Real generation, real cost — the output is flagged TEST and will never reach the
+                Real generation, real cost. The output is flagged TEST and will never reach the
                 client&apos;s Workspace, the calendar, or scheduling. Find it under Outputs &amp;
                 Artifacts once it lands, with Promote/Dismiss actions.
               </p>
@@ -1009,7 +1009,7 @@ export function TestRunButton({ agentId, clientId }: { agentId: string; clientId
           ) : (
             <div className="mt-4 space-y-3">
               <p className="text-xs text-muted-2">
-                Fires for real — same cost, same generation — to verify this agent&apos;s prompt and
+                Fires for real. Same cost, same generation. To verify this agent&apos;s prompt and
                 context pipeline still produce good output. The result never reaches the client,
                 the calendar, or scheduling.
               </p>
@@ -1144,7 +1144,7 @@ export function AgentRunHistory({
                     className="mb-0 rounded-none border-0 bg-transparent px-4 py-2"
                   />
                   {elapsed && (
-                    <p className="px-4 pb-1 text-[11px] text-muted-2">Working — started {elapsed}</p>
+                    <p className="px-4 pb-1 text-[11px] text-muted-2">Working. Started {elapsed}</p>
                   )}
                   <CancelRunControl runId={run.id} staffFastReconcile />
                 </div>
@@ -1444,7 +1444,7 @@ export function AgentScheduleModal({
       title={paceOnly ? `${agent.name} pace` : `Keep ${agent.name} running`}
       description={
         paceOnly
-          ? "How often this agent posts for you. Change it whenever you like — it takes effect from the next post."
+          ? "How often this agent posts for you. Change it whenever you like. It takes effect from the next post."
           : "Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
       }
       footer={
@@ -2344,7 +2344,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           <Label htmlFor="ae-desc">Description (internal)</Label>
           <Textarea id="ae-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
           <p className="mt-1 text-xs text-muted-2">
-            The lab manifest blurb. Staff surfaces only — clients never see this.
+            The lab manifest blurb. Staff surfaces only. Clients never see this.
           </p>
         </div>
         <div>
@@ -2360,7 +2360,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           <p className="mt-1 text-xs text-muted-2">
             What the client reads on the agent card and in the run dialog: 1–2 sentences, sentence
             case, no product codes. Leave it empty and every client surface reads a generic keyed
-            line instead — the internal description above never reaches them.
+            line instead. The internal description above never reaches them.
           </p>
         </div>
         <div>

@@ -38,8 +38,8 @@ export function AiProcessingBanner({
           <span className="font-medium">Karos Agents are building your workspace strategy</span>{" "}
           <span className="text-muted">
             {isClientViewer
-              ? "— this usually takes a few minutes. Your workspace updates on its own when it finishes."
-              : "— Regenerate and Refresh Task Map are locked until this finishes."}
+              ? "this usually takes a few minutes. Your workspace updates on its own when it finishes."
+              : "Regenerate and Refresh Task Map are locked until this finishes."}
           </span>
         </p>
       </div>
@@ -67,7 +67,7 @@ export function AiProcessingBanner({
                 activity timeline and badged on the staff client list — no email
                 or push is sent, so it must not claim one (QA F69). */}
             <span className="text-muted">
-              Your Karos team can see it and is on it — nothing for you to do.
+              Your Karos team can see it and is on it. Nothing for you to do.
             </span>
           </p>
         ) : (

@@ -127,7 +127,7 @@ export async function generateClientBriefAction(
       system:
         "Write a plain, factual company description in exactly two short sentences (about two lines total). " +
         "Describe what the company does and who it serves. " +
-        "Do NOT use em dashes (—). Do NOT use marketing hype or adjectives like 'leading' or 'innovative'. " +
+        "Do NOT use em dashes ( · ). Do NOT use marketing hype or adjectives like 'leading' or 'innovative'. " +
         "Return only the description text, no preamble.",
       messages: [{ role: "user", content: `Company: ${client.name}\n\n${source}` }],
       maxOutputTokens: 160,
@@ -469,7 +469,7 @@ export async function generateDocSummaryAction(
       model: anthropic(MODEL),
       system:
         "You are a strategic analyst. Distill the document into exactly 4-5 high-impact executive insights. " +
-        "Return ONLY a valid JSON array of strings — no markdown, no preamble, no trailing text. " +
+        "Return ONLY a valid JSON array of strings. No markdown, no preamble, no trailing text. " +
         "Each string: max 20 words, starts with an action verb or key noun, concrete and specific.",
       messages: [
         {
@@ -547,7 +547,7 @@ export async function applyTargetedDocCorrectionAction(
     if (!changed) {
       return {
         error:
-          "We could not apply that correction safely — nothing was changed and you have not been charged. Try naming the fact more specifically.",
+          "We could not apply that correction safely. Nothing was changed and you have not been charged. Try naming the fact more specifically.",
       };
     }
     return { ok: true };

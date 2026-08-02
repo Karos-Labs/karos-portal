@@ -150,10 +150,16 @@ describe("the denial prefixes and isCreditDenialMessage agree", () => {
     }
   });
 
-  it("still detects the pre-2026-07-31 spaced-hyphen spelling", () => {
-    // Stored refusals (clientAgent.lastError) predate the em-dash fix. If this
-    // fails, clientSafeRefusal starts paraphrasing away real credit denials.
-    expect(isCreditDenialMessage("Not enough credits - this action costs 25 credits and 3 are left.")).toBe(true);
+  it("still detects every spelling this line has ever had", () => {
+    // Stored refusals (clientAgent.lastError) outlive every copy fix, and there
+    // have been three: a spaced hyphen until 2026-07-31, an em dash until
+    // 2026-08-03, a period since (AF-8). Rows written under all three are in
+    // the database now. If this fails, clientSafeRefusal starts paraphrasing
+    // away real credit denials.
+    const tail = "this action costs 25 credits and 3 are left.";
+    expect(isCreditDenialMessage(`Not enough credits - ${tail}`)).toBe(true);
+    expect(isCreditDenialMessage(`Not enough credits — ${tail}`)).toBe(true);
+    expect(isCreditDenialMessage(`Not enough credits. This action costs 25 credits and 3 are left.`)).toBe(true);
   });
 
   it("does not pass an arbitrary quota error off as a credit denial", () => {
@@ -161,19 +167,27 @@ describe("the denial prefixes and isCreditDenialMessage agree", () => {
     expect(isCreditDenialMessage("Not enough credits")).toBe(false);
   });
 
-  it("says the same thing in both voices, with the house em dash", () => {
-    expect(CREDIT_DENIAL_PREFIX.insufficient_balance).toContain(" — ");
-    expect(CREDIT_DENIAL_PREFIX.insufficient_balance).not.toContain(" - ");
+  it("says the same thing in both voices, with no dash in either", () => {
+    // AF-8 reversed the house style: the em dash this line used to REQUIRE is
+    // now the thing it must not contain. Both dashes are checked, so neither
+    // spelling can come back as a "fix" for the other.
+    for (const dash of [" — ", " - "]) {
+      expect(CREDIT_DENIAL_PREFIX.insufficient_balance).not.toContain(dash);
+      expect(CREDIT_BLOCK_REASON.insufficient_balance).not.toContain(dash);
+      expect(CREDIT_BLOCK_REASON.weekly_limit).not.toContain(dash);
+      expect(CREDIT_BLOCK_REASON.monthly_limit).not.toContain(dash);
+    }
     // The ruling: the client is pointed at their Karos team, not at an "admin".
     expect(CREDIT_BLOCK_REASON.insufficient_balance).toBe(
-      "Not enough credits — ask your Karos team for a top-up.",
+      "Not enough credits. Ask your Karos team for a top-up.",
     );
   });
 
-  it("keeps every minted denial free of a spaced hyphen", () => {
+  it("keeps every minted denial free of both dashes", () => {
     const denial = assessCharge(credits({ weeklyLimit: 10, weekSpent: 9 }), 5, NOW);
     expect(denial.ok).toBe(false);
     if (denial.ok) return;
     expect(denial.message).not.toContain(" - ");
+    expect(denial.message).not.toContain("—");
   });
 });

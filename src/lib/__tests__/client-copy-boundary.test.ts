@@ -12,13 +12,22 @@ import { queueCapacitySkipNote } from "@/lib/task-dedup";
 
 /**
  * Two rules about text a CLIENT reads, asked as SHAPES over the channels that
- * carry it: no spaced hyphen where an em dash belongs, and no Firestore enum
- * used as prose.
+ * carry it: no dash between clauses (neither a spaced hyphen nor an em dash),
+ * and no Firestore enum used as prose.
  *
- * Both had been fixed per-site before. Ledger F71 banned `" - "` in client copy
- * and it came back at least four times, in two files, in text a client's own
- * model paraphrases. A per-site fix cannot hold a rule that any new string can
- * break, so this asks the rule of a CHANNEL rather than of a list of strings.
+ * THE FIRST RULE REVERSED ON 2026-08-03 (AF-8). It used to read "no spaced
+ * hyphen where an em dash BELONGS" — the em dash was the house fix. The product
+ * owner ruled the character out of client copy altogether ("Why is there an M
+ * dash? We don't use those"), so both dashes are offences now and the
+ * replacement is a comma, a period, or the "·" this app already separates with.
+ * The en dash is untouched: "3–4 posts" is a range, not punctuation.
+ *
+ * That reversal is why this file is the guard rather than a one-off sweep. The
+ * dash rule has now changed direction once and been re-fixed per-site four
+ * times before that: ledger F71 banned `" - "` in client copy and it came back
+ * at least four times, in two files, in text a client's own model paraphrases.
+ * A per-site fix cannot hold a rule that any new string can break, so this asks
+ * the rule of a CHANNEL rather than of a list of strings.
  *
  * ── WHAT MAKES A STRING CLIENT-REACHABLE ─────────────────────────────────────
  * Deciding that is the whole difficulty, and it is answered by CHARACTERISING
@@ -451,10 +460,20 @@ function offences(shape: string, opts: { payload?: boolean; jsx?: boolean } = {}
     // A markdown bullet opens with "- ", which is list syntax and not punctuation.
     if (/^\s*-\s/.test(line)) continue;
     if (/\S[ \t]-[ \t]\S/.test(line)) {
-      out.push("spaced hyphen — use an em dash");
+      out.push("spaced hyphen — use a comma, a period or ·");
       break;
     }
   }
+  // AF-8. "Why is there an M dash? We don't use those."
+  //
+  // This rule used to point the other way: a spaced hyphen was an offence
+  // BECAUSE an em dash belonged there. The product owner reversed the house
+  // style for client copy, so both are offences now and the fix is a comma, a
+  // period, or the "·" this app already separates with.
+  //
+  // The en dash is untouched and still wanted: "3–4 posts", "~10–25 min",
+  // "1–10" are ranges, not punctuation between clauses.
+  if (text.includes("—")) out.push("em dash — use a comma, a period or ·");
   if (IS_PROSE.test(text) || opts.payload) {
     for (const token of STORED_ENUM_TOKENS) {
       if (new RegExp(`(^|[^A-Za-z0-9_])${token}([^A-Za-z0-9_]|$)`).test(text)) {
@@ -489,8 +508,18 @@ describe("the two rules themselves", () => {
   it("tells a spaced hyphen from a list bullet and from arithmetic", () => {
     expect(offences("Nothing changed - try again")).toHaveLength(1);
     expect(offences("  - a bullet - inside a list")).toEqual([]);
-    // An em dash is the point of the rule, so it must not itself trip.
-    expect(offences("Nothing changed — try again")).toEqual([]);
+  });
+
+  it("flags the em dash it used to prescribe (AF-8)", () => {
+    // The reversal, asserted in both directions so neither half can rot: the
+    // dash is an offence, and the punctuation that replaces it is not.
+    expect(offences("Nothing changed — try again")).toHaveLength(1);
+    expect(offences("Nothing changed, try again")).toEqual([]);
+    expect(offences("Nothing changed. Try again.")).toEqual([]);
+    expect(offences("Drafted · not posted")).toEqual([]);
+    // Anywhere in the line, not only between clauses — an em dash opening a
+    // sentence fragment is the same character and the same ruling.
+    expect(offences("— and then it stopped")).toHaveLength(1);
   });
 
   it("flags a spaced-hyphen NUMERIC RANGE too, and that is on purpose", () => {
@@ -500,6 +529,9 @@ describe("the two rules themselves", () => {
     // the existing copy already writes it that way ("~10–25 min").
     expect(offences("3 - 4 posts a week")).toHaveLength(1);
     expect(offences("3–4 posts a week")).toEqual([]);
+    // The en dash survived the AF-8 reversal on purpose: a range is not
+    // punctuation between clauses, and "3—4" was never the alternative.
+    expect(offences("~10–25 min, 1–10 people")).toEqual([]);
   });
 
   it("reads a JSX wrap the way the browser does", () => {

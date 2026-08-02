@@ -231,7 +231,7 @@ export function LinkedInSeatsWorkspace({
           </div>
           {atLimit && (
             <p className="text-[11px] text-muted-2">
-              This is beyond your {seatLimit}-seat plan — adding a seat is a one-time {seatCost}-credit
+              This is beyond your {seatLimit}-seat plan. Adding a seat is a one-time {seatCost}-credit
               charge.
             </p>
           )}
@@ -354,11 +354,11 @@ export function LinkedInSeatsWorkspace({
                       Their LinkedIn sign-in is removed with the seat, so they would have to sign in
                       again.{" "}
                       {reAddCharges
-                        ? `You're over your ${seatLimit}-seat plan, so adding someone back is a one-time ${seatCost}-credit charge — removing a seat is not refunded.`
+                        ? `You're over your ${seatLimit}-seat plan, so adding someone back is a one-time ${seatCost}-credit charge. Removing a seat is not refunded.`
                         : "Removing a seat is not refunded."}
                     </p>
                     <p className="text-[11px] text-muted-2">
-                      To stop their posts temporarily, pause the seat instead — that keeps the
+                      To stop their posts temporarily, pause the seat instead. That keeps the
                       sign-in and can be undone.
                     </p>
                     <div className="flex flex-wrap gap-2 pt-0.5">

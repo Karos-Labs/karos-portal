@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { BrandFavicon } from "@/components/brand-favicon";
+import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
+import { socialAccount, socialHandleValue } from "@/lib/social-handles";
 import { updateClientProfileAction } from "@/lib/actions";
 import type { Client, SocialLinks } from "@/lib/types";
 
@@ -40,21 +42,57 @@ export type ClientProfileFields = Pick<
 
 const TEAM_SIZES = ["1–10", "11–50", "51–200", "201–500", "500+"];
 
-// Only channels we actually handle — @-handles.
-const SOCIALS: { key: keyof SocialLinks; placeholder: string }[] = [
+/**
+ * The social accounts this panel shows and edits (AF-4).
+ *
+ * `key` doubles as the platform id for the mark and the handle parser — the
+ * SocialLinks field names and `SocialPlatform` agree on all six, so a row's
+ * logo, its @handle and the profile it opens all come from the same word and
+ * cannot drift apart. (`website` is the seventh SocialLinks field and is not a
+ * social account; it renders in the company header, not here.)
+ *
+ * LinkedIn earns its place beside the original three because it is the one
+ * whose stored value is most often a full link — /in/ for a person, /company/
+ * for a page — which is exactly the shortening AF-4 asked for.
+ */
+const SOCIALS: { key: keyof SocialLinks & SocialPlatform; placeholder: string }[] = [
   { key: "instagram", placeholder: "instagram handle" },
   { key: "x", placeholder: "x / twitter handle" },
   { key: "tiktok", placeholder: "tiktok handle" },
+  { key: "linkedin", placeholder: "linkedin handle" },
 ];
+
+/** Anything already stored for the other platforms still renders. */
+const DISPLAY_SOCIALS: (keyof SocialLinks & SocialPlatform)[] = [
+  "instagram",
+  "x",
+  "tiktok",
+  "linkedin",
+  "youtube",
+  "facebook",
+];
+
+/** For the row's tooltip and its accessible name — the mark itself is decorative. */
+const PLATFORM_NAME: Record<keyof SocialLinks & SocialPlatform, string> = {
+  instagram: "Instagram",
+  x: "X",
+  tiktok: "TikTok",
+  linkedin: "LinkedIn",
+  youtube: "YouTube",
+  facebook: "Facebook",
+};
 
 /* ── Pill-shaped input ────────────────────────────────────────────────── */
 
 function Pill({
   icon,
+  mark,
   children,
   className,
 }: {
-  icon: string;
+  icon?: string;
+  /** A platform logo, for the rows that have one — see `SOCIALS`. */
+  mark?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }) {
@@ -65,7 +103,7 @@ function Pill({
         className,
       )}
     >
-      <Icon name={icon} className="h-4 w-4 shrink-0 text-muted-2" />
+      {mark ?? <Icon name={icon ?? "AtSign"} className="h-4 w-4 shrink-0 text-muted-2" />}
       {children}
     </div>
   );
@@ -250,8 +288,17 @@ export function ClientProfilePanel({
 
   function save() {
     setError(null);
+    // Shorten on the way IN, not only on the way out (AF-4): a link pasted here
+    // is stored as the handle, so the field stops accumulating the five spellings
+    // the display parser exists to absorb. Unparseable text is written back
+    // trimmed and otherwise untouched.
+    const normalized: SocialLinks = { ...links };
+    for (const key of DISPLAY_SOCIALS) {
+      const value = links[key];
+      if (value != null) normalized[key] = socialHandleValue(key, value);
+    }
     startTransition(async () => {
-      const res = await updateClientProfileAction(client.id, { category, teamSize, socialLinks: links });
+      const res = await updateClientProfileAction(client.id, { category, teamSize, socialLinks: normalized });
       if (res.ok) {
         setEditing(false);
         router.refresh();
@@ -261,7 +308,15 @@ export function ClientProfilePanel({
     });
   }
 
-  const activeLinks = SOCIALS.filter((s) => (client.socialLinks?.[s.key] ?? "").trim());
+  // Parsed once, in the order DISPLAY_SOCIALS declares, so a row's logo, handle
+  // and destination are one decision. `socialAccount` returns null only for
+  // empty text, which is the same filter this line has always applied.
+  const activeLinks = DISPLAY_SOCIALS.map((key) => ({
+    key,
+    account: socialAccount(key, client.socialLinks?.[key] ?? ""),
+  })).filter((row): row is { key: SocialPlatform & keyof SocialLinks; account: NonNullable<typeof row.account> } =>
+    row.account !== null,
+  );
   const hasMeta = Boolean(client.category || client.teamSize);
   const inputCls =
     "min-w-0 flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2 outline-none";
@@ -337,18 +392,39 @@ export function ClientProfilePanel({
                 Add team size &amp; category
               </button>
             )}
-            {activeLinks.map((s) => {
-              const raw = client.socialLinks![s.key]!;
-              return (
-                <span
-                  key={s.key}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted"
+            {/* THE PLATFORM'S LOGO + @username, and the row opens the profile
+                (AF-4). Same affordance as the brand-colour swatches beneath:
+                a real control, keyboard-reachable, that does the obvious thing
+                with the value it is showing.
+                The mark is the one the agent surfaces and the marketing site
+                use (SocialPlatformMark) — a client's Instagram row and their
+                Instagram agent carry the same logo. An account whose stored
+                text yields no URL still renders, as a plain chip: the handle is
+                the client's own and a panel is not the place to correct it. */}
+            {activeLinks.map(({ key, account }) =>
+              account.url ? (
+                <a
+                  key={key}
+                  href={account.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  title={`Open ${account.handle} on ${PLATFORM_NAME[key]}`}
+                  aria-label={`Open ${account.handle} on ${PLATFORM_NAME[key]} in a new tab`}
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon"
                 >
-                  <Icon name="AtSign" className="h-4 w-4 text-muted-2" />
-                  {raw.replace(/^@/, "")}
+                  <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{account.handle}</span>
+                </a>
+              ) : (
+                <span
+                  key={key}
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted"
+                >
+                  <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{account.handle}</span>
                 </span>
-              );
-            })}
+              ),
+            )}
           </div>
 
           {/* Free text of unbounded length, in a rail that must keep a
@@ -396,12 +472,21 @@ export function ClientProfilePanel({
             </Pill>
           </div>
 
+          {/* The same mark the row will carry once saved, so the field a person
+              is typing into is labelled by the logo rather than by a generic
+              @-sign repeated four times. */}
           {SOCIALS.map((s) => (
-            <Pill key={s.key} icon="AtSign">
+            <Pill
+              key={s.key}
+              mark={
+                <SocialPlatformMark platform={s.key} className="h-4 w-4 shrink-0 text-muted-2" />
+              }
+            >
               <input
                 value={links[s.key] ?? ""}
                 onChange={(e) => setLink(s.key, e.target.value)}
                 placeholder={s.placeholder}
+                aria-label={`${PLATFORM_NAME[s.key]} handle`}
                 className={inputCls}
               />
             </Pill>

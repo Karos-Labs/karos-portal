@@ -207,7 +207,7 @@ export async function withdrawClientAgentFeedbackAction(input: {
   const row = await getClientAgentFeedback(input.feedbackId);
   if (!row || row.clientId !== input.clientId) return { error: "Feedback not found." };
   if (row.createdBy !== user.uid) {
-    return { error: "Only the person who wrote a note can withdraw it — staff can resolve it instead." };
+    return { error: "Only the person who wrote a note can withdraw it. Staff can resolve it instead." };
   }
   await updateClientAgentFeedback(row.id, { status: "withdrawn" });
   revalidatePath(`/clients/${input.clientId}/agents`);
@@ -242,7 +242,7 @@ export async function setClientAgentFeedbackStatusAction(input: {
   const row = await getClientAgentFeedback(input.feedbackId);
   if (!row) return { error: "Feedback not found." };
   if (row.status === "withdrawn") {
-    return { error: "The person who wrote this note withdrew it — only they can raise it again." };
+    return { error: "The person who wrote this note withdrew it. Only they can raise it again." };
   }
   await updateClientAgentFeedback(row.id, { status: input.status });
   revalidatePath(`/clients/${row.clientId}/agents`);

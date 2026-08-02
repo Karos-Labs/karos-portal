@@ -156,7 +156,7 @@ export async function scheduleAssetAction(
   // way to tell it apart from a real scheduled post once dated) — strictly
   // worse than the archive leak, since it never even needs "approved" first.
   if (isTestRunAsset(asset)) {
-    throw new Error("This is a Test Run draft — use Promote (Control Room → Outputs) instead of scheduling it directly.");
+    throw new Error("This is a Test Run draft. Use Promote (Control Room → Outputs) instead of scheduling it directly.");
   }
   const publishMode: PublishMode = mode ?? (platform ? "auto" : "placeholder");
   if (publishMode === "auto" && !platform) {
@@ -214,14 +214,14 @@ export async function clientRescheduleAssetAction(
   if (asset.status !== "approved" && asset.status !== "scheduled") {
     return {
       ok: false,
-      error: "Only an already-approved or scheduled post can be moved — this one is still in review.",
+      error: "Only an already-approved or scheduled post can be moved. This one is still in review.",
     };
   }
   if (newScheduledAt <= Date.now()) {
     return { ok: false, error: "Pick a time in the future." };
   }
   if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
-    return { ok: false, error: "This post is being published right now — give it a moment, then try again." };
+    return { ok: false, error: "This post is being published right now. Give it a moment, then try again." };
   }
 
   const family = chainFamilyFor(asset.type);
@@ -238,7 +238,7 @@ export async function clientRescheduleAssetAction(
     if (collision) {
       return {
         ok: false,
-        error: "That day already has another post scheduled in this content family — pick a different day.",
+        error: "That day already has another post scheduled in this content family. Pick a different day.",
       };
     }
   }
@@ -300,7 +300,7 @@ export async function approveAssetAction(
   // flag. The plain review queue shows no TEST badge, so this is the gate
   // that actually stops the mis-click rather than relying on staff noticing.
   if (isTestRunAsset(asset)) {
-    throw new Error("This is a Test Run draft — use Promote (Control Room → Outputs) instead of Approve.");
+    throw new Error("This is a Test Run draft. Use Promote (Control Room → Outputs) instead of Approve.");
   }
   // `Omit<…, "type">`, and named for this one action, because this object is
   // handed to `updateAsset` as a whole: the compiler is what refuses a `type` on
@@ -422,9 +422,9 @@ async function closeProducingJobIfReviewed(asset: Asset): Promise<void> {
  */
 const MARK_POSTED_REFUSAL: Record<MarkPostedBlock, string> = {
   published: "Already marked as posted",
-  placeholder: "This is a placeholder — put it on the calendar before marking it posted",
+  placeholder: "This is a placeholder. Put it on the calendar before marking it posted",
   unapproved: "Only an approved, scheduled, or delivered post can be marked as posted",
-  locked: "This post is scheduled for a later day — you can mark it posted on the day it goes out.",
+  locked: "This post is scheduled for a later day. You can mark it posted on the day it goes out.",
 };
 
 /**
@@ -468,7 +468,7 @@ export async function markAssetPostedAction(
   // claim right now, and flipping status to published here wouldn't stop it —
   // we'd attest "already posted by hand" AND post again for real.
   if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
-    return { ok: false, error: "This post is being published right now — give it a moment." };
+    return { ok: false, error: "This post is being published right now. Give it a moment." };
   }
 
   const { changed } = await reconcileAssetPublished(id, Date.now(), null, { force: true });
@@ -512,8 +512,8 @@ export async function unscheduleAssetAction(id: string): Promise<void> {
  */
 const PUBLISH_REFUSAL: Record<AssetPublishBlock, string> = {
   published: "Already published",
-  placeholder: "This is a calendar-only placeholder — Karos never posts it.",
-  unapproved: "Only an approved, scheduled, or delivered post can be published — approve it first.",
+  placeholder: "This is a calendar-only placeholder. Karos never posts it.",
+  unapproved: "Only an approved, scheduled, or delivered post can be published. Approve it first.",
 };
 
 /**
@@ -548,18 +548,18 @@ export async function publishAssetNowAction(
     inferPlatform(asset.type, valid.map((i) => i.platform));
 
   if (!target) {
-    return { ok: false, error: "No compatible platform connected — connect one in the Integrations tab" };
+    return { ok: false, error: "No compatible platform connected. Connect one in the Integrations tab" };
   }
   const integration = valid.find((i) => i.platform === target);
   if (!integration) {
-    return { ok: false, error: `No active ${target} integration — connect or re-connect it first` };
+    return { ok: false, error: `No active ${target} integration. Connect or re-connect it first` };
   }
 
   // Atomically claim so a concurrent auto-cron tick (or a double-clicked button)
   // can't push this same asset in parallel and post it twice.
   const claimed = await claimAssetForPublish(id);
   if (!claimed) {
-    return { ok: false, error: "This asset is already being published — give it a moment." };
+    return { ok: false, error: "This asset is already being published. Give it a moment." };
   }
 
   let publishResult: { postId: string | null };

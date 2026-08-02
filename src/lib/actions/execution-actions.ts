@@ -82,7 +82,7 @@ export async function startTaskExecutionAction(
   if (inferOwnerEngine(task) !== "karos_managed") {
     // Not the stored owner value: this is returned to a CLIENT_USER's task card
     // (see requireTaskAccess), and "karos_managed" is a Firestore word.
-    return { ok: false, error: "Karos agents don't run this task — it's one for your team to complete." };
+    return { ok: false, error: "Karos agents don't run this task. It's one for your team to complete." };
   }
   if (task.metadata?.executing === true) {
     return { ok: true }; // already running — don't double-trigger
@@ -376,7 +376,7 @@ export async function publishIntegrationAction(
   if (!recipient) {
     return {
       ok: false,
-      error: "No recipient email — add a contact email to the client profile.",
+      error: "No recipient email. Add a contact email to the client profile.",
     };
   }
 

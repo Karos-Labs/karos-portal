@@ -111,7 +111,7 @@ describe("#111 the library shows the price that decides whether a client can lau
     // they read on the one card they stop at. Either alone leaves the gap #111
     // is about — a card that reads as priced — on one of the two paths.
     expect(occurrences(text, "Setup not priced")).toBe(2);
-    expect(text).toContain("clients cannot launch it themselves");
+    expect(text).toContain("Clients cannot launch it themselves");
   });
 
   it("does not flag one that is priced, and quotes the stored number", () => {
@@ -145,7 +145,7 @@ describe("#111 the library shows the price that decides whether a client can lau
       ]),
     );
     expect(occurrences(text, "one-time setup")).toBe(1);
-    expect(occurrences(text, "clients cannot launch it themselves")).toBe(1);
+    expect(occurrences(text, "Clients cannot launch it themselves")).toBe(1);
     expect(text).toContain(`${creditsLabel(40)} one-time setup`);
   });
 

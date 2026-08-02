@@ -218,7 +218,7 @@ function StuckLaunchEscape({ agent }: { agent: ClientAgentCardRow }) {
     <div className="mt-3 border-t border-border/60 pt-2">
       {overdue && (
         <p className="mb-1 text-[11px] text-warning">
-          This setup has been running for over an hour — it may be stuck.
+          This setup has been running for over an hour. It may be stuck.
         </p>
       )}
       {confirming ? (
@@ -321,7 +321,7 @@ function LaunchProgress({
         );
       })}
       <p className="pt-1 text-[11px] text-muted-2">
-        This takes {LAUNCH_ESTIMATE}. You can leave this page — it keeps running.
+        This takes {LAUNCH_ESTIMATE}. You can leave this page. It keeps running.
       </p>
     </div>
   );

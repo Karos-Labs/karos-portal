@@ -56,7 +56,7 @@ export default async function RedditAgentPage({ params }: { params: Promise<{ id
     <>
       <PageHeader
         title="Reddit agent"
-        description="What we collect to run Reddit for you: the account we draft as, how much history it has, and how you want mentions handled. We work out the subreddits and the questions worth answering. Drafts only — we never post to Reddit, you post the reply yourself."
+        description="What we collect to run Reddit for you: the account we draft as, how much history it has, and how you want mentions handled. We work out the subreddits and the questions worth answering. Drafts only. We never post to Reddit, you post the reply yourself."
         action={
           <a
             href={action.href}

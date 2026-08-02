@@ -115,7 +115,7 @@ export async function deleteIntegrationAction(
     const user = await getCurrentUser();
     if (!user || user.disabled) return { error: "Please sign in again to disconnect this channel." };
     if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") {
-      return { error: "Only your Karos team can disconnect a channel — message us and we'll do it." };
+      return { error: "Only your Karos team can disconnect a channel. Message us and we'll do it." };
     }
     await deleteClientIntegration(clientId, platform);
     revalidatePath(`/clients/${clientId}`);

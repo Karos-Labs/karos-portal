@@ -303,7 +303,7 @@ export function BulkUploadClips({ clientId, bucketName }: { clientId: string; bu
             ) : null}
             <p className="text-[11px] text-muted-2">
               {destinationPath
-                ? "Copy this exact path — a different client's id here would land these clips (or nothing, if Import from Storage can't find them) somewhere else."
+                ? "Copy this exact path. A different client's id here would land these clips (or nothing, if Import from Storage can't find them) somewhere else."
                 : "Set GCS_MEDIA_BUCKET to show this client's exact gcloud destination path."}
             </p>
           </div>

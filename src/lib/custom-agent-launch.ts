@@ -241,7 +241,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "LinkedIn drafts",
       intro:
-        "Drafts the next company-page post from your LinkedIn agent data: the company page, seats, and ongoing drops. Voice, topics, and cadence are built from that data — this form only scopes the run. Draft-only; a person always posts.",
+        "Drafts the next company-page post from your LinkedIn agent data: the company page, seats, and ongoing drops. Voice, topics, and cadence are built from that data. This form only scopes the run. Draft-only; a person always posts.",
       fields: [
         {
           key: "request",
@@ -334,7 +334,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "X drafts",
       intro:
-        "Drafts a week of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data — this form only scopes the run. Draft-only; nothing posts without a human.",
+        "Drafts a week of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data. This form only scopes the run. Draft-only; nothing posts without a human.",
       fields: [
         {
           key: "run_scope",
@@ -378,7 +378,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "Reddit reply",
       intro:
-        "Finds a live thread worth answering and drafts one genuinely helpful reply, from your Reddit agent data. The subreddits, the questions worth answering and the voice are built from that data — this form only scopes the run. We never post to Reddit; you post the reply yourself.",
+        "Finds a live thread worth answering and drafts one genuinely helpful reply, from your Reddit agent data. The subreddits, the questions worth answering and the voice are built from that data. This form only scopes the run. We never post to Reddit; you post the reply yourself.",
       fields: [
         {
           key: "request",

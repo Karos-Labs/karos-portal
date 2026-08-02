@@ -318,7 +318,7 @@ function renderPage(p: {
         <Card>
           <CardTitle className="mb-1">Clients low on credits</CardTitle>
           <p className="mb-4 text-xs text-muted">
-            At or below {LOW_CREDIT_THRESHOLD} spendable credits — the point where the portal
+            At or below {LOW_CREDIT_THRESHOLD} spendable credits. The point where the portal
             starts telling them to ask you for a top-up.
           </p>
           <ul className="divide-y divide-border">
@@ -344,7 +344,7 @@ function renderPage(p: {
         {/* Model breakdown */}
         <Card>
           <CardTitle className="mb-4">
-            {agentKey ? `Model breakdown — ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
+            {agentKey ? `Model breakdown · ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
           </CardTitle>
           {modelStats.length === 0 ? (
             <EmptyState
