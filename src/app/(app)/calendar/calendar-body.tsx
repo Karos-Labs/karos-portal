@@ -145,7 +145,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       singleFilter = { clientId: viewClient.id };
       single = true;
       defaultClientId = viewClient.id;
-      title = `${viewClient.name} — Calendar`;
+      title = `${viewClient.name} · Calendar`;
       // "View as client" is scoped to this one client — the schedule-run
       // picker must not offer every other client staff can see.
       clientOptions = [{ id: viewClient.id, name: viewClient.name }];
@@ -328,8 +328,8 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       const stuckLabel = stuck ? (isClient ? "Delayed" : "Stuck") : undefined;
       const stuckMessage = stuck
         ? isClient
-          ? "This run hasn't started yet — your Karos team can look into it."
-          : `This was expected to fire and hasn't — the schedule looks stuck.${
+          ? "This run hasn't started yet. Your Karos team can look into it."
+          : `This was expected to fire and hasn't. The schedule looks stuck.${
               r.lastError || r.lastRunAt
                 ? " See its last fire below."
                 : " It has no recorded fire at all yet; check the Jobs page for what's blocking it."
@@ -547,9 +547,9 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     if (runway.activeFamilies.length > 0) {
       const fmt = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
       if (runway.coveredThroughMs == null) {
-        runwayBadge = <Badge tone="danger">No runway — calendar is empty ahead</Badge>;
+        runwayBadge = <Badge tone="danger">No runway. Calendar is empty ahead</Badge>;
       } else if (runway.coveredThroughMs < runway.horizonThroughMs) {
-        runwayBadge = <Badge tone="warning">Short runway — filled through {fmt(runway.coveredThroughMs)}</Badge>;
+        runwayBadge = <Badge tone="warning">Short runway. Filled through {fmt(runway.coveredThroughMs)}</Badge>;
       } else {
         runwayBadge = <Badge tone="success">Runway: filled through {fmt(runway.coveredThroughMs)}</Badge>;
       }

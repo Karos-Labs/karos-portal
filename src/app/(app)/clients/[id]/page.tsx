@@ -190,7 +190,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   return (
     <>
       <p className="mb-6 text-sm text-muted">
-        {firstName ? `Welcome back, ${firstName}` : "Welcome back"} — here&apos;s what&apos;s
+        {firstName ? `Welcome back, ${firstName}` : "Welcome back"}. Here&apos;s what&apos;s
         happening across the {client.name} workspace.
       </p>
       <div className="space-y-8">

@@ -637,8 +637,8 @@ export default async function ClientAgentDetailPage({
         <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
           <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
           {viewerIsClient
-            ? "Agent runs are paused right now — starting a new post will not work until this clears. Contact your Karos team if you need a post today. Everything below is unaffected."
-            : "Agent runs are paused — the agent-service environment is not configured, so starting a post will fail until it is set. Everything below is unaffected."}
+            ? "Agent runs are paused right now. Starting a new post will not work until this clears. Contact your Karos team if you need a post today. Everything below is unaffected."
+            : "Agent runs are paused. The agent-service environment is not configured, so starting a post will fail until it is set. Everything below is unaffected."}
         </p>
       )}
 
@@ -854,7 +854,7 @@ export default async function ClientAgentDetailPage({
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-4 py-3 text-xs text-muted-2">
                 {archetype === "template_calendar"
                   ? "Nothing yet. Finished work appears here once your Karos team has approved it."
-                  : "Nothing else yet — everything this agent has made is above."}
+                  : "Nothing else yet. Everything this agent has made is above."}
               </p>
             ) : (
               <ul className="space-y-1.5">

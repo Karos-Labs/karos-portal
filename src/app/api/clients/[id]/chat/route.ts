@@ -332,11 +332,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // clipped by the weekly/monthly caps. Quoting the raw balance is the
       // same mistake F102 fixed on the rail, the panel and the agents page:
       // a capped client would be told a number they cannot spend.
-      `This client pays for AI actions with credits. Spendable right now: ${availableCredits(credits)} credits — ` +
+      `This client pays for AI actions with credits. Spendable right now: ${availableCredits(credits)} credits` +
       `quote THIS figure when asked what they have; it is the balance already clipped by their spend caps. ` +
       `Used ${credits.weekSpent}${credits.weeklyLimit != null ? ` of ${credits.weeklyLimit}` : ""} this week, ` +
       `${credits.monthSpent}${credits.monthlyLimit != null ? ` of ${credits.monthlyLimit}` : ""} this month.\n` +
-      `What each action costs — this is the same price list the client reads on their settings page:\n${priceLines}\n` +
+      `What each action costs. This is the same price list the client reads on their settings page:\n${priceLines}\n` +
       (agentPriceLines
         ? `This client's agents and the exact price of one run of each:\n${agentPriceLines}\n`
         : `This client has no AI agents assigned yet.\n`) +
@@ -434,9 +434,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const mentionableNames = customAgents.map((a) => liveByCustomAgentId.get(a.id)?.displayName ?? a.name);
 
   const focusAppendix = focusedAgent
-    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusedAgent.displayName}** — this STAYS active across turns ` +
+    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusedAgent.displayName}**. This STAYS active across turns ` +
       `until they explicitly ask to switch to a different agent or return to the general copilot; never drop it on your own. ` +
-      `Prioritize this agent in your answers${focusedAgent.templates.length > 0 ? ` — its templates: ${focusedAgent.templates.map((t) => t.name).join(", ")}` : ""}. ` +
+      `Prioritize this agent in your answers${focusedAgent.templates.length > 0 ? `its templates: ${focusedAgent.templates.map((t) => t.name).join(", ")}` : ""}. ` +
       `Still answer anything else they ask; this is a focus, not a restriction. ` +
       `If they ask (in plain text, not @mention) to switch to another agent or go back to general, call set_agent_focus.` +
       (() => {
@@ -448,7 +448,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return md ? `\n\n${md}` : "";
       })()
     : mentionableNames.length > 0
-      ? `\n\n## AGENT FOCUS\nNo agent is focused right now — you're the general copilot. If the user asks in plain text ` +
+      ? `\n\n## AGENT FOCUS\nNo agent is focused right now. You're the general copilot. If the user asks in plain text ` +
         `to talk to / focus on one of their agents (${mentionableNames.join(", ")}), call set_agent_focus ` +
         `to switch into it; it then stays focused across turns until they ask to switch again or return here.`
       : "";
@@ -458,6 +458,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // unambiguous ISO instant so a tool call's datetime input is computed from
   // the same instant the model reasons about, not re-derived from prose.
   const nowAppendix = `\n\n## CURRENT DATE/TIME\n${new Date().toISOString()} (UTC). Convert relative dates ("next Thursday", "in two weeks") from this instant.`;
+
+  /**
+   * AF-8 REACHES THE MODEL'S OWN SENTENCES TOO.
+   *
+   * "Why is there an M dash? We don't use those." The static guard
+   * (client-copy-boundary.test.ts) can sweep every string this repo ships, but
+   * the copilot's replies are written at runtime and are the one client-facing
+   * surface no test can read. Without this the house rule holds everywhere
+   * except the surface a client actually converses with — and an LLM left to
+   * itself reaches for the em dash constantly.
+   *
+   * Stated as a substitution rather than a prohibition: "don't use X" invites
+   * the model to find the nearest lookalike, and a spaced hyphen is the other
+   * thing this app's copy rules refuse.
+   */
+  const styleAppendix =
+    `\n\n## WRITING STYLE\nNever use an em dash (—) in your replies. Use a comma, a full stop, or "·" instead. ` +
+    `Do not substitute a spaced hyphen (" - ") either. An en dash is fine for ranges ("3–4 posts", "10–20 minutes").`;
 
   const systemPrompt =
     `${baseSystemPrompt}\n\n` +
@@ -480,7 +498,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     creditsAppendix +
     agentFeedbackAppendix +
     focusAppendix +
-    nowAppendix;
+    nowAppendix +
+    styleAppendix;
 
   /* ── Shared tools ─────────────────────────────────────────────────── */
 
@@ -582,7 +601,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           console.error(
             `[copilot] Support email failed for client ${clientId}: ${result.error}`,
           );
-          return "I couldn't send the support email just now — please try again shortly, or email hello@karoslabs.com directly.";
+          return "I couldn't send the support email just now. Please try again shortly, or email hello@karoslabs.com directly.";
         }
       } else {
         console.log("[copilot] Support email (ADMIN_EMAIL not set):", { subject, message, clientId });
@@ -631,16 +650,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             // a second time would fail again with no idea why. Name only the
             // cause they can act on, then hand the other one to us.
             return (
-              "Gmail access was denied — the Gmail read permission wasn't granted during sign-in. " +
+              "Gmail access was denied. The Gmail read permission wasn't granted during sign-in. " +
               "Please sign out and sign back in with Google, and approve the Gmail permission on the consent screen. " +
-              "If it still doesn't take, tell your Karos team — that one is ours to fix, not yours. " +
+              "If it still doesn't take, tell your Karos team. That one is ours to fix, not yours. " +
               "I can still work from your meetings and context documents in the meantime."
             );
           }
           return (
             "Your Google access token has expired. " +
             "Please sign out and sign back in with Google to restore Gmail access. " +
-            "I can still build a task map from your existing context — just let me know."
+            "I can still build a task map from your existing context. Just let me know."
           );
         }
         return "Failed to connect to Gmail. Check your network and try again.";
@@ -689,7 +708,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
 
       if (extracted.tasks.length === 0) {
-        return `Analyzed ${emails.length} operational signals — no actionable items detected. Your queue looks clear for now.`;
+        return `Analyzed ${emails.length} operational signals. No actionable items detected. Your queue looks clear for now.`;
       }
 
       // Three-tier dedup (task-dedup.ts) — Gmail candidates are title-only, so
@@ -701,7 +720,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const dupSkipped = extracted.tasks.length - deduped.length;
 
       if (deduped.length === 0) {
-        return `Analyzed ${emails.length} operational signals — all extracted items already exist in your task board (${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped).`;
+        return `Analyzed ${emails.length} operational signals. All extracted items already exist in your task board (${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped).`;
       }
 
       // The cap bounds the Karos AI execution queue only — client_managed
@@ -764,7 +783,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Set owner='karos_managed' for tasks Karos AI or staff will execute; 'client_managed' for tasks the client must do themselves. " +
       "Every karos_managed content task MUST name its executing agent: set productType for a managed product, OR agentId for a custom agent (from AVAILABLE AI EXECUTION AGENTS). Never set both. " +
       "Exception: if the user has @mentioned/focused one agent (see FOCUSED AGENT below), a karos_managed task with neither set defaults to that agent automatically. " +
-      `The Karos AI execution queue holds at most ${MAX_ACTIVE_TASKS} active karos_managed tasks per client — karos_managed proposals beyond the free capacity are rejected; client_managed tasks are uncapped. ` +
+      `The Karos AI execution queue holds at most ${MAX_ACTIVE_TASKS} active karos_managed tasks per client · karos_managed proposals beyond the free capacity are rejected; client_managed tasks are uncapped. ` +
       "Pass an empty tasks array when the board already covers all observable signals.",
     inputSchema: z.object({
       tasks: z
@@ -789,7 +808,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .string()
               .optional()
               .describe(
-                "The id of a CUSTOM agent (from AVAILABLE AI EXECUTION AGENTS, marked 'custom agent') that will execute this task — use INSTEAD of productType when a custom agent fits. Must be an exact id from that list; never invented",
+                "The id of a CUSTOM agent (from AVAILABLE AI EXECUTION AGENTS, marked 'custom agent') that will execute this task. Use INSTEAD of productType when a custom agent fits. Must be an exact id from that list; never invented",
               ),
             platform: z
               .enum(["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"])
@@ -801,7 +820,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .min(0)
               .max(100)
               .optional()
-              .describe("Contextual priority weight per CONTEXTUAL PRIORITY SCORING — how critical the underlying gap is"),
+              .describe("Contextual priority weight per CONTEXTUAL PRIORITY SCORING. How critical the underlying gap is"),
           }),
         )
         // Room for a full Scan & Refresh in ONE call: up to 6 "depending on
@@ -813,7 +832,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ tasks }) => {
       if (tasks.length === 0) {
-        return "No new tasks created — the task board already covers all observable signals.";
+        return "No new tasks created. The task board already covers all observable signals.";
       }
 
       // @mention default (§3): a karos_managed task with no executor named
@@ -853,7 +872,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           pool,
         );
         if (reason) {
-          dupReasons.push(`"${t.title}" — ${reason}`);
+          dupReasons.push(`"${t.title}" · ${reason}`);
           continue;
         }
         if (t.owner === "karos_managed") {
@@ -882,9 +901,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       if (freshTasks.length === 0) {
         if (capSkipped > 0 && dupSkipped === 0) {
-          return `Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks) — no tasks created. Ask the user to complete or approve existing tasks first.`;
+          return `Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). No tasks created. Ask the user to complete or approve existing tasks first.`;
         }
-        return `No tasks created — ${capSkipped > 0 ? `${capSkipped} blocked by the Karos queue capacity and ` : ""}the rest duplicate existing work:\n${dupReasons.join("\n")}`;
+        return `No tasks created. ${capSkipped > 0 ? `${capSkipped} blocked by the Karos queue capacity and ` : ""}The rest duplicate existing work:\n${dupReasons.join("\n")}`;
       }
 
       const now = Date.now();
@@ -1029,7 +1048,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const findOutputTool = tool({
     description:
       "Look up one of this client's own generated outputs (assets) by id or a fragment of its title. " +
-      "Call this BEFORE edit_output, reschedule_output, or when the user asks about the status of something specific — you need the exact id first.",
+      "Call this BEFORE edit_output, reschedule_output, or when the user asks about the status of something specific. You need the exact id first.",
     inputSchema: z.object({
       query: z.string().describe("An asset id, or part of its title"),
     }),
@@ -1044,9 +1063,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (matches.length > 1) {
         const top = matches.slice(0, 5);
         return (
-          `Found ${matches.length} matching outputs — which one did you mean?\n` +
+          `Found ${matches.length} matching outputs. Which one did you mean?\n` +
           top
-            .map((a) => `- "${a.title || "Untitled"}" (${statusLabelForActor(a.status)}) — id: ${a.id}`)
+            .map((a) => `- "${a.title || "Untitled"}" (${statusLabelForActor(a.status)}) · id: ${a.id}`)
             .join("\n")
         );
       }
@@ -1058,7 +1077,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // model reads it as one.
       const view = viewOutputLine(asset);
       return [
-        `**${asset.title || "Untitled"}** — status: ${statusLabelForActor(asset.status)}` +
+        `**${asset.title || "Untitled"}** · status: ${statusLabelForActor(asset.status)}` +
           (asset.scheduledAt ? `, scheduled for ${new Date(asset.scheduledAt).toISOString()}` : ""),
         `id: ${asset.id}`,
         "",
@@ -1071,7 +1090,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const editOutputTool = tool({
     description:
       "Save a revised version of one of this client's own generated outputs. Look it up with find_output first, " +
-      "draft the full replacement text yourself based on what the user asked to change (not a diff — the complete new content), then call this.",
+      "draft the full replacement text yourself based on what the user asked to change (not a diff, the complete new content), then call this.",
     inputSchema: z.object({
       assetId: z.string().describe("Exact asset id from find_output"),
       newContent: z.string().describe("The complete replacement content"),
@@ -1079,7 +1098,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ assetId, newContent, newTitle }) => {
       const existing = promptAssets.find((a) => a.id === assetId);
-      if (!existing) return "I don't have that output — look it up with find_output first.";
+      if (!existing) return "I don't have that output. Look it up with find_output first.";
       try {
         await updateAssetAction(assetId, { content: newContent, ...(newTitle ? { title: newTitle } : {}) });
       } catch (e) {
@@ -1118,7 +1137,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const runAgentNowTool = tool({
     description:
       "Trigger an ad-hoc run of one of this client's custom agents right now, billed at its normal per-run rate. " +
-      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling — this spends credits.",
+      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name"),
       prompt: z.string().optional().describe("Optional extra instruction for this run"),
@@ -1153,7 +1172,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? clientSafeRunError(result.error)
           : `Couldn't start that run: ${result.error}`;
       }
-      return `Started a run of **${match.name}** — it takes 10–20 minutes, and your Karos team reviews the result before it reaches your Workspace.`;
+      return `Started a run of **${match.name}**. It takes 10–20 minutes, and your Karos team reviews the result before it reaches your Workspace.`;
     },
   });
 
@@ -1169,7 +1188,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     execute: async ({ assetId, newScheduledAt }) => {
       const parsed = Date.parse(newScheduledAt);
       if (Number.isNaN(parsed)) {
-        return "That date didn't parse — give it as ISO 8601, e.g. 2026-08-06T13:00:00.000Z.";
+        return "That date didn't parse. Give it as ISO 8601, e.g. 2026-08-06T13:00:00.000Z.";
       }
       // Real (non-impersonated) staff get the full-power path — no day/status
       // guard rails, since that surface is already theirs via the Assets UI.
@@ -1211,14 +1230,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const provideFeedbackTool = tool({
     description:
-      "Record standing feedback on one of this client's LIVE agents — tone, formatting, or topic preferences that should " +
+      "Record standing feedback on one of this client's LIVE agents. Tone, formatting, or topic preferences that should " +
       "shape everything it makes from here on (or one format only, if scoped to a template). This is not a one-off request: " +
       "it's injected into every future run of that agent.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name, matched against this client's live agents"),
       text: z.string().describe("The feedback itself, in the client's own words"),
       scope: z.enum(["agent", "template"]).default("agent"),
-      templateKey: z.string().optional().describe("Required when scope is 'template' — one of the agent's own format keys"),
+      templateKey: z.string().optional().describe("Required when scope is 'template'. One of the agent's own format keys"),
       category: z.enum(FEEDBACK_CATEGORIES as [string, ...string[]]).optional(),
     }),
     execute: async ({ agentQuery, text, scope, templateKey, category }) => {
@@ -1238,7 +1257,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...(category ? { category } : {}),
       });
       if (result.error) return result.error;
-      return `Saved — this ${
+      return `Saved. This ${
         scope === "template" ? `shapes only "${templateKey}" posts` : `applies to everything ${umbrella.displayName} makes`
       } from here on.`;
     },
@@ -1265,14 +1284,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Switch which agent this conversation is focused on, or return to the general copilot. Call this when the user asks " +
       "IN PLAIN TEXT (not via the @mention picker) to talk to/focus on a specific agent, to switch to a different one, or to " +
       "stop focusing / go back to the general copilot. Matches against ALL of this client's agents, not only live ones. " +
-      "Once focused, it stays focused across turns until they ask again — never call action='clear' unasked.",
+      "Once focused, it stays focused across turns until they ask again. Never call action='clear' unasked.",
     inputSchema: z.object({
       action: z.enum(["focus", "clear"]),
-      agentQuery: z.string().optional().describe("Required when action is 'focus' — the agent's name"),
+      agentQuery: z.string().optional().describe("Required when action is 'focus'. The agent's name"),
     }),
     execute: async ({ action, agentQuery }) => {
       if (action === "clear") {
-        return "Back to the general copilot — I'm not focused on a specific agent anymore.\n\n<!-- COPILOT_FOCUS:null -->";
+        return "Back to the general copilot. I'm not focused on a specific agent anymore.\n\n<!-- COPILOT_FOCUS:null -->";
       }
       const q = (agentQuery ?? "").trim().toLowerCase();
       if (!q) return "Which agent would you like to focus on?";
@@ -1293,7 +1312,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
       const payload = JSON.stringify(resolved);
       return (
-        `Switched focus to **${resolved.name}** — I'll prioritize it until you ask to focus on a different agent ` +
+        `Switched focus to **${resolved.name}**. I'll prioritize it until you ask to focus on a different agent ` +
         `or go back to general.\n\n<!-- COPILOT_FOCUS:${payload} -->`
       );
     },

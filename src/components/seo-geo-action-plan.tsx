@@ -135,7 +135,7 @@ export function SeoGeoActionPlan({
               {r.description && <p className="mt-1 text-xs text-muted">{r.description}</p>}
               {isApproved ? (
                 <p className="mt-1 text-[11px] text-success">
-                  With your Karos team — it&apos;ll show in your next snapshot.
+                  With your Karos team, and it&apos;ll show in your next snapshot.
                 </p>
               ) : (
                 <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.06em] text-muted-2">
@@ -150,7 +150,7 @@ export function SeoGeoActionPlan({
           is authorization, not execution — a person makes the change — and the
           plan never said so anywhere. */}
       <p className="mt-3 text-[11px] text-muted-2">
-        Approving sends it to your Karos team — they make the change and it shows in your next
+        Approving sends it to your Karos team. They make the change and it shows in your next
         snapshot. Nothing on your site changes when you click.
       </p>
     </>

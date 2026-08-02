@@ -93,7 +93,7 @@ describe("the copilot's /add-task reply", () => {
     expect(addTaskReply({ ok: false, duplicate: true })).toBe(
       "That's already on your task board.",
     );
-    expect(addTaskReply({ ok: false })).toBe("Couldn't add that task — try again.");
+    expect(addTaskReply({ ok: false })).toBe("Couldn't add that task. Try again.");
     expect(addTaskReply({ ok: false, error: "Forbidden" })).toBe("Forbidden");
     for (const reply of [
       addTaskReply({ ok: false, duplicate: true }),

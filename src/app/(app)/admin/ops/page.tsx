@@ -80,7 +80,7 @@ export default async function OpsImportPage() {
         </div>
         <p className="mb-3 text-xs text-muted">
           Imports the committed <code className="font-mono">client/</code> deliverables from a lab run. Everything lands
-          as a <strong>draft</strong> for staff review — a client never sees an imported post until it is approved.
+          as a <strong>draft</strong> for staff review. A client never sees an imported post until it is approved.
           &ldquo;Check for updates&rdquo; above tells you which clients have runs you have not imported yet.
         </p>
 
@@ -163,7 +163,7 @@ function ConfigStrip({
         detail={
           labReady
             ? `${repo} · ${wiredClients} client${wiredClients === 1 ? "" : "s"} with a lab slug`
-            : "Unset — Check for updates cannot scan, and the per-client “Import lab outputs” button is hidden everywhere in the app."
+            : "Unset. Check for updates cannot scan, and the per-client “Import lab outputs” button is hidden everywhere in the app."
         }
       />
       <ConfigRow
@@ -172,7 +172,7 @@ function ConfigStrip({
         label="Ops inbox"
         detail={
           inboxDir ??
-          "Unset — proposals dropped on the server are not read, and SEO/GEO snapshots cannot be imported. The lab-repo source still works."
+          "Unset. Proposals dropped on the server are not read, and SEO/GEO snapshots cannot be imported. The lab-repo source still works."
         }
       />
     </div>

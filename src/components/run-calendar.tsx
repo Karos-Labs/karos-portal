@@ -240,7 +240,7 @@ function RunChip({ run, size = "cell" }: { run: CalendarRun; size?: ChipSize }) 
       )}
       title={`${scheduled ? "Scheduled" : "Ran"} · ${run.productName} · ${timeStr(run.at, run.timeZone)}${
         scheduled && run.zoneLabel ? ` ${run.zoneLabel}` : ""
-      }${run.clientName ? ` — ${run.clientName}` : ""}`}
+      }${run.clientName ? ` · ${run.clientName}` : ""}`}
     >
       <AgentMark identity={run.productName} icon={run.productIcon} className="h-2.5 w-2.5 shrink-0" />
       <span className="truncate">{run.productName}</span>
@@ -305,7 +305,7 @@ function PostChip({
          projection (calendar-body) — so this prints whatever arrived rather than
          re-deciding which kinds are allowed one, which is how the held post's
          sentence would have been dropped on the way to the tooltip. */
-      title={`${postKindLabel(post.kind, viewerIsClient)}${post.publishError ? ` — ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
+      title={`${postKindLabel(post.kind, viewerIsClient)}${post.publishError ? ` · ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
     >
       <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
       <span className="truncate">{post.title}</span>
@@ -494,7 +494,7 @@ function ScheduledRunCard({
                   passed on the broken code. */}
               {run.lastError && (
                 <p className="text-xs text-danger">
-                  Failed to fire {run.lastErrorAt ? relativeTime(run.lastErrorAt) : ""} — {run.lastError}
+                  Failed to fire {run.lastErrorAt ? relativeTime(run.lastErrorAt) : ""} · {run.lastError}
                 </p>
               )}
               {!viewerIsClient && !run.lastError && run.lastRunAt && (
@@ -750,7 +750,7 @@ function PausedRunNotice({ run, onDone }: { run: PausedRunMemo; onDone: () => vo
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <p className="min-w-0 text-xs text-muted">
           <span className="font-medium text-foreground">{run.productName}</span> is paused. It
-          won&apos;t run again until you resume it — here, or under Paused schedules below.
+          won&apos;t run again until you resume it, here or under Paused schedules below.
         </p>
         <div className="flex shrink-0 gap-2">
           <Button size="sm" variant="outline" onClick={resume} loading={busy}>

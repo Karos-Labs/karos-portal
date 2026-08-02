@@ -195,7 +195,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
             rows={2}
             value={subreddits}
             onChange={(e) => setSubreddits(e.target.value)}
-            placeholder="r/SaaS, r/marketing — separated by commas or new lines"
+            placeholder="r/SaaS, r/marketing. Separated by commas or new lines"
           />
           <p className="mt-1 text-xs text-muted">
             A starting point for our research, not the final list. We build the full set from where
@@ -209,7 +209,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
             rows={2}
             value={offLimitsSubreddits}
             onChange={(e) => setOffLimitsSubreddits(e.target.value)}
-            placeholder="r/SEO, r/marketing — anywhere you were removed, banned, or would rather not appear"
+            placeholder="r/SEO, r/marketing. Anywhere you were removed, banned, or would rather not appear"
           />
           <p className="mt-1 text-xs text-muted">
             We never draft for these. Worth filling in if a past post went badly somewhere. Names
@@ -325,7 +325,7 @@ function FeedbackBox({
         <a href={archive.href} className="underline hover:text-foreground">
           {archive.label}
         </a>
-        {" "}— and that is the signal that sharpens the voice fastest.
+        , and that is the signal that sharpens the voice fastest.
       </p>
       {runs.length > 0 ? (
         /* The run's state through the app's own mapper, and its date through
@@ -373,7 +373,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent — it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent. It feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (

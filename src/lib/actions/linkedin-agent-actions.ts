@@ -137,7 +137,7 @@ export async function addLinkedInSeatAction(input: {
   const name = input.name.trim();
   if (!name) return { error: "Name is required." };
   if (name.length > MAX_NAME) return { error: `Name is too long (max ${MAX_NAME} characters).` };
-  if (!input.role.trim()) return { error: "Role is required — in their own words is fine." };
+  if (!input.role.trim()) return { error: "Role is required. In their own words is fine." };
   if (!input.offLimits.trim()) return { error: "Tell us what we must never post (or write \"nothing\")." };
   const profileUrl = parseLinkedInUrl(input.profileUrl, "person");
   if (profileUrl !== null && typeof profileUrl === "object") return profileUrl;
@@ -151,7 +151,7 @@ export async function addLinkedInSeatAction(input: {
   const existing = (await listClientSeats(input.clientId)).find((s) => s.slug === slug);
   let seatId = existing?.id;
   if (seatId && (await getAgentIntake(input.clientId, "linkedin", seatId))) {
-    return { error: `A LinkedIn seat for "${name}" already exists — edit it instead.` };
+    return { error: `A LinkedIn seat for "${name}" already exists. Edit it instead.` };
   }
   const now = Date.now();
   if (!seatId) {
@@ -215,7 +215,7 @@ export async function saveLinkedInSeatIntakeAction(input: {
   const user = await requireClientAccess(input.clientId);
   const seat = await getClientSeat(input.seatId);
   if (!seat || seat.clientId !== input.clientId) return { error: "Seat not found." };
-  if (!input.role.trim()) return { error: "Role is required — in their own words is fine." };
+  if (!input.role.trim()) return { error: "Role is required. In their own words is fine." };
   if (!input.offLimits.trim()) return { error: "Tell us what we must never post (or write \"nothing\")." };
   const profileUrl = parseLinkedInUrl(input.profileUrl, "person");
   if (profileUrl !== null && typeof profileUrl === "object") return profileUrl;
@@ -254,8 +254,8 @@ function parseFallback(
       // them from a reader following the export list, not from the client.
       error:
         kind === "writing"
-          ? "Paste the piece of writing — it is how we learn a real voice for someone who does not post."
-          : "Write (or transcribe) the who-you-are notes — it is how we learn a real voice for someone who does not post.",
+          ? "Paste the piece of writing. It is how we learn a real voice for someone who does not post."
+          : "Write (or transcribe) the who-you-are notes. It is how we learn a real voice for someone who does not post.",
     };
   }
   if (trimmed.length > 10_000) return { error: "Please keep the voice sample under 10,000 characters." };
@@ -336,10 +336,10 @@ export async function addLiDraftFeedbackAction(input: {
     return { error: "Paste the final text you actually posted." };
   }
   if (input.action === "not_posted" && !input.reason?.trim()) {
-    return { error: "Tell us why this one did not run — that is what teaches the agent." };
+    return { error: "Tell us why this one did not run. That is what teaches the agent." };
   }
   if (input.action === "note" && !input.reason?.trim()) {
-    return { error: "Write the feedback — as much detail as you like." };
+    return { error: "Write the feedback. As much detail as you like." };
   }
   if (input.action === "edit_request" && !input.reason?.trim()) {
     return { error: "Tell us what to change about this draft." };

@@ -298,8 +298,8 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       label: "AI visibility today",
       // CD-J1 bounce 2b: only claim the category scope when the record carries it.
       explainer: basis.categoryScoped
-        ? `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. ${coverageSentence("can")} This is the number the fixes below are designed to move.`
-        : `How often AI assistants actually named or recommended you on this snapshot, measured across all the buyer questions we asked — including the ones naming your brand, which is why it isn't comparable with a current snapshot. ${coverageSentence("could")}`,
+        ? `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand, the questions new customers ask. ${coverageSentence("can")} This is the number the fixes below are designed to move.`
+        : `How often AI assistants actually named or recommended you on this snapshot, measured across all the buyer questions we asked, including the ones naming your brand, which is why it isn't comparable with a current snapshot. ${coverageSentence("could")}`,
       value: visibilityMeasured ? liveVisibility.index : null,
       tone: visibilityMeasured ? visBand.tone : "neutral",
       // Already live (`visibilityMeasured` is liveVisibility.enginesScored > 0);
@@ -463,7 +463,7 @@ export function buildQuestionPlanLine(insights: SeoGeoInsights): string {
   }
   const cat = presenceCounts(insights.categoryPresence).planned;
   const brand = presenceCounts(insights.brandPresence).planned;
-  return `We ask ${asked} questions on every snapshot — ${cat} about your category, and ${brand} that name you directly. Only the ${cat} category questions count toward how you compare with competitors.`;
+  return `We ask ${asked} questions on every snapshot · ${cat} about your category, and ${brand} that name you directly. Only the ${cat} category questions count toward how you compare with competitors.`;
 }
 
 export interface CitationView {
@@ -502,7 +502,7 @@ export function buildCitationView(insights: SeoGeoInsights): CitationView {
         ? `We couldn't measure any ${basis.answers} this run, so there is nothing to count citations against yet.`
         : cited > 0
           ? `Your site was cited as a source in ${cited} of ${of} ${basis.answers} across every engine we measured.`
-          : `Your site was never cited as a source in the ${of} ${basis.answers} we measured — earning citations from these domains' territory is what moves the visibility score.`,
+          : `Your site was never cited as a source in the ${of} ${basis.answers} we measured. Earning citations from these domains' territory is what moves the visibility score.`,
     emptyLine: "No engine cited any source domain on the answers we measured this run.",
   };
 }
@@ -566,14 +566,14 @@ export function buildSnapshotTrust(insights: SeoGeoInsights): SnapshotTrustView 
     ? " Question counts also differed between snapshots back then, so the totals here won't match a current snapshot's."
     : "";
   const scopeLine = unscoped
-    ? " Its engine-by-engine figures cover every question we asked, including the ones that name you — current snapshots measure those on category questions only."
+    ? " Its engine-by-engine figures cover every question we asked, including the ones that name you. Current snapshots measure those on category questions only."
     : "";
   return {
     isLegacy: true,
     title: "These results are from an earlier measurement setup",
     description:
       (preRedeploy
-        ? `This snapshot was captured on ${formatCaptured(insights.capturedAt)}, before we rebuilt how visibility is measured. Read the numbers as history rather than your position today — a refresh re-measures everything on the current setup.`
+        ? `This snapshot was captured on ${formatCaptured(insights.capturedAt)}, before we rebuilt how visibility is measured. Read the numbers as history rather than your position today. A refresh re-measures everything on the current setup.`
         : "How we measure visibility has changed since this snapshot, so these numbers aren't directly comparable with a current one. A refresh re-measures everything on the current setup.") +
       countsLine +
       scopeLine,
@@ -890,12 +890,12 @@ export function buildEngineViews(
         {
           label: "cited as a source",
           value: pct(cat.citationRate),
-          explainer: `How often the engine linked to your website as a source for its answer — ${fraction(citedCount, n, basis.answers)}. Being cited means the AI is reading your site, not just remembering your name.`,
+          explainer: `How often the engine linked to your website as a source for its answer · ${fraction(citedCount, n, basis.answers)}. Being cited means the AI is reading your site, not just remembering your name.`,
         },
         {
           label: "answered first",
           value: pct(cat.firstPositionRate),
-          explainer: `When the answer listed brands, how often yours came first — ${fraction(firstCount, n, basis.answers)}. First mention carries the most weight with buyers skimming an answer.`,
+          explainer: `When the answer listed brands, how often yours came first · ${fraction(firstCount, n, basis.answers)}. First mention carries the most weight with buyers skimming an answer.`,
         },
       ],
       // F10: `cat.`, not `row.` — the chip sat in the same card as "cited as a
@@ -1029,12 +1029,12 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
         ? {
             value: `${Math.round(insights.rosterSharePct)}%`,
             pct: Math.round(insights.rosterSharePct),
-            caption: `of every brand mention across you and the ${competitors} competitor${competitors === 1 ? "" : "s"} we track — measured on category questions only`,
+            caption: `of every brand mention across you and the ${competitors} competitor${competitors === 1 ? "" : "s"} we track. Measured on category questions only`,
             // CD-J1 directive 3: state the basis. This is computed on category
             // questions alone; the branded ones name the client by construction,
             // and counting them would be scoring yourself on your own name.
             explainer:
-              "Your share of every brand mention across the category answers we measured, counting you and the competitors we track. Questions that name you are left out — being named in a question about you isn't visibility. It's the single number for how much of the AI conversation you own.",
+              "Your share of every brand mention across the category answers we measured, counting you and the competitors we track. Questions that name you are left out. Being named in a question about you isn't visibility. It's the single number for how much of the AI conversation you own.",
           }
         : null,
   };
@@ -1199,7 +1199,7 @@ export function buildRosterSanity(
     headline: `None of the ${n} tracked competitor${n === 1 ? "" : "s"} appear in the AI answers we measured`,
     detail: suggestions.length
       ? `Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. Consider tracking: ${suggestions.join(", ")}.`
-      : "Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. The discovery pass found no untracked brands either — worth checking the client's category and question set.",
+      : "Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. The discovery pass found no untracked brands either. Worth checking the client's category and question set.",
   };
 }
 

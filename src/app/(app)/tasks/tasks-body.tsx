@@ -42,7 +42,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
             description="What's next on the board, what already happened, and everything your agents have delivered."
           />
           <p className="text-sm text-muted-2">
-            Your account isn&apos;t linked to a workspace yet — contact your Karos account manager.
+            Your account isn&apos;t linked to a workspace yet. Contact your Karos account manager.
           </p>
         </div>
       );

@@ -168,7 +168,7 @@ export function AccountProfilePanel({
       <Card>
         <CardTitle className="mb-1">Resume / CV</CardTitle>
         <p className="mb-3 text-xs text-muted-2">
-          Stored for your Karos team — they use it when writing your LinkedIn advocacy posts.
+          Stored for your Karos team. They use it when writing your LinkedIn advocacy posts.
         </p>
         <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
       </Card>

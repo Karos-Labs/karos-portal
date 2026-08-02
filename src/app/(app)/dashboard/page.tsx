@@ -76,7 +76,7 @@ export default async function DashboardPage() {
         >
           <Icon name="TriangleAlert" className="h-4 w-4 shrink-0 text-danger" />
           <p className="text-xs text-danger">
-            {recentFailedJobs.length} run{recentFailedJobs.length === 1 ? "" : "s"} failed this week — review in Jobs.
+            {recentFailedJobs.length} run{recentFailedJobs.length === 1 ? "" : "s"} failed this week. Review in Jobs.
           </p>
         </Link>
       )}

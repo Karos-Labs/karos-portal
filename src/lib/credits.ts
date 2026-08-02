@@ -212,7 +212,7 @@ export function evaluateSeatAddition(args: {
     allowed: false,
     requiresCharge: true,
     cost,
-    reason: `You've reached your plan's ${args.seatLimit}-seat limit. Adding another employee seat is a one-time ${cost}-credit charge — top up credits or upgrade your plan to continue.`,
+    reason: `You've reached your plan's ${args.seatLimit}-seat limit. Adding another employee seat is a one-time ${cost}-credit charge. Top up credits or upgrade your plan to continue.`,
   };
 }
 
@@ -304,7 +304,7 @@ export const CLIENT_PRICE_ROWS: readonly ClientPriceRow[] = [
     // sits in brackets after the label, and in the copilot's prompt it is the
     // whole of what the model may say about a figure it has not been given.
     // "per agent" is deliberately not repeated from the price cell.
-    note: "one-time, when an agent is first set up for you — its own page shows the price",
+    note: "one-time, when an agent is first set up for you. Its own page shows the price",
   },
   {
     label: "Agent run",
@@ -415,29 +415,41 @@ export type CreditDenialCode = "insufficient_balance" | "weekly_limit" | "monthl
  * string straight through to a client card.
  */
 export const CREDIT_DENIAL_PREFIX: Record<CreditDenialCode, string> = {
-  insufficient_balance: "Not enough credits — this action costs",
+  insufficient_balance: "Not enough credits. This action costs",
   weekly_limit: "Weekly credit limit reached (",
   monthly_limit: "Monthly credit limit reached (",
 };
 
 /**
- * A denial's dashes, flattened to the house em dash. The insufficient-balance
- * line carried a spaced hyphen until 2026-07-31, and these messages are STORED
- * as well as returned — the scheduler writes its refusal into the agent row's
- * lastError — so a message minted before the copy fix has to keep reading as a
- * credit denial. Otherwise clientSafeRefusal stops recognising it and collapses
- * the one refusal a client is meant to read into the generic paraphrase.
- * Normalising both sides beats a hard cutover or a legacy prefix twin.
+ * A denial's clause separator, flattened away entirely, so that a message
+ * MINTED UNDER ANY PAST HOUSE STYLE still reads as a credit denial.
+ *
+ * There have been three. The line carried a spaced hyphen until 2026-07-31,
+ * an em dash until 2026-08-03, and a period since (AF-8: "Why is there an M
+ * dash? We don't use those"). These messages are STORED as well as returned —
+ * the scheduler writes its refusal into the agent row's lastError — so rows
+ * written under all three spellings are in the database right now. If this
+ * stops recognising them, clientSafeRefusal collapses the one refusal a client
+ * is MEANT to read into the generic paraphrase.
+ *
+ * Hence separator-agnostic rather than "normalise to the current spelling":
+ * both sides are reduced to the words, which is the part that has not changed
+ * and the part the prefix match is actually about. Case is folded with them,
+ * because the word after the separator was lowercase under the dash spellings
+ * and is capitalised under this one.
  */
-function normalizeDenialDashes(text: string): string {
-  return text.replace(/ [-–—] /g, " — ");
+function denialKey(text: string): string {
+  return text
+    .replace(/\s*[-–—]\s+/g, " ")
+    .replace(/\.\s+/g, " ")
+    .toLowerCase();
 }
 
 /** True when `message` is one of the three assessCharge denials, verbatim. */
 export function isCreditDenialMessage(message: string): boolean {
-  const normalized = normalizeDenialDashes(message);
+  const normalized = denialKey(message);
   return Object.values(CREDIT_DENIAL_PREFIX).some((prefix) =>
-    normalized.startsWith(normalizeDenialDashes(prefix)),
+    normalized.startsWith(denialKey(prefix)),
   );
 }
 
@@ -460,9 +472,9 @@ export const CREDIT_WINDOW_RESET = {
 } as const;
 
 export const CREDIT_BLOCK_REASON: Record<CreditDenialCode, string> = {
-  insufficient_balance: "Not enough credits — ask your Karos team for a top-up.",
-  weekly_limit: `Weekly limit reached — ${CREDIT_WINDOW_RESET.weekly_limit}.`,
-  monthly_limit: `Monthly limit reached — ${CREDIT_WINDOW_RESET.monthly_limit}.`,
+  insufficient_balance: "Not enough credits. Ask your Karos team for a top-up.",
+  weekly_limit: `Weekly limit reached, ${CREDIT_WINDOW_RESET.weekly_limit}.`,
+  monthly_limit: `Monthly limit reached, ${CREDIT_WINDOW_RESET.monthly_limit}.`,
 };
 
 /**
@@ -546,7 +558,7 @@ export function assessCharge(
       code: "weekly_limit",
       message:
         `${CREDIT_DENIAL_PREFIX.weekly_limit}${rolled.weekSpent} of ${rolled.weeklyLimit} used). ` +
-        `It resets on Monday — or ask your Karos team to raise the limit.`,
+        `It resets on Monday, or ask your Karos team to raise the limit.`,
     };
   }
   if (rolled.monthlyLimit != null && rolled.monthSpent + amount > rolled.monthlyLimit) {
@@ -555,7 +567,7 @@ export function assessCharge(
       code: "monthly_limit",
       message:
         `${CREDIT_DENIAL_PREFIX.monthly_limit}${rolled.monthSpent} of ${rolled.monthlyLimit} used). ` +
-        `It resets on the 1st — or ask your Karos team to raise the limit.`,
+        `It resets on the 1st, or ask your Karos team to raise the limit.`,
     };
   }
   return {

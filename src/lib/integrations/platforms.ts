@@ -263,7 +263,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     icon: "Building2",
     color: "#0A66C2",
     description:
-      "Read company-page follower demographics and post analytics — a separate LinkedIn connection from personal posting.",
+      "Read company-page follower demographics and post analytics. A separate LinkedIn connection from personal posting.",
     fields: [
       {
         key: "accessToken",
@@ -364,7 +364,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     name: "Reddit",
     icon: "MessageSquare",
     color: "#FF4500",
-    description: "Read account history, karma, and thread activity — draft-first, never auto-posts.",
+    description: "Read account history, karma, and thread activity. Draft-first, never auto-posts.",
     fields: [
       {
         key: "accessToken",

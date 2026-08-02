@@ -147,7 +147,7 @@ function DraftCard({
       if (result.error) {
         setError(
           handedOff && action !== "not_posted" && action !== "edit_request"
-            ? `${result.error} The thread is already open — click again to save your choice here (we will not open it a second time).`
+            ? `${result.error} The thread is already open. Click again to save your choice here (we will not open it a second time).`
             : result.error,
         );
         return;
@@ -301,11 +301,11 @@ function DraftCard({
                 rows={8}
                 value={finalText}
                 onChange={(e) => setFinalText(e.target.value)}
-                placeholder="Your final version — the wording you will actually post."
+                placeholder="Your final version. The wording you will actually post."
               />
               {overCap ? (
                 <p className="text-xs text-red-400">
-                  {finalText.trim().length.toLocaleString()} characters — Reddit comments cap at{" "}
+                  {finalText.trim().length.toLocaleString()} characters. Reddit comments cap at{" "}
                   {REDDIT_COMMENT_CAP.toLocaleString()}. Trim it before posting.
                 </p>
               ) : null}
@@ -328,7 +328,7 @@ function DraftCard({
                 rows={2}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="What should change? Tone, angle, a fact to fix — in your own words."
+                placeholder="What should change? Tone, angle, a fact to fix. In your own words."
               />
               <div className="flex gap-2">
                 <Button size="sm" onClick={() => send("edit_request")} disabled={pending || !reason.trim()}>
@@ -394,8 +394,8 @@ function DraftCard({
               </div>
               <p className="text-[11px] text-muted-2">
                 {draft.threadUrl
-                  ? "This copies the reply and opens the thread. You paste it and press reply — nothing is ever posted for you."
-                  : "This copies the reply. The draft names no thread link, so open the thread yourself — nothing is ever posted for you."}{" "}
+                  ? "This copies the reply and opens the thread. You paste it and press reply. Nothing is ever posted for you."
+                  : "This copies the reply. The draft names no thread link, so open the thread yourself. Nothing is ever posted for you."}{" "}
                 Edit it into your own words first; Reddit rewards that.
               </p>
             </>
@@ -432,13 +432,13 @@ function DraftCard({
         </div>
       ) : sent === "edit_request" ? (
         <p className="mt-3 text-[11px] text-muted-2">
-          Change requested — it feeds the agent&apos;s next pass on this account.
+          Change requested. It feeds the agent&apos;s next pass on this account.
         </p>
       ) : (
         <p className="mt-3 text-[11px] text-muted-2">
           {draft.subreddit
-            ? `Logged — the reason tunes ${draft.subreddit}'s rules and the account's voice for the next run.`
-            : "Logged — the reason tunes the account's voice for the next run."}
+            ? `Logged. The reason tunes ${draft.subreddit}'s rules and the account's voice for the next run.`
+            : "Logged. The reason tunes the account's voice for the next run."}
         </p>
       )}
     </div>

@@ -156,7 +156,7 @@ function CompanyForm({
     >
       <p className="mt-1 text-sm text-muted">
         One per business. The page runs on your brand voice and your own first-party material; we
-        only ask what we cannot find ourselves. Drafts only — a person always posts.
+        only ask what we cannot find ourselves. Drafts only. A person always posts.
       </p>
       <div className="mt-4 space-y-4">
         <div>
@@ -232,13 +232,13 @@ function FallbackField({
     <div>
       <Label htmlFor={`${idPrefix}-fallback`}>If this person is not very active on LinkedIn (optional)</Label>
       <Select id={`${idPrefix}-fallback`} value={kind} onChange={(e) => onKind(e.target.value)}>
-        <option value="">They post regularly — we learn the voice from their real posts</option>
+        <option value="">They post regularly. We learn the voice from their real posts</option>
         <option value="writing">Drop a long piece of their own genuine writing</option>
         <option value="about">Tell us who they are (typed, or a transcribed voice note)</option>
       </Select>
       <p className="mt-1 text-xs text-muted">
         Being inactive on LinkedIn is a first-class case, not a problem. This is how we learn a real
-        voice for someone who does not post — a spoken sample is the best source.
+        voice for someone who does not post. A spoken sample is the best source.
       </p>
       {kind ? (
         <Textarea
@@ -248,7 +248,7 @@ function FallbackField({
           onChange={(e) => onText(e.target.value)}
           placeholder={
             kind === "writing"
-              ? "Paste the piece here — an essay, a long email, anything they genuinely wrote themselves."
+              ? "Paste the piece here. An essay, a long email, anything they genuinely wrote themselves."
               : "Who are they, what have they actually done, how do they talk? Paste a voice-note transcript if you have one."
           }
         />
@@ -297,7 +297,7 @@ function SeatCv({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
     <div className="mt-4 border-t border-border pt-4">
       <p className="text-sm font-medium">Resume / CV</p>
       <p className="mt-1 text-xs text-muted">
-        Private — only our team and the agent read it, and it is never posted. The CV is for
+        Private. Only our team and the agent read it, and it is never posted. The CV is for
         substance (their real experience), not voice. Not strictly required: their real posts or
         the voice sample also work, but it is the strongest single source.
       </p>
@@ -393,8 +393,8 @@ function SeatCard({
   // The warning shows in both states, so it has to point at the right place.
   // The CV sits below the form in both, so only the other two move behind "Edit".
   const noVoiceSource = editing
-    ? "This seat has no voice source yet. Add their profile URL or the voice sample below, or attach a CV — drafts need at least one genuine source of who they are."
-    : 'This seat has no voice source yet. Attach a CV below, or press "Edit" to add their profile URL or the voice sample — drafts need at least one genuine source of who they are.';
+    ? "This seat has no voice source yet. Add their profile URL or the voice sample below, or attach a CV. Drafts need at least one genuine source of who they are."
+    : 'This seat has no voice source yet. Attach a CV below, or press "Edit" to add their profile URL or the voice sample. Drafts need at least one genuine source of who they are.';
 
   return (
     <SavedFormCard
@@ -498,7 +498,7 @@ function SeatCard({
         />
         <p className="text-xs text-muted">
           No voice questions here on purpose: we build the voice from their real posts, CV and
-          edits — and if they already have a seat for another agent, we reuse what we already know.
+          edits. And if they already have a seat for another agent, we reuse what we already know.
         </p>
         {fieldError(error)}
         <div className="flex items-center gap-3">
@@ -692,13 +692,13 @@ function FeedbackBox({
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not — in your own words, as much detail as you like.
+        Tell us what is working and what is not. In your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
         picking, editing and skipping happens on the drafts themselves, in{" "}
         <a href={archive.href} className="underline hover:text-foreground">
           {archive.label}
         </a>
-        — and each of those choices reaches the agent too.
+        , and each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
         /* The run's state through the app's own mapper — these used to print the
@@ -756,7 +756,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent — it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent. It feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (
@@ -835,7 +835,7 @@ export function LinkedInAgentIntake({
             measure with, and it is the one with a plan limit and a price. */}
         <p className="text-xs text-muted-2">
           These seats are who the agent writes for. Signing someone in so we can publish and measure
-          on their own LinkedIn is separate — that is the employee seats list in your settings, and
+          on their own LinkedIn is separate. That is the employee seats list in your settings, and
           only it has a plan limit.
         </p>
       </div>

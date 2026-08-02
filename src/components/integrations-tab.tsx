@@ -442,8 +442,8 @@ function PlatformCard({
 
         {pendingVerification && (
           <p className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning">
-            {platform.name} is reviewing our developer account. Connecting is not available yet —
-            your Karos team will turn it on the moment it is approved.
+            {platform.name} is reviewing our developer account. Connecting is not available yet.
+            Your Karos team will turn it on the moment it is approved.
           </p>
         )}
 
@@ -455,7 +455,7 @@ function PlatformCard({
           <p className="text-[11px] text-warning/80">
             {isAdmin
               ? "OAuth env vars not set. The button above will fail until configured."
-              : "This channel isn't connectable yet — ask your Karos team to finish setting it up."}
+              : "This channel isn't connectable yet. Ask your Karos team to finish setting it up."}
           </p>
         )}
 
@@ -855,7 +855,7 @@ function GoogleUnifiedCard({
           <p className="text-[11px] text-warning/80">
             {isAdmin
               ? "OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will fail until configured."
-              : "Google Suite isn't connectable yet — ask your Karos team to finish setting it up."}
+              : "Google Suite isn't connectable yet. Ask your Karos team to finish setting it up."}
           </p>
         )}
 
@@ -917,7 +917,7 @@ function GoogleUnifiedCard({
                 </p>
               )}
               <p className="pt-1 text-[11px] text-muted-2">
-                Reconnecting always goes through the button above — Google issues one token pair
+                Reconnecting always goes through the button above. Google issues one token pair
                 covering all three services at once, so there&apos;s no separate per-service OAuth.
               </p>
             </div>

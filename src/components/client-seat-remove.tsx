@@ -118,7 +118,7 @@ export function ClientSeatRemove({
       <div className="min-w-0 space-y-1.5">
         <p className="text-xs font-medium text-foreground">Remove {seatName}?</p>
         <p className="text-xs text-muted">
-          A seat is one person, shared by every agent we run for them — so this removes their
+          A seat is one person, shared by every agent we run for them. So this removes their
           answers everywhere, including anything attached to their seat. It cannot be undone.
         </p>
         {runInFlight ? (

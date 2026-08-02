@@ -223,7 +223,7 @@ export function StrategyWarRoom({
           )}
         </div>
         <p className="text-xs text-muted-2">
-          Three specialist agents are debating your Task Map live — proposing, critiquing, and
+          Three specialist agents are debating your Task Map live, proposing, critiquing, and
           stress-testing against your analytics until they reach consensus. This takes about a
           minute; leaving before it finishes discards the run.
         </p>
@@ -253,7 +253,7 @@ export function StrategyWarRoom({
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
               <p className="flex min-w-0 items-center gap-2 text-sm text-warning">
                 <Icon name="TriangleAlert" className="h-4 w-4 shrink-0" />
-                The agents are still working. Leaving now discards the run — nothing is saved.
+                The agents are still working. Leaving now discards the run. Nothing is saved.
               </p>
               <div className="flex shrink-0 items-center gap-3">
                 <button
@@ -274,7 +274,7 @@ export function StrategyWarRoom({
             </div>
           ) : (
             <div className="flex items-center justify-between gap-2 px-1">
-              <p className="text-[11px] text-muted-2">Keep this open — the run stops if you leave.</p>
+              <p className="text-[11px] text-muted-2">Keep this open. The run stops if you leave.</p>
               <button
                 type="button"
                 onClick={() => setConfirmingClose(true)}
@@ -293,7 +293,7 @@ export function StrategyWarRoom({
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
             <p className="flex min-w-0 items-center gap-2">
               <Icon name="CircleCheck" className="h-4 w-4 shrink-0" />
-              Consensus reached — {created} task{created === 1 ? "" : "s"} locked into your map.
+              Consensus reached · {created} task{created === 1 ? "" : "s"} locked into your map.
             </p>
             <Link
               href="/tasks"
@@ -308,7 +308,7 @@ export function StrategyWarRoom({
           <div className="space-y-1.5 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
             <p className="flex items-center gap-2 font-medium">
               <Icon name="Info" className="h-4 w-4 shrink-0" />
-              Nothing new to add — no tasks were created.
+              Nothing new to add. No tasks were created.
             </p>
             <p className="text-xs opacity-90">{zeroOutcomeExplanation(outcome)}</p>
             <div className="flex flex-wrap items-center gap-3 pt-0.5">
@@ -378,7 +378,7 @@ function zeroOutcomeExplanation(
     return `Karos already has its limit of ${MAX_ACTIVE_TASKS} open tasks for you, so ${capSkipped} proposal${capSkipped === 1 ? "" : "s"} could not be added. Approve or complete some of those, then run this again.`;
   }
   if (duplicatesSkipped > 0) {
-    return `All ${duplicatesSkipped} proposal${duplicatesSkipped === 1 ? "" : "s"} already exist on your board — your task map is up to date.`;
+    return `All ${duplicatesSkipped} proposal${duplicatesSkipped === 1 ? "" : "s"} already exist on your board. Your task map is up to date.`;
   }
   return outcome.note;
 }
@@ -408,7 +408,7 @@ function ConsoleLine({ line }: { line: Line }) {
     case "consensus":
       return (
         <p className="pt-1 font-semibold text-neon">
-          ✅ Consensus locked — {line.count} optimal task{line.count === 1 ? "" : "s"}.
+          ✅ Consensus locked · {line.count} optimal task{line.count === 1 ? "" : "s"}.
         </p>
       );
     case "persisted":
@@ -416,7 +416,7 @@ function ConsoleLine({ line }: { line: Line }) {
     case "campaign":
       return (
         <p className="pt-1 text-info">
-          🎬 Campaign built — “{line.title}” ({line.themeScope}): {line.count} extra task
+          🎬 Campaign built · “{line.title}” ({line.themeScope}): {line.count} extra task
           {line.count === 1 ? "" : "s"} added to your board.
         </p>
       );

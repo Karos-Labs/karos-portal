@@ -357,7 +357,7 @@ function ScanSummary({ scan }: { scan: UpdateScan }) {
   return (
     <div className="rounded-lg border border-border bg-surface-2 px-4 py-3">
       <p className="text-sm">
-        Scanned <span className="font-mono text-xs">{scan.repo}</span> — {scan.checked} client
+        Scanned <span className="font-mono text-xs">{scan.repo}</span> · {scan.checked} client
         {scan.checked === 1 ? "" : "s"} with a lab slug.{" "}
         {propsFound === 0 && runsFound === 0 ? (
           <span className="text-muted">Nothing new.</span>
@@ -383,7 +383,7 @@ function ScanSummary({ scan }: { scan: UpdateScan }) {
               >
                 <div className="min-w-0">
                   <p className="text-xs font-medium">
-                    {c.clientName} — {c.newRuns.length} un-imported run{c.newRuns.length === 1 ? "" : "s"}
+                    {c.clientName} · {c.newRuns.length} un-imported run{c.newRuns.length === 1 ? "" : "s"}
                   </p>
                   <p className="truncate font-mono text-[10px] text-muted-2">
                     {c.newRuns.map((r) => r.runName).join(" · ")}
@@ -466,7 +466,7 @@ export function WriteManifest({ pick, compact }: { pick: Pick_; compact?: boolea
       {!compact && (
         <p className="text-xs text-muted-2">
           {palette
-            ? "No row is deleted. Profile FIELDS a human already filled are skipped — except the brand palette, below. Documents, competitors and the SEO/GEO snapshot are updated in place."
+            ? "No row is deleted. Profile FIELDS a human already filled are skipped, except the brand palette below. Documents, competitors and the SEO/GEO snapshot are updated in place."
             : "No row is deleted. Profile fields a human already filled are skipped. Documents, competitors and the SEO/GEO snapshot are updated in place."}
         </p>
       )}
@@ -483,7 +483,7 @@ export function WriteManifest({ pick, compact }: { pick: Pick_; compact?: boolea
           <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0" />
           <span>
             Replaces the brand palette: {palette.from.join(", ") || "no colors stored"} becomes{" "}
-            {palette.to.join(", ")} — including hexes a human picked, and a three-color palette
+            {palette.to.join(", ")}, including hexes a human picked, and a three-color palette
             leaves the fourth slot empty. Nothing on this page puts it back.
           </span>
         </p>
@@ -566,7 +566,7 @@ function BundleCard({
               Imported {importedOn(prior.importedAt)} by {prior.actor}
               {prior.partial && " (selected items only)"}
               {prior.changedSince && (
-                <span className="text-warning">· the file has changed since — import it again</span>
+                <span className="text-warning">· the file has changed since. Import it again</span>
               )}
             </p>
           )}
@@ -746,7 +746,7 @@ function PlanCard({
       {totalCount > 1 && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[11px] text-muted-2">
-            {pickedCount} of {totalCount} selected — untick anything you do not want.
+            {pickedCount} of {totalCount} selected. Untick anything you do not want.
           </p>
           <div className="flex gap-2">
             <button
@@ -799,7 +799,7 @@ function PlanCard({
             // Say it, rather than quietly folding a create into an update.
             note={
               c.reconciled
-                ? `Already in the roster (matched by ${c.reconciled.matchedBy}) — will update the existing row.`
+                ? `Already in the roster (matched by ${c.reconciled.matchedBy}). Will update the existing row.`
                 : null
             }
             checked={isOn(c.key)}
@@ -843,12 +843,12 @@ function PlanCard({
       {plan.skippedProfile.length > 0 && (
         <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5">
           <p className="text-xs font-medium text-muted">
-            Skipped — a human already set these, and a refresh never overwrites them:
+            Skipped. A human already set these, and a refresh never overwrites them:
           </p>
           <ul className="mt-1.5 space-y-0.5">
             {plan.skippedProfile.map((s) => (
               <li key={s.field} className="text-[11px] text-muted-2">
-                {s.field} — {s.reason}
+                {s.field} · {s.reason}
               </li>
             ))}
           </ul>
@@ -866,7 +866,7 @@ function PlanCard({
       {plan.warnings.length > 0 && (
         <div className="rounded-md border border-warning/30 bg-warning/10 px-3.5 py-2.5">
           <p className="text-xs font-medium text-warning">
-            {plan.warnings.length} warning{plan.warnings.length === 1 ? "" : "s"} — not blocking, but read them:
+            {plan.warnings.length} warning{plan.warnings.length === 1 ? "" : "s"}, not blocking, but read them:
           </p>
           <ul className="mt-1.5 space-y-0.5">
             {plan.warnings.map((w, i) => (
@@ -889,7 +889,7 @@ function PlanCard({
           {plan.lockedReason}
         </p>
       ) : plan.counts.totalWrites === 0 && !plan.seoGeo?.ok ? (
-        <p className="text-xs text-muted">Nothing to write — the bundle matches what is already stored.</p>
+        <p className="text-xs text-muted">Nothing to write. The bundle matches what is already stored.</p>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-muted">
@@ -923,7 +923,7 @@ function SeoGeoCard({
   if (!seoGeo.ok) {
     return (
       <div className="rounded-md border border-danger/30 bg-danger/10 px-3.5 py-3">
-        <p className="text-xs font-medium text-danger">SEO/GEO snapshot refused — the refresh half can still import.</p>
+        <p className="text-xs font-medium text-danger">SEO/GEO snapshot refused. The refresh half can still import.</p>
         <ul className="mt-1.5 space-y-0.5">
           {seoGeo.errors.map((e, i) => (
             <li key={i} className="font-mono text-[11px] text-danger/90">
@@ -943,10 +943,10 @@ function SeoGeoCard({
       </p>
       <p className="mt-1.5 text-[11px] text-muted">Currently stored: {seoGeo.storedProvenance}</p>
       <p className="mt-1 text-[11px] text-muted-2">
-        It will be stamped as a hand import, keeping its own capture date and pipeline stamp —
+        It will be stamped as a hand import, keeping its own capture date and pipeline stamp.
         {seoGeo.willReadAsLegacy
-          ? " it renders with the legacy banner, as an unstamped or superseded capture should."
-          : " its pipeline stamp is current, so no legacy banner."}
+          ? " It renders with the legacy banner, as an unstamped or superseded capture should."
+          : " Its pipeline stamp is current, so no legacy banner."}
       </p>
       {seoGeo.warnings.map((w, i) => (
         <p key={i} className="mt-1 text-[11px] text-warning">
@@ -979,16 +979,16 @@ export function OutcomePanel({ outcome }: { outcome: ApplyOutcome }) {
       <ul className="mt-1.5 space-y-0.5 text-[11px] text-muted">
         <li>
           {refresh.error
-            ? `Refresh failed — ${refresh.error}`
+            ? `Refresh failed · ${refresh.error}`
             : `${refresh.docs} document(s), ${refresh.competitors} competitor row(s), ${refresh.client} client update.`}
         </li>
         <li>
           {seoGeo.applied
             ? "SEO/GEO snapshot imported and stamped as a hand import."
             : seoGeo.error
-              ? `SEO/GEO refused — ${seoGeo.error}`
+              ? `SEO/GEO refused · ${seoGeo.error}`
               : seoGeo.skippedReason
-                ? `SEO/GEO skipped — ${seoGeo.skippedReason}`
+                ? `SEO/GEO skipped · ${seoGeo.skippedReason}`
                 : "No SEO/GEO snapshot in this bundle."}
         </li>
       </ul>

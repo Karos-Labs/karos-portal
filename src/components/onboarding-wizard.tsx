@@ -161,7 +161,7 @@ export function OnboardingWizard({
     <div className="animate-fade-up">
       <div className="mb-6 text-center">
         <h1 className="text-2xl font-semibold tracking-tight">Welcome to Karos CMO</h1>
-        <p className="mt-1 text-sm text-muted">Let&apos;s get your workspace set up — it only takes a minute.</p>
+        <p className="mt-1 text-sm text-muted">Let&apos;s get your workspace set up. It only takes a minute.</p>
       </div>
 
       <StepIndicator step={step} />
@@ -177,7 +177,7 @@ export function OnboardingWizard({
           <>
             <div>
               <h2 className="text-base font-semibold">Personal profile</h2>
-              <p className="text-xs text-muted-2">Tell us who you are — this powers your AI-written voice.</p>
+              <p className="text-xs text-muted-2">Tell us who you are. This powers your AI-written voice.</p>
             </div>
 
             <AvatarUploader name={name || user.name} value={photoURL} onChange={setPhotoURL} />
@@ -202,7 +202,7 @@ export function OnboardingWizard({
                   feature that does not exist. Same sentence the Settings card
                   already tells the truth with. */}
               <p className="mb-2 text-[11px] text-muted-2">
-                Stored for your Karos team — they use it when writing your LinkedIn advocacy posts.
+                Stored for your Karos team. They use it when writing your LinkedIn advocacy posts.
               </p>
               <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
             </div>

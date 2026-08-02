@@ -195,7 +195,7 @@ export async function requireClientAccess(clientId: string): Promise<AppUser> {
  * so the site whose condition is different gets its own.
  */
 export const TASK_LEFT_REVIEW_MESSAGE =
-  "This task is no longer waiting for review — it may have just been approved somewhere else. Refresh to see where it is now.";
+  "This task is no longer waiting for review. It may have just been approved somewhere else. Refresh to see where it is now.";
 
 /** The preflight sibling: this task is not AT the review step, however it got there. */
 export const TASK_NOT_IN_REVIEW_MESSAGE =

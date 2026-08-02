@@ -47,7 +47,7 @@ export function OnboardingSocialsStep({
             "all six now - you can always add", and the guard must normalise JSX
             whitespace before asking the question. */}
         <p className="text-xs text-muted-2">
-          Connect the channels your agents should publish to — one, some, or all of them. You can
+          Connect the channels your agents should publish to. One, some, or all of them. You can
           always add the rest later from Settings.
         </p>
       </div>

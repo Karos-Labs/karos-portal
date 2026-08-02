@@ -213,7 +213,7 @@ export function ClientHomeOverview({
                 // says the right thing: they show up once the team is done.
                 icon="Sparkles"
                 label={`${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"} in review`}
-                hint="Your Karos team is reviewing these — they'll appear in your archive when ready."
+                hint="Your Karos team is reviewing these. They'll appear in your archive when ready."
               />
             )}
             {reviewPendingTasks.length > 0 && (

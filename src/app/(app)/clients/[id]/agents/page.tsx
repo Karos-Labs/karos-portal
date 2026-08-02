@@ -244,7 +244,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         {agents.length > 0 && !agentServiceConfigured && (
           <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
             <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-            Agent runs are paused right now — starting a new run will not work until this clears.
+            Agent runs are paused right now. Starting a new run will not work until this clears.
             Contact your Karos team if you need a run today. Everything below is unaffected.
           </p>
         )}
@@ -403,7 +403,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const extraSchedules = staffScheduleSelection.get(agent.id)?.duplicates.length ?? 0;
     const note =
       extraSchedules > 0
-        ? `${extraSchedules + 1} schedules for this agent — only the next to fire is shown here or editable`
+        ? `${extraSchedules + 1} schedules for this agent. Only the next to fire is shown here or editable`
         : review > 0
           ? `${review} draft${review === 1 ? "" : "s"} waiting for review`
           : setup && !setup.ready
@@ -421,7 +421,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const legacy = legacyByAgentId.get(agent.id) ?? [];
     const legacyNote =
       legacy.length > 0
-        ? `${legacy.length} settings-page schedule${legacy.length === 1 ? "" : "s"} (${legacy.filter((r) => r.enabled).length} on) — not billed to the client`
+        ? `${legacy.length} settings-page schedule${legacy.length === 1 ? "" : "s"} (${legacy.filter((r) => r.enabled).length} on). Not billed to the client`
         : null;
     const fullNote = [note, legacyNote].filter(Boolean).join(" · ") || null;
     return {
@@ -480,7 +480,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
       {enabledAgents.length > 0 && !agentServiceConfigured && (
         <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
           <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-          Agent runs are paused — the agent-service environment is not configured, so submitting a
+          Agent runs are paused. The agent-service environment is not configured, so submitting a
           run will fail until it is set. Schedules, history and deliverables below are unaffected.
         </p>
       )}
@@ -507,7 +507,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
                 // exists in the Edit dialog on the Clients page, which no link can
                 // open. So the sentence says where it is and there is no button
                 // promising to take you there.
-                "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page — and set this client's lab repo slug in its Edit dialog on the Clients page, or runs go out without their client context."
+                "No custom agent in the library is enabled, so there is nothing to run here. Import or enable one on the Agents page, and set this client's lab repo slug in its Edit dialog on the Clients page, or runs go out without their client context."
           }
           action={
             <a href="/agents" className="text-xs text-neon hover:underline">

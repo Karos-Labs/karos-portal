@@ -112,7 +112,7 @@ export function BindAgentControl({
         <div className="max-w-sm rounded-[var(--radius)] border border-warning/30 bg-warning/10 p-2.5 text-right">
           <p className="text-[11px] text-warning">
             {selectedName} is already producing for this client. Adding it as new hides its Run
-            button, its schedule row and its run history from the client until you launch it — its
+            button, its schedule row and its run history from the client until you launch it. Its
             weekly schedule keeps firing, so pause that too if you mean to stop it.
           </p>
           <div className="mt-1.5 flex justify-end gap-1.5">
@@ -251,7 +251,7 @@ export function CurationPane({ agent }: { agent: ClientAgentCardRow }) {
               <Textarea
                 value={row.rationale ?? ""}
                 onChange={(e) => update(index, { rationale: e.target.value })}
-                placeholder="Why this format fits this client — the client reads this line."
+                placeholder="Why this format fits this client. The client reads this line."
                 rows={2}
                 className="text-xs"
                 aria-label="Template rationale"

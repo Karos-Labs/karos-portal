@@ -926,7 +926,7 @@ describe("presence + prompts", () => {
 
   it("labels the roster share as category-only (CD-J1 directive 3)", () => {
     const share = buildPresence(insights()).rosterShare;
-    expect(share?.caption).toContain("measured on category questions only");
+    expect(share?.caption).toContain("Measured on category questions only");
     expect(share?.explainer).toContain("Questions that name you are left out");
   });
 

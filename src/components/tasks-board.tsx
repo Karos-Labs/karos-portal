@@ -908,7 +908,7 @@ export function TasksBoard({
       // zero: "Run & charge 0 credits" over a real charge is consent to the
       // wrong amount, which is worse than refusing to quote.
       if (typeof res.credits !== "number") {
-        setExecError("Could not check what this run costs — try again in a moment.");
+        setExecError("Could not check what this run costs. Try again in a moment.");
         return;
       }
       setRunPrompt({ taskId: task.id, credits: res.credits });
@@ -925,7 +925,7 @@ export function TasksBoard({
     if (!task) {
       // The panel outlived its card (a refresh archived or deleted it). Say so
       // rather than silently doing nothing — the client pressed a charge button.
-      setExecError("That task is no longer on your board — nothing was charged.");
+      setExecError("That task is no longer on your board. Nothing was charged.");
       return;
     }
     commitStatusChange(task, "in_progress");

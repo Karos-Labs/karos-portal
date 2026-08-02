@@ -279,7 +279,7 @@ function ReviewPanel({
               Auto-publish at the scheduled time
             </span>
             <span className="block text-[11px] text-muted">
-              Requires the target channel to be connected with auto-publish enabled — otherwise it
+              Requires the target channel to be connected with auto-publish enabled. Otherwise it
               lands on the calendar, where you open the post and press Publish Now.
             </span>
           </span>
@@ -464,7 +464,7 @@ function AiPlanSection({
           />
         ) : (
           <p className="text-xs text-muted">
-            Execution guide ready — {countPlanSteps(plan)}. Press Show to read it.
+            Execution guide ready · {countPlanSteps(plan)}. Press Show to read it.
           </p>
         )
       ) : (

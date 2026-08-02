@@ -122,7 +122,7 @@ function DraftCard({
       if (result.error) {
         setError(
           handedOff && action !== "not_posted"
-            ? `${result.error} Your post is already open on X — click again to retry recording the pick (X will not reopen).`
+            ? `${result.error} Your post is already open on X. Click again to retry recording the pick (X will not reopen).`
             : result.error,
         );
         return;

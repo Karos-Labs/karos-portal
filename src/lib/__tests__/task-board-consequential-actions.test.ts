@@ -304,7 +304,7 @@ describe("a billable run is price-gated; a free status move is not", () => {
     expect(confirm.indexOf("setRunPrompt(null)")).toBeLessThan(
       confirm.indexOf('commitStatusChange(task, "in_progress")'),
     );
-    expect(confirm).toContain("nothing was charged");
+    expect(confirm).toContain("Nothing was charged");
   });
 
   it("only charges from the confirm handler", () => {
