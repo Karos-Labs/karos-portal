@@ -207,13 +207,13 @@ export default async function ClientSettingsPage({
   );
 
   /**
-   * THIS TAB IS THE ROUTE TO MEETINGS (AF-1).
+   * THE MEETINGS SURFACE A CLIENT REACHES (AF-1).
    *
-   * The client rail used to carry a Meetings row; the product owner moved it
-   * here ("I like that in the settings"), so this tab is now the only surface
-   * that offers /transcripts to a client. The twelve most recent calls are the
-   * preview; the row below opens the full page, which is where a client with
-   * more than twelve has to be able to get to.
+   * This tab predates the branch and is exactly where the product owner wants
+   * it — "I like that in the settings" — so nothing here changed when the rail
+   * lost its Meetings row. It is named here only because it is now the whole of
+   * a client's route to their calls, and a later edit that thins it out would
+   * be removing the destination rather than a duplicate of one.
    */
   const meetingsSection = (
     <Card>
@@ -240,15 +240,6 @@ export default async function ClientSettingsPage({
           ))}
         </ul>
       )}
-      {/* Rendered whether or not there are any yet: it is the destination, not
-          a "see more". */}
-      <Link
-        href="/transcripts"
-        className="mt-3 inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-foreground"
-      >
-        <Icon name="Mic" className="h-3.5 w-3.5" />
-        Open all meetings
-      </Link>
     </Card>
   );
 

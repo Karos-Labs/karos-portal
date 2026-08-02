@@ -199,11 +199,14 @@ describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
     expect(rail.slice(open, close)).not.toContain("/transcripts");
   });
 
-  it("puts the route on the Settings page instead", () => {
-    // The tab, and inside it the link to the whole page — twelve rows of
-    // preview is not a destination for a client with thirteen calls.
+  it("keeps the Settings tab that replaced it", () => {
+    // This tab predates the branch — it is where the ruling points, not
+    // something built to satisfy it — and it renders the client's own calls,
+    // each row opening the transcript. Asserted because it is now the WHOLE of
+    // a client's route to their meetings: thin it out and the destination goes
+    // with it.
     expect(settingsPage).toContain('{ id: "meetings", label: "Meetings"');
-    expect(flat(settingsPage)).toContain('href="/transcripts"');
+    expect(flat(settingsPage)).toContain("href={`/transcripts/${t.id}`}");
   });
 
   it("leads to a page that is genuinely built for a client", () => {
@@ -215,28 +218,31 @@ describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
   });
 
   it("leaves no route the staff shell offers a client that their own shell withholds", () => {
-    // #137's relation, still enforced — with /transcripts now carried by the
-    // Settings page rather than the rail's nav table.
+    // #137's relation, still enforced, with ONE named exemption.
     //
-    // The staff shell keeps its own Meetings row for CLIENT_USER on purpose,
-    // and it is not an oversight left behind by AF-1: that shell renders for
-    // exactly one client — the one whose client document did not resolve — and
-    // that client has no /clients/<id>/settings to reach, so the row is their
-    // only route to a page built for them. Two shells, two correct answers.
+    // /transcripts is the exemption and AF-1 is the reason: a client's meetings
+    // are the Settings tab above, so the route itself is deliberately not in
+    // their nav. The staff shell keeps its own Meetings row for CLIENT_USER,
+    // and that is not an oversight left behind by the ruling — that shell
+    // renders for exactly one client, the one whose client document did not
+    // resolve, and that client has no /clients/<id>/settings to reach. Two
+    // shells, two correct answers.
+    //
+    // Named rather than derived: an exemption computed from the settings page's
+    // hrefs would grow silently the next time a route is linked from it, which
+    // is the opposite of what this relation is for.
+    const EXEMPT = new Set(["/transcripts"]);
     const railSide = new Set(clientRailRoutes());
-    const viaSettings = new Set(
-      [...settingsPage.matchAll(/href="(\/[^"]*)"/g)].map((m) => m[1]!),
-    );
     for (const route of staffShellClientRoutes()) {
-      expect(
-        railSide.has(route) || viaSettings.has(route),
-        `${route} is offered by the staff shell only`,
-      ).toBe(true);
+      if (EXEMPT.has(route)) continue;
+      expect(railSide.has(route), `${route} is offered by the staff shell only`).toBe(true);
     }
-    // Non-vacuity: the exemption is carrying exactly the route AF-1 moved, so a
-    // second route quietly dropping out of the rail still fails above.
-    expect(viaSettings.has("/transcripts")).toBe(true);
+    // Non-vacuity in both directions: the exemption is live (the staff shell
+    // really does still offer it), it is doing exactly one route's worth of
+    // work, and the rail really has stopped offering it.
+    expect(staffShellClientRoutes()).toContain("/transcripts");
     expect(railSide.has("/transcripts")).toBe(false);
+    expect(staffShellClientRoutes().filter((r) => EXEMPT.has(r))).toHaveLength(1);
   });
 });
 
