@@ -132,4 +132,37 @@ below as NOT YET APPLIED.
 |---|---|---|
 | R20 | Reddit agent instructions v1 (the canonical block in `docs/reddit-agent-portal.md`) → `customAgents/pwUIj4jayaJ3S8yuUaQ7` | snapshot the doc to `_backup/<date>/customAgents-pwUIj4jayaJ3S8yuUaQ7-v1-pre.json` FIRST; undo = restore `instructions` from it |
 | R21 | Karos Labs pilot Reddit intake seed (`agentIntake`, agent="reddit", seatId=null) | delete the doc; record its id here when written |
+
+## X agent v2 hookup — 2026-08-03 (agent-service branch: main, direct commits, per-agent-service's own manual-deploy discipline; portal: this branch)
+
+karos-agents PR #28 (`products/building/x-agent-v2/`) rebuilds the X drafting
+run as on-demand/per-identity/resumable. v1 (`products/live/x-agent`) is
+untouched. Everything below is additive — no existing agent's behavior
+changes except where noted.
+
+| # | What | Where | Undo |
+|---|---|---|---|
+| V1 | `client_path` on context files: the runner also materializes a context file at `clients/<slug>/<client_path>`, not just `client_context/files/<name>` | `agent-service/src/types.ts`, `agent-service/src/schemas/validate.ts`, `agent-service/runner/src/context-files.ts`, `src/lib/agent-service/types.ts` | remove the `client_path` field + the second-write branch in `downloadContextFiles`; no existing caller sets it, so behavior for every current agent is unchanged either way |
+| V2 | `outputRoots()` widened to also capture `clients/<slug>/skills` and `clients/<slug>/profile` as artifacts (not just `outputs/`) | `agent-service/runner/src/artifacts.ts` | revert to the 2-root array; this affects EVERY custom/managed agent, not just X v2 — an unchanged baked-in file costs nothing extra (before/after diff skips it), but reverting is one line if it turns out to upload more than intended |
+| V3 | Whole-run `model` override on `CustomAgent`, threaded as `brief.model` | `agent-service/src/task-types.ts` (`parseModelOverride`), `agent-service/src/schemas/task-types/custom.json`, `src/lib/types.ts` (`CustomAgent.model`), `src/lib/jobs/submit-custom.ts`, `src/lib/agent-service/run-custom-agent.ts` | remove the field + the two `...(agent.model ? {model: agent.model} : {})` spreads; absent field is a no-op today for every existing agent (`stepModels` is separate) |
+| V4 | `isXAgent`/`isXAgentIdentity` recognize `karos-x-agent-v2` alongside `karos-x-agent` | `src/lib/agent-service/x-agent-context.ts`, `src/lib/custom-agent-launch.ts` | drop the `\|\| key === "karos-x-agent-v2"` clause from both |
+| V5 | Launch-profile matcher recognizes v2's key (was `startsWith("karos-x-agent ")` only, which v2's key never matches) + batch-size (5/10/21) field on the X profile | `src/lib/custom-agent-launch.ts` (X profile block) | drop the `\|\| identity.startsWith("karos-x-agent-v2 ")` clause and the `batch_size` field |
+| V6 | `BATCH_SIZE_FIELD_KEY`/`batchSizeFrom` — reserved field key excluded from prompt prose, read separately as `chargeMultiplier` | `src/lib/custom-agent-launch.ts` | delete both exports; only the X v2 profile uses the key today |
+| V7 | `runCustomAgentAction` accepts `chargeMultiplier`; the run dialog passes `batchSizeFrom(fields)` | `src/lib/actions/custom-agent-actions.ts`, `src/components/custom-agents.tsx` | remove the param and the dialog's `...(batchSizeFrom(fields) ? {...} : {})` spread — every other agent's fields never set `batch_size`, so this is a no-op for them |
+| V8 | `X_V2_MAX_OUTPUTS_PER_RUN = 21` — otherwise the generic 5-per-run ceiling silently clamps a client's "21 drafts" pick | `src/lib/scheduled-runs.ts` (`scheduleLimitsFor`, `isXAgentV2Identity`) | remove the `X_V2_MAX_OUTPUTS_PER_RUN` branch; falls back to the generic 5 |
+
+### Data changes
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| V-D1 | New `karos-x-agent-v2` CustomAgent doc, **`enabled: false`** — hidden from every run surface until someone reviews and flips it on (karos-agents manifest still marks both v2 skills "unreviewed") | `customAgents/Ji7p4nLTzDcbcKgDhtee` | delete the doc; nothing else references it (a brand-new doc, not a modification of v1's) |
+
+### Deliberately NOT done this pass (named so nothing goes missing quietly)
+
+| What | Why deferred |
+|---|---|
+| Durable cross-run sync of `x-ledger.json`/`topic-catalog.yaml` for ONGOING (non-launch) runs | The existing contract (`docs/one-pagers/x-agent-v2-integration-contract.md` item 2) only syncs a launch run's `voice-profile--<slug>.md` back into Firestore via the webhook. V2 is chosen together across a whole batch, so a first run works without this — it only matters for run 2+ avoiding repeats. Needs a webhook extension (generalize the artifact-parsing beyond the one filename pattern) plus a durable store for the ledger/catalog content, which is real, un-shipped design work. |
+| Lane-preference input (shift the default 3/3/2/1/1 mix) | No existing data model or UI anywhere in the portal — genuinely new, not an extension. Framework.md itself calls the default mix "a default, not a rule," so v2 works without it; it's a refinement, not a blocker. |
+| Review UI for v2's per-post output shape | v2 writes numbered `client/<NN>-post/{post.md,about.txt}` folders (multiple independent posts) instead of v1's single `DRAFTS.md` batch file that `x-drafts-review.tsx` parses. Needs either a webhook change to create one asset per surviving post, or a new parser — a real UI task, not done here. |
+| Per-identity file-path materialization (`client_path`) | Built the mechanism (V1) but did not use it for X v2's specific paths — v2's run-protocol.md expects per-run, per-identity file placement that the current `buildXAgentContextFiles` (whole-client, all-identities-at-once) doesn't cleanly map onto without a redesign. Relying instead on the existing, already-negotiated contract (items 1/3/4) that tells the lab team to read `client_context/files/x-portal-intake.md` etc. — confirm with them this still holds for v2 specifically. |
 | R22 | `SCRAPECREATORS_API_KEY` secret + runner wiring, if Daniel provisions it | remove the secret reference from `cloudbuild.yaml` and the two config lines; the domain is already allowlisted |

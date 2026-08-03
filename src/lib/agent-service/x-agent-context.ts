@@ -27,9 +27,21 @@ import { uploadBytes } from "@/lib/storage";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { AgentIntake, ClientSeat, XDraftFeedback } from "@/lib/types";
 
-/** The imported lab-manifest key of the X agent's customAgents doc. */
+/**
+ * The imported lab-manifest key(s) of the X agent's customAgents docs. v2
+ * (karos-x-agent-v2, products/building/x-agent-v2) is a separate agent from
+ * v1 — both exist side by side so v2 can be reviewed against v1's reference
+ * runs, per docs/one-pagers/x-agent-v2-FRAMEWORK.md. Everything gated or
+ * injected here applies to either: same portal-collected intake, same
+ * context-file contract.
+ */
 export function isXAgent(agentKey: string): boolean {
-  return agentKey === "karos-x-agent";
+  return agentKey === "karos-x-agent" || agentKey === "karos-x-agent-v2";
+}
+
+/** Narrower than isXAgent — only true for the v2 rebuild, for callers that branch on it. */
+export function isXAgentV2(agentKey: string): boolean {
+  return agentKey === "karos-x-agent-v2";
 }
 
 /**

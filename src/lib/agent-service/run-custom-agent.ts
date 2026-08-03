@@ -246,6 +246,14 @@ export async function submitCustomAgentRun(args: {
         include_client_skills: agent.includeClientSkills,
         instructions: agent.instructions.slice(0, MAX_INSTRUCTIONS_CHARS),
         prompt,
+        // Both mirror the twin core (lib/jobs/submit-custom.ts) — missing here
+        // meant a scheduler-fired run of an agent with either set ran on the
+        // task type's plain default instead, silently diverging from a manual
+        // run of the SAME agent through the run dialog.
+        ...(agent.stepModels && Object.keys(agent.stepModels).length > 0
+          ? { step_models: agent.stepModels }
+          : {}),
+        ...(agent.model ? { model: agent.model } : {}),
       },
       callback_url: `${appUrl.replace(/\/$/, "")}/api/agent-service/webhook`,
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),

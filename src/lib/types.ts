@@ -373,6 +373,15 @@ export interface CustomAgent {
    * the whole run uses the task type's single default model, as today.
    */
   stepModels?: Record<string, string> | null;
+  /**
+   * Optional whole-run model override, replacing the custom task type's
+   * single default (claude-opus-4-8). Threaded through to the agent-service
+   * runner as `brief.model`. Unlike stepModels, this needs no matching named
+   * subagent in the skill — use it when a skill's own catalog entry
+   * recommends a cheaper tier but has no Task-tool delegation point for
+   * stepModels to attach to (e.g. a linear, sequential-turn skill).
+   */
+  model?: string | null;
   /** Hidden from run surfaces when false (still editable by admins). */
   enabled: boolean;
   /** Import provenance (absent on hand-written agents). */
