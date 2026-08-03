@@ -82,6 +82,20 @@ const PLATFORM_NAME: Record<keyof SocialLinks & SocialPlatform, string> = {
   facebook: "Facebook",
 };
 
+/**
+ * ONE chip geometry for the whole meta + socials row.
+ *
+ * The row used to size each chip on its own and let flex stretch them to the
+ * tallest, so a long category turned every handle beside it into a three-line
+ * box. The Competitor Track rows a few sections down are the density this rail
+ * is built at — px-2, a 14px mark, one text line — so the chips are drawn to
+ * the same measurements, and the tag, the plus and the six platform logos all
+ * finally draw at one size.
+ */
+const CHIP =
+  "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-muted";
+const CHIP_ICON = "h-3.5 w-3.5 shrink-0 text-muted-2";
+
 /* ── Pill-shaped input ────────────────────────────────────────────────── */
 
 function Pill({
@@ -268,9 +282,19 @@ function BrandProfileModal({
 export function ClientProfilePanel({
   client,
   compact = false,
+  headerAction,
 }: {
   client: ClientProfileFields;
   compact?: boolean;
+  /**
+   * An extra control for the header's button cluster, for the shell that has
+   * one. The staff client-context rail mounts this panel with the ↗ that opens
+   * the client's own website (CD-G4) — the "extra button" that is the whole
+   * difference between the two views of this panel. It sits with the edit
+   * controls and hides with them while the form is open, because a header that
+   * regrows a control mid-edit is the shift the cluster exists to avoid.
+   */
+  headerAction?: React.ReactNode;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -324,19 +348,22 @@ export function ClientProfilePanel({
   return (
     <div className="px-1">
       {/* Company header */}
-      <div className={cn("flex items-center gap-2.5", compact ? "mb-2.5 py-1" : "mb-2.5")}>
+      <div className={cn("flex items-center gap-2.5", compact ? "mb-2 py-0.5" : "mb-2.5")}>
         <BrandFavicon
           src={client.logoUrl || client.brandingGuidelines?.logoUrl}
           website={client.website}
           name={client.name}
           accentColor={client.accentColor ?? "#2dff9e"}
           faviconSize={64}
-          className={cn("rounded-md text-xs", compact ? "h-8 w-8" : "h-8 w-8")}
+          /* The ternary finally decides something: the height-constrained
+             mounts give the mark 28px, and the scrolling sheet keeps 32. */
+          className={cn("rounded-md text-xs", compact ? "h-7 w-7" : "h-8 w-8")}
           imgClassName="border border-border bg-surface-2 object-contain"
         />
         <span className="flex-1 truncate text-sm font-semibold text-foreground">{client.name}</span>
         {!editing && (
           <div className="flex items-center gap-1">
+            {headerAction}
             <button
               onClick={() => setBrandProfileOpen(true)}
               className="flex h-6 w-6 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
@@ -359,36 +386,48 @@ export function ClientProfilePanel({
 
       {!editing ? (
         <>
-          {/* Meta + social chips */}
-          {/* nowrap in the rail: a second chip row is exactly the kind of
-              content-dependent growth the no-scroll contract cannot absorb. */}
-          <div
-            className={cn(
-              "flex gap-1.5",
-              compact ? "mb-0 flex-nowrap overflow-hidden" : "mb-2 flex-wrap",
-            )}
-          >
+          {/* Meta + social chips — ONE wrapping row of equal-height chips.
+              It was `flex-nowrap` at the rail's compact mount, on default
+              align-items: stretch, and both halves of that hurt. Nothing
+              shortened the category, so "Global Startup Pitch Competition"
+              wrapped to three lines and squeezed its own tag icon down to a
+              few pixels; stretch then pulled every handle beside it up to
+              that height, which is the row of oversized boxes the product
+              owner walked into on the Pitch by Deel account.
+              Nowrap was there to stop a second row growing into the no-scroll
+              contract (CD-E3) — but it was buying that with a row three lines
+              tall, which costs the contract more than wrapping ever did. The
+              category truncates instead, carrying its full text in `title`,
+              so the ordinary case is a single 22px row and the worst case is
+              two. */}
+          <div className={cn("flex flex-wrap items-center gap-1", compact ? "mb-1" : "mb-2")}>
             {hasMeta ? (
               <>
                 {client.teamSize && (
-                  <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted">
-                    <Icon name="Users" className="h-4 w-4 text-muted-2" />
+                  <span className={CHIP}>
+                    <Icon name="Users" className={CHIP_ICON} />
                     {client.teamSize}
                   </span>
                 )}
                 {client.category && (
-                  <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted">
-                    <Icon name="Tag" className="h-4 w-4 text-muted-2" />
-                    {client.category}
+                  /* The one chip whose text is free-form, so the one chip with
+                     a ceiling. Narrower where the rail is height-constrained,
+                     because that is where a wrap costs something. */
+                  <span
+                    title={client.category}
+                    className={cn(CHIP, "min-w-0", compact ? "max-w-[9rem]" : "max-w-[14rem]")}
+                  >
+                    <Icon name="Tag" className={CHIP_ICON} />
+                    <span className="truncate">{client.category}</span>
                   </span>
                 )}
               </>
             ) : (
               <button
                 onClick={() => setEditing(true)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border px-2.5 py-1 text-xs text-muted-2 transition-colors hover:border-border-strong"
+                className={cn(CHIP, "border-dashed text-muted-2 transition-colors hover:border-border-strong")}
               >
-                <Icon name="Plus" className="h-4 w-4" />
+                <Icon name="Plus" className={CHIP_ICON} />
                 Add team size &amp; category
               </button>
             )}
@@ -410,16 +449,16 @@ export function ClientProfilePanel({
                   rel="noreferrer noopener"
                   title={`Open ${account.handle} on ${PLATFORM_NAME[key]}`}
                   aria-label={`Open ${account.handle} on ${PLATFORM_NAME[key]} in a new tab`}
-                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon"
+                  className={cn(
+                    CHIP,
+                    "max-w-full transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon",
+                  )}
                 >
                   <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{account.handle}</span>
                 </a>
               ) : (
-                <span
-                  key={key}
-                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-muted"
-                >
+                <span key={key} className={cn(CHIP, "max-w-full")}>
                   <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{account.handle}</span>
                 </span>
