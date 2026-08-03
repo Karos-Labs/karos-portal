@@ -515,6 +515,30 @@ export function Sidebar({
   // it renders for every staff member, not just admins. A second labelled exit in
   // the nav was redundant — three controls for one action, and one more row
   // competing for the rail's fixed height (CD-E3).
+  /**
+   * The active row's treatment, and the ONE place the two shells disagreed
+   * about it (V4).
+   *
+   * In client context these four rows ARE the client's nav — same labels, same
+   * destinations, same order as client-rail.tsx — and that rail marks its
+   * active row in paper: `bg-surface-2 text-foreground`. This one painted it
+   * `bg-neon-soft text-neon`, so the first thing a staff member saw on
+   * entering client view was an orange tab the client themselves never gets.
+   * Ember's rule is that orange is rationed to one CTA, and a nav row is not
+   * that CTA.
+   *
+   * Scoped to the client context on purpose: `items` above is EITHER the four
+   * client tabs OR the full agency nav, and the agency nav is staff's own
+   * workspace chrome — out of scope here, and not something a client ever
+   * sees. So the same component says "you are looking at the client's app" in
+   * the client's own vocabulary, and keeps saying "you are in the workspace"
+   * in the workspace's.
+   */
+  const activeRowClass = clientCtx
+    ? "bg-surface-2 text-foreground"
+    : "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]";
+  const activeIconClass = clientCtx ? "text-foreground" : "text-neon";
+
   const nav = (
     <nav className="flex flex-col gap-1">
       {items.map((item) => {
@@ -530,16 +554,14 @@ export function Sidebar({
             onClick={() => setOpen(false)}
             className={cn(
               "group flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
-              active
-                ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]"
-                : "text-muted hover:bg-surface-2 hover:text-foreground",
+              active ? activeRowClass : "text-muted hover:bg-surface-2 hover:text-foreground",
             )}
           >
             <Icon
               name={item.icon}
               className={cn(
                 "h-4 w-4",
-                active ? "text-neon" : "text-muted-2 group-hover:text-foreground",
+                active ? activeIconClass : "text-muted-2 group-hover:text-foreground",
               )}
             />
             <span className="flex-1">{item.label}</span>
@@ -566,57 +588,74 @@ export function Sidebar({
       : `https://${clientWebsite}`
     : null;
 
+  /**
+   * THE EXTRA BUTTON — the whole difference between this rail's company panel
+   * and the client's own (V3).
+   *
+   * Staff used to get a company CHIP here (logo + name + this ↗) while the
+   * client got the full ClientProfilePanel, so a staff member in client
+   * context saw no bio and none of the client's social handles — the two
+   * halves of AF-4 — on the desktop rail. The panel is mounted below instead,
+   * and this control rides into its header rather than living on a row of its
+   * own: "the same, with the extra buttons". Sized to the panel's own header
+   * buttons (h-6 with a 14px glyph) so the cluster reads as one group.
+   */
+  const clientSiteAction = activeClient ? (
+    clientSiteHref ? (
+      <a
+        href={clientSiteHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => setOpen(false)}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+        aria-label="Open client website in a new tab"
+        title="Open client website"
+      >
+        <Icon name="ArrowUpRight" className="h-3.5 w-3.5" />
+      </a>
+    ) : (
+      <Link
+        href={`/clients/${activeClient.client.id}`}
+        onClick={() => setOpen(false)}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
+        aria-label="Go to client dashboard"
+        title="Go to client dashboard"
+      >
+        <Icon name="ArrowUpRight" className="h-3.5 w-3.5" />
+      </Link>
+    )
+  ) : null;
+
   // Client-context sections appended below core nav when a client is active.
-  // CD-G4: the top block — logo, nav, client chip, and the rule above the
+  // CD-G4: the top block — logo, nav, company panel, and the rule above the
   // Documents header — is back to the 36a5200 baseline measurement-for-
   // measurement; Documents and everything under it keeps the approved
   // compaction. `space-y` is the one class that straddles that boundary (it
-  // sets the chip→Documents gap AND the Documents→Competitors→Brand Colors
+  // sets the panel→Documents gap AND the Documents→Competitors→Brand Colors
   // gaps), so it stays at the compact 1.5; the baseline air above Documents is
   // restored through the two wrappers' own pt-4 instead.
+  //
+  // mt-1.5, not mt-2: the client's rail puts its nav and its first section 6px
+  // apart (space-y-1.5 on the body), and this is the same gap in the other
+  // shell. The 2px it gives back also matters — the company panel below costs
+  // this rail ~70px it did not spend before, and the no-scroll contract
+  // (CD-E3) is measured at 1440x900 with seven documents on screen.
   const clientSections = activeClient ? (
-    <div className="mt-2 space-y-1.5">
-      {/* Client header. pb-1.5 exists to BLOCK margin collapsing, not for its
-          own 6px: space-y compiles to a child margin on this wrapper, and the
-          inner row's mb-1 collapses into it — leaving 6px above DOCUMENTS vs
-          the baseline's 16px (shell2-lens measurement). Padding interrupts the
-          collapse, so mb-1(4) + pb-1.5(6) + space-y(6) = the baseline 16px. */}
-      <div className="border-t border-border pb-1.5 pt-4">
-        <div className="mb-1 flex items-center gap-2 px-1">
-          <BrandFavicon
-            src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
-            website={activeClient.client.website}
-            name={activeClient.client.name}
-            accentColor={activeClient.client.accentColor ?? "#2dff9e"}
-            faviconSize={64}
-            className="h-6 w-6 rounded-[5px] text-[10px]"
-            imgClassName="border border-border bg-surface-2 object-contain"
-          />
-          <span className="flex-1 truncate text-sm font-semibold text-foreground">
-            {activeClient.client.name}
-          </span>
-          {clientSiteHref ? (
-            <a
-              href={clientSiteHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setOpen(false)}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-              title="Open client website"
-            >
-              <Icon name="ArrowUpRight" className="h-3 w-3" />
-            </a>
-          ) : (
-            <Link
-              href={`/clients/${activeClient.client.id}`}
-              onClick={() => setOpen(false)}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-              title="Go to client dashboard"
-            >
-              <Icon name="ArrowUpRight" className="h-3 w-3" />
-            </Link>
-          )}
-        </div>
+    <div className="mt-1.5 space-y-1.5">
+      {/* The client's OWN company panel, in the slot the company chip used to
+          hold and in the same place the client rail keeps it: first section
+          under the nav, directly above Documents (V3). Same component, same
+          `compact` — the rail is the no-scroll layout the clamp was written
+          for (CD-E3) — plus the staff ↗ in its header. The chip it replaces
+          drew the logo and the name and stopped there, so bio and handles, the
+          two things AF-4 put on the client's rail, were the two things a staff
+          member in client context could not see. */}
+      <div className="border-t border-border pt-4">
+        <ClientProfilePanel
+          client={activeClient.client}
+          compact
+          headerAction={clientSiteAction}
+        />
       </div>
 
       <div className="border-t border-border pt-4">
