@@ -156,8 +156,21 @@ export function ClientRail({
               bounded (4 tabs, ≤6 documents, ≤5 tracked competitors, ≤4
               swatches), so the compacted stack fits; overflow-y-auto remains
               the safety valve for genuinely short windows rather than clipping
-              a whole section away. */}
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-4 pb-0 pt-4">
+              a whole section away.
+
+              ONE gap between sections — space-y-1.5, the staff rail's own
+              (sidebar.tsx, `clientSections`). It was space-y-0.5 here, and the
+              two wrappers below carried an mt-4 on top of it that the other
+              two sections had nothing to answer with: Tailwind v4 compiles
+              space-y to a margin-BOTTOM, so the two margins added rather than
+              overriding and the rail ran 34 / 34 / 14 / 12. That is why Brand
+              Colors read as glued to the last competitor row — not because
+              12px is small, but because the two gaps above it were nearly
+              three times it. Dropping the mt-4 leaves every section on the
+              same border-t + pt rhythm and the same 6px outer gap, which is
+              the sidebar the product owner said looked better — and it gives
+              the no-scroll contract 16px back. */}
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-4 pb-0 pt-4">
             <nav className="flex flex-col gap-0.5">
               {tabNav.map((item) => {
                 const active = isActive(pathname, item);
@@ -185,11 +198,11 @@ export function ClientRail({
               })}
             </nav>
 
-            <div className="mt-4 border-t border-border pt-4">
+            <div className="border-t border-border pt-4">
               <ClientProfilePanel client={client} compact />
             </div>
 
-            <div className="mt-4 border-t border-border pt-4">
+            <div className="border-t border-border pt-4">
               <ClientDocuments
                 contextDocs={contextDocs}
                 isAdmin={isAdmin}
