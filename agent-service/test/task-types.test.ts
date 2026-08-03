@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveTaskConfig, getTaskTypeConfig } from "../src/task-types.js";
+import { TASK_TYPES } from "../src/types.js";
 import type { JobSpec } from "../src/types.js";
 
 const CUSTOM_BRIEF = {
@@ -18,6 +19,12 @@ describe("resolveTaskConfig", () => {
 
   it("registers a research stepModel for social_post pending the matching skill-side subagent name", () => {
     expect(getTaskTypeConfig("social_post").stepModels).toEqual({ research: "claude-sonnet-4-6" });
+  });
+
+  it("dials every task type down from the SDK's high-effort default", () => {
+    for (const taskType of TASK_TYPES) {
+      expect(getTaskTypeConfig(taskType).effort).toBe("medium");
+    }
   });
 
   it("resolves entry skill and merges skill roots for custom", () => {

@@ -155,6 +155,7 @@ async function main(): Promise<void> {
         ...(stepAgents ? { agents: stepAgents } : {}),
         permissionMode: "dontAsk",
         model: taskConfig.model,
+        ...(taskConfig.effort ? { effort: taskConfig.effort } : {}),
         maxTurns: taskConfig.maxTurns,
         maxBudgetUsd: taskConfig.maxBudgetUsd,
         env: sdkEnv(),

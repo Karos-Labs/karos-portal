@@ -20,6 +20,15 @@ export interface TaskTypeConfig {
   maxBudgetUsd: number;
   model: string;
   /**
+   * Reasoning depth passed to the SDK's `effort` option. Unset (the SDK's own
+   * default) is "high" — deep reasoning on every turn, including turns that
+   * are pure bookkeeping (writing a ledger line, checking a file exists).
+   * A real run's cost breakdown showed extended-thinking tokens as the single
+   * largest line item, well ahead of the tokens actually spent on drafted
+   * content — this is the lever for that, independent of model choice.
+   */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
+  /**
    * Optional per-step model override, keyed by the named subagent identifier
    * the skill's steps delegate to via the SDK's Task tool (custom task type
    * only, from brief.step_models — see resolveTaskConfig). The runner (main.ts)
@@ -150,6 +159,7 @@ export const TASK_TYPE_CONFIGS: Record<TaskType, TaskTypeConfig> = {
     maxTurns: 400,
     maxBudgetUsd: 45,
     model: AGENT_MODEL,
+    effort: "medium",
     // Inert until the karos-agents Instagram skill's Phase 1 research
     // fan-out names this subagent_type on its Task tool calls (see
     // buildStepAgentDefinitions in runner/src/main.ts) — that skill change
@@ -194,6 +204,7 @@ Run the "karos-instagram-agent" skill (products/live/instagram-agent/SKILL.md). 
     maxTurns: 250,
     maxBudgetUsd: 30,
     model: AGENT_MODEL,
+    effort: "medium",
     egressGroups: ["core", "research", "fonts"],
     buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
 
@@ -222,6 +233,7 @@ Run the "karos-newsletter-agent" skill (products/live/newsletter-agent/SKILL.md)
     maxTurns: 250,
     maxBudgetUsd: 30,
     model: AGENT_MODEL,
+    effort: "medium",
     egressGroups: ["core", "research"],
     buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
 
@@ -256,6 +268,7 @@ Run the "karos-blog-agent" skill (products/live/blog-agent/SKILL.md). If the cli
     maxTurns: 500,
     maxBudgetUsd: 45,
     model: AGENT_MODEL,
+    effort: "medium",
     egressGroups: ["core", "fonts", "npm"],
     buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
 
@@ -295,6 +308,7 @@ Run the "landing-builder" skill (products/live/landing-page/landing-builder/SKIL
     maxTurns: 400,
     maxBudgetUsd: 45,
     model: AGENT_MODEL,
+    effort: "medium",
     egressGroups: ["core", "research", "image_sourcing", "social_platforms", "fonts"],
     buildPrompt: (spec, ctx) => {
       const brief = spec.brief;
