@@ -74,6 +74,7 @@ import {
 } from "../src/lib/lab-outputs-shared";
 import { chainFamilyFor, orderKeyForLabItem, planClientChain, templateFromItemKey } from "../src/lib/post-chain";
 import { recommendedScheduleFields } from "../src/lib/scheduling";
+import { clampClientCategoryValue, clientCategoryValue } from "../src/lib/utils";
 import type {
   Asset,
   BrandColor,
@@ -257,9 +258,12 @@ async function main() {
   // Dry run is the default; `db` stays null below so no write can slip through.
   const dryRun = !apply;
   const labRootArg = args.find((a) => a.startsWith("--lab-root="))?.split("=")[1];
-  const industryArg = args.find((a) => a.startsWith("--industry="))?.split("=")[1];
+  // `--industry=` still works: it is what every runbook using this script says,
+  // and the field it fills is `category` now (see Client.industry).
+  const categoryArg = args.find((a) => a.startsWith("--category="))?.split("=")[1]
+    ?? args.find((a) => a.startsWith("--industry="))?.split("=")[1];
   if (!slug) {
-    console.error("Usage: npx tsx scripts/import-lab-client.ts <slug> [--apply] [--lab-root=PATH] [--industry=TEXT]");
+    console.error("Usage: npx tsx scripts/import-lab-client.ts <slug> [--apply] [--lab-root=PATH] [--category=TEXT]");
     process.exit(1);
   }
 
@@ -369,7 +373,9 @@ async function main() {
   const clientPatch: Partial<Client> = {
     name,
     website,
-    industry: industryArg ?? existingClient?.industry ?? "Technology news & media",
+    category: clampClientCategoryValue(
+      categoryArg ?? (existingClient ? clientCategoryValue(existingClient) : null) ?? "Technology news & media",
+    ),
     ...(description ? { description } : {}),
     ...(domain ? { domains: [...new Set([...(existingClient?.domains ?? []), domain])] } : {}),
     ...(accentColor ? { accentColor } : {}),

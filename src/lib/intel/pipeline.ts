@@ -3,6 +3,7 @@ import "server-only";
 import { streamText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 import {
   getClient,
   replaceClientContextDocs,
@@ -105,7 +106,7 @@ function clientContext(client: Client): string {
   const parts = [
     `Company: ${client.name}`,
     client.website ? `Website: ${client.website}` : "",
-    client.industry ? `Industry: ${client.industry}` : "",
+    clientCategoryValue(client) ? `Industry: ${clientCategoryValue(client)}` : "",
     client.description ? `Description: ${client.description}` : "",
   ];
 
@@ -308,7 +309,7 @@ async function researchCompetitive(
     messages: [
       {
         role: "user",
-        content: `Research the competitive landscape for ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.${trackedBlock}
+        content: `Research the competitive landscape for ${client.name} (${client.website ?? "no website"}) in the ${clientCategoryValue(client) ?? "their"} industry.${trackedBlock}
 
 LIVE VERIFICATION REQUIRED: search for the current market landscape first, then fetch the homepages of the top competitors you identify (and every manually-flagged competitor above). Quote taglines and pricing only from pages fetched in this run, labeled "web-observed (URL, ${todayISO()})".
 
@@ -370,7 +371,7 @@ async function researchStrategy(client: Client, rules: string, meetingSignals = 
     messages: [
       {
         role: "user",
-        content: `Research the market positioning and strategy of ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.
+        content: `Research the market positioning and strategy of ${client.name} (${client.website ?? "no website"}) in the ${clientCategoryValue(client) ?? "their"} industry.
 
 FIRST: fetch the client's website and search for recent news/announcements about them and their category. Label live findings "web-observed (URL, ${todayISO()})".
 
@@ -412,7 +413,7 @@ async function researchSentiment(client: Client, rules: string, meetingSignals =
     messages: [
       {
         role: "user",
-        content: `Research customer sentiment and audience psychology for ${client.name} (${client.website ?? "no website"}) in the ${client.industry ?? "their"} industry.
+        content: `Research customer sentiment and audience psychology for ${client.name} (${client.website ?? "no website"}) in the ${clientCategoryValue(client) ?? "their"} industry.
 
 LIVE VERIFICATION REQUIRED: search G2, Capterra, Trustpilot, Reddit, and industry forums (Reclame Aqui for Brazilian companies) for real, current reviews and discussions about this brand and its category. Label live findings "web-observed (URL, ${todayISO()})".
 

@@ -63,7 +63,13 @@ interface Props {
   viewerIsBilled: boolean;
   userName?: string;
   hasGoogleIntegration?: boolean;
-  client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
+  /**
+   * `industry` used to travel this whole chain — layout → dock → widget — and
+   * was read by nothing at the far end. It is `category`'s legacy spelling now
+   * (see Client.industry), and the copilot gets the category from the server's
+   * own context builder, not from a prop.
+   */
+  client?: Pick<Client, "name" | "website" | "isAiProcessing">;
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
   /** Host shell - sets the left offset of the pinned strip. Defaults to the client portal. */
   shell?: CopilotShell;

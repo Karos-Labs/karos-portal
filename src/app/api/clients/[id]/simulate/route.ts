@@ -9,12 +9,15 @@ import {
 } from "@/lib/simulation-engine";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { chargeClientModelCall, refundClientModelCall } from "@/lib/client-model-charge";
+import { clientCategoryValue } from "@/lib/utils";
 import type { Asset, Client } from "@/lib/types";
 
 export const maxDuration = 60;
 
 function inferBusinessModel(client: Client): "B2B" | "B2C" | "MIXED" | null {
-  const hay = `${client.industry ?? ""} ${client.category ?? ""} ${client.description ?? ""}`.toLowerCase();
+  // One category, once. This used to read both field names into the same
+  // haystack, back when they were two editors for the same fact.
+  const hay = `${clientCategoryValue(client) ?? ""} ${client.description ?? ""}`.toLowerCase();
   const b2bHint = /\bb2b\b|enterprise|procurement|compliance|saas|software|platform|agency|consulting|services/.test(hay);
   const b2cHint = /\bb2c\b|consumer|retail|ecommerce|shopper|lifestyle|fashion|beauty|food|travel/.test(hay);
   if (b2bHint && b2cHint) return "MIXED";
@@ -134,8 +137,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const simCtx = {
     clientId,
     clientName: client.name,
-    industry: client.industry ?? null,
-    category: client.category ?? null,
+    category: clientCategoryValue(client),
     toneOfVoice: client.brandVoice ?? null,
     targetMarket: client.description ?? null,
     businessModel,

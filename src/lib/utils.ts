@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { Client } from "@/lib/types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -93,6 +94,39 @@ export const CLIENT_CATEGORY_MAX_LENGTH = 28;
  */
 export function clampClientCategoryValue(value?: string | null): string {
   return (value ?? "").trim().slice(0, CLIENT_CATEGORY_MAX_LENGTH).trim();
+}
+
+/**
+ * WHAT A CLIENT'S CATEGORY IS, asked once for the whole app.
+ *
+ * `category` and `industry` were the same fact wearing two field names, with two
+ * editors and two audiences: the client typed a category into the chip's pencil,
+ * staff typed an industry into the Clients-page dialog, and the copilot and the
+ * intel pipeline read only the second one — so a client who set their own
+ * category watched their agents brief themselves on a value they could not see
+ * or change. They are ONE field now. `category` is it; `industry` is the legacy
+ * spelling, still stored on documents written before this and read ONLY here.
+ *
+ * A READ-TIME FALLBACK RATHER THAN A MIGRATION, which is how this codebase
+ * carries a renamed field: nothing rewrites the old documents, and nothing
+ * deletes `industry` either, because it is what this function falls back TO.
+ *
+ * THE CAP FOLLOWS FROM THAT, and is worth stating before somebody reads it as a
+ * bug. Everything written from here on is clamped to CLIENT_CATEGORY_MAX_LENGTH
+ * (28), but a legacy `industry` was typed with no ceiling at all. A longer one
+ * keeps coming back from here whole and keeps rendering — `clientCategoryLabel`
+ * is what shortens it for the chip — until somebody opens either editor, at
+ * which point it is saved into `category` clamped. That convergence-on-edit is
+ * the intended behaviour: no document is rewritten on our schedule, and no
+ * value is lost before a person has chosen a shorter one.
+ *
+ * Blank counts as absent — a document may carry `category: ""` from a cleared
+ * input, and an empty string must not shadow a legacy value that says something.
+ */
+export function clientCategoryValue(
+  client: Pick<Client, "category" | "industry">,
+): string | null {
+  return client.category?.trim() || client.industry?.trim() || null;
 }
 
 /**

@@ -79,6 +79,9 @@ describe("buildCampaignTaskDrafts (pure)", () => {
 
 describe("generateCampaignBundle", () => {
   beforeEach(() => {
+    // Stored under the LEGACY name on purpose: `clientCategoryValue` is what the
+    // prompt builder reads now, so a client who predates the rename still gets a
+    // category into their campaign brief rather than a bare company name.
     getClientMock.mockResolvedValue({ id: "c1", name: "Acme", industry: "saas" });
     listAssetsMock.mockResolvedValue([]);
     generateObjectMock.mockResolvedValue({ object: blueprint, usage: { inputTokens: 100, outputTokens: 50 } });

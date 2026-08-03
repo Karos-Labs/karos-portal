@@ -28,7 +28,13 @@ export interface SimulationArtifact {
 export interface SimulationContext {
   clientId: string;
   clientName: string;
-  industry?: string | null;
+  /**
+   * ONE FIELD, resolved by `clientCategoryValue` before it gets here. This shape
+   * used to carry `industry` AND `category` and the two prompts below printed
+   * both, on separate labelled lines — which told the planner there were two
+   * facts about the brand when there was only ever one, and handed it the same
+   * string twice whenever both were filled in.
+   */
   category?: string | null;
   toneOfVoice?: string | null;
   targetMarket?: string | null;
@@ -122,7 +128,6 @@ function buildPersonaPlannerPrompt(artifact: SimulationArtifact, ctx: Simulation
 
 CLIENT CONTEXT
 - Brand: ${ctx.clientName}
-- Industry: ${ctx.industry ?? "unknown"}
 - Category: ${ctx.category ?? "unknown"}
 - Tone of voice: ${ctx.toneOfVoice ?? "unknown"}
 - Target market: ${ctx.targetMarket ?? "unknown"}
@@ -159,7 +164,6 @@ function buildUserPrompt(artifact: SimulationArtifact, ctx: SimulationContext): 
   const channels = (artifact.channels ?? []).join(", ") || "n/a";
   return `BRAND: ${ctx.clientName}
 BUSINESS MODEL: ${ctx.businessModel ?? "unknown"}
-INDUSTRY: ${ctx.industry ?? "unknown"}
 CATEGORY: ${ctx.category ?? "unknown"}
 TARGET MARKET: ${ctx.targetMarket ?? "unknown"}
 TONE OF VOICE: ${ctx.toneOfVoice ?? "unknown"}

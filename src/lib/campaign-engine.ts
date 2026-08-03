@@ -31,6 +31,7 @@ import {
 import { taskWeekKey, findDuplicateReason } from "@/lib/task-dedup";
 import { freshnessGuard } from "@/lib/entropy-guard";
 import type { ClientTask, TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 
 const SOCIAL_PLATFORMS = ["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"] as const;
 
@@ -174,10 +175,10 @@ export interface GeneratedCampaign {
 
 function buildCampaignPrompt(
   clientName: string,
-  industry: string | null | undefined,
+  category: string | null | undefined,
   trend: CampaignTrend,
 ): string {
-  return `CLIENT: ${clientName}${industry ? ` — ${industry}` : ""}
+  return `CLIENT: ${clientName}${category ? ` — ${category}` : ""}
 TREND / EVENT TO BUILD AROUND: ${trend.theme}${trend.rationale ? `\nWhy it matters: ${trend.rationale}` : ""}
 
 Design ONE cohesive omnichannel campaign around this trend. Produce:
@@ -230,7 +231,7 @@ export async function generateCampaignBundle(
       model: anthropic(MODELS.SONNET),
       schema: campaignBlueprintSchema,
       system,
-      prompt: buildCampaignPrompt(client.name, client.industry, input.trend),
+      prompt: buildCampaignPrompt(client.name, clientCategoryValue(client), input.trend),
     }));
   } catch (err) {
     logger.logGenerationFailure(campaignUsageMeta, err);

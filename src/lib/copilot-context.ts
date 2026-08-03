@@ -5,6 +5,7 @@ import { effectiveDominantColors } from "@/lib/branding";
 import { assetTypeLabel } from "@/lib/asset-type-copy";
 import { contextDocLabel } from "@/lib/context-doc-copy";
 import { jobStatusLabel } from "@/lib/job-status-copy";
+import { clientCategoryValue } from "@/lib/utils";
 
 /* ── Shared helpers ──────────────────────────────────────────────────── */
 
@@ -77,7 +78,13 @@ export function buildCopilotSystemPrompt(
   parts.push("## CLIENT PROFILE");
   parts.push(`- **Name:** ${client.name}`);
   if (client.website) parts.push(`- **Website:** ${client.website}`);
-  if (client.industry) parts.push(`- **Industry:** ${client.industry}`);
+  // THE FIELD THE CLIENT CAN SEE AND CHANGE. This line used to read `industry`,
+  // which only staff could edit, so a client who set their own category watched
+  // the copilot brief itself on a value they had no way to reach. One field, one
+  // reader — the label stays "Industry" because that is the word the model
+  // reasons in, not a field name it is being shown.
+  const category = clientCategoryValue(client);
+  if (category) parts.push(`- **Industry:** ${category}`);
   if (client.description) parts.push(`- **Description:** ${client.description}`);
   if (client.contactEmail) parts.push(`- **Contact:** ${client.contactEmail}`);
   // DROPPED for a client session rather than relabelled, and that is the fix.

@@ -4,6 +4,7 @@ import { streamText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS } from "@/lib/constants";
 import type { Client } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
@@ -331,7 +332,9 @@ function sanitizePromptSet(prompts: string[]): string[] {
  * and the navigational ones carry the bare domain or "official site".
  */
 function questionTemplates(client: Client): Record<PromptIntent, string[]> {
-  const category = client.industry?.trim() || "this category";
+  // This bank already called the value a category; it was just reading the
+  // other field name for it.
+  const category = clientCategoryValue(client) ?? "this category";
   const name = client.name;
   const domain = client.website?.replace(/^https?:\/\//, "").replace(/\/.*$/, "") || name;
   return {
@@ -415,7 +418,7 @@ async function generatePromptSet(client: Client, competitors: string[], gazettee
         {
           role: "user",
           content: `Client: ${client.name} (${client.website ?? "no website"})
-Industry: ${client.industry ?? "unknown"}
+Industry: ${clientCategoryValue(client) ?? "unknown"}
 Description: ${client.description ?? "—"}
 Known competitors: ${competitors.join(", ") || "—"}
 

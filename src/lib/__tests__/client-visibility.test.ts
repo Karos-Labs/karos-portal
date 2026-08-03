@@ -62,6 +62,28 @@ describe("toClientPortalView", () => {
     expect(view.isAiProcessing).toBe(true);
   });
 
+  it("resolves the category HERE, so the old field name never crosses (CD-L)", () => {
+    // `industry` and `category` were the same fact under two names. Both used to
+    // be shipped, and the panel painted only the second — so a client whose
+    // value predated the rename saw an empty chip in their own sidebar while the
+    // copilot briefed itself on the one they could not see. The projection is
+    // where the fallback is answered: one field crosses, under the name the
+    // panel's pencil writes back to.
+    for (const [stored, expected] of [
+      [{ category: "Martech", industry: "SaaS" }, "Martech"],
+      [{ industry: "SaaS" }, "SaaS"],
+      [{ category: "  ", industry: "SaaS" }, "SaaS"],
+    ] as Array<[Partial<Client>, string]>) {
+      const view = toClientPortalView(makeClient(stored));
+      expect(view.category).toBe(expected);
+      expect("industry" in view, "the legacy field name crossed the boundary").toBe(false);
+    }
+    // Neither stored: no key at all, same as every other absent profile field.
+    const bare = toClientPortalView(makeClient());
+    expect("category" in bare).toBe(false);
+    expect("industry" in bare).toBe(false);
+  });
+
   // F69: both client-side readers only ever asked WHETHER the last run failed,
   // and aiProcessingError is a raw provider string (500 chars of it).
   it("tells the client THAT generation failed, never why", () => {
@@ -240,8 +262,12 @@ describe("toStaffShellView", () => {
     expect(view.website).toBe("https://acme.test");
     expect(view.logoUrl).toBe("https://cdn.test/logo.png");
     expect(view.accentColor).toBe("#ff0000");
-    expect(view.industry).toBe("SaaS");
+    // ONE CATEGORY CROSSES, not two names for it. `industry` is `category`'s
+    // legacy spelling and the projection resolves the fallback here, so the
+    // shell it feeds never has to know the old name existed — and when both are
+    // stored, the field the editors write is the one that wins.
     expect(view.category).toBe("Martech");
+    expect("industry" in view).toBe(false);
     expect(view.teamSize).toBe("11–50");
     expect(view.brief).toBe("Two sentences.");
     expect(view.description).toBe("Longer about text.");

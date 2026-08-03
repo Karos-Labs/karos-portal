@@ -35,6 +35,7 @@ import { requireClientAccess } from "./_shared";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { withClientModelCharge } from "@/lib/client-model-charge";
 import type { ContextDocTier } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 
 const MAX_TEXT = 2_000;
 /** originalText is system-captured (pick time), not user-typed — truncate rather than error,
@@ -304,8 +305,9 @@ export async function proposeXRosterAction(input: {
     getClientContextDocInTierOrder(input.clientId, "target-audience", contextTiers),
     getClientContextDocInTierOrder(input.clientId, "market-strategy", contextTiers),
   ]);
+  const category = clientCategoryValue(client);
   const context = [
-    `Company: ${client.name}${client.industry ? ` (${client.industry})` : ""}${client.website ? ` · ${client.website}` : ""}`,
+    `Company: ${client.name}${category ? ` (${category})` : ""}${client.website ? ` · ${client.website}` : ""}`,
     client.brief ? `About: ${client.brief}` : "",
     audience?.content ? `TARGET AUDIENCE (excerpt):\n${audience.content.slice(0, 4_000)}` : "",
     strategy?.content ? `MARKET STRATEGY (excerpt):\n${strategy.content.slice(0, 4_000)}` : "",

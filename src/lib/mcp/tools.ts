@@ -22,6 +22,7 @@ import { contextKind } from "@/lib/context";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import type { AssetType, Client } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 import { canStaffAccessClient, type McpActor } from "./auth";
 import { type McpTool, textResult, ToolError } from "./protocol";
 
@@ -85,7 +86,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "list_clients",
     description:
-      "List the clients you can access (id, name, industry, website, brand voice, status). Staff only.",
+      "List the clients you can access (id, name, category, website, brand voice, status). Staff only.",
     actors: ["staff"],
     schema: z.object({}),
     handler: async (_args, actor) => {
@@ -97,7 +98,7 @@ export const MCP_TOOLS: McpTool[] = [
         clients.map((c) => ({
           id: c.id,
           name: c.name,
-          industry: c.industry ?? null,
+          category: clientCategoryValue(c),
           website: c.website ?? null,
           brandVoice: c.brandVoice ?? null,
           status: c.status,
@@ -110,7 +111,7 @@ export const MCP_TOOLS: McpTool[] = [
   {
     name: "get_client",
     description:
-      "Full profile for one client — brand voice, description, industry, social links, branding. " +
+      "Full profile for one client — brand voice, description, category, social links, branding. " +
       "Service (job) callers may omit clientId to get their own client.",
     actors: ["staff", "service"],
     schema: z.object({ clientId: clientIdArg }),
@@ -121,8 +122,9 @@ export const MCP_TOOLS: McpTool[] = [
         id: c.id,
         name: c.name,
         website: c.website ?? null,
-        industry: c.industry ?? null,
-        category: c.category ?? null,
+        // ONE KEY. This used to hand the caller `industry` and `category` as two
+        // separate facts about the same brand, which is what they never were.
+        category: clientCategoryValue(c),
         description: c.description ?? null,
         brief: c.brief ?? null,
         brandVoice: c.brandVoice ?? null,

@@ -335,7 +335,7 @@ export async function updateClient(id: string, data: Partial<Client>): Promise<v
 export async function completeOnboarding(
   uid: string,
   clientId: string,
-  clientPatch: Partial<Pick<Client, "name" | "industry" | "brandVoice">>,
+  clientPatch: Partial<Pick<Client, "name" | "category" | "brandVoice">>,
 ): Promise<void> {
   const userRef = col.users().doc(uid);
   const clientRef = col.clients().doc(clientId);

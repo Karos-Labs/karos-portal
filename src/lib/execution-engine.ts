@@ -28,6 +28,7 @@ import { submitManagedJob } from "@/lib/jobs/submit-managed";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
 import type { AppUser, ClientTask, CustomAgent, ManagedTaskType, TaskOwner } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 import { logger } from "@/services/logger";
 import type { ModelId } from "@/lib/constants";
 
@@ -402,7 +403,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         task.priority,
         taskType,
         client.name,
-        client.industry,
+        clientCategoryValue(client) ?? undefined,
         client.website,
         client.brandVoice,
         adjustmentFeedback,

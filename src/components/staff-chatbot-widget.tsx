@@ -34,7 +34,6 @@ export function StaffCopilotDock({ userName, viewerUid }: { userName?: string; v
       client={{
         name: client.name,
         website: client.website,
-        industry: client.industry,
         isAiProcessing: isAiProcessingLockActive(client),
       }}
     />

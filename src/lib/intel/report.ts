@@ -4,6 +4,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
 import { runGuardedReportPass, REPORT_IDLE_TIMEOUT_MS } from "./report-stream";
 import type { Client } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 import type { ParsedReport } from "@/lib/report-parser";
 import {
   getClient,
@@ -206,7 +207,7 @@ function compilePrompt(template: string, client: Client, brandingContext?: strin
   return template
     .replace(/\{COMPANY_NAME\}/g, client.name || "the company")
     .replace(/\{WEBSITE_URL\}/g, client.website || "not provided")
-    .replace(/\{INDUSTRY\}/g, client.industry || "general")
+    .replace(/\{INDUSTRY\}/g, clientCategoryValue(client) || "general")
     .replace(/\{DESCRIPTION\}/g, client.description || "")
     .replace(/\{DATE\}/g, today)
     .replace(/\{BRANDING_CONTEXT\}/g, brandingContext ? "\n\n" + brandingContext + "\n" : "")

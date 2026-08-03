@@ -35,6 +35,7 @@ import { chargeClientModelCall, withClientModelCharge } from "@/lib/client-model
 import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { logger } from "@/services/logger";
 import type { AppUser, TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 
 /**
  * The charge spec for a small Haiku task helper (plan generation, custom-task
@@ -368,7 +369,7 @@ export async function generateTaskPlanAction(
             task.source,
             task.priority,
             client?.name ?? "the client",
-            client?.industry,
+            client ? clientCategoryValue(client) ?? undefined : undefined,
             client?.website,
           ),
         }));
@@ -488,7 +489,7 @@ async function ingestRoutedTask(args: {
       prompt: buildTaskIngestionRoutingPrompt(
         trimmed,
         client.name,
-        client.industry ?? "marketing",
+        clientCategoryValue(client) ?? "marketing",
         agentSummary,
       ),
     }));

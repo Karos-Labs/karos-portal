@@ -211,7 +211,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               client={{
                 name: client.name,
                 website: client.website,
-                industry: client.industry,
                 isAiProcessing: isAiProcessingLockActive(client),
               }}
               report={

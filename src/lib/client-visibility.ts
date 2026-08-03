@@ -1,4 +1,5 @@
 import type { AppUser, BrandingGuidelines, Client } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 
 /**
  * WHICH CLIENTS A USER MAY OPEN — the rule, once.
@@ -165,8 +166,11 @@ export function toClientPortalView(c: Client): Client {
     status: c.status,
     // Profile fields the rail's own panels render and let the client edit.
     ...(c.website ? { website: c.website } : {}),
-    ...(c.industry ? { industry: c.industry } : {}),
-    ...(c.category ? { category: c.category } : {}),
+    // THE FALLBACK IS RESOLVED HERE, so `industry` does not cross at all. Both
+    // names carried the same fact and both used to be shipped; the browser now
+    // receives one field under the name it edits, and a document that only has
+    // the legacy spelling arrives as a category like any other.
+    ...(clientCategoryValue(c) ? { category: clientCategoryValue(c)! } : {}),
     ...(c.teamSize ? { teamSize: c.teamSize } : {}),
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.socialLinks ? { socialLinks: c.socialLinks } : {}),
@@ -246,9 +250,9 @@ export type StaffShellClientView = Pick<
   | "accentColor"
   | "brandingGuidelines"
   // Company profile: the narrow-width Company sheet mounts ClientProfilePanel,
-  // which renders AND edits this set (industry doubles as the copilot blurb).
+  // which renders AND edits this set. `industry` is NOT here: it and `category`
+  // are one field now, resolved to `category` by the projection below.
   | "website"
-  | "industry"
   | "category"
   | "teamSize"
   | "brief"
@@ -274,8 +278,9 @@ export function toStaffShellView(c: Client): StaffShellClientView {
     id: c.id,
     name: c.name,
     ...(c.website ? { website: c.website } : {}),
-    ...(c.industry ? { industry: c.industry } : {}),
-    ...(c.category ? { category: c.category } : {}),
+    // Same resolution as the client's own view: one field, under the name the
+    // panel's pencil writes back to.
+    ...(clientCategoryValue(c) ? { category: clientCategoryValue(c)! } : {}),
     ...(c.teamSize ? { teamSize: c.teamSize } : {}),
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.description ? { description: c.description } : {}),

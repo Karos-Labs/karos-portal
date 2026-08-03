@@ -7,7 +7,7 @@ import { Card, Badge, Button, Input, Select, Textarea, Label } from "@/component
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { updateClientAction, deleteClientAction } from "@/lib/actions";
-import { cn } from "@/lib/utils";
+import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { LOW_CREDIT_THRESHOLD } from "@/lib/constants";
 import type { Client } from "@/lib/types";
@@ -45,7 +45,10 @@ function EditClientModal({
   const [form, setForm] = useState({
     name: client.name ?? "",
     website: client.website ?? "",
-    industry: client.industry ?? "",
+    // PREFILLED THROUGH THE FALLBACK, so a client whose only stored value is the
+    // legacy `industry` opens this dialog with their current category in the box
+    // rather than an empty one that would blank it on save.
+    category: clientCategoryValue(client) ?? "",
     contactEmail: client.contactEmail ?? "",
     domains: (client.domains ?? []).join(", "),
     description: client.description ?? "",
@@ -117,7 +120,7 @@ function EditClientModal({
       await updateClientAction(client.id, {
         name: form.name.trim(),
         website: form.website.trim(),
-        industry: form.industry.trim(),
+        category: form.category.trim(),
         contactEmail: form.contactEmail.trim().toLowerCase(),
         domainsCsv: form.domains,
         description: form.description.trim(),
@@ -216,9 +219,20 @@ function EditClientModal({
             <Label>Name *</Label>
             <Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Acme Co" />
           </div>
+          {/* THE SAME FIELD THE CLIENT'S OWN PROFILE CHIP EDITS (CD-L). This box
+              said "Industry" and wrote `client.industry`, while the client typed
+              a category into the chip in their sidebar — one fact, two fields,
+              two ceilings, and only the staff one reached the copilot and the
+              intel pipeline. One field now, under the name the chip uses, capped
+              where the chip is measured. */}
           <div>
-            <Label>Industry</Label>
-            <Input value={form.industry} onChange={(e) => set("industry", e.target.value)} placeholder="SaaS, retail…" />
+            <Label>Category</Label>
+            <Input
+              value={form.category}
+              onChange={(e) => set("category", e.target.value)}
+              placeholder="SaaS, retail…"
+              maxLength={CLIENT_CATEGORY_MAX_LENGTH}
+            />
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -385,7 +399,7 @@ export function ClientsGrid({
       ? clients.filter(
           (c) =>
             c.name.toLowerCase().includes(needle) ||
-            (c.industry ?? "").toLowerCase().includes(needle) ||
+            (clientCategoryValue(c) ?? "").toLowerCase().includes(needle) ||
             (c.website ?? "").toLowerCase().includes(needle),
         )
       : clients;
@@ -443,7 +457,7 @@ export function ClientsGrid({
                       <ClientAvatar client={c} />
                       <div>
                         <p className="font-semibold">{c.name}</p>
-                        <p className="text-xs text-muted-2">{c.industry || c.website || "-"}</p>
+                        <p className="text-xs text-muted-2">{clientCategoryValue(c) || c.website || "-"}</p>
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
