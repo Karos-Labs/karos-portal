@@ -57,7 +57,7 @@ export function MeetingsClient({ transcripts, clients, currentUserRole, currentC
         const date = t.meetingDate ?? t.createdAt;
         if (date < now - TIMEFRAME_MS[timeframe]) return false;
       }
-      // Client filter — client role: always scoped to own client
+      // Client filter - client role: always scoped to own client
       if (!isStaff) {
         if (currentClientId && t.clientId !== currentClientId) return false;
       } else if (clientFilter === "__karos__") {
@@ -100,7 +100,7 @@ export function MeetingsClient({ transcripts, clients, currentUserRole, currentC
         ))}
       </div>
 
-      {/* Filters — staff only */}
+      {/* Filters - staff only */}
       {isStaff && (
         <div className="flex flex-wrap items-center gap-2">
           {/* Timeframe */}
@@ -247,7 +247,7 @@ function MeetingRow({
         )}
       </Link>
 
-      {/* Archive / Unarchive button — staff only */}
+      {/* Archive / Unarchive button - staff only */}
       {isStaff && (
         <button
           onClick={handleArchiveToggle}

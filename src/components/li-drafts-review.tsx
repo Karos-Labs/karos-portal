@@ -2,7 +2,7 @@
 
 /**
  * The LinkedIn drafts reader: a parsed draft batch rendered as readable cards
- * — grouped per account, one card per post — with pick / edit / skip actions
+ * - grouped per account, one card per post - with pick / edit / skip actions
  * wired into the per-account feedback loop.
  *
  * Picking is also the posting hand-off: the pick copies the final text to the
@@ -10,10 +10,10 @@
  * linkedin.com/feed/?shareActive=true&text=… (verified live 2026-07-24: full
  * prefill incl. newlines/emoji/links up to LinkedIn's 3,000-char cap; the
  * auth wall carries the link through login). The deep link is undocumented,
- * so the clipboard copy is always made first — if LinkedIn ever drops the
+ * so the clipboard copy is always made first - if LinkedIn ever drops the
  * prefill, the text is already on the clipboard. Files (carousel PDFs,
  * slides) cannot ride a URL: the card lists them for download + manual
- * attach. Draft-only stays true — the human presses Post on LinkedIn.
+ * attach. Draft-only stays true - the human presses Post on LinkedIn.
  *
  * Chrome-less by design: it embeds wherever outputs live (the asset card in
  * the archive and on the job page).
@@ -41,7 +41,7 @@ const LINKEDIN_POST_CAP = 3_000;
 
 /**
  * LinkedIn compose deep link with the text prefilled. Past the 3,000-char cap
- * the prefill is unreliable — open the bare composer and let the copied text
+ * the prefill is unreliable - open the bare composer and let the copied text
  * carry the post.
  */
 function liComposeUrl(text: string): string {
@@ -58,7 +58,7 @@ function charLabel(chars?: string): string | null {
 
 /**
  * The artifacts a draft names in its Media bullet, resolved against the run's
- * files. Exact or path-basename matches only — the pinned instructions
+ * files. Exact or path-basename matches only - the pinned instructions
  * require exact file names, and substring matching would attach
  * "slide-11.png" to a bullet naming "1.png".
  */
@@ -103,7 +103,7 @@ function DraftCard({
   async function send(action: SentState, textUsed?: string) {
     setError(null);
     // Picking IS the posting hand-off (skips and change requests never open
-    // the composer). The clipboard write is AWAITED before window.open —
+    // the composer). The clipboard write is AWAITED before window.open -
     // Chrome rejects clipboard writes once the new tab steals focus, and the
     // copy is the safety net for the undocumented deep link. The await stays
     // inside the click gesture's transient activation, so popup blockers
@@ -209,7 +209,7 @@ function DraftCard({
           {draft.meta.map((m, i) => (
             <li key={i} className="break-words text-xs text-muted">
               {/* Linkified AND de-marked: the lab writes these bullets in
-                  markdown, so the prose runs are stripped (F70 — raw ** must
+                  markdown, so the prose runs are stripped (F70 - raw ** must
                   never reach a client), while a link run is a bare URL and is
                   rendered verbatim; stripping inside an href would corrupt it. */}
               {splitMetaLinks(m).map((seg, j) =>
@@ -363,7 +363,7 @@ function DraftCard({
   );
 }
 
-/** A parsed batch, chrome-less — the host (asset card, job page) owns the frame. */
+/** A parsed batch, chrome-less - the host (asset card, job page) owns the frame. */
 export function LiDraftsBatch({
   clientId,
   jobId,

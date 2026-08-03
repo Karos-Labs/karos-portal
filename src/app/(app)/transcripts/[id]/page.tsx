@@ -9,6 +9,7 @@ import { MeetingActionItems } from "@/components/meeting-action-items";
 import { ArchiveButton } from "@/components/archive-button";
 import { formatDateTime } from "@/lib/utils";
 import { deriveActionItemOwners } from "@/lib/transcripts/ingest";
+import { normalizeDashes } from "@/lib/text-utils";
 import type { AppUser } from "@/lib/types";
 
 export default async function TranscriptDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -29,8 +30,8 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
   ]);
 
   // Scope the users shown in action-item assignment dropdowns based on the meeting's client association.
-  // Scenario A — meeting is associated with a client: admins + employees + that client's users.
-  // Scenario B — unassociated or Karos Internal: admins + employees only.
+  // Scenario A - meeting is associated with a client: admins + employees + that client's users.
+  // Scenario B - unassociated or Karos Internal: admins + employees only.
   const users: AppUser[] = isStaff
     ? t.clientId && !t.isKarosInternal
       ? allUsers.filter(
@@ -78,7 +79,7 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
           {isStaff && t.clientId && !t.contextDocSignalAt && (
             <TranscriptSignalButton transcriptId={t.id} clientId={t.clientId} />
           )}
-          {/* Hide-from-client toggle — admin only */}
+          {/* Hide-from-client toggle - admin only */}
           {isAdmin && (
             <HideFromClientToggle transcriptId={t.id} hiddenFromClient={!!t.hiddenFromClient} />
           )}
@@ -100,7 +101,7 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
         <div className="space-y-6">
           <Card>
             <CardTitle className="mb-2">Summary</CardTitle>
-            <p className="whitespace-pre-wrap text-sm text-muted">{t.summary || "No summary available."}</p>
+            <p className="whitespace-pre-wrap text-sm text-muted">{t.summary ? normalizeDashes(t.summary) : "No summary available."}</p>
           </Card>
           <Card>
             <CardTitle className="mb-2">Transcript</CardTitle>

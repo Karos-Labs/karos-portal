@@ -331,12 +331,12 @@ function FeedbackBox({
         /* The run's state through the app's own mapper, and its date through
            the app's own formatter. This printed the raw database word
            ("review", "queued", "failed") beside an ISO machine date, in
-           client-facing copy — the same rows the X and LinkedIn intakes render
+           client-facing copy - the same rows the X and LinkedIn intakes render
            properly. */
         <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => {
             /* A3/A4, the pass-2 stamp treatment. `Run <date>` is the generation
-               instant, and one fire produces a week of drafts — so four rows
+               instant, and one fire produces a week of drafts - so four rows
                printed the same date and said outright that the week came out of
                one minute. A client's rows are already collapsed to one per day
                server-side (toRunRowViews); here they lose the machinery noun and
@@ -407,7 +407,7 @@ export function RedditAgentIntake({
   company: RedditIntakeView | null;
   feedback: RedditFeedbackRowView[];
   runs: RedditRunRowView[];
-  /** Whose vocabulary the run rows are written in — see FeedbackBox. */
+  /** Whose vocabulary the run rows are written in - see FeedbackBox. */
   isStaff: boolean;
 }) {
   return (

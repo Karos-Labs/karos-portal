@@ -37,6 +37,7 @@ vi.mock("@/lib/data", () => ({
 import {
   buildCampaignTaskDrafts,
   generateCampaignBundle,
+  unmetCampaignDependencyTitles,
   type CampaignBlueprint,
 } from "@/lib/campaign-engine";
 
@@ -196,5 +197,43 @@ describe("generateCampaignBundle", () => {
     expect(result).toMatchObject({ duplicatesSkipped: 1, capSkipped: 0 });
     // The anchor still landed, so the dependents still resolve against it.
     expect(createClientTaskMock.mock.calls[1][0]).toMatchObject({ dependsOnTaskIds: ["t1"] });
+  });
+});
+
+describe("unmetCampaignDependencyTitles (pure)", () => {
+  it("is empty when the task has no dependencies", () => {
+    expect(unmetCampaignDependencyTitles({ dependsOnTaskIds: [] }, new Map())).toEqual([]);
+    expect(unmetCampaignDependencyTitles({}, new Map())).toEqual([]);
+  });
+
+  it("blocks on a dependency that hasn't produced a deliverable yet", () => {
+    const tasksById = new Map([["anchor1", { title: "The Buyer's Guide", status: "pending" as const }]]);
+    expect(unmetCampaignDependencyTitles({ dependsOnTaskIds: ["anchor1"] }, tasksById)).toEqual([
+      "The Buyer's Guide",
+    ]);
+  });
+
+  it("is unblocked once the dependency reaches review_pending (drafted, not yet approved)", () => {
+    const tasksById = new Map([["anchor1", { title: "The Buyer's Guide", status: "review_pending" as const }]]);
+    expect(unmetCampaignDependencyTitles({ dependsOnTaskIds: ["anchor1"] }, tasksById)).toEqual([]);
+  });
+
+  it("is unblocked once the dependency is completed", () => {
+    const tasksById = new Map([["anchor1", { title: "The Buyer's Guide", status: "completed" as const }]]);
+    expect(unmetCampaignDependencyTitles({ dependsOnTaskIds: ["anchor1"] }, tasksById)).toEqual([]);
+  });
+
+  it("does not block on a dependency id that no longer resolves (deleted task)", () => {
+    expect(unmetCampaignDependencyTitles({ dependsOnTaskIds: ["gone"] }, new Map())).toEqual([]);
+  });
+
+  it("reports every unmet dependency, in order", () => {
+    const tasksById = new Map([
+      ["a", { title: "Anchor", status: "completed" as const }],
+      ["b", { title: "Second piece", status: "in_progress" as const }],
+    ]);
+    expect(unmetCampaignDependencyTitles({ dependsOnTaskIds: ["a", "b"] }, tasksById)).toEqual([
+      "Second piece",
+    ]);
   });
 });

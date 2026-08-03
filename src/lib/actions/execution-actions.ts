@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import {
   TASK_LEFT_REVIEW_MESSAGE,
   TASK_NOT_IN_REVIEW_MESSAGE,
+  campaignDependencyBlocker,
   requireTaskAccess,
 } from "./_shared";
 import {
@@ -93,6 +94,16 @@ export async function startTaskExecutionAction(
   // own card does — checked before the claim so a refusal costs nothing.
   const blocked = await clientTaskRunRefusal({ user, clientId, task });
   if (blocked) return { ok: false, error: blocked };
+
+  // A campaign step (e.g. the newsletter) can't run ahead of the piece it
+  // depends on (the anchor blog) — there's nothing yet for it to build on.
+  const blocker = await campaignDependencyBlocker(task);
+  if (blocker) {
+    return {
+      ok: false,
+      error: `Waiting on "${blocker}" to finish first - this campaign step runs after it.`,
+    };
+  }
 
   // Atomically claim the task first (verifies ownership + pending status +
   // not already executing) so a double-fired drag or retry can't charge and

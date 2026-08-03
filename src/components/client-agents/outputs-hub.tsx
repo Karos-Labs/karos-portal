@@ -12,11 +12,11 @@ import { relativeTime, cn } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
 
 /**
- * The Control Room's Outputs & Artifacts Hub — this agent's FULL output list
+ * The Control Room's Outputs & Artifacts Hub - this agent's FULL output list
  * (staff only, uncapped, unlike the client-facing archive summary which caps
  * at 8 rows), with 1-click preview via the existing AssetDetailModal instead
  * of building a second preview surface. Test-run assets (meta.testRun) get a
- * TEST badge plus Promote/Dismiss — the only two things that can happen to
+ * TEST badge plus Promote/Dismiss - the only two things that can happen to
  * one (asset-actions.ts's promoteTestAssetAction / dismissTestAssetAction).
  */
 export function OutputsHub({
@@ -26,7 +26,7 @@ export function OutputsHub({
   assets: Asset[];
   /**
    * Copilot chat's `find_output`/`inspect_job` deep link (`?asset=` on the
-   * agent detail page) — auto-opens this asset the same as clicking its row.
+   * agent detail page) - auto-opens this asset the same as clicking its row.
    * Staff-only surface, so this carries no churn-rule risk the client detail
    * page's archive rows are deliberately built to avoid (client-agent-rows.ts).
    */

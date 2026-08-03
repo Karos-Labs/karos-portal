@@ -20,7 +20,7 @@ export default async function PendingPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
-      {/* The redirect above already fires the moment the account is enabled —
+      {/* The redirect above already fires the moment the account is enabled -
           polling is all that was missing, so approval lands the user in the
           workspace without a manual reload (QA F115). */}
       <AutoRefresh intervalMs={15000} />

@@ -61,8 +61,10 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "xNewsUpdates",
   "xTakes",
   "xDraftFeedback",
+  "liDraftFeedback",
   "redditDraftFeedback",
   "plannedScheduledRuns",
+  "seatVoiceProfiles",
 ];
 
 /** Per-client singleton docs, doc ID = clientId (mirror of data.ts CLIENT_DOC_COLLECTIONS). */

@@ -595,7 +595,7 @@ export function lastRunFailedAgentIds(
  */
 export const SCHEDULE_REFUSAL_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
 
-export type RosterStatusTone = "live" | "attention" | "progress" | "idle";
+export type RosterStatusTone = "live" | "attention" | "progress" | "idle" | "disabled";
 
 export interface RosterStatus {
   tone: RosterStatusTone;
@@ -753,6 +753,16 @@ export function rosterStatus(input: {
    */
   lastRunFailed?: boolean;
   /**
+   * False when an admin has paused this agent (`CustomAgent.enabled`) — the
+   * roster card must say "Coming Soon" rather than any live/progress/idle
+   * word, whatever the umbrella or schedule underneath it looks like. This
+   * outranks even a schedule refusal: a paused agent isn't "needing
+   * attention", it simply isn't running for anyone right now — and it outranks
+   * the AF-5 upcoming-content rung for the same reason. Defaults to true so
+   * every existing caller (managed products, tests) is unaffected.
+   */
+  enabled?: boolean;
+  /**
    * Whether the reader is STAFF — the gate on the `lastRunFailed` rung, and the
    * only thing on this input that asks who is looking.
    *
@@ -796,6 +806,10 @@ export function rosterStatus(input: {
   /** Clock, for the refusal's freshness window. Defaults to now. */
   now?: number;
 }): RosterStatus {
+  // An admin's pause outranks everything — refusal, failed run, AF-5 — because
+  // a paused agent isn't in any of those states: it simply isn't running for
+  // anyone right now, and "Coming Soon" is the one honest word for that.
+  if (input.enabled === false) return { tone: "disabled", label: "Coming Soon" };
   const status = rosterStatusCore(input);
   // The AF-5 rung. Only an IDLE outcome is eligible: see the doc above for why
   // this may not reach past an alarm or a launch narration.

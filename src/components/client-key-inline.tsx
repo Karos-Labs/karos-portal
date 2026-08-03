@@ -11,7 +11,7 @@ import { regenerateClientKeyAction } from "@/lib/actions";
  *
  * `canRotate` adds the remediation control: the key auto-approves any signup
  * straight into the workspace, so whoever may hand it out must also be able to
- * replace it once it leaks (QA F56 — the rotate control existed on the server
+ * replace it once it leaks (QA F56 - the rotate control existed on the server
  * but was mounted on no page). The server action re-checks the caller: staff,
  * or the workspace's own group admin.
  */

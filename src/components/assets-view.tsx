@@ -41,7 +41,7 @@ export function AssetsView({
    * Staff-only, keyed by client: the platforms a post can actually be pushed to.
    * Without it AssetCard's "Publish Now" can never render, so the approve panel's
    * "Manual push" tier names a control that does not exist on this list (F107).
-   * Platform ids only — never integration records, which carry decrypted tokens.
+   * Platform ids only - never integration records, which carry decrypted tokens.
    */
   connectedPlatformsByClient?: Record<string, string[]>;
 }) {

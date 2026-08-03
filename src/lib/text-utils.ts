@@ -188,6 +188,37 @@ export function stripTrailingMetaCommentary(text: string): string {
   return s;
 }
 
+/** Matches a fenced code block or an inline code span — left untouched by normalizeDashes. */
+const CODE_SPAN_OR_FENCE = /(```[\s\S]*?```|`[^`\n]*`)/g;
+
+/**
+ * Normalize the double-hyphen / em-dash habit AI output tends toward
+ * ("word -- word", "word—word") into a single plain hyphen, so it reads
+ * consistently with the rest of the UI's typography.
+ *
+ * Two rules, applied only OUTSIDE code spans/fences (a spaced `--` is a real
+ * separator in shell syntax — e.g. `npm run test -- --watch` — and collapsing
+ * it there would break the command, not just its looks):
+ *   - An em dash is always replaced (it never appears in real code/CLI flags).
+ *   - A double hyphen is replaced ONLY when it stands alone, bounded by
+ *     whitespace or the string edges on both sides. That leaves a CLI flag
+ *     like `--verbose` (no trailing space) and a markdown horizontal rule
+ *     `---` (a third dash immediately follows) untouched.
+ *
+ * Idempotent — running it twice is a no-op.
+ */
+export function normalizeDashes(text: string): string {
+  if (!text) return text;
+  return text
+    .split(CODE_SPAN_OR_FENCE)
+    .map((segment, i) =>
+      i % 2 === 1
+        ? segment // odd indices are the captured code spans/fences — untouched
+        : segment.replace(/—/g, "-").replace(/(^|\s)--(?!-)(?=\s|$)/g, "$1-"),
+    )
+    .join("");
+}
+
 /**
  * Escape HTML special characters for safe embedding in HTML strings.
  * Use for all user-controlled or AI-generated strings embedded in HTML —

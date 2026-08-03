@@ -33,7 +33,7 @@ const OUTPUT_NOUN: Record<AgentArchetype, string> = {
  *
  * Everything a client can DO to their agent lives here, and only here: make a
  * post now, steer it with feedback, pause or reorder its formats, change its
- * pace. The roster card that opens this page carries none of it — Albert's
+ * pace. The roster card that opens this page carries none of it - Albert's
  * ruling is that a run gesture belongs next to the context that explains what
  * it costs and produces, and a grid of cards is not that place.
  *
@@ -46,7 +46,7 @@ const OUTPUT_NOUN: Record<AgentArchetype, string> = {
  * THE CHURN RULE (A3/A4) is unchanged by the move. The week strip still carries
  * a day and a label and nothing else; there is still no batch run history, no
  * draft count, no "ready" marker. A bigger surface is not permission to say
- * more — it is more room to say the same things legibly.
+ * more - it is more room to say the same things legibly.
  */
 export function AgentDetailPanel({
   agent,
@@ -63,8 +63,8 @@ export function AgentDetailPanel({
    * Which page shape this panel is the CONTROLS band of (CD-I1).
    *
    * Only `template_calendar` renders the format registry and the week strip.
-   * The other two archetypes lead with their own product — a video gallery, a
-   * day's finds — and this panel sits under it carrying the gestures that are
+   * The other two archetypes lead with their own product - a video gallery, a
+   * day's finds - and this panel sits under it carrying the gestures that are
    * common to all three: run, steer, pace. Suppressing the two sections is not
    * cosmetic: template rows on a clip maker would offer per-format runs for
    * formats that do not exist, and a second calendar strip under the daily
@@ -74,7 +74,7 @@ export function AgentDetailPanel({
   /** Staff only: the client's per-day notes, rendered beside the plan (B2). */
   staffNotes?: boolean;
   /**
-   * What clicking a format opens onto (CD-K1) — its full reasoning and the
+   * What clicking a format opens onto (CD-K1) - its full reasoning and the
    * posts made under it, joined server-side on `Asset.templateKey`.
    *
    * Threaded rather than fetched here for the reason everything else on this
@@ -97,13 +97,13 @@ export function AgentDetailPanel({
   const templates = visibleTemplates(agent);
   const noun = OUTPUT_NOUN[archetype];
   // The format registry and the plan strip belong to the template-calendar
-  // shape alone — the other two archetypes render their own product above this
+  // shape alone - the other two archetypes render their own product above this
   // panel and would otherwise say the same thing twice.
   const showTemplates = archetype === "template_calendar";
   const showWeek = archetype !== "daily_finder";
 
   // "Create new post" is the page's primary gesture, and it has to resolve to a
-  // REAL format — the server runs one template, never an abstract "post". The
+  // REAL format - the server runs one template, never an abstract "post". The
   // first format whose gate allows it is the one it uses, and the button names
   // it, so nobody presses a button whose output they cannot predict. When every
   // format is blocked the button carries the first gate's own reason (F25)
@@ -127,8 +127,8 @@ export function AgentDetailPanel({
   const firstBlock =
     blocked.find((gate) => gate?.code !== "template_paused") ?? blocked[0];
   // An empty registry produces NO gate to quote, so the two shapes that
-  // legitimately have no templates — options-mode (final) and a live umbrella
-  // whose formats are not seeded yet (temporary) — used to get a dead button
+  // legitimately have no templates - options-mode (final) and a live umbrella
+  // whose formats are not seeded yet (temporary) - used to get a dead button
   // with nothing beside it. Same F25 rule: paint the reason or do not disable.
   const blockReason =
     firstBlock?.reason ??
@@ -153,7 +153,7 @@ export function AgentDetailPanel({
   return (
     <div className="space-y-6">
       {/* The one run this page acknowledges: one the viewer pressed. Scheduled
-          fires stay invisible — a "ran 2 hours ago · 7 drafts" line beside a
+          fires stay invisible - a "ran 2 hours ago · 7 drafts" line beside a
           week of daily slots is the tell that the days are a batch (§4.1). */}
       {agent.activeRun && (
         <div className="rounded-[var(--radius)] border border-info/30 bg-info/10">
@@ -169,7 +169,7 @@ export function AgentDetailPanel({
             </p>
           </div>
           {/* F30, restored. The cancel used to ride the generic run rows, and
-              CD-G1 removed those from the client's branch — leaving a client
+              CD-G1 removed those from the client's branch - leaving a client
               who mis-fired a billable twenty-minute run with no way to stop it
               and no page to reach that could. The banner is where a client now
               meets that run, so the existing control mounts here rather than a
@@ -249,7 +249,7 @@ export function AgentDetailPanel({
              product without promising the picker, because the picker did not
              exist; it does now, so today's three options ARE the row. The
              placeholder survives only for a day whose options have not been
-             assigned yet — where it is still the honest thing to say. */
+             assigned yet - where it is still the honest thing to say. */
           agent.today ? (
             agent.today.pickedDirection ? (
               <OptionPicked direction={agent.today.pickedDirection} />

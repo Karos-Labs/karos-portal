@@ -13,7 +13,7 @@ import {
   type SeatActionResult,
 } from "@/lib/actions/seat-actions";
 
-/** Client-safe seat view — never carries tokens, only whether one is present. */
+/** Client-safe seat view - never carries tokens, only whether one is present. */
 export interface SeatView {
   id: string;
   employeeName: string;
@@ -103,7 +103,7 @@ export function LinkedInSeatsWorkspace({
   /**
    * Whether re-adding someone after this removal would be charged again.
    * evaluateSeatAddition charges when `currentSeatCount >= seatLimit`, so after
-   * dropping one seat the re-add is free iff `seats.length - 1 < seatLimit` —
+   * dropping one seat the re-add is free iff `seats.length - 1 < seatLimit` -
    * i.e. it costs credits exactly when the roster is currently OVER the limit.
    * Derived from the live count rather than a stored per-seat price because the
    * charge that matters here is the future re-add, not the original purchase.
@@ -191,7 +191,7 @@ export function LinkedInSeatsWorkspace({
 
   return (
     <div className="border-t border-border bg-surface-2/40 p-4">
-      {/* Header — wraps so the Add button never overflows narrow cards */}
+      {/* Header - wraps so the Add button never overflows narrow cards */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Icon name="Users" className="h-4 w-4 shrink-0 text-neon" />

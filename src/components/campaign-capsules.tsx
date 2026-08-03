@@ -28,7 +28,7 @@ function shortDate(t: number | null): string {
 }
 
 /**
- * Campaign Capsules — aggregates calendar assets sharing a campaignId into
+ * Campaign Capsules - aggregates calendar assets sharing a campaignId into
  * unified, expandable cards showing the campaign's cross-channel journey and
  * scheduling progression at a glance, instead of scattering the pieces across
  * the grid. Renders nothing when there are no campaigns.

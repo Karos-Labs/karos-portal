@@ -605,14 +605,16 @@ export async function publishAssetNowAction(
  * Record that a picked X option was actually posted (§4.5c).
  *
  * Only applies to assets materialized by `pickAgentSlotOptionAction` — they
- * carry the option ref, the account and the batch they came from in `meta`, so
- * no schema change to XDraftFeedback was needed. Anything else returns silently.
+ * carry the option ref, the account and the batch they came from in `meta`.
+ * Anything else returns silently.
  *
  * `posted_with_edits` carries the final text, which is the most valuable row in
  * the whole log: it is the client showing, not telling, exactly how the agent's
  * draft fell short. Edit detection is the flag stamped at pick time rather than
- * a re-comparison here — the original lives in the batch asset and could have
- * been re-imported since.
+ * a re-comparison here. `originalText` (also stamped at pick time, into
+ * `meta.originalText` — see pickAgentSlotOptionAction) rides along so the row
+ * carries a real before/after diff instead of depending on the batch asset,
+ * which can go stale or be re-imported, to still hold the original later.
  */
 async function recordPostedOptionFeedback(asset: Asset): Promise<void> {
   const meta = asset.meta ?? {};
@@ -621,12 +623,13 @@ async function recordPostedOptionFeedback(asset: Asset): Promise<void> {
   if (!draftRef || !accountTitle) return;
 
   const edited = meta.edited === true;
+  const originalText = typeof meta.originalText === "string" ? meta.originalText : undefined;
   await addXDraftFeedbackAction({
     clientId: asset.clientId,
     accountTitle,
     ...(typeof meta.pickedFromAssetId === "string" ? { assetId: meta.pickedFromAssetId } : {}),
     draftRef,
     action: edited ? "posted_with_edits" : "posted",
-    ...(edited ? { finalText: asset.content } : {}),
+    ...(edited ? { finalText: asset.content, ...(originalText ? { originalText } : {}) } : {}),
   });
 }

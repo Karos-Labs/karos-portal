@@ -81,7 +81,11 @@ const globalForDb = globalThis as typeof globalThis & {
 
 export const adminDb = () => {
   if (!globalForDb.__karosAdminDb) {
-    const firestore = getFirestore(getAdminApp());
+    // Named-database selection — prep runs its own isolated Firestore
+    // database ("prep") in the same shared Firebase project; production
+    // (and anything unset) uses the project's default database.
+    const databaseId = process.env.FIRESTORE_DATABASE_ID || "(default)";
+    const firestore = getFirestore(getAdminApp(), databaseId);
     try {
       // Drop undefined fields instead of throwing — optional Agent/field props
       // (e.g. a non-select field's `options`) are routinely absent on writes.

@@ -12,7 +12,7 @@ interface Props {
   /** Passed straight through to IntegrationsTab — see oauth.ts. */
   googleBusinessProfileRequested: boolean;
   currentUserRole: Role;
-  /** Sanitized LinkedIn employee seats — same data Settings shows, so an
+  /** Sanitized LinkedIn employee seats - same data Settings shows, so an
    * existing workspace's roster never appears empty here by mistake. */
   linkedinSeats?: SeatView[];
   seatLimit?: number;
@@ -20,7 +20,7 @@ interface Props {
 }
 
 /**
- * Onboarding step 3 — embeds the same IntegrationsTab used on the client
+ * Onboarding step 3 - embeds the same IntegrationsTab used on the client
  * Settings page, so a channel connected here or later never diverges: one
  * component, one OAuth flow, one Reconnect/Disconnect behavior. New platforms
  * added to PLATFORM_REGISTRY show up here automatically.

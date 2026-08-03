@@ -105,7 +105,7 @@ function UserRow({
       <div className="flex flex-wrap items-center gap-2">
         {u.disabled && <Badge tone="warning">Disabled</Badge>}
 
-        {/* Group admin toggle — admin can toggle any client; group admin can toggle others in their group */}
+        {/* Group admin toggle - admin can toggle any client; group admin can toggle others in their group */}
         {u.role === "CLIENT_USER" && !isSelf && (isAdmin || isGroupAdmin) && (
           <button
             onClick={() => act(() => toggleGroupAdminAction(u.uid, !u.isGroupAdmin))}

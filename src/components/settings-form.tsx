@@ -164,7 +164,7 @@ export function AccountProfilePanel({
         </form>
       </Card>
 
-      {/* Resume / CV — powers the LinkedIn advocacy voice */}
+      {/* Resume / CV - powers the LinkedIn advocacy voice */}
       <Card>
         <CardTitle className="mb-1">Resume / CV</CardTitle>
         <p className="mb-3 text-xs text-muted-2">
@@ -173,7 +173,7 @@ export function AccountProfilePanel({
         <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
       </Card>
 
-      {/* Account metadata — read-only */}
+      {/* Account metadata - read-only */}
       <Card>
         <CardTitle className="mb-4">Account details</CardTitle>
         <dl className="space-y-3">
@@ -289,7 +289,7 @@ export function AccountSecurityPanel({ providers }: { providers: string[] }) {
         </div>
       </Card>
 
-      {/* Password change — only for email/password accounts */}
+      {/* Password change - only for email/password accounts */}
       {hasPassword && (
         <Card>
           <CardTitle className="mb-4">Change password</CardTitle>

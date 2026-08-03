@@ -24,7 +24,7 @@ export function AnalyticsFilters({ clients, currentClientId, currentRange, curre
     const range    = "range"    in updates ? updates.range    : currentRange;
     if (clientId) params.set("clientId", clientId);
     if (range)    params.set("range", range);
-    // Preserve the agent filter across range/client pill changes — only the
+    // Preserve the agent filter across range/client pill changes - only the
     // chip's own clear link drops it.
     if (currentAgentKey) params.set("agentKey", currentAgentKey);
     const qs = params.toString();
@@ -192,7 +192,7 @@ export function FeedbackTable({ feedbacks, clients }: FeedbackTableProps) {
 }
 
 /* ── Agent feedback history table ────────────────────────────────────
-   The two-level client-agent feedback (Phase 3, §5), NOT the table above —
+   The two-level client-agent feedback (Phase 3, §5), NOT the table above -
    that one is the doc-correction `Feedback` collection consumed by the
    context-doc pipeline. This is the standing per-agent/per-template notes
    clients and staff leave on a live umbrella (client-agents/feedback-modal.tsx

@@ -61,7 +61,7 @@ export function ClientRail({
   reviewJobs: AgentReviewNotification[];
   taskAlerts: ClientTask[];
   /**
-   * Credits the client can actually SPEND right now — availableCredits(), i.e.
+   * Credits the client can actually SPEND right now - availableCredits(), i.e.
    * the balance clipped by the weekly/monthly caps, not the raw stored balance.
    * The pill is labelled "remaining", so it must be the number the charge
    * transaction would honour. Shown as a pill linking to settings; hidden when null.
@@ -79,7 +79,7 @@ export function ClientRail({
   const home = `/clients/${client.id}`;
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
-  // The Library merged into the Workspace's Archive tab (2026-07) — one page
+  // The Library merged into the Workspace's Archive tab (2026-07) - one page
   // for board + activity + everything the agents delivered.
   //
   // "AI agents" in sentence case because that is the heading of the page it
@@ -109,7 +109,7 @@ export function ClientRail({
    */
   const settingsItem: NavItem = { href: `${home}/settings`, label: "Settings", icon: "Settings" };
 
-  // Bar + sheet frame are shared with the staff shell's client-context mode —
+  // Bar + sheet frame are shared with the staff shell's client-context mode -
   // see components/mobile-shell.tsx (CD-G9a). The hook closes the sheet on
   // navigation.
   const [companyOpen, setCompanyOpen] = useCompanySheet();
@@ -229,7 +229,7 @@ export function ClientRail({
 
           {/* Bottom account menu */}
           <div className="shrink-0 border-t border-border p-3">
-            {/* The bell sits ON the rail, not inside the account dropdown — a
+            {/* The bell sits ON the rail, not inside the account dropdown - a
                 badge only signals if it is visible without opening a menu, and
                 staff get exactly that in the workspace header (QA F116). */}
             <div className="mb-2 flex items-center gap-2">
@@ -266,7 +266,7 @@ export function ClientRail({
            Branding + the credits pill only. The bell that used to sit here is
            in the Company sheet now (CD-H5): at this width the sheet is where
            every piece of account chrome lives, and the staff shell already
-           works this way. The strip itself stays — it is the product's
+           works this way. The strip itself stays - it is the product's
            wordmark, not a menu (orchestrator ruling). */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
         <Link href={home} className="flex items-center gap-2.5">
@@ -301,7 +301,7 @@ export function ClientRail({
         companyOpen={companyOpen}
         onOpenCompany={() => setCompanyOpen(true)}
         /* CD-H5: the bell moved off the top bar into the sheet, so the tab
-           carries the signal — same treatment CD-G9c gave the staff shell. */
+           carries the signal - same treatment CD-G9c gave the staff shell. */
         companyUnread={unread}
       />
 
@@ -334,7 +334,7 @@ export function ClientRail({
               client's one route to it at every width, and the sheet must not
               re-open a destination the rail was just told to stop offering. */}
           {/* Explicit close: the sheet's on-navigation effect never fires when
-              the link's route is already current (same-route trap — twin of the
+              the link's route is already current (same-route trap - twin of the
               staff sheet's CD-G9c bounce-3). */}
           <Link
             href={settingsItem.href}

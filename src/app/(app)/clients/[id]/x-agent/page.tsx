@@ -7,7 +7,7 @@ import { XAgentIntake } from "@/components/x-agent-intake";
 
 /**
  * The client's X agent page: the company-page form, seats, the two ongoing
- * boxes, and per-draft feedback — the one canonical set of X intake surfaces.
+ * boxes, and per-draft feedback - the one canonical set of X intake surfaces.
  */
 export default async function XAgentPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();

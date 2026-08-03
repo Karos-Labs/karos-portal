@@ -8,13 +8,13 @@ import { TONE_COLORS } from "./tones";
 import type { GapChannel, GapView } from "./presenter";
 
 /**
- * "What we're fixing" — interactive gap cards (SCRUM-52 fixes 1 + 5).
+ * "What we're fixing" - interactive gap cards (SCRUM-52 fixes 1 + 5).
  * Receives fully humanized GapView rows from the presenter (plain data only);
  * this file owns filter/expand state and the funnel chip into the client's
  * agents page (SCRUM-52 amendment).
  */
 
-/** QA F144: same word set as the presenter's channel chips — "search engines"
+/** QA F144: same word set as the presenter's channel chips - "search engines"
  *  read as AI search to the team that built it, so it reads that way to a client. */
 const FILTERS: Array<{ id: "all" | GapChannel; label: string }> = [
   { id: "all", label: "All" },
@@ -88,7 +88,7 @@ function GapCard({ gap }: { gap: GapView }) {
             {/* The route sentence carries the whole story now, product name
                 included. The linked agent chip that used to sit under it is gone:
                 every label it could carry named a MANAGED PRODUCT, and no managed
-                product has a card at /clients/[id]/agents — so the chip was a
+                product has a card at /clients/[id]/agents - so the chip was a
                 dead-end link on a staff screen. `GapView.agentChip` is kept as a
                 pinned null (seo-geo-presenter.test.ts) rather than deleted, so
                 re-introducing a chip href fails a test instead of shipping. */}

@@ -282,6 +282,17 @@ export interface CustomAgent {
    * the F130 placeholder-pricing failure at the most expensive SKU.
    */
   launchCreditCost?: number | null;
+  /**
+   * Optional per-step model override, keyed by the named subagent identifier
+   * the skill's steps delegate to via the Claude Agent SDK's Task tool (e.g.
+   * `{"draft-post": "claude-haiku-4-5", "research": "claude-opus-4-8"}`).
+   * Threaded through to the agent-service runner as `brief.step_models`; only
+   * takes effect for skills whose steps are structured as named subagent
+   * delegations matching these keys — see docs/one-pagers/
+   * x-agent-v2-integration-contract.md for the naming contract. Undefined ⇒
+   * the whole run uses the task type's single default model, as today.
+   */
+  stepModels?: Record<string, string> | null;
   /** Hidden from run surfaces when false (still editable by admins). */
   enabled: boolean;
   /** Import provenance (absent on hand-written agents). */
@@ -920,7 +931,15 @@ export type ContextDocType =
   | "target-audience"
   | "client-guidelines"
   | "action-plan"
-  | "meeting-notes";
+  | "meeting-notes"
+  // Agent onboarding profile — the identity narrative (handle, off-limits, how
+  // they want to come across) for one agent, company + every seat in one doc
+  // (see upsertAgentProfileScope/getAgentProfileDocData in data.ts). Only "x"
+  // is wired today; the other two exist so LinkedIn/Reddit can adopt the same
+  // mechanism later without a type change.
+  | "x-agent-profile"
+  | "linkedin-agent-profile"
+  | "reddit-agent-profile";
 
 /** Three-tier no-leak boundary. */
 export type ContextDocTier = "internal" | "client" | "internal-only";
@@ -1526,6 +1545,32 @@ export interface CreditLedgerEntry {
  * (PORTAL-INPUT-CONTRACT §3: the client types an update once).
  */
 
+/**
+ * A seat's AI-built voice profile — swept from the account's own handle/posts
+ * by an agent's Setup (launch) run, not asked of the client. Its own sibling
+ * collection rather than a field on AgentIntake (which is explicitly ASK-only,
+ * see AgentIntake's doc comment) or a doc inside clientContextDocs (whose key
+ * has no seat dimension). One doc per (clientId, agent, seatId); `agent` keeps
+ * this usable by LinkedIn/Reddit once they adopt the same v2 pattern.
+ */
+export interface SeatVoiceProfile {
+  id: string;
+  clientId: string;
+  agent: "x" | "linkedin" | "reddit";
+  seatId: string;
+  /** Markdown content, built by the agent. */
+  content: string;
+  version: number;
+  /** Named sources the sweep drew from (handle, prior posts, etc.), if reported. */
+  sources?: string[];
+  /** When the sweep that produced this content ran. */
+  builtAt: number;
+  /** The launch-run job that produced this content, if known. */
+  builtByJobId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** A person with a seat inside a client business (platform-agnostic). */
 export interface ClientSeat {
   id: string;
@@ -1554,13 +1599,15 @@ export interface AgentIntake {
   /**
    * Account identity on the platform: X = @handle, LinkedIn = profile/page
    * URL, Reddit = u/username. Null = none yet (company) / pending (seat
-   * drafts, cannot post).
+   * drafts, cannot post). Undefined for X's docs going forward — the X agent
+   * moved this field to its clientContextDocs profile doc (see
+   * upsertAgentProfileScope); LinkedIn and Reddit still store it here.
    */
-  handle: string | null;
-  /** Company form only: how the brand wants to come across (the one asked voice input). */
+  handle?: string | null;
+  /** Company form only: how the brand wants to come across (the one asked voice input). Undefined for X — moved to its clientContextDocs profile doc. */
   comeAcross?: string;
-  /** Anything we must never post. */
-  offLimits: string;
+  /** Anything we must never post. Undefined for X — moved to its clientContextDocs profile doc. */
+  offLimits?: string;
   /** Engagement roster @handles; empty = engagement lane stays off. */
   roster: string[];
   /**
@@ -1691,6 +1738,8 @@ export interface XDraftFeedback {
   action: "posted" | "posted_with_edits" | "not_posted" | "note";
   /** posted_with_edits: the final text the client actually used. */
   finalText?: string;
+  /** posted_with_edits: the drafted text before the client's edit — the other half of the diff alongside finalText. */
+  originalText?: string;
   /** not_posted: why it was killed. */
   reason?: string;
   createdBy: string;
@@ -1723,6 +1772,8 @@ export interface LiDraftFeedback {
   action: "posted" | "posted_with_edits" | "not_posted" | "note" | "edit_request";
   /** posted_with_edits: the final text the client actually used. */
   finalText?: string;
+  /** posted_with_edits: the drafted text before the client's edit — the other half of the diff alongside finalText. Mirrors XDraftFeedback's field; not yet wired since LinkedIn doesn't use the slot/option-pick model. */
+  originalText?: string;
   /** not_posted: why it was killed. edit_request: what to change. */
   reason?: string;
   createdBy: string;
@@ -1896,6 +1947,15 @@ export interface AgentSlotOptionPick {
   pickedBy: string;
   /** True when the client edited the text before confirming. */
   edited: boolean;
+  /**
+   * The option's drafted text, captured at pick time — the one moment it's
+   * guaranteed correct, since the batch asset it was drawn from can go stale
+   * or be re-imported later. Paired with the materialized Asset's (possibly
+   * edited) content, this is the durable before/after diff; also copied onto
+   * that Asset's `meta.originalText` so mark-as-posted can carry it into
+   * XDraftFeedback without re-touching this slot doc.
+   */
+  originalText?: string;
 }
 
 /**

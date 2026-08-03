@@ -13,8 +13,8 @@ import { faviconUrl, domainFromName } from "@/lib/favicon";
  *   a `name` that is itself a domain ("ploy.ai") → initials chip → generic
  *   building glyph.
  *
- * One component for every brand surface — client switcher, clients grid,
- * competitor track, SEO/GEO comparison rows — so "always show the brand's
+ * One component for every brand surface - client switcher, clients grid,
+ * competitor track, SEO/GEO comparison rows - so "always show the brand's
  * favicon when we know its website" holds everywhere by construction.
  *
  * `className` carries sizing/rounding shared by every state; `imgClassName`
@@ -30,11 +30,11 @@ export function BrandFavicon({
   className,
   imgClassName,
 }: {
-  /** Uploaded/explicit logo URL — tried first. */
+  /** Uploaded/explicit logo URL - tried first. */
   src?: string | null;
   /** Website whose favicon is used when no logo (or the logo 404s). */
   website?: string | null;
-  /** Brand name — enables the initials fallback chip. */
+  /** Brand name - enables the initials fallback chip. */
   name?: string;
   /** Accent for the initials chip (client accent or theme neon). */
   accentColor?: string;
@@ -44,7 +44,7 @@ export function BrandFavicon({
   imgClassName?: string;
 }) {
   // Third candidate: brands whose NAME is their domain and that carry no
-  // stored website — routine for report-sourced competitor rows, which is why
+  // stored website - routine for report-sourced competitor rows, which is why
   // Okara.ai and ploy.ai rendered the generic glyph next to real favicons
   // (CD-F2). Dropped when it would duplicate the website candidate.
   const derived = website?.trim() ? null : faviconUrl(domainFromName(name), faviconSize);

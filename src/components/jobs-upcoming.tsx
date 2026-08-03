@@ -3,12 +3,12 @@ import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { nextRunCountdown } from "@/lib/scheduled-runs";
 
-/** One projected future fire, from either scheduling system — see jobs/page.tsx. */
+/** One projected future fire, from either scheduling system - see jobs/page.tsx. */
 export interface UpcomingRunRow {
   id: string;
   clientId: string;
   clientName: string;
-  /** The resolved display identity — never the stored/lab agent name (F147). */
+  /** The resolved display identity - never the stored/lab agent name (F147). */
   agentLabel: string;
   nextRunAt: number;
   /** Already carries its own zone suffix (describeCadence/describeLegacyCadence). */

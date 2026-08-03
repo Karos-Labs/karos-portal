@@ -386,7 +386,7 @@ function TaskCard({
       )}
 
       {/* Compact by design: title, chips, age. The description lives in the
-          ticket modal (and the hover tooltip) — its two extra lines per card
+          ticket modal (and the hover tooltip) - its two extra lines per card
           were what pushed the count off screen (QA F136). */}
       <h3
         className="line-clamp-2 text-sm font-semibold leading-snug text-foreground"
@@ -708,7 +708,7 @@ export function TasksBoard({
   const router = useRouter();
   const searchParams = useSearchParams();
   // Deep link from the notification bell: ?owner= picks the tab, ?task= opens
-  // the ticket (QA F64). Distinct keys — ?tab= is the Workspace's
+  // the ticket (QA F64). Distinct keys - ?tab= is the Workspace's
   // board/activity/archive toggle and must not be re-keyed. Unknown values are
   // ignored, so a stale link degrades to the default board.
   const ownerParam = searchParams.get("owner");
@@ -752,7 +752,7 @@ export function TasksBoard({
   }
 
   // Same-route navigation (bell row clicked while already on /tasks) doesn't
-  // remount, so the deep-link params have to be re-read when they change —
+  // remount, so the deep-link params have to be re-read when they change -
   // otherwise the board keeps whatever tab it was on (QA F64 / F97 watch-item).
   const linkSignature = `${ownerParam ?? ""}|${taskParam ?? ""}`;
   const [prevLinkSignature, setPrevLinkSignature] = useState(linkSignature);
@@ -998,7 +998,7 @@ export function TasksBoard({
   }
 
   // Client-owned work never sits in "Review Pending" (that state is for AI drafts
-  // awaiting review) — the "Depending on you" tab only needs 3 columns.
+  // awaiting review) - the "Depending on you" tab only needs 3 columns.
   const visibleColumns = useMemo(
     () => (activeTab === "client" ? BOARD_COLUMNS.filter((c) => c.status !== "review_pending") : BOARD_COLUMNS),
     [activeTab],
@@ -1016,7 +1016,7 @@ export function TasksBoard({
       if (task.status === "archived") continue;
       // The "Depending on you" tab renders no Review Pending column, so any
       // client-owned task already stuck in that state (moved there before the
-      // status machine refused it — QA F54) surfaces in Pending instead of
+      // status machine refused it - QA F54) surfaces in Pending instead of
       // silently disappearing while still counting in the tab total.
       if (activeTab === "client" && task.status === "review_pending") {
         map.pending.push(task);
@@ -1046,7 +1046,7 @@ export function TasksBoard({
       <div className="mb-4 flex flex-col gap-3 rounded-lg border border-border bg-surface-2/70 p-3">
         {/* ONE straight row (CD-G10): tabs · search · status on a shared
             baseline. It used to be `flex-wrap` with the run-pending CTA sitting
-            inside the right-hand group — and that CTA is a tall two-line card,
+            inside the right-hand group - and that CTA is a tall two-line card,
             not a control. Its height plus the search field's min-width blew the
             row apart: the tabs dropped to a second line bottom-left while
             search and the status filter stayed top-right, with the card
@@ -1056,8 +1056,8 @@ export function TasksBoard({
             the viewport. `sm:` only knows the window is 640+, so with the
             copilot rail out at 1280 the row still tried to fit tabs (336px) +
             search + filters into 548-580px: the search field was squeezed to
-            41px in the client shell and to ZERO — with the row overflowing by
-            29px — in the staff shell, which carries a second select. The (app)
+            41px in the client shell and to ZERO - with the row overflowing by
+            29px - in the staff shell, which carries a second select. The (app)
             shells wrap every page in @container, so @3xl (768px of actual
             column) is a width the row can honestly hold; below it the toolbar
             uses the column layout CD-G10 already defines, rather than a
@@ -1103,7 +1103,7 @@ export function TasksBoard({
               leaving the search box showing four characters. */}
           <div className="flex min-w-0 flex-1 flex-col gap-2 @3xl:flex-row @3xl:items-center @3xl:justify-end">
             {/* The floor that makes the row honest: once it IS a row, the field
-                never shrinks past 8rem — below that the placeholder is cut and
+                never shrinks past 8rem - below that the placeholder is cut and
                 the control stops reading as a search box. */}
             <div className="relative min-w-0 w-full @3xl:min-w-[8rem] @3xl:max-w-[320px] @3xl:flex-1">
               <Icon name="Search" className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-2" />
@@ -1155,7 +1155,7 @@ export function TasksBoard({
 
         {/* The CTA gets its own clean row (CD-G10). It is a card that grows a
             price-confirmation panel when pressed, so there is no width at which
-            it belongs on the filter line — inside the row it distorted the
+            it belongs on the filter line - inside the row it distorted the
             toolbar, and on the row it distorted nothing. */}
         {activeTab === "karos" && clientId && (
           <div className="border-t border-border/60 pt-3">

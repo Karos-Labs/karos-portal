@@ -31,7 +31,7 @@ const SENTIMENT_META: Record<Sentiment, { tone: "success" | "warning" | "danger"
 };
 
 /**
- * Audience Simulation panel — runs the asset's artifact past the synthetic
+ * Audience Simulation panel - runs the asset's artifact past the synthetic
  * persona panel on demand and renders each verdict with a color-coded score
  * bar, sentiment indicator, and the raw qualitative critique. Handles the
  * parallel run with a graceful skeleton grid and isolates per-persona failures.
@@ -48,8 +48,8 @@ export function AudienceSimulation({
   const [results, setResults] = useState<PersonaSimulationResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A ref (not state) so a double-click within the same render pass — before
-  // `loading` re-renders the button away — still can't fire a second request.
+  // A ref (not state) so a double-click within the same render pass - before
+  // `loading` re-renders the button away - still can't fire a second request.
   const runningRef = useRef(false);
 
   const run = useCallback(async () => {

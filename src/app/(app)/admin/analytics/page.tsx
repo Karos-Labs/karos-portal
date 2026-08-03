@@ -36,7 +36,7 @@ interface LowCreditClient {
 /**
  * Clients at or below LOW_CREDIT_THRESHOLD, lowest first. The client-facing
  * wall says "ask your Karos team for a top-up" and the copilot repeats it under
- * 20 — but the Karos team had no queue, notification or dashboard telling them
+ * 20 - but the Karos team had no queue, notification or dashboard telling them
  * who was asking (QA F117). SPENDABLE credits, so a client blocked by a weekly
  * cap shows up too, not just an empty balance.
  */
@@ -312,7 +312,7 @@ function renderPage(p: {
         ))}
       </div>
 
-      {/* Clients low on credits — the agency's queue for the top-up the
+      {/* Clients low on credits - the agency's queue for the top-up the
           client-facing wall tells them to ask for (QA F117). */}
       {lowCredits.length > 0 && (
         <Card>
@@ -456,7 +456,7 @@ function renderPage(p: {
         <FeedbackTable feedbacks={displayFeedbacks} clients={clients} />
       </Card>
 
-      {/* Agent feedback history (Phase 3 two-level client-agent feedback) —
+      {/* Agent feedback history (Phase 3 two-level client-agent feedback) -
           distinct collection from the doc-correction table above. */}
       <Card>
         <AgentFeedbackHistoryTable rows={displayAgentFeedbackRows} clients={clients} agentNames={agentNames} />

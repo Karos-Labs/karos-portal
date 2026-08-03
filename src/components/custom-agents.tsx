@@ -27,6 +27,7 @@ import {
   runCustomAgentAction,
   runCustomAgentTestAction,
   setClientCustomAgentsAction,
+  setCustomAgentEnabledAction,
   updateCustomAgentAction,
 } from "@/lib/actions";
 import {
@@ -68,18 +69,18 @@ import { cn, formatDate, relativeTime } from "@/lib/utils";
 /**
  * The slice of a CustomAgent that may be serialized to client-user browsers.
  * Deliberately excludes instructions (the system prompt), skill paths, and
- * repo provenance — pages map full docs down to this before passing them.
+ * repo provenance - pages map full docs down to this before passing them.
  *
  * `description` is NOT on it (F127). It is the lab repo's own skill manifest,
  * no surface that receives this summary reads it, and this module's whole
  * doctrine is that a field which crosses the boundary is readable from
  * view-source whether or not anything paints it. The staff agent LIBRARY still
- * shows it — that surface takes the full CustomAgent, which is the honest place
+ * shows it - that surface takes the full CustomAgent, which is the honest place
  * for manifest text to live.
  */
 export type RunnableAgentSummary = Pick<
   CustomAgent,
-  "id" | "key" | "name" | "clientBlurb" | "icon" | "color"
+  "id" | "key" | "name" | "clientBlurb" | "icon" | "color" | "enabled"
 > & {
   creditCost?: number | null;
 };
@@ -92,7 +93,7 @@ export type RunnableAgentSummary = Pick<
  * `description`. That is the defect Albert screenshotted (CD-G2): cards on his
  * own client pages reading "Master content-social skill. Given a brand's
  * guidelines + any past competitor research…". The fallback is now the keyed
- * blurb map, which always has a sentence written for a buyer — so the manifest
+ * blurb map, which always has a sentence written for a buyer - so the manifest
  * is no longer in the chain at all, nor in the payload, and the staff library
  * still flags agents with no curated blurb for a rewrite.
  */
@@ -107,7 +108,7 @@ function agentBlurb(agent: Pick<RunnableAgentSummary, "key" | "name" | "clientBl
 /** One run-history row, pre-filtered and stripped server-side. */
 export interface CustomAgentRunRow {
   id: string;
-  /** The run's STORED agent name. A join key — the card matches its own runs on it. */
+  /** The run's STORED agent name. A join key - the card matches its own runs on it. */
   agentName: string;
   /**
    * The ONE name this row prints, resolved server-side through the §7.3
@@ -119,7 +120,7 @@ export interface CustomAgentRunRow {
   createdAt: number;
   assetCount: number;
   /**
-   * The operator's raw request. STAFF VIEWERS ONLY — a client's permanent run
+   * The operator's raw request. STAFF VIEWERS ONLY - a client's permanent run
    * history must not be somebody's typing, misspellings and all, so the page
    * omits it from the client payload rather than hiding it at render.
    */
@@ -127,12 +128,12 @@ export interface CustomAgentRunRow {
   /** Link target (staff viewers get /jobs/<id>); absent for client viewers. */
   href?: string;
   /**
-   * Raw failure text (STAFF VIEWERS ONLY, same reasoning as `prompt`) — the
+   * Raw failure text (STAFF VIEWERS ONLY, same reasoning as `prompt`) - the
    * Control Room's Runs & Telemetry tab runs this through `classifyJobError`
    * for a human-readable label, keeping the raw string alongside it.
    */
   error?: string;
-  /** How the run was initiated — staff-only, so a Test Run can badge itself distinctly. */
+  /** How the run was initiated - staff-only, so a Test Run can badge itself distinctly. */
   runType?: JobRunType;
 }
 
@@ -145,7 +146,7 @@ export interface ClientAgentScheduleRow {
   outputsPerRun: number;
   nextRunAt: number;
   /**
-   * The ongoing direction handed to the agent on every fire — STAFF-AUTHORED,
+   * The ongoing direction handed to the agent on every fire - STAFF-AUTHORED,
    * and absent for client viewers (toScheduleRows omits it). It used to ship
    * unconditionally and be painted in an editable textarea inside the client's
    * pace dialog, which both showed a client internal operator copy and let them
@@ -156,7 +157,7 @@ export interface ClientAgentScheduleRow {
   minute: number;
   /**
    * The scheduler's refusal from the last fire that produced nothing. When set,
-   * the card drops the "Live" badge — an always-on agent that is refused on
+   * the card drops the "Live" badge - an always-on agent that is refused on
    * every fire must never read as healthy.
    */
   lastError?: string | null;
@@ -165,7 +166,7 @@ export interface ClientAgentScheduleRow {
 }
 
 /**
- * The intake page an agent refuses to run without, by agent key — or null for
+ * The intake page an agent refuses to run without, by agent key - or null for
  * agents with no such gate. Used on the STAFF hub, where the client is chosen
  * inside the run dialog and per-agent readiness therefore cannot be resolved
  * before the card is drawn (the client page passes a resolved `agentSetup` map
@@ -213,7 +214,7 @@ function agentLaunchCost(agent: Pick<CustomAgent, "launchCreditCost">): number |
 
 /**
  * An agent's blurb wherever a client reads it. Clamped to three lines so the
- * cut always lands on a line boundary — never mid-word — with a "More" control
+ * cut always lands on a line boundary - never mid-word - with a "More" control
  * that expands it in place. Whether the text overflows is MEASURED rather than
  * guessed from a character count: a length threshold is the same class of bug,
  * and the same prose wraps to a different number of lines per card width.
@@ -225,7 +226,7 @@ function AgentBlurb({ text, className }: { text: string; className?: string }) {
 
   useEffect(() => {
     const el = ref.current;
-    // While expanded there is nothing to measure (the clamp is off) — keep the
+    // While expanded there is nothing to measure (the clamp is off) - keep the
     // last answer so the control that opened it does not vanish under the cursor.
     if (!el || expanded) return;
     const measure = () => setOverflows(el.scrollHeight - el.clientHeight > 1);
@@ -268,13 +269,13 @@ function AgentBlurb({ text, className }: { text: string; className?: string }) {
  *
  * It carries BOTH routes to the same form, because the two surfaces that need
  * it can reach it differently. `href` is the agent's own data page and always
- * exists — that is what the client's detail route offers (CD-E1/CD-G1), and it
+ * exists - that is what the client's detail route offers (CD-E1/CD-G1), and it
  * is the only option when the page did not prefetch the form. `kind`/`data`
  * appear when it DID: the run dialog then collects the intake in place, so a
  * staff member setting up a run does not lose the brief they were writing to a
  * navigation.
  *
- * kind and data move together — a kind with no payload would render an empty
+ * kind and data move together - a kind with no payload would render an empty
  * pane, and a payload with no kind has no form to render it in.
  *
  * WHAT A CALLER OWES RunCustomAgentModal (#113). That dialog collects the intake
@@ -292,7 +293,7 @@ export type AgentSetupState = {
   ready: boolean;
   href: string;
   /**
-   * The OPERATOR's name for the intake page, e.g. "X agent data" — it matches
+   * The OPERATOR's name for the intake page, e.g. "X agent data" - it matches
    * the route, the manifest and how staff talk about it, and staff surfaces
    * (the run dialog, the roster note, StaffAgentControls) keep using it.
    */
@@ -301,10 +302,10 @@ export type AgentSetupState = {
    * The same page in a client's words, e.g. "Your X details".
    *
    * "Agent data" is our vocabulary, not theirs: a client reading "Manage X
-   * agent data" beside "Reddit agent data — NEEDED" is being asked to maintain
+   * agent data" beside "Reddit agent data - NEEDED" is being asked to maintain
    * a system's records rather than to tell us about themselves. Every
-   * client-facing surface — the inputs band, the sidebar card, the run gates'
-   * refusal lines — reads this one, so the three agents also stop each
+   * client-facing surface - the inputs band, the sidebar card, the run gates'
+   * refusal lines - reads this one, so the three agents also stop each
    * inventing their own phrasing.
    */
   clientLabel: string;
@@ -367,7 +368,7 @@ const INTAKE_ROUTE: Record<IntakeKind, string> = {
 };
 
 /**
- * What the agent drafts from, in the client's words — the run dialog says this
+ * What the agent drafts from, in the client's words - the run dialog says this
  * when the data is still missing. Per kind, because the three agents hold
  * genuinely different data: X and LinkedIn have a company page and seats,
  * Reddit has one account plus the subreddits it may answer in.
@@ -386,13 +387,13 @@ const INTAKE_FIRST_STEP: Record<IntakeKind, string> = {
 };
 
 /**
- * Which intake surface governs this agent — read off the agent's own setup
+ * Which intake surface governs this agent - read off the agent's own setup
  * state rather than re-derived from its key.
  *
  * Resolving it from the key meant every caller had to be handed all three
  * payloads and asked the identity question again, which is a second place for
  * "is this the LinkedIn agent" to drift from the server's answer. Now the page
- * says it once, per agent, and a state with no prefetched form yields null —
+ * says it once, per agent, and a state with no prefetched form yields null -
  * the href card serves that case.
  */
 function intakeFor(setup: AgentSetupState | null | undefined): AgentIntakeContext | null {
@@ -411,8 +412,8 @@ function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string
 }
 
 /**
- * Is the company page saved? `ready` is a looser server predicate — for X, any
- * seat satisfies it, and seats are shared across agents — so it cannot decide
+ * Is the company page saved? `ready` is a looser server predicate - for X, any
+ * seat satisfies it, and seats are shared across agents - so it cannot decide
  * on its own whether the setup a person came here to do is finished.
  */
 function companyOnFile(intake: AgentIntakeContext | null): boolean {
@@ -440,7 +441,7 @@ function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
 /**
  * The way into an agent's data: warning-toned while the data is still missing,
  * quiet once it is on file. Opens the run dialog's data pane rather than
- * navigating — the data belongs with the agent.
+ * navigating - the data belongs with the agent.
  */
 function AgentDataButton({
   kind,
@@ -472,6 +473,32 @@ function AgentDataButton({
 
 /* ═══════════════════ staff hub (/agents) ═══════════════════ */
 
+/** Admin-only Live/Paused flip, right on the agent card - no editor round-trip. */
+function AgentLiveToggle({ agentId, enabled }: { agentId: string; enabled: boolean }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={() =>
+        startTransition(async () => {
+          await setCustomAgentEnabledAction(agentId, !enabled);
+          router.refresh();
+        })
+      }
+      title={enabled ? "Pause this agent for clients" : "Make this agent live for clients"}
+      className="disabled:opacity-50"
+    >
+      <Badge tone={enabled ? "success" : "neutral"} className="cursor-pointer hover:opacity-80">
+        <Icon name={pending ? "Loader" : enabled ? "Zap" : "Pause"} className={cn("h-2.5 w-2.5", pending && "animate-spin")} />
+        {enabled ? "Live" : "Paused"}
+      </Badge>
+    </button>
+  );
+}
+
 /**
  * The "Custom agents" section of the staff Agents page: the stored-prompt
  * agent library. Admins import agents from the karos-agents repo catalog,
@@ -491,7 +518,7 @@ export function CustomAgentsHub({
    * an ARBITRARY agent with an arbitrary client: a per-client instance runs an
    * entry skill baked under the folder its key names, and both submit cores
    * refuse the wrong pair. Without the slug the hub can only offer every client
-   * and let the server refuse — after the whole brief has been written (F38).
+   * and let the server refuse - after the whole brief has been written (F38).
    */
   clients: Array<{ id: string; name: string; agentsRepoSlug?: string | null }>;
   isAdmin: boolean;
@@ -573,8 +600,20 @@ export function CustomAgentsHub({
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
+                  {/* Live/Paused: whether clients can currently launch or run
+                      this agent at all. Admins can flip it right here - a
+                      pause takes effect immediately (submitCustomAgentJob
+                      refuses a disabled agent) and turns the agent into
+                      "Coming Soon" on every client roster it was granted to. */}
+                  {isAdmin ? (
+                    <AgentLiveToggle agentId={agent.id} enabled={agent.enabled} />
+                  ) : (
+                    <Badge tone={agent.enabled ? "success" : "neutral"}>
+                      {agent.enabled ? "Live" : "Paused"}
+                    </Badge>
+                  )}
                   {/* Intake-driven agents refuse a run whose client has not filled
-                      in their data page — and that gate could only be discovered
+                      in their data page - and that gate could only be discovered
                       by writing the whole brief and reading the refusal. The
                       readiness itself depends on the client picked inside the
                       dialog, so the hub names the gate rather than pretending to
@@ -705,8 +744,8 @@ export function CustomAgentsHub({
  *
  * All THREE intake prefixes, which is the point: the Reddit one was missing,
  * so a staff member whose Reddit schedule was refused for want of intake got
- * the "contact us" row — advice to email somebody about a form they were one
- * click from filling in — while the identical X and LinkedIn refusals offered
+ * the "contact us" row - advice to email somebody about a form they were one
+ * click from filling in - while the identical X and LinkedIn refusals offered
  * the link. The three agents are gated the same way by the submit cores, so
  * they recover the same way here.
  */
@@ -725,8 +764,8 @@ function refusalNamesSetup(refusal: string): boolean {
  * roster and open the same full page a client opens, which is the second half
  * of Albert's directive. That move is only honest if nothing staff could do
  * before becomes unreachable, so this band carries the four capabilities that
- * lived on the retired card — run now, set/manage the schedule, reach the
- * agent's data, and read why a schedule is refusing — and the detail page
+ * lived on the retired card - run now, set/manage the schedule, reach the
+ * agent's data, and read why a schedule is refusing - and the detail page
  * mounts the curation pane and the economics card beside it.
  *
  * STAFF ONLY, and simpler for it: staff runs are free (isBillableClientActor),
@@ -750,7 +789,7 @@ export function StaffAgentControls({
   schedule?: ClientAgentScheduleRow;
   setup?: AgentSetupState;
   contextItems: ContextItem[];
-  /** Deliverables sitting in review for this agent — the staff queue. */
+  /** Deliverables sitting in review for this agent - the staff queue. */
   reviewCount?: number;
   reviewHref: string;
   lastRunAt?: number;
@@ -768,7 +807,7 @@ export function StaffAgentControls({
   const refusal = schedule?.status === "active" ? schedule.lastError?.trim() || null : null;
   const refusalIsSetup = refusal !== null && refusalNamesSetup(refusal);
   // A scheduled run fires unattended, so every fire would be refused while the
-  // company page is missing. An EXISTING schedule stays open to manage —
+  // company page is missing. An EXISTING schedule stays open to manage -
   // pausing it must never be blocked.
   const scheduleNeedsData = Boolean(intake) && !companyOnFile(intake) && !schedule;
 
@@ -887,7 +926,7 @@ export function StaffAgentControls({
         )}
       </div>
 
-      {/* Why a control is off, PAINTED — the Button primitive sets
+      {/* Why a control is off, PAINTED - the Button primitive sets
           disabled:pointer-events-none, so a title on a disabled button can
           never be shown. */}
       {blockedSetup && (
@@ -942,16 +981,16 @@ export function StaffAgentControls({
 }
 
 /**
- * Control Room "Test Run" (item 3's dry-run equivalent) — staff only. The
+ * Control Room "Test Run" (item 3's dry-run equivalent) - staff only. The
  * agent-service has no dry-run parameter, so this fires for real: same cost,
  * same generation. What's different is what happens to the OUTPUT afterward
- * — runCustomAgentTestAction stamps runType: "test", which the webhook reads
+ * - runCustomAgentTestAction stamps runType: "test", which the webhook reads
  * to keep the resulting draft off the calendar and every client-facing
  * surface (asset-visibility.ts's isTestRunAsset, mirroring the existing
  * launchDeliverable exclusion). Deliberately a simpler form than
- * RunCustomAgentModal — no client picker (already scoped to one client), no
+ * RunCustomAgentModal - no client picker (already scoped to one client), no
  * intake/attachment dance (a staff member testing the pipeline can just type
- * a brief) — reusing that heavier modal here would drag in machinery this
+ * a brief) - reusing that heavier modal here would drag in machinery this
  * flow doesn't need.
  */
 export function TestRunButton({ agentId, clientId }: { agentId: string; clientId: string }) {
@@ -1037,12 +1076,12 @@ export function TestRunButton({ agentId, clientId }: { agentId: string; clientId
 }
 
 /**
- * Recent agent runs — the staff history strip (CD-I1).
+ * Recent agent runs - the staff history strip (CD-I1).
  *
  * Lifted out of the retired card grid rather than rewritten, and kept on BOTH
  * staff surfaces: the roster page shows every agent's runs (the cross-agent
  * view staff had before and would otherwise lose to per-agent pages), and the
- * detail page shows one agent's. Client viewers never mount it — their run
+ * detail page shows one agent's. Client viewers never mount it - their run
  * history is the archive, and a raw prompt or a /jobs link is staff-only.
  */
 export function AgentRunHistory({
@@ -1051,14 +1090,14 @@ export function AgentRunHistory({
   heading = "Recent agent runs",
 }: {
   runs: CustomAgentRunRow[];
-  /** For the platform mark — matched on the stored name, as the rows are. */
+  /** For the platform mark - matched on the stored name, as the rows are. */
   agents: RunnableAgentSummary[];
   heading?: string;
 }) {
   const agentByName = useMemo(() => new Map(agents.map((a) => [a.name, a])), [agents]);
   if (runs.length === 0) return null;
   // Item 4's execution-state visibility, computed off the same rows the list
-  // below already has — no second fetch, just a count.
+  // below already has - no second fetch, just a count.
   const stateCounts = runs.reduce(
     (acc, r) => {
       if (r.status === "queued") acc.queued++;
@@ -1099,7 +1138,7 @@ export function AgentRunHistory({
               <div className="min-w-0 flex-1">
                 {/* The resolved identity, never the stored name (F147). */}
                 <p className="truncate text-sm">{run.label}</p>
-                {/* What the run produced — never what somebody typed to start
+                {/* What the run produced - never what somebody typed to start
                     it, for a client. `prompt` is present only for staff. */}
                 <p className="truncate text-xs text-muted-2">
                   {relativeTime(run.createdAt)}
@@ -1108,7 +1147,7 @@ export function AgentRunHistory({
                     : ""}
                   {run.prompt ? ` · "${run.prompt}"` : ""}
                 </p>
-                {/* Honest timeline (no fabricated step count — the agent-service
+                {/* Honest timeline (no fabricated step count - the agent-service
                     reports only terminal outcomes, see job-error-taxonomy.ts /
                     agent-health.ts doc comments): queued → working (elapsed) →
                     the classified error, or nothing more once it's done. */}
@@ -1149,10 +1188,10 @@ export function AgentRunHistory({
                   <CancelRunControl runId={run.id} staffFastReconcile />
                 </div>
               )}
-              {/* Item 4: a failed run used to be a dead end — the only way to
+              {/* Item 4: a failed run used to be a dead end - the only way to
                   try again was firing a brand-new run by hand. Re-submits with
                   the same agent/client/prompt via retryJobAction. Labeled plainly
-                  as a full re-run, not "resume from failed step" — there is no
+                  as a full re-run, not "resume from failed step" - there is no
                   step-level signal to resume FROM (see job-error-taxonomy.ts). */}
               {run.status === "failed" && (
                 <div className="border-t border-border bg-surface-2/50">
@@ -1177,8 +1216,8 @@ export function AgentRunHistory({
  * EXPORTED because CD-G1 took the client's only mount away with it (F30
  * regression). Dropping ClientCustomAgents from the client branch left this
  * control mounted on the staff hub alone, so the client-authorized action
- * behind it — cancelClientAgentJobAction, which authorizes on the JOB's own
- * clientId — had no surface. The agent DETAIL page is where a client now meets
+ * behind it - cancelClientAgentJobAction, which authorizes on the JOB's own
+ * clientId - had no surface. The agent DETAIL page is where a client now meets
  * their in-flight run, so that is where the control goes: one implementation,
  * one action, one confirm step, on both panels.
  */
@@ -1189,7 +1228,7 @@ export function CancelRunControl({
 }: {
   runId: string;
   /**
-   * Whether stopping this run actually returns credits — i.e. whether the
+   * Whether stopping this run actually returns credits - i.e. whether the
    * viewer was charged for it. Staff and impersonated sessions never spend
    * (isBillableClientActor), so promising them a refund describes a ledger
    * entry that does not exist. Default true: the client pressing their own
@@ -1197,13 +1236,13 @@ export function CancelRunControl({
    */
   refunds?: boolean;
   /**
-   * Control Room's "Force Cancel" (staff only, default false — this component
+   * Control Room's "Force Cancel" (staff only, default false - this component
    * is shared with the client-facing activeRun banner, which cannot call a
    * requireStaff() action). `cancelClientAgentJobAction` only asks the agent-
    * service to stop the run; locally the job stays queued/running until a
    * webhook arrives or the ~10-minute reconcile cron sweeps it. When true,
-   * this fires `refreshJobStatusAction` right after — the same reconcile
-   * logic the cron uses — so the row reflects the real terminal state in
+   * this fires `refreshJobStatusAction` right after - the same reconcile
+   * logic the cron uses - so the row reflects the real terminal state in
    * seconds instead of up to the cron's full interval.
    */
   staffFastReconcile?: boolean;
@@ -1216,7 +1255,7 @@ export function CancelRunControl({
   function cancel() {
     setError(null);
     startTransition(async () => {
-      // The action does not only RETURN errors — requireClientAccess throws
+      // The action does not only RETURN errors - requireClientAccess throws
       // ("Unauthorized" / "Forbidden"), and a network failure on the server
       // action itself rejects. Unhandled, that escaped the transition and took
       // the whole route to the error boundary: a client whose session had
@@ -1270,7 +1309,7 @@ export function CancelRunControl({
 
 /**
  * Re-fire a failed run with the same agent/client/prompt (retryJobAction).
- * Staff-only surface — mounted only from AgentRunHistory, which never renders
+ * Staff-only surface - mounted only from AgentRunHistory, which never renders
  * for client viewers (see its own doc comment).
  */
 function RetryRunControl({ runId }: { runId: string }) {
@@ -1317,12 +1356,12 @@ function RetryRunControl({ runId }: { runId: string }) {
  * A3/A4). The staff dialog has two dials because the schedule really has two
  * dimensions: how many days the agent fires, and how many items each fire
  * produces. Shown to a client, that second dial states the batch shape outright
- * — "3 runs × 5 outputs = 15 drafts a week" tells them their week is generated
+ * - "3 runs × 5 outputs = 15 drafts a week" tells them their week is generated
  * in lumps ahead of time, which is exactly what the week strip is careful never
  * to reveal. A client may be told the PACE (how many posts a week, which days),
  * never the batching that produces it.
  *
- * So the client form offers one number — the days it actually changes — and
+ * So the client form offers one number - the days it actually changes - and
  * READS the stored outputs-per-run into the weekly cost and the save payload
  * rather than pinning it: a pinned 1 both under-quoted a 3×5 schedule's price
  * and silently rewrote it on save (delta-lens bounce). The label decomposes
@@ -1360,7 +1399,7 @@ export function AgentScheduleModal({
   );
   // ALWAYS the stored value, in both faces of the dialog. Pinning this to 1 for
   // paceOnly (as it briefly did) was two bugs in one: a schedule stored at 3×5
-  // quoted its weekly cost from 3×1 — five times under — and pressing "Save
+  // quoted its weekly cost from 3×1 - five times under - and pressing "Save
   // pace" then wrote that 1 back, silently cutting the client's output to a
   // fifth of what they were paying for. A client adjusting pace changes which
   // DAYS the agent fires, and nothing else; the server enforces the same rule
@@ -1485,7 +1524,7 @@ export function AgentScheduleModal({
                 Clients see one dial. It is labelled "Posts per week" only when
                 that is literally true (one output per fire); when a staff member
                 has set more, the honest client-side name for the same dial is
-                the number of DAYS — which the ruling allows ("the modal may name
+                the number of DAYS - which the ruling allows ("the modal may name
                 pace: posts per week, days") and which states no batch shape. */}
             <Label htmlFor={`schedule-posts-${agent.id}`}>
               {paceOnly
@@ -1533,7 +1572,7 @@ export function AgentScheduleModal({
         </div>
 
         {/* STAFF ONLY. This is the operator's standing instruction to the agent
-            — internal copy, written for the model — and it was rendering in the
+            - internal copy, written for the model - and it was rendering in the
             client's pace dialog as an editable textarea. That showed a client
             text never written for them AND let them rewrite the direction every
             future run receives. Clients steer their agent through feedback,
@@ -1561,7 +1600,7 @@ export function AgentScheduleModal({
           {paceOnly ? (
             /* The weekly total above is computed from the STORED multiplier, so
                it is the real number. What it must not do is decompose: no
-               "runs", no "outputs per run", no weekly draft total — each of
+               "runs", no "outputs per run", no weekly draft total - each of
                those describes the batch rather than the pace. When one post per
                fire is stored there is no batch to hide and the friendlier
                sentence is also the true one.
@@ -1652,13 +1691,13 @@ export function AgentScheduleModal({
 
 /* ═══════════════════════ run dialog ═══════════════════════ */
 
-/** The brief, or the agent's own data form — the intake-driven agents own both. */
+/** The brief, or the agent's own data form - the intake-driven agents own both. */
 type RunPane = "run" | "data";
 
 /**
  * Exported so the agent DETAIL page can offer the same run gesture for an
  * agent that has a live schedule but no umbrella (CD-H8). One dialog, one
- * launch profile, one charge path — a second run form for the legacy shape
+ * launch profile, one charge path - a second run form for the legacy shape
  * would be a second place for the priced gesture to drift.
  */
 export function RunCustomAgentModal({
@@ -1724,7 +1763,7 @@ export function RunCustomAgentModal({
   // The data opens on the company page being missing, not on the server gate:
   // `ready` is satisfied by a shared seat, so an X run would otherwise skip
   // straight to the brief for a client who set LinkedIn up first. This only
-  // chooses the pane — `ready` alone still decides what a run does.
+  // chooses the pane - `ready` alone still decides what a run does.
   const openOnData = Boolean(intake) && (!companyOnFile(intake) || initialPane === "data");
   const [pane, setPane] = useState<RunPane>(openOnData ? "data" : "run");
   // Did the data open because the run wanted it, rather than because someone
@@ -1758,7 +1797,7 @@ export function RunCustomAgentModal({
   // and the sentence explaining the swap, so a switch has to go back to the top
   // of that box rather than to the top of the pane. The control that did the
   // switching lived in the pane it hid, so focus has to move too. Neither is
-  // wanted on first mount — the dialog already opens at the top.
+  // wanted on first mount - the dialog already opens at the top.
   useEffect(() => {
     if (shownPane.current === pane) return;
     shownPane.current = pane;
@@ -1797,7 +1836,7 @@ export function RunCustomAgentModal({
       return;
     }
     // An agent whose only field is labelled "Optional" must be runnable with the
-    // form left exactly as instructed — that is the run the intake-driven
+    // form left exactly as instructed - that is the run the intake-driven
     // agents are documented to support, and they draft from their stored data
     // either way. The brief joins non-empty fields only, so an untouched form
     // produced an empty prompt and a refusal naming a requirement that does not
@@ -1894,7 +1933,7 @@ export function RunCustomAgentModal({
   // One gate for every intake-driven agent whose form this dialog does NOT
   // carry. `setup` is already this agent's own answer, so the modal never
   // re-derives readiness from the agent key. When the page DID prefetch the
-  // form (`intake`), the pane below collects it in place instead — a link out
+  // form (`intake`), the pane below collects it in place instead - a link out
   // would throw away the run the reader was setting up (ruling 7).
   //
   // IT NAMES THE FORM AND NOTHING ELSE (#113). It used to describe the shape of
@@ -1952,7 +1991,7 @@ export function RunCustomAgentModal({
     // The blurb goes in the body, not Modal's `description`: that slot is an
     // unclamped <p>, so a long fallback manifest pushed the whole brief below
     // the fold. Same clamp + "More" as the card. It is also never
-    // `agent.description` — that is the lab manifest, written for the people
+    // `agent.description` - that is the lab manifest, written for the people
     // who build agents, and this dialog is a client surface (CD-G2). The
     // estimate + Start run row is the pinned footer: on the long agent briefs
     // it used to scroll out of sight in the same box as the title.
@@ -2086,7 +2125,7 @@ export function RunCustomAgentModal({
             {clients.length === 1 ? (
               // F38. A per-client agent instance has exactly one client it can
               // draft for, and a dropdown of one is a question with a single
-              // answer — worse, it reads as though there were a choice. The
+              // answer - worse, it reads as though there were a choice. The
               // fixed chip states the binding instead.
               <div
                 id="ca-client"
@@ -2251,7 +2290,24 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
   const [launchCreditCost, setLaunchCreditCost] = useState(
     agent?.launchCreditCost != null ? String(agent.launchCreditCost) : "",
   );
+  const [stepModelsText, setStepModelsText] = useState(
+    Object.entries(agent?.stepModels ?? {})
+      .map(([step, model]) => `${step}: ${model}`)
+      .join("\n"),
+  );
   const [enabled, setEnabled] = useState(agent?.enabled ?? true);
+
+  function parseStepModels(raw: string): Record<string, string> | null {
+    const entries: Array<[string, string]> = [];
+    for (const line of raw.split("\n")) {
+      const idx = line.indexOf(":");
+      if (idx === -1) continue;
+      const step = line.slice(0, idx).trim();
+      const model = line.slice(idx + 1).trim();
+      if (step && model) entries.push([step, model]);
+    }
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
+  }
 
   function save() {
     setError(null);
@@ -2268,6 +2324,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
       instructions,
       creditCost: creditCost.trim() === "" ? null : Number(creditCost),
       launchCreditCost: launchCreditCost.trim() === "" ? null : Number(launchCreditCost),
+      stepModels: parseStepModels(stepModelsText),
       enabled,
     };
     startTransition(async () => {
@@ -2422,7 +2479,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           </div>
         </div>
         {/* §6.3. Until this is set the client's self-serve Launch button stays
-            disabled with a visible "pricing is being finalized" reason — gated
+            disabled with a visible "pricing is being finalized" reason - gated
             rather than provisional, because billing an invented number that
             later changes is the F130 placeholder-pricing failure at the most
             expensive SKU. Staff launches stay free and ARE the measurement runs;
@@ -2442,6 +2499,22 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
             The one-off setup run that researches the brand and designs the template set. Must be
             higher than the per-run price. Left empty, clients cannot launch this agent themselves
             and staff run the setup for them.
+          </p>
+        </div>
+        <div>
+          <Label htmlFor="ae-step-models">Per-step model overrides (one per line, optional)</Label>
+          <Textarea
+            id="ae-step-models"
+            rows={3}
+            value={stepModelsText}
+            onChange={(e) => setStepModelsText(e.target.value)}
+            placeholder={"draft-post: claude-haiku-4-5\nresearch: claude-opus-4-8"}
+            className="font-mono text-xs"
+          />
+          <p className="mt-1 text-xs text-muted-2">
+            `step name: model id`, one per line. Only takes effect for a skill whose steps are
+            named subagents matching these names — a no-op otherwise. Leave empty to run the whole
+            job on the task type&apos;s single default model, as today.
           </p>
         </div>
         <div className="flex items-center gap-4">

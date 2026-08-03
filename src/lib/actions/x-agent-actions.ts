@@ -29,6 +29,7 @@ import {
   getClientSeat,
   listClientSeats,
   upsertAgentIntake,
+  upsertAgentProfileScope,
 } from "@/lib/data";
 import { requireClientAccess } from "./_shared";
 import { CREDIT_COSTS } from "@/lib/credits";
@@ -36,6 +37,9 @@ import { withClientModelCharge } from "@/lib/client-model-charge";
 import type { ContextDocTier } from "@/lib/types";
 
 const MAX_TEXT = 2_000;
+/** originalText is system-captured (pick time), not user-typed — truncate rather than error,
+ * matching the pick flow's own cap (slot-option-actions.ts's MAX_PICK_CHARS). */
+const MAX_ORIGINAL_TEXT = 4_000;
 const MAX_NAME = 120;
 const MAX_ROSTER = 30;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -148,13 +152,16 @@ export async function saveXCompanyIntakeAction(input: {
   if (handle !== null && typeof handle === "object") return handle;
   const premium = parsePremium(input.premium);
   await clearDroppedPremium(input.clientId, null, premium);
+  await upsertAgentProfileScope(
+    input.clientId,
+    "x",
+    { seatId: null },
+    { handle, comeAcross: input.comeAcross.trim(), offLimits: input.offLimits.trim() },
+  );
   await upsertAgentIntake({
     clientId: input.clientId,
     agent: "x",
     seatId: null,
-    handle,
-    comeAcross: input.comeAcross.trim(),
-    offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
     ...premium,
     createdBy: user.uid,
@@ -211,12 +218,16 @@ export async function addXSeatAction(input: {
       updatedAt: now,
     });
   }
+  await upsertAgentProfileScope(
+    input.clientId,
+    "x",
+    { seatId, name, slug },
+    { handle, offLimits: input.offLimits.trim() },
+  );
   await upsertAgentIntake({
     clientId: input.clientId,
     agent: "x",
     seatId,
-    handle,
-    offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
     ...parsePremium(input.premium),
     createdBy: user.uid,
@@ -388,12 +399,16 @@ export async function saveXSeatIntakeAction(input: {
   if (handle !== null && typeof handle === "object") return handle;
   const premium = parsePremium(input.premium);
   await clearDroppedPremium(input.clientId, input.seatId, premium);
+  await upsertAgentProfileScope(
+    input.clientId,
+    "x",
+    { seatId: input.seatId, name: seat.name, slug: seat.slug },
+    { handle, offLimits: input.offLimits.trim() },
+  );
   await upsertAgentIntake({
     clientId: input.clientId,
     agent: "x",
     seatId: input.seatId,
-    handle,
-    offLimits: input.offLimits.trim(),
     roster: parseRoster(input.roster),
     ...premium,
     createdBy: user.uid,
@@ -485,6 +500,8 @@ export async function addXDraftFeedbackAction(input: {
   draftRef?: string;
   action: "posted" | "posted_with_edits" | "not_posted" | "note";
   finalText?: string;
+  /** posted_with_edits: the drafted text before the client's edit. */
+  originalText?: string;
   reason?: string;
 }): Promise<{ error?: string }> {
   const user = await requireClientAccess(input.clientId);
@@ -526,6 +543,9 @@ export async function addXDraftFeedbackAction(input: {
     ...(input.draftRef?.trim() ? { draftRef: input.draftRef.trim() } : {}),
     action: input.action,
     ...(input.finalText?.trim() ? { finalText: input.finalText.trim() } : {}),
+    ...(input.originalText?.trim()
+      ? { originalText: input.originalText.trim().slice(0, MAX_ORIGINAL_TEXT) }
+      : {}),
     ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
     createdBy: user.uid,
     createdAt: Date.now(),

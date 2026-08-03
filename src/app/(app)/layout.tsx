@@ -43,7 +43,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { user, isImpersonating, realAdmin } = await getViewingContext();
 
   // Block the entire portal until a freshly-created client account finishes the
-  // 2-step onboarding wizard. Checked first — before any other data fetching.
+  // 2-step onboarding wizard. Checked first - before any other data fetching.
   // Exempt impersonation: staff "viewing as" an unonboarded client must land on
   // the real dashboard, not get funneled into (and stuck in) that client's wizard.
   if (shouldBlockForOnboarding({ isImpersonating, user })) redirect("/onboarding");
@@ -56,7 +56,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   let clients: StaffShellClientView[] = [];
 
   // Staff bell feeds are cross-client, so they need the viewer's client scope:
-  // admins see every client, an employee only their assigned ones — the same
+  // admins see every client, an employee only their assigned ones - the same
   // fence /jobs, /assets and the task board use.
   const isStaffViewer = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const staffClients: Client[] = isStaffViewer
@@ -78,7 +78,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         ? listAssignedActionItems(user.uid, { forClientId: user.clientId })
         : Promise.resolve([] as ActionItemNotification[])
       : listAssignedActionItems(user.uid),
-    // Reviews + tasks: the client's own, or — for staff — everything in their
+    // Reviews + tasks: the client's own, or - for staff - everything in their
     // client scope. These two feeds used to be handed empty arrays to staff, so
     // "Ready for review" and "Pending tasks" were structurally unreachable for
     // the people who run the agency, and the bell claimed "All caught up!"
@@ -144,7 +144,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       const spendableCredits = availableCredits(credits);
 
       // Price + refusal for a targeted doc correction, resolved HERE rather than
-      // in the modal — same shape as the Agents page's creditBlockReasons map:
+      // in the modal - same shape as the Agents page's creditBlockReasons map:
       // the reason comes from the server's own ladder, so the modal can't invent
       // a different one. Present only for a billable client viewer; staff and
       // admins in "View as Client" are never charged, so they see no price.
@@ -158,7 +158,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         : undefined;
       // Same rule as the docs above, applied to the client record itself: the
       // rail is a "use client" component, so the WHOLE document would be
-      // serialized into every client-portal RSC payload — including
+      // serialized into every client-portal RSC payload - including
       // clientKeyId, the join token that auto-approves any signup into this
       // workspace (QA F56). Whitelist-projected before it crosses.
       const clientView = toClientPortalView(client);
@@ -184,10 +184,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 <ImpersonationBanner realAdmin={realAdmin} viewingAs={user} />
               )}
               <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pt-8 md:pb-16 lg:pb-8">
-                {/* Same cap as the staff shell — the two shells must render pages
+                {/* Same cap as the staff shell - the two shells must render pages
                     at identical widths or tabs appear to change size. */}
                 <div className="@container mx-auto w-full max-w-6xl animate-fade-up">
-                  {/* The client shell — this banner's audience is a CLIENT_USER,
+                  {/* The client shell - this banner's audience is a CLIENT_USER,
                       who has neither Regenerate nor Refresh Task Map (F20). */}
                   <AiProcessingBanner client={clientView} isClientViewer />
                   {children}
@@ -229,7 +229,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <ActiveClientProvider>
       <div className="flex min-h-screen flex-col md:flex-row">
         {/* Support, light/dark and the bell used to float in an AppHeader strip
-            at the top right of every staff page. CD-G9c retired that strip —
+            at the top right of every staff page. CD-G9c retired that strip -
             the rail's account menu carries them now, and the Company sheet
             carries them at narrow width in client context. */}
         <Sidebar
@@ -245,7 +245,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {isImpersonating && realAdmin && (
             <ImpersonationBanner realAdmin={realAdmin} viewingAs={user} />
           )}
-          {/* Client-context mode gets its own persistent bar — see F60. */}
+          {/* Client-context mode gets its own persistent bar - see F60. */}
           <ClientContextBar />
           {/* Scroll reserve, and it is CONDITIONAL here where the client shell's
               is flat — the bottom chrome it clears (tab bar + copilot strip)
@@ -255,7 +255,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </StaffShellMain>
         </div>
-        {/* Docked copilot right-rail — visible when admin selects a client via "View as Client" */}
+        {/* Docked copilot right-rail - visible when admin selects a client via "View as Client" */}
         <StaffCopilotDock userName={user.name} viewerUid={user.uid} />
       </div>
     </ActiveClientProvider>

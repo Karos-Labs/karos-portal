@@ -38,7 +38,7 @@ const UNKNOWN_STATUS_COLOR = "#9c9ca3";
  * of the analytics stack does not go.
  *
  * CD-H1: for a client viewer they are the FIRST thing under the Overview header
- * — the counters are what the dashboard opens with, and F99's tab arrangement
+ * - the counters are what the dashboard opens with, and F99's tab arrangement
  * had pushed them a screen down behind AI Insights into the Performance tab.
  * The client page renders this directly and passes `hideStats` to
  * <ClientAnalytics/> so the row is never printed twice; staff keep the plain
@@ -112,7 +112,7 @@ export function ClientAnalyticsStats({
   return (
     /* F124 collapsed these four tiles into one thin SummaryStat row on the
        duplication argument; Albert reviewed it on 2026-07-28 and struck the
-       finding (CD-G6) — the row read as messy, and the counters are the first
+       finding (CD-G6) - the row read as messy, and the counters are the first
        view. The baseline tiles are the shipped design; do not collapse them
        again.
 
@@ -228,7 +228,7 @@ export function ClientAnalytics({
           )}
         </Card>
 
-        {/* Connected channels — QA F145: a channel whose token died used to be
+        {/* Connected channels - QA F145: a channel whose token died used to be
             filtered out of this list entirely. It didn't say "broken, click to
             fix"; it just disappeared, and the channel count dropped by one with
             no explanation, so a dead LinkedIn read as "never set up". The card's
@@ -267,7 +267,7 @@ export function ClientAnalytics({
                   </div>
                   {integrationNeedsReconnect(i) ? (
                     // Same treatment Settings already gives a dead token, plus the
-                    // route to fix it — the health truth existed, the dashboard
+                    // route to fix it - the health truth existed, the dashboard
                     // just refused to show it.
                     <Link href={`/clients/${clientId}/settings?tab=channels`} className="shrink-0">
                       <Badge tone="warning" className="hover:border-warning/60">

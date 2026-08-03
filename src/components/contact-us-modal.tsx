@@ -73,7 +73,7 @@ export function ContactUsButton({
 
   return (
     <>
-      {/* Trigger — icon button (header) or full-width row (account menu) */}
+      {/* Trigger - icon button (header) or full-width row (account menu) */}
       {variant === "row" ? (
         <button
           onClick={() => setOpen(true)}
@@ -93,7 +93,7 @@ export function ContactUsButton({
         </button>
       )}
 
-      {/* Backdrop — portaled to <body> so the header's backdrop-blur
+      {/* Backdrop - portaled to <body> so the header's backdrop-blur
           containing block doesn't offset this fixed overlay. */}
       {open && createPortal(
         <div

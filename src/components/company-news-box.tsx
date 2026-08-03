@@ -4,7 +4,7 @@
  * The shared "what happened this week" company news drop (SCRUM-51): ONE
  * input per client, stored once (the xNewsUpdates collection keeps its
  * historical name) and fanned out at run time to every agent that consumes
- * news — X gets whats-new.json, the LinkedIn company page gets
+ * news - X gets whats-new.json, the LinkedIn company page gets
  * company-updates.md Section A. Mounted inside both agent intake surfaces; do
  * not build a per-platform copy of this box.
  */
@@ -22,7 +22,7 @@ export interface CompanyNewsRowView {
   type?: string;
 }
 
-/** The Section A pick-list from the lab template — the skill routes by these terms. */
+/** The Section A pick-list from the lab template - the skill routes by these terms. */
 const NEWS_TYPES = [
   "win/milestone",
   "launch",

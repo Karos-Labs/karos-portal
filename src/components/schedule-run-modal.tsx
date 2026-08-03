@@ -18,7 +18,7 @@ const WEEKDAYS = [
   { value: 6, label: "Saturday" },
 ];
 
-/** `YYYY-MM-DDTHH:mm` in the browser's zone — the format datetime-local wants. */
+/** `YYYY-MM-DDTHH:mm` in the browser's zone - the format datetime-local wants. */
 function toLocalInputValue(at: number): string {
   const d = new Date(at);
   const pad = (n: number) => String(n).padStart(2, "0");

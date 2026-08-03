@@ -10,8 +10,8 @@ import { RegenerateModal } from "@/components/client-documents";
  * Admin-only Regenerate entry point for the staff client dashboard (CD-G5).
  *
  * The same control already lives in the documents header of the client rail, but
- * the pipeline it runs rebuilds far more than the documents — it also rewrites
- * the client's SEO/GEO intel — so it belongs at client level, not buried in a
+ * the pipeline it runs rebuilds far more than the documents - it also rewrites
+ * the client's SEO/GEO intel - so it belongs at client level, not buried in a
  * sidebar section named after only one of its outputs. Same modal, same server
  * action, same AI-processing lock; only the entry point is new.
  */
@@ -20,7 +20,7 @@ export function RegenerateWorkspaceButton({
   isAiProcessing,
 }: {
   clientId: string;
-  /** True while a background AI generation cycle is running — locks the button, exactly as in the rail. */
+  /** True while a background AI generation cycle is running - locks the button, exactly as in the rail. */
   isAiProcessing?: boolean;
 }) {
   const router = useRouter();

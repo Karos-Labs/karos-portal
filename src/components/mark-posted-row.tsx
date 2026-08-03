@@ -85,7 +85,7 @@ export function MarkPostedRow({
   if (variant === "chip") {
     return (
       <div
-        // The day card itself opens the asset modal on click — the attestation
+        // The day card itself opens the asset modal on click - the attestation
         // button must not also trigger it.
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

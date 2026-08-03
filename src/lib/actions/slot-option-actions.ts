@@ -124,6 +124,9 @@ export async function pickAgentSlotOptionAction(input: {
     pickedAt: now,
     pickedBy: user.uid,
     edited,
+    // Captured here, at the one moment it's guaranteed correct — the batch
+    // asset it came from can go stale or be re-imported later (§4.5c).
+    originalText: original,
   });
   if (!claimed) return { error: "You've already chosen for that day." };
 
@@ -146,11 +149,13 @@ export async function pickAgentSlotOptionAction(input: {
       clientAgentId: umbrella.id,
       slotId: slot.id,
       optionRef: chosen.ref,
-      // The original stays recoverable from the batch asset, so edit detection
-      // needs no schema change to XDraftFeedback (§4.5c).
       pickedFromAssetId: batchAsset.id,
       xAccountTitle: chosen.account,
       edited,
+      // The drafted text before this pick's edit — carried here so mark-as-posted
+      // (recordPostedOptionFeedback) can pass it into XDraftFeedback without
+      // re-touching the slot doc or depending on the batch asset staying around.
+      originalText: original,
     },
     createdBy: user.uid,
     createdAt: now,

@@ -56,6 +56,8 @@ import { sendEmail, supportRequestEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
 import { logger } from "@/services/logger";
+import { classifyJobError } from "@/lib/job-error-taxonomy";
+import { notifyChatbotFailure } from "@/lib/job-alerts";
 import { runCustomAgentAction } from "@/lib/actions/custom-agent-actions";
 import { updateAssetAction, clientRescheduleAssetAction, scheduleAssetAction } from "@/lib/actions/asset-actions";
 import { addClientAgentFeedbackAction } from "@/lib/actions/client-agent-feedback-actions";
@@ -1356,6 +1358,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       set_agent_focus: setAgentFocusTool,
     }),
     onFinish: ({ usage }) => logCopilotUsage(usage),
+    // The text-stream response protocol this route returns has no channel for
+    // an error part — toTextStreamResponse() only ever forwards "text-delta"
+    // parts, so a thrown/streamed provider error (token depletion, a 5xx)
+    // otherwise vanishes silently: the HTTP response still completes with
+    // whatever partial text came before it, usually none. This is the only
+    // place the real error is ever observed server-side, so it's also the
+    // only place the failure can be logged and alerted on — the client
+    // detects the resulting empty completion itself (chatbot-widget.tsx) and
+    // shows the friendly fallback message.
+    onError: ({ error }) => {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.logGenerationFailure(
+        {
+          clientId,
+          agentId: null,
+          agentName: "chat_copilot",
+          modelName: modelId,
+          operation: "chat_copilot",
+        },
+        error,
+      );
+      notifyChatbotFailure({
+        clientId,
+        clientName: client.name,
+        userEmail: user.email,
+        error: message,
+        ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
+      }).catch((e) => console.error("[chat] notifyChatbotFailure failed:", e));
+      console.error(`[chat] copilot stream error for client ${clientId}:`, classifyJobError(message)?.label ?? message);
+    },
   });
 
   return result.toTextStreamResponse();

@@ -41,14 +41,14 @@ interface Props {
   seatCost?: number;
 }
 
-/* ── Platform marks — one shared source (agent-identity) for the whole app ── */
+/* ── Platform marks - one shared source (agent-identity) for the whole app ── */
 
 function PlatformMark({ id, className }: { id: string; className?: string }) {
   const platform = platformForIntegrationId(id);
   return platform ? <SocialPlatformMark platform={platform} className={className} /> : null;
 }
 
-/** Google's multicolor G — inherently multi-color, so it stays local rather than
+/** Google's multicolor G - inherently multi-color, so it stays local rather than
     joining the monochrome shared marks. Used by the Google Services Suite card. */
 function GoogleLogo() {
   return (
@@ -127,7 +127,7 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
 /**
  * Refusals from the card's actions arrive as DATA ({ error }) and are already
  * written for a client to read, so they render verbatim. A throw reaching these
- * handlers is therefore not a refusal but a transport failure — or an exception
+ * handlers is therefore not a refusal but a transport failure - or an exception
  * Next has masked behind an opaque production digest ("An error occurred in the
  * Server Components render… digest: 1234567890"). Never render that: the catch
  * blocks below always substitute their own line, which is the allowlist
@@ -143,7 +143,7 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
  *
  * Live channels keep the full card. The rest collapse into a compact add-row
  * list; clicking one expands that platform's real card in place, so nothing is
- * removed — only deferred.
+ * removed - only deferred.
  */
 function ChannelSection({
   title,
@@ -160,7 +160,7 @@ function ChannelSection({
    * Three buckets, not two. "needs-reconnect" MUST keep its full card: an
    * expired token is the one state a client has to act on, and collapsing it
    * into the add-list hid the Reconnect badge behind a click and replaced the
-   * warning with the platform's marketing blurb — a broken channel reading as
+   * warning with the platform's marketing blurb - a broken channel reading as
    * fine and filed away. Only a platform with no integration doc at all is
    * genuinely "not set up" and safe to collapse.
    */
@@ -185,7 +185,7 @@ function ChannelSection({
 
       {(live.length > 0 || needsReconnect.length > 0 || opened.length > 0 || leadingCards) && (
         <div className="grid grid-cols-1 items-start gap-6 @2xl:grid-cols-2 @4xl:grid-cols-3">
-          {/* Healthy first, then the ones needing attention — both as full
+          {/* Healthy first, then the ones needing attention - both as full
               cards, so a Reconnect badge is never a click away. */}
           {live.map(renderCard)}
           {needsReconnect.map(renderCard)}
@@ -259,7 +259,7 @@ function PlatformCard({
   // The OAuth flow exists but the platform has not approved our developer
   // account yet, so a Connect click can only end in a failed popup. Say so.
   const pendingVerification = !isConnected && PENDING_VERIFICATION_PLATFORM_IDS.has(platform.id);
-  // "Healthy" (fully connected, no reconnect needed) drives the subtle glow —
+  // "Healthy" (fully connected, no reconnect needed) drives the subtle glow -
   // a reconnect-needed card should read as a warning, not a success state.
   const isHealthyConnected = isConnected && !integrationNeedsReconnect(integration!);
   // Absent flag = enabled (pre-toggle integrations keep auto-publishing).
@@ -272,7 +272,7 @@ function PlatformCard({
   /**
    * Failures from the card's own controls (auto-publish, Disconnect). Separate
    * from formError, which renders inside the admin credentials form and is
-   * therefore invisible whenever that form is collapsed — which is exactly when
+   * therefore invisible whenever that form is collapsed - which is exactly when
    * these two controls are used.
    */
   const [actionError, setActionError] = useState<string | null>(null);
@@ -313,7 +313,7 @@ function PlatformCard({
     setSaving(true);
     setFormError(null);
     try {
-      // A blank password field means "keep the stored secret" — the server carries
+      // A blank password field means "keep the stored secret" - the server carries
       // it over, since secrets are never sent here to merge back.
       await saveIntegrationAction(clientId, platform.id, fields, accountName || undefined);
       setAdvancedOpen(false);
@@ -326,7 +326,7 @@ function PlatformCard({
 
   async function handleAutoPublishToggle() {
     const next = !autoPublish;
-    setAutoPublish(next); // optimistic — reverted below if the write is refused
+    setAutoPublish(next); // optimistic - reverted below if the write is refused
     setTogglingAuto(true);
     setActionError(null);
     try {
@@ -351,7 +351,7 @@ function PlatformCard({
     try {
       const res = await deleteIntegrationAction(clientId, platform.id);
       if (res.error) {
-        // The old comment here claimed "revalidation corrects state" — nothing
+        // The old comment here claimed "revalidation corrects state" - nothing
         // revalidates on the failure path, so the card just stayed Connected and
         // said nothing.
         setActionError(res.error);
@@ -381,12 +381,12 @@ function PlatformCard({
     >
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
-        {/* Platform mark — the real brand logo, monochrome chip in our palette */}
+        {/* Platform mark - the real brand logo, monochrome chip in our palette */}
         <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
           <PlatformMark id={platform.id} className="h-5 w-5" />
         </div>
 
-        {/* Text — name and status stack on every card (a wrapping row let the
+        {/* Text - name and status stack on every card (a wrapping row let the
             badge sit beside short names like TikTok, breaking the grid rhythm) */}
         <div className="min-w-0 flex-1 space-y-1">
           <p className="font-semibold leading-none">{platform.name}</p>
@@ -425,11 +425,11 @@ function PlatformCard({
         </div>
       </div>
 
-      {/* Action area — mt-auto pins it to the bottom of the card regardless of
+      {/* Action area - mt-auto pins it to the bottom of the card regardless of
           how much (or little) header content sits above it, so Connect /
           Reconnect / Disconnect line up across every card in the row. */}
       <div className="mt-auto px-4 pb-4 space-y-3">
-        {/* OAuth connect — available to all users when this platform supports
+        {/* OAuth connect - available to all users when this platform supports
             OAuth, EXCEPT while the platform still has to approve our developer
             account: that button can only open a popup that fails. */}
         {!isConnected && hasOAuthSupport && !pendingVerification && (
@@ -448,7 +448,7 @@ function PlatformCard({
         )}
 
         {/* The Connect button is shown to everyone regardless of server config,
-            so the "this will fail" hint has to be shown to everyone too — it
+            so the "this will fail" hint has to be shown to everyone too - it
             used to be admin-only, leaving clients and employees with a branded
             button whose entire behaviour was a blank popup (QA F55). */}
         {hasOAuthSupport && !isOAuthEnabled && (
@@ -466,7 +466,7 @@ function PlatformCard({
             requireStaff), while a client posts from their own account and
             records it with "Mark as posted". Naming a control the reader cannot
             see is the defect this whole finding is about.
-            Hidden for read/analytics-only platforms — there's nothing to publish. */}
+            Hidden for read/analytics-only platforms - there's nothing to publish. */}
         {isConnected && !READ_ONLY_PLATFORM_IDS.has(platform.id) && (
           <button
             onClick={handleAutoPublishToggle}
@@ -517,7 +517,7 @@ function PlatformCard({
               </Button>
             )}
             {/* Staff only. deleteIntegrationAction is requireStaff, so for a
-                client this button could never do anything but fail — and it
+                client this button could never do anything but fail - and it
                 failed silently, giving them a spinner and nothing else, every
                 single time. Gated on staff rather than isAdmin because
                 employees are permitted to disconnect. */}
@@ -542,7 +542,7 @@ function PlatformCard({
           </p>
         )}
 
-        {/* LinkedIn employee-advocacy roster lives in a modal, not inline —
+        {/* LinkedIn employee-advocacy roster lives in a modal, not inline -
             an unbounded seat list must never dictate this card's height. */}
         {platform.id === "linkedin" && isConnected && (
           <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
@@ -570,7 +570,7 @@ function PlatformCard({
         )}
       </div>
 
-      {/* Advanced / manual form — accordion */}
+      {/* Advanced / manual form - accordion */}
       {isAdmin && (
         <div
           className={cn(
@@ -669,10 +669,10 @@ function PlatformCard({
 /* ── Unified Google card ─────────────────────────────────────────────
  * Replaces three separate cards (Search Console / Analytics / Business
  * Profile) with one. All three share one OAuth flow (provider id
- * "google_unified" — see oauth.ts) that fans a single token pair out to all
+ * "google_unified" - see oauth.ts) that fans a single token pair out to all
  * three ClientIntegration docs server-side; this card is purely a different
  * way of looking at + managing those same three docs, not a fourth doc of
- * its own. YouTube stays a separate standalone card in the grid — it's also
+ * its own. YouTube stays a separate standalone card in the grid - it's also
  * a publish target, unlike these three. ────────────────────────────── */
 
 const GOOGLE_SUB_SERVICES = [
@@ -693,7 +693,7 @@ function GoogleUnifiedCard({
   onDisconnected,
 }: {
   integrations: IntegrationView[];
-  /** Whether the (separately-connected, standalone) YouTube card is linked —
+  /** Whether the (separately-connected, standalone) YouTube card is linked -
    * shown here only as an at-a-glance status pill, not a control. */
   youtubeConnected: boolean;
   clientId: string;
@@ -712,7 +712,7 @@ function GoogleUnifiedCard({
 }) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
-  /** Failure text for a per-service disconnect — this card had no error slot. */
+  /** Failure text for a per-service disconnect - this card had no error slot. */
   const [subError, setSubError] = useState<string | null>(null);
 
   const byId = new Map(integrations.map((i) => [i.platform, i]));
@@ -738,7 +738,7 @@ function GoogleUnifiedCard({
       const res = await deleteIntegrationAction(clientId, id);
       if (res.error) {
         // Same empty catch as the platform card had, and the same claim that
-        // "revalidation corrects state" — it doesn't on the failure path. This
+        // "revalidation corrects state" - it doesn't on the failure path. This
         // card had no error slot at all, so the refusal had nowhere to go.
         setSubError(res.error);
         return;
@@ -796,7 +796,7 @@ function GoogleUnifiedCard({
             Connect Google Analytics 4, Search Console, YouTube, and Business Profile in a single
             authorization step.
           </p>
-          {/* Dynamic per-service status chips — YouTube is informational only
+          {/* Dynamic per-service status chips - YouTube is informational only
               here (it keeps its own standalone card + OAuth below, since it's
               also a publish target), so this pill isn't part of GOOGLE_SUB_SERVICES. */}
           <div className="flex flex-wrap gap-1.5 pt-1.5">
@@ -849,7 +849,7 @@ function GoogleUnifiedCard({
         </button>
 
         {/* Same rule as the platform cards: everyone who can press the button
-            gets told it can't work yet (QA F55) — only admins get the env-var
+            gets told it can't work yet (QA F55) - only admins get the env-var
             detail. */}
         {!isOAuthEnabled && (
           <p className="text-[11px] text-warning/80">
@@ -873,7 +873,7 @@ function GoogleUnifiedCard({
         )}
       </div>
 
-      {/* Per-service breakdown — admin only */}
+      {/* Per-service breakdown - admin only */}
       {isAdmin && (
         <div
           className={cn(
@@ -943,20 +943,20 @@ export function IntegrationsTab({
   const router = useRouter();
   const isAdmin = currentUserRole === "KAROS_ADMIN";
   // This tab renders on /clients/[id]/settings, which a client can open for
-  // their own workspace — so copy here has to know who is reading it.
+  // their own workspace - so copy here has to know who is reading it.
   const isClientViewer = currentUserRole === "CLIENT_USER";
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
   const [popupError, setPopupError] = useState<string | null>(null);
   const popupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // The three read-only Google services render as ONE merged card, so they
-  // count as one slot here too — otherwise this stat would disagree with
+  // count as one slot here too - otherwise this stat would disagree with
   // what's visually on screen (e.g. "6/9" while only 7 cards are shown).
   const googleMergedIds = new Set<string>(GOOGLE_READ_ONLY_SUB_PLATFORM_IDS);
   const standalonePlatforms = PLATFORM_REGISTRY.filter((p) => !googleMergedIds.has(p.id));
   // Counts follow the same three-bucket rule as the grid. The badge used to
   // count any integration DOC as connected, with no status check, so an expired
-  // channel was tallied as working — the count and the card contradicted each
+  // channel was tallied as working - the count and the card contradicted each
   // other. "Connected" now means usable; anything needing a reconnect is
   // reported separately rather than being quietly folded into a green number.
   const usableGoogleCount = GOOGLE_READ_ONLY_SUB_PLATFORM_IDS.filter((id) => {
@@ -975,7 +975,7 @@ export function IntegrationsTab({
     (usableGoogleCount === 0 && staleGoogleCount > 0 ? 1 : 0);
   const totalCardCount = standalonePlatforms.length + 1; // +1 for the merged Google Services Suite card
 
-  // Two sections, driven by each platform's registry `category` — a new
+  // Two sections, driven by each platform's registry `category` - a new
   // platform lands in the right section just by declaring one, no UI changes.
   const publishingPlatforms = standalonePlatforms.filter((p) => p.category === "publishing");
   const analyticsStandalonePlatforms = standalonePlatforms.filter((p) => p.category === "analytics");
@@ -1000,7 +1000,7 @@ export function IntegrationsTab({
     return () => {
       window.removeEventListener("message", handleMessage);
       // The popup-closed poll started by openOAuthPopup outlives this effect
-      // (it's keyed off a ref, not effect state) — without this, navigating
+      // (it's keyed off a ref, not effect state) - without this, navigating
       // away while a popup is still open leaves its setInterval running forever.
       if (popupTimerRef.current) clearInterval(popupTimerRef.current);
     };
@@ -1038,7 +1038,7 @@ export function IntegrationsTab({
 
   /**
    * Which of the three buckets a platform sits in. "absent" means no
-   * integration doc at all — the only state that is genuinely not set up. A
+   * integration doc at all - the only state that is genuinely not set up. A
    * dead-token integration is "needs-reconnect": still a channel the client
    * owns, and the one that most needs to stay on screen.
    */
@@ -1117,7 +1117,7 @@ export function IntegrationsTab({
         renderCard={renderPlatformCard}
       />
 
-      {/* Analytics & Performance Intelligence — the three read-only Google
+      {/* Analytics & Performance Intelligence - the three read-only Google
           services (Search Console / Analytics / Business Profile) render as
           ONE merged card; YouTube's own standalone card stays in Publishing
           since it's also a post target, but its status still surfaces here

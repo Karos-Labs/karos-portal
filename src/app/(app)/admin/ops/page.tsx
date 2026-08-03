@@ -11,7 +11,7 @@ import { LabImportButton } from "@/components/lab-import";
 import { OpsImport } from "@/components/ops-import";
 
 /**
- * Ops Import (admin only) — land work produced locally into the live portal.
+ * Ops Import (admin only) - land work produced locally into the live portal.
  *
  * Two discovery sources for proposals, one write path:
  *   · the karos-agents lab repo (clients/<slug>/refresh/*.json), scanned by
@@ -24,7 +24,7 @@ import { OpsImport } from "@/components/ops-import";
  * implementation. That flow already reads the committed karos-agents run
  * outputs and creates draft assets through the same createAsset path the
  * agent-service webhook uses, with per-item idempotency and the one-post/day
- * chain reflow. Reimplementing it here would have forked the asset writer —
+ * chain reflow. Reimplementing it here would have forked the asset writer -
  * the one thing this page must not do.
  *
  * Runbook: docs/qa-sweep-2026-07/refresh/OPS-IMPORT.md
@@ -139,7 +139,7 @@ export default async function OpsImportPage() {
  * What this page can and cannot reach, named by env var.
  *
  * Written because the AI Agents tab simply HIDES its "Import lab outputs"
- * button when AGENTS_REPO_GITHUB_TOKEN is missing — a missing feature looks
+ * button when AGENTS_REPO_GITHUB_TOKEN is missing - a missing feature looks
  * identical to a feature that was never built, and Albert lost time to exactly
  * that. A missing capability should say its own name.
  */

@@ -7,11 +7,17 @@ import {
   claimExternalJobCompletion,
   createAsset,
   getClient,
+  getCustomAgent,
   getJob,
   getJobByExternalServiceId,
   isJobInFlight,
+  listClientSeats,
   updateJob,
+  upsertSeatVoiceProfile,
 } from "@/lib/data";
+import { isXAgent } from "@/lib/agent-service/x-agent-context";
+import { isLinkedInAgent } from "@/lib/agent-service/linkedin-agent-context";
+import { isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -413,6 +419,12 @@ export async function POST(req: NextRequest) {
   const deliveryNonce = randomUUID().slice(0, 8);
 
   if (payload.status === "done") {
+    // Setup (launch) runs may emit one voice-profile--<seat-slug>.md per seat
+    // swept — captured off the same decoded bytes as primaryText, no second
+    // fetch (x-agent-v2). Only meaningful on launch runs; launch deliverables
+    // stay staff-only regardless via launchDeliverable:true below.
+    const voiceProfileArtifacts: { seatSlug: string; content: string }[] = [];
+
     for (const artifact of payload.artifacts) {
       // The value checked IS the value passed, so AbortSignal.timeout can never
       // be handed zero or a negative. Non-positive means the phase is spent:
@@ -507,6 +519,16 @@ export async function POST(req: NextRequest) {
               const ext = extension(artifact.name);
               if (TEXT_EXTENSIONS.includes(ext)) {
                 const content = bytes.toString("utf8");
+                // Setup-run per-seat voice profiles (x-agent-v2): captured off
+                // the same decoded bytes, launch runs only — same rule as the
+                // templates.json capture above.
+                const voiceProfileMatch = artifact.name
+                  .split("/")
+                  .pop()
+                  ?.match(/^voice-profile--(.+)\.md$/i);
+                if (isLaunchRun && voiceProfileMatch) {
+                  voiceProfileArtifacts.push({ seatSlug: voiceProfileMatch[1], content });
+                }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
                 // agents (X, LinkedIn) — prefer it deterministically over the
                 // size race, so a long sibling text file (a video brief, an
@@ -635,6 +657,49 @@ export async function POST(req: NextRequest) {
   let createdAssetId: string | null = null;
 
   if (payload.status === "done") {
+    // Setup-run voice profiles (x-agent-v2): generic on any custom agent with
+    // seats, not gated to X — resolved via the job's customAgentId so LinkedIn/
+    // Reddit adopt this with no webhook change once they emit the same
+    // artifact convention. Best-effort AND after the claim: a save failure here
+    // must not fail the whole delivery — the next launch run re-sweeps and
+    // overwrites anyway.
+    if (isLaunchRun && voiceProfileArtifacts.length > 0) {
+      try {
+        const customAgent = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
+        const agentKey = customAgent?.key ?? "";
+        const agent = isXAgent(agentKey)
+          ? "x"
+          : isLinkedInAgent(agentKey)
+            ? "linkedin"
+            : isRedditAgent(agentKey)
+              ? "reddit"
+              : null;
+        if (agent) {
+          const seats = await listClientSeats(job.clientId);
+          const seatBySlug = new Map(seats.map((s) => [s.slug, s]));
+          for (const { seatSlug, content } of voiceProfileArtifacts) {
+            const seat = seatBySlug.get(seatSlug);
+            if (!seat) continue;
+            await upsertSeatVoiceProfile({
+              clientId: job.clientId,
+              agent,
+              seatId: seat.id,
+              content,
+              builtAt: now,
+              builtByJobId: job.id,
+            });
+          }
+        }
+      } catch (e) {
+        console.error("[webhook] seat voice profile save failed:", e);
+        events.push({
+          at: Date.now(),
+          level: "error",
+          message: "Voice profile save failed - retries on the next launch run",
+        });
+      }
+    }
+
     if (deliveredCount > 0) {
       // Custom agents (e.g. the LinkedIn generators) produce any asset shape, so
       // the slot-less library note is the safe default — but the submitter can

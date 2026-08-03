@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AgentIdentity } from "@/components/agent-identity";
+import { cn } from "@/lib/utils";
 import type { RosterStatus } from "@/lib/client-agents";
 
 /**
@@ -9,7 +10,7 @@ import type { RosterStatus } from "@/lib/client-agents";
  *
  * Albert, on seeing the old roster: "they can just click on it, and then it
  * opens… over the whole page. That whole page should be like the Instagram
- * Agent." So the card's entire job is to be recognisable and clickable — a
+ * Agent." So the card's entire job is to be recognisable and clickable - a
  * mark, a name, one line of what it gives you, one status word. Everything the
  * old card carried (template rows, Run now, Set schedule, Adjust pace, the week
  * strip) moves to the detail page, because a grid of cards each offering four
@@ -21,8 +22,8 @@ import type { RosterStatus } from "@/lib/client-agents";
  * charge fired from a surface that never explained itself.
  *
  * It is a real <Link>, not a click handler on a div and not a modal. That gives
- * it the whole browser for free — middle-click, cmd-click, back, a copyable URL
- * — and a modal cannot be any of those things. This is a server component: it
+ * it the whole browser for free - middle-click, cmd-click, back, a copyable URL
+ * - and a modal cannot be any of those things. This is a server component: it
  * holds no state and needs no client bundle.
  */
 export function ClientAgentRosterCard({
@@ -35,7 +36,7 @@ export function ClientAgentRosterCard({
   note,
 }: {
   href: string;
-  /** `"<key> <name>"` — drives the platform mark. */
+  /** `"<key> <name>"` - drives the platform mark. */
   identity: string;
   icon?: string | null;
   displayName: string;
@@ -50,15 +51,10 @@ export function ClientAgentRosterCard({
    */
   note?: string | null;
 }) {
-  return (
-    <Link
-      href={href}
-      // The hover affordance has to be unmistakable (CD-G1): the whole card is
-      // the target, so it lifts, brightens its border and slides its chevron —
-      // three signals, because a card that only changes border colour reads as
-      // decoration rather than as something you can open.
-      className="card-grad group relative flex flex-col overflow-hidden rounded-[var(--radius)] border border-border p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-neon/50 hover:shadow-[0_0_0_1px_var(--color-neon-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/60 sm:p-5"
-    >
+  const disabled = status.tone === "disabled";
+
+  const inner = (
+    <>
       <span
         className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-90"
         aria-hidden="true"
@@ -80,12 +76,49 @@ export function ClientAgentRosterCard({
             </p>
           )}
         </div>
-        <Icon
-          name="ChevronRight"
-          className="mt-0.5 h-4 w-4 shrink-0 text-muted-2 transition-all group-hover:translate-x-0.5 group-hover:text-neon"
-          aria-hidden="true"
-        />
+        {/* A paused agent has nowhere to go - no Run, no launch, no config
+            reachable through it (the toggle lives on the staff Agents hub) -
+            so there is no chevron promising a destination, and no click.
+            Blocked here, not just server-side: a client could otherwise open
+            the detail page and see a "Coming Soon" agent's setup ladder,
+            which is staff/launch bookkeeping that has nothing to do with why
+            it's unavailable. */}
+        {!disabled && (
+          <Icon
+            name="ChevronRight"
+            className="mt-0.5 h-4 w-4 shrink-0 text-muted-2 transition-all group-hover:translate-x-0.5 group-hover:text-neon"
+            aria-hidden="true"
+          />
+        )}
       </div>
+    </>
+  );
+
+  const className = cn(
+    "card-grad group relative flex flex-col overflow-hidden rounded-[var(--radius)] border border-border p-4 sm:p-5",
+    disabled
+      ? "opacity-60 cursor-default"
+      : // The hover affordance has to be unmistakable (CD-G1): the whole card is
+        // the target, so it lifts, brightens its border and slides its chevron -
+        // three signals, because a card that only changes border colour reads as
+        // decoration rather than as something you can open.
+        "transition-all duration-200 hover:-translate-y-0.5 hover:border-neon/50 hover:shadow-[0_0_0_1px_var(--color-neon-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/60",
+  );
+
+  if (disabled) {
+    return (
+      <div className={className} aria-disabled="true">
+        {inner}
+      </div>
+    );
+  }
+
+  // It is a real <Link>, not a click handler on a div and not a modal. That
+  // gives it the whole browser for free - middle-click, cmd-click, back, a
+  // copyable URL - and a modal cannot be any of those things.
+  return (
+    <Link href={href} className={className}>
+      {inner}
     </Link>
   );
 }

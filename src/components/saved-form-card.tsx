@@ -4,7 +4,7 @@
  * A setup section that is already filled in: the gist at a glance plus an edit
  * affordance, with the caller's form taking over while `open`. The caller owns
  * the open state because only it can restore its field values when the user
- * backs out. Anything passed as `notice` or `footer` renders in both states —
+ * backs out. Anything passed as `notice` or `footer` renders in both states -
  * warnings must not hide behind the collapse, and ongoing inputs are not setup.
  */
 
@@ -14,7 +14,7 @@ import { Icon } from "@/components/icon";
 
 export interface SavedFormLine {
   label: string;
-  /** Empty reads as "None yet", dimmed — callers pass the raw field value. */
+  /** Empty reads as "None yet", dimmed - callers pass the raw field value. */
   value: string;
 }
 

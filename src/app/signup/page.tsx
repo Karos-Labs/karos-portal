@@ -73,7 +73,7 @@ export default function SignupPage() {
   const [isPending, startTransition] = useTransition();
 
   // Set once a native email/password signup has been created and its
-  // verification email dispatched — flips the card to the "check your inbox" view.
+  // verification email dispatched - flips the card to the "check your inbox" view.
   const [verificationSent, setVerificationSent] = useState(false);
   const [resent, setResent] = useState(false);
 
@@ -161,7 +161,7 @@ export default function SignupPage() {
         return;
       }
       // A freshly-provisioned account that landed disabled (pending approval)
-      // must go to /pending, not into the workspace — mirroring the login page.
+      // must go to /pending, not into the workspace - mirroring the login page.
       // Otherwise the server guard bounces it back, causing a confusing flash.
       router.push(result.disabled ? "/pending" : routeAfterAuth(result.role, result.clientId));
       router.refresh();
@@ -189,7 +189,7 @@ export default function SignupPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm animate-fade-up">
 
-        {/* Wordmark lockup — head disc + Spectral (brand §2.2), matches /login */}
+        {/* Wordmark lockup - head disc + Spectral (brand §2.2), matches /login */}
         <div className="mb-8 text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

@@ -90,7 +90,7 @@ import type { Job } from "@/lib/types";
  *
  * Moved here from the roster page with CD-I1's staff parity. Ruling 7 put the
  * panes on whichever surface owns the run DIALOG, and that surface is now this
- * one — so the roster stopped paying for them and this page builds exactly one,
+ * one - so the roster stopped paying for them and this page builds exactly one,
  * for the agent it is about, instead of three for every agent on a list.
  *
  * Only the FORMS are built here. `ready` is not re-derived alongside them:
@@ -131,7 +131,7 @@ async function agentIntakePane(
  *
  * Albert: "they can just click on it, and then it opens… over the whole page.
  * That whole page should be like the Instagram Agent." The roster answers "is
- * this working for me"; this page answers everything else — what the agent
+ * this working for me"; this page answers everything else - what the agent
  * produces, whether it is live, the formats it writes, how to make a post now,
  * how to steer it, what it has already delivered, what data and connections it
  * runs on.
@@ -144,7 +144,7 @@ async function agentIntakePane(
  * viewer may receive about an agent, and both routes go through it.
  *
  * The launch states (§7.1 states 1–3) render as this page's HERO for a
- * non-live umbrella. The roster card upstream shows only the status word —
+ * non-live umbrella. The roster card upstream shows only the status word -
  * a CTA, a progress narration and a failure with a Contact-us row are all
  * explanations, and explanations belong on the page you opened to get them.
  */
@@ -153,7 +153,7 @@ export default async function ClientAgentDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string; agentId: string }>;
-  /** `asset` — Copilot chat's staff deep link, lands on Control Room's Outputs
+  /** `asset` - Copilot chat's staff deep link, lands on Control Room's Outputs
    *  tab with this asset pre-opened (OutputsHub/ControlRoom). Staff-only: a
    *  CLIENT_USER never receives this param (their side has no Control Room). */
   searchParams: Promise<{ asset?: string }>;
@@ -204,7 +204,7 @@ export default async function ClientAgentDetailPage({
     listClientAgents({ clientId: id }),
     listAssets({ clientId: id }),
     listClientIntegrations(id),
-    // The run dialog's attachment picker (CD-H8) — the legacy branch offers
+    // The run dialog's attachment picker (CD-H8) - the legacy branch offers
     // the standard run gesture, and the standard gesture can attach context.
     listContextItems({ clientId: id }),
   ]);
@@ -372,7 +372,7 @@ export default async function ClientAgentDetailPage({
   // ── WHICH PAGE SHAPE (CD-I1) ──
   // Albert: "a logical UI for each of the agents based on what each of the
   // agents does." The archetype is resolved from the agent's identity through
-  // the §7.3 idiom, and it decides the HERO only — status, archive, data,
+  // the §7.3 idiom, and it decides the HERO only - status, archive, data,
   // connectors and feedback are the common chassis and render for all three.
   const archetype = agentArchetype({ key: agent.key, name: agent.name });
 
@@ -389,7 +389,7 @@ export default async function ClientAgentDetailPage({
       ? buildClipMakerView({ assets: produced, run: plannedRun, now })
       : null;
 
-  // The finder reads the SAME produced set — its finds are assets like any
+  // The finder reads the SAME produced set - its finds are assets like any
   // other deliverable, so a client's archive rules already apply to them and
   // an unapproved batch can never surface as "found today".
   const finderView =
@@ -413,11 +413,11 @@ export default async function ClientAgentDetailPage({
       : null;
 
   // The clip maker's source material: what it has to cut FROM. `mimeType` is
-  // the reliable discriminator — ContextItem.kind has no "video" variant yet
+  // the reliable discriminator - ContextItem.kind has no "video" variant yet
   // (the other half of F150, still ops-pending), so a clip uploaded today is
   // stored as "other" and a kind check would report none on file.
   // The archive list under the hero: the rows, and what to call them. Capped
-  // at 8 on every branch — this is a summary that links the Workspace, not the
+  // at 8 on every branch - this is a summary that links the Workspace, not the
   // Workspace itself.
   const archiveRows = (
     clipView ? clipView.documents : finderView ? finderView.documents : produced
@@ -446,7 +446,7 @@ export default async function ClientAgentDetailPage({
     : 0;
   const lastStaffRun = agentRuns[0];
   // §6.2(b). USD this client has spent on this agent, split by run type.
-  // Computed from the jobs already loaded — no extra read — and staff-only:
+  // Computed from the jobs already loaded - no extra read - and staff-only:
   // this is cost data, and the client's side of the same question is credits.
   const economics = isStaff
     ? summarizeAgentEconomics(jobs.filter((job) => job.customAgentId === agent.id))
@@ -456,7 +456,7 @@ export default async function ClientAgentDetailPage({
   // `scheduledRuns` (unlike `scheduleRows`/`schedule` above, which only cover
   // WEEKLY umbrella-paced schedules) is the raw PlannedScheduledRun set for
   // every cadence, so a one-off or daily/monthly schedule still counts toward
-  // health/next-run — deriveAgentHealth and nextRunCountdown are both pure
+  // health/next-run - deriveAgentHealth and nextRunCountdown are both pure
   // (agent-health.ts / scheduled-runs.ts), so this is just wiring real rows in.
   const agentSchedules = scheduledRuns.filter((r) => r.customAgentId === agent.id);
   const activeAgentSchedules = agentSchedules
@@ -487,7 +487,7 @@ export default async function ClientAgentDetailPage({
 
   const setup = agentSetup[agent.id] ?? null;
   const connections = sanitizeIntegrations(integrations);
-  // Platform ids for the deliverable modal's publish controls — the same
+  // Platform ids for the deliverable modal's publish controls - the same
   // sanitized set the connector chips below render, never the raw integration
   // docs (which carry credentials).
   const connectedPlatformNames = connections.map((connection) => connection.platform);
@@ -498,8 +498,8 @@ export default async function ClientAgentDetailPage({
   // reason every other gate on this surface is: a control may only offer a
   // press the server would accept (F131), and its reason has to arrive with it
   // already resolved so it can be painted rather than hidden in a tooltip on a
-  // pointer-events-none button (F25). Same ladder the generic card walks —
-  // service, then intake, then credits — so the two cannot disagree.
+  // pointer-events-none button (F25). Same ladder the generic card walks -
+  // service, then intake, then credits - so the two cannot disagree.
   const legacyGate = evaluateLegacyRunGate({
     serviceConfigured: agentServiceConfigured,
     setup,
@@ -509,23 +509,23 @@ export default async function ClientAgentDetailPage({
   });
 
   // F31. The legacy branch had no run state at all: a client pressed "Create a
-  // new post", the page did not change, and nothing on it refreshed — so the
+  // new post", the page did not change, and nothing on it refreshed - so the
   // twenty minutes the run takes were indistinguishable from the press having
   // done nothing. Resolved here rather than in the panel for the usual reason:
   // only an id and a phase cross the boundary, never the job's prompt, events
   // or asset ids.
   //
-  // Attribution matches the "what it has made" join above — customAgentId is
+  // Attribution matches the "what it has made" join above - customAgentId is
   // authoritative, agentName keeps runs fired before that field existed. Launch
   // runs are excluded by construction: this shape has no umbrella to launch.
   //
   // ONLY A RUN THIS VIEWER STARTED. The banner this feeds says "Making your
   // next post now" and offers a Cancel whose confirm promises the credits back,
-  // and it was matching ANY in-flight run on the agent — including a SCHEDULED
+  // and it was matching ANY in-flight run on the agent - including a SCHEDULED
   // fire. Two things were wrong with that. The copy: a cron tick is not
   // something the reader just asked for, and the umbrella card next door has
   // always held the opposite line ("the one run the card acknowledges: a 'Run
-  // now' the viewer just pressed" — client-agent-rows.ts), which is also the
+  // now' the viewer just pressed" - client-agent-rows.ts), which is also the
   // A3/A4 rule that scheduled production stays invisible. And the money: a
   // scheduled fire charges the client only when the SCHEDULE was theirs
   // (run-scheduled/route.ts bills on `billClientCredits` and acts as the
@@ -552,7 +552,7 @@ export default async function ClientAgentDetailPage({
 
   // ── THE SECTIONED LAYOUT (CD-K1) ──
   // Albert: "under each agent, everything Daniel created is there, WITH DATES,
-  // categorized in sections — all inputs, all outputs, all settings." Outputs
+  // categorized in sections - all inputs, all outputs, all settings." Outputs
   // already had a home (the hero and the archive under it); these are the other
   // two bands, and both are read-only projections that link the surfaces which
   // already own the writes. Building editors here would be a second write path
@@ -561,7 +561,7 @@ export default async function ClientAgentDetailPage({
   const inputs = agentInputsView(inputDocs, setup);
 
   // The registry rows the FORMAT list can be opened onto. `row.templates` is
-  // the viewer-redacted registry, never `umbrella.templates` — a `curating`
+  // the viewer-redacted registry, never `umbrella.templates` - a `curating`
   // umbrella's registry holds what the setup run proposed and staff have not
   // confirmed, and the row projection empties it for a client for that reason.
   // `produced` is the same delivered-work-only set the archive below rides, so
@@ -623,7 +623,7 @@ export default async function ClientAgentDetailPage({
     return newest === null || at > newest ? at : newest;
   }, null);
   // NOT "delivered so far". A client's `produced` is their ARCHIVE set, and
-  // `isInClientArchive` drops published work past the 30-day window — so the
+  // `isInClientArchive` drops published work past the 30-day window - so the
   // number is what is in the Workspace right now, and a label promising a
   // lifetime total would be wrong for exactly the clients who have the most.
   // Staff see every asset, so for them it is the count without a window.
@@ -687,7 +687,7 @@ export default async function ClientAgentDetailPage({
       {/* CD-H7a's idiom, for the same failure one level up: the two-column
           arrangement engages off the CONTENT COLUMN, not the viewport. `lg:`
           only knows the window is 1024+, so with the Copilot dock out at 1280
-          this grid computed 236px of content beside a 320px rail — the run
+          this grid computed 236px of content beside a 320px rail - the run
           card's label wrapped one word per line and the button sat on top of
           it. The (app) shells wrap every page in @container, so @4xl (896px of
           actual column) is the first width that honestly holds 1fr + 320px +
@@ -716,7 +716,7 @@ export default async function ClientAgentDetailPage({
               maker to be deliverables-first and the finder to lead with what it
               found today, and "first" is a layout claim, not a copy one: what a
               page opens with is what it is about. The template-calendar shape
-              has no separate hero — its product IS the format registry and the
+              has no separate hero - its product IS the format registry and the
               week ahead, which live inside the panel below. */}
           {clipView && (
             <section>
@@ -745,7 +745,7 @@ export default async function ClientAgentDetailPage({
 
           {/* Hero: the launch card for a non-live umbrella (§7.1 states 1–3),
               the working agent once it is live. An agent with no umbrella at
-              all has neither — it is simply not set up, and says so rather
+              all has neither - it is simply not set up, and says so rather
               than offering controls the server would refuse. */}
           {row && umbrella?.launchState === "live" ? (
             <AgentDetailPanel
@@ -787,8 +787,8 @@ export default async function ClientAgentDetailPage({
                honest. An unbound agent with delivered work but no schedule is
                set up and idle, and a page that says so while offering no way to
                ask it for anything is a label with nothing behind it. The gate
-               below is the same server-evaluated ladder — service, intake,
-               credits — so the button can still only offer a press the server
+               below is the same server-evaluated ladder - service, intake,
+               credits - so the button can still only offer a press the server
                would accept. */
             <LegacyAgentPanel
               clientId={id}
@@ -820,7 +820,7 @@ export default async function ClientAgentDetailPage({
           ) : inputs ? (
             /* ONE SETUP ASK PER SCREEN (P1-2/P1-4). This EmptyState used to
                render above the inputs band regardless, so an intake-driven
-               agent said "Not set up yet — your Karos team sets this up" in a
+               agent said "Not set up yet - your Karos team sets this up" in a
                hero and then, 40px below, carried a green READY TO RUN badge on
                the band that actually knows. On the Reddit page the same screen
                asked for setup five times in five voices.
@@ -843,13 +843,13 @@ export default async function ClientAgentDetailPage({
               They have always lived at /clients/<id>/<platform>-agent; the
               redesign removed the sidebar links, so for two months the only way
               to reach a seat form was to know the URL. Each row carries its own
-              date and links the page that owns its writes — the forms are
+              date and links the page that owns its writes - the forms are
               REUSED, never forked. */}
           {inputs && <AgentInputsSection view={inputs} />}
 
           {/* ── SETTINGS (CD-K1 directive 2) ──
               What the launch run decided: the registry, the rotation, the pace,
-              and when any of it last moved. Read-only by design — every field
+              and when any of it last moved. Read-only by design - every field
               here already has an editor above or beside it, and the gap this
               fills is that none of those editors ever says WHEN. */}
           {setupFacts.length > 0 && <AgentSetupSection facts={setupFacts} />}
@@ -859,7 +859,7 @@ export default async function ClientAgentDetailPage({
               (StaffAgentControls, AgentRunHistory, AgentEconomicsCard) into one
               tabbed panel, plus what none of them had: a real (not fabricated)
               health read, an explicit next-scheduled-execution line, and a
-              Test Run trigger. Staff only — never mounted for a CLIENT_USER,
+              Test Run trigger. Staff only - never mounted for a CLIENT_USER,
               same gate every section it replaces already used. */}
           {isStaff && (
             <ControlRoom
@@ -885,8 +885,8 @@ export default async function ClientAgentDetailPage({
           )}
 
           {/* Where staff confirm the template set before a client ever sees it
-              (the Q3 curation gate). Umbrella-only by nature — it edits the
-              umbrella's registry — and never shown for an unbound agent. */}
+              (the Q3 curation gate). Umbrella-only by nature - it edits the
+              umbrella's registry - and never shown for an unbound agent. */}
           {isStaff && row && umbrella && umbrella.launchState !== "not_launched" && (
             <CurationPane agent={row} />
           )}
@@ -920,7 +920,7 @@ export default async function ClientAgentDetailPage({
                         client; the STAMP has to match. `createdAt` is the
                         generation instant a whole batch shares, so eight rows
                         under "What it has made for you" all read "3 hours ago"
-                        — the same batch tell the asset filter three screens up
+                        - the same batch tell the asset filter three screens up
                         was added to close. Staff keep the generation time. */}
                     <span className="shrink-0 text-[11px] text-muted-2">
                       {relativeTime(deliverableStamp(asset, viewerIsClient))}
@@ -943,7 +943,7 @@ export default async function ClientAgentDetailPage({
               The generic card answers this with one link, which is right for
               an agent whose data is a form and wrong for both new archetypes:
               a clip maker runs on FILES, and a finder runs on a list of
-              communities it is welcome in and a list it is banned from — and
+              communities it is welcome in and a list it is banned from - and
               being banned somewhere is a fact a client wants to see on the
               page, not behind a link. */}
           {archetype === "clip_maker" ? (
@@ -959,7 +959,7 @@ export default async function ClientAgentDetailPage({
 
                It drops out while the intake is still EMPTY, though. With
                nothing saved it has no answers to show and collapses into a
-               fourth "Set it up" — and the inputs band beside it is already
+               fourth "Set it up" - and the inputs band beside it is already
                making that ask with the dates and the link. One ask per screen
                (P1-4); once the intake exists this card is the only thing on the
                page that can show what is in it, and comes back. */

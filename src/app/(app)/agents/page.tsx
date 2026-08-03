@@ -57,7 +57,7 @@ export default async function AgentsPage() {
       <CustomAgentsHub
         agents={customAgents}
         // The lab slug rides along so the hub can tell which agents may run for
-        // which client — a per-client instance is refused by both submit cores
+        // which client - a per-client instance is refused by both submit cores
         // for anyone else, and the hub is where that pair gets assembled (F38).
         clients={activeClients.map((c) => ({
           id: c.id,

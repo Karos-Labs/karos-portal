@@ -18,7 +18,7 @@ interface UploadItem {
   error?: string;
 }
 
-/** Best-effort local duration probe — never blocks the upload if it fails. */
+/** Best-effort local duration probe - never blocks the upload if it fails. */
 function probeDuration(file: File): Promise<number | undefined> {
   return new Promise((resolve) => {
     const video = document.createElement("video");
@@ -82,13 +82,13 @@ async function uploadOne(clientId: string, file: File): Promise<void> {
   }
 }
 
-/** How many uploads run at once — enough to use available bandwidth without
+/** How many uploads run at once - enough to use available bandwidth without
  *  opening 100 concurrent PUTs when a whole podcast-clip batch is dropped at once. */
 const CONCURRENCY = 3;
 
 /**
  * Staff-only: bulk-upload pre-generated video clips (podcast cuts, etc.)
- * straight to GCS and register each as a draft asset — trigger-button +
+ * straight to GCS and register each as a draft asset - trigger-button +
  * modal, matching LabImportButton's pattern (lab-import.tsx).
  */
 export function BulkUploadClips({ clientId, bucketName }: { clientId: string; bucketName?: string }) {

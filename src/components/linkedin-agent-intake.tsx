@@ -89,7 +89,7 @@ function fieldError(error: string | null) {
 }
 
 /**
- * Reads the fallback field back in the seat summary — see FallbackField. No
+ * Reads the fallback field back in the seat summary - see FallbackField. No
  * kind means no sample was captured, so it stays empty for the summary card's
  * own empty-value treatment.
  */
@@ -105,7 +105,7 @@ function CompanyForm({
 }: {
   clientId: string;
   intake: LiIntakeView | null;
-  /** The LinkedIn URL already on the client profile — confirm, don't re-ask. */
+  /** The LinkedIn URL already on the client profile - confirm, don't re-ask. */
   pageUrlSuggestion?: string;
 }) {
   const router = useRouter();
@@ -385,7 +385,7 @@ function SeatCard({
     setEditing(false);
   }
 
-  // The input-contract minimum: ONE genuine source of substance and voice —
+  // The input-contract minimum: ONE genuine source of substance and voice -
   // their profile (real posts), a CV, or the voice sample. Warn, never block:
   // the CV can only be attached after the seat exists.
   const belowMinimum =
@@ -701,13 +701,13 @@ function FeedbackBox({
         , and each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
-        /* The run's state through the app's own mapper — these used to print the
+        /* The run's state through the app's own mapper - these used to print the
            raw database word ("review", "queued", "failed") into client-facing
            copy, beside a machine date, on a line with nothing to click. */
         <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => {
             /* A3/A4, the pass-2 stamp treatment. `Run <date>` is the generation
-               instant, and one fire produces a week of drafts — so four rows
+               instant, and one fire produces a week of drafts - so four rows
                printed the same date and said outright that the week came out of
                one minute. A client's rows are already collapsed to one per day
                server-side (toRunRowViews); here they lose the machinery noun and
@@ -805,7 +805,7 @@ export function LinkedInAgentIntake({
    */
   runInFlight: boolean;
   pageUrlSuggestion?: string;
-  /** Whose vocabulary the run rows are written in — see FeedbackBox. */
+  /** Whose vocabulary the run rows are written in - see FeedbackBox. */
   isStaff: boolean;
 }) {
   return (

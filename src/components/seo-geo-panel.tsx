@@ -40,7 +40,7 @@ import { SeoGeoActionPlan } from "@/components/seo-geo-action-plan";
  * SEO & GEO insights panel (SCRUM-52 redesign). Server component: all domain
  * markup renders here from presenter view-models; interactivity lives in the
  * small client leaves (disclosure, gap list, flag dialog). Everything a client
- * reads is plain English by construction — internal run-record vocabulary is
+ * reads is plain English by construction - internal run-record vocabulary is
  * mapped (never echoed) in seo-geo/presenter.ts, which is unit-tested for leaks.
  */
 
@@ -93,7 +93,7 @@ function AnswerDot({ mark, tone, label }: { mark: AnswerCellView["mark"]; tone: 
 }
 
 /**
- * The per-question × per-engine matrix (QA F12) — the exhibit behind every
+ * The per-question × per-engine matrix (QA F12) - the exhibit behind every
  * aggregate on the page. Horizontally scrollable in its own container so it never
  * pushes the page sideways.
  */
@@ -339,7 +339,7 @@ export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
   return (
     <div className="space-y-6">
       {/* CD-B4: say it once, above the numbers, when this snapshot was produced
-          by a measurement setup we've since replaced — rather than presenting
+          by a measurement setup we've since replaced - rather than presenting
           superseded maths as the client's position today. It travels WITH the
           scores: lifting the tiles above the fold must not leave the warning
           behind in a collapsed section. */}
@@ -365,7 +365,7 @@ export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
  * The prioritized action plan, in the client's language. The client-facing
  * `recommendations[]` (plain-English title + what it entails + owner, each row
  * with a real Approve control that persists and posts to the activity timeline)
- * is the primary view — `gaps[]` is documented INTERNAL and is demoted to a
+ * is the primary view - `gaps[]` is documented INTERNAL and is demoted to a
  * staff-only technical disclosure (dev-handoff §3b/§4, QA Fix 6/7).
  */
 export function SeoGeoPlan({
@@ -381,7 +381,7 @@ export function SeoGeoPlan({
   // re-resolved through today's REC_COPY here, at the server boundary (CD-J1
   // bounce 1): the plan was frozen at capture, so older snapshots still carry the
   // raw engineering labels the copy table exists to replace. Ids are stable, so
-  // this heals them without a re-capture — and doing it here, rather than in the
+  // this heals them without a re-capture - and doing it here, rather than in the
   // client leaf, keeps those labels out of the RSC payload entirely.
   // The approvals ride along for one reason only (AF-11): when two rec ids heal
   // to identical copy they collapse to one row, and the row has to keep the id
@@ -434,11 +434,11 @@ export function SeoGeoPanel({
   hidePlan = false,
 }: {
   insights: SeoGeoInsights | null;
-  /** The CURRENT tracked-5 (same selector as the sidebar) — keeps every panel
+  /** The CURRENT tracked-5 (same selector as the sidebar) - keeps every panel
    *  surface side-by-side with the Competitor Track instead of the frozen
    *  snapshot roster. */
   trackedCompetitors?: TrackedCompetitorRef[];
-  /** Client website — drives the client's own favicon in the comparison rows. */
+  /** Client website - drives the client's own favicon in the comparison rows. */
   clientWebsite?: string | null;
   /** True when the viewer is the client. Gates the internal gap list, which
    *  `SeoGeoInsights.gaps` is explicitly documented as never being rendered raw
@@ -449,7 +449,7 @@ export function SeoGeoPanel({
    *  is ever coming. */
   intelScheduleEnabled?: boolean;
   intelScheduleNextRunAt?: number | null;
-  /** A refresh run holds the workspace lock right now — rendered in place on the
+  /** A refresh run holds the workspace lock right now - rendered in place on the
    *  capture strip instead of leaving a stale snapshot looking current. */
   isRefreshing?: boolean;
   /** QA F99/F124: the client dashboard lifts the headline scores and the action
@@ -485,20 +485,20 @@ export function SeoGeoPanel({
   // it carry a written plan?) is read by SeoGeoScores and SeoGeoPlan, which own
   // the two surfaces that report it.
   const prompts = buildPromptViews(insights);
-  // Grouped under plain-English intent headings (F18) — the fallback list for
+  // Grouped under plain-English intent headings (F18) - the fallback list for
   // snapshots with no persisted answer grid.
   const promptGroups = buildIntentPromptViews(insights);
   // QA F12: the per-question × per-engine matrix the pipeline has been computing and
   // persisting on every run since SCRUM-52, read by no component until now. It is the
   // exhibit behind every aggregate above; without it the "no black box" claim on this
-  // card is unsupported. Null on pre-grid snapshots — the flat list stays the fallback.
+  // card is unsupported. Null on pre-grid snapshots - the flat list stays the fallback.
   const answerGrid = buildAnswerGridViews(insights);
   const generic = genericFlagPrefill(insights);
   const citationLeaderboard = insights.citationLeaderboard ?? [];
 
   // QA F23: the AI capture rejected and the pipeline substituted an empty probe
   // set, empty prompt set and a one-name roster. Without this guard the panel
-  // renders its full scaffolding against those zeros — "0 real buyer questions",
+  // renders its full scaffolding against those zeros - "0 real buyer questions",
   // "excluding the 0 questions that name you directly", and a disclosure labelled
   // "The 0 buyer questions we asked" that opens onto an empty box. That reads like
   // the product is broken, when one leg of one run degraded.
@@ -527,7 +527,7 @@ export function SeoGeoPanel({
   const discovered = buildDiscoveredViews(insights, trackedCompetitors);
   const rosterChips = buildRosterChips(insights, trackedCompetitors, clientWebsite);
   // Staff-only roster verdict (CD-J1 directive 4); null when there is nothing to
-  // say — nobody tracked, or no measured answers to check a roster against.
+  // say - nobody tracked, or no measured answers to check a roster against.
   const rosterSanity = buildRosterSanity(insights, trackedCompetitors);
   // What this snapshot's comparison numbers are actually measured over. A legacy
   // record's figures cover every question; the copy must say so rather than
@@ -542,7 +542,7 @@ export function SeoGeoPanel({
   // QA F133: ONE definition of "cited" for the whole client-facing report.
   // This sentence used to count raw citation OCCURRENCES across ALL captured
   // answers ("cited 11 times") while the fix card a screen above counted the
-  // ANSWER RATE across category answers ("cited in 0% of category answers") —
+  // ANSWER RATE across category answers ("cited in 0% of category answers") -
   // two numbers for the same measurement, both stated as fact, reading as the
   // report contradicting itself. Both surfaces now use the engine cards' unit
   // and scope: answers cited, out of measured category answers.
@@ -670,7 +670,7 @@ export function SeoGeoPanel({
       <Card>
         <CardTitle className="mb-1">You vs competitors on each AI engine</CardTitle>
         {/* CD-J1 directive 3: name the basis in the subline. Every number in this
-            section is measured on category questions only — a question that
+            section is measured on category questions only - a question that
             contains your name names you by construction, so counting those would
             hand you a lead over every competitor before an engine said anything. */}
         <p className="mb-4 text-xs text-muted-2">
@@ -740,7 +740,7 @@ export function SeoGeoPanel({
 
       {/* 6 · Methodology (QA F18): three named sections, three Cards. These used to
           be one Card whose only affordance was a collapsed row labelled "The 20
-          buyer questions we asked" — so the competitor roster and the citation
+          buyer questions we asked" - so the competitor roster and the citation
           leaderboard, both named sections of this report, were children of a
           disclosure that didn't mention them and was closed by default. A client
           asking "who are you comparing me to?" could never find the answer. */}
@@ -785,7 +785,7 @@ export function SeoGeoPanel({
             </div>
           )}
           {/* CD-J1 bounce 2c: state the split in words. The branded count appeared
-              nowhere on screen before this — the page showed a category total and a
+              nowhere on screen before this - the page showed a category total and a
               grand total and left the client to subtract. */}
           <p className="mt-3 text-[11px] text-muted-2">
             {questionPlanLine} We ask every engine the same questions on every snapshot so results
@@ -800,11 +800,11 @@ export function SeoGeoPanel({
         <p className="mb-3 text-xs text-muted-2">
           The brands your visibility is measured against on every snapshot.
         </p>
-        {/* CD-J1 directive 4 — STAFF ONLY. A roster of never-named brands makes
+        {/* CD-J1 directive 4 - STAFF ONLY. A roster of never-named brands makes
             every comparison above honest and meaningless at once: bars at zero
             against opponents who aren't in the race. The client cannot tell that
             apart from "you're losing", so the team gets told instead. A suggestion,
-            never an action — the roster is an account decision and nothing here
+            never an action - the roster is an account decision and nothing here
             mutates it. */}
         {!isClientViewer && rosterSanity && (
           <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
@@ -836,25 +836,25 @@ export function SeoGeoPanel({
 
       {/* QA F19: this Card is NOT gated on there being citations. The client's own
           citation sentence used to be nested inside a `quotedInstead.length > 0`
-          check, so the single most important line in the section — your site was
-          never cited, and earning citations is what moves the score — was exactly
+          check, so the single most important line in the section - your site was
+          never cited, and earning citations is what moves the score - was exactly
           the line that could not render when there were no citations at all. The
           zero state deleted its own explanation while the engine cards above kept
           saying "cited as a source: 0 of 14" with nothing to explain it.
-          It IS suppressed on a degraded run (F23) — there were no answers to
+          It IS suppressed on a degraded run (F23) - there were no answers to
           count citations across, and the capture-strip banner says so. */}
       {!captureFailed && (
       <Card>
         <CardTitle className="mb-1">Who the engines quote as sources</CardTitle>
         {quotedInstead.length > 0 ? (
           <>
-            {/* The bars count citations, the sentence below counts answers — say
+            {/* The bars count citations, the sentence below counts answers - say
                 which is which, so two honest numbers don't read as a contradiction. */}
             <p className="mb-3 text-xs text-muted-2">
               How many times each of these {quotedInstead.length} domains was cited across the{" "}
               {basis.answers} we measured.
             </p>
-            {/* Every row the data layer returns — the old hard `.slice(0, 8)` against
+            {/* Every row the data layer returns - the old hard `.slice(0, 8)` against
                 a limit of 12 dropped up to four competitor source domains with no
                 count, no "show all", and no hint there were more. */}
             <ul className="space-y-1.5">

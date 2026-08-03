@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 /**
  * CD-J1 directive 2: a score you can click to see what produced it.
  *
- * The headline on a presence tile is a percentage. The honest denominators — how
- * many questions we asked, how many named you, how many no engine could answer —
+ * The headline on a presence tile is a percentage. The honest denominators - how
+ * many questions we asked, how many named you, how many no engine could answer -
  * live in here, one click away, in plain sentences. That inversion is the whole
  * point: "Named in 0 of 12" put the arithmetic in front of the client and the
  * meaning nowhere.
@@ -24,7 +24,7 @@ export function ScorePopover({
   lines,
   srLabel,
 }: {
-  /** The headline the client sees and clicks — e.g. "62%". */
+  /** The headline the client sees and clicks - e.g. "62%". */
   value: string;
   title: string;
   lines: string[];
@@ -40,7 +40,7 @@ export function ScorePopover({
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       setOpen(false);
-      // Escape returns focus to what opened the panel — a keyboard user must not
+      // Escape returns focus to what opened the panel - a keyboard user must not
       // be dropped at the top of the document.
       triggerRef.current?.focus();
     }

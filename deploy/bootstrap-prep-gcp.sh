@@ -79,15 +79,23 @@ have artifacts repositories describe "$REPO" --location="$REGION" --project="$PR
 say "Cloud Build service-account bindings (prep)"
 PREP_PROJECT_NUMBER=$(gcloud projects describe "$PREP_PROJECT_ID" --format='value(projectNumber)')
 PREP_CB_SA="${PREP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+# Newer Cloud Build versions run builds as the Compute Engine default SA, not the
+# Cloud Build SA. Grant both so the build works regardless of worker generation.
+PREP_COMPUTE_SA="${PREP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-gcloud projects add-iam-policy-binding "$PREP_PROJECT_ID" \
-  --member="serviceAccount:${PREP_CB_SA}" --role="roles/run.admin" --condition=None -q >/dev/null
-gcloud iam service-accounts add-iam-policy-binding \
-  "${PREP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-  --project="$PREP_PROJECT_ID" \
-  --member="serviceAccount:${PREP_CB_SA}" --role="roles/iam.serviceAccountUser" -q >/dev/null
-gcloud projects add-iam-policy-binding "$PREP_PROJECT_ID" \
-  --member="serviceAccount:${PREP_CB_SA}" --role="roles/secretmanager.secretAccessor" --condition=None -q >/dev/null
+for SA in "$PREP_CB_SA" "$PREP_COMPUTE_SA"; do
+  gcloud projects add-iam-policy-binding "$PREP_PROJECT_ID" \
+    --member="serviceAccount:${SA}" --role="roles/run.admin" --condition=None -q >/dev/null
+  gcloud projects add-iam-policy-binding "$PREP_PROJECT_ID" \
+    --member="serviceAccount:${SA}" --role="roles/artifactregistry.writer" --condition=None -q >/dev/null
+  gcloud projects add-iam-policy-binding "$PREP_PROJECT_ID" \
+    --member="serviceAccount:${SA}" --role="roles/secretmanager.secretAccessor" --condition=None -q >/dev/null
+  gcloud projects add-iam-policy-binding "$PREP_PROJECT_ID" \
+    --member="serviceAccount:${SA}" --role="roles/logging.logWriter" --condition=None -q >/dev/null
+  gcloud iam service-accounts add-iam-policy-binding "$PREP_COMPUTE_SA" \
+    --project="$PREP_PROJECT_ID" \
+    --member="serviceAccount:${SA}" --role="roles/iam.serviceAccountUser" -q >/dev/null
+done
 
 # ── 3. Prep secrets ──────────────────────────────────────────────────────────
 say "Prep secrets (same names as cloudbuild.yaml's --set-secrets list)"
@@ -164,7 +172,7 @@ have iam service-accounts describe "$DEPLOYER_SA" --project="$PREP_PROJECT_ID" \
 gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER_SA" \
   --project="$PREP_PROJECT_ID" \
   --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/${WIF_POOL_RESOURCE#*/}/attribute.repository/${GITHUB_REPO}" -q >/dev/null
+  --member="principalSet://iam.googleapis.com/${WIF_POOL_RESOURCE}/attribute.repository/${GITHUB_REPO}" -q >/dev/null
 
 gcloud projects add-iam-policy-binding "$PREP_PROJECT_ID" \
   --member="serviceAccount:${DEPLOYER_SA}" --role="roles/cloudbuild.builds.editor" --condition=None -q >/dev/null

@@ -137,3 +137,50 @@ export async function notifyScheduleFireFailure(opts: {
     console.error("[job-alerts] notifyScheduleFireFailure failed:", e);
   }
 }
+
+/**
+ * Alert for a copilot chat turn that threw or errored mid-stream (token
+ * depletion, provider 5xx, etc.) — the chat route has no Job doc to hang a
+ * failure off, so this carries the request's own context directly. Fired
+ * from the chat route's `streamText` `onError`, which is the only place that
+ * actually sees the thrown error (the text-stream response protocol drops it
+ * before it ever reaches the browser).
+ */
+export async function notifyChatbotFailure(opts: {
+  clientId: string;
+  clientName?: string;
+  userEmail?: string;
+  error: string;
+  stack?: string;
+}): Promise<void> {
+  try {
+    const to = alertRecipients();
+    if (to.length === 0) return;
+    const clientLabel = opts.clientName ?? opts.clientId;
+    const classified = classifyJobError(opts.error);
+    const html = alertShell({
+      heading: "Copilot chat error",
+      rows: [
+        ["Client", esc(clientLabel)],
+        ...(opts.userEmail ? [["User", esc(opts.userEmail)] as [string, string]] : []),
+        ...(classified ? [["Reason", esc(classified.label)] as [string, string]] : []),
+        ["Raw error", `<span style="color:#aebfc4;">${esc(classified?.raw ?? opts.error)}</span>`],
+        ...(opts.stack
+          ? [["Stack", `<pre style="white-space:pre-wrap;font-size:11px;color:#7a8b90;">${esc(opts.stack.slice(0, 4000))}</pre>`] as [string, string]]
+          : []),
+      ],
+      link: `${appUrl()}/clients/${opts.clientId}`,
+      linkLabel: "Open client workspace",
+    });
+    const result = await sendEmail({
+      to,
+      subject: `[Karos Alert] Copilot chat error — ${clientLabel}`,
+      html,
+    });
+    if (!result.ok) {
+      console.error(`[job-alerts] Chatbot-failure alert email for client ${opts.clientId} failed: ${result.error}`);
+    }
+  } catch (e) {
+    console.error("[job-alerts] notifyChatbotFailure failed:", e);
+  }
+}

@@ -13,7 +13,7 @@ import { describeCadence, runtimeTimeZone } from "@/lib/run-cadence";
 import type { AssetType, RunCadence, ScheduledRun } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
 
-/** The agent picker only needs identity — full docs stay server-side. */
+/** The agent picker only needs identity - full docs stay server-side. */
 export type SchedulableAgent = { id: string; name: string; entrySkillDir: string };
 
 const DAYS = [
@@ -48,7 +48,7 @@ const DEFAULT_CADENCE: Omit<RunCadence, "timezone"> = {
  * One schedule row. State is per row rather than per card so a failure names
  * the schedule it belongs to.
  *
- * F110: both handlers used to be fire-and-forget inside a transition — the
+ * F110: both handlers used to be fire-and-forget inside a transition - the
  * result was discarded, so a refused toggle or delete left the row exactly as
  * it was with no message, and the delete fired on a single click of an
  * unlabelled trash icon. Same treatment the calendar's card already had:

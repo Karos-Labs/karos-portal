@@ -626,6 +626,36 @@ describe("rosterStatus", () => {
 });
 
 /**
+ * The admin pause (main's coming-soon roster). `enabled: false` outranks every
+ * other input — including AF-5's upcoming-content promotion — because a paused
+ * agent isn't live, failing, or idle: it simply isn't running for anyone.
+ */
+describe("rosterStatus · Coming Soon", () => {
+  it("defaults to enabled when the caller omits it, unaffected", () => {
+    expect(rosterStatus({ launchState: "live" })).toEqual({ tone: "live", label: "Live" });
+  });
+
+  it("says Coming Soon for a paused agent, outranking every other input", () => {
+    expect(
+      rosterStatus({
+        launchState: "live",
+        scheduleActive: true,
+        hasDelivered: true,
+        hasUpcomingContent: true,
+        enabled: false,
+      }),
+    ).toEqual({ tone: "disabled", label: "Coming Soon" });
+  });
+
+  it("says Coming Soon for a paused agent with no umbrella at all", () => {
+    expect(rosterStatus({ launchState: null, enabled: false })).toEqual({
+      tone: "disabled",
+      label: "Coming Soon",
+    });
+  });
+});
+
+/**
  * The ordering rule behind the badge: only the most recent run WITH A VERDICT
  * counts. An old failure followed by a success is an agent that had a bad day
  * and then worked — and a badge that remembers the failure forever is the

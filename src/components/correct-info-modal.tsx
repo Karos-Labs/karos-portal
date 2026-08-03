@@ -18,7 +18,7 @@ export function CorrectInfoModal({
   docLabel: string;
   /**
    * What this correction will cost the viewer, resolved on the server. Present
-   * only when the viewer is actually billable — staff and admins in "View as
+   * only when the viewer is actually billable - staff and admins in "View as
    * Client" pass nothing and see no price, because they are not charged.
    * `blockReason` is the server's own refusal line (creditBlockReason) when the
    * cost does not fit, so this modal names the same limit the charge would.
@@ -53,7 +53,7 @@ export function CorrectInfoModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, pending, onClose]);
 
-  // Credits won't cover it — the server would refuse the charge before the model
+  // Credits won't cover it - the server would refuse the charge before the model
   // runs, so don't let the client spend a keystroke on the attempt.
   const shortfall = correctionPricing?.blockReason != null;
 
@@ -124,7 +124,7 @@ export function CorrectInfoModal({
             className="resize-none"
           />
           {/* The charge happens before the model call, so a client used to learn
-              the price only by watching the rail drop by 2 — or, if they were
+              the price only by watching the rail drop by 2 - or, if they were
               short, by a red error after committing. Every other billable action
               states its cost up front ("Costs N credits." on the run dialog);
               this surface was the one that stayed silent. */}

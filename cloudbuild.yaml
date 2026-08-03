@@ -101,6 +101,34 @@ substitutions:
   # look like production mail (see DEPLOY_ENVIRONMENTS.md).
   _EMAIL_FROM: "Karos Labs <donotreply@karoslabs.com>"
   _ADMIN_EMAIL: "hello@karoslabs.com"
+  # Failure-alert on-call list (job-alerts.ts) — separate from _ADMIN_EMAIL
+  # above (support/signup mail). If this ever needs more than one address,
+  # note gcloud's --set-env-vars splits on every comma, so a literal
+  # "a@x.com,b@y.com" value here breaks the parse unless the whole
+  # --set-env-vars argument switches to a custom delimiter (--set-env-vars=^;^...).
+  _ADMIN_EMAILS: "hello@karoslabs.com"
+  # Set to "true" for environments where allUsers invoker is allowed (production).
+  # Prep sets this to "false" via deploy-prep.yml to skip the IAM binding attempt
+  # that fails under org policy constraints/iam.allowedPolicyMemberDomains.
+  _ALLOW_UNAUTHENTICATED: "true"
+  # Named Firestore database — prep runs its own isolated "prep" database in
+  # the same shared Firebase project; "(default)" is production's. See
+  # src/lib/firebase/admin.ts (FIRESTORE_DATABASE_ID) and firebase.json.
+  _FIRESTORE_DATABASE_ID: "(default)"
+  # Dedicated GCS bucket for large pre-generated media (src/lib/gcs-media.ts)
+  # — own bucket per environment so prep media never lands in production's.
+  _GCS_MEDIA_BUCKET: "karos-media-assets"
+  # Live external analytics ingestion (src/lib/analytics — pulls real
+  # connected-account data for whichever clients exist in this environment's
+  # own Firestore database).
+  _ANALYTICS_LIVE_INGEST: "1"
+  # Agent-service webhook callback target — a stable Cloud Run URL for THIS
+  # service (independent of _APP_URL/any custom domain). Set once this
+  # environment's own agent-service is deployed.
+  _AGENT_SERVICE_CALLBACK_URL: ""
+  # Full production/prep parity — the rest of these were previously only in
+  # cloudbuild.promote.yaml (production). Same secret NAMES everywhere, own
+  # VALUES per project's Secret Manager (see DEPLOY_ENVIRONMENTS.md).
   # Override at submit time: --substitutions _REGION=europe-west1,...
 
 options:
@@ -135,33 +163,28 @@ steps:
   # ── 3. Deploy to Cloud Run ──────────────────────────────────────────────────
   - id: cloud-run-deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - run
-      - deploy
-      - ${_SERVICE}
-      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA
-      - --region=${_REGION}
-      - --platform=managed
-      - --allow-unauthenticated        # remove if you add Cloud IAP / identity proxy
-      - --port=3000
-      - --min-instances=1             # keep 1 warm to avoid Firebase Admin cold-start latency
-      - --max-instances=10
-      - --memory=1Gi                  # AI SDK streaming + Firebase Admin needs headroom
-      - --cpu=1
-      - --timeout=300                 # max request timeout; AI generation can be slow
-      - --concurrency=80              # Cloud Run default; tune based on observed p99 latency
-      # Runtime secrets — mounted from Secret Manager, never in the image.
-      # AGENT_SERVICE_TOKEN + AGENT_WEBHOOK_SECRET are the same secrets the agent
-      # service uses (agent-service-tokens / agent-webhook-secret).
-      - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest
-      # Non-secret runtime env vars (not baked into image; can change without rebuild).
-      # AGENT_SERVICE_URL + AGENT_SERVICE_AUDIENCE = the deployed agent api URL
-      # (both empty until the agent service is deployed; while unset,
-      # isAgentServiceConfigured() is false, so agent-service runs refuse and the
-      # run control is disabled — NOT hidden). NEXT_PUBLIC_APP_URL is the
-      # webhook callback base.
-      - --set-env-vars=EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT}
+      - -c
+      - |
+        AUTH_FLAG="--allow-unauthenticated"
+        if [ "${_ALLOW_UNAUTHENTICATED}" != "true" ]; then
+          AUTH_FLAG="--no-allow-unauthenticated"
+        fi
+        gcloud run deploy ${_SERVICE} \
+          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          $$AUTH_FLAG \
+          --port=3000 \
+          --min-instances=1 \
+          --max-instances=10 \
+          --memory=1Gi \
+          --cpu=1 \
+          --timeout=300 \
+          --concurrency=80 \
+          --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,SEGMIND_API_KEY=SEGMIND_API_KEY:latest,NEXT_PUBLIC_FIREBASE_API_KEY=NEXT_PUBLIC_FIREBASE_API_KEY:latest,NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:latest,NEXT_PUBLIC_FIREBASE_PROJECT_ID=NEXT_PUBLIC_FIREBASE_PROJECT_ID:latest,NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:latest,NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:latest,NEXT_PUBLIC_FIREBASE_APP_ID=NEXT_PUBLIC_FIREBASE_APP_ID:latest,AGENTS_REPO_GITHUB_TOKEN=github-token:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,OAUTH_STATE_SECRET=OAUTH_STATE_SECRET:latest,LINKEDIN_CLIENT_ID=LINKEDIN_CLIENT_ID:latest,LINKEDIN_CLIENT_SECRET=LINKEDIN_CLIENT_SECRET:latest,TWITTER_CLIENT_ID=TWITTER_CLIENT_ID:latest,TWITTER_CLIENT_SECRET=TWITTER_CLIENT_SECRET:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,LINKEDIN_COMMUNITY_CLIENT_SECRET=LINKEDIN_COMMUNITY_CLIENT_SECRET:latest,LINKEDIN_COMMUNITY_CLIENT_ID=LINKEDIN_COMMUNITY_CLIENT_ID:latest \
+          --set-env-vars="EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},ADMIN_EMAILS=${_ADMIN_EMAILS},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},AGENT_SERVICE_CALLBACK_URL=${_AGENT_SERVICE_CALLBACK_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},ANALYTICS_LIVE_INGEST=${_ANALYTICS_LIVE_INGEST}"
     waitFor: [docker-push]
 
 images:

@@ -40,7 +40,7 @@ const GROUP_TEMPLATE_CHIPS = 3;
  * The template streams present in one agent's deliverables, most-used first.
  *
  * F148's complaint was that a client's template set is "rendered nowhere as a
- * group" — the agent designs three or four named formats for them, the detail
+ * group" - the agent designs three or four named formats for them, the detail
  * modal shows one on a single post, and nowhere does the client see that their
  * agent produces several distinct streams. The archive is where the whole body
  * of work is, so it is where the streams become visible.
@@ -72,11 +72,11 @@ const GROUP_PAGE_SIZE = 12;
 
 /**
  * The Workspace "Archive" tab, grouped per agent and carrying the agent's real
- * platform mark. A tile opens the same detail modal the calendar uses — which
+ * platform mark. A tile opens the same detail modal the calendar uses - which
  * mounts the per-draft reader for agent draft batches (pick / edit / skip) and
  * is otherwise read-only; approval itself stays on the staff Library.
  *
- * For a client the set is POSTED work from the last ~30 days only — the filter
+ * For a client the set is POSTED work from the last ~30 days only - the filter
  * runs server-side in TasksBody (F149/A4); this component only has to talk
  * about it honestly. Staff see the client's full library.
  *
@@ -163,7 +163,7 @@ export function ArchiveView({
       if (agent !== "all" && name !== agent) continue;
       (byAgent.get(name) ?? byAgent.set(name, []).get(name)!).push(asset);
     }
-    // A3/A4: a client's rows are ordered — and stamped — by when the work
+    // A3/A4: a client's rows are ordered - and stamped - by when the work
     // reached them, not by when it was generated. Ordering by `createdAt` while
     // printing the delivery time would also leave the tiles visibly out of
     // sequence with their own timestamps.
@@ -381,7 +381,7 @@ function ArchiveTile({
         <p className="truncate text-sm font-medium text-foreground">{asset.title}</p>
         <div className="mt-auto flex items-center justify-between gap-2">
           {/* `createdAt` is the GENERATION instant, and a whole week of
-              "daily" posts shares one — so a client's archive printed five
+              "daily" posts shares one - so a client's archive printed five
               tiles reading "3 hours ago", which states the batch outright
               (A3/A4). Posted work carries its posting time and everything else
               the moment it was approved; staff keep the generation stamp,

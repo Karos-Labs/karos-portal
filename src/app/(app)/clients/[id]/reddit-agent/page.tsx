@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/ui";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 
 /**
- * The client's Reddit agent page: the account form and feedback — the one
+ * The client's Reddit agent page: the account form and feedback - the one
  * canonical set of Reddit intake surfaces, mounted with the same props the run
  * dialog renders inline. Nothing in the navigation points here; it is the
  * fallback for a caller that ships the setup flag without the inline payload,

@@ -26,10 +26,10 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
  * Client-portal welcome widgets: what needs the client's attention right now,
  * plus the latest deliverables produced for them.
  *
- * `assets` MUST arrive already redacted for client viewers — the page passes
+ * `assets` MUST arrive already redacted for client viewers - the page passes
  * getClientLibraryAssets(assets, { forClient: true }), so locked (future-dated)
  * posts surface here only as whitelist placeholders (template name as title,
- * type, status — no content/image/meta). Titles are rendered verbatim below, so
+ * type, status - no content/image/meta). Titles are rendered verbatim below, so
  * an un-redacted future title would leak; the redaction stays at the page.
  *
  * THAT SENTENCE IS A CONTRACT, AND ONE FIELD NO LONGER RELIES ON IT.
@@ -73,7 +73,7 @@ export function ClientHomeOverview({
   clientId: string;
   tasks: ClientTask[];
   assets: Asset[];
-  /** Whose "Recent activity" this is — see the list below (A3/A4). */
+  /** Whose "Recent activity" this is - see the list below (A3/A4). */
   viewerIsClient?: boolean;
 }) {
   const archive = clientArchiveLink({ clientId, isStaff: !viewerIsClient });
@@ -84,7 +84,7 @@ export function ClientHomeOverview({
   const reviewPendingTasks = tasks.filter((t) => t.status === "review_pending");
   const pendingTasks = tasks.filter((t) => t.status === "pending");
   // A scheduled post the publish cron couldn't push (rate limit, expired
-  // integration, upstream error) used to be silent — status stays "scheduled"
+  // integration, upstream error) used to be silent - status stays "scheduled"
   // forever with only publishError set, and nothing on this page said so.
   // Same "failed" classification the calendar itself renders (calendar-kind.ts)
   // — one predicate, not a second ad hoc copy of it.
@@ -104,7 +104,7 @@ export function ClientHomeOverview({
   // future-dated post is not in it yet, so "does this row have a destination"
   // can only be answered against the current moment. Read once per render.
   //
-  // The directive has to be the LAST line before the statement — it applies to
+  // The directive has to be the LAST line before the statement - it applies to
   // the next SOURCE line, so with the explanation underneath it was suppressing
   // a comment and the rule fired anyway (an error in the tree since this
   // comment was written, and the "unused directive" warning beside it).
@@ -114,8 +114,8 @@ export function ClientHomeOverview({
   // A3/A4, the treatment its siblings already carry (archive-view, the agent
   // detail page). Two things were wrong with this list for a client.
   //
-  // The set: it listed DRAFTS. A draft has not reached the client — approval is
-  // staff-only (approveAssetAction calls requireStaff) — and the drafts of one
+  // The set: it listed DRAFTS. A draft has not reached the client - approval is
+  // staff-only (approveAssetAction calls requireStaff) - and the drafts of one
   // fire are minted in one second, so five rows read "Untitled · 3 hours ago"
   // and published the shape of the generation run on the client's home screen.
   // Their own row above already reports them, in the one honest way: a count,
@@ -123,12 +123,12 @@ export function ClientHomeOverview({
   // draft's delivery stamp IS the fire, because nothing has moved it since.
   //
   // The stamp: `updatedAt ?? createdAt` on the rows that remain. Delivered work
-  // carries its posting time, or the moment it was approved — the same
+  // carries its posting time, or the moment it was approved - the same
   // clientDeliveryStamp the archive sorts, ages and prints by, so a row here
   // and the same row one screen over cannot disagree about when it arrived.
   //
   // Membership is the archive's own predicate, which is also what decides
-  // whether the row links (below) — so a client's rows are now exactly the rows
+  // whether the row links (below) - so a client's rows are now exactly the rows
   // with somewhere to go. Staff keep every asset, stamped at generation.
   const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.updatedAt ?? a.createdAt);
   const recentAssets = [...assets]
@@ -139,8 +139,8 @@ export function ClientHomeOverview({
   return (
     /* CD-H4: `min-w-0` on the cards, not decoration. A grid item's automatic
        minimum size is its MIN-CONTENT, so at 375 the track stayed 343 while the
-       cards sized themselves to the longest deliverable title — 465px here,
-       381px in the reviewer's capture — and the status badges and "Open
+       cards sized themselves to the longest deliverable title - 465px here,
+       381px in the reviewer's capture - and the status badges and "Open
        archive" were cut off by the shell's overflow-x-clip. With the floor at 0
        the card takes the track and the rows' existing min-w-0/truncate chain
        does the shortening it was always meant to do. */
@@ -208,7 +208,7 @@ export function ClientHomeOverview({
                 // them by design (asset-visibility.ts getClientArchiveAssets),
                 // the calendar filters them out, and /assets redirects clients
                 // to /tasks. The Workspace board holds tasks, not deliverables,
-                // so it does not contain these either — the count and every
+                // so it does not contain these either - the count and every
                 // candidate destination are provably disjoint. The hint already
                 // says the right thing: they show up once the team is done.
                 icon="Sparkles"
@@ -264,8 +264,8 @@ export function ClientHomeOverview({
               // Same rule as the attention row above: a row links to the
               // archive only when the archive would actually hold it, rather
               // than landing the client on a screen that provably excludes the
-              // item they clicked. This used to test `status !== "draft"` — one
-              // of the archive's four rules — so a future-dated post, a launch
+              // item they clicked. This used to test `status !== "draft"` - one
+              // of the archive's four rules - so a future-dated post, a launch
               // deliverable, or a post already aged past the 30-day window all
               // rendered as links to a list they are not in. One predicate,
               // asked here instead of re-derived.

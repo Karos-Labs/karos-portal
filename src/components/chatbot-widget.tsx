@@ -20,7 +20,7 @@ interface Message {
   /**
    * What the transcript shows in place of `content`. An action chip's hidden
    * instruction used to be rendered in the user bubble, so the client was
-   * shown words they never wrote — including an order aimed at the model
+   * shown words they never wrote - including an order aimed at the model
    * ("Start by asking me…") and internal product vocabulary (QA F15).
    * `content` is still what goes to the API.
    */
@@ -35,7 +35,7 @@ interface MentionableAgent {
   platform: string | null;
 }
 
-/** A focused-agent chip set by picking `@AgentName` — biases, not locks, the chat. */
+/** A focused-agent chip set by picking `@AgentName` - biases, not locks, the chat. */
 interface FocusAgent {
   id: string;
   name: string;
@@ -49,7 +49,7 @@ interface FocusAgent {
  * conversation (QA F88). sessionStorage (not local) keeps it to the tab.
  */
 const THREAD_KEY_PREFIX = "karos.copilot.thread.";
-/** Cap what we write back — a long thread is not worth a quota error. */
+/** Cap what we write back - a long thread is not worth a quota error. */
 const MAX_PERSISTED_MESSAGES = 40;
 
 function isPersistedMessage(v: unknown): v is Message {
@@ -81,7 +81,7 @@ interface ProactiveAction {
   trigger?: string;
   color: string;
   /**
-   * Opts into Sonnet instead of the copilot's default Haiku model — this is a
+   * Opts into Sonnet instead of the copilot's default Haiku model - this is a
    * plain chatbot, so most turns (including a focused-agent conversation) run
    * cheap. These three run multi-step tool orchestration over a full strategy
    * write-up, not a quick Q&A turn, so they ask for the stronger model.
@@ -92,7 +92,7 @@ interface ProactiveAction {
 function buildProactiveActions(viewerIsBilled: boolean): ProactiveAction[] {
   return [
     {
-      // Handled by the Strategy War Room, not the chat path — so no trigger.
+      // Handled by the Strategy War Room, not the chat path - so no trigger.
       // The swarm reads the client's calendar gaps, brand guidance, past
       // engagement and custom agents; it does NOT look at the web, the client's
       // site or the inbox, so the label must not promise a market scan (QA F50).
@@ -109,7 +109,7 @@ function buildProactiveActions(viewerIsBilled: boolean): ProactiveAction[] {
       color: "#FF6B2C",
     },
     {
-      // The copilot has no web search and no page fetch — the only competitor
+      // The copilot has no web search and no page fetch - the only competitor
       // intelligence it holds is the tracked competitor list already stored on
       // the account. Asking for a URL promised a page visit that never happens
       // (QA F87), so both the sublabel and the trigger name the real source.
@@ -138,7 +138,7 @@ function buildProactiveActions(viewerIsBilled: boolean): ProactiveAction[] {
       // a card into In Progress (QA F91).
       //
       // "Dispatch" was the same mistake one layer up (A3): it named the
-      // machinery — a batch being sent somewhere — on a chip a client presses.
+      // machinery - a batch being sent somewhere - on a chip a client presses.
       // The label says what the client ends up with. Same rename as the board
       // chip in tasks-board.tsx; neither surface branches by role, so there is
       // no staff naming to preserve here.
@@ -156,10 +156,10 @@ function buildProactiveActions(viewerIsBilled: boolean): ProactiveAction[] {
 
 /**
  * The `/` command palette. Each entry either inserts a scaffold sentence into
- * the input — the same idiom the action chips' `trigger` strings already use,
+ * the input - the same idiom the action chips' `trigger` strings already use,
  * so completing it and sending is an ordinary chat turn the new capability-
  * matrix tools (find_output/edit_output/run_agent_now/reschedule_output/
- * provide_feedback, chat/route.ts) answer — or, for `/add-task`, is handled
+ * provide_feedback, chat/route.ts) answer - or, for `/add-task`, is handled
  * entirely client-side (see `sendAddTask`) to keep the cheap, deterministic
  * Haiku-routed path `QuickTaskForm` used to front, now reached from the main
  * input instead of a separate card.
@@ -272,15 +272,15 @@ function useCopilot(
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Set by picking `@AgentName` — sent as `focusAgentId` on every turn until cleared. */
+  /** Set by picking `@AgentName` - sent as `focusAgentId` on every turn until cleared. */
   const [focusAgent, setFocusAgent] = useState<FocusAgent | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Scoped to viewer AND client: sessionStorage survives sign-out in the same
-  // tab, and StaffCopilotDock writes under this prefix too — an unscoped key
+  // tab, and StaffCopilotDock writes under this prefix too - an unscoped key
   // let the next signed-in user restore the previous one's transcript, which
   // for a staff→client handover means internal-tier context in a client's pane.
   const storageKey = `${THREAD_KEY_PREFIX}${viewerUid || "anon"}.${clientId}`;
-  /** Separate key, same scoping — the focus survives independently of clearing the transcript. */
+  /** Separate key, same scoping - the focus survives independently of clearing the transcript. */
   const focusStorageKey = `${THREAD_KEY_PREFIX}focus.${viewerUid || "anon"}.${clientId}`;
   /** Blocks the write-back below until the restore pass has run. */
   const hydratedRef = useRef(false);
@@ -288,7 +288,7 @@ function useCopilot(
   // Restore the transcript AND the focused agent for this client. Runs after
   // mount rather than in a lazy initializer so the server-rendered (empty)
   // markup and the first client render still agree. The two live in the same
-  // effect so `hydratedRef` gates both write-backs from the same instant —
+  // effect so `hydratedRef` gates both write-backs from the same instant -
   // a client who picked an agent expects it to survive a reload exactly like
   // the transcript already does, not silently reset to the general copilot.
   useEffect(() => {
@@ -302,7 +302,7 @@ function useCopilot(
         if (restored.length > 0) setMessages(restored);
       }
     } catch {
-      /* unreadable / disabled storage — start clean */
+      /* unreadable / disabled storage - start clean */
     }
     try {
       const rawFocus = sessionStorage.getItem(focusStorageKey);
@@ -316,12 +316,12 @@ function useCopilot(
         setFocusAgent(parsedFocus as FocusAgent);
       }
     } catch {
-      /* unreadable / disabled storage — starts unfocused */
+      /* unreadable / disabled storage - starts unfocused */
     }
     hydratedRef.current = true;
   }, [storageKey, focusStorageKey]);
 
-  // Write the focus back on every change once hydrated — unlike the transcript,
+  // Write the focus back on every change once hydrated - unlike the transcript,
   // an explicit clear (null) DOES get persisted here: there is no dual-mount
   // "empty means not-yet-restored" ambiguity for a single id, only ever a
   // deliberate pick, a deliberate clear, or the restore pass itself.
@@ -331,7 +331,7 @@ function useCopilot(
       if (focusAgent) sessionStorage.setItem(focusStorageKey, JSON.stringify(focusAgent));
       else sessionStorage.removeItem(focusStorageKey);
     } catch {
-      /* quota or private mode — focus stays in memory for this session only */
+      /* quota or private mode - focus stays in memory for this session only */
     }
   }, [focusAgent, focusStorageKey]);
 
@@ -348,7 +348,7 @@ function useCopilot(
       if (messages.length === 0) return;
       sessionStorage.setItem(storageKey, JSON.stringify(messages.slice(-MAX_PERSISTED_MESSAGES)));
     } catch {
-      /* quota or private mode — the in-memory thread still works */
+      /* quota or private mode - the in-memory thread still works */
     }
   }, [messages, streaming, storageKey]);
 
@@ -367,10 +367,10 @@ function useCopilot(
 
   const send = useCallback(
     /**
-     * @param display Shown in the user bubble instead of `text` — used by the
+     * @param display Shown in the user bubble instead of `text` - used by the
      * action chips, whose trigger is an instruction to the model, not a
      * sentence the client typed (QA F15). `text` is what the API receives.
-     * @param deep Opts this one turn into Sonnet — the 3 substantive proactive
+     * @param deep Opts this one turn into Sonnet - the 3 substantive proactive
      * actions set it; everything else runs on the copilot's default cheap model.
      */
     async (text: string, display?: string, deep?: boolean) => {
@@ -442,7 +442,7 @@ function useCopilot(
                 const payload = JSON.parse(m[1]) as { id: string; name: string } | null;
                 setFocusAgent(payload);
               } catch {
-                /* malformed payload — leave focus exactly as it was */
+                /* malformed payload - leave focus exactly as it was */
               }
             }
           }
@@ -451,9 +451,29 @@ function useCopilot(
           );
         }
 
+        // A provider failure mid-stream (token depletion, a 5xx) produces no
+        // text-delta parts at all - the plain text-stream protocol this route
+        // returns has no channel to carry an error part, so the request still
+        // completes normally with nothing written (chat/route.ts's onError
+        // logs it and alerts the Karos team server-side, but can't tell the
+        // client). Left alone this renders as a permanently "typing" bubble.
+        // An error-free completion with no visible text is itself the signal.
+        const visibleContent = accumulated.replace(/<!--\s*COPILOT_FOCUS:[\s\S]*?-->/g, "").trim();
+        if (!visibleContent) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: "A temporary error occurred. Sending an error report to the Karos team." }
+                : m,
+            ),
+          );
+          router.refresh();
+          return;
+        }
+
         if (brandingUpdated) onBrandingChange();
         if (tasksCreated) onTasksCreated();
-        // Chat messages charge credits — refresh so the rail's balance pill
+        // Chat messages charge credits - refresh so the rail's balance pill
         // reflects the new balance.
         router.refresh();
       } catch (e) {
@@ -471,13 +491,13 @@ function useCopilot(
   );
 
   /**
-   * `/add-task` — the fast path `QuickTaskForm` used to front, reached from
+   * `/add-task` - the fast path `QuickTaskForm` used to front, reached from
    * the main input instead of a separate card. Deliberately NOT a chat turn:
    * it calls `ingestCustomUserTaskAction` directly (its own cheap Haiku
    * routing + dedup, its own `task_assist` credit charge), so folding task
    * creation into the main input doesn't also fold it into the pricier,
-   * slower `chat_message` path. The transcript still shows it as a turn —
-   * the user's literal command, then the routed result — so the two ways of
+   * slower `chat_message` path. The transcript still shows it as a turn -
+   * the user's literal command, then the routed result - so the two ways of
    * adding a task don't read as two different features.
    */
   const sendAddTask = useCallback(
@@ -624,7 +644,7 @@ function ProactiveWelcome({
   send: (t: string, display?: string) => void;
   /** Launches the multi-agent Strategy War Room instead of a single-shot chat scan. */
   onRefreshTaskMap: () => void;
-  /** True while a background AI generation cycle is running — locks the Refresh Task Map chip. */
+  /** True while a background AI generation cycle is running - locks the Refresh Task Map chip. */
   isAiProcessing?: boolean;
   /** `isBillableClientActor()` for this session — decides whether a price is quoted. */
   viewerIsBilled: boolean;
@@ -638,7 +658,7 @@ function ProactiveWelcome({
   return (
     // `grow` (flex: 1 1 auto), not `flex-1` (flex: 1 1 0%). The bottom sheet is
     // now capped rather than fixed at 70dvh (CD-G8), so this region's container
-    // can have an INDEFINITE height — and a zero flex-basis is exactly the case
+    // can have an INDEFINITE height - and a zero flex-basis is exactly the case
     // where engines disagree about what an auto-height column flex container
     // should size to. Chrome resolves it to the max-content contribution (so
     // both spellings measure identically there), but `auto` states the intent
@@ -655,7 +675,7 @@ function ProactiveWelcome({
             phone filled the sheet on its own (QA F94). */}
         <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
           <p className="font-medium">{greeting} I&apos;m your AI Copilot for <strong>{clientName}</strong>.</p>
-          {/* Describing a task no longer needs its own card — the main input
+          {/* Describing a task no longer needs its own card - the main input
               below does it, either conversationally or via /add-task (QA CD-L1). */}
           <p className="mt-1 text-xs text-muted">
             Describe a task, type <code className="rounded bg-surface-3 px-1 py-0.5 font-mono text-[10px]">/</code> for
@@ -718,7 +738,7 @@ function ChatEmptyState({
   send: (t: string) => void;
 }) {
   return (
-    // `grow` for the same reason as ProactiveWelcome — see the note there.
+    // `grow` for the same reason as ProactiveWelcome - see the note there.
     <div className="flex grow flex-col items-center justify-center gap-3 px-4 py-8 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
         <Icon name="Sparkles" className="h-6 w-6" />
@@ -826,7 +846,7 @@ export function ChatbotWidget({
   }, [panelOpen]);
 
   /* ── @mention roster ──────────────────────────────────────────────── */
-  // Fetched independently of a chat turn — the `@` dropdown has to be ready
+  // Fetched independently of a chat turn - the `@` dropdown has to be ready
   // the moment the client starts typing, not after their first message lands.
   const [mentionableAgents, setMentionableAgents] = useState<MentionableAgent[]>([]);
   useEffect(() => {
@@ -837,7 +857,7 @@ export function ChatbotWidget({
         if (!cancelled) setMentionableAgents(data.agents ?? []);
       })
       .catch(() => {
-        /* dropdown just stays empty — chat itself still works */
+        /* dropdown just stays empty - chat itself still works */
       });
     return () => {
       cancelled = true;
@@ -846,7 +866,7 @@ export function ChatbotWidget({
 
   /* ── `@` / `/` dispatch ───────────────────────────────────────────── */
   // Single-line input, so both triggers are read off the END of the current
-  // value — the same simplification most single-line mention comboboxes make.
+  // value - the same simplification most single-line mention comboboxes make.
   // `@` fires on the trailing word anywhere; `/` only when it is the WHOLE
   // input so far, since a command is something typed first, not mid-sentence.
   const mentionQuery = /(?:^|\s)@(\S*)$/.exec(input)?.[1];
@@ -868,7 +888,7 @@ export function ChatbotWidget({
 
   function pickMention(agent: MentionableAgent) {
     setFocusAgent({ id: agent.id, name: agent.displayName });
-    // Strip the trailing "@query" the user was typing — the chip carries the
+    // Strip the trailing "@query" the user was typing - the chip carries the
     // focus from here, so the literal "@" text would otherwise double it up.
     setInput((prev) => prev.replace(/(?:^|\s)@\S*$/, (m) => (m.startsWith(" ") ? " " : "")));
     setHighlightedIndex(0);
@@ -892,9 +912,9 @@ export function ChatbotWidget({
     send(input);
   }
 
-  // Shared by both the form's submit and the input's Enter key — kept as one
+  // Shared by both the form's submit and the input's Enter key - kept as one
   // function taking no event so it isn't tied to either handler's event type.
-  // Commits whichever row is HIGHLIGHTED, not always the top one — arrow keys
+  // Commits whichever row is HIGHLIGHTED, not always the top one - arrow keys
   // (handleKeyDown) move `highlightedIndex` before this ever fires.
   function submitOrDispatch() {
     // A dropdown open commits the highlighted suggestion rather than sending
@@ -910,7 +930,7 @@ export function ChatbotWidget({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    // Arrow/Tab only apply while a dropdown is actually open — otherwise
+    // Arrow/Tab only apply while a dropdown is actually open - otherwise
     // Tab should do its normal browser thing (move focus to the next control).
     if (activeMatches.length > 0) {
       if (e.key === "ArrowDown") {
@@ -924,7 +944,7 @@ export function ChatbotWidget({
         return;
       }
       if (e.key === "Tab") {
-        // Tab commits without sending — lets the client keep typing to
+        // Tab commits without sending - lets the client keep typing to
         // complete the sentence (an @mention leaves the input empty to type
         // into; a /command's scaffold ends mid-sentence on purpose).
         e.preventDefault();
@@ -945,7 +965,7 @@ export function ChatbotWidget({
 
   return (
     <>
-      {/* Floating bubble — hidden in docked mode */}
+      {/* Floating bubble - hidden in docked mode */}
       {!docked && (
         <button
           onClick={() => setOpen((v) => !v)}
@@ -977,7 +997,7 @@ export function ChatbotWidget({
           )}
         >
 
-          {/* Header — single title; hairline divider, no fill (surface ladder).
+          {/* Header - single title; hairline divider, no fill (surface ladder).
               Sizes to its own content. This used to be pinned to h-[53px] to
               match the border-box height of the page header the rail sat beside,
               so the two border-b hairlines read as one continuous line; that
@@ -1041,7 +1061,7 @@ export function ChatbotWidget({
               <ChatEmptyState clientName={clientName} send={send} />
             )
           ) : (
-            /* `grow` for the same reason as ProactiveWelcome — see the note there. */
+            /* `grow` for the same reason as ProactiveWelcome - see the note there. */
             <div className="flex grow flex-col gap-3 overflow-y-auto p-4">
               {messages.map((msg) => (
                 <div
@@ -1058,9 +1078,9 @@ export function ChatbotWidget({
                   >
                     {msg.content ? (
                       msg.role === "assistant" ? (
-                        // The model writes markdown — the system prompt is itself
+                        // The model writes markdown - the system prompt is itself
                         // authored in it and the flagship actions ask for
-                        // multi-section deliverables — so a pre-wrapped span put
+                        // multi-section deliverables - so a pre-wrapped span put
                         // asterisks, hash marks and table pipes on screen (QA F89).
                         // renderSectionBody escapes before formatting, so model
                         // output cannot inject markup; it is the same renderer the
@@ -1081,7 +1101,7 @@ export function ChatbotWidget({
             </div>
           )}
 
-          {/* AI actions strip — the four actions and the quick-add form used to
+          {/* AI actions strip - the four actions and the quick-add form used to
               exist only while the transcript was empty, so the panel's whole
               action surface was a zero-state and the only way back to it was
               the header's reset, which destroys a paid thread (QA F88). */}
@@ -1123,7 +1143,7 @@ export function ChatbotWidget({
             </div>
           )}
 
-          {/* Focused-agent chip — a bias, not a lock (chat/route.ts's FOCUSED
+          {/* Focused-agent chip - a bias, not a lock (chat/route.ts's FOCUSED
               AGENT block still answers anything else asked). Persists across
               turns AND reloads (sessionStorage) until cleared here, by picking
               a different @mention, or by telling the copilot in plain text to
@@ -1143,7 +1163,7 @@ export function ChatbotWidget({
             </div>
           )}
 
-          {/* Input bar — `relative` hosts the @mention / /command dropdown,
+          {/* Input bar - `relative` hosts the @mention / /command dropdown,
               which floats ABOVE the bar (bottom-full) since the bar itself
               sits at the very bottom of the panel. */}
           <div className="relative shrink-0">

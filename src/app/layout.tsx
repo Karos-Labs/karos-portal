@@ -3,7 +3,7 @@ import { Spectral, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 
-/* Ember type system — three families, three jobs (brand guidelines §5). */
+/* Ember type system - three families, three jobs (brand guidelines §5). */
 const spectral = Spectral({
   variable: "--font-spectral",
   subsets: ["latin"],

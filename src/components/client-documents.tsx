@@ -135,9 +135,9 @@ function esc(s: string): string {
  * Escapes FIRST, for the same reason doc-render.ts does: every tag below is
  * generated after this point, so any `<...>` in the document body is text, not
  * markup. Without it the browser parsed angle-bracketed text as a tag and
- * dropped it — the templates carry ~110 angle-bracket placeholder slots, so any
+ * dropped it - the templates carry ~110 angle-bracket placeholder slots, so any
  * section the model left unfilled silently lost its text in the one file a
- * client is most likely to forward — and a stray script or image tag reaching a
+ * client is most likely to forward - and a stray script or image tag reaching a
  * document would have executed in the print window.
  */
 function renderForPrint(markdown: string): string {
@@ -145,14 +145,14 @@ function renderForPrint(markdown: string): string {
   // has become `&lt;!-- … --&gt;` nothing downstream recognises it, and the PDF
   // is the copy a client is most likely to forward.
   let out = esc(stripPipelineMarkers(markdown))
-    // Separator lines. A rule is a real separator, so it prints as one — the
+    // Separator lines. A rule is a real separator, so it prints as one - the
     // screen has rendered it since the asset-renderer fix and a PDF that
     // silently drops it does not match the document the client just read.
     // Trailing spaces are matched too; without that they left a literal "---".
     .replace(/^---+[ \t]*$/gm, "<hr />")
-    // H4+ sub-headings — the Market Strategy template's persona headings
+    // H4+ sub-headings - the Market Strategy template's persona headings
     .replace(/^#{4,6}\s+(.+)$/gm, "<h4>$1</h4>")
-    // H2 headings — legacy literal numbers stripped; documents generated before
+    // H2 headings - legacy literal numbers stripped; documents generated before
     // the numbers came out of the templates still carry them.
     .replace(/^##\s+(.+)$/gm, (_m, h: string) => `<h2>${stripHeadingNumber(h)}</h2>`)
     // H3 sub-headings
@@ -216,7 +216,7 @@ function renderForPrint(markdown: string): string {
     return `<ol>${items}</ol>\n`;
   });
 
-  // Blockquotes — matches the ESCAPED marker: esc() above has already turned a
+  // Blockquotes - matches the ESCAPED marker: esc() above has already turned a
   // leading ">" into "&gt;", so a `^>` rule here could never fire and every
   // quoted line would keep its arrow on the page. Same rule as doc-render.ts.
   out = out.replace(/^&gt;\s+(.+)$/gm, "<blockquote>$1</blockquote>");
@@ -224,12 +224,12 @@ function renderForPrint(markdown: string): string {
   // Remaining plain lines → paragraphs. Skips only the BLOCK tags generated
   // above, not any tag: the inline passes run first, so a `**Label:** value`
   // line already starts with `<strong>` and used to fall out of this pass
-  // entirely — printing at the browser default instead of the 11pt body size.
+  // entirely - printing at the browser default instead of the 11pt body size.
   out = out.replace(/^(?!\s*$).+$/gm, (line) =>
     GENERATED_BLOCK_LINE_RE.test(line) ? line : `<p>${line}</p>`,
   );
 
-  // Links, last — same rule and same scheme guard as the on-screen renderer, so
+  // Links, last - same rule and same scheme guard as the on-screen renderer, so
   // the PDF matches the screen instead of printing bracket-and-parenthesis text.
   out = out.replace(LINK_RE, (whole, text: string, href: string) =>
     isSafeHref(href) ? `<a href="${href}">${text}</a>` : whole,
@@ -320,7 +320,7 @@ function buildPrintWindow(content: string, title: string): void {
 
 function downloadMarkdown(content: string, label: string): void {
   // stripDocPreamble already drops pipeline markers, so the .md a client keeps
-  // does not carry the sync sentinels either — they are invisible in a markdown
+  // does not carry the sync sentinels either - they are invisible in a markdown
   // preview but plain text in any editor, which is where the file gets opened.
   const clean = stripDocPreamble(content);
   const titled = `# ${label}\n\n${clean}`;
@@ -412,7 +412,7 @@ function ExportMenu({
 
 /* ── Full-document slide-over (50% width) ─────────────────────────────── */
 
-/** Any body text sitting before the first `##` heading — parseDocSections drops it. */
+/** Any body text sitting before the first `##` heading - parseDocSections drops it. */
 function leadIn(content: string): string {
   const clean = stripDocPreamble(content);
   const idx = clean.search(/^##\s+/m);
@@ -443,11 +443,11 @@ function DocOverlay({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [correcting, setCorrecting] = useState(false);
   const [summary, setSummary] = useState<string[] | null>(null);
-  // renderFullDoc("") returns "" — with no branch here the panel used to open
+  // renderFullDoc("") returns "" - with no branch here the panel used to open
   // onto a completely blank body with no message and no explanation.
   const body = renderFullDoc(doc.content);
   // parseDocSections gives heading/body pairs AND drops sections whose body is
-  // nothing but "Unknown" / "Not provided" / "TBD" — both were already written
+  // nothing but "Unknown" / "Not provided" / "TBD" - both were already written
   // and had no callers. Below two sections there is nothing to index, so those
   // documents keep the single-pass render.
   const sections = parseDocSections(doc.content);
@@ -473,7 +473,7 @@ function DocOverlay({
 
   // Executive summary: already built on the server, with caching keyed on the
   // document version and its own usage logging, and no screen had ever called
-  // it. Non-blocking and best-effort — the document reads fine without it, and
+  // it. Non-blocking and best-effort - the document reads fine without it, and
   // a repeat open of an unchanged version is served from cache with no model
   // call.
   useEffect(() => {
@@ -506,7 +506,7 @@ function DocOverlay({
               {/* "Is this current?" is the first question a document with a
                   recurring regeneration schedule has to answer. */}
               {/* Carries a date and a version number, so it takes the readable
-                  tone — muted-2 is for labels (QA F119). */}
+                  tone - muted-2 is for labels (QA F119). */}
               <p className="mt-0.5 text-[11px] text-muted">
                 Updated {formatDate(doc.updatedAt)} · v{doc.version}
               </p>
@@ -579,7 +579,7 @@ function DocOverlay({
                 </nav>
 
                 <div className="min-w-0 flex-1 break-words [&_code]:break-all [&_table]:min-w-0">
-                  {/* Narrow panels get the index as a scrollable chip row — a
+                  {/* Narrow panels get the index as a scrollable chip row - a
                       44px column would leave no room for the document itself. */}
                   <div className="mb-4 -mx-1 flex gap-1.5 overflow-x-auto pb-1 md:hidden">
                     {sections.map((s, i) => (
@@ -639,7 +639,7 @@ function DocOverlay({
 
 /* ── Regenerate modal ─────────────────────────────────────────────────── */
 
-/* Exported for the staff dashboard's Regenerate entry point (CD-G5) — the flow
+/* Exported for the staff dashboard's Regenerate entry point (CD-G5) - the flow
    lives here because this is where it was born, and it must exist exactly once. */
 export function RegenerateModal({
   clientId,
@@ -856,7 +856,7 @@ function ScheduleModal({
   // The saved next run and the preview only agree at a one-month interval: the
   // cron advances by adding the interval to the slot that just fired, while the
   // preview is the next calendar occurrence of dayOfMonth. So show the SAVED
-  // date until something is edited, and relabel it once it is — the modal is the
+  // date until something is edited, and relabel it once it is - the modal is the
   // only place a schedule can be inspected, and "Next run" was the one number an
   // admin opens it to check.
   const edited =
@@ -1029,10 +1029,10 @@ export function ClientDocuments({
   contextDocs: ClientContextDoc[];
   isAdmin?: boolean;
   clientId?: string;
-  /** True while a background AI generation cycle is running — locks the Regenerate button. */
+  /** True while a background AI generation cycle is running - locks the Regenerate button. */
   isAiProcessing?: boolean;
   /**
-   * True when the last generation cycle failed — the empty state says so (QA
+   * True when the last generation cycle failed - the empty state says so (QA
    * F69). A BOOLEAN, not the reason: this rail mounts for client viewers, and
    * all it ever did with the raw provider error was test it for truthiness.
    */
@@ -1047,7 +1047,7 @@ export function ClientDocuments({
   allowInternalFallback?: boolean;
   /**
    * Price of a targeted correction, for the Correct Info modal. Server-resolved
-   * and passed only for billable client viewers — omitted on the staff shell,
+   * and passed only for billable client viewers - omitted on the staff shell,
    * whose corrections are agency overhead and cost the client nothing.
    */
   correctionPricing?: { cost: number; blockReason?: string };
@@ -1158,7 +1158,7 @@ export function ClientDocuments({
       )}
 
       {/* An "Agent-specific documents" section used to sit here (X / LinkedIn
-          agent data), mounted only when clientId was set — so it appeared and
+          agent data), mounted only when clientId was set - so it appeared and
           disappeared as you moved around the portal, and it competed with the
           real documents list for the rail's fixed height. Agent data intake is
           reachable where it belongs: the AI Agents cards link it per agent

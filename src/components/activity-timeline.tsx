@@ -21,7 +21,7 @@ import type { ActivityEventType, ClientReport, Job, Role } from "@/lib/types";
  * The ONLY job fields this timeline may hold.
  *
  * It used to take `Job[]`, which the server built by spreading whole job
- * documents — so every row of the payload carried the run's `input` (the
+ * documents - so every row of the payload carried the run's `input` (the
  * operator's prompt and brief), its `events` (the internal execution trace),
  * `clientAgentId`, and `meta.agentsRepoSha`, the git SHA of the private lab
  * repo. None of it is painted; all of it is readable in the RSC payload, which
@@ -34,11 +34,11 @@ export type TimelineJob = Pick<
 >;
 
 /**
- * The ONLY activity-log fields this timeline may hold — the jobs rule above,
+ * The ONLY activity-log fields this timeline may hold - the jobs rule above,
  * applied to the other half of the stream.
  *
  * It used to take `ActivityLog[]` straight off the data layer. That carried
- * `clientId` and a free-form `metadata` bag nothing here paints, and — worse —
+ * `clientId` and a free-form `metadata` bag nothing here paints, and - worse -
  * it carried the row's stored `actor` verbatim, so the internal writer names
  * ("Runway autopilot" and friends, see activity-actors.ts) were sanitized in
  * the BROWSER, on a list the browser had already downloaded. Staff MANUAL_NOTE
@@ -69,7 +69,7 @@ interface TimelineEvent {
   description?: string;
   actor: string;
   actorRole: "system" | "staff" | "client";
-  /** Agent name for agent-run events — resolves the real platform logo. */
+  /** Agent name for agent-run events - resolves the real platform logo. */
   agentIdentity?: string;
 }
 
@@ -77,7 +77,7 @@ interface TimelineEvent {
 
 function eventsFromLogs(logs: TimelineActivity[]): TimelineEvent[] {
   // A straight rename into TimelineEvent's shape. The actor arrives already
-  // redacted for this viewer and the staff-only rows are already gone — both
+  // redacted for this viewer and the staff-only rows are already gone - both
   // decided at the RSC boundary, because an internal string that reaches the
   // browser is readable whether or not this function ever paints it.
   return logs.map((l) => ({
@@ -141,7 +141,7 @@ export function eventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
   }));
 }
 
-/** Server-local calendar day — the grain a client's timeline is aggregated to. */
+/** Server-local calendar day - the grain a client's timeline is aggregated to. */
 function dayKeyOf(t: number): string {
   const d = new Date(t);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -152,7 +152,7 @@ function dayKeyOf(t: number): string {
  *
  * Per-run rows are the batch tell in its purest form. A week of "daily" posts
  * is produced by one or two fires, so the client's timeline printed several
- * "<agent> delivered a draft" lines carrying the SAME minute — the generation
+ * "<agent> delivered a draft" lines carrying the SAME minute - the generation
  * lump, itemised, on the screen whose whole job is to narrate steady work. It
  * also said "delivered a draft", and a draft is precisely the thing that is not
  * delivered to a client: it is staff-reviewed first (approveAssetAction calls
@@ -216,7 +216,7 @@ function clientEventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
  * The one row on this timeline with no stored actor.
  *
  * Everything else arrives already redacted from the server projection, which is
- * where a STORED actor has to be decided — a name redacted after the payload
+ * where a STORED actor has to be decided - a name redacted after the payload
  * shipped has already shipped. This row is derived here, from the report prop,
  * and it signed itself "System AI": an INTERNAL_ACTORS name, reaching a
  * client's timeline through the one door that projection does not cover. Same
@@ -542,7 +542,7 @@ export function ActivityTimeline({
 
   return (
     <div>
-      {/* Add Note — staff only */}
+      {/* Add Note - staff only */}
       {isStaff && <AddNoteForm clientId={clientId} />}
 
       {/* Empty state */}
@@ -554,7 +554,7 @@ export function ActivityTimeline({
           <div>
             <p className="text-sm font-medium text-foreground">No activity yet</p>
             {/* Manual notes are stripped from a client's timeline, and "Intel
-                Report" is an internal product name — so neither belongs in a
+                Report" is an internal product name - so neither belongs in a
                 list of what to expect (QA F73). */}
             <p className="mt-1 text-xs text-muted-2">
               Every agent run, brand update, and competitor change shows up here as your team works.
@@ -578,7 +578,7 @@ export function ActivityTimeline({
       {/* Timeline */}
       {allEvents.length > 0 && (
         <div className="relative">
-          {/* Vertical connector line — positioned at center of 40px icon column */}
+          {/* Vertical connector line - positioned at center of 40px icon column */}
           <div className="absolute left-5 top-0 bottom-0 w-px bg-border" />
 
           <div>

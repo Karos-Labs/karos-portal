@@ -27,7 +27,7 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
   const [value, setValue] = useState("");
   const [isPending, startTransition] = useTransition();
   // "info" is the duplicate case: nothing failed, the work is already on the
-  // board — it used to render in the red danger style (QA F61).
+  // board - it used to render in the red danger style (QA F61).
   const [feedback, setFeedback] = useState<{
     type: "success" | "info" | "error";
     message: string;
@@ -43,7 +43,7 @@ export function QuickAddTaskBar({ clientId, onAdded, className }: Props) {
     startTransition(async () => {
       const result = await ingestCustomUserTaskAction(clientId, trimmed);
       if (result.ok) {
-        // Name the card that was actually created — the router rewrites the
+        // Name the card that was actually created - the router rewrites the
         // text the user typed (QA F65). The board is already on screen here,
         // so no link is needed.
         const label = result.title

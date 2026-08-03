@@ -14,14 +14,14 @@ import type { Asset } from "@/lib/types";
  *
  * Albert's ask is that each agent's page be "a logical UI… based on what each
  * of the agents does", and what this one does is make video. A list of titles
- * and timestamps — which is what the generic detail page gave it — is not a way
+ * and timestamps - which is what the generic detail page gave it - is not a way
  * to look at a video: you cannot tell a good cut from a bad one, or even that
  * the deliverable IS a video, without opening something. So the gallery is the
  * hero and everything else on the page sits under it.
  *
  * NOTHING IS RE-IMPLEMENTED HERE. The tiles are the archive tile's treatment
  * (poster + play badge), and opening one mounts the SAME AssetDetailModal every
- * other deliverable surface opens — which already carries the F150 video-player
+ * other deliverable surface opens - which already carries the F150 video-player
  * render, the caption copy button and the download affordances. A second player
  * on this page would be a second place for the video path to drift, and F150
  * exists precisely because that path was missing once already.
@@ -29,7 +29,7 @@ import type { Asset } from "@/lib/types";
  * SAFE BY CONSTRUCTION for a client viewer: the assets reaching this component
  * have passed `getClientArchiveAssets`, so drafts, launch deliverables and
  * future-dated posts were dropped server-side rather than filtered at render.
- * A locked asset could not render a clip even if one slipped through —
+ * A locked asset could not render a clip even if one slipped through -
  * `redactLockedAsset` builds its copy by whitelist and never carries `videoUrl`.
  */
 export function ClipGallery({
@@ -42,7 +42,7 @@ export function ClipGallery({
   clips: Asset[];
   viewerIsClient: boolean;
   connectedPlatforms?: string[];
-  /** Staff only — the modal's approve control. */
+  /** Staff only - the modal's approve control. */
   canApprove?: boolean;
   /** What happens next, when there is nothing yet. */
   emptyHint: string;
@@ -56,7 +56,7 @@ export function ClipGallery({
         {/* Honest, and specific about the next step. "No clips yet" on its own
             is a dead end; the client's question is always "so what happens
             now", and the answer differs by whether the agent has what it needs
-            to cut from — which is why the caller passes the line. */}
+            to cut from - which is why the caller passes the line. */}
         <p className="mt-2 text-sm text-foreground">No clips yet</p>
         <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-muted-2">{emptyHint}</p>
       </div>
@@ -128,7 +128,7 @@ function ClipTile({
           {/* The DELIVERY moment for a client, never the generation instant:
               a whole batch shares one `createdAt`, so printing it under a
               gallery of "your clips" publishes the batch shape (A3/A4). Staff
-              keep the generation time — for them it is the fact worth
+              keep the generation time - for them it is the fact worth
               knowing. */}
           <span className="text-[11px] text-muted-2">
             {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}

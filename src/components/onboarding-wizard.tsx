@@ -85,7 +85,7 @@ export function OnboardingWizard({
   const [photoURL, setPhotoURL] = useState<string | null>(user.photoURL ?? null);
   const [resumeUrl, setResumeUrl] = useState<string | null>(user.resumeUrl ?? null);
   // Connecting redirects to LinkedIn and back (full page load), so this only ever
-  // needs to reflect the freshly-fetched server prop — no local setter required.
+  // needs to reflect the freshly-fetched server prop - no local setter required.
   const linkedInConnected = !!user.linkedInConnected;
 
   const [clientName, setClientName] = useState(client.name);
@@ -153,7 +153,7 @@ export function OnboardingWizard({
     }
     // No try/catch here: completeOnboardingAction redirects on success, and
     // `redirect()` throws by design (Next.js docs: must be called outside
-    // try/catch) — catching around it risks swallowing the navigation.
+    // try/catch) - catching around it risks swallowing the navigation.
     startTransition(() => completeOnboardingAction({ name, phone, clientName, industry, brandVoice }));
   }
 
@@ -196,9 +196,9 @@ export function OnboardingWizard({
             <div>
               <Label>Resume / CV (optional)</Label>
               {/* F67: this used to claim the resume was "used to write LinkedIn
-                  content in your authentic voice". It reaches no model — the
+                  content in your authentic voice". It reaches no model - the
                   upload route stores a URL on the user record and the prompt
-                  branch that once read it is gone — so the promise was for a
+                  branch that once read it is gone - so the promise was for a
                   feature that does not exist. Same sentence the Settings card
                   already tells the truth with. */}
               <p className="mb-2 text-[11px] text-muted-2">

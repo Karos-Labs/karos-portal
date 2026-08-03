@@ -6,7 +6,7 @@ import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { MAX_ACTIVE_TASKS } from "@/lib/constants";
-// Type-only import — the server-only swarm engine never reaches the client bundle.
+// Type-only import - the server-only swarm engine never reaches the client bundle.
 import type { SwarmEvent, SwarmAgentId } from "@/lib/agent-swarm";
 
 /** Terminal accent per agent. */
@@ -27,7 +27,7 @@ type Line =
 type Status = "running" | "done" | "error";
 
 /**
- * The Strategy War Room — a live terminal that streams the multi-agent Task Map
+ * The Strategy War Room - a live terminal that streams the multi-agent Task Map
  * debate over SSE. Replaces the plain refresh spinner: the SEO, Creative, and
  * Data agents argue round-by-round in the console; on consensus it flashes the
  * result, refreshes the board, and closes.
@@ -39,7 +39,7 @@ export function StrategyWarRoom({
 }: {
   clientId: string;
   onClose: () => void;
-  /** Fired once when consensus is persisted — parent refreshes the Task Map. */
+  /** Fired once when consensus is persisted - parent refreshes the Task Map. */
   onComplete: () => void;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
@@ -47,8 +47,8 @@ export function StrategyWarRoom({
   const [created, setCreated] = useState<number | null>(null);
   /**
    * Why the save produced what it produced. Zero created is a routine outcome
-   * — every candidate that duplicates the board or overflows the active-task
-   * ceiling is dropped — and the only explanation used to be one grey console
+   * - every candidate that duplicates the board or overflows the active-task
+   * ceiling is dropped - and the only explanation used to be one grey console
    * line under a green "Consensus reached" banner (QA F90).
    */
   const [outcome, setOutcome] = useState<{
@@ -61,7 +61,7 @@ export function StrategyWarRoom({
   const [progress, setProgress] = useState<{ round: number; total: number } | null>(null);
   /**
    * Escape and a backdrop click both reach Modal's onClose, which unmounts this
-   * component and aborts the stream — the server then skips persistence, so
+   * component and aborts the stream - the server then skips persistence, so
    * six sequential model calls are discarded with no warning (QA F93). While a
    * run is live, a close request raises this confirmation instead.
    */
@@ -172,7 +172,7 @@ export function StrategyWarRoom({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [lines]);
 
-  // Once consensus lands, refresh the board — but stay open. The modal used to
+  // Once consensus lands, refresh the board - but stay open. The modal used to
   // close itself after 1.6s, which left nothing to click and no way to reach
   // the tasks it had just created (QA F65).
   useEffect(() => {
@@ -181,7 +181,7 @@ export function StrategyWarRoom({
     onComplete();
   }, [status, onComplete]);
 
-  // Every dismissal path — Escape, the backdrop, the corner X — comes through
+  // Every dismissal path - Escape, the backdrop, the corner X - comes through
   // Modal's onClose, so intercepting here covers all three.
   const requestClose = useCallback(() => {
     if (status === "running") {
@@ -194,7 +194,7 @@ export function StrategyWarRoom({
   return (
     <Modal open onClose={requestClose} className="max-w-2xl">
       <div className="space-y-3">
-        {/* Header — pr-8 clears the Modal's absolutely-positioned close button,
+        {/* Header - pr-8 clears the Modal's absolutely-positioned close button,
             same convention as Modal's own title. */}
         <div className="flex items-center gap-2.5 pr-8">
           <span className="relative flex h-2.5 w-2.5">
@@ -246,7 +246,7 @@ export function StrategyWarRoom({
           </div>
         </div>
 
-        {/* Running footer — an explicit way out, so Escape is not the only
+        {/* Running footer - an explicit way out, so Escape is not the only
             instinct available mid-run (QA F93). */}
         {status === "running" &&
           (confirmingClose ? (
@@ -285,7 +285,7 @@ export function StrategyWarRoom({
             </div>
           ))}
 
-        {/* Footer — a green tick over "0 tasks locked" was the last thing a
+        {/* Footer - a green tick over "0 tasks locked" was the last thing a
             client saw after a minute of waiting, with no idea why nothing
             happened (QA F90). Zero created gets its own neutral panel that
             says what was dropped and what to do next. */}

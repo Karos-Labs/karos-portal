@@ -25,8 +25,8 @@ const PRIORITY_COLOR: Record<string, string> = {
 };
 
 /**
- * Anything older than this is still shown — dropping work silently is worse
- * than showing it — but visually stepped back, so a 19-day-old row stops
+ * Anything older than this is still shown - dropping work silently is worse
+ * than showing it - but visually stepped back, so a 19-day-old row stops
  * reading as something that just happened (QA F143).
  */
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -162,7 +162,7 @@ export function NotificationBell({
 
   const visibleActions = visibleActionItems(actionItems, dismissals.dismissed);
   // Review rows have no dismiss control: the X used to write nothing but local
-  // state, so the row (and the count) came back on the next page load — a badge
+  // state, so the row (and the count) came back on the next page load - a badge
   // that lies (QA F121). listReviewJobs queries status == "review", so the row
   // clears by itself the moment the job is approved, exactly like the task rows.
   //
@@ -170,7 +170,7 @@ export function NotificationBell({
   const reviewRows = reviewFeedRows(reviewJobs, { viewerIsClient });
 
   // Task alerts: review_pending tasks are surfaced first (need immediate attention),
-  // then pending tasks. No local dismissal — they disappear when status changes.
+  // then pending tasks. No local dismissal - they disappear when status changes.
   const reviewPendingTasks = taskAlerts.filter((t) => t.status === "review_pending");
   const pendingTasks = taskAlerts.filter((t) => t.status === "pending");
 
@@ -197,7 +197,7 @@ export function NotificationBell({
   const showMeetingsLink = visibleActions.length > 0;
 
   // CD-H7b: one number, one noun. The badge clamped at "9+" while the panel
-  // header read "32 active" — the same set, described two ways, so opening the
+  // header read "32 active" - the same set, described two ways, so opening the
   // panel looked like it had found 23 more. The clamp now only bites in the
   // hundreds (where a badge genuinely cannot hold the digits), and the header
   // calls the set what the bell's own aria-label and the Company tab's
@@ -276,7 +276,7 @@ export function NotificationBell({
                   : "right-0 top-full mt-2",
               "rounded-md border border-border glass-surface shadow-2xl",
               // Column so a caller-supplied max-height squeezes the FEED rather
-              // than truncating the panel — the header and footer stay put and
+              // than truncating the panel - the header and footer stay put and
               // the rows scroll. No effect on mounts that set no height: with
               // nothing to shrink against, the feed keeps its own max-h.
               "flex flex-col",
@@ -399,7 +399,7 @@ export function NotificationBell({
               )}
             </div>
 
-            {/* Footer — one link per KIND of row actually in the feed. A panel
+            {/* Footer - one link per KIND of row actually in the feed. A panel
                 of meeting action items used to be footed "View workspace →"
                 and vice versa (QA F143). */}
             {(showWorkspaceLink || showMeetingsLink) && (
@@ -573,7 +573,7 @@ function TaskAlertRow({
   const prioColor = PRIORITY_COLOR[task.priority] ?? PRIORITY_COLOR.low;
   // Land on the tab that actually holds this card, and open it. The board used
   // to always open on "Automated", so a click on one of the client's own items
-  // showed a tab that did not contain it (QA F64). `owner` is a distinct key —
+  // showed a tab that did not contain it (QA F64). `owner` is a distinct key -
   // `tab` belongs to the Workspace's board/activity/archive toggle.
   const owner: TaskOwner = task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
   const href = `/tasks?owner=${owner === "client_managed" ? "client" : "karos"}&task=${task.id}`;
@@ -598,7 +598,7 @@ function TaskAlertRow({
         />
       </div>
       <div className="min-w-0 flex-1">
-        {/* Subject + verb first, the task's own wording second — a raw task
+        {/* Subject + verb first, the task's own wording second - a raw task
             description is not an event and read as a clipped sentence. */}
         <p className="text-xs font-medium leading-snug text-foreground">
           {isReview ? "A task is ready for your review" : "A task is waiting on you"}

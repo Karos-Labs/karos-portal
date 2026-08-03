@@ -8,13 +8,13 @@ import { retryJobAction } from "@/lib/actions";
 
 /**
  * Re-submits a failed custom-agent run with the same agent/client/prompt
- * (retryJobAction) — the job detail page's version of the same control
+ * (retryJobAction) - the job detail page's version of the same control
  * `RetryRunControl` (custom-agents.tsx) and the /jobs list row already offer,
  * mirroring ManagedJobCancelButton's shape for the pending/error handling.
  *
  * Unlike those two (both rows in a LIST, where the new run just shows up as
  * another row after a refresh), this button lives ON the old failed job's own
- * page — a plain `router.refresh()` would re-render the same still-failed
+ * page - a plain `router.refresh()` would re-render the same still-failed
  * job with no sign anything happened. Navigating to the new job id instead
  * (retryJobAction always creates a fresh job) is what actually shows the
  * retry took effect.

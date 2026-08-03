@@ -3,6 +3,7 @@ import "server-only";
 import { getCurrentUser } from "@/lib/auth";
 import { createActivityLog, getClientTask } from "@/lib/data";
 import { canViewClient } from "@/lib/client-visibility";
+import { unmetCampaignDependencyTitles } from "@/lib/campaign-engine";
 import type { ActivityLog, AppUser, Client, ClientTask } from "@/lib/types";
 
 import { SYSTEM_AI_ACTOR_NAME, sessionSafeActor } from "@/lib/activity-actors";
@@ -233,6 +234,24 @@ export async function requireTaskAccess(
   if (!task || task.clientId !== clientId) return { ok: false, error: "This task no longer exists." };
 
   return { ok: true, user, task };
+}
+
+/**
+ * The title of a campaign dependency this task is still waiting on (e.g. the
+ * newsletter waiting on the anchor blog), or null when it's clear to execute.
+ * Every choke point that triggers a karos_managed run into in_progress calls
+ * this before claiming, so a campaign step can never run ahead of the piece
+ * it depends on — mirrors the claim-before-charge ordering those call sites
+ * already use (a premature attempt costs nothing).
+ */
+export async function campaignDependencyBlocker(task: ClientTask): Promise<string | null> {
+  if (!task.campaignId || !task.dependsOnTaskIds?.length) return null;
+  const deps = await Promise.all(task.dependsOnTaskIds.map((id) => getClientTask(id)));
+  const tasksById = new Map(
+    deps.filter((d): d is ClientTask => !!d).map((d) => [d.id, d]),
+  );
+  const blockers = unmetCampaignDependencyTitles(task, tasksById);
+  return blockers.length > 0 ? blockers[0] : null;
 }
 
 /**

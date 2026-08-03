@@ -5,7 +5,7 @@ import { Icon } from "@/components/icon";
 import { cn, initials } from "@/lib/utils";
 
 /**
- * Shared avatar drag-and-drop uploader — used by both the onboarding wizard
+ * Shared avatar drag-and-drop uploader - used by both the onboarding wizard
  * (step 1) and the account settings profile tab. Uploads immediately (mirrors
  * the client logo uploader convention) so the value is never lost across a
  * full-page navigation (e.g. the LinkedIn OAuth round trip in onboarding).

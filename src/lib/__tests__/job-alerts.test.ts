@@ -8,7 +8,7 @@ vi.mock("@/lib/email", async (importOriginal) => {
   return { ...actual, sendEmail: sendEmailMock };
 });
 
-import { alertRecipients, notifyJobFailure, notifyScheduleFireFailure } from "@/lib/job-alerts";
+import { alertRecipients, notifyJobFailure, notifyScheduleFireFailure, notifyChatbotFailure } from "@/lib/job-alerts";
 import type { Client, Job } from "@/lib/types";
 
 const BASE_JOB: Job = {
@@ -127,5 +127,45 @@ describe("notifyScheduleFireFailure", () => {
     process.env.ADMIN_EMAILS = "ops@karoslabs.com";
     sendEmailMock.mockRejectedValue(new Error("network down"));
     await expect(notifyScheduleFireFailure(OPTS)).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyChatbotFailure", () => {
+  const OPTS = {
+    clientId: "client1",
+    clientName: "Acme Co",
+    userEmail: "jane@acme.com",
+    error: "Credit balance is too low",
+    stack: "Error: Credit balance is too low\n at foo.ts:1:1",
+  };
+
+  it("does not send when no recipients are configured", async () => {
+    delete process.env.ADMIN_EMAILS;
+    await notifyChatbotFailure(OPTS);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+
+  it("sends with the client, user, classified reason, and stack in the body", async () => {
+    process.env.ADMIN_EMAILS = "ops@karoslabs.com";
+    await notifyChatbotFailure(OPTS);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    const call = sendEmailMock.mock.calls[0]![0];
+    expect(call.to).toEqual(["ops@karoslabs.com"]);
+    expect(call.subject).toContain("Acme Co");
+    expect(call.html).toContain("jane@acme.com");
+    expect(call.html).toContain("foo.ts:1:1");
+  });
+
+  it("falls back to the raw clientId when no clientName is given", async () => {
+    process.env.ADMIN_EMAILS = "ops@karoslabs.com";
+    await notifyChatbotFailure({ clientId: "client1", error: "boom" });
+    const call = sendEmailMock.mock.calls[0]![0];
+    expect(call.subject).toContain("client1");
+  });
+
+  it("never throws, even when sendEmail itself rejects", async () => {
+    process.env.ADMIN_EMAILS = "ops@karoslabs.com";
+    sendEmailMock.mockRejectedValue(new Error("network down"));
+    await expect(notifyChatbotFailure(OPTS)).resolves.toBeUndefined();
   });
 });

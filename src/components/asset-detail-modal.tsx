@@ -19,6 +19,7 @@ import {
   isPublishHold,
 } from "@/lib/asset-status-copy";
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
+import { normalizeDashes } from "@/lib/text-utils";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
@@ -103,7 +104,7 @@ type SlideMeta = {
 };
 
 /**
- * Read-only detail view of a single asset — full output content plus all its
+ * Read-only detail view of a single asset - full output content plus all its
  * metadata (status, channels, schedule, platform, publish mode). Opened from the
  * content calendar when a scheduled item is clicked.
  */
@@ -134,11 +135,11 @@ export function AssetDetailModal({
   viewerIsClient: boolean;
   /**
    * Staff viewer. `publishAssetNowAction` is `requireStaff()`, so a client-facing
-   * Publish Now here could only ever error — the client's path is Mark as posted.
+   * Publish Now here could only ever error - the client's path is Mark as posted.
    * Never inferred from the asset: the caller knows the viewer's role.
    */
   canPublish?: boolean;
-  /** The asset owner's usable publish integrations — staff payload only. */
+  /** The asset owner's usable publish integrations - staff payload only. */
   connectedPlatforms?: string[];
 }) {
   const [tab, setTab] = useState<"details" | "simulation">("details");
@@ -146,12 +147,12 @@ export function AssetDetailModal({
   // Agent draft batches are pinned markdown structures, not captions. This
   // modal is the ONLY deliverable viewer a client can reach (the asset card
   // lives on staff-only routes), so the pick / edit / skip reader has to mount
-  // here too — otherwise the loop the intake forms promise doesn't exist for
+  // here too - otherwise the loop the intake forms promise doesn't exist for
   // the person it was written for. LinkedIn and Reddit are sniffed FIRST: both
   // write "## Account N · …" headings, which contain the X sniff's "# Account "
   // substring, so both must be tested before X or the X reader claims their
   // batches. Each of the two carries a distinct h1 marker, so they cannot claim
-  // each other. Same order as asset-card.tsx — the two viewers of the same
+  // each other. Same order as asset-card.tsx - the two viewers of the same
   // deliverable must not disagree about what it is.
   const content = asset?.content;
   const liBatch = useMemo(
@@ -170,7 +171,7 @@ export function AssetDetailModal({
         : null,
     [content, liBatch, redditBatch],
   );
-  // The run's attachable media for the LinkedIn reader (shared definition —
+  // The run's attachable media for the LinkedIn reader (shared definition -
   // the asset card renders the same list).
   const assetMeta = asset?.meta;
   const liMedia = useMemo<LiMediaFile[]>(
@@ -184,7 +185,7 @@ export function AssetDetailModal({
 
   // Defensive lock guard: the calendar/Today never open a locked asset, but if
   // one reaches here (belt-and-braces) show only the template placeholder + the
-  // unlock date — never content, images, hashtags, or the download buttons.
+  // unlock date - never content, images, hashtags, or the download buttons.
   if (asset.locked) {
     const unlockStr =
       asset.scheduledAt != null
@@ -199,7 +200,7 @@ export function AssetDetailModal({
         <div className="flex flex-col items-center gap-3 py-6 text-center">
           {/* CREATION language, not lock language (§4.1 item 1). "This
               deliverable unlocks on Thursday" tells the client the post already
-              exists and is being withheld from them — which is the single fact
+              exists and is being withheld from them - which is the single fact
               the whole slot model is built to keep indistinguishable, and it
               made every pre-generated batch legible as one. A padlock says the
               same thing in an icon, so it goes too. */}
@@ -308,13 +309,13 @@ export function AssetDetailModal({
 
         {/* Cover image (non-carousel). Sourced from assetImages() rather than
             asset.imageUrl alone, which missed any import whose photos landed in
-            meta.files — the same gap that rendered those assets' cards blank. */}
+            meta.files - the same gap that rendered those assets' cards blank. */}
         {slides.length === 0 && coverImageUrl && videos.length === 0 && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={coverImageUrl} alt={asset.title} className="w-full rounded-lg border border-border" />
         )}
 
-        {/* Video deliverables — podcast cuts, branded shorts, TikTok. Until
+        {/* Video deliverables - podcast cuts, branded shorts, TikTok. Until
             this existed the clips were emailed by hand (QA F150); the caption
             copy button below is the other half of "post it yourself". The src
             is our own route, never the stored URL: a bulk-uploaded clip's
@@ -331,7 +332,7 @@ export function AssetDetailModal({
           />
         ))}
 
-        {/* Content — a parsed drafts batch gets the per-draft reader (pick,
+        {/* Content - a parsed drafts batch gets the per-draft reader (pick,
             edit, skip, each choice feeding the agent's next run); anything
             else gets the caption with a copy button. */}
         {liBatch ? (
@@ -370,7 +371,7 @@ export function AssetDetailModal({
             <div className="mb-1.5 flex items-center justify-between gap-2">
               <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Content</p>
               {/* Posting happens by hand from a phone, and this modal is the
-                  phone's way into a post — so copy is a primary action here, not
+                  phone's way into a post - so copy is a primary action here, not
                   the card's hover-revealed icon. */}
               <CopyCaptionButton asset={asset} variant="full" />
             </div>
@@ -420,7 +421,7 @@ export function AssetDetailModal({
           </div>
         )}
 
-        {/* Unconditional on eligibility — a viewer with no Publish Now button (a
+        {/* Unconditional on eligibility - a viewer with no Publish Now button (a
             client, or staff with no compatible connected platform) is exactly
             who most needs to see WHY a scheduled post never went out; the
             retry control below stays gated, the fact of the failure does not. */}
@@ -484,7 +485,7 @@ function PublishStateNotice({ publishError }: { publishError: string }) {
  * This modal is the only viewer a client can reach, so it may not print
  * machine formatting on screen: an agent deliverable that carries Markdown
  * structure (headings, bullets, tables, bold, blockquotes) goes through
- * renderAssetBody — the asset-specific entry point of the client-safe renderer,
+ * renderAssetBody - the asset-specific entry point of the client-safe renderer,
  * which HTML-escapes the source before it touches any markup and, unlike the
  * context-doc entry point, strips no preamble (an agent's first line is its own
  * headline and a leading `---` is a draft separator, not frontmatter). Plain
@@ -493,7 +494,7 @@ function PublishStateNotice({ publishError }: { publishError: string }) {
  */
 function AssetContentBody({ content }: { content: string }) {
   if (!looksLikeMarkdown(content)) {
-    return <p className="whitespace-pre-wrap text-sm text-foreground/90">{content}</p>;
+    return <p className="whitespace-pre-wrap text-sm text-foreground/90">{normalizeDashes(content)}</p>;
   }
   return (
     <div
@@ -504,12 +505,12 @@ function AssetContentBody({ content }: { content: string }) {
 }
 
 /**
- * Manual push, from the calendar — the control three separate strings tell the
+ * Manual push, from the calendar - the control three separate strings tell the
  * user to use here ("On the calendar, you push it live with Publish Now").
  *
  * Staff only, and deliberately so: `publishAssetNowAction` is `requireStaff()`,
  * so a client-facing button could only ever error. It sits ABOVE MarkPostedRow
- * and does not replace it — the two answer different questions. Publish Now is
+ * and does not replace it - the two answer different questions. Publish Now is
  * "Karos pushes this through the connected integration now"; Mark as posted is
  * the client's attestation that they posted it by hand, and stays the only
  * control a client sees.
@@ -579,7 +580,7 @@ function PublishNowRow({
 /**
  * "I posted this myself." The calendar → modal path is how a post gets read on
  * a phone, and posting is done by hand from there (copy the caption, paste it
- * into the platform), so this is where the loop has to be closed — without it
+ * into the platform), so this is where the loop has to be closed - without it
  * nothing the user does can ever move the asset off approved/scheduled.
  */
 

@@ -22,8 +22,8 @@ const WEEKDAY_LONG = [
 /**
  * A note about ONE day (§4.3, CD-A3).
  *
- * The copy is the load-bearing part. A note is not feedback — feedback shapes
- * everything the agent writes from here on, a note is about Thursday — and the
+ * The copy is the load-bearing part. A note is not feedback - feedback shapes
+ * everything the agent writes from here on, a note is about Thursday - and the
  * dialog says so, because a client who leaves "make this one about the launch"
  * expecting it to become a standing rule has been misled by the surface.
  *

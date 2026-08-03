@@ -5,6 +5,12 @@ name: Deploy to Prep
 # production — see DEPLOY_ENVIRONMENTS.md). Production is never touched here;
 # promoting a verified prep build to production is a separate manual workflow
 # (promote-production.yml).
+#
+# Prep now has full production feature parity with its own "basics": its own
+# named Firestore database ("prep", same shared Firebase project — see
+# firebase.json + src/lib/firebase/admin.ts), its own GCS media bucket, and
+# its own agent-service deployment (see deploy-agent-service-prep.yml). Auth
+# users are still shared (same Firebase project); Firestore data is not.
 on:
   push:
     branches: [main]
@@ -48,4 +54,4 @@ jobs:
           gcloud builds submit \
             --project="${{ vars.PREP_PROJECT_ID }}" \
             --config=cloudbuild.yaml \
-            --substitutions=_APP_URL="${{ vars.PREP_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PREP_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PREP_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PREP_ADMIN_EMAIL }}"
+            --substitutions=COMMIT_SHA="${{ github.sha }}",_REGION="${{ vars.PREP_REGION || 'us-central1' }}",_APP_URL="${{ vars.PREP_APP_URL }}",_AGENT_SERVICE_URL="${{ vars.PREP_AGENT_SERVICE_URL }}",_EMAIL_FROM="${{ vars.PREP_EMAIL_FROM }}",_ADMIN_EMAIL="${{ vars.PREP_ADMIN_EMAIL }}",_ADMIN_EMAILS="${{ vars.PREP_ADMIN_EMAILS }}",_FIRESTORE_DATABASE_ID="prep",_GCS_MEDIA_BUCKET="${{ vars.PREP_GCS_MEDIA_BUCKET }}",_AGENT_SERVICE_CALLBACK_URL="${{ vars.PREP_APP_URL }}"

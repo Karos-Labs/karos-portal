@@ -20,7 +20,7 @@ import { groupRefusals, summarizeRefusals } from "@/lib/refusal-copy";
 import { cn } from "@/lib/utils";
 
 /**
- * Admin Ops Import — find locally-produced work, review it, then land it.
+ * Admin Ops Import - find locally-produced work, review it, then land it.
  *
  * Two discovery sources, deliberately rendered the same way: proposals
  * committed to the lab repo ("Check for updates") and proposals dropped in the
@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
  * PLAN BEFORE WRITE IS THE STRUCTURE, NOT THE COPY: there is no code path from
  * this component to a write that does not first render the dry-run diff. The
  * Import button only appears once a plan exists, and the server re-validates
- * the bundle from its source anyway — the plan shown here authorizes nothing.
+ * the bundle from its source anyway - the plan shown here authorizes nothing.
  */
 
 /** A discovered bundle, from either source, before anything is validated. */
@@ -47,7 +47,7 @@ interface SourceRow {
    */
   clientId: string | null;
   clientName: string | null;
-  /** Shape counts (inbox) or repo path (lab) — whatever the source can cheaply say. */
+  /** Shape counts (inbox) or repo path (lab) - whatever the source can cheaply say. */
   subtitle: string | null;
   error: string | null;
   hasSeoGeo: boolean;
@@ -83,7 +83,7 @@ type ApplyState =
 
 const keyOf = (r: { origin: BundleOrigin; ref: string }) => `${r.origin}:${r.ref}`;
 
-/** A plan plus the subset the operator ticked — what actually gets imported. */
+/** A plan plus the subset the operator ticked - what actually gets imported. */
 interface Pick_ {
   plan: PlanSummary;
   selectedKeys: string[];
@@ -179,7 +179,7 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
 
   /**
    * Every bundle with a rendered, unapplied, unlocked plan. "Import all" takes
-   * each in full — a per-bundle subset is a per-bundle decision, so anything
+   * each in full - a per-bundle subset is a per-bundle decision, so anything
    * ticked down individually is imported from its own card.
    */
   const readyPlans: Pick_[] = rows
@@ -259,7 +259,7 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
         ))
       )}
 
-      {/* Per-bundle confirm — names exactly what will be written. */}
+      {/* Per-bundle confirm - names exactly what will be written. */}
       <Modal
         open={confirming !== null}
         onClose={() => setConfirming(null)}
@@ -291,7 +291,7 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
         )}
       </Modal>
 
-      {/* Import-all confirm — the same manifest, per client. */}
+      {/* Import-all confirm - the same manifest, per client. */}
       <Modal
         open={bulk === "confirm"}
         onClose={() => setBulk("idle")}
@@ -335,7 +335,7 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
 }
 
 /**
- * The answer to "is there anything new anywhere?" — including the un-imported
+ * The answer to "is there anything new anywhere?" - including the un-imported
  * post runs, which import through the same lab flow the client pages use.
  */
 function ScanSummary({ scan }: { scan: UpdateScan }) {
@@ -389,8 +389,8 @@ function ScanSummary({ scan }: { scan: UpdateScan }) {
                     {c.newRuns.map((r) => r.runName).join(" · ")}
                   </p>
                 </div>
-                {/* Posts land through the existing lab importer — drafts, chain
-                    reflow, per-item idempotency — never a second writer. */}
+                {/* Posts land through the existing lab importer - drafts, chain
+                    reflow, per-item idempotency - never a second writer. */}
                 <LabImportButton clientId={c.clientId} />
               </div>
             ),
@@ -403,7 +403,7 @@ function ScanSummary({ scan }: { scan: UpdateScan }) {
 
 /**
  * The confirm dialog's manifest: what lands, in nouns, before anything is
- * written — and only what is TICKED. A confirm that listed the whole bundle
+ * written - and only what is TICKED. A confirm that listed the whole bundle
  * after the operator narrowed it would be worse than no confirm at all.
  *
  * ONE ITEM IS NOT COVERED BY THE REASSURANCE, so it is not listed under it
@@ -542,7 +542,7 @@ function BundleCard({
   onImport: (pick: Pick_) => void;
 }) {
   // An already-imported bundle stays on the page as a quiet card rather than
-  // looking like one nobody has touched — that ambiguity is what made Albert
+  // looking like one nobody has touched - that ambiguity is what made Albert
   // ask why Karos Labs was missing. Still re-openable: a file that changed
   // since says so, and "Review again" is always available.
   const prior = row.priorImport;
@@ -622,7 +622,7 @@ function BundleCard({
 /**
  * A refusal, in sentences.
  *
- * The validator's own strings are precise and unreadable — Albert hit
+ * The validator's own strings are precise and unreadable - Albert hit
  * `competitors.create[0]: duplicates the existing row …` and could not tell
  * whether he or the tool was at fault. Grouped copy answers what happened and
  * what to do; the exact lines stay one disclosure away, never discarded.
@@ -686,7 +686,7 @@ function Tick({
 /**
  * The dry-run diff, with a tick per write.
  *
- * Everything starts ticked — the common case is importing the whole bundle —
+ * Everything starts ticked - the common case is importing the whole bundle -
  * and untickng a line simply removes it from the write. The one exception is a
  * dependency: the palette cannot go in without its branding document, so that
  * tick disables itself with a reason instead of letting the click through and
@@ -703,12 +703,12 @@ function PlanCard({
   const [selected, setSelected] = useState<Set<string>>(() => new Set(allKeys));
   const [withSeoGeo, setWithSeoGeo] = useState(plan.seoGeo?.ok === true);
 
-  // Read the keys off the plan rather than importing the core's constants — the
+  // Read the keys off the plan rather than importing the core's constants - the
   // core is the validator, and a client bundle has no business carrying it.
   const PROFILE_KEY = plan.items.find((i) => i.kind === "profile")?.key ?? "client:profile";
   const PALETTE_KEY = plan.items.find((i) => i.kind === "palette")?.key ?? "client:palette";
 
-  /** Keys whose dependency is currently unticked — disabled, with the reason. */
+  /** Keys whose dependency is currently unticked - disabled, with the reason. */
   const blocked = new Map<string, string>();
   for (const item of plan.items) {
     const missing = item.requires.filter((r) => !selected.has(r));
@@ -908,7 +908,7 @@ function PlanCard({
 
 /**
  * The SEO/GEO half. Provenance is stated up front because these numbers are
- * normally machine-measured — importing one by hand is the exception, and the
+ * normally machine-measured - importing one by hand is the exception, and the
  * page says so rather than letting it blend in with a pipeline capture.
  */
 function SeoGeoCard({

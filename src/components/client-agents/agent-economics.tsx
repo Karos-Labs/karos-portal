@@ -7,12 +7,12 @@ import { getLaunchCalibrationAction } from "@/lib/actions/agent-economics-action
 import type { AgentEconomics, LaunchCalibration } from "@/lib/credit-reporting";
 
 /**
- * What this client's agent has COST US, in dollars (§6.2b) — and what a setup
+ * What this client's agent has COST US, in dollars (§6.2b) - and what a setup
  * run costs relative to a normal one, measured (§6.3).
  *
  * Staff-only by construction: it is mounted only from the staff branch of the
  * agents page, and the cross-client measurement behind the button is a
- * requireStaff action. Nothing here is a client-facing number — the client's
+ * requireStaff action. Nothing here is a client-facing number - the client's
  * side of the same question is credits, on their settings page.
  *
  * This is the "493 onboarding runs at ~$8.5" visibility Albert asked for,
@@ -33,10 +33,10 @@ export function AgentEconomicsCard({
   /** The price currently set on the lab agent, for comparison. */
   launchCreditCost: number | null;
   /**
-   * Required, not defaulted — every raw-$ figure in this card is internal
+   * Required, not defaulted - every raw-$ figure in this card is internal
    * cost data a CLIENT_USER must never see (item 3's role-based cost
    * abstraction). The call site already only mounts this component for
-   * staff, but that's a positional guarantee; this is the structural one —
+   * staff, but that's a positional guarantee; this is the structural one -
    * a future caller that forgets its own `isStaff` check still can't render
    * a dollar figure to a client by accident.
    */
@@ -47,7 +47,7 @@ export function AgentEconomicsCard({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // Hooks above run unconditionally (Rules of Hooks) — this gate short-circuits
+  // Hooks above run unconditionally (Rules of Hooks) - this gate short-circuits
   // everything after them, before any $ figure is built or rendered.
   if (!viewerIsStaff) return null;
 
@@ -120,7 +120,7 @@ export function AgentEconomicsCard({
         {calibration && (
           <div className="mt-2 rounded-md border border-border bg-surface-2/70 px-2.5 py-2">
             {calibration.ratio == null ? (
-              /* Never a fallback multiplier — the whole point of the ruling is
+              /* Never a fallback multiplier - the whole point of the ruling is
                  that the price comes from measurement, so "not measurable yet"
                  is the honest answer and staff launches are what fix it. */
               <p className="text-[11px] text-muted-2">

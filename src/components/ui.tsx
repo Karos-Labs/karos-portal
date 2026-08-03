@@ -125,7 +125,7 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
 Select.displayName = "Select";
 
 /* -------------------------------- Badge ---------------------------------
-   Squared chips (§8) — mono labels, hairline borders, no glow. */
+   Squared chips (§8) - mono labels, hairline borders, no glow. */
 
 export function Badge({
   children,
@@ -137,7 +137,7 @@ export function Badge({
   className?: string;
 }) {
   /* Judgment scale: success green / warning amber / danger red / info slate.
-     The historical "neon" tone means "good" — it renders success green so the
+     The historical "neon" tone means "good" - it renders success green so the
      brand orange never participates in status colors. */
   const tones: Record<string, string> = {
     neutral: "bg-surface-3 text-muted border-border",
@@ -208,7 +208,7 @@ export function EmptyState({
 }
 
 /* ------------------------------- StatCard -------------------------------
-   Minimal: mono label over a mono numeral. No icon chip — the `icon` prop is
+   Minimal: mono label over a mono numeral. No icon chip - the `icon` prop is
    accepted for call-site compatibility but intentionally not rendered. */
 
 export function StatCard({

@@ -147,7 +147,7 @@ function ClientContextPicker({
     // server. That was a REAL escalation window, not a dead control: at the
     // time, generateIntelReportAction gated on requireStaff, so the employee's
     // click would have fired a full pipeline run (the action is requireAdmin
-    // now — CD-G5 hardening — closing the server side too). The flag starting
+    // now - CD-G5 hardening - closing the server side too). The flag starting
     // out honest closes the UI side.
     setActiveClient({ client, contextDocs: [], competitors: [], isAdmin });
     router.push(`/clients/${client.id}`);
@@ -261,8 +261,8 @@ function ClientContextPicker({
 /* ── User menu ───────────────────────────────────────────────────────── */
 
 /**
- * The staff account zone. CD-G9c moved the floating top-right cluster —
- * support, light/dark, notifications — in here, so the workspace no longer
+ * The staff account zone. CD-G9c moved the floating top-right cluster -
+ * support, light/dark, notifications - in here, so the workspace no longer
  * carries a header bar whose only job was three icons. That consciously
  * overrules F116's "a badge behind a dropdown is not a badge": the trigger
  * keeps an unread DOT so the signal survives the move, and the full panel is
@@ -293,7 +293,7 @@ function UserMenu({
   unreadWithChrome: number;
   /**
    * False inside the mobile drawer, which already surfaces the three rows one
-   * level up — the menu is itself a tap deep there, so nesting them would put
+   * level up - the menu is itself a tap deep there, so nesting them would put
    * support and the bell three taps from a page.
    */
   showChrome?: boolean;
@@ -370,7 +370,7 @@ function UserMenu({
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           {/* NOT overflow-hidden: the notification panel below is `absolute
               bottom-full`, i.e. entirely outside this box, so an ancestor clip
-              erased it — the row opened onto nothing. The rounding needs no
+              erased it - the row opened onto nothing. The rounding needs no
               clip of its own, every child row is rounded-[8px] inside p-1 and
               nothing reaches the corners. */}
           <div className="absolute bottom-full left-0 right-0 z-50 mb-1.5 rounded-[12px] border border-border bg-surface shadow-xl">
@@ -387,7 +387,7 @@ function UserMenu({
                   panelPlacement="up"
                   /* The anchor sits ~300px off the bottom of the rail, so a
                      full-height panel (header + 480px feed + footer = 561px)
-                     ran off the TOP of the viewport at 1280x800 — measured
+                     ran off the TOP of the viewport at 1280x800 - measured
                      -21px. 45vh keeps it clear down to ~600px of viewport. */
                   panelClassName="max-h-[45vh]"
                   allowJobDeepLinks={allowJobDeepLinks}
@@ -498,7 +498,7 @@ export function Sidebar({
   // Narrow-width contract (CD-G9a): with a client context active the staff
   // shell drops the top bar + hamburger and renders the SAME bottom tab bar and
   // full-screen Company sheet the client shell uses. Staff WITHOUT a context
-  // keep the drawer — the full admin nav is more tabs than a bar can hold
+  // keep the drawer - the full admin nav is more tabs than a bar can hold
   // (flagged, not ruled). Bound once so TS narrows it inside the JSX below.
   const clientCtx = isStaff && activeClient ? activeClient : null;
 
@@ -513,7 +513,7 @@ export function Sidebar({
   // QA F113 (staff stranded in client view) is answered by the ClientContextPicker
   // at the foot of the rail: its ✕ clears the context AND routes to /clients, and
   // it renders for every staff member, not just admins. A second labelled exit in
-  // the nav was redundant — three controls for one action, and one more row
+  // the nav was redundant - three controls for one action, and one more row
   // competing for the rail's fixed height (CD-E3).
   /**
    * The active row's treatment, and the ONE place the two shells disagreed
@@ -576,7 +576,7 @@ export function Sidebar({
     </nav>
   );
 
-  // CD-G4: the chip's ↗ opens the client's REAL website, not /clients/[id] —
+  // CD-G4: the chip's ↗ opens the client's REAL website, not /clients/[id] -
   // the nav's Dashboard tab already goes there in client view, so the internal
   // link was a duplicate. Same protocol normalisation the Competitor Track rows
   // use for their own ↗. Null when the client has no website on file, and the
@@ -671,7 +671,7 @@ export function Sidebar({
         />
       </div>
 
-      {/* key: switching client context must reset the panel's local state —
+      {/* key: switching client context must reset the panel's local state -
           an optimistically added row otherwise stayed on screen for the NEXT
           client's rail until a reload (QA F62 flag). */}
       <CompetitorTrack
@@ -685,18 +685,18 @@ export function Sidebar({
         guidelines={activeClient.client.brandingGuidelines}
         clientId={activeClient.client.id}
         hasWebsite={!!activeClient.client.website}
-        /* Staff shell — internal usage percentages are visible and editable here. */
+        /* Staff shell - internal usage percentages are visible and editable here. */
         isStaff
       />
     </div>
   ) : null;
 
-  // `inDrawer` — the same tree serves the desktop rail and the narrow-width
+  // `inDrawer` - the same tree serves the desktop rail and the narrow-width
   // drawer, but the drawer is itself one tap deep, so the chrome CD-G9c moved
   // into the account menu is surfaced a level higher there (see the footer).
   const shellContent = (inDrawer: boolean) => (
     <div className="flex h-full flex-col">
-      {/* Logo — fixed top */}
+      {/* Logo - fixed top */}
       <div className="shrink-0 px-4 pb-2 pt-4">
         <Link href={homeHref} className="flex items-center gap-2.5 px-2 py-1">
           <Image
@@ -715,8 +715,8 @@ export function Sidebar({
 
       {/* Body. NOT a scroll container by contract (CD-E3): nav + client chip +
           Documents + Competitor Track + Brand Colors + footer must fit the
-          viewport at common laptop heights. The content set is bounded — 4
-          client tabs, ≤6 documents, ≤5 tracked competitors, ≤4 swatches — so
+          viewport at common laptop heights. The content set is bounded - 4
+          client tabs, ≤6 documents, ≤5 tracked competitors, ≤4 swatches - so
           the compacted stack fits; overflow-y-auto stays as the safety valve
           for genuinely short windows rather than clipping a section away. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-2">
@@ -724,9 +724,9 @@ export function Sidebar({
         {clientSections}
       </div>
 
-      {/* Bottom — fixed */}
+      {/* Bottom - fixed */}
       <div className="shrink-0 space-y-1.5 border-t border-border px-4 py-2">
-        {/* QA F113: employees get the same context switcher as admins — the
+        {/* QA F113: employees get the same context switcher as admins - the
             picker also carries the X that clears the context. `clients` is
             already fenced to their assigned clients by the app layout. The
             LABELLED exit is F60's ClientContextBar, which renders for any
@@ -740,7 +740,7 @@ export function Sidebar({
         {inDrawer && (
           <div className="space-y-0.5">
             {/* w-full, not the default w-80: the drawer is w-64 with
-                overflow-y-auto, which forces overflow-x to auto — a 320px
+                overflow-y-auto, which forces overflow-x to auto - a 320px
                 panel would be clipped and drag in a horizontal scrollbar. */}
             <NotificationBell
               actionItems={actionItems}
@@ -781,7 +781,7 @@ export function Sidebar({
       {clientCtx ? (
         /* ── Narrow width, client context: bottom tab bar + Company sheet.
              Twin of the client shell's own mount (components/client-rail.tsx)
-             — same bar, same sheet frame, staff-flavoured contents. ── */
+             - same bar, same sheet frame, staff-flavoured contents. ── */
         <>
           <MobileTabBar
             items={items}
@@ -809,7 +809,7 @@ export function Sidebar({
               />
             </div>
 
-            {/* key: see the desktop mount — switching client must reset the
+            {/* key: see the desktop mount - switching client must reset the
                 panel's optimistic rows (QA F62). */}
             <CompetitorTrack
               key={clientCtx.client.id}
@@ -822,7 +822,7 @@ export function Sidebar({
               guidelines={clientCtx.client.brandingGuidelines}
               clientId={clientCtx.client.id}
               hasWebsite={!!clientCtx.client.website}
-              /* Staff shell — internal usage percentages are visible here. */
+              /* Staff shell - internal usage percentages are visible here. */
               isStaff
             />
 
@@ -830,7 +830,7 @@ export function Sidebar({
                 the retired top bar and the sign-out the drawer used to carry. */}
             <div className="space-y-0.5 border-t border-border pt-4">
               {/* Explicit close: the sheet otherwise closes on navigation, and
-                  tapping Settings while already ON /settings routes nowhere —
+                  tapping Settings while already ON /settings routes nowhere -
                   the sheet just sat there over the page it had reached. */}
               <Link
                 href="/settings"
@@ -857,7 +857,7 @@ export function Sidebar({
               />
               <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
               <ThemeSwitch />
-              {/* The staff escape hatch, and STAFF-ONLY — this branch never
+              {/* The staff escape hatch, and STAFF-ONLY - this branch never
                   renders for a client. At phone width in client context the
                   nav is five client tabs and nothing else, so the only way
                   back to the agency workspace was the F60 strip at the top of

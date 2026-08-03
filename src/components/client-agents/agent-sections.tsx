@@ -9,7 +9,7 @@ import type { RosterStatus } from "@/lib/client-agents";
 /**
  * The dated, categorized bands of an agent's page (CD-K1).
  *
- * Albert: everything about an agent — inputs, outputs, settings — laid out on
+ * Albert: everything about an agent - inputs, outputs, settings - laid out on
  * the agent's own page, in sections, with dates, and an unmistakable LIVE mark
  * when it is running. `AgentStatusStrip` is the mark; `AgentInputsSection` is
  * what it runs on; `AgentSetupSection` is what the launch decided. The archive
@@ -17,7 +17,7 @@ import type { RosterStatus } from "@/lib/client-agents";
  *
  * Server components on purpose. Nothing here holds state, everything they paint
  * was redacted at the RSC boundary, and the two interactive things a reader
- * might want from them — editing an intake form, reordering the rotation — are
+ * might want from them - editing an intake form, reordering the rotation - are
  * reached through the surfaces that already own those writes rather than
  * re-implemented here. A second editor for a document that has one is how two
  * surfaces start disagreeing about it.
@@ -34,14 +34,14 @@ import type { RosterStatus } from "@/lib/client-agents";
  *
  * The header badge says the same word, and that is deliberate rather than
  * redundant: the badge is a chip in a row of chrome, and Albert's directive was
- * that "if something's running it must say LIVE" — a claim about how loudly the
+ * that "if something's running it must say LIVE" - a claim about how loudly the
  * page says it, not about whether the word appears somewhere. So the strip
  * leads the content column with a breathing halo, and the badge above it stays
  * the compact form for anyone scanning the header.
  *
  * The STATUS ITSELF is not re-derived here. It arrives already resolved by
  * `rosterStatus`, which is where the rule lives that a schedule refusal
- * outranks Live (F24/F129) — an agent whose every fire is turned away is not
+ * outranks Live (F24/F129) - an agent whose every fire is turned away is not
  * live, whatever its umbrella says. A strip that decided its own tone from
  * `launchState === "live"` would be the second answer that quietly disagrees.
  */
@@ -51,7 +51,7 @@ export function AgentStatusStrip({
   facts,
   staffNote,
 }: {
-  /** From `rosterStatus` — never re-derived. The real union, so a tone typo
+  /** From `rosterStatus` - never re-derived. The real union, so a tone typo
       is a type error rather than a silent fall-through to idle grey. */
   status: RosterStatus;
   /**
@@ -149,7 +149,7 @@ export function AgentStatusStrip({
 /**
  * The documents this agent drafts from, each with the date it last changed.
  *
- * These are Daniel's intake surfaces — the company form, one seat per person,
+ * These are Daniel's intake surfaces - the company form, one seat per person,
  * the shared news drop, the takes box. They have always existed at
  * `/clients/<id>/<platform>-agent`; the sidebar that linked them was removed in
  * the redesign, so for two months the only way to reach a seat form was to know
@@ -314,7 +314,7 @@ function RowFace({ row }: { row: AgentInputsView["rows"][number] }) {
 /**
  * What the setup run decided, dated (directive 2).
  *
- * Read-only, and every fact here has an editor somewhere else on this page —
+ * Read-only, and every fact here has an editor somewhere else on this page -
  * the format rows reorder and pause, the pace dialog changes the schedule, the
  * curation pane rewrites the registry. The gap this fills is that none of those
  * editors ever says WHEN any of it happened, so an agent that was set up in

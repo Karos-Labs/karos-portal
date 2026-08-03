@@ -24,7 +24,7 @@ interface Props {
   allowUsagePct?: boolean;
 }
 
-/* ── Color entry (local form state — lighter than full BrandColor) ─────── */
+/* ── Color entry (local form state - lighter than full BrandColor) ─────── */
 
 interface ColorEntry {
   id: number;
@@ -108,7 +108,7 @@ export function BrandingModal({
     }
   }
 
-  /** Sum of the entered usage shares — a mix that does not add to 100 is a
+  /** Sum of the entered usage shares - a mix that does not add to 100 is a
    *  typo far more often than it is intentional, so the form says so. */
   const usageTotal = colors.reduce((sum, c) => {
     const n = Number(c.usagePct);
@@ -124,7 +124,7 @@ export function BrandingModal({
       const result = await generateBrandingAction(clientId);
       setGenResult({ source: result.source, visualStyle: result.visualStyle });
 
-      // Pre-fill palette — prefer new array, fall back to legacy scalars
+      // Pre-fill palette - prefer new array, fall back to legacy scalars
       if (result.dominantColors?.length) {
         setColors(
           result.dominantColors.map((c) => ({

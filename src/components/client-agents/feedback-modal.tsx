@@ -18,8 +18,8 @@ import type { ClientAgentFeedbackRow } from "./types";
 /**
  * The two-level feedback surface (Phase 3 §5).
  *
- * ONE component, two scopes. The scope is fixed by where it was opened from —
- * the agent footer or a template row — and stated in the copy rather than
+ * ONE component, two scopes. The scope is fixed by where it was opened from -
+ * the agent footer or a template row - and stated in the copy rather than
  * offered as a dropdown: "which of my formats does this apply to" is a question
  * the client already answered by clicking the row they were looking at, and a
  * mis-set dropdown silently teaches the wrong stream.
@@ -46,7 +46,7 @@ export function ClientAgentFeedbackModal({
   scope: "agent" | "template";
   templateKey?: string | null;
   templateName?: string | null;
-  /** Every row on this umbrella — filtered to the open scope below. */
+  /** Every row on this umbrella - filtered to the open scope below. */
   rows: ClientAgentFeedbackRow[];
   viewerIsClient: boolean;
   onClose: () => void;
@@ -144,7 +144,7 @@ export function ClientAgentFeedbackModal({
             }
             aria-label="Your feedback"
           />
-          {/* Cosmetic only — filters the analytics history table, changes
+          {/* Cosmetic only - filters the analytics history table, changes
               nothing about scope or injection. Optional, so skipping it costs
               nothing. */}
           <Select

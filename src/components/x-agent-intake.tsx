@@ -3,7 +3,7 @@
 /**
  * X agent (e13) intake surfaces: the company-page form, per-person seat forms
  * ("add a seat", repeatable), the two ongoing drop boxes, and per-draft
- * feedback. One canonical set of X surfaces — copy follows the input
+ * feedback. One canonical set of X surfaces - copy follows the input
  * contract: sentence case, each field says what we do with the answer,
  * optional fields say the product runs without them.
  */
@@ -52,7 +52,7 @@ export interface XSeatView {
   takes: Array<{ id: string; take: string; date: string; topic?: string }>;
 }
 
-/** The shared company news row (SCRUM-51) — see company-news-box.tsx. */
+/** The shared company news row (SCRUM-51) - see company-news-box.tsx. */
 export type XNewsRowView = CompanyNewsRowView;
 
 export interface XFeedbackRowView {
@@ -748,13 +748,13 @@ function FeedbackBox({
         , and each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
-        /* The run's state through the app's own mapper — these used to print the
+        /* The run's state through the app's own mapper - these used to print the
            raw database word ("review", "queued", "failed") into client-facing
            copy, beside a machine date, on a line with nothing to click. */
         <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => {
             /* A3/A4, the pass-2 stamp treatment. `Run <date>` is the generation
-               instant, and one fire produces a week of drafts — so four rows
+               instant, and one fire produces a week of drafts - so four rows
                printed the same date and said outright that the week came out of
                one minute. A client's rows are already collapsed to one per day
                server-side (toRunRowViews); here they lose the machinery noun and

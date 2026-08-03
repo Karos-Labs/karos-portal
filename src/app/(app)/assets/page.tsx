@@ -62,7 +62,7 @@ export default async function AssetsPage({
   const user = await requireUser();
   const { clientId: viewClientId } = await searchParams;
 
-  // The client Library merged into the Workspace's Archive tab (2026-07) —
+  // The client Library merged into the Workspace's Archive tab (2026-07) -
   // client users land there; this route stays the staff review surface.
   if (user.role === "CLIENT_USER") redirect("/tasks");
 
@@ -144,7 +144,7 @@ export default async function AssetsPage({
 
   const allAssets = await listAssets();
   const clientIds = new Set(clients.map((c) => c.id));
-  // Admins and employees alike only see assets of EXISTING (visible) clients —
+  // Admins and employees alike only see assets of EXISTING (visible) clients -
   // orphaned assets of deleted clients used to leak into this cross-client view.
   const assets = allAssets.filter((a) => clientIds.has(a.clientId));
   const connectedPlatformsByClient = await pushablePlatformsByClient(assets);
