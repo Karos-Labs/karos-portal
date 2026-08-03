@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
 // Quoted from the pricing home, off the same constant the swarm route charges.
@@ -32,10 +33,25 @@ interface MentionableAgent {
   id: string;
   displayName: string;
   icon: string;
-  platform: string | null;
+  /**
+   * Which platform this agent posts to (AF-20), resolved by the route through
+   * lib/content-platform and sent as a token. Null for the agents that target
+   * none (Landing Builder), and those keep their stored lucide icon.
+   */
+  platform: SocialPlatform | null;
 }
 
-/** A focused-agent chip set by picking `@AgentName` - biases, not locks, the chat. */
+/**
+ * A focused-agent chip set by picking `@AgentName` - biases, not locks, the chat.
+ *
+ * Deliberately NOT carrying a platform of its own, even though the chip draws
+ * one: focus is set from two places, and only one of them holds a roster row.
+ * The other is the copilot's own `set_agent_focus` marker, which names an agent
+ * in prose mid-stream from inside a hook that never sees the mention list. A
+ * field here would be filled on one path and empty on the other, so the same
+ * chip would wear a logo or not depending on how the user got to it. The chip
+ * looks the id up in the roster at render instead - one answer, both paths.
+ */
 interface FocusAgent {
   id: string;
   name: string;
@@ -849,6 +865,11 @@ export function ChatbotWidget({
   // Fetched independently of a chat turn - the `@` dropdown has to be ready
   // the moment the client starts typing, not after their first message lands.
   const [mentionableAgents, setMentionableAgents] = useState<MentionableAgent[]>([]);
+  // The focused chip's mark, resolved from the roster rather than stored on the
+  // focus itself, so both ways of setting focus reach the same answer.
+  const focusAgentPlatform: SocialPlatform | null = focusAgent
+    ? mentionableAgents.find((a) => a.id === focusAgent.id)?.platform ?? null
+    : null;
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/clients/${clientId}/agents/mentionable`)
@@ -1150,7 +1171,15 @@ export function ChatbotWidget({
               switch agents / go back to general (set_agent_focus). */}
           {focusAgent && (
             <div className="mx-3 mb-2 flex w-fit items-center gap-1.5 rounded-full border border-neon/30 bg-neon-soft px-2.5 py-1 text-[11px] text-neon">
-              <Icon name="AtSign" className="h-3 w-3" />
+              {/* The same mark the picker row wore, looked up rather than
+                  carried - see FocusAgent. The @ stays when the agent targets
+                  no platform, and when focus was set by the copilot naming an
+                  agent that is not on this client's roster. */}
+              {focusAgentPlatform ? (
+                <SocialPlatformMark platform={focusAgentPlatform} className="h-3 w-3" />
+              ) : (
+                <Icon name="AtSign" className="h-3 w-3" />
+              )}
               Focused on {focusAgent.name}
               <button
                 type="button"
@@ -1184,7 +1213,16 @@ export function ChatbotWidget({
                         i === clampedIndex ? "bg-surface-2" : "hover:bg-surface-2",
                       )}
                     >
-                      <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      {/* AF-20: the platform this agent posts to, so tagging
+                          one says what you are about to get. An agent that
+                          targets no platform (Landing Builder) keeps the stored
+                          icon it has always had - the route sends null rather
+                          than a nearest guess. */}
+                      {a.platform ? (
+                        <SocialPlatformMark platform={a.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      ) : (
+                        <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      )}
                       <span className="flex-1 truncate text-xs text-foreground">{a.displayName}</span>
                     </button>
                   ))}

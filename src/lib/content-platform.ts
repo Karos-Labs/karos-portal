@@ -161,19 +161,37 @@ export function platformForAgentIdentity(key?: string | null, name?: string | nu
 /* ── Row helpers: the one call each surface makes ────────────────────── */
 
 /**
- * The platform behind a resolved identity: its STORED umbrella platform, else
- * the one name the surface is actually printing.
+ * The mark for a row that stands for an AGENT rather than for one post: its
+ * STORED platform first, then the strings that name it.
  *
- * Asking the printed label rather than the row's raw `agentName` is what keeps
- * the mark and the caption agreeing. It is also the same string `AgentMark`
- * would have been handed at the fallback, so a row with no umbrella renders
- * exactly what it renders today, and the umbrella rung is pure gain: an
- * umbrella renamed to "Acme's voice" keeps its Instagram mark instead of losing
- * the only platform word it had.
+ * The stored value leads because it was derived from the agent's identity ONCE,
+ * at bind time, and written down — so an umbrella renamed to "Acme's voice"
+ * keeps its Instagram mark instead of losing the only platform word it had.
+ * When there is no stored value the key and the name answer, which is what a
+ * catalog agent nobody has bound yet has to fall back on.
+ *
+ * Used by the calendar's run and schedule rows and by the copilot's @-mention
+ * roster, which is why it takes loose strings rather than one row shape: those
+ * three surfaces hold three different records of the same agent.
+ */
+export function platformForAgentRow(
+  stored: string | null | undefined,
+  key: string | null | undefined,
+  name: string | null | undefined,
+): SocialPlatform | null {
+  const bound = stored ? platformForIntegrationId(stored) : null;
+  return bound ?? platformForAgentIdentity(key, name);
+}
+
+/**
+ * The same question asked of a resolved identity. The printed LABEL is what
+ * gets sniffed, not the row's raw `agentName`, so the mark and the caption
+ * beside it always agree — and it is the same string `AgentMark` would have
+ * been handed at the fallback, so a row with no umbrella renders exactly what
+ * it renders today.
  */
 function platformForIdentity(identity: ContentIdentity): SocialPlatform | null {
-  const stored = identity.platform ? platformForIntegrationId(identity.platform) : null;
-  return stored ?? platformForAgentIdentity(null, identity.label);
+  return platformForAgentRow(identity.platform, null, identity.label);
 }
 
 /**

@@ -3,6 +3,7 @@ import { listClientAgents } from "@/lib/data-client-agents";
 import { getClient, listCustomAgents } from "@/lib/data";
 import { canViewClient } from "@/lib/client-visibility";
 import { getClientCustomAgents } from "@/lib/agent-roster";
+import { platformForAgentRow } from "@/lib/content-platform";
 
 export const maxDuration = 10;
 
@@ -61,18 +62,32 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     listCustomAgents(),
     getClientCustomAgents(clientId),
   ]);
-  const iconByAgentId = new Map(customAgents.map((a) => [a.id, a.icon]));
+  // The whole catalog doc, not just its icon: the agent KEY is the precise
+  // source for a platform mark ("karos-x-agent" answers exactly, a display name
+  // only guesses), and it never leaves this route — see `platform` below.
+  const customAgentById = new Map(customAgents.map((a) => [a.id, a]));
   const liveUmbrellaByCustomAgentId = new Map(
     umbrellas.filter((u) => u.launchState === "live").map((u) => [u.customAgentId, u]),
   );
 
   const agents = catalogAgents.map((agent) => {
     const umbrella = liveUmbrellaByCustomAgentId.get(agent.id);
+    const custom = customAgentById.get(agent.id);
+    const displayName = umbrella?.displayName ?? agent.name;
     return {
       id: umbrella?.id ?? agent.id,
-      displayName: umbrella?.displayName ?? agent.name,
-      icon: iconByAgentId.get(agent.id) ?? "Bot",
-      platform: umbrella?.platform || null,
+      displayName,
+      icon: custom?.icon ?? "Bot",
+      // AF-20: the copilot's @-agent tags wear the logo of the platform the
+      // agent posts to, so tagging one says what you are about to get.
+      //
+      // This field already existed and already crossed; what changed is that it
+      // was the umbrella's raw stored string, so it was null for every catalog
+      // agent nobody has bound an umbrella for yet — which is most of the list
+      // this route deliberately widened to include. Resolved through the one
+      // resolver now, and still one TOKEN on the wire: the agent key it was
+      // read from stays here.
+      platform: platformForAgentRow(umbrella?.platform, custom?.key, displayName),
     };
   });
 
