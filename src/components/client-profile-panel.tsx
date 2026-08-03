@@ -527,7 +527,13 @@ export function ClientProfilePanel({
                 <span
                   key={key}
                   title={account.logoOnly ? PLATFORM_NAME[key] : undefined}
-                  aria-label={account.logoOnly ? PLATFORM_NAME[key] : undefined}
+                  /* `role="img"` or the label is not announced at all: the mark
+                     inside is aria-hidden (it is decorative everywhere else it
+                     is used), and an aria-label on a bare span has no element
+                     to name. The chip with text beside it needs neither. */
+                  {...(account.logoOnly
+                    ? { role: "img" as const, "aria-label": PLATFORM_NAME[key] }
+                    : {})}
                   className={cn(CHIP, "max-w-full")}
                 >
                   <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
