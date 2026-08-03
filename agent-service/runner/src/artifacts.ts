@@ -15,9 +15,26 @@ export interface CollectedArtifact {
   bytes: number;
 }
 
-/** Directories (repo-relative) that agents write deliverables into. */
+/**
+ * Directories (repo-relative) that agents write deliverables into, PLUS the
+ * two client-folder trees where cross-run durable state actually lives per
+ * the client profile contract: `skills/<agent>/` (ledgers, topic catalogs,
+ * per-client engine config) and `profile/` (voice profiles, learning-log
+ * appends on executive profiles). Neither is captured by the platform today
+ * without this — a fresh container clones the baked repo on every run, so
+ * anything an agent appends to its own ledger or voice profile is otherwise
+ * discarded the moment the container exits. Safe to always include: the
+ * before/after diff in collectArtifacts only uploads files that actually
+ * changed, so an untouched baked-in tree (e.g. a large per-client engine
+ * clone under skills/) costs nothing extra per run.
+ */
 export function outputRoots(clientSlug: string): string[] {
-  return [`clients/${clientSlug}/outputs`, "outputs"];
+  return [
+    `clients/${clientSlug}/outputs`,
+    `clients/${clientSlug}/skills`,
+    `clients/${clientSlug}/profile`,
+    "outputs",
+  ];
 }
 
 async function walk(dir: string, out: Map<string, { size: number; mtimeMs: number }>, base: string): Promise<void> {

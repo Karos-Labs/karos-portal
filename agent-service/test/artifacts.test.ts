@@ -40,4 +40,22 @@ describe("snapshot + collect", () => {
     expect(artifacts.find((a) => a.relPath.endsWith("new.md"))?.clientFacing).toBe(true);
     expect(skipped).toEqual([]);
   });
+
+  it("also captures durable state under skills/ and profile/, never as client-facing", async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), "artifacts-test-"));
+    const skillsDir = path.join(repo, "clients/acme/skills/x-agent");
+    const profileDir = path.join(repo, "clients/acme/profile/executives");
+    await mkdir(skillsDir, { recursive: true });
+    await mkdir(profileDir, { recursive: true });
+    await writeFile(path.join(skillsDir, "x-ledger.json"), "[]");
+
+    const before = await snapshotOutputs(repo, "acme");
+    await writeFile(path.join(skillsDir, "x-ledger.json"), '[{"id":1}]');
+    await writeFile(path.join(profileDir, "jane-doe.md"), "# Jane Doe\n");
+
+    const { artifacts } = await collectArtifacts(repo, "acme", before);
+    const relPaths = artifacts.map((a) => a.relPath.split(path.sep).join("/")).sort();
+    expect(relPaths).toEqual(["clients/acme/profile/executives/jane-doe.md", "clients/acme/skills/x-agent/x-ledger.json"]);
+    expect(artifacts.every((a) => !a.clientFacing)).toBe(true);
+  });
 });

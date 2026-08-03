@@ -61,6 +61,12 @@
         "maxLength": 100
       },
       "description": "Optional per-step model override, keyed by the named subagent identifier the skill's steps delegate to via the Task tool. Only takes effect when the skill's steps are structured as named subagent delegations matching these keys."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "Optional whole-run model override, replacing the custom task type's default (claude-opus-4-8). Set this when a skill's own catalog entry recommends a cheaper tier — e.g. a linear, non-subagent skill where step_models has no delegation point to attach to."
     }
   }
 }

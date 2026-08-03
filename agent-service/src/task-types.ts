@@ -386,6 +386,7 @@ export function resolveTaskConfig(taskType: TaskType, brief: Record<string, unkn
   }
 
   const stepModels = parseStepModels(brief.step_models);
+  const model = parseModelOverride(brief.model);
 
   return {
     ...base,
@@ -394,7 +395,24 @@ export function resolveTaskConfig(taskType: TaskType, brief: Record<string, unkn
     skillRoots: [...new Set([...roots, ...base.skillRoots])],
     includeClientSkills: brief.include_client_skills !== false,
     ...(stepModels ? { stepModels } : {}),
+    ...(model ? { model } : {}),
   };
+}
+
+/**
+ * Validates brief.model into a whole-run model override, or undefined if
+ * absent. Unlike stepModels (which needs a matching named subagent in the
+ * skill's own Task-tool delegations to do anything), this replaces the
+ * custom task type's single default model outright — for a skill whose
+ * catalog entry recommends a cheaper tier but has no subagent delegation
+ * point for step_models to attach to (a linear, sequential-turn skill).
+ */
+function parseModelOverride(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error("invalid model: must be a non-empty string");
+  }
+  return raw.trim();
 }
 
 /** Validates brief.step_models into a plain string→string map, or undefined if absent/empty. */

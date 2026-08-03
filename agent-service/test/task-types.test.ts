@@ -52,6 +52,17 @@ describe("resolveTaskConfig", () => {
     expect(config.includeClientSkills).toBe(false);
   });
 
+  it("defaults to the custom task type's model, overridable per-brief", () => {
+    expect(resolveTaskConfig("custom", CUSTOM_BRIEF).model).toBe(getTaskTypeConfig("custom").model);
+    const overridden = resolveTaskConfig("custom", { ...CUSTOM_BRIEF, model: "claude-sonnet-5" });
+    expect(overridden.model).toBe("claude-sonnet-5");
+  });
+
+  it("rejects a non-string model override", () => {
+    expect(() => resolveTaskConfig("custom", { ...CUSTOM_BRIEF, model: 123 })).toThrow(/invalid model/);
+    expect(() => resolveTaskConfig("custom", { ...CUSTOM_BRIEF, model: "" })).toThrow(/invalid model/);
+  });
+
   it("defaults custom agents onto the same research stepModel, overridable per-brief", () => {
     expect(resolveTaskConfig("custom", CUSTOM_BRIEF).stepModels).toEqual({ research: "claude-sonnet-4-6" });
     const overridden = resolveTaskConfig("custom", {
