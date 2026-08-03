@@ -19,6 +19,13 @@ import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "
 import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
 import { SavedFormCard } from "@/components/saved-form-card";
+import { ClientSeatRemove } from "@/components/client-seat-remove";
+import {
+  clientArchiveLink,
+  intakeAnchorId,
+  intakeSeatAnchorId,
+} from "@/lib/agent-intake-links";
+import { INTAKE_UPLOAD_FAILED, intakeSave } from "@/lib/intake-save";
 import {
   addLiDraftFeedbackAction,
   addLinkedInSeatAction,
@@ -51,7 +58,12 @@ export interface LiFeedbackRowView {
   id: string;
   account: string;
   action: string;
-  draftRef?: string;
+  /**
+   * The lane this row was written against, humanised server-side
+   * (agent-intake-views' draftLabelOf). Absent when the stored ref names no
+   * lane; the raw ref never crosses — it is the log's join key, not copy.
+   */
+  draftLabel?: string;
   createdAt: number;
 }
 
@@ -107,7 +119,9 @@ function CompanyForm({
   function save() {
     setError(null);
     start(async () => {
-      const result = await saveLinkedInCompanyIntakeAction({ clientId, pageUrl, comeAcross, offLimits });
+      const result = await intakeSave(() =>
+        saveLinkedInCompanyIntakeAction({ clientId, pageUrl, comeAcross, offLimits }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -142,7 +156,7 @@ function CompanyForm({
     >
       <p className="mt-1 text-sm text-muted">
         One per business. The page runs on your brand voice and your own first-party material; we
-        only ask what we cannot find ourselves. Drafts only - a person always posts.
+        only ask what we cannot find ourselves. Drafts only. A person always posts.
       </p>
       <div className="mt-4 space-y-4">
         <div>
@@ -218,13 +232,13 @@ function FallbackField({
     <div>
       <Label htmlFor={`${idPrefix}-fallback`}>If this person is not very active on LinkedIn (optional)</Label>
       <Select id={`${idPrefix}-fallback`} value={kind} onChange={(e) => onKind(e.target.value)}>
-        <option value="">They post regularly - we learn the voice from their real posts</option>
+        <option value="">They post regularly. We learn the voice from their real posts</option>
         <option value="writing">Drop a long piece of their own genuine writing</option>
         <option value="about">Tell us who they are (typed, or a transcribed voice note)</option>
       </Select>
       <p className="mt-1 text-xs text-muted">
         Being inactive on LinkedIn is a first-class case, not a problem. This is how we learn a real
-        voice for someone who does not post - a spoken sample is the best source.
+        voice for someone who does not post. A spoken sample is the best source.
       </p>
       {kind ? (
         <Textarea
@@ -234,7 +248,7 @@ function FallbackField({
           onChange={(e) => onText(e.target.value)}
           placeholder={
             kind === "writing"
-              ? "Paste the piece here - an essay, a long email, anything they genuinely wrote themselves."
+              ? "Paste the piece here. An essay, a long email, anything they genuinely wrote themselves."
               : "Who are they, what have they actually done, how do they talk? Paste a voice-note transcript if you have one."
           }
         />
@@ -259,16 +273,22 @@ function SeatCv({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   function upload(file: File) {
     setError(null);
     start(async () => {
-      const body = new FormData();
-      body.append("clientId", clientId);
-      body.append("seatId", seat.id);
-      body.append("file", file);
-      const result = await uploadLinkedInSeatCvAction(body);
+      const result = await intakeSave(() => {
+        const body = new FormData();
+        body.append("clientId", clientId);
+        body.append("seatId", seat.id);
+        body.append("file", file);
+        return uploadLinkedInSeatCvAction(body);
+      }, INTAKE_UPLOAD_FAILED);
+      // Cleared on FAILURE too, not only on success. A file input keeps the
+      // file it already holds, and re-choosing the same file fires no second
+      // change event — so without this the retry the failure copy asks for was
+      // impossible, and the upload that threw looked like a dead control.
+      if (inputRef.current) inputRef.current.value = "";
       if (result.error) {
         setError(result.error);
         return;
       }
-      if (inputRef.current) inputRef.current.value = "";
       router.refresh();
     });
   }
@@ -277,7 +297,7 @@ function SeatCv({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
     <div className="mt-4 border-t border-border pt-4">
       <p className="text-sm font-medium">Resume / CV</p>
       <p className="mt-1 text-xs text-muted">
-        Private - only our team and the agent read it, and it is never posted. The CV is for
+        Private. Only our team and the agent read it, and it is never posted. The CV is for
         substance (their real experience), not voice. Not strictly required: their real posts or
         the voice sample also work, but it is the strongest single source.
       </p>
@@ -309,7 +329,16 @@ function SeatCv({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
 
 /* ────────────────────────── seat cards ─────────────────────────── */
 
-function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
+function SeatCard({
+  clientId,
+  seat,
+  runInFlight,
+}: {
+  clientId: string;
+  seat: LiSeatView;
+  /** Passed through to the remove confirm — see ClientSeatRemove. */
+  runInFlight: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -324,16 +353,18 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   function saveSeat() {
     setError(null);
     start(async () => {
-      const result = await saveLinkedInSeatIntakeAction({
-        clientId,
-        seatId: seat.id,
-        role,
-        profileUrl,
-        focus,
-        offLimits,
-        fallbackKind,
-        fallbackText,
-      });
+      const result = await intakeSave(() =>
+        saveLinkedInSeatIntakeAction({
+          clientId,
+          seatId: seat.id,
+          role,
+          profileUrl,
+          focus,
+          offLimits,
+          fallbackKind,
+          fallbackText,
+        }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -362,8 +393,8 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
   // The warning shows in both states, so it has to point at the right place.
   // The CV sits below the form in both, so only the other two move behind "Edit".
   const noVoiceSource = editing
-    ? "This seat has no voice source yet. Add their profile URL or the voice sample below, or attach a CV - drafts need at least one genuine source of who they are."
-    : 'This seat has no voice source yet. Attach a CV below, or press "Edit" to add their profile URL or the voice sample - drafts need at least one genuine source of who they are.';
+    ? "This seat has no voice source yet. Add their profile URL or the voice sample below, or attach a CV. Drafts need at least one genuine source of who they are."
+    : 'This seat has no voice source yet. Attach a CV below, or press "Edit" to add their profile URL or the voice sample. Drafts need at least one genuine source of who they are.';
 
   return (
     <SavedFormCard
@@ -392,7 +423,20 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
       ]}
       open={editing}
       onEdit={() => setEditing(true)}
-      footer={<SeatCv clientId={clientId} seat={seat} />}
+      footer={
+        <>
+          <SeatCv clientId={clientId} seat={seat} />
+          {/* In the footer so it renders in BOTH states: a seat added by
+              mistake is one nobody has opened, and hiding the way back behind
+              "Edit" is how it became permanent. */}
+          <ClientSeatRemove
+            clientId={clientId}
+            seatId={seat.id}
+            seatName={seat.name}
+            runInFlight={runInFlight}
+          />
+        </>
+      }
     >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -454,7 +498,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
         />
         <p className="text-xs text-muted">
           No voice questions here on purpose: we build the voice from their real posts, CV and
-          edits - and if they already have a seat for another agent, we reuse what we already know.
+          edits. And if they already have a seat for another agent, we reuse what we already know.
         </p>
         {fieldError(error)}
         <div className="flex items-center gap-3">
@@ -488,16 +532,18 @@ function AddSeatForm({ clientId }: { clientId: string }) {
   function add() {
     setError(null);
     start(async () => {
-      const result = await addLinkedInSeatAction({
-        clientId,
-        name,
-        role,
-        profileUrl,
-        focus,
-        offLimits,
-        fallbackKind,
-        fallbackText,
-      });
+      const result = await intakeSave(() =>
+        addLinkedInSeatAction({
+          clientId,
+          name,
+          role,
+          profileUrl,
+          focus,
+          offLimits,
+          fallbackKind,
+          fallbackText,
+        }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -621,12 +667,17 @@ function FeedbackBox({
 
   const accountName = (id: string) =>
     id === "company" ? "Company page" : id === "program" ? "Everything" : (seats.find((s) => s.id === id)?.name ?? "Seat");
+  // #90: `?tab=archive` is read only by ProgressView, and a staff viewer at the
+  // flat /tasks never gets one. The destination and its label move together.
+  const archive = clientArchiveLink({ clientId, isStaff });
 
   function submit() {
     setError(null);
     setSent(false);
     start(async () => {
-      const result = await addLiDraftFeedbackAction({ clientId, account, action: "note", reason: note });
+      const result = await intakeSave(() =>
+        addLiDraftFeedbackAction({ clientId, account, action: "note", reason: note }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -641,13 +692,13 @@ function FeedbackBox({
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not - in your own words, as much detail as you like.
+        Tell us what is working and what is not. In your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
         picking, editing and skipping happens on the drafts themselves, in{" "}
-        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
-          your archive
+        <a href={archive.href} className="underline hover:text-foreground">
+          {archive.label}
         </a>
-        - and each of those choices reaches the agent too.
+        , and each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
         /* The run's state through the app's own mapper - these used to print the
@@ -705,7 +756,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent - it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent. It feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (
@@ -714,7 +765,7 @@ function FeedbackBox({
             <li key={f.id} className="text-xs text-muted">
               <span className="text-foreground">{accountName(f.account)}</span> ·{" "}
               {f.action === "note" ? "feedback" : f.action.replace(/_/g, " ")}
-              {f.draftRef ? ` · ${f.draftRef}` : ""} · {relativeTime(f.createdAt)}
+              {f.draftLabel ? ` · ${f.draftLabel}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>
@@ -732,6 +783,7 @@ export function LinkedInAgentIntake({
   news,
   feedback,
   runs,
+  runInFlight,
   pageUrlSuggestion,
   isStaff,
 }: {
@@ -741,24 +793,55 @@ export function LinkedInAgentIntake({
   news: CompanyNewsRowView[];
   feedback: LiFeedbackRowView[];
   runs: LiRunRowView[];
+  /**
+   * A run this agent has in flight already holds its payload, so the remove
+   * confirm says a removed seat may still come back with drafts (#84).
+   *
+   * A PROP, not `runs.some(…)`. `runs` is the DISPLAY list, and for a client it
+   * is collapsed to one row per calendar day — so a run queued at 09:00 is not
+   * in it once a later run the same day lands, and the warning went to staff
+   * and not to the client who pressed Remove. The server answers this from the
+   * unfiltered scan (see `anyRunInFlight` in lib/agent-intake-views.ts).
+   */
+  runInFlight: boolean;
   pageUrlSuggestion?: string;
   /** Whose vocabulary the run rows are written in - see FeedbackBox. */
   isStaff: boolean;
 }) {
   return (
     <div className="space-y-6">
-      <CompanyForm
-        clientId={clientId}
-        intake={company}
-        {...(pageUrlSuggestion ? { pageUrlSuggestion } : {})}
-      />
+      {/* The anchors the agent page's inputs band links each of its rows to
+          (#85). Both sides derive them from the SAME row id through
+          intakeAnchorId, so a row cannot end up pointing at a hash that
+          matches nothing — which scrolls nowhere and raises nothing. */}
+      <div id={intakeAnchorId("company")} className="scroll-mt-24">
+        <CompanyForm
+          clientId={clientId}
+          intake={company}
+          {...(pageUrlSuggestion ? { pageUrlSuggestion } : {})}
+        />
+      </div>
       <div className="space-y-4">
         {seats.map((seat) => (
-          <SeatCard key={seat.id} clientId={clientId} seat={seat} />
+          <div key={seat.id} id={intakeSeatAnchorId(seat.id)} className="scroll-mt-24">
+            <SeatCard clientId={clientId} seat={seat} runInFlight={runInFlight} />
+          </div>
         ))}
         <AddSeatForm clientId={clientId} />
+        {/* #83: this page and the settings dialog both ask for "a LinkedIn
+            seat", read different collections, and neither can see the other's
+            rows — so each has to say which one it is showing. This is the
+            drafting roster; the settings one holds the sign-ins we publish and
+            measure with, and it is the one with a plan limit and a price. */}
+        <p className="text-xs text-muted-2">
+          These seats are who the agent writes for. Signing someone in so we can publish and measure
+          on their own LinkedIn is separate. That is the employee seats list in your settings, and
+          only it has a plan limit.
+        </p>
       </div>
-      <CompanyNewsBox clientId={clientId} rows={news} />
+      <div id={intakeAnchorId("news")} className="scroll-mt-24">
+        <CompanyNewsBox clientId={clientId} rows={news} />
+      </div>
       <FeedbackBox
         clientId={clientId}
         seats={seats}

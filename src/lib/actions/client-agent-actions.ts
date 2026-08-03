@@ -6,16 +6,19 @@ import {
   getClient,
   getClientCredits,
   getCustomAgent,
+  listAssets,
   listJobs,
   listPlannedScheduledRuns,
 } from "@/lib/data";
 import {
   claimClientAgentLaunch,
   getClientAgent,
+  listClientAgents,
   releaseClientAgentLaunch,
   updateClientAgent,
   upsertClientAgent,
 } from "@/lib/data-client-agents";
+import { agentsWithDeliveredWork } from "@/lib/agent-detail-archetypes";
 import { isCustomAgentGrantedToClient, submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import {
   LAUNCH_BLOCK_REASON,
@@ -40,7 +43,7 @@ import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
 import { socialPlatformsFor } from "@/components/agent-identity";
 import { logActivity, requireClientAccess, requireStaff } from "./_shared";
 import { agentSetupStartedTitle } from "@/lib/activity-titles";
-import type { ClientAgent, ClientAgentTemplate, CustomAgent } from "@/lib/types";
+import type { Client, ClientAgent, ClientAgentTemplate, CustomAgent } from "@/lib/types";
 
 /**
  * Client-agent umbrella actions — bind, LAUNCH, curate, go live (Phase 3 §2).
@@ -93,31 +96,84 @@ function chainFamilyForAgent(agent: Pick<CustomAgent, "key" | "name">): ClientAg
 }
 
 /**
- * Whether this agent is ALREADY working for this client — a successful custom
- * run in its history, or a live weekly schedule row.
+ * Whether this agent is ALREADY working for this client — it has landed work
+ * here, or it has a schedule row that has not been retired.
+ *
+ * "A live WEEKLY schedule row" is what this line used to claim, and the code
+ * under it has never tested the cadence: a daily, monthly or one-off row counts
+ * too, which is the answer this question wants. The comment was the overstated
+ * half. Left broader than `isLiveAgentSchedule` on purpose — a pending one-off
+ * is still work in flight, and binding over it is still the thing to ask about.
  *
  * Binding such an agent as `not_launched` is not a neutral act: the client's
  * agents page hands a pre-launch umbrella its card, which removes the agent's
  * Run button, its schedule row and its run history from the client's view and
- * replaces the lot with "Not set up yet" — for an agent that is, visibly to
- * them, producing. That is why the bind control asks before doing it (W6).
+ * replaces the lot with a launch card — for an agent that is, visibly to them,
+ * producing. The launch card's only CTA is then DISABLED for that client, because
+ * `launchCreditCost` is uncalibrated on every agent (#167 is open), so the whole
+ * gesture ends in "ask your Karos team". That is why the bind control asks before
+ * doing it (W6), and why this predicate has to be right.
+ *
+ * IT ASKS THE SAME QUESTION THE CLIENT'S PAGE ASKS, and that is the fix. This was
+ * a job join plus the schedule rung, and a job join CANNOT SEE A LAB IMPORT: an
+ * imported asset is written with `jobId: null` and produces no job at all. The
+ * agent detail page decides which hero to draw from `agentsWithDeliveredWork`,
+ * which reads the asset attribution rungs as well — so for an agent whose whole
+ * history is imported posts and which has no schedule, the two answers were
+ * OPPOSITE. The page showed the legacy panel and a working "Create a new post";
+ * this said "not producing", bound it `not_launched` with no confirmation, and
+ * the same page then swapped to the dead launch card. `clientAgentRunRefusal`
+ * refuses the run server-side from the same moment, so it is not only the button
+ * that goes: the gesture goes with it.
+ *
+ * That is the third copy of one question. The job-only join in client-agents.ts
+ * was cut back to "half an answer" and named so, with `agentsWithDeliveredWork`
+ * as the whole one; this predicate was the copy nobody came back for.
+ *
+ * (That half is named descriptively rather than spelled, and the reason is worth
+ * knowing before you "helpfully" spell it: the tripwire in
+ * agent-detail-archetypes.test.ts sweeps src/ for that identifier to catch a new
+ * caller, and it reads each file RAW — so a COMMENT naming it is indistinguishable
+ * from a call and reds the sweep. Prose satisfying a source scan is the trap; the
+ * scan wants `stripComments`, which lives in src/lib/__tests__/source-scan.ts.)
+ *
+ * TWO STATED RESIDUALS, both inherited from `agentsWithDeliveredWork` rather than
+ * introduced here:
+ *
+ *  - It drops a per-client instance whose key names another client. Harmless
+ *    here: the bind refuses that pair one rung above, so this is never reached
+ *    for such a pair.
+ *  - It does not rescue a jobless imported asset for an agent that ALREADY has a
+ *    non-live umbrella (its own doc states the rung order that causes this). At
+ *    bind time the umbrella for this agent normally does not exist yet, which is
+ *    exactly when the folder rung is reached. On a re-bind it may exist — and
+ *    then this predicate matters less than it looks, because `upsertClientAgent`
+ *    writes nothing at all when the document is already there.
+ *
+ * `viewerIsClient: false` because the caller is `requireStaff`. That keeps jobs
+ * in `review` counting and applies no archive window, which is the right reading
+ * of "is this agent already working here" — not of "what can the client see".
  */
 async function isAgentProducingForClient(
-  clientId: string,
-  agent: Pick<CustomAgent, "id" | "name">,
+  client: Pick<Client, "id" | "agentsRepoSlug">,
+  agent: Pick<CustomAgent, "id" | "name" | "key">,
 ): Promise<boolean> {
-  const [jobs, schedules] = await Promise.all([
-    listJobs({ clientId }),
-    listPlannedScheduledRuns({ clientId }),
+  const [assets, jobs, schedules, umbrellas] = await Promise.all([
+    listAssets({ clientId: client.id }),
+    listJobs({ clientId: client.id }),
+    listPlannedScheduledRuns({ clientId: client.id }),
+    listClientAgents({ clientId: client.id }),
   ]);
-  const successful = new Set(["review", "approved", "delivered"]);
-  const hasRun = jobs.some(
-    (job) =>
-      job.external?.taskType === "custom" &&
-      successful.has(job.status) &&
-      (job.customAgentId === agent.id || (!job.customAgentId && job.agentName === agent.name)),
-  );
-  if (hasRun) return true;
+  const delivered = agentsWithDeliveredWork({
+    assets,
+    jobs,
+    agents: [agent],
+    umbrellas,
+    clientSlug: client.agentsRepoSlug,
+    viewerIsClient: false,
+    now: Date.now(),
+  });
+  if (delivered.has(agent.id)) return true;
   return schedules.some(
     (run) => run.customAgentId === agent.id && run.status !== "completed",
   );
@@ -173,7 +229,7 @@ export async function bindClientAgentAction(input: {
   }
 
   if (!input.bindAsLive && !input.bindAsNew) {
-    if (await isAgentProducingForClient(input.clientId, agent)) {
+    if (await isAgentProducingForClient(client, agent)) {
       return { alreadyProducing: true };
     }
   }

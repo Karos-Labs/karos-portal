@@ -1,13 +1,24 @@
 /**
- * Client-facing label for an agent draft's lane heading.
+ * Client-facing labels for the lab's own batch headings.
  *
- * The agent writes its own production vocabulary into the deliverable —
- * "Avenue 3 · News-reaction (live)", "Post 2 · POV thread" — and the readers
- * printed it verbatim as the first thing a client reads on every draft
- * (QA F70). Nobody outside the lab knows what an Avenue is.
+ * The agent writes its production vocabulary into the deliverable — LANE
+ * headings ("Avenue 3 · News-reaction (live)", "Post 2 · POV thread") and
+ * ACCOUNT headings ("# Account 2 · Albert Kattan (seat 1, handle pending)") —
+ * and the readers printed both verbatim as the first thing a client reads
+ * (QA F70, #87). Nobody outside the lab knows what an Avenue is, and a seat
+ * number is bookkeeping.
  *
- * Humanize at the RENDER boundary only: the raw heading is also the draftRef
- * sent to the feedback actions, so the parsers must keep it untouched.
+ * This module is the ONE home for that humanising, and the rule it exists to
+ * express is: HUMANISE ON THE WAY TO A CLIENT, NEVER ON THE WAY TO STORAGE. Both
+ * strings are join keys — a lane heading is the tail of the `draftRef` the
+ * feedback log joins on, and an account heading is the `account` that same log
+ * scopes by (x-agent-context's feedbackSection matches on it) — so a write path
+ * that called in here would split a client's history across two namespaces.
+ *
+ * SCOPE. These are label functions and nothing more. They do not decide which
+ * fields cross to a client — the projections do (`client-agent-rows.ts`,
+ * `agent-intake-views.ts`) — and a REF that must cross as a join key still
+ * carries an account heading inside itself; see `toClientXOption`.
  */
 
 const LANE_COPY: Record<string, string> = {
@@ -28,14 +39,64 @@ const LANE_COPY: Record<string, string> = {
   "pov-thread": "Your point of view (thread)",
 };
 
+/**
+ * The lab's slot ordinal, on either heading kind: "Avenue 2 · ", "Post 1 · ",
+ * "Draft 3 · ", "Account 1 · ", "Seat 2 · ".
+ *
+ * One pattern for both because it is one shape — an ordinal slot number the
+ * batch numbers its sections with — and forbidding the shape rather than the
+ * spellings is what stops the next section word arriving on a client's screen.
+ *
+ * THE SEPARATOR IS NOT PART OF THE SHAPE. It may be punctuation, plain
+ * whitespace, or the end of the string — because the heading is free text the
+ * agent composes, and a run that wrote "## Avenue 2 News-reaction" instead of
+ * "## Avenue 2 · News-reaction" matched neither of the first two alternatives
+ * and sentence-cased whole, putting "Avenue 2 news reaction" on a paying
+ * client's option card as their angle. Punctuation-only was a spelling rule
+ * wearing a shape rule's clothes.
+ *
+ * The end-of-string alternative stays for its own reason: a heading that is only
+ * an ordinal ("Avenue 9") names no lane, and matching it only when a lane
+ * follows would print the word Avenue to a client.
+ *
+ * SCOPE, stated because widening a strip rule can eat real words: a lane or
+ * account heading whose own first words are a section word, a number and then
+ * more text ("Post 5 mistakes founders make") now loses that head. That is the
+ * deliberate trade — the lab's lane vocabulary is a closed set (LANE_COPY) and
+ * none of it opens that way, while the ordinal shape demonstrably does.
+ */
+const SLOT_PREFIX = /^\s*(?:avenue|post|draft|account|seat)\s*\d+\s*(?:[·:\-–—]\s*|\s+|$)/i;
+
+/** A social handle: the one token inside an account heading a client knows it by. */
+const HANDLE = /@[A-Za-z0-9_.]{1,30}/;
+
+/**
+ * What a lane label falls back to when a heading names no lane.
+ *
+ * "Draft" works as a CARD HEADING — the review panes title a draft card with it
+ * — and is wrong inside a client's sentence, where it reads as an internal
+ * status word ("You chose the Draft post for today", #155). Sentence-shaped
+ * callers take `laneLabelOrNull` and print nothing instead.
+ */
+const NO_LANE = "Draft";
+
 /** "Avenue 3 · News-reaction (live)" → "Reacting to the news · live" */
 export function laneLabel(heading: string): string {
+  return laneLabelOrNull(heading) ?? NO_LANE;
+}
+
+/**
+ * The same label, but null rather than "Draft" when the heading names no lane.
+ *
+ * The whole of `laneLabel`'s work lives here so the two answers cannot drift.
+ */
+export function laneLabelOrNull(heading: string): string | null {
   const raw = (heading ?? "").trim();
-  if (!raw) return "Draft";
+  if (!raw) return null;
 
   // Drop the lab's slot prefix ("Avenue 2 · ", "Post 1 · ", "Draft 3 · ").
-  const withoutPrefix = raw.replace(/^\s*(avenue|post|draft)\s*\d+\s*[·:\-–—]\s*/i, "").trim();
-  if (!withoutPrefix) return "Draft";
+  const withoutPrefix = raw.replace(SLOT_PREFIX, "").trim();
+  if (!withoutPrefix) return null;
 
   // "(live)" and friends are freshness flags, not part of the lane name.
   const flagMatch = withoutPrefix.match(/\(([^)]+)\)\s*$/);
@@ -44,11 +105,97 @@ export function laneLabel(heading: string): string {
 
   const mapped = LANE_COPY[base.toLowerCase()];
   const label = mapped ?? sentenceCase(base);
+  if (!label) return null;
   return flag ? `${label} · ${flag.toLowerCase()}` : label;
+}
+
+/**
+ * The lane inside a full draft ref — `${accountTitle} · ${lane}` — as a client
+ * may read it, or null when the ref names no lane.
+ *
+ * The ref convention is `account · lane`, so the head is DROPPED rather than
+ * humanised: callers that want the account print it themselves. A ref with no
+ * head to drop yields nothing, because a single segment cannot be told apart
+ * from an account title, and printing an account heading as an angle is the
+ * defect this module exists to stop.
+ */
+export function refLaneLabel(ref: string): string | null {
+  const parts = (ref ?? "")
+    .split(" · ")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return null;
+  // ANCHOR ON THE ORDINAL SHAPE, NOT ON POSITION.
+  //
+  // The first version dropped segment 0 and assumed the rest was the lane, i.e.
+  // that a ref is exactly `account · lane`. That holds for X and LinkedIn, whose
+  // account head is one segment. It does NOT hold for Reddit: its account title
+  // itself contains " · " — the contract mandates
+  // `## Account 1 · <name> (u/<handle>) · <warming|established>` — so dropping
+  // one segment left `warming · Draft 1 · <lane>`, and the client's feedback line
+  // read "Warming · draft 1 · thorough value answer". That is a lab ordinal and an
+  // internal program-mode enum reaching a paying client, plus an A3 batch tell,
+  // because a numbered draft implies a numbered set.
+  //
+  // The lane always begins at the LAST segment carrying an ordinal, whatever
+  // index that is. `slice(1)` survives only as the fallback for a ref with no
+  // ordinal anywhere, which is the shape the old code assumed was universal.
+  let lane = parts.slice(1);
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    if (SLOT_PREFIX.test(parts[i]!)) {
+      lane = parts.slice(i);
+      break;
+    }
+  }
+  return laneLabelOrNull(lane.join(" · "));
+}
+
+/**
+ * A batch's account heading as a client may read it, or null when nothing in it
+ * is theirs to recognise.
+ *
+ * REMOVED: the slot ordinal above, and every parenthetical. Parentheticals on
+ * these headings carry the lab's bookkeeping — "(seat 1, handle pending)" is
+ * the shape the contract's own example uses — and the shape is forbidden rather
+ * than the spellings, so a parenthetical nobody has written client copy for
+ * cannot reach a client's option picker. An unclosed one is treated the same
+ * way. An @handle survives: a handle is what a client recognises an account BY.
+ *
+ * KEPT, verbatim: everything else. "Company page @getkaros" is the deliverable
+ * contract's own wording for the company section and reads correctly as it is;
+ * a seat section carries the person's name, which is also the client's own.
+ *
+ * Null when that leaves nothing — the honest answer for a heading that was all
+ * bookkeeping is to print no account, not to dress a seat number up as copy.
+ */
+export function accountLabel(title: string): string | null {
+  let raw = (title ?? "").trim();
+  for (let previous = ""; previous !== raw; ) {
+    previous = raw;
+    raw = raw.replace(SLOT_PREFIX, "").trim();
+  }
+
+  const handle = raw.match(HANDLE)?.[0] ?? null;
+  const cleaned = raw
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\([^)]*$/, " ")
+    // Bare brackets left over from a NESTED parenthetical. /\([^)]*\)/ permits "("
+    // inside [^)], so "((@getkaros))" is consumed as "((@getkaros)" and the outer
+    // ")" survives — which put "Company page ) @getkaros" on the option picker.
+    // Square brackets go too: bookkeeping wears them as readily as parentheses.
+    .replace(/[()[\]]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[·:,;–—-]+$/, "")
+    .trim();
+
+  if (!cleaned) return handle;
+  if (handle && !cleaned.includes(handle)) return `${cleaned} ${handle}`;
+  return cleaned;
 }
 
 function sentenceCase(value: string): string {
   const spaced = value.replace(/[_/-]+/g, " ").replace(/\s+/g, " ").trim();
-  if (!spaced) return "Draft";
+  if (!spaced) return "";
   return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
 }

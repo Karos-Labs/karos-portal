@@ -14,32 +14,34 @@ import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
-import { NotificationBell } from "@/components/notification-bell";
+import {
+  NotificationBell,
+  useNotificationDismissals,
+  type NotificationDismissals,
+} from "@/components/notification-bell";
+import {
+  unreadNotificationCount,
+  type NotificationFeeds,
+} from "@/lib/notification-rows";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
 import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
 import { isAiProcessingLockActive } from "@/lib/constants";
-import { hasAiProcessingFailure } from "@/lib/client-visibility";
+import { hasAiProcessingFailure, type StaffShellClientView } from "@/lib/client-visibility";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
   AppUser,
-  Client,
   ClientTask,
   Role,
 } from "@/lib/types";
 
-/** The three feeds the bell renders - threaded down from the app layout. */
-interface NotificationFeeds {
-  actionItems: ActionItemNotification[];
-  reviewJobs: AgentReviewNotification[];
-  taskAlerts: (ClientTask & { _clientName?: string })[];
-}
-
-function unreadTotal({ actionItems, reviewJobs, taskAlerts }: NotificationFeeds): number {
-  return actionItems.length + reviewJobs.length + taskAlerts.length;
-}
+/* The three feeds the bell renders — threaded down from the app layout — and
+   the count derived from them both live in @/lib/notification-rows. This file
+   used to declare the shape and add the three lengths up itself, which is how
+   the avatar dot and the hamburger dot came to disagree with the panel they
+   open: only the panel subtracted the viewer's dismissals (#105). */
 
 interface NavItem {
   href: string;
@@ -49,13 +51,45 @@ interface NavItem {
   exact?: boolean;
 }
 
+/**
+ * The staff workspace nav — and, for the `CLIENT_USER` rows, the nav of the ONE
+ * client this shell ever serves.
+ *
+ * THAT VIEWER IS REAL AND THIS TABLE USED TO LIE TO THEM (#137). The app layout
+ * hands every CLIENT_USER the ClientRail — but only after `getClient(clientId)`
+ * RESOLVES. A client whose id is unset, or whose client document has gone,
+ * falls through to this shell, and the rows below are the whole of their
+ * navigation.
+ *
+ * Two of those rows were then REWRITTEN from `user.clientId`, on the assumption
+ * that the fallthrough could not happen: `/dashboard` was remapped to
+ * `/clients/${user.clientId}` and an `AI Agents` row was spliced in pointing at
+ * the same subtree. Both of those routes call `requireVisibleClient`, which
+ * `notFound()`s the instant the document does not load — the second half of the
+ * very condition that sent this viewer here. So the only two rows written FOR
+ * them were the only two that could 404 ON them. Nothing in this file reads
+ * `user.clientId` any more, and client-shell-nav.test.ts holds it to that.
+ *
+ * A CLIENT_USER ROW MUST NOT LEAD TO A PAGE THAT TURNS A CLIENT AWAY, which is
+ * the other half of the same rule and is derived rather than declared: the same
+ * test resolves each row below to its route and rejects any whose page
+ * redirects a CLIENT_USER. That is what dropped `/dashboard` (it redirects them
+ * to `/clients/<id>`, or to `/assets` with no id) and `/assets` (it redirects
+ * them to /tasks, which the Workspace row below already is).
+ *
+ * The three that survive all serve a client with no company context on purpose:
+ * /transcripts scopes and redacts to their client and renders empty without
+ * one, /calendar has an explicit no-clientId empty state, /tasks is theirs.
+ * Their real nav — Dashboard, AI agents, Meetings, Calendar, Workspace — is
+ * client-rail.tsx, which is the only place a resolvable client's shell is built.
+ */
 const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
+  { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/clients", label: "Clients", icon: "Building2", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/agents", label: "Agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/jobs", label: "Jobs", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/transcripts", label: "Meetings", icon: "Mic", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
-  { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
+  { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/calendar", label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/tasks", label: "Workspace", icon: "SquareCheck", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/team", label: "Team", icon: "Users", roles: ["KAROS_ADMIN"] },
@@ -70,7 +104,9 @@ const NAV: NavItem[] = [
 function clientViewNav(clientId: string): NavItem[] {
   return [
     { href: `/clients/${clientId}`, label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
-    { href: `/clients/${clientId}/agents`, label: "AI Agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+    /* Sentence case, like the client rail's own item and both headings on the
+       page they open — one destination, one spelling (#141). */
+    { href: `/clients/${clientId}/agents`, label: "AI agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: `/clients/${clientId}/tasks`, label: "Workspace", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   ];
@@ -84,7 +120,13 @@ const ROLE_LABEL: Record<Role, string> = {
 
 /* ── View-as-Client picker ───────────────────────────────────────────── */
 
-function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin: boolean }) {
+function ClientContextPicker({
+  clients,
+  isAdmin,
+}: {
+  clients: StaffShellClientView[];
+  isAdmin: boolean;
+}) {
   const router = useRouter();
   const { activeClient, setActiveClient } = useActiveClient();
   const [open, setOpen] = useState(false);
@@ -94,7 +136,7 @@ function ClientContextPicker({ clients, isAdmin }: { clients: Client[]; isAdmin:
     ? clients.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()))
     : clients;
 
-  function selectClient(client: Client) {
+  function selectClient(client: StaffShellClientView) {
     setOpen(false);
     setQuery("");
     // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load.
@@ -230,22 +272,39 @@ function UserMenu({
   user,
   realAdmin,
   feeds,
+  dismissals,
+  viewerIsClient,
+  unreadWithChrome,
   showChrome = true,
+  allowJobDeepLinks = true,
 }: {
   user: AppUser;
   realAdmin?: AppUser;
   feeds: NotificationFeeds;
+  /** The shell's dismissal set — threaded so this bell and the dots agree (#105). */
+  dismissals: NotificationDismissals;
+  /** Passed straight to the bell — see the Sidebar's own binding. */
+  viewerIsClient: boolean;
+  /**
+   * The Sidebar's own `unread`, handed down rather than recomputed here: this
+   * dot and the hamburger dot are the same number, and adding a second call
+   * site for the sum is how they drifted apart in the first place (#105).
+   */
+  unreadWithChrome: number;
   /**
    * False inside the mobile drawer, which already surfaces the three rows one
    * level up - the menu is itself a tap deep there, so nesting them would put
    * support and the bell three taps from a page.
    */
   showChrome?: boolean;
+  /** Passed straight to the bell — see the Sidebar's own binding. */
+  allowJobDeepLinks?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const unread = showChrome ? unreadTotal(feeds) : 0;
+  // No bell in this menu inside the drawer, so no dot on its trigger either.
+  const unread = showChrome ? unreadWithChrome : 0;
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -331,6 +390,9 @@ function UserMenu({
                      ran off the TOP of the viewport at 1280x800 - measured
                      -21px. 45vh keeps it clear down to ~600px of viewport. */
                   panelClassName="max-h-[45vh]"
+                  allowJobDeepLinks={allowJobDeepLinks}
+                  viewerIsClient={viewerIsClient}
+                  dismissals={dismissals}
                 />
               )}
               <Link
@@ -378,7 +440,7 @@ export function Sidebar({
   user: AppUser;
   pendingCount?: number;
   realAdmin?: AppUser;
-  clients?: Client[];
+  clients?: StaffShellClientView[];
   /**
    * Bell feeds. They used to be handed to AppHeader, the floating top-right
    * strip; CD-G9c retired that strip and the bell now lives in the account
@@ -395,31 +457,39 @@ export function Sidebar({
   const [companyOpen, setCompanyOpen] = useCompanySheet();
 
   const feeds: NotificationFeeds = { actionItems, reviewJobs, taskAlerts };
-  const unread = unreadTotal(feeds);
-
-  const clientHomePath =
-    user.role === "CLIENT_USER" && user.clientId ? `/clients/${user.clientId}` : null;
+  // Asked of the ROLE, not of the shell. This shell is the staff workspace, but
+  // it is also what a CLIENT_USER with no clientId falls through to (see the app
+  // layout), and that viewer must get the client's feed grain and the client's
+  // words — not "Waiting for your review" and a /jobs link they cannot open.
+  const viewerIsClient = user.role === "CLIENT_USER";
+  // The dismissal set every bell in this shell shares with both dots below,
+  // and the ONE derivation of "how many unread" (#105, #118).
+  const dismissals = useNotificationDismissals();
+  const unread = unreadNotificationCount(feeds, {
+    viewerIsClient,
+    dismissed: dismissals.dismissed,
+  });
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
+  // The nav table, filtered by role and nothing else. It used to be filtered and
+  // then REWRITTEN for a client — a /dashboard remap and a spliced AI Agents
+  // row, both built from `user.clientId` — see the note above NAV for why those
+  // two rows could only ever 404 for the one viewer they rendered for (#137).
   const adminItems: NavItem[] = NAV.filter((n) => {
     if (n.roles.includes(user.role)) return true;
     if (n.href === "/team" && user.role === "CLIENT_USER" && user.isGroupAdmin) return true;
     return false;
-  }).map((n) => {
-    // exact - otherwise Dashboard stays lit on the AI Agents page below it.
-    if (n.href === "/dashboard" && clientHomePath) return { ...n, href: clientHomePath, exact: true };
-    return n;
   });
-  if (clientHomePath) {
-    // Client users run their granted custom agents from their own agents page.
-    adminItems.splice(1, 0, {
-      href: `${clientHomePath}/agents`,
-      label: "AI Agents",
-      icon: "Bot",
-      roles: ["CLIENT_USER"],
-    });
-  }
+
+  // Where the wordmark goes — the same question the nav table above answers,
+  // asked of the one control that is not in it. /dashboard is the STAFF home:
+  // it redirects a CLIENT_USER to /clients/<clientId>, or to /assets when they
+  // have no id. Neither ends anywhere for the client who reaches this shell —
+  // the first is the notFound() described above, and the second bounces on to
+  // /tasks. So the mark goes to /tasks directly: the Workspace is the page that
+  // actually holds their work.
+  const homeHref = isStaff ? "/dashboard" : "/tasks";
 
   // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
   // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.
@@ -432,11 +502,43 @@ export function Sidebar({
   // (flagged, not ruled). Bound once so TS narrows it inside the JSX below.
   const clientCtx = isStaff && activeClient ? activeClient : null;
 
+  // The bell has to agree with the nav it sits inside. `clientViewNav` above
+  // deliberately drops the Jobs tab, so a review row that deep-linked to
+  // /jobs/[id] threw a staff member in Client View onto the one admin page
+  // this very shell had just taken away — reported live as "I don't know why
+  // it brought me here in Jobs… I'm on the View as client app". Derived from
+  // the same condition that picks `items`, so the two cannot drift apart.
+  const allowJobDeepLinks = clientCtx === null;
+
   // QA F113 (staff stranded in client view) is answered by the ClientContextPicker
   // at the foot of the rail: its ✕ clears the context AND routes to /clients, and
   // it renders for every staff member, not just admins. A second labelled exit in
   // the nav was redundant - three controls for one action, and one more row
   // competing for the rail's fixed height (CD-E3).
+  /**
+   * The active row's treatment, and the ONE place the two shells disagreed
+   * about it (V4).
+   *
+   * In client context these four rows ARE the client's nav — same labels, same
+   * destinations, same order as client-rail.tsx — and that rail marks its
+   * active row in paper: `bg-surface-2 text-foreground`. This one painted it
+   * `bg-neon-soft text-neon`, so the first thing a staff member saw on
+   * entering client view was an orange tab the client themselves never gets.
+   * Ember's rule is that orange is rationed to one CTA, and a nav row is not
+   * that CTA.
+   *
+   * Scoped to the client context on purpose: `items` above is EITHER the four
+   * client tabs OR the full agency nav, and the agency nav is staff's own
+   * workspace chrome — out of scope here, and not something a client ever
+   * sees. So the same component says "you are looking at the client's app" in
+   * the client's own vocabulary, and keeps saying "you are in the workspace"
+   * in the workspace's.
+   */
+  const activeRowClass = clientCtx
+    ? "bg-surface-2 text-foreground"
+    : "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]";
+  const activeIconClass = clientCtx ? "text-foreground" : "text-neon";
+
   const nav = (
     <nav className="flex flex-col gap-1">
       {items.map((item) => {
@@ -452,16 +554,14 @@ export function Sidebar({
             onClick={() => setOpen(false)}
             className={cn(
               "group flex items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-all duration-150 active:scale-[0.97]",
-              active
-                ? "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]"
-                : "text-muted hover:bg-surface-2 hover:text-foreground",
+              active ? activeRowClass : "text-muted hover:bg-surface-2 hover:text-foreground",
             )}
           >
             <Icon
               name={item.icon}
               className={cn(
                 "h-4 w-4",
-                active ? "text-neon" : "text-muted-2 group-hover:text-foreground",
+                active ? activeIconClass : "text-muted-2 group-hover:text-foreground",
               )}
             />
             <span className="flex-1">{item.label}</span>
@@ -476,69 +576,50 @@ export function Sidebar({
     </nav>
   );
 
-  // CD-G4: the chip's ↗ opens the client's REAL website, not /clients/[id] -
-  // the nav's Dashboard tab already goes there in client view, so the internal
-  // link was a duplicate. Same protocol normalisation the Competitor Track rows
-  // use for their own ↗. Null when the client has no website on file, and the
-  // chip falls back to the internal link rather than rendering a dead control.
-  const clientWebsite = activeClient?.client.website?.trim();
-  const clientSiteHref = clientWebsite
-    ? clientWebsite.startsWith("http")
-      ? clientWebsite
-      : `https://${clientWebsite}`
-    : null;
+  /**
+   * THE EXTRA BUTTON IS GONE (CD-L P5).
+   *
+   * This rail used to hand ClientProfilePanel a ↗ to the client's own website
+   * (CD-G4), described in its own comment as "the whole difference between the
+   * two views of this panel". The product owner walked both views and ruled the
+   * difference out: "The rest of this page should be the exact same", with
+   * Schedule and Regenerate on the DOCUMENTS heading as the only staff extras
+   * left anywhere in the client-context stack.
+   *
+   * Staff can still reach the site — it is the Website field in the Brand
+   * Profile sheet the panel's contact button opens, and every Competitor Track
+   * row below keeps its own ↗. What is removed is a control that made the two
+   * mounts render differently, which is the thing being fixed.
+   */
 
   // Client-context sections appended below core nav when a client is active.
-  // CD-G4: the top block - logo, nav, client chip, and the rule above the
-  // Documents header - is back to the 36a5200 baseline measurement-for-
+  // CD-G4: the top block — logo, nav, company panel, and the rule above the
+  // Documents header — is back to the 36a5200 baseline measurement-for-
   // measurement; Documents and everything under it keeps the approved
   // compaction. `space-y` is the one class that straddles that boundary (it
-  // sets the chip→Documents gap AND the Documents→Competitors→Brand Colors
+  // sets the panel→Documents gap AND the Documents→Competitors→Brand Colors
   // gaps), so it stays at the compact 1.5; the baseline air above Documents is
   // restored through the two wrappers' own pt-4 instead.
+  //
+  // mt-1.5, not mt-2: the client's rail puts its nav and its first section 6px
+  // apart (space-y-1.5 on the body), and this is the same gap in the other
+  // shell. The 2px it gives back also matters — the company panel below costs
+  // this rail ~70px it did not spend before, and the no-scroll contract
+  // (CD-E3) is measured at 1440x900 with seven documents on screen.
   const clientSections = activeClient ? (
-    <div className="mt-2 space-y-1.5">
-      {/* Client header. pb-1.5 exists to BLOCK margin collapsing, not for its
-          own 6px: space-y compiles to a child margin on this wrapper, and the
-          inner row's mb-1 collapses into it - leaving 6px above DOCUMENTS vs
-          the baseline's 16px (shell2-lens measurement). Padding interrupts the
-          collapse, so mb-1(4) + pb-1.5(6) + space-y(6) = the baseline 16px. */}
-      <div className="border-t border-border pb-1.5 pt-4">
-        <div className="mb-1 flex items-center gap-2 px-1">
-          <BrandFavicon
-            src={activeClient.client.logoUrl || activeClient.client.brandingGuidelines?.logoUrl}
-            website={activeClient.client.website}
-            name={activeClient.client.name}
-            accentColor={activeClient.client.accentColor ?? "#2dff9e"}
-            faviconSize={64}
-            className="h-6 w-6 rounded-[5px] text-[10px]"
-            imgClassName="border border-border bg-surface-2 object-contain"
-          />
-          <span className="flex-1 truncate text-sm font-semibold text-foreground">
-            {activeClient.client.name}
-          </span>
-          {clientSiteHref ? (
-            <a
-              href={clientSiteHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setOpen(false)}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-              title="Open client website"
-            >
-              <Icon name="ArrowUpRight" className="h-3 w-3" />
-            </a>
-          ) : (
-            <Link
-              href={`/clients/${activeClient.client.id}`}
-              onClick={() => setOpen(false)}
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-              title="Go to client dashboard"
-            >
-              <Icon name="ArrowUpRight" className="h-3 w-3" />
-            </Link>
-          )}
-        </div>
+    <div className="mt-1.5 space-y-1.5">
+      {/* The client's OWN company panel, in the slot the company chip used to
+          hold and in the same place the client rail keeps it: first section
+          under the nav, directly above Documents (V3). Same component, same
+          `compact` — the rail is the no-scroll layout the clamp was written
+          for (CD-E3) — and now the same PROPS, full stop: the staff ↗ that used
+          to ride in its header was the last divergence between the two views
+          and CD-L P5 removed it. The chip this replaced drew the logo and the
+          name and stopped there, so bio and handles, the two things AF-4 put on
+          the client's rail, were the two things a staff member in client
+          context could not see. */}
+      <div className="border-t border-border pt-4">
+        <ClientProfilePanel client={activeClient.client} compact />
       </div>
 
       <div className="border-t border-border pt-4">
@@ -581,7 +662,7 @@ export function Sidebar({
     <div className="flex h-full flex-col">
       {/* Logo - fixed top */}
       <div className="shrink-0 px-4 pb-2 pt-4">
-        <Link href="/dashboard" className="flex items-center gap-2.5 px-2 py-1">
+        <Link href={homeHref} className="flex items-center gap-2.5 px-2 py-1">
           <Image
             src="/brand/kairos-head-disc-dark.svg"
             alt=""
@@ -632,6 +713,14 @@ export function Sidebar({
               variant="row"
               panelPlacement="up"
               panelClassName="w-full max-h-[45vh]"
+              allowJobDeepLinks={allowJobDeepLinks}
+              viewerIsClient={viewerIsClient}
+              dismissals={dismissals}
+              /* The drawer is `fixed inset-0` and closes only from explicit
+                 handlers, so without this a bell row routes underneath it and
+                 leaves the drawer covering the page it just opened — on every
+                 navigation, not just a same-route tap. */
+              onNavigate={() => setOpen(false)}
             />
             <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
             <ThemeSwitch />
@@ -641,7 +730,11 @@ export function Sidebar({
           user={user}
           realAdmin={realAdmin}
           feeds={feeds}
+          dismissals={dismissals}
+          viewerIsClient={viewerIsClient}
+          unreadWithChrome={unread}
           showChrome={!inDrawer}
+          allowJobDeepLinks={allowJobDeepLinks}
         />
       </div>
     </div>
@@ -662,6 +755,9 @@ export function Sidebar({
           />
 
           <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
+            {/* NOT compact: the clamp exists for the no-scroll desktop rail, and
+                this sheet scrolls. The real client's sheet (client-rail.tsx)
+                shows the full text — one look for both views (AF-3). */}
             <ClientProfilePanel client={clientCtx.client} />
 
             <div className="border-t border-border pt-4">
@@ -708,6 +804,9 @@ export function Sidebar({
                 <Icon name="Settings" className="h-4 w-4 text-muted-2" />
                 Settings
               </Link>
+              {/* onNavigate: same explicit close as the Settings row above —
+                  a bell row pointing at the route already open navigates
+                  nowhere, so the sheet's on-navigation effect never fires. */}
               <NotificationBell
                 actionItems={actionItems}
                 reviewJobs={reviewJobs}
@@ -715,6 +814,10 @@ export function Sidebar({
                 variant="row"
                 panelPlacement="up"
                 panelClassName="max-h-[45vh]"
+                allowJobDeepLinks={allowJobDeepLinks}
+                viewerIsClient={viewerIsClient}
+                dismissals={dismissals}
+                onNavigate={() => setCompanyOpen(false)}
               />
               <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
               <ThemeSwitch />
@@ -744,7 +847,7 @@ export function Sidebar({
         <>
           {/* Mobile top bar */}
           <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
-            <Link href="/dashboard" className="flex items-center gap-2.5">
+            <Link href={homeHref} className="flex items-center gap-2.5">
               <Image
                 src="/brand/kairos-head-disc-dark.svg"
                 alt=""

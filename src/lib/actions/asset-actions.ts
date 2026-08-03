@@ -27,8 +27,14 @@ import {
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity, sameLocalDay } from "@/lib/scheduling";
-import { chainFamilyFor, isAssetUnlockedForClient } from "@/lib/post-chain";
-import { isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
+import { chainFamilyFor } from "@/lib/post-chain";
+import { type MarkPostedBlock, markPostedBlock } from "@/lib/mark-posted";
+import {
+  type AssetPublishBlock,
+  assetPublishBlock,
+  isLaunchDeliverable,
+  isTestRunAsset,
+} from "@/lib/asset-visibility";
 import { syncSlotPostedForAsset } from "@/lib/client-agent-slots";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
 import type { Asset, PublishMode } from "@/lib/types";
@@ -59,7 +65,32 @@ export async function updateAssetAction(id: string, patch: { content?: string; t
     // path (e.g. a chat tool) ever hands them the id.
     if (isLaunchDeliverable(asset) || isTestRunAsset(asset)) throw new Error("Forbidden");
   }
-  await updateAsset(id, { ...patch, updatedAt: Date.now() });
+  // BUILT FIELD BY FIELD, NEVER SPREAD — and `type` is why.
+  //
+  // A server action's parameter list is a COMPILE-TIME claim about this repo's
+  // own callers, not a check on the wire: the arguments arrive as a POST body
+  // and nothing validates them at runtime. So `updateAsset(id, { ...patch })`
+  // wrote whatever the caller sent — data.ts merges the object as given — and
+  // the `{ content?, title?, status? }` signature stopped none of it. The field
+  // that mattered is `type`: PUBLISHABLE_PLATFORMS is keyed by it, so re-typing
+  // a Reddit reply `social_post` AFTER creation puts it on every publish surface
+  // and inside the auto-publish cron's reach, which is the hard product rule
+  // (Reddit is draft-only) broken from the one direction its fence cannot see —
+  // `deliverableAssetType` decides the type once, at creation, and nothing
+  // re-asks the question on a write. Nor is there an un-fencing to undo it with:
+  // no asset-type edit exists anywhere in the product.
+  //
+  // Picking each named field one at a time is what makes "an asset's type never
+  // changes after creation" TRUE rather than asserted, and widening the
+  // signature the only way to widen what can be written. The scan in
+  // platforms-publishable.test.ts fails on any patch reaching `updateAsset`
+  // whose keys it cannot read at the call — a spread of this parameter included.
+  await updateAsset(id, {
+    ...(patch.content !== undefined ? { content: patch.content } : {}),
+    ...(patch.title !== undefined ? { title: patch.title } : {}),
+    ...(patch.status !== undefined ? { status: patch.status } : {}),
+    updatedAt: Date.now(),
+  });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
 }
@@ -125,7 +156,7 @@ export async function scheduleAssetAction(
   // way to tell it apart from a real scheduled post once dated) — strictly
   // worse than the archive leak, since it never even needs "approved" first.
   if (isTestRunAsset(asset)) {
-    throw new Error("This is a Test Run draft — use Promote (Control Room → Outputs) instead of scheduling it directly.");
+    throw new Error("This is a Test Run draft. Use Promote (Control Room → Outputs) instead of scheduling it directly.");
   }
   const publishMode: PublishMode = mode ?? (platform ? "auto" : "placeholder");
   if (publishMode === "auto" && !platform) {
@@ -183,14 +214,14 @@ export async function clientRescheduleAssetAction(
   if (asset.status !== "approved" && asset.status !== "scheduled") {
     return {
       ok: false,
-      error: "Only an already-approved or scheduled post can be moved — this one is still in review.",
+      error: "Only an already-approved or scheduled post can be moved. This one is still in review.",
     };
   }
   if (newScheduledAt <= Date.now()) {
     return { ok: false, error: "Pick a time in the future." };
   }
   if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
-    return { ok: false, error: "This post is being published right now - give it a moment, then try again." };
+    return { ok: false, error: "This post is being published right now. Give it a moment, then try again." };
   }
 
   const family = chainFamilyFor(asset.type);
@@ -207,7 +238,7 @@ export async function clientRescheduleAssetAction(
     if (collision) {
       return {
         ok: false,
-        error: "That day already has another post scheduled in this content family — pick a different day.",
+        error: "That day already has another post scheduled in this content family. Pick a different day.",
       };
     }
   }
@@ -269,9 +300,15 @@ export async function approveAssetAction(
   // flag. The plain review queue shows no TEST badge, so this is the gate
   // that actually stops the mis-click rather than relying on staff noticing.
   if (isTestRunAsset(asset)) {
-    throw new Error("This is a Test Run draft — use Promote (Control Room → Outputs) instead of Approve.");
+    throw new Error("This is a Test Run draft. Use Promote (Control Room → Outputs) instead of Approve.");
   }
-  const patch: Partial<Asset> = { status: "approved", updatedAt: Date.now() };
+  // `Omit<…, "type">`, and named for this one action, because this object is
+  // handed to `updateAsset` as a whole: the compiler is what refuses a `type` on
+  // it (see updateAssetAction's note — re-typing an asset defeats the
+  // creation-time draft-only fence), and the distinctive name is what stops the
+  // pin that exempts THIS payload in platforms-publishable.test.ts from
+  // exempting some other function's `patch` as well.
+  const approvalPatch: Omit<Partial<Asset>, "type"> = { status: "approved", updatedAt: Date.now() };
 
   if (opts?.scheduledAt != null) {
     const publishMode: PublishMode = opts.publishMode ?? (opts.platform ? "auto" : "placeholder");
@@ -295,9 +332,9 @@ export async function approveAssetAction(
         );
       }
     }
-    patch.scheduledAt = opts.scheduledAt;
-    patch.publishMode = publishMode;
-    if (opts.platform) patch.scheduledPlatform = opts.platform;
+    approvalPatch.scheduledAt = opts.scheduledAt;
+    approvalPatch.publishMode = publishMode;
+    if (opts.platform) approvalPatch.scheduledPlatform = opts.platform;
   } else {
     // No explicit opts scheduledAt supplied — attempt to preserve any candidate
     // scheduling (imported scheduledAt or agent recommendedAt) and, if an
@@ -314,16 +351,16 @@ export async function approveAssetAction(
           ? integrations.find((i) => i.platform === platform && integrationIsUsable(i))
           : undefined;
 
-      patch.scheduledAt = candidateAt;
+      approvalPatch.scheduledAt = candidateAt;
       if (active) {
-        patch.publishMode = "auto";
-        if (platform) patch.scheduledPlatform = platform;
+        approvalPatch.publishMode = "auto";
+        if (platform) approvalPatch.scheduledPlatform = platform;
       } else {
         // No usable integration or client opted out — keep safety: land on the
         // calendar but require an explicit Publish Now (manual) so nothing posts
         // without a connection or an opt-in.
-        patch.publishMode = "manual";
-        if (platform) patch.scheduledPlatform = platform;
+        approvalPatch.publishMode = "manual";
+        if (platform) approvalPatch.scheduledPlatform = platform;
       }
     } else if (
       asset.scheduledAt != null &&
@@ -332,11 +369,11 @@ export async function approveAssetAction(
     ) {
       // Cron-safety: approving a chain-dated draft without any candidate slot
       // must never leave it cron-eligible — force manual.
-      patch.publishMode = "manual";
+      approvalPatch.publishMode = "manual";
     }
   }
 
-  await updateAsset(id, patch);
+  await updateAsset(id, approvalPatch);
   await closeProducingJobIfReviewed(asset);
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
@@ -374,6 +411,23 @@ async function closeProducingJobIfReviewed(asset: Asset): Promise<void> {
 }
 
 /**
+ * What we tell the user when the attestation rule refuses, keyed by reason so
+ * the message cannot drift from the rule (same shape as PUBLISH_REFUSAL below).
+ * Rendered verbatim next to the button: sentence case, no internal vocabulary,
+ * each one names the way out.
+ *
+ * The control hides itself for every one of these, so a person only reaches
+ * this text from a stale page or a direct call — which is exactly why it has to
+ * read like something written for them.
+ */
+const MARK_POSTED_REFUSAL: Record<MarkPostedBlock, string> = {
+  published: "Already marked as posted",
+  placeholder: "This is a placeholder. Put it on the calendar before marking it posted",
+  unapproved: "Only an approved, scheduled, or delivered post can be marked as posted",
+  locked: "This post is scheduled for a later day. You can mark it posted on the day it goes out.",
+};
+
+/**
  * "I posted this myself" — record that an asset went live by hand.
  *
  * Every other route to "published" runs through a platform integration: the
@@ -394,38 +448,27 @@ export async function markAssetPostedAction(
   id: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const asset = await requireAssetAccess(id);
-  if (asset.status === "published") return { ok: false, error: "Already marked as posted" };
-  if (asset.publishMode === "placeholder") {
-    return { ok: false, error: "This is a placeholder - put it on the calendar before marking it posted" };
-  }
-  // Only a post that has actually been approved onto the calendar can have been
-  // posted. Without this a CLIENT_USER could force one of their own DRAFTS
-  // straight to published — self-approving unreviewed work and completing the
-  // parent staff task with it — since force skips shouldReconcilePublished,
-  // which is what would otherwise reject a draft. The UI hides the button for
-  // drafts, but a server action is a public endpoint: the UI is not the guard.
-  // (Compare updateAssetAction and approveAssetAction, which keep every other
-  // status transition staff-only for exactly this reason.)
-  if (
-    asset.status !== "approved" &&
-    asset.status !== "scheduled" &&
-    asset.status !== "delivered"
-  ) {
-    return { ok: false, error: "Only an approved, scheduled, or delivered post can be marked as posted" };
-  }
-  // A post whose day hasn't come yet cannot have been posted. Without this a
-  // client could attest their way through the whole pre-generated batch — one
-  // click per future day — and each flip to published ends redactLockedAsset's
-  // redaction, revealing title, content and images ahead of time (churn rule
-  // A3/A4). The UI hides the control, but a server action is a public endpoint.
-  if (!isAssetUnlockedForClient(asset, Date.now())) {
-    return { ok: false, error: "This post is scheduled for a later day — you can mark it posted on the day it goes out." };
-  }
+  // THE rule — `markPostedBlock`, the same body the control asks before it
+  // renders. Every clause of it is load-bearing on this side of the wire, and a
+  // hidden button is not a guard: a server action is a public endpoint.
+  //
+  //  · status: without it a CLIENT_USER could force one of their own DRAFTS
+  //    straight to published — self-approving unreviewed work and completing
+  //    the parent staff task with it — since force skips
+  //    shouldReconcilePublished, which is what would otherwise reject a draft.
+  //    (Compare updateAssetAction and approveAssetAction, which keep every
+  //    other status transition staff-only for exactly this reason.)
+  //  · locked/future-dated: without it a client could attest their way through
+  //    the whole pre-generated batch — one click per future day — and each flip
+  //    to published ends redactLockedAsset's redaction, revealing title,
+  //    content and images ahead of time (churn rule A3/A4).
+  const block = markPostedBlock(asset, Date.now());
+  if (block !== null) return { ok: false, error: MARK_POSTED_REFUSAL[block] };
   // Don't race an in-flight push: the auto-cron may be mid-publish under a
   // claim right now, and flipping status to published here wouldn't stop it —
   // we'd attest "already posted by hand" AND post again for real.
   if (asset.publishClaimedAt != null && Date.now() - asset.publishClaimedAt < PUBLISH_CLAIM_TTL_MS) {
-    return { ok: false, error: "This post is being published right now - give it a moment." };
+    return { ok: false, error: "This post is being published right now. Give it a moment." };
   }
 
   const { changed } = await reconcileAssetPublished(id, Date.now(), null, { force: true });
@@ -463,9 +506,29 @@ export async function unscheduleAssetAction(id: string): Promise<void> {
 }
 
 /**
+ * What we tell the user when the shared publish rule refuses. Rendered verbatim
+ * next to the button, so: sentence case, no internal vocabulary, and each one
+ * names the way out. Keyed by reason so the message can't drift from the rule.
+ */
+const PUBLISH_REFUSAL: Record<AssetPublishBlock, string> = {
+  published: "Already published",
+  placeholder: "This is a calendar-only placeholder. Karos never posts it.",
+  unapproved: "Only an approved, scheduled, or delivered post can be published. Approve it first.",
+};
+
+/**
  * Manual push (tier "manual"): publish an asset to a platform right now through
  * our API integration, regardless of the auto-publish toggle or any schedule.
  * Returns a result object instead of throwing so the card can render the error inline.
+ *
+ * THE gate. This is the only control in the portal that posts to a client's live
+ * social account, and it used to refuse nothing but an already-published asset —
+ * so a placeholder ("Karos never posts it") and an unapproved draft both went
+ * out for real if anything called it, and two of the three surfaces offering the
+ * button did exactly that. Eligibility is now `assetPublishBlock`, the same rule
+ * the card and the detail modal ask, because a hidden button is not a guard: a
+ * server action is a public endpoint (see markAssetPostedAction, which learned
+ * this for the far cheaper by-hand attestation).
  */
 export async function publishAssetNowAction(
   id: string,
@@ -474,7 +537,8 @@ export async function publishAssetNowAction(
   await requireStaff();
   const asset = await getAsset(id);
   if (!asset) throw new Error("Asset not found");
-  if (asset.status === "published") return { ok: false, error: "Already published" };
+  const block = assetPublishBlock(asset);
+  if (block) return { ok: false, error: PUBLISH_REFUSAL[block] };
 
   const integrations = await listClientIntegrations(asset.clientId);
   const valid = integrations.filter((i) => integrationIsUsable(i));
@@ -484,18 +548,18 @@ export async function publishAssetNowAction(
     inferPlatform(asset.type, valid.map((i) => i.platform));
 
   if (!target) {
-    return { ok: false, error: "No compatible platform connected - connect one in the Integrations tab" };
+    return { ok: false, error: "No compatible platform connected. Connect one in the Integrations tab" };
   }
   const integration = valid.find((i) => i.platform === target);
   if (!integration) {
-    return { ok: false, error: `No active ${target} integration - connect or re-connect it first` };
+    return { ok: false, error: `No active ${target} integration. Connect or re-connect it first` };
   }
 
   // Atomically claim so a concurrent auto-cron tick (or a double-clicked button)
   // can't push this same asset in parallel and post it twice.
   const claimed = await claimAssetForPublish(id);
   if (!claimed) {
-    return { ok: false, error: "This asset is already being published - give it a moment." };
+    return { ok: false, error: "This asset is already being published. Give it a moment." };
   }
 
   let publishResult: { postId: string | null };
@@ -503,6 +567,17 @@ export async function publishAssetNowAction(
     publishResult = await publishAssetToPlatform(target, integration, asset);
   } catch (e) {
     await releaseAssetPublishClaim(id).catch(() => {});
+    // STORED RAW, ON PURPOSE, and this is the note that stops the next reader
+    // sanitizing it here. `publishError` is the platform SDK's own exception and
+    // it is the only thing that says which integration broke — staff read the
+    // asset un-projected and need it. A client never does: both client asset
+    // projections run it through `clientSafePublishError` (lib/asset-visibility)
+    // before it can cross the RSC boundary, so the collapse happens where the
+    // reader is known rather than where the string is written. Sanitizing at the
+    // write would destroy the diagnostic for everyone and fix nothing.
+    //
+    // The returned copy is raw for the same reason and is safe for a different
+    // one: this action is `requireStaff()`, so only an operator ever reads it.
     const message = e instanceof Error ? e.message : "Unknown error";
     if (e instanceof TokenExpiredError) {
       await markIntegrationExpired(asset.clientId, target).catch(() => {});

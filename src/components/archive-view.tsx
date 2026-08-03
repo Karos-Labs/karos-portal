@@ -1,13 +1,18 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { AgentIdentity } from "@/components/agent-identity";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { assetImages, assetVideos } from "@/lib/asset-images";
+// The client's vocabulary for a stored status ("published" reads as "Posted")
+// used to be a local const here. It is shared now because the publish cron's
+// ordering-hold message interpolated the RAW enum into a sentence a client
+// reads, and one map is the only way those two agree.
+import { CLIENT_ASSET_STATUS_LABEL, clientAssetStatusLabel } from "@/lib/asset-status-copy";
 import { clientDeliveryStamp } from "@/lib/asset-visibility";
+import { offeredStatesFor } from "@/lib/client-state-domain";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { cn, relativeTime } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
@@ -18,15 +23,6 @@ const STATUS_TONE: Record<Asset["status"], "neutral" | "success" | "warning" | "
   scheduled: "info",
   published: "success",
   delivered: "success",
-};
-
-/** Client vocabulary for the stored status - "published" reads as "Posted". */
-const STATUS_LABEL: Record<Asset["status"], string> = {
-  draft: "Draft",
-  approved: "Approved",
-  scheduled: "Scheduled",
-  published: "Posted",
-  delivered: "Delivered",
 };
 
 interface AgentGroup {
@@ -66,7 +62,13 @@ function templatesOf(assets: Asset[]): AgentGroup["templates"] {
 /** Tiles shown per agent group before "Show all N" (QA F66). */
 const GROUP_PAGE_SIZE = 12;
 
-const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "published", "delivered"];
+/* The filter's options used to be a hand-typed `STATUS_ORDER` of all five
+   statuses, and "Draft" was one of them — on a list whose own server-side
+   projection (`isInClientArchive`) rejects a draft outright, so a client
+   selecting it could only ever empty the page. The options now come from
+   `offeredStatesFor("archive", …)`, which derives them by asking that projection,
+   so the control and the set it filters cannot disagree. Staff still get all
+   five: their view is the full library. */
 
 /**
  * The Workspace "Archive" tab, grouped per agent and carrying the agent's real
@@ -80,13 +82,34 @@ const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "publ
  *
  * The control bar (status / agent / search) mirrors the staff AssetsView strip:
  * the client used to get one uncontrolled wall of every tile ever produced
- * (QA F66). `status` seeds from ?status= so other surfaces can deep link into
- * a slice - composed with F97's ?tab=archive.
+ * (QA F66). All three filters are component-local state.
+ *
+ * `status` used to seed from a `?status=` search param "so other surfaces can
+ * deep link into a slice", with a manual same-route re-read to go with it —
+ * removed 2026-07-31 (QA #138), along with the twin reader on /assets.
+ *
+ * THE CONTRACT ALREADY DECAYED ONCE, which is the argument for deleting it
+ * rather than keeping it warm. A producing link did exist: af1b404 (2026-07-21)
+ * added `href="/assets?view=library&status=draft"` to client-home-overview.tsx
+ * in the same commit that added the /assets reader it fed. 350a1a2 (2026-07-28,
+ * QA F97) re-pointed that dashboard row at the archive and dropped the param,
+ * leaving both readers with no producer — so what was deleted here is a param
+ * whose one caller had already been removed a week earlier, not a path nobody
+ * had got round to using. A reader kept alive past its last producer is the
+ * shape that rots: it type-checks, it renders, and the next person to write a
+ * deep link inherits re-read logic no test has ever exercised.
+ *
+ * Verify with `git log -S'status=draft' -- src/components/client-home-overview.tsx`
+ * before re-adding it; reintroduce it WITH its producer and a test.
+ *
+ * SCOPE: this is about the `?status=` param on these two surfaces. `?tab=`
+ * (F97, progress-view.tsx) is a separate, genuinely-used param and is
+ * unaffected; no claim is made here about search params elsewhere.
  */
 export function ArchiveView({
   assets,
   agentLabelByAssetId,
-  viewerIsClient = false,
+  viewerIsClient,
 }: {
   assets: Asset[];
   /**
@@ -97,29 +120,24 @@ export function ArchiveView({
    * called that stream "Instagram Agent".
    */
   agentLabelByAssetId: Record<string, string>;
-  /** Drives the copy only - the posted-only filter is applied on the server. */
-  viewerIsClient?: boolean;
+  /**
+   * Which reader this is. Drives the copy, the stamp, and — since the filter
+   * became derived — which statuses the dropdown offers.
+   *
+   * REQUIRED, no default. It defaulted to `false`, which meant a mount that
+   * forgot it got the STAFF answer silently: staff copy, the generation stamp,
+   * and now every status option including one a client's archive can never
+   * hold. A defaulted viewer flag is the cheapest way to lose a disclosure rule,
+   * and the one mount (progress-view.tsx) already passes it.
+   */
+  viewerIsClient: boolean;
 }) {
-  const searchParams = useSearchParams();
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
-  const statusParam = searchParams.get("status");
-  const [status, setStatus] = useState<Asset["status"] | "all">(() =>
-    STATUS_ORDER.includes(statusParam as Asset["status"]) ? (statusParam as Asset["status"]) : "all",
-  );
+  const [status, setStatus] = useState<Asset["status"] | "all">("all");
   const [agent, setAgent] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  // Same-route deep link (?status=) has to be re-read when it changes, since
-  // the component re-renders rather than remounting.
-  const [prevStatusParam, setPrevStatusParam] = useState(statusParam);
-  if (prevStatusParam !== statusParam) {
-    setPrevStatusParam(statusParam);
-    setStatus(
-      STATUS_ORDER.includes(statusParam as Asset["status"]) ? (statusParam as Asset["status"]) : "all",
-    );
-  }
 
   // The resolver already answered for every asset in the payload and never
   // returns an empty label; the local fallbacks stay only so a hand-assembled
@@ -199,9 +217,9 @@ export function ArchiveView({
           className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
         >
           <option value="all">All statuses</option>
-          {STATUS_ORDER.map((option) => (
+          {offeredStatesFor("archive", viewerIsClient).map((option) => (
             <option key={option} value={option}>
-              {STATUS_LABEL[option]}
+              {CLIENT_ASSET_STATUS_LABEL[option]}
             </option>
           ))}
         </select>
@@ -314,7 +332,12 @@ export function ArchiveView({
         })
       )}
 
-      <AssetDetailModal asset={openAsset} open={openAsset != null} onClose={() => setOpenAssetId(null)} />
+      <AssetDetailModal
+        asset={openAsset}
+        open={openAsset != null}
+        onClose={() => setOpenAssetId(null)}
+        viewerIsClient={viewerIsClient}
+      />
     </div>
   );
 }
@@ -366,7 +389,7 @@ function ArchiveTile({
           <span className="text-[11px] text-muted-2">
             {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}
           </span>
-          <Badge tone={STATUS_TONE[asset.status]}>{STATUS_LABEL[asset.status] ?? asset.status}</Badge>
+          <Badge tone={STATUS_TONE[asset.status]}>{clientAssetStatusLabel(asset.status)}</Badge>
         </div>
       </div>
     </button>

@@ -13,12 +13,24 @@ import { parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
+import {
+  PUBLISH_HOLD_HEADING,
+  assetStatusLabel,
+  isPublishHold,
+} from "@/lib/asset-status-copy";
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
-import { assetImages, assetLiMedia, assetVideos } from "@/lib/asset-images";
+import { isAssetPublishable } from "@/lib/asset-visibility";
+import {
+  assetDownloadTargets,
+  assetImages,
+  assetLiMedia,
+  assetVideoSrc,
+  assetVideos,
+} from "@/lib/asset-images";
 import { templateForAsset } from "@/lib/post-chain";
 import type { Asset } from "@/lib/types";
 
@@ -53,23 +65,32 @@ function fmt(t: number): string {
   });
 }
 
-/** Native download action for an asset's photos - anchors to the shared download route
- *  (single image, or a zip when the asset carries a carousel). */
+/** Native download action for an asset's deliverables — anchors to the shared download
+ *  route (a photo, a zip when the asset carries a carousel, or a clip). What is on offer
+ *  comes from `assetDownloadTargets`, so a video-only asset gets a control instead of the
+ *  old photos-only gate; WHO may have it stays this component's own call, unchanged. */
 export function AssetDownloadButtons({ asset, className }: { asset: Asset; className?: string }) {
+  // This modal's own pre-existing refusal, kept here rather than pushed into the
+  // shared helper: the card never had it, and the server gate (authorizeAssetMedia)
+  // is what actually withholds a future-dated post.
   if (asset.locked) return null;
-  const images = assetImages(asset);
-  if (images.length === 0) return null;
+  const targets = assetDownloadTargets(asset);
+  if (targets.length === 0) return null;
   return (
     <div className={className ?? "flex flex-wrap gap-1.5"}>
-      <a
-        href={`/api/assets/${asset.id}/download`}
-        download
-        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
-      >
-        <Icon name="Camera" className="h-3.5 w-3.5" />
-        <Icon name="Download" className="h-3 w-3" />
-        {images.length > 1 ? `Download all (${images.length})` : "Download"}
-      </a>
+      {targets.map((t) => (
+        <a
+          key={t.href}
+          href={t.href}
+          download
+          title={t.title}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+        >
+          <Icon name={t.icon} className="h-3.5 w-3.5" />
+          <Icon name="Download" className="h-3 w-3" />
+          {t.label}
+        </a>
+      ))}
     </div>
   );
 }
@@ -91,12 +112,27 @@ export function AssetDetailModal({
   asset,
   open,
   onClose,
+  viewerIsClient,
   canPublish = false,
   connectedPlatforms,
 }: {
   asset: Asset | null;
   open: boolean;
   onClose: () => void;
+  /**
+   * Which status register this modal reads its words from. REQUIRED, with no
+   * default, and that is the fix: this modal printed `asset.status` raw, so a
+   * paying client opening a tile from their own archive read the lowercase
+   * Firestore enum "published" while the archive behind it said "Posted". It is
+   * reachable by clients from archive-view, clip-gallery and the calendar, so a
+   * defaulted flag would have let the next mount silently pick a register — the
+   * missing prop is a compile error instead.
+   *
+   * Separate from `canPublish` below on purpose. That one is a capability
+   * ("may this viewer push a post live"); this one is an audience ("whose
+   * vocabulary is this"). Staff in View as Client differ on the two.
+   */
+  viewerIsClient: boolean;
   /**
    * Staff viewer. `publishAssetNowAction` is `requireStaff()`, so a client-facing
    * Publish Now here could only ever error - the client's path is Mark as posted.
@@ -196,6 +232,11 @@ export function AssetDetailModal({
   // reachable via Download all below.
   const coverImageUrl = images.length > 0 ? images[0].url : null;
   const videos = assetVideos(asset);
+  // Whether this asset offers anything to download at all — same helper the
+  // buttons use, so the section and its contents cannot disagree. Locked assets
+  // returned at the guard above, so this is only ever an unlocked asset and the
+  // section can never render empty around a refused button.
+  const downloads = assetDownloadTargets(asset);
 
   return (
     <Modal
@@ -215,12 +256,21 @@ export function AssetDetailModal({
       </div>
 
       {tab === "simulation" ? (
-        <AudienceSimulation key={asset.id} clientId={asset.clientId} assetId={asset.id} />
+        <AudienceSimulation
+          key={asset.id}
+          clientId={asset.clientId}
+          assetId={asset.id}
+          viewerIsClient={viewerIsClient}
+        />
       ) : (
       <div className="space-y-4">
         {/* Status + template + type row */}
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={statusTone(asset.status)}>{asset.status}</Badge>
+          {/* Never the raw enum. The tone stays local (presentation is this
+              component's business); the WORD comes from the register the viewer
+              belongs to (lib/asset-status-copy), which is the same lookup the
+              archive one screen away already uses. */}
+          <Badge tone={statusTone(asset.status)}>{assetStatusLabel(asset.status, viewerIsClient)}</Badge>
           {template && <Badge tone="neutral">{template.name}</Badge>}
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-2">
             <Icon name={TYPE_ICON[asset.type] ?? "FileText"} className="h-3.5 w-3.5" />
@@ -267,32 +317,19 @@ export function AssetDetailModal({
 
         {/* Video deliverables - podcast cuts, branded shorts, TikTok. Until
             this existed the clips were emailed by hand (QA F150); the caption
-            copy button below is the other half of "post it yourself". Clips
-            live in GCS block storage, and direct browser download of a signed
-            GCS URL is unreliable (cross-origin, and the signature can be
-            stale) - same reasoning as AssetDownloadButtons for images, so
-            each clip gets its own server-proxied download link. */}
+            copy button below is the other half of "post it yourself". The src
+            is our own route, never the stored URL: a bulk-uploaded clip's
+            stored URL is a 7-day signed link that has usually expired by the
+            day the clip is shown. */}
         {videos.map((v, i) => (
-          <div key={v.url} className="space-y-1.5">
-            <video
-              src={v.url}
-              controls
-              preload="metadata"
-              {...(coverImageUrl ? { poster: coverImageUrl } : {})}
-              className="max-h-96 w-full rounded-lg border border-border bg-black object-contain"
-            />
-            {!asset.locked && (
-              <a
-                href={`/api/assets/${asset.id}/video-download?i=${i}`}
-                download
-                className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
-              >
-                <Icon name="Video" className="h-3.5 w-3.5" />
-                <Icon name="Download" className="h-3 w-3" />
-                Download{videos.length > 1 ? ` clip ${i + 1}` : ""}
-              </a>
-            )}
-          </div>
+          <video
+            key={v.url}
+            src={assetVideoSrc(asset.id, i)}
+            controls
+            preload="metadata"
+            {...(coverImageUrl ? { poster: coverImageUrl } : {})}
+            className="max-h-96 w-full rounded-lg border border-border bg-black object-contain"
+          />
         ))}
 
         {/* Content - a parsed drafts batch gets the per-draft reader (pick,
@@ -374,8 +411,10 @@ export function AssetDetailModal({
           </div>
         )}
 
-        {/* Downloads */}
-        {images.length > 0 && (
+        {/* Downloads — photos AND clips. Gating the section on photos was the
+            third place a video-only asset lost its download control, after the
+            button itself and the card's inline link. */}
+        {downloads.length > 0 && (
           <div className="border-t border-border pt-3">
             <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Download</p>
             <AssetDownloadButtons asset={asset} />
@@ -387,10 +426,7 @@ export function AssetDetailModal({
             who most needs to see WHY a scheduled post never went out; the
             retry control below stays gated, the fact of the failure does not. */}
         {asset.publishError && asset.status !== "published" && (
-          <div className="rounded-[var(--radius)] border border-danger/30 bg-danger/10 px-3 py-2.5">
-            <p className="text-xs font-medium text-danger">Publish failed</p>
-            <p className="mt-0.5 text-xs text-danger/90">{asset.publishError}</p>
-          </div>
+          <PublishStateNotice publishError={asset.publishError} />
         )}
         <PublishNowRow
           asset={asset}
@@ -401,6 +437,45 @@ export function AssetDetailModal({
       </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The panel over a stored `publishError` — and the heading has to match the body.
+ *
+ * `publishError` carries two different facts. Usually it is the platform SDK's
+ * exception (collapsed to one client-safe sentence at the server boundary,
+ * lib/asset-visibility). But the publish cron writes its benign ORDERING HOLD
+ * into the same field, and this panel headed that "Publish failed" in danger red
+ * over a body reading "This post is waiting for an earlier post in this
+ * format…" — a heading contradicting its own paragraph, on the client's screen.
+ *
+ * Which of the two it is comes from `isPublishHold`, the single test for that
+ * (lib/asset-status-copy), so this panel, the calendar's chip and the sanitizer
+ * cannot disagree about the same stored string. The hold's heading is the same
+ * string the chip is labelled with, for the same reason.
+ *
+ * A hold needs nothing from the reader — the cron releases it by itself on the
+ * next tick once the predecessor is posted — so it gets the neutral treatment,
+ * not a red one.
+ */
+function PublishStateNotice({ publishError }: { publishError: string }) {
+  if (isPublishHold(publishError)) {
+    return (
+      <div className="rounded-[var(--radius)] border border-border bg-surface-2 px-3 py-2.5">
+        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+          <Icon name="CalendarClock" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+          {PUBLISH_HOLD_HEADING}
+        </p>
+        <p className="mt-0.5 text-xs text-muted">{publishError}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-[var(--radius)] border border-danger/30 bg-danger/10 px-3 py-2.5">
+      <p className="text-xs font-medium text-danger">Publish failed</p>
+      <p className="mt-0.5 text-xs text-danger/90">{publishError}</p>
+    </div>
   );
 }
 
@@ -453,17 +528,15 @@ function PublishNowRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(asset.publishError ?? null);
 
-  // Same gate as the asset card: a connected platform must be able to carry this
-  // asset type. Placeholders are excluded - a roadmap entry was never meant to
-  // go out, and "Karos never posts it" is the tier's own promise.
+  // Literally the same gate as the asset card now: a connected platform must be
+  // able to carry this asset type, and isAssetPublishable — the one shared rule,
+  // also enforced by publishAssetNowAction — must accept the asset. This row
+  // excluded placeholders by hand but still offered the button on an unapproved
+  // draft, which is how "correct here, wrong on the card" hid the real hole.
   const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
     connectedPlatforms.includes(p),
   );
-  const eligible =
-    canPublish &&
-    compatibleConnected.length > 0 &&
-    asset.status !== "published" &&
-    asset.publishMode !== "placeholder";
+  const eligible = canPublish && compatibleConnected.length > 0 && isAssetPublishable(asset);
   if (!eligible) return null;
 
   const target = asset.scheduledPlatform ?? compatibleConnected[0];

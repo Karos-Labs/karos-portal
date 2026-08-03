@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import {
@@ -24,8 +25,6 @@ interface Props {
   users?: AppUser[];
   /** UID of the currently logged-in user (for "Assign to me"). */
   currentUserId?: string;
-  /** Called after the meeting is auto-archived (all items done). */
-  onAutoArchived?: () => void;
 }
 
 export function MeetingActionItems({
@@ -37,8 +36,8 @@ export function MeetingActionItems({
   actionItemAssignedUserIds: initialAssignedIds = [],
   users = [],
   currentUserId,
-  onAutoArchived,
 }: Props) {
+  const router = useRouter();
   const [completed, setCompleted] = useState<Set<number>>(new Set(initialCompleted));
   // owners drives the visual grouping (display names)
   const [owners, setOwners] = useState<(string | null)[]>(actionItemOwners);
@@ -81,7 +80,14 @@ export function MeetingActionItems({
     setPendingToggle((s) => new Set(s).add(index));
     try {
       const { allDone } = await toggleActionItemCompletionAction(transcriptId, index, nowDone);
-      if (allDone) onAutoArchived?.();
+      // Ticking the last item archives the meeting server-side, and this page
+      // paints that (the Archived badge, and the archive button's own label), so
+      // the route has to be re-read. This used to call an `onAutoArchived?.()`
+      // prop that could not be delivered: the only mount is the transcript detail
+      // page, a SERVER component, which cannot pass a function at all — so the
+      // archive happened and nothing on screen moved. The refresh is the same
+      // remedy, from a place that can actually reach it.
+      if (allDone) router.refresh();
     } catch {
       setCompleted((prev) => {
         const r = new Set(prev);

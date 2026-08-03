@@ -6,7 +6,7 @@ import { Icon } from "@/components/icon";
 import { AvatarUploader } from "@/components/avatar-uploader";
 import { ResumeUploader } from "@/components/resume-uploader";
 import { OnboardingSocialsStep } from "@/components/onboarding-socials-step";
-import { cn } from "@/lib/utils";
+import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
 import {
   saveOnboardingProfileAction,
   ensureOwnEmployeeSeatAction,
@@ -59,6 +59,7 @@ export function OnboardingWizard({
   notice,
   integrations,
   oauthEnabledPlatforms,
+  googleBusinessProfileRequested,
   linkedinSeats,
   seatLimit,
   seatCost,
@@ -68,6 +69,8 @@ export function OnboardingWizard({
   notice?: string | null;
   integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
+  /** Passed straight through to the socials step — see oauth.ts. */
+  googleBusinessProfileRequested: boolean;
   linkedinSeats?: SeatView[];
   seatLimit?: number;
   seatCost?: number;
@@ -86,7 +89,11 @@ export function OnboardingWizard({
   const linkedInConnected = !!user.linkedInConnected;
 
   const [clientName, setClientName] = useState(client.name);
-  const [industry, setIndustry] = useState(client.industry ?? "");
+  // The box says "Industry / niche" and always did; the FIELD behind it is
+  // `category`, the one the client's own profile chip shows and edits. It used
+  // to write the legacy `industry` instead, so a client answered this question
+  // at signup and then found the chip in their sidebar still empty.
+  const [category, setCategory] = useState(clientCategoryValue(client) ?? "");
   const [brandVoice, setBrandVoice] = useState(client.brandVoice ?? "");
 
   function goNext() {
@@ -151,14 +158,14 @@ export function OnboardingWizard({
     // No try/catch here: completeOnboardingAction redirects on success, and
     // `redirect()` throws by design (Next.js docs: must be called outside
     // try/catch) - catching around it risks swallowing the navigation.
-    startTransition(() => completeOnboardingAction({ name, phone, clientName, industry, brandVoice }));
+    startTransition(() => completeOnboardingAction({ name, phone, clientName, category, brandVoice }));
   }
 
   return (
     <div className="animate-fade-up">
       <div className="mb-6 text-center">
         <h1 className="text-2xl font-semibold tracking-tight">Welcome to Karos CMO</h1>
-        <p className="mt-1 text-sm text-muted">Let&apos;s get your workspace set up - it only takes a minute.</p>
+        <p className="mt-1 text-sm text-muted">Let&apos;s get your workspace set up. It only takes a minute.</p>
       </div>
 
       <StepIndicator step={step} />
@@ -174,7 +181,7 @@ export function OnboardingWizard({
           <>
             <div>
               <h2 className="text-base font-semibold">Personal profile</h2>
-              <p className="text-xs text-muted-2">Tell us who you are - this powers your AI-written voice.</p>
+              <p className="text-xs text-muted-2">Tell us who you are. This powers your AI-written voice.</p>
             </div>
 
             <AvatarUploader name={name || user.name} value={photoURL} onChange={setPhotoURL} />
@@ -199,7 +206,7 @@ export function OnboardingWizard({
                   feature that does not exist. Same sentence the Settings card
                   already tells the truth with. */}
               <p className="mb-2 text-[11px] text-muted-2">
-                Stored for your Karos team - they use it when writing your LinkedIn advocacy posts.
+                Stored for your Karos team. They use it when writing your LinkedIn advocacy posts.
               </p>
               <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
             </div>
@@ -248,8 +255,16 @@ export function OnboardingWizard({
               <Input id="ob-client-name" value={clientName} onChange={(e) => setClientName(e.target.value)} required />
             </div>
             <div>
-              <Label htmlFor="ob-industry">Industry / niche</Label>
-              <Input id="ob-industry" value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="e.g. B2B SaaS, fintech, healthcare" />
+              <Label htmlFor="ob-category">Industry / niche</Label>
+              <Input
+                id="ob-category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                placeholder="e.g. B2B SaaS, fintech, healthcare"
+                /* The cap the chip this fills is measured against, felt here
+                   rather than discovered on save. */
+                maxLength={CLIENT_CATEGORY_MAX_LENGTH}
+              />
             </div>
             <div>
               <Label htmlFor="ob-brand-voice">Brand voice</Label>
@@ -281,6 +296,7 @@ export function OnboardingWizard({
               clientId={client.id}
               integrations={integrations}
               oauthEnabledPlatforms={oauthEnabledPlatforms}
+          googleBusinessProfileRequested={googleBusinessProfileRequested}
               currentUserRole={user.role}
               linkedinSeats={linkedinSeats}
               seatLimit={seatLimit}

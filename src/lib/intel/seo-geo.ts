@@ -4,6 +4,7 @@ import { streamText, stepCountIs } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS } from "@/lib/constants";
 import type { Client } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 import {
   ENGINE_LABELS,
   ENGINE_PROVIDERS,
@@ -331,7 +332,9 @@ function sanitizePromptSet(prompts: string[]): string[] {
  * and the navigational ones carry the bare domain or "official site".
  */
 function questionTemplates(client: Client): Record<PromptIntent, string[]> {
-  const category = client.industry?.trim() || "this category";
+  // This bank already called the value a category; it was just reading the
+  // other field name for it.
+  const category = clientCategoryValue(client) ?? "this category";
   const name = client.name;
   const domain = client.website?.replace(/^https?:\/\//, "").replace(/\/.*$/, "") || name;
   return {
@@ -415,7 +418,7 @@ async function generatePromptSet(client: Client, competitors: string[], gazettee
         {
           role: "user",
           content: `Client: ${client.name} (${client.website ?? "no website"})
-Industry: ${client.industry ?? "unknown"}
+Industry: ${clientCategoryValue(client) ?? "unknown"}
 Description: ${client.description ?? "—"}
 Known competitors: ${competitors.join(", ") || "—"}
 
@@ -634,7 +637,12 @@ function pct(v: number): string {
 }
 
 function buildSeoBrief(audit: AuditResult, insights: SeoGeoInsights): string {
-  const seoGaps = insights.gaps.filter((g) => g.lever === "SEO").slice(0, 8);
+  // `!== "GEO"` rather than `=== "SEO"`: a gap the dedupe promoted to lever
+  // "BOTH" belongs in BOTH briefs. Strict equality excluded it from each of
+  // them, so four checks vanished from the markdown fed to the client report
+  // entirely — the one place a gap can go missing without any surface looking
+  // broken. Same reasoning inverted in buildGeoBrief.
+  const seoGaps = insights.gaps.filter((g) => g.lever !== "GEO").slice(0, 8);
   return [
     `## SEO Snapshot (measured ${todayISO()})`,
     `- **SEO score: ${insights.seoScore}/100** (data coverage ${insights.seoDataCoveragePct}% — MEASURED checks only)`,
@@ -731,7 +739,8 @@ function buildGeoBrief(insights: SeoGeoInsights): string {
     );
   }
 
-  const geoGaps = insights.gaps.filter((g) => g.lever === "GEO").slice(0, 8);
+  // See buildSeoBrief: "BOTH" must appear here too, so exclude only pure SEO.
+  const geoGaps = insights.gaps.filter((g) => g.lever !== "SEO").slice(0, 8);
   if (geoGaps.length) {
     lines.push(
       "",

@@ -39,9 +39,15 @@ import {
   refreshJobStatusAction,
   retryJobAction,
 } from "@/lib/actions/external-job-actions";
-import { CREDIT_COSTS, scheduledAgentWeeklyCost } from "@/lib/credits";
+import {
+  CREDIT_BLOCK_REASON,
+  CREDIT_COSTS,
+  creditsLabel,
+  scheduledAgentWeeklyCost,
+} from "@/lib/credits";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
+import { validateScheduleTiming } from "@/lib/scheduling";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
 import {
   agentKeyMatchesClientSlug,
@@ -189,6 +195,24 @@ function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
 }
 
 /**
+ * The one-off SETUP price, or null when nobody has set one (§6.3).
+ *
+ * STAFF ONLY — it is deliberately absent from RunnableAgentSummary, so this
+ * takes the full document and no client payload can carry it.
+ *
+ * "Is the field filled in" is the whole test here, and it is complete for
+ * anything this app stored: every write of launchCreditCost goes through
+ * `validateAgentInput` (lib/actions/custom-agent-actions.ts), which refuses
+ * anything that is not a whole number greater than zero, and the repo import
+ * never sets it at all. `evaluateLaunchGate` additionally rejects zero,
+ * negatives and non-integers — that is its defence against rows this app did
+ * not write, not a second rule this card has to keep in step with.
+ */
+function agentLaunchCost(agent: Pick<CustomAgent, "launchCreditCost">): number | null {
+  return agent.launchCreditCost ?? null;
+}
+
+/**
  * An agent's blurb wherever a client reads it. Clamped to three lines so the
  * cut always lands on a line boundary - never mid-word - with a "More" control
  * that expands it in place. Whether the text overflows is MEASURED rather than
@@ -253,6 +277,17 @@ function AgentBlurb({ text, className }: { text: string; className?: string }) {
  *
  * kind and data move together - a kind with no payload would render an empty
  * pane, and a payload with no kind has no form to render it in.
+ *
+ * WHAT A CALLER OWES RunCustomAgentModal (#113). That dialog collects the intake
+ * IN PLACE when it is handed a `kind`, and cannot when it is not: without the
+ * payload it cannot tell which of the three agents it is looking at, so all it
+ * can offer is `label` and `href` — the name of the form and the way to it. A
+ * surface that mounts the run dialog for a state with `ready: false` and NO
+ * `kind` should therefore refuse before opening it, which is what all three
+ * mounts do today (the library disables Run, StaffAgentControls paints "Run now
+ * needs the {label}" beside the agent's own href, and LegacyAgentPanel disables
+ * the run on `evaluateLegacyRunGate`'s `setup_missing` rung and links the form).
+ * That is why the dialog's own href gate is a backstop rather than a route.
  */
 export type AgentSetupState = {
   ready: boolean;
@@ -546,6 +581,9 @@ export function CustomAgentsHub({
             // belongs to. Until now the only way to learn it was to write a
             // brief and read the refusal.
             const boundTo = perClientAgentSlug(agent.key);
+            // #111. Resolved once so the badge and the price line can never
+            // disagree about whether this agent has a setup price.
+            const launchCost = agentLaunchCost(agent);
             return (
             <div
               key={agent.id}
@@ -589,10 +627,23 @@ export function CustomAgentsHub({
                       baked under one client's lab folder, so this is a property
                       of the agent, not of whoever is looking at it. */}
                   {boundTo && <Badge tone="neutral">{boundTo} only</Badge>}
-                  {/* No client blurb ⇒ the client's card is still falling back to
-                      the lab manifest below. Flagged here, fixed in the editor. */}
+                  {/* No client blurb ⇒ every client surface for this agent is
+                      reading the keyed fallback rather than a line somebody
+                      wrote for it. NOT the manifest below — `agentBlurb` took
+                      the manifest out of the chain (F127/CD-G2). Flagged here,
+                      fixed in the editor. */}
                   {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
-                  {/* Repo-catalog flag - informational until an admin reviews and enables. */}
+                  {/* #111. The library flagged an unwritten blurb and said
+                      nothing about an unset SETUP price, which is the stronger
+                      gate: it is the rung `evaluateLaunchGate` refuses on, so a
+                      client's self-serve Launch stays disabled until an admin
+                      types a number in the editor. Makes the UNSET STATE
+                      visible and nothing more — what the number should be is
+                      Daniel's call (#167), and inventing one here would be the
+                      F130 placeholder-pricing failure at the priciest SKU. */}
+                  {launchCost === null && <Badge tone="warning">Setup not priced</Badge>}
+                  {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
+                  {/* Repo-catalog flag — informational until an admin reviews and enables. */}
                   {!agent.enabled && agent.source?.status === "blocked" && (
                     <Badge tone="danger">Blocked in repo</Badge>
                   )}
@@ -604,10 +655,25 @@ export function CustomAgentsHub({
               <div className="mt-3">
                 <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
               </div>
-              <div className="mt-auto flex items-center justify-between gap-2 pt-4">
-                <p className="text-xs text-muted-2">
-                  {agentRunCost(agent)} credits per client run
-                </p>
+              <div className="mt-auto flex items-end justify-between gap-2 pt-4">
+                {/* BOTH prices, because only one of them gates anything. The
+                    per-run line read as "this agent is priced" while the setup
+                    price — the one the client's Launch button waits on — was
+                    invisible whether it was set or not. */}
+                <div className="min-w-0">
+                  <p className="text-xs text-muted-2">
+                    {creditsLabel(agentRunCost(agent))} per client run
+                  </p>
+                  {launchCost === null ? (
+                    <p className="mt-0.5 text-xs text-warning">
+                      Setup not priced. Clients cannot launch it themselves
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-xs text-muted-2">
+                      {creditsLabel(launchCost)} one-time setup
+                    </p>
+                  )}
+                </div>
                 <div className="flex gap-1.5">
                   {isAdmin && (
                     <Button size="sm" variant="ghost" onClick={() => setEditAgent(agent)}>
@@ -810,7 +876,7 @@ export function StaffAgentControls({
           </>
         ) : blockedSetup ? (
           <p className={cn("text-[11px] text-warning", !schedule && "text-xs")}>
-            Not running yet - your {blockedSetup.label} is still empty.
+            Not running yet. Your {blockedSetup.label} is still empty.
           </p>
         ) : schedule ? (
           <p className="mt-0.5 text-[11px] text-muted-2">
@@ -865,12 +931,12 @@ export function StaffAgentControls({
           never be shown. */}
       {blockedSetup && (
         <p className="mt-2 border-t border-border/60 pt-2 text-[11px] text-warning">
-          Run now needs the {blockedSetup.label} - this agent drafts from it.
+          Run now needs the {blockedSetup.label}. This agent drafts from it.
         </p>
       )}
       {scheduleNeedsData && intake && !blockedSetup && (
         <p className="mt-2 text-[11px] text-muted-2">
-          Add the {INTAKE_LABEL[intake.kind]} agent data before setting a schedule - every
+          Add the {INTAKE_LABEL[intake.kind]} agent data before setting a schedule. Every
           scheduled run drafts from it.
         </p>
       )}
@@ -883,6 +949,11 @@ export function StaffAgentControls({
           viewerIsClient={false}
           {...(setup ? { setup } : {})}
           {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
+          // AF-9. These controls only ever render inside the Control Room on an
+          // agent's own detail page, and that page is what the operator came to
+          // read — a redirect to the raw job record threw away the tab they had
+          // open and everything else on the agent with it.
+          stayOnPage
           onClose={() => setRunOpen(false)}
         />
       )}
@@ -966,7 +1037,7 @@ export function TestRunButton({ agentId, clientId }: { agentId: string; clientId
               <Icon name="CircleCheck" className="mx-auto h-8 w-8 text-success" />
               <p className="text-sm text-foreground">Test run started</p>
               <p className="text-xs text-muted-2">
-                Real generation, real cost - the output is flagged TEST and will never reach the
+                Real generation, real cost. The output is flagged TEST and will never reach the
                 client&apos;s Workspace, the calendar, or scheduling. Find it under Outputs &amp;
                 Artifacts once it lands, with Promote/Dismiss actions.
               </p>
@@ -977,7 +1048,7 @@ export function TestRunButton({ agentId, clientId }: { agentId: string; clientId
           ) : (
             <div className="mt-4 space-y-3">
               <p className="text-xs text-muted-2">
-                Fires for real - same cost, same generation - to verify this agent&apos;s prompt and
+                Fires for real. Same cost, same generation. To verify this agent&apos;s prompt and
                 context pipeline still produce good output. The result never reaches the client,
                 the calendar, or scheduling.
               </p>
@@ -1112,7 +1183,7 @@ export function AgentRunHistory({
                     className="mb-0 rounded-none border-0 bg-transparent px-4 py-2"
                   />
                   {elapsed && (
-                    <p className="px-4 pb-1 text-[11px] text-muted-2">Working - started {elapsed}</p>
+                    <p className="px-4 pb-1 text-[11px] text-muted-2">Working. Started {elapsed}</p>
                   )}
                   <CancelRunControl runId={run.id} staffFastReconcile />
                 </div>
@@ -1350,7 +1421,23 @@ export function AgentScheduleModal({
 
   function save() {
     setError(null);
-    const [hour, minute] = time.split(":").map(Number);
+    // A cleared time field used to save 00:00. `"".split(":").map(Number)` is
+    // `[0]`, so hour became 0 and minute undefined, and the server had no way
+    // to tell that from a client who genuinely picked midnight — one slip moved
+    // every future post to the middle of the night. Nothing is submitted until
+    // the time reads as a time; 00:00 still parses, because midnight is a
+    // choice a client is allowed to make.
+    const timing = validateScheduleTiming({
+      time,
+      // Swept as the payload, not as a list: whatever numbers this save is
+      // about to send are the numbers checked.
+      counts: { postsPerWeek, outputsPerRun },
+    });
+    if (!timing.ok) {
+      setError(timing.error);
+      return;
+    }
+    const { hour, minute } = timing;
     startTransition(async () => {
       const result = await configureClientAgentScheduleAction({
         clientId,
@@ -1396,7 +1483,7 @@ export function AgentScheduleModal({
       title={paceOnly ? `${agent.name} pace` : `Keep ${agent.name} running`}
       description={
         paceOnly
-          ? "How often this agent posts for you. Change it whenever you like - it takes effect from the next post."
+          ? "How often this agent posts for you. Change it whenever you like. It takes effect from the next post."
           : "Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
       }
       footer={
@@ -1508,7 +1595,7 @@ export function AgentScheduleModal({
         <div className="rounded-md border border-neon/20 bg-neon-soft/40 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-foreground">Estimated weekly cost</span>
-            <span className="font-mono text-sm text-neon">{weeklyCost} credits</span>
+            <span className="font-mono text-sm text-neon">{creditsLabel(weeklyCost)}</span>
           </div>
           {paceOnly ? (
             /* The weekly total above is computed from the STORED multiplier, so
@@ -1516,18 +1603,32 @@ export function AgentScheduleModal({
                "runs", no "outputs per run", no weekly draft total - each of
                those describes the batch rather than the pace. When one post per
                fire is stored there is no batch to hide and the friendlier
-               sentence is also the true one. */
+               sentence is also the true one.
+
+               WHEN THE MONEY ACTUALLY MOVES (#32). This said "Credits are
+               charged as each post is made", which is a lying state on a screen
+               about money — nothing charges at the moment a post is produced,
+               and nothing charges at publish. The scheduler's fire path
+               (/api/run-scheduled → submitCustomAgentJob) charges UPFRONT, once,
+               before the agent has written anything, and it charges for the
+               whole fire: `chargeMultiplier = outputsPerRun`, so the amount is
+               the per-output price times the outputs that fire will produce.
+               A fire that delivers nothing is refunded in full (the webhook's
+               zero-deliverable and failure refunds); a fire that delivers SOME
+               of its batch is not, which is why only the one-post-per-fire
+               branch below may promise the credits back for a missing post. */
             <p className="mt-1 text-[11px] text-muted-2">
               {outputsPerRun === 1
-                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${costPerOutput} credits each. Credits are charged as each post is made.`
-                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. Credits are charged as each post is made.`}
+                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${creditsLabel(costPerOutput)} each. A post's credits are charged when the agent starts drafting it, not when it goes out; if the post never arrives, they are handed back.`
+                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. A day's credits are charged in full when the agent starts drafting for it, not as posts go out.`}
             </p>
           ) : (
             <>
               <p className="mt-1 text-[11px] text-muted-2">
                 {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
-                {outputsPerRun === 1 ? "" : "s"} × {costPerOutput} credits.
-                Credits are charged when each scheduled run starts.
+                {outputsPerRun === 1 ? "" : "s"} × {creditsLabel(costPerOutput)}.
+                Credits are charged in full when each scheduled run starts, and refunded
+                if it delivers nothing.
               </p>
               <p className="mt-1 text-[11px] text-foreground">
                 {postsPerWeek * outputsPerRun} new draft
@@ -1537,11 +1638,37 @@ export function AgentScheduleModal({
           )}
           {availableCredits !== undefined && (
             <p className={cn("mt-1 text-[11px]", insufficient ? "text-danger" : "text-muted-2")}>
-              {availableCredits} credits currently available.
+              {creditsLabel(availableCredits)} currently available.
             </p>
           )}
         </div>
 
+        {/* WHY SAVE IS OFF, when it is off because of credits (AF-10).
+            `insufficient` has disabled the primary button since F27, and the
+            only sign of it was the availability line above turning red — a
+            disabled control whose reason is a colour on a different sentence,
+            which is the F25 shape exactly. A client out of credits pressed
+            nothing, read "0 credits currently available.", and was told neither
+            that the button was dead nor what to do about it.
+
+            The WORDING is the shared one (`CREDIT_BLOCK_REASON`), not a line of
+            this dialog's own: the run gates beside it already refuse in those
+            words, and a client who meets the refusal here and again on the run
+            button must not read two different explanations of one balance.
+            Staff never see it — `availableCredits` is undefined for them, so
+            `insufficient` is false. */}
+        {insufficient && (
+          <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
+            <p className="text-xs text-warning">{CREDIT_BLOCK_REASON.insufficient_balance}</p>
+            {/* Precisely what is and is not off: Pause is never disabled by
+                the balance, and promising "you can still change the pace" would
+                be describing the very button that just went dead. */}
+            <p className="mt-0.5 text-[11px] text-muted-2">
+              You can still pause this agent. Saving a new pace works again once your balance is
+              topped up.
+            </p>
+          </div>
+        )}
         {blockedBySetup && setupNeeded && (
           <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
             Add the {INTAKE_LABEL[setupNeeded.kind]} agent data first. Every scheduled run drafts
@@ -1581,6 +1708,7 @@ export function RunCustomAgentModal({
   viewerIsClient,
   setup,
   initialPane,
+  stayOnPage,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -1599,6 +1727,23 @@ export function RunCustomAgentModal({
   setup?: AgentSetupState;
   /** "data" opens straight on the agent's data; so does a missing company page. */
   initialPane?: RunPane;
+  /**
+   * Keep a STAFF run's confirmation here instead of navigating to /jobs/<id>
+   * (AF-9).
+   *
+   * Albert on the post-run gesture: "when you click after run the agent, then it
+   * goes back to…". This dialog is only ever mounted from an agent's own detail
+   * page — the legacy panel and the Control Room's staff controls, which is the
+   * whole list — so for staff the successful press replaced the page they were
+   * reading with the raw job record, and every other thing they had open on that
+   * agent (the Control Room tab, the schedule, the outputs) was gone. The run
+   * itself is announced on the page they were already on: `running` on the status
+   * strip covers it now, and AutoRefresh polls it to completion.
+   *
+   * The job is not hidden — the confirmation links it. What changes is that
+   * following the link is a decision rather than a redirect.
+   */
+  stayOnPage?: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -1611,6 +1756,8 @@ export function RunCustomAgentModal({
   const [briefTouched, setBriefTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  /** The run this press produced, so a staff confirmation can link it (AF-9). */
+  const [startedJobId, setStartedJobId] = useState<string | null>(null);
   const intake = intakeFor(setup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
@@ -1721,7 +1868,11 @@ export function RunCustomAgentModal({
         setError(result.error);
         return;
       }
-      if (viewerIsClient) {
+      if (viewerIsClient || stayOnPage) {
+        // The page behind this dialog is the one that narrates the run now, so
+        // the refresh is what makes it start doing so — the in-flight mark and
+        // the poller both key off a job that only exists after this await.
+        if (result.jobId) setStartedJobId(result.jobId);
         setStarted(true);
         router.refresh();
       } else if (result.jobId) {
@@ -1739,12 +1890,38 @@ export function RunCustomAgentModal({
           {/* Drafts no longer reach the client archive at all: F149 filters it
               to approved, non-future items. phase3-design §3's sentence is for
               run-FINISHED surfaces; this one fires the moment a run starts, so
-              it takes the future-tense "reviews it when it lands" form -
-              nobody is reviewing anything yet. */}
+              it takes the future-tense "reviews it when it lands" form —
+              nobody is reviewing anything yet.
+
+              STAFF GET THEIR OWN SENTENCE (AF-9). This card is what a staff
+              member now sees instead of being redirected, and the client's line
+              tells the reader their Karos team will review it — which, to the
+              Karos team, is a machine telling them to wait for themselves. */}
           <p className="text-xs text-muted">
-            The agent is working. This usually takes {profile.estimate.replace("~", "")}. Your Karos team
-            reviews it when it lands - finished posts appear in your Workspace once approved.
+            {viewerIsClient ? (
+              <>
+                The agent is working. This usually takes {profile.estimate.replace("~", "")}. Your
+                Karos team reviews it when it lands, and finished posts appear in your Workspace
+                once approved.
+              </>
+            ) : (
+              <>
+                The agent is working. This usually takes {profile.estimate.replace("~", "")}. This
+                page keeps itself up to date while it runs, and the deliverables land in the review
+                queue.
+              </>
+            )}
           </p>
+          {/* Where the redirect used to go, as a choice. Staff only: /jobs is
+              not a route a CLIENT_USER may open. */}
+          {!viewerIsClient && startedJobId && (
+            <Link
+              href={`/jobs/${startedJobId}`}
+              className="inline-flex items-center gap-1 text-xs text-neon hover:underline"
+            >
+              Open the run <Icon name="ArrowRight" className="h-3 w-3" />
+            </Link>
+          )}
           <Button variant="subtle" onClick={onClose}>
             Done
           </Button>
@@ -1758,15 +1935,35 @@ export function RunCustomAgentModal({
   // re-derives readiness from the agent key. When the page DID prefetch the
   // form (`intake`), the pane below collects it in place instead - a link out
   // would throw away the run the reader was setting up (ruling 7).
+  //
+  // IT NAMES THE FORM AND NOTHING ELSE (#113). It used to describe the shape of
+  // the intake — "the company page, a seat per person, and the ongoing drops" —
+  // which is the X and LinkedIn shape and wrong for the third agent it serves:
+  // Reddit's intake is one account plus how mentions are handled (INTAKE_ASKS
+  // holds all three, per kind). This branch cannot use that table, and the
+  // reason is its own condition: `intake` is null exactly when `setup.kind` is
+  // absent, so the one thing it does not know is WHICH agent it is looking at.
+  // `label` and `href` it does know — the caller resolved both per agent — so
+  // the copy is built from those and makes no claim about the form's contents.
+  //
+  // A BACKSTOP, NOT A ROUTE, and worth stating because it reads like a route.
+  // No mount can reach it today: the agent library passes no `setup`;
+  // StaffAgentControls is staff-only and the detail route prefetches the panes
+  // for staff, so its `setup` always carries a kind; and LegacyAgentPanel — the
+  // one mount a CLIENT reaches — is handed `evaluateLegacyRunGate`'s verdict,
+  // which refuses on `setup_missing` and disables "Create a new post" with the
+  // reason painted and the form linked. Making this reachable would mean
+  // loosening that gate, which is correct as it stands, so it stays a backstop:
+  // if a future mount does skip the gate, the reader meets a true sentence and a
+  // way out rather than the submit core's refusal after writing a brief.
   if (setup && !setup.ready && !intake) {
     return (
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
           <p className="text-sm text-foreground">Set up the {setup.label} first.</p>
           <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from the {setup.label} page: the company page, a seat per
-            person, and the ongoing drops. It takes a few minutes to fill in once, and the agent
-            will not run without it.
+            This agent drafts from what is saved on the {setup.label} page, and it will not
+            run until that is there. It takes a few minutes to fill in, once.
           </p>
           <div className="flex items-center gap-2 pt-1">
             <a
@@ -1825,7 +2022,9 @@ export function RunCustomAgentModal({
                 <p className="text-xs text-muted-2">
                   <Icon name="Clock" className="mr-1 inline h-3 w-3" />
                   {profile.estimate}. You can leave this page; the run continues.
-                  {viewerIsClient && <span className="ml-1">Costs {agentRunCost(agent)} credits.</span>}
+                  {viewerIsClient && (
+                    <span className="ml-1">Costs {creditsLabel(agentRunCost(agent))}.</span>
+                  )}
                 </p>
                 <Button variant="accent" onClick={submit} loading={pending}>
                   {pending ? "Starting…" : "Start run"}
@@ -2202,7 +2401,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           <Label htmlFor="ae-desc">Description (internal)</Label>
           <Textarea id="ae-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
           <p className="mt-1 text-xs text-muted-2">
-            The lab manifest blurb. Staff surfaces only - clients never see this.
+            The lab manifest blurb. Staff surfaces only. Clients never see this.
           </p>
         </div>
         <div>
@@ -2217,7 +2416,8 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           />
           <p className="mt-1 text-xs text-muted-2">
             What the client reads on the agent card and in the run dialog: 1–2 sentences, sentence
-            case, no product codes. Leave empty and the card falls back to the internal description.
+            case, no product codes. Leave it empty and every client surface reads a generic keyed
+            line instead. The internal description above never reaches them.
           </p>
         </div>
         <div>
@@ -2313,7 +2513,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           />
           <p className="mt-1 text-xs text-muted-2">
             `step name: model id`, one per line. Only takes effect for a skill whose steps are
-            named subagents matching these names — a no-op otherwise. Leave empty to run the whole
+            named subagents matching these names, and is a no-op otherwise. Leave empty to run the whole
             job on the task type&apos;s single default model, as today.
           </p>
         </div>
@@ -2591,7 +2791,7 @@ export function ClientAgentAccessCard({
       {error && <p className="text-xs text-danger">{error}</p>}
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-2">
-          {saved ? "Saved." : "Checked agents appear on the client's AI Agents page, billed per run."}
+          {saved ? "Saved." : "Checked agents appear on the client's AI agents page, billed per run."}
         </p>
         <Button size="sm" variant="accent" onClick={save} loading={pending} disabled={!dirty}>
           Save access

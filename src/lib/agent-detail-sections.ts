@@ -2,16 +2,23 @@ import "server-only";
 
 import {
   getAgentIntake,
+  getAgentProfileDocData,
   listAgentIntake,
   listClientSeats,
   listXNewsUpdates,
   listXTakes,
 } from "@/lib/data";
+import type { AgentProfileScopeFields } from "@/lib/data";
 import {
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
 } from "@/lib/custom-agent-launch";
+import {
+  toLiIntakeView,
+  toRedditIntakeView,
+  toXIntakeView,
+} from "@/lib/agent-intake-views";
 import { isOptionsMode } from "@/lib/client-agents";
 import type {
   AgentIntake,
@@ -40,9 +47,14 @@ import type {
  *  1. `toAgentInputRows` builds by WHITELIST. An intake document carries
  *     `createdBy` (a uid), a private CV path and URL, and every other agent's
  *     fields — the three families share one collection. What crosses is a
- *     label, a handle, a count and two timestamps; the ANSWERS stay on the
- *     intake page, behind the client-safe views that already redact them
- *     (toXIntakeView / toLiIntakeView / toRedditIntakeView).
+ *     label, a handle, a count, two timestamps, and — since AF-7 — the client's
+ *     own ANSWERS, taken from the very functions the intake page renders
+ *     (toXIntakeView / toLiIntakeView / toRedditIntakeView), never from the
+ *     document. Albert: "your X details — this is a button here, but realistically
+ *     it should show on this page." Reading the shared view rather than projecting
+ *     the doc again is the whole safety of that: there is one whitelist, and a
+ *     field added to `AgentIntake` reaches this band only if somebody first
+ *     decided it was client-safe on the intake surface.
  *  2. `buildAgentSetupFacts` never hands a client a number that decomposes into
  *     the batch shape (A3/A4). Runs-per-week and outputs-per-run multiply out
  *     to "your week is generated in one lump", which is the fact the whole slot
@@ -52,12 +64,23 @@ import type {
 
 /* ──────────────────────── inputs: the intake documents ─────────────────── */
 
+/** One saved answer, as the band prints it. */
+export interface AgentInputAnswer {
+  /** The question, in the reader's words ("Never post about"). */
+  label: string;
+  /** Their answer, already a string — a list is joined, a flag is a word. */
+  value: string;
+}
+
+/** How many rows of a repeating drop (news, takes) the band carries. */
+export const INPUT_ANSWERS_SHOWN = 5;
+
 /** One intake document, as a browser may receive it. */
 export interface AgentInputRow {
   id: string;
   /** What this document is, in the reader's words ("Company profile"). */
   label: string;
-  /** One line of what is stored — never the answers themselves. */
+  /** One line of what is stored — the handle, or a count of the drop's rows. */
   detail: string;
   /**
    * Epoch millis of the last save. Null when nothing has been saved yet, which
@@ -67,6 +90,116 @@ export interface AgentInputRow {
   filled: boolean;
   /** lucide name for the row mark. */
   icon: string;
+  /**
+   * The client's own saved answers, rendered inline under the row (AF-7).
+   *
+   * Absent — not empty — for a document with nothing in it, so an unfilled row
+   * stays the plain link to the form it is missing rather than growing an empty
+   * disclosure. Every value here came out of a client-safe intake view; nothing
+   * reads `AgentIntake` directly, and the key-set test in
+   * agent-detail-sections.test.ts is what holds that line.
+   */
+  answers?: AgentInputAnswer[];
+}
+
+/** Drop a pair whose value is blank, so the band never prints a labelled nothing. */
+function answer(label: string, value: string | null | undefined): AgentInputAnswer[] {
+  const text = value?.trim();
+  return text ? [{ label, value: text }] : [];
+}
+
+/** Same, for the list-valued fields (roster, subreddits). */
+function listAnswer(label: string, values: readonly string[] | undefined): AgentInputAnswer[] {
+  const items = (values ?? []).map((v) => v.trim()).filter(Boolean);
+  return items.length > 0 ? [{ label, value: items.join(", ") }] : [];
+}
+
+/**
+ * The client's X answers, in the order the intake page asks for them.
+ *
+ * Takes the VIEW, not the document. `toXIntakeView` is the whitelist and this is
+ * only the register — which question each field answers, in the client's words —
+ * so a field that view does not carry cannot be labelled into existence here.
+ */
+function xAnswers(view: ReturnType<typeof toXIntakeView>): AgentInputAnswer[] {
+  if (!view) return [];
+  return [
+    ...answer("Account", view.handle),
+    ...answer("How you want to come across", view.comeAcross),
+    ...answer("Never post about", view.offLimits),
+    ...listAnswer("Accounts you follow", view.roster),
+    // A tri-state: unset means "we work it out", which is a different answer
+    // from "no" and has to read as one.
+    ...(view.premium === undefined ? [] : answer("Premium account", view.premium ? "Yes" : "No")),
+  ];
+}
+
+const LI_FALLBACK_LABEL: Record<"writing" | "about", string> = {
+  writing: "Writing sample",
+  about: "About you",
+};
+
+function liAnswers(view: ReturnType<typeof toLiIntakeView>): AgentInputAnswer[] {
+  if (!view) return [];
+  return [
+    ...answer("Account", view.handle),
+    ...answer("Role", view.role),
+    ...answer("What you post about", view.focus),
+    ...answer("How you want to come across", view.comeAcross),
+    ...answer("Never post about", view.offLimits),
+    // The CV's NAME, which is all the client-safe view carries. Its path and its
+    // signed URL stay private, and this band has no way to reach them.
+    ...answer("CV on file", view.cvName),
+    ...(view.fallbackKind ? answer(LI_FALLBACK_LABEL[view.fallbackKind], view.fallbackText) : []),
+  ];
+}
+
+const REDDIT_MODE_LABEL: Record<"warming" | "established", string> = {
+  warming: "Warming up a new account",
+  established: "Established account",
+};
+
+/**
+ * One intake document's answers, through its OWN family's whitelist.
+ *
+ * A switch over the union rather than a pair of lookup maps, so a fourth intake
+ * family is a compile error here instead of a document silently projected through
+ * whichever branch happened to be last — the three views take the same `AgentIntake`
+ * and keep different fields of it, so handing an X document to `toLiIntakeView`
+ * would publish LinkedIn's fields off an X form.
+ */
+function intakeAnswersFor(
+  agent: AgentIntake["agent"],
+  doc: AgentIntake | null,
+  xProfile: AgentProfileScopeFields | null,
+): AgentInputAnswer[] {
+  if (!doc && !(agent === "x" && xProfile)) return [];
+  switch (agent) {
+    case "x":
+      // Intake + profile scope together (x-agent-v2): the handle and
+      // off-limits moved to the profile doc; roster/premium stay on intake.
+      return xAnswers(toXIntakeView(doc, xProfile));
+    case "linkedin":
+      return liAnswers(toLiIntakeView(doc));
+    case "reddit":
+      return redditAnswers(toRedditIntakeView(doc));
+  }
+}
+
+function redditAnswers(view: ReturnType<typeof toRedditIntakeView>): AgentInputAnswer[] {
+  if (!view) return [];
+  return [
+    ...answer("Account", view.handle),
+    ...(view.mode ? answer("Account stage", REDDIT_MODE_LABEL[view.mode]) : []),
+    ...answer("Account history", view.accountHistory),
+    ...listAnswer("Subreddits you are welcome in", view.subreddits),
+    // The fact a dated row cannot state, and the reason the finder card exists
+    // beside this band: being banned somewhere is something a client wants on
+    // the page rather than behind a link.
+    ...listAnswer("Off limits", view.offLimitsSubreddits),
+    ...answer("Disclosure", view.disclosurePosture),
+    ...answer("Never post about", view.offLimits),
+  ];
 }
 
 /** The "What it runs on" section for one of the three intake-driven agents. */
@@ -112,8 +245,17 @@ export function toAgentInputRows(args: {
   intake: AgentIntake[];
   news: XNewsUpdate[];
   takes: XTake[];
+  /** X only — the profile-scope doc that now carries handle/off-limits (x-agent-v2). */
+  xProfile?: AgentProfileScopeFields | null;
 }): AgentInputRow[] {
   const rows: AgentInputRow[] = [];
+  const answersOf = (doc: AgentIntake | null): { answers?: AgentInputAnswer[] } => {
+    const saved = intakeAnswersFor(args.agent, doc, args.xProfile ?? null);
+    // ABSENT, not empty. A row with nothing saved stays the plain link to the
+    // form it is missing; growing an empty disclosure on it would be a control
+    // that opens onto nothing.
+    return saved.length > 0 ? { answers: saved } : {};
+  };
 
   rows.push({
     id: "company",
@@ -124,6 +266,7 @@ export function toAgentInputRows(args: {
     updatedAt: args.company?.updatedAt ?? null,
     filled: Boolean(args.company),
     icon: args.agent === "reddit" ? "User" : "Building2",
+    ...answersOf(args.company),
   });
 
   // Reddit runs on the company account alone — it has no seat model, and the
@@ -145,6 +288,10 @@ export function toAgentInputRows(args: {
         updatedAt: doc?.updatedAt ?? seat.updatedAt,
         filled: Boolean(doc),
         icon: "User",
+        // THIS SEAT's document and no other. `intakeBySeat` is keyed on the
+        // seat id, so the row cannot carry a colleague's answers even if two
+        // seats share a name.
+        ...answersOf(doc),
       });
     }
   }
@@ -163,6 +310,18 @@ export function toAgentInputRows(args: {
       updatedAt: latest?.createdAt ?? null,
       filled: args.news.length > 0,
       icon: "FileText",
+      // The drop's own rows are already the client's words, typed by them on
+      // this client's own news box — there is no shared collection and no other
+      // seat's data to ride along, so the whitelist here is the two fields the
+      // box itself renders. Capped: this is a peek, and the box is where the
+      // whole list lives.
+      ...(args.news.length > 0
+        ? {
+            answers: args.news
+              .slice(0, INPUT_ANSWERS_SHOWN)
+              .map((update) => ({ label: update.date, value: update.title })),
+          }
+        : {}),
     });
   }
 
@@ -178,6 +337,16 @@ export function toAgentInputRows(args: {
       updatedAt: latest?.createdAt ?? null,
       filled: args.takes.length > 0,
       icon: "PenLine",
+      // Same rule as the news drop: the client's own lines, two fields, capped.
+      // `topic` when they gave one, the date when they did not, so the label
+      // always says something rather than being blank on half the rows.
+      ...(args.takes.length > 0
+        ? {
+            answers: args.takes
+              .slice(0, INPUT_ANSWERS_SHOWN)
+              .map((take) => ({ label: take.topic?.trim() || take.date, value: take.take })),
+          }
+        : {}),
     });
   }
 
@@ -207,15 +376,23 @@ export async function readAgentInputDocs(
   const agent = intakeFamilyFor(agentKey);
   if (!agent) return null;
 
-  const [company, intake, seats, news, takes] = await Promise.all([
+  const [company, intake, seats, news, takes, xProfile] = await Promise.all([
     getAgentIntake(clientId, agent, null),
     agent === "reddit" ? Promise.resolve<AgentIntake[]>([]) : listAgentIntake(clientId, agent),
     agent === "reddit" ? Promise.resolve<ClientSeat[]>([]) : listClientSeats(clientId),
     agent === "reddit" ? Promise.resolve<XNewsUpdate[]>([]) : listXNewsUpdates(clientId),
     agent === "x" ? listXTakes(clientId) : Promise.resolve<XTake[]>([]),
+    // x-agent-v2 moved the company handle/off-limits/come-across into the
+    // profile-scope doc; the X view reads intake + profile together.
+    agent === "x" ? getAgentProfileDocData(clientId, "x") : Promise.resolve(null),
   ]);
 
-  return { agent, rows: toAgentInputRows({ agent, company, seats, intake, news, takes }) };
+  return {
+    agent,
+    // The COMPANY scope of the profile doc — per-seat scopes stay behind the
+    // intake surface, same as before.
+    rows: toAgentInputRows({ agent, company, seats, intake, news, takes, xProfile: xProfile?.company ?? null }),
+  };
 }
 
 /**

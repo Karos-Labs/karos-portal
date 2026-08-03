@@ -137,8 +137,39 @@ async function requestJobCancellation(jobId: string, preloaded?: Job): Promise<{
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Cancel failed" };
   }
+  /**
+   * RE-READ BEFORE THE APPEND, for the same reason the webhook does.
+   *
+   * `job.events` was read BEFORE `cancelAgentServiceJob` — an unbounded HTTP call
+   * — and `cancelClientAgentJobAction` widens the window further by preloading
+   * the job and passing it in. Writing the whole array back from that base erases
+   * anything appended meanwhile, and the concurrent writer is not hypothetical:
+   * it is the webhook delivery this cancel is racing. Its lines are the ones a
+   * reader most needs — "N client-facing deliverable(s) attached", the per-artifact
+   * re-host failures, and "Refunded N credits for the failed run" — so losing them
+   * leaves a job in `review` whose timeline says only that a cancel was asked for.
+   *
+   * The webhook fixed its own direction and this is the mirror; a read-modify-write
+   * hole is only closed when BOTH writers re-read. A failed re-read falls back to
+   * the array already held: stale but real, and dropping this event to punish a
+   * read failure would lose more than it protects.
+   *
+   * NOT ATOMIC, and the residual is stated rather than implied: two writes landing
+   * inside the same instant can still interleave. The atomic form needs a
+   * transaction in the data layer — see the note there — and is a bigger change
+   * than this hole warrants on its own.
+   */
+  let freshJob: Job | null = null;
+  try {
+    freshJob = await getJob(jobId);
+  } catch (e) {
+    console.error("[cancel] pre-write job re-read failed, appending to the preloaded copy:", e);
+  }
   await updateJob(jobId, {
-    events: [...job.events, { at: Date.now(), level: "info", message: "Cancellation requested" }],
+    events: [
+      ...(freshJob?.events ?? job.events),
+      { at: Date.now(), level: "info", message: "Cancellation requested" },
+    ],
     updatedAt: Date.now(),
   });
   revalidatePath(`/jobs/${jobId}`);

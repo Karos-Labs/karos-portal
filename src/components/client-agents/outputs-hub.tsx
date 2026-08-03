@@ -6,6 +6,7 @@ import { Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { assetImages } from "@/lib/asset-images";
+import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { promoteTestAssetAction, dismissTestAssetAction } from "@/lib/actions/asset-actions";
 import { relativeTime, cn } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
@@ -83,9 +84,13 @@ export function OutputsHub({
                 </p>
               </button>
               {isTest && <Badge tone="warning">TEST</Badge>}
-              <Badge tone="neutral" className="capitalize">
-                {asset.status}
-              </Badge>
+              {/* The staff register, not the stored enum under CSS `capitalize`.
+                  This hub is staff-only — the Control Room is its only mount and
+                  the agent page gates that on `isStaff` — which is the same fact
+                  its hard-coded `viewerIsClient={false}` below already rests on.
+                  `capitalize` had to go with it: it title-cases EVERY word, so a
+                  two-word label would render "Awaiting Review". */}
+              <Badge tone="neutral">{assetStatusLabel(asset.status, false)}</Badge>
               {isTest && !dismissed && (
                 <div className="flex shrink-0 items-center gap-1">
                   <Button
@@ -110,10 +115,14 @@ export function OutputsHub({
           );
         })}
       </ul>
+      {/* Literal `false`, not a threaded prop: this hub is the Control Room's,
+          and the Control Room is mounted behind `isStaff` on the agent detail
+          page — there is no client reader to ask. */}
       <AssetDetailModal
         asset={openAsset}
         open={openAsset != null}
         onClose={() => setOpenAssetId(null)}
+        viewerIsClient={false}
       />
     </>
   );

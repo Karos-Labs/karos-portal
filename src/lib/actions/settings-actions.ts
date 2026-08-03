@@ -6,7 +6,6 @@ import { requireUser } from "@/lib/auth";
 import {
   upsertClientSettings,
   listClientTasks,
-  chargeClientCredits,
   claimTaskForExecution,
   releaseTaskClaim,
 } from "@/lib/data";
@@ -16,7 +15,8 @@ import {
   inferOwnerEngine,
   plannedTaskExecutionCost,
 } from "@/lib/execution-engine";
-import { CreditError, isBillableClientActor } from "@/lib/credits";
+import { isBillableClientActor } from "@/lib/credits";
+import { chargeClientModelCall } from "@/lib/client-model-charge";
 import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import type { ClientTask } from "@/lib/types";
 
@@ -66,30 +66,37 @@ export async function runPendingTasksBatchAction(
       if (await clientTaskRunRefusal({ user, clientId, task: t })) continue;
       const claimed = await claimTaskForExecution(t.id, clientId, ["pending"]);
       if (!claimed) continue;
+      // Charged through `chargeClientModelCall` (lib/client-model-charge.ts),
+      // the app's one answer to "a client triggered a model call" — this loop
+      // used to be a fifth hand-written copy of it. The two failure shapes it
+      // has always distinguished are preserved exactly: a credit DENIAL comes
+      // back as `denied` and stops the batch after running what was funded;
+      // anything else still throws and is caught below.
+      let denied: string | null;
       try {
-        await chargeClientCredits({
+        ({ denied } = await chargeClientModelCall({
+          user,
           clientId,
           amount: await plannedTaskExecutionCost(claimed),
           operation: "task_execution",
           reason: `Task run · ${claimed.title.slice(0, 80)}`,
           jobId: t.id,
-          actorUid: user.uid,
-          actorName: user.name,
-        });
-        claimedIds.push(t.id);
+        }));
       } catch (e) {
         // Release only the CURRENT (uncharged) claim. Earlier tasks are
         // already charged — releasing them would strand their charges, so
         // they stay claimed and run with the batch.
         await releaseTaskClaim(t.id, "pending");
-        if (e instanceof CreditError) {
-          // Out of credits/caps — run what was already funded.
-          firstDenial = e.message;
-          break;
-        }
         console.error("[task-batch] charge failed unexpectedly:", e);
         break;
       }
+      if (denied !== null) {
+        await releaseTaskClaim(t.id, "pending");
+        // Out of credits/caps — run what was already funded.
+        firstDenial = denied;
+        break;
+      }
+      claimedIds.push(t.id);
     }
     if (claimedIds.length === 0 && firstDenial) {
       return { ok: false, error: firstDenial };

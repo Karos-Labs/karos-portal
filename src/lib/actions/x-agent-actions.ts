@@ -25,13 +25,17 @@ import {
   createClientSeat,
   getAgentIntake,
   getClient,
-  getClientContextDoc,
+  getClientContextDocInTierOrder,
   getClientSeat,
   listClientSeats,
   upsertAgentIntake,
   upsertAgentProfileScope,
 } from "@/lib/data";
 import { requireClientAccess } from "./_shared";
+import { CREDIT_COSTS } from "@/lib/credits";
+import { withClientModelCharge } from "@/lib/client-model-charge";
+import type { ContextDocTier } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 
 const MAX_TEXT = 2_000;
 /** originalText is system-captured (pick time), not user-typed — truncate rather than error,
@@ -87,7 +91,7 @@ function parseHandle(raw: string): string | null | { error: string } {
   if (!/^[A-Za-z0-9_]{1,15}$/.test(trimmed)) {
     return {
       error:
-        "That is not a valid X handle — letters, numbers and underscores only, up to 15 characters. Leave it empty if you do not have one yet.",
+        "That is not a valid X handle. Letters, numbers and underscores only, up to 15 characters. Leave it empty if you do not have one yet.",
     };
   }
   return `@${trimmed}`;
@@ -202,7 +206,7 @@ export async function addXSeatAction(input: {
   const existing = (await listClientSeats(input.clientId)).find((s) => s.slug === slug);
   let seatId = existing?.id;
   if (seatId && (await getAgentIntake(input.clientId, "x", seatId))) {
-    return { error: `An X seat for "${name}" already exists — edit it instead.` };
+    return { error: `An X seat for "${name}" already exists. Edit it instead.` };
   }
   const now = Date.now();
   if (!seatId) {
@@ -246,25 +250,64 @@ export async function addXSeatAction(input: {
  * already know about the client (onboarding docs + profile), grounded with
  * live web search. The client approves or edits — nothing is engaged off an
  * unapproved list, and the engine re-verifies every handle live at run time.
+ *
+ * PRICED AT `CREDIT_COSTS.chatMessage` (1), which is not a new price but the
+ * existing rate for the nearest operation: that constant's own definition is
+ * "one copilot chat message (Sonnet, up to 6 tool steps)", and this is one
+ * Sonnet call with up to 4 web-search tool uses. Same model, same order of tool
+ * budget, one press of a button — so it charges what a copilot turn charges.
+ *
+ * Booked under `ai_tool`, not `chat_message`, because the client's own spend
+ * breakdown groups by operation: an account suggestion filed under "Copilot"
+ * would tell them they spent credits on a feature they did not use. The price
+ * comes from the nearest operation; the LABEL has to name the real one.
  */
 export async function proposeXRosterAction(input: {
   clientId: string;
   /** When proposing for a person's seat rather than the company page. */
   seatName?: string;
 }): Promise<{ handles?: Array<{ handle: string; why: string }>; error?: string }> {
-  await requireClientAccess(input.clientId);
+  const user = await requireClientAccess(input.clientId);
   const client = await getClient(input.clientId);
   if (!client) return { error: "Client not found." };
 
-  // Client tier: this suggestion runs for client users too, so it must read the
-  // published copy — the one a correction updates and the one that carries no
-  // internal analyst notes.
+  // WHICH TIERS THIS ACTOR'S CONTEXT MAY COME FROM.
+  //
+  // A CLIENT_USER gets the published copy or nothing. The model's one-line
+  // reasons render on their screen (x-agent-intake.tsx paints `why` under the
+  // field), and the internal copy is the uncondensed analyst version — the
+  // condensation pass exists to strip internal methodology notes and
+  // competitor-derogatory labels out of it (src/lib/intel/condense.ts). Feeding
+  // it to a model whose output a client reads is the exact thing
+  // intel-actions.ts refuses in two places, in those words.
+  //
+  // STAFF may also read the internal copy, and that is what closes the defect:
+  // a client whose workspace was imported from the lab repo has internal-tier
+  // documents ONLY (scripts/import-lab-client.ts writes tier "internal" and
+  // nothing else), so an exact client-tier read returned nothing and staff were
+  // told to "finish onboarding" for a client whose onboarding is finished.
+  // Staff are already entitled to that copy and are the only reader of their own
+  // proposal, so for them it is a legitimate second source.
+  //
+  // ALLOWLIST, so it fails closed: the staff branch is the one that has to be
+  // named. Any role that is not one of the two staff roles — today only
+  // CLIENT_USER, and whatever is added tomorrow — falls to the client tier
+  // alone. `impersonatedBy` is written out rather than left implicit in the
+  // role: an admin in "View as Client" reaches this as a CLIENT_USER, and
+  // impersonation exists to see what the client sees, not to widen what a
+  // client's own screen is built from (the same call isStaffCopilotActor makes).
+  // "internal-only" (client-guidelines, action-plan) is in neither list and so
+  // is unreadable here for anybody.
+  const staffActor =
+    !user.impersonatedBy && (user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE");
+  const contextTiers: ContextDocTier[] = staffActor ? ["client", "internal"] : ["client"];
   const [audience, strategy] = await Promise.all([
-    getClientContextDoc(input.clientId, "target-audience", "client"),
-    getClientContextDoc(input.clientId, "market-strategy", "client"),
+    getClientContextDocInTierOrder(input.clientId, "target-audience", contextTiers),
+    getClientContextDocInTierOrder(input.clientId, "market-strategy", contextTiers),
   ]);
+  const category = clientCategoryValue(client);
   const context = [
-    `Company: ${client.name}${client.industry ? ` (${client.industry})` : ""}${client.website ? ` — ${client.website}` : ""}`,
+    `Company: ${client.name}${category ? ` (${category})` : ""}${client.website ? ` · ${client.website}` : ""}`,
     client.brief ? `About: ${client.brief}` : "",
     audience?.content ? `TARGET AUDIENCE (excerpt):\n${audience.content.slice(0, 4_000)}` : "",
     strategy?.content ? `MARKET STRATEGY (excerpt):\n${strategy.content.slice(0, 4_000)}` : "",
@@ -272,36 +315,73 @@ export async function proposeXRosterAction(input: {
     .filter(Boolean)
     .join("\n\n");
   if (!audience?.content && !strategy?.content && !client.brief) {
-    return { error: "Not enough client context yet — finish onboarding first, or type accounts manually." };
+    // NOT "finish onboarding first". That named a remedy that is wrong for the
+    // case this refusal still covers: a client whose documents were imported at
+    // internal tier only has finished onboarding, and what is missing is the
+    // published copy this reader is allowed to draw on. The line now names work
+    // that actually unblocks it, and leaves the manual route where it was.
+    return {
+      error:
+        "Not enough about your brand on file yet to suggest accounts. Ask your Karos team to finish your brand documents, or type accounts manually.",
+    };
   }
 
   const forWhom = input.seatName
-    ? `a personal X account belonging to ${input.seatName}, a person at ${client.name}. Favor respected operators, founders, and voices this person would credibly reply to — people a notch or two bigger than them in the same space.`
+    ? `a personal X account belonging to ${input.seatName}, a person at ${client.name}. Favor respected operators, founders, and voices this person would credibly reply to. People a notch or two bigger than them in the same space.`
     : `the company X page of ${client.name}. Favor the loudest credible voices their buyers already follow in this niche.`;
 
-  try {
-    const { text } = await generateText({
-      model: anthropic(MODELS.SONNET),
-      tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
-      system:
-        "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active — well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
-      prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
-    });
-    const match = text.match(/\[[\s\S]*\]/);
-    if (!match) return { error: "Could not build a proposal — try again or type accounts manually." };
-    const parsed = JSON.parse(match[0]) as Array<{ handle?: string; why?: string }>;
-    const handles = parsed
-      .map((p) => ({
-        handle: `@${String(p.handle ?? "").replace(/^@+/, "").trim()}`,
-        why: String(p.why ?? "").slice(0, 200),
-      }))
-      .filter((p) => /^@[A-Za-z0-9_]{1,15}$/.test(p.handle))
-      .slice(0, 15);
-    if (handles.length < 5) return { error: "Proposal came back too thin — try again or type accounts manually." };
-    return { handles };
-  } catch {
-    return { error: "Could not build a proposal right now — try again or type accounts manually." };
-  }
+  const outcome = await withClientModelCharge(
+    {
+      user,
+      clientId: input.clientId,
+      amount: CREDIT_COSTS.chatMessage,
+      operation: "ai_tool",
+      // Client copy: the ledger feed renders ungated to a CLIENT_USER.
+      reason: input.seatName
+        ? `Account suggestions · X agent · ${input.seatName.slice(0, 40)}`
+        : "Account suggestions · X agent",
+    },
+    async ({ refund }) => {
+      // Every failure below hands the credit back. The client pressed a button
+      // that promised a list of accounts; if they did not get one, they did not
+      // get the thing they paid for — whether the model threw, returned
+      // unparseable text, or returned too few usable handles.
+      try {
+        const { text } = await generateText({
+          model: anthropic(MODELS.SONNET),
+          tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
+          system:
+            "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active, such as well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
+          prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
+        });
+        const match = text.match(/\[[\s\S]*\]/);
+        if (!match) {
+          await refund("Refund · account suggestions came back empty");
+          return { error: "Could not build a proposal. Try again or type accounts manually." };
+        }
+        const parsed = JSON.parse(match[0]) as Array<{ handle?: string; why?: string }>;
+        const handles = parsed
+          .map((p) => ({
+            handle: `@${String(p.handle ?? "").replace(/^@+/, "").trim()}`,
+            why: String(p.why ?? "").slice(0, 200),
+          }))
+          .filter((p) => /^@[A-Za-z0-9_]{1,15}$/.test(p.handle))
+          .slice(0, 15);
+        if (handles.length < 5) {
+          await refund("Refund · account suggestions came back empty");
+          return { error: "Proposal came back too thin. Try again or type accounts manually." };
+        }
+        return { handles };
+      } catch {
+        // This catch is why the refund is spelled here rather than left to the
+        // wrapper: it swallows the throw to keep the client-safe sentence, so
+        // the wrapper never sees a failure to pair a refund to.
+        await refund("Refund · account suggestions failed");
+        return { error: "Could not build a proposal right now. Try again or type accounts manually." };
+      }
+    },
+  );
+  return outcome.ok ? outcome.result : { error: outcome.denied };
 }
 
 export async function saveXSeatIntakeAction(input: {
@@ -391,7 +471,7 @@ export async function addXTakeAction(input: {
   const user = await requireClientAccess(input.clientId);
   const seat = await getClientSeat(input.seatId);
   if (!seat || seat.clientId !== input.clientId) return { error: "Seat not found." };
-  if (!input.take.trim()) return { error: "Write the take — one honest sentence is enough." };
+  if (!input.take.trim()) return { error: "Write the take. One honest sentence is enough." };
   if (!DATE_RE.test(input.date)) return { error: "Pick a date for this take." };
   if (input.take.length > MAX_TEXT) return { error: "Please keep the take under 2,000 characters." };
   await addXTake({
@@ -449,10 +529,10 @@ export async function addXDraftFeedbackAction(input: {
     return { error: "Paste the final text you actually posted." };
   }
   if (input.action === "not_posted" && !input.reason?.trim()) {
-    return { error: "Tell us why this one did not run — that is what teaches the agent." };
+    return { error: "Tell us why this one did not run. That is what teaches the agent." };
   }
   if (input.action === "note" && !input.reason?.trim()) {
-    return { error: "Write the feedback — as much detail as you like." };
+    return { error: "Write the feedback. As much detail as you like." };
   }
   if ((input.finalText?.length ?? 0) > MAX_TEXT || (input.reason?.length ?? 0) > MAX_TEXT) {
     return { error: "Please keep each answer under 2,000 characters." };

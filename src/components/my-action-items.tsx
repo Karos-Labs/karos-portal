@@ -30,6 +30,19 @@ export function MyActionItems({ items: initialItems, users, clients, currentUser
   const [items, setItems] = useState<ActionItem[]>(initialItems);
   const [filter, setFilter] = useState<Filter>("active");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /**
+   * The item that just left this list, and where it came from.
+   *
+   * Reassigning drops the row from `visible` the instant the write lands
+   * (`assigneeUserId === currentUserId`), and THE ROW WAS THE ONLY THING
+   * CARRYING THE LINK TO THE MEETING — so the one action a person takes next
+   * (check the transcript, or undo a mis-click on a narrow select) had nowhere
+   * to start from (#116). Held here rather than on the row, because the row is
+   * exactly what unmounts.
+   */
+  const [reassigned, setReassigned] = useState<
+    { id: string; title: string; transcriptId: string; toName: string | null } | null
+  >(null);
 
   const visible = useMemo(
     () =>
@@ -84,7 +97,42 @@ export function MyActionItems({ items: initialItems, users, clients, currentUser
               : "Action items assigned to you from meetings will appear here."
           }
         />
-      ) : (
+      ) : null}
+
+      {/*
+        The trace the reassigned row took with it (#116). Rendered ABOVE the list
+        and outside the empty-state branch, so it survives handing over the last
+        item you had — which is exactly when losing the meeting link hurts most.
+        `role="status"` because the row vanishes under the pointer that changed
+        the select, and focus lands on a control that no longer exists.
+      */}
+      {reassigned && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-md border border-border bg-surface-2/40 px-3 py-2"
+        >
+          <p className="min-w-0 text-xs text-muted">
+            <span className="font-medium text-foreground">{reassigned.title}</span> is now{" "}
+            {reassigned.toName ? `${reassigned.toName}'s` : "unassigned"}.{" "}
+            <Link
+              href={`/transcripts/${reassigned.transcriptId}`}
+              className="text-neon underline underline-offset-2"
+            >
+              Open the meeting
+            </Link>
+          </p>
+          <button
+            type="button"
+            onClick={() => setReassigned(null)}
+            className="shrink-0 text-[11px] text-muted-2 transition-colors hover:text-foreground"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {visible.length > 0 ? (
         <ul className="divide-y divide-border">
           {visible.map((item) => (
             <ActionItemRow
@@ -99,10 +147,18 @@ export function MyActionItems({ items: initialItems, users, clients, currentUser
                 patchItem(item.id, patch);
                 router.refresh();
               }}
+              onReassigned={(toName) =>
+                setReassigned({
+                  id: item.id,
+                  title: item.text,
+                  transcriptId: item.transcriptId,
+                  toName,
+                })
+              }
             />
           ))}
         </ul>
-      )}
+      ) : null}
     </Card>
   );
 }
@@ -117,6 +173,7 @@ function ActionItemRow({
   expanded,
   onToggleExpand,
   onPatched,
+  onReassigned,
 }: {
   item: ActionItem;
   users: AppUser[];
@@ -125,6 +182,8 @@ function ActionItemRow({
   expanded: boolean;
   onToggleExpand: () => void;
   onPatched: (patch: Partial<ActionItem>) => void;
+  /** Raised when this row hands the item to someone else and is about to unmount. */
+  onReassigned: (toName: string | null) => void;
 }) {
   const [pending, setPending] = useState(false);
   const [comment, setComment] = useState("");
@@ -155,6 +214,12 @@ function ActionItemRow({
     await run(async () => {
       const target = users.find((u) => u.uid === userId);
       await reassignActionItemAction(item.id, userId || null);
+      // Only when it actually LEAVES this list. Reassigning to yourself, or
+      // clearing to Unassigned from someone else's name, keeps the row — and a
+      // notice about a row still on screen is its own small lie.
+      if (userId !== currentUserId) {
+        onReassigned(target ? (target.name ?? target.email) : null);
+      }
       return {
         assigneeUserId: userId || null,
         assigneeName: target ? (target.name ?? target.email) : null,

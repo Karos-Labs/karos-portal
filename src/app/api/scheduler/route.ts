@@ -20,9 +20,22 @@ const MAX_ERROR_CHARS = 400;
 /**
  * Recurring-generator cron. Every tick it fires the ScheduledRuns whose
  * nextRunAt has passed — each one submits a `custom` agent-service job (the
- * referenced CustomAgent supplies the entry skill + instructions). System-fired
- * and free: scheduled runs never charge the client's credits. Draft-first is
- * preserved downstream — the webhook lands every deliverable as a draft.
+ * referenced CustomAgent supplies the entry skill + instructions). Draft-first
+ * is preserved downstream — the webhook lands every deliverable as a draft.
+ *
+ * THE SECOND SCHEDULING SYSTEM, and the unbilled one. `/api/run-scheduled`
+ * drains `plannedScheduledRuns` and hands the submit core an explicit `bill`
+ * decision per row; this route drains `scheduledRuns` and passes
+ * `charge: null` unconditionally, so every fire here is free to the client,
+ * absent from the credit ledger, and real Anthropic spend that no client
+ * invoice traces. Rows are created only from the client settings card.
+ *
+ * WHETHER TO RETIRE IT OR START BILLING IT IS A PRODUCT/MONEY DECISION and
+ * belongs to Daniel — nothing in this pass changes either. What did change is
+ * that the rows stopped being invisible: the client's AI agents page (staff
+ * branch) lists any legacy schedule per agent, the /jobs upcoming panel marks
+ * these fires "not billed to the client", and the settings card says on each
+ * row that it does not bill and states that these appear on no calendar.
  *
  * Idempotent under redelivery/overlap: claimScheduledRun is a compare-and-set on
  * nextRunAt, so only one tick advances a given run and no window double-fires.
@@ -83,6 +96,11 @@ export async function GET(req: NextRequest) {
         client,
         prompt: run.prompt,
         actor: { uid: "scheduler", name: SCHEDULER_ACTOR_NAME, role: "staff" },
+        // Stamped HERE rather than defaulted in the core: a default keyed to who
+        // happens to call a function becomes a lie about money the moment a
+        // second caller appears. This route is the scheduler, so this is the one
+        // place that can say so truthfully.
+        runType: "scheduled",
         extraMetadata: {
           asset_type: run.assetType,
           ...(run.platform ? { platform: run.platform } : {}),

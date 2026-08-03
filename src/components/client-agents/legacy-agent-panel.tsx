@@ -111,7 +111,7 @@ export function LegacyAgentPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your next post now - this takes 10–20 minutes. Your Karos team reviews it when
+              Making your next post now. This takes 10–20 minutes. Your Karos team reviews it when
               it lands, and finished posts appear in your Workspace once approved.
             </p>
           </div>
@@ -173,7 +173,7 @@ export function LegacyAgentPanel({
           <p className="mt-1 text-xs text-muted-2">
             {schedule
               ? "This agent is already posting for you on a schedule. Change how often whenever you like."
-              : "This agent has no schedule yet - your Karos team sets one up."}
+              : "This agent has no schedule yet. Your Karos team sets one up."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -195,6 +195,11 @@ export function LegacyAgentPanel({
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
           {...(setup ? { setup } : {})}
+          // AF-9: this panel IS the agent's page, for both readers. A client
+          // already stayed here; a staff member was redirected to /jobs/<id>,
+          // away from the run banner and the cancel control this very panel
+          // mounts for the run they just started.
+          stayOnPage
           onClose={() => setRunning(false)}
         />
       )}

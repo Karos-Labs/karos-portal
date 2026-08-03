@@ -110,6 +110,14 @@ const insights = (patch: Partial<SeoGeoInsights> = {}): SeoGeoInsights => ({
   geoVisibilityCoveragePct: 60,
   geoVisibilityModel: "appearance-led (geo-score-v3): mean over engines",
   geoVisibilityEnginesMeasured: 3,
+  // DELIBERATELY CONTRADICTING `perEngine` below, and left that way (#123). These
+  // three stored fields were frozen at capture under whatever formula was current
+  // then; `perEngine` is what the tile is actually derived from now. The headline
+  // went live in 682e188 while the coverage line stayed on these, so a snapshot
+  // could print a real score above "based on 0 of 5 AI engines". Every visibility
+  // assertion below is therefore stated in terms of the ARRAY (1 row = 1 of 1). If
+  // a future edit "tidies" these to agree with `perEngine`, the fixture stops being
+  // able to catch the regression it exists for.
   geoVisibilityEnginesScored: 3,
   geoVisibilityEnginesTotal: 5,
   rosterSharePct: 18.3,
@@ -260,6 +268,14 @@ describe("leak guard (SCRUM-52 fix 1)", () => {
   });
 });
 
+/**
+ * British/US spelling pairs, word-anchored. Pairs rather than suffixes so the
+ * pattern flags what it claims to and nothing else — see the scope note on the
+ * test that uses it.
+ */
+const BRITISH_SPELLING =
+  /\b(?:licence|licences|programme|programmes|centre|centres|centred|colour|colours|coloured|behaviour|behaviours|favour|favours|favourite|favourites|flavour|flavours|honour|honours|labour|neighbour|neighbours|rumour|humour|odour|armour|vapour|defence|offence|pretence|practise|practised|practising|cheque|cheques|grey|catalogue|catalogues|dialogue|dialogues|analogue|whilst|amongst|fulfil|fulfils|fulfilment|enrol|enrols|enrolment|instalment|instalments|skilful|cancelled|cancelling|travelled|travelling|modelling|labelled|labelling|signalled|organis(?:e|es|ed|ing|ation|ations)|recognis(?:e|es|ed|ing)|analys(?:e|es|ed|ing)|optimis(?:e|es|ed|ing|ation)|customis(?:e|es|ed|ing)|personalis(?:e|es|ed|ing)|prioritis(?:e|es|ed|ing)|summaris(?:e|es|ed|ing)|apologis(?:e|es|ed|ing)|authoris(?:e|es|ed|ing|ation)|categoris(?:e|es|ed|ing)|specialis(?:e|es|ed|ing)|maximis(?:e|es|ed|ing)|minimis(?:e|es|ed|ing)|utilis(?:e|es|ed|ing)|visualis(?:e|es|ed|ing)|monetis(?:e|es|ed|ing)|emphasis(?:e|es|ed|ing)|standardis(?:e|es|ed|ing))\b/i;
+
 describe("client action-plan lever badge (QA F144 / CD-B1)", () => {
   const ACTION_PLAN = readFileSync(
     path.resolve(process.cwd(), "src/components/seo-geo-action-plan.tsx"),
@@ -316,16 +332,80 @@ describe("client action-plan lever badge (QA F144 / CD-B1)", () => {
     }
   });
 
-  it("US spelling on every word a client reads here", () => {
-    const BRITISH =
-      /\b\w*(?:isation|our\b|ise\b|ised\b|ising\b|centre|licence|programme|whilst|amongst)\w*\b/i;
-    for (const label of [...Object.values(LEVER_LABELS), ...ALL_LEVERS.map((l) => l)]) {
-      expect(label).not.toMatch(BRITISH);
+  /**
+   * SCOPE: the three lever labels and the quoted strings in
+   * seo-geo-action-plan.tsx. Nothing wider. This is NOT a portal-wide spelling
+   * guarantee and must not be cited as one.
+   *
+   * That correction matters, because the premise this guard shipped on was
+   * false. Commit 48b5aa0 justified it with "the one genuine client-visible
+   * British spelling in the portal ... add-competitor-modal.tsx's placeholder
+   * read 'Central Bank licence'" — but that component had zero importers and
+   * was rendered nowhere, so no client could ever have read it. It has since
+   * been deleted outright (QA #140). The LIVE competitor-add surface,
+   * client-context-sections.tsx via addCompetitorByNameAction, was then swept
+   * for the same defect class and is clean: "Analyzing competitor profile…",
+   * "Brand Colors", "AI analyzed all tracked competitors" are all correct US
+   * forms. So this guard protects the two surfaces named above and nothing else.
+   *
+   * The detector was also rebuilt. It used to be a SUFFIX sweep — bare
+   * alternatives "ise", "ised", "ising", "our" and "isation" behind a word
+   * boundary — which flags "promise", "advise", "advised", "revised",
+   * "concise", "wise", "your", "hour" and "four": nine correct US words. It
+   * passed only because its two inputs happened to avoid them; the first person
+   * to write "we advise" into the action plan would have been told their US
+   * spelling was British. Word-anchored British/US PAIRS detect the thing the
+   * name promises instead, and the two assertions below prove the detector both
+   * fires and discriminates — without them a typo in the pattern would turn
+   * this whole test into a silent pass.
+   */
+  it("keeps US spelling in the lever labels and the action-plan copy", () => {
+    // Fires on real British forms...
+    for (const british of [
+      "licence",
+      "programme",
+      "centre",
+      "colour",
+      "behaviour",
+      "defence",
+      "organisation",
+      "analysed",
+      "prioritise",
+      "whilst",
+    ]) {
+      expect(british, `${british} is not detected as British`).toMatch(BRITISH_SPELLING);
+    }
+    // ...and NOT on the correct US words the old suffix sweep wrongly caught.
+    for (const us of [
+      "promise",
+      "advise",
+      "advised",
+      "revised",
+      "concise",
+      "wise",
+      "your",
+      "hour",
+      "four",
+      "license",
+      "organization",
+      "color",
+      "center",
+      "analyzed",
+      "defense",
+      "program",
+    ]) {
+      expect(us, `${us} is correct US spelling and must not be flagged`).not.toMatch(
+        BRITISH_SPELLING,
+      );
+    }
+
+    for (const label of Object.values(LEVER_LABELS)) {
+      expect(label).not.toMatch(BRITISH_SPELLING);
     }
     // The plan component's own copy travels with the badge — same rule.
     for (const line of ACTION_PLAN.split("\n")) {
       const strings = line.match(/"[^"]{4,}"/g) ?? [];
-      for (const s of strings) expect(s).not.toMatch(BRITISH);
+      for (const s of strings) expect(s).not.toMatch(BRITISH_SPELLING);
     }
   });
 });
@@ -648,8 +728,14 @@ describe("score views + context line (fixes 2 + 3)", () => {
     const [seo, readiness, visibility] = buildScoreViews(insights());
     expect(seo.coverageLine).toBe("measured 75% of checks");
     expect(readiness.coverageLine).toBe("measured 94% of checks");
-    expect(visibility.coverageLine).toBe("based on 3 of 5 AI engines");
-    expect(visibility.coveragePct).toBe(60);
+    // From `perEngine` (one row, measured), NOT from the stored 3-of-5 the fixture
+    // still carries — see the note on those fields. The headline above this line
+    // and this line are now one derivation, so they cannot contradict each other.
+    // Singular denominator, singular noun: the fixture has exactly one engine row
+    // and this line read "1 of 1 AI engines" until the noun was made to agree.
+    expect(visibility.coverageLine).toBe("based on 1 of 1 AI engine");
+    expect(visibility.explainer).toContain("Based on the 1 of 1 engine we ");
+    expect(visibility.coveragePct).toBe(100);
   });
 
   it("renders absent data as null values, never a zero grade", () => {
@@ -659,7 +745,10 @@ describe("score views + context line (fixes 2 + 3)", () => {
     expect(views[0].value).toBeNull();
     expect(views[0].bandLabel).toBe("not measured yet");
     expect(views[2].value).toBeNull();
-    expect(views[2].bandLabel).toBe("no engines measured this run");
+    // No engine ROWS, which is not the same claim as "every engine came back
+    // empty" — that state still reads "no engines measured this run" and keeps a
+    // real denominator ("0 of 2"). Pinned in stale-claims-visibility-coverage.
+    expect(views[2].bandLabel).toBe("no engine data in this snapshot");
   });
 
   /**
@@ -736,10 +825,27 @@ describe("score views + context line (fixes 2 + 3)", () => {
   /** Two days after the fixture's capture, so the relative age is deterministic. */
   const NOW = Date.UTC(2026, 6, 14);
 
-  it("answers 'why only 3 models' in the context line", () => {
+  /**
+   * Renamed: this was "answers 'why only 3 models'", from when the fixture carried
+   * a three-engine roster. It carries one engine now, so what it actually pins is
+   * the whole strip — date, relative age, question count, engine coverage — and
+   * that the coverage noun agrees with a denominator of one.
+   */
+  it("states date, age, question count and engine coverage in the context line", () => {
     expect(buildContextLine(insights(), NOW)).toBe(
-      "Snapshot from July 12, 2026 (2 days ago) · 2 real buyer questions · 3 of 5 AI engines measured",
+      "Snapshot from July 12, 2026 (2 days ago) · 2 real buyer questions · 1 of 1 AI engine measured",
     );
+  });
+
+  it("keeps the strip's nouns agreeing with their own counts", () => {
+    const one = insights({ promptSet: ["best fintech tool for startups"] });
+    expect(buildContextLine(one, NOW)).toBe(
+      "Snapshot from July 12, 2026 (2 days ago) · 1 real buyer question · 1 of 1 AI engine measured",
+    );
+    const many = insights({
+      perEngine: [engineRow({ engine: "chatgpt" }), engineRow({ engine: "gemini" })],
+    });
+    expect(buildContextLine(many, NOW)).toContain("2 of 2 AI engines measured");
   });
 
   /** QA F23: a rejected capture substitutes an empty prompt set, and the counts
@@ -820,7 +926,7 @@ describe("presence + prompts", () => {
 
   it("labels the roster share as category-only (CD-J1 directive 3)", () => {
     const share = buildPresence(insights()).rosterShare;
-    expect(share?.caption).toContain("measured on category questions only");
+    expect(share?.caption).toContain("Measured on category questions only");
     expect(share?.explainer).toContain("Questions that name you are left out");
   });
 

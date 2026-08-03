@@ -22,9 +22,10 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { SavedFormCard } from "@/components/saved-form-card";
 import { JobStatusBadge } from "@/components/job-status";
-import { laneLabel } from "@/lib/draft-lane-label";
 import { formatDate, relativeTime } from "@/lib/utils";
 import type { JobStatus } from "@/lib/types";
+import { clientArchiveLink, intakeAnchorId } from "@/lib/agent-intake-links";
+import { intakeSave } from "@/lib/intake-save";
 import {
   addRedditDraftFeedbackAction,
   saveRedditCompanyIntakeAction,
@@ -46,7 +47,12 @@ export interface RedditFeedbackRowView {
   id: string;
   account: string;
   action: string;
-  draftRef?: string;
+  /**
+   * The lane this row was written against, humanised server-side
+   * (agent-intake-views' draftLabelOf). Absent when the stored ref names no
+   * lane; the raw ref never crosses — it is the log's join key, not copy.
+   */
+  draftLabel?: string;
   subreddit?: string;
   reasonCode?: string;
   createdAt: number;
@@ -89,16 +95,18 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
   function save() {
     setError(null);
     start(async () => {
-      const result = await saveRedditCompanyIntakeAction({
-        clientId,
-        username,
-        accountHistory,
-        subreddits,
-        offLimitsSubreddits,
-        disclosurePosture,
-        offLimits,
-        mode,
-      });
+      const result = await intakeSave(() =>
+        saveRedditCompanyIntakeAction({
+          clientId,
+          username,
+          accountHistory,
+          subreddits,
+          offLimitsSubreddits,
+          disclosurePosture,
+          offLimits,
+          mode,
+        }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -187,7 +195,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
             rows={2}
             value={subreddits}
             onChange={(e) => setSubreddits(e.target.value)}
-            placeholder="r/SaaS, r/marketing - separated by commas or new lines"
+            placeholder="r/SaaS, r/marketing. Separated by commas or new lines"
           />
           <p className="mt-1 text-xs text-muted">
             A starting point for our research, not the final list. We build the full set from where
@@ -201,7 +209,7 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
             rows={2}
             value={offLimitsSubreddits}
             onChange={(e) => setOffLimitsSubreddits(e.target.value)}
-            placeholder="r/SEO, r/marketing - anywhere you were removed, banned, or would rather not appear"
+            placeholder="r/SEO, r/marketing. Anywhere you were removed, banned, or would rather not appear"
           />
           <p className="mt-1 text-xs text-muted">
             We never draft for these. Worth filling in if a past post went badly somewhere. Names
@@ -277,17 +285,22 @@ function FeedbackBox({
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const [note, setNote] = useState("");
+  // #90: `?tab=archive` is read only by ProgressView, and a staff viewer at the
+  // flat /tasks never gets one. The destination and its label move together.
+  const archive = clientArchiveLink({ clientId, isStaff });
 
   function submit() {
     setError(null);
     setSent(false);
     start(async () => {
-      const result = await addRedditDraftFeedbackAction({
-        clientId,
-        account: "program",
-        action: "note",
-        reason: note,
-      });
+      const result = await intakeSave(() =>
+        addRedditDraftFeedbackAction({
+          clientId,
+          account: "program",
+          action: "note",
+          reason: note,
+        }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -309,10 +322,10 @@ function FeedbackBox({
         Tell us what is working and what is not, in your own words. It goes straight into the
         agent&apos;s next run. Once your Karos team has approved the replies, saying whether you posted a
         reply happens on the reply itself, in{" "}
-        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
-          your archive
+        <a href={archive.href} className="underline hover:text-foreground">
+          {archive.label}
         </a>
-        {" "}- and that is the signal that sharpens the voice fastest.
+        , and that is the signal that sharpens the voice fastest.
       </p>
       {runs.length > 0 ? (
         /* The run's state through the app's own mapper, and its date through
@@ -360,7 +373,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent - it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent. It feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (
@@ -372,9 +385,7 @@ function FeedbackBox({
               </span>
               {f.reasonCode ? ` · ${REASON_LABEL[f.reasonCode] ?? f.reasonCode}` : ""}
               {f.subreddit ? ` · ${f.subreddit}` : ""}
-              {/* draftRef is stored raw (it is the feedback log's join key) and
-                  humanized only here, the same way every other reader does it. */}
-              {f.draftRef ? ` · ${laneLabel(f.draftRef)}` : ""} · {relativeTime(f.createdAt)}
+              {f.draftLabel ? ` · ${f.draftLabel}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>
@@ -401,7 +412,13 @@ export function RedditAgentIntake({
 }) {
   return (
     <div className="space-y-6">
-      <AccountForm clientId={clientId} intake={company} />
+      {/* The anchor the agent page's inputs band links its one row to (#85).
+          Reddit has no seats and no news drop, so "company" is the whole set —
+          and it is derived from the same row id the band mints, not spelled
+          twice. */}
+      <div id={intakeAnchorId("company")} className="scroll-mt-24">
+        <AccountForm clientId={clientId} intake={company} />
+      </div>
       <FeedbackBox clientId={clientId} runs={runs} recent={feedback} isStaff={isStaff} />
     </div>
   );

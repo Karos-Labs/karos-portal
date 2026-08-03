@@ -138,7 +138,7 @@ function DraftCard({
       if (result.error) {
         setError(
           handedOff && action !== "not_posted" && action !== "edit_request"
-            ? `${result.error} Your post is already open on LinkedIn - click again to save your choice here (we will not open LinkedIn a second time).`
+            ? `${result.error} Your post is already open on LinkedIn. Click again to save your choice here (we will not open LinkedIn a second time).`
             : result.error,
         );
         return;
@@ -244,7 +244,7 @@ function DraftCard({
               />
               {finalText.trim().length > LINKEDIN_POST_CAP ? (
                 <p className="text-xs text-red-400">
-                  {finalText.trim().length.toLocaleString()} characters - LinkedIn posts cap at
+                  {finalText.trim().length.toLocaleString()} characters. LinkedIn posts cap at
                   3,000. Trim it before posting.
                 </p>
               ) : null}
@@ -267,7 +267,7 @@ function DraftCard({
                 rows={2}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="What should change? Tone, angle, a fact to fix - in your own words."
+                placeholder="What should change? Tone, angle, a fact to fix. In your own words."
               />
               <div className="flex gap-2">
                 <Button
@@ -356,7 +356,7 @@ function DraftCard({
         </div>
       ) : sent === "edit_request" ? (
         <p className="mt-3 text-[11px] text-muted-2">
-          Change requested - it feeds the agent&apos;s next pass on this draft.
+          Change requested. It feeds the agent&apos;s next pass on this draft.
         </p>
       ) : null}
     </div>

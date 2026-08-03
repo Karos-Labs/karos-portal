@@ -15,7 +15,7 @@
  */
 
 import { creditBucketFor, type CreditBucket } from "@/lib/credits";
-import type { CreditLedgerEntry, Job, JobRunType } from "@/lib/types";
+import type { ClientAgent, CreditLedgerEntry, CustomAgent, Job, JobRunType } from "@/lib/types";
 
 /* ── §6.2(a) the client's per-agent credit breakdown ──────────────── */
 
@@ -33,7 +33,92 @@ export interface AgentSpendRow {
   buckets: AgentSpendBucket[];
 }
 
-const BUCKET_ORDER: CreditBucket[] = ["setup", "scheduled", "manual", "other"];
+const BUCKET_ORDER: CreditBucket[] = ["setup", "scheduled", "manual", "runs", "other"];
+
+/**
+ * What a spend row is called when its `agentId` resolves to no name at all.
+ *
+ * NOT "Removed agent". That is a claim about the client's library, and the map
+ * this function is handed decides whether it is true: built from jobs alone —
+ * which is what the settings page used to do — an agent with charges but no job
+ * carrying its `customAgentId` was headed "Removed" while sitting in the
+ * library, enabled.
+ *
+ * THE SCHEDULER CORE IS NOT THE CAUSE, though an earlier version of this note
+ * said so. That core passes `charge: null` on its only caller, so its runs never
+ * reach the ledger and cannot mis-name a row in it. The real sources are a job
+ * pruned by retention, a charge from a path that writes no job, and an agent
+ * removed from the library for real — which is exactly why the word has to go:
+ * one of those three IS a removal and the other two are not, and this function
+ * cannot tell them apart.
+ *
+ * This says only what is known at this point: there is spend, it belongs to one
+ * agent, and we cannot name it. `spendAgentNames` below is how a caller makes
+ * that case vanishingly rare; it is not how this line becomes safe to overstate.
+ */
+export const UNNAMED_AGENT_LABEL = "Unnamed agent";
+
+/**
+ * ledger `agentId` (a customAgents doc id) → the ONE name to print for it.
+ *
+ * THREE SOURCES, WEAKEST FIRST, because they answer the same question with
+ * different authority and the strongest must win:
+ *
+ *   1. the lab agent's own document — the name exists for every agent still in
+ *      the library, including ones this client has never had a job for. This is
+ *      the rung that stops a live agent being called removed.
+ *   2. WEAKEST: a job this client actually ran — the name as RECORDED THEN, which
+ *      after a rename is not the name any other surface uses. Only consulted for
+ *      an id the library no longer knows.
+ *   3. the client's umbrella (`ClientAgent.displayName`) — the §7.3 identity.
+ *      A client reads that name on their agents page, their calendar and their
+ *      run rows; their billing page printing a different one for the same agent
+ *      is the F147 double identity on the surface where it costs money.
+ *
+ * Pure, so the caller owns the reads. Every source is optional: a caller that
+ * can only supply one still gets a better map than none, and the label above
+ * covers what none of them names.
+ */
+export function spendAgentNames(input: {
+  /** Every lab agent, for the id → name rung. */
+  customAgents?: Array<Pick<CustomAgent, "id" | "name">>;
+  /** This client's jobs. Only those carrying `customAgentId` can contribute. */
+  jobs?: Array<Pick<Job, "customAgentId" | "agentName">>;
+  /** This client's umbrellas — the §7.3 identity, and the strongest rung. */
+  umbrellas?: Array<Pick<ClientAgent, "customAgentId" | "displayName">>;
+}): Record<string, string> {
+  const names: Record<string, string> = {};
+  // WEAKEST FIRST, so a later rung overwrites an earlier one — and the job rung
+  // is the WEAKEST, not the middle one.
+  //
+  // It sat above the library and below the umbrella, which put a HISTORICAL name
+  // over the current one: `listJobs` sorts newest-first and this loop is
+  // last-wins, so after any rename the billing page headed the row with the
+  // OLDEST name the agent ever ran under, while the calendar resolves the same
+  // question library-first and printed the new one. That is the double identity
+  // this helper exists to prevent, on the surface where it costs money.
+  //
+  // First-wins within the jobs, for the same reason: over a newest-first list
+  // the first entry is the most recent name, which is the only job-recorded
+  // answer worth having.
+  for (const job of input.jobs ?? []) {
+    if (job.customAgentId && job.agentName && !names[job.customAgentId]) {
+      names[job.customAgentId] = job.agentName;
+    }
+  }
+  // The library's current name beats any name a past run recorded.
+  for (const agent of input.customAgents ?? []) {
+    if (agent.name) names[agent.id] = agent.name;
+  }
+  // The §7.3 identity wins outright: it is the name the client already reads on
+  // their agents page, their calendar and their run rows.
+  for (const umbrella of input.umbrellas ?? []) {
+    if (umbrella.customAgentId && umbrella.displayName) {
+      names[umbrella.customAgentId] = umbrella.displayName;
+    }
+  }
+  return names;
+}
 
 /**
  * Group a client's charges by agent, then by kind.
@@ -49,7 +134,7 @@ export function summarizeClientSpend(input: {
   ledger: CreditLedgerEntry[];
   /** jobId → run type, for splitting agent runs into scheduled vs manual. */
   runTypeByJobId: Record<string, JobRunType | undefined>;
-  /** agentId → display name. Missing ⇒ the agent was deleted. */
+  /** agentId → the one name to print. Build it with `spendAgentNames`. */
   agentNameById: Record<string, string>;
 }): AgentSpendRow[] {
   const rows = new Map<string, AgentSpendRow>();
@@ -69,7 +154,7 @@ export function summarizeClientSpend(input: {
       row = {
         agentId,
         agentName: agentId
-          ? (input.agentNameById[agentId] ?? "Removed agent")
+          ? (input.agentNameById[agentId] ?? UNNAMED_AGENT_LABEL)
           : "Other usage",
         credits: 0,
         buckets: [],
@@ -118,7 +203,10 @@ export interface AgentEconomics {
    */
   test: UsdBucket;
   /**
-   * Jobs that predate run-type stamping. Reported as its own bucket and
+   * Jobs carrying no run type: ones that predate the field, and ones fired
+   * through a path that does not state it — the legacy `/api/scheduler` cron
+   * being the live example, since its core stamps only the run type it is
+   * handed and that route hands it none. Reported as its own bucket and
    * labelled as such rather than folded into "runs": these are real dollars
    * that genuinely cannot be attributed, and burying them in a run average
    * would silently bias the very ratio §6.3 exists to measure.

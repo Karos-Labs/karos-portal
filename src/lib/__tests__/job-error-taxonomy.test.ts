@@ -27,6 +27,49 @@ describe("classifyJobError", () => {
     ).toBe("Provider credits exhausted");
   });
 
+  /**
+   * The portal's OWN submit-time refusals — the two literal strings
+   * agent-service/client.ts throws, stored verbatim as job.error by
+   * submit-custom / submit-managed / run-custom-agent. The generic rules below
+   * misread their HTTP status codes as the model provider's.
+   */
+  it("names the right system for a rejected agent-service call, not the provider", () => {
+    // This is the misclassification: `\b401\b` used to make a rotated
+    // AGENT_SERVICE_TOKEN read as "Provider authentication expired", sending
+    // staff to check the model provider's key.
+    expect(classifyJobError("Agent service request failed (401). Please try again or contact support.")?.label).toBe(
+      "Agent service credentials rejected",
+    );
+    expect(classifyJobError("Agent service request failed (403). Please try again or contact support.")?.label).toBe(
+      "Agent service credentials rejected",
+    );
+  });
+
+  it("separates the agent service's own rate limit and outages from the provider's", () => {
+    expect(classifyJobError("Agent service request failed (429). Please try again or contact support.")?.label).toBe(
+      "Rate limited by agent service",
+    );
+    for (const status of [500, 502, 503]) {
+      expect(classifyJobError(`Agent service request failed (${status}). Please try again or contact support.`)?.label).toBe(
+        "Agent service unavailable",
+      );
+    }
+  });
+
+  it("classifies the unconfigured-service refusal instead of dropping it in the generic bucket", () => {
+    expect(
+      classifyJobError("Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN).")?.label,
+    ).toBe("Agent service not configured");
+  });
+
+  it("still reads a provider 401 in free text as a provider auth failure", () => {
+    // The new rules are anchored to the portal's own string shape, so they must
+    // not swallow what the agent service reports about its upstream.
+    expect(classifyJobError("Anthropic API error: 401 Unauthorized")?.label).toBe(
+      "Provider authentication expired",
+    );
+  });
+
   it("classifies auth failures", () => {
     expect(classifyJobError("401 Unauthorized: invalid api key")?.label).toBe(
       "Provider authentication expired",

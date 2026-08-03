@@ -5,16 +5,15 @@ import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { EmptyState } from "@/components/ui";
 import { AssetCard } from "@/components/asset-card";
+// The staff register. These words were a local const here; they are unchanged
+// byte for byte, and this is now the only place they are written down — the
+// analytics chart was printing a third, drifted set of them to the same reader
+// (see asset-status-copy.ts).
+import { STAFF_ASSET_STATUS_LABEL } from "@/lib/asset-status-copy";
+import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset } from "@/lib/types";
 
 const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "delivered", "published"];
-const STATUS_LABEL: Record<Asset["status"], string> = {
-  draft: "Awaiting review",
-  approved: "Approved",
-  scheduled: "Scheduled",
-  delivered: "Delivered",
-  published: "Published",
-};
 const STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info"> = {
   draft: "warning",
   approved: "success",
@@ -30,14 +29,12 @@ const STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info"> = {
 export function AssetsView({
   assets,
   canApprove = false,
-  initialStatus,
   clientNames,
   connectedPlatformsByClient,
 }: {
   assets: Asset[];
   /** Staff-only: show approve/schedule controls on each card. Clients never approve. */
   canApprove?: boolean;
-  initialStatus?: Asset["status"];
   /** Present on the staff-wide view so cards retain their client context. */
   clientNames?: Record<string, string>;
   /**
@@ -48,7 +45,7 @@ export function AssetsView({
    */
   connectedPlatformsByClient?: Record<string, string[]>;
 }) {
-  const [status, setStatus] = useState<Asset["status"] | "all">(initialStatus ?? "all");
+  const [status, setStatus] = useState<Asset["status"] | "all">("all");
   const channels = useMemo(
     () => [...new Set(assets.flatMap((asset) => asset.channels ?? []))].sort(),
     [assets],
@@ -83,17 +80,29 @@ export function AssetsView({
           className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
         >
           <option value="all">All statuses</option>
-          {STATUS_ORDER.map((option) => <option key={option} value={option}>{STATUS_LABEL[option]}</option>)}
+          {STATUS_ORDER.map((option) => <option key={option} value={option}>{STAFF_ASSET_STATUS_LABEL[option]}</option>)}
         </select>
         {channels.length > 0 && (
           <select
             aria-label="Filter assets by channel"
             value={channel}
             onChange={(event) => setChannel(event.target.value)}
-            className="h-8 rounded-md border border-border bg-surface px-2 text-xs capitalize text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
+            className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
           >
             <option value="all">All channels</option>
-            {channels.map((option) => <option key={option} value={option}>{option}</option>)}
+            {/*
+              `platformLabel`, not the bare id under CSS `capitalize` — which
+              title-cases the first letter of each word and so printed "Linkedin"
+              and "Tiktok", misspelling both brands. That is QA F122, recorded
+              against the connected-channels card and fixed there; this filter was
+              the copy that was missed. The class went with the id: it cannot stay
+              once the text is a real label, or "X (Twitter)" would be re-cased too.
+            */}
+            {channels.map((option) => (
+              <option key={option} value={option}>
+                {platformLabel(option)}
+              </option>
+            ))}
           </select>
         )}
         <span className="ml-auto px-1 text-[11px] text-muted-2">Newest first</span>
@@ -107,9 +116,9 @@ export function AssetsView({
         />
       ) : (
         groupedAssets.map((group) => (
-          <section key={group.status} aria-label={STATUS_LABEL[group.status]}>
+          <section key={group.status} aria-label={STAFF_ASSET_STATUS_LABEL[group.status]}>
             <div className="mb-3 flex items-center gap-2">
-              <Badge tone={STATUS_TONE[group.status]}>{STATUS_LABEL[group.status]}</Badge>
+              <Badge tone={STATUS_TONE[group.status]}>{STAFF_ASSET_STATUS_LABEL[group.status]}</Badge>
               <span className="text-xs text-muted-2">{group.items.length}</span>
             </div>
             <div className="grid items-start gap-3 lg:grid-cols-2">

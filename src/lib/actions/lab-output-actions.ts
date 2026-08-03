@@ -18,6 +18,7 @@ import {
   type LabRun,
 } from "@/lib/lab-outputs";
 import { uploadBytes } from "@/lib/storage";
+import { labImportAssetType } from "@/lib/agent-service/deliverable-asset-type";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import {
   chainFamilyFor,
@@ -173,9 +174,10 @@ export async function importLabRunAction(input: {
       if (t) knownTemplateKeys.add(t.key);
     }
 
-    // agentFolder is constant for the whole run, so the type/family are too.
-    const assetType = guessAssetType(input.agentFolder);
-    const chainFamily = chainFamilyFor(assetType);
+    // agentFolder is constant for the whole run, so the FOLDER'S answer is too.
+    // The per-item answer is not: the draft-only fence below also reads each
+    // item's own text, and either half saying "draft-only" wins.
+    const folderAssetType = guessAssetType(input.agentFolder);
 
     const now = Date.now();
     let created = 0;
@@ -236,6 +238,30 @@ export async function importLabRunAction(input: {
         if (key) template = { key, name: titleCaseFormat(dataJson.format) };
       }
       if (template) knownTemplateKeys.add(template.key);
+
+      /**
+       * THE THIRD RUNTIME DERIVATION, now asked the same question as the other two.
+       *
+       * `guessAssetType` keys on the lab-repo FOLDER NAME — a location, not the
+       * deliverable — and it never reads the item's text. It does check Reddit
+       * before its social bucket, so a folder called `reddit-agent` lands on
+       * `note`; but a Reddit batch exported under any other folder name (say
+       * `social-replies`) was typed `social_post`, and `PUBLISHABLE_PLATFORMS`
+       * then offers a reply written for one thread to twitter, linkedin, facebook
+       * and tiktok. Reddit is draft-only by hard product rule.
+       *
+       * `isDraftOnlyDeliverable` is the same predicate the webhook and the MCP
+       * upload ask, and its two halves are independent on purpose: the TEXT (the
+       * batch carries its own heading) and the IDENTITY (loose word match). Asked
+       * per ITEM because content is per item — the folder half was already
+       * constant and is passed as the identity.
+       *
+       * This is what makes deliverable-asset-type.ts's claim to be the one copy
+       * every runtime-derived type goes through TRUE rather than asserted; before
+       * this it was the copy two of the three went through.
+       */
+      const assetType = labImportAssetType(folderAssetType, input.agentFolder, content);
+      const chainFamily = chainFamilyFor(assetType);
 
       await createAsset({
         clientId: input.clientId,

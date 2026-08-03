@@ -126,6 +126,16 @@ done
 gcloud scheduler jobs create http runway --location="$LOCATION" \
   --schedule="0 8 * * 1" --uri="<platform-url>/api/runway" \
   --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
+
+# Daily digest — the morning email carrying each opted-in client's own calendar
+# day. HOURLY ON THE HOUR, and that is not a typo: the job is a cheap tick and
+# every client is gated on THEIR OWN timezone inside it, so one schedule serves
+# clients in any number of zones. A daily UTC job could only ever be somebody's
+# morning. Idempotent per client per local day (Client.lastDigestSentDay), so a
+# retried or replayed tick never double-sends.
+gcloud scheduler jobs create http daily-digest --location="$LOCATION" \
+  --schedule="0 * * * *" --uri="<platform-url>/api/daily-digest" \
+  --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
 ```
 
 To check whether a job already exists rather than re-create it:
@@ -133,7 +143,23 @@ To check whether a job already exists rather than re-create it:
 
 (`publish` every 5 min, `cleanup-logs` daily, `scheduler` every ~15 min,
 `run-scheduled` every ~10 min, both `reconcile`s every ~10 min, `analytics/sync`
-daily, `runway` weekly (Mon 08:00) — adjust schedules to taste.)
+daily, `runway` weekly (Mon 08:00), `daily-digest` hourly — adjust schedules to
+taste, EXCEPT `daily-digest`, which must stay hourly: its send time is a local
+hour per client, so a coarser schedule silently skips whichever zones fall
+between ticks.)
+
+**Before wiring `daily-digest`, dry-run it.** It mails real clients, so it takes
+the same flag `/api/runway` does and reports what it would send without sending
+or marking anything:
+
+```bash
+curl -H "Authorization: Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)" \
+  "<platform-url>/api/daily-digest?dryRun=1"
+```
+
+Nothing goes out until a staff member switches **Daily email** on for a client
+from the Clients page, and that client has a **Timezone** set (blank falls back
+to the container's, which is UTC).
 
 **`run-scheduled` (`/api/run-scheduled`) was missing from this list until
 2026-07-30** — it's the newer per-agent schedule dialog's cron

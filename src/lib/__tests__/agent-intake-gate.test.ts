@@ -155,7 +155,7 @@ describe("agent data setup gate", () => {
     for (const file of CORES) {
       const { x, linkedin, reddit } = gateMessages(file);
       for (const message of [x, linkedin, reddit]) {
-        expect(message).toContain("Open this agent on your AI Agents page");
+        expect(message).toContain("Open this agent on your AI agents page");
         expect(message).toContain('follow "Set it up" under "What it knows about you"');
         expect(message).not.toMatch(/Agent-specific documents/i);
         expect(message).not.toMatch(/data page/i);
@@ -368,7 +368,14 @@ describe("per-client agent instance binding", () => {
 
     // Every action that can put a schedule live, in both collections: staff
     // create, the client's always-on card, resuming a paused row, and the
-    // admin-only legacy card (create, edit, switch back on).
+    // admin-only legacy card (create, switch back on).
+    //
+    // The legacy card has no edit path: `updateScheduledRunAction` existed and
+    // was correctly gated, but scheduled-runs.tsx only ever called create,
+    // toggle and delete, so it was dead and was removed (QA #164). This list is
+    // the ENABLING actions that exist, not a wish-list — an entry for a
+    // function that is gone fails on the assertion below, which is what keeps
+    // it honest in both directions.
     const callers: Record<string, string[]> = {
       "src/lib/actions/planned-run-actions.ts": [
         "createPlannedRunAction",
@@ -377,7 +384,6 @@ describe("per-client agent instance binding", () => {
       ],
       "src/lib/actions/scheduled-run-actions.ts": [
         "createScheduledRunAction",
-        "updateScheduledRunAction",
         "toggleScheduledRunAction",
       ],
     };

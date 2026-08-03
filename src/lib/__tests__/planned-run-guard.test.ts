@@ -208,3 +208,159 @@ describe("configureClientAgentScheduleAction — a client's save cannot rewrite 
     );
   });
 });
+
+/**
+ * WHO PAYS is set once, at creation, and an edit never rewrites it.
+ *
+ * `billClientCredits` is the money switch the cron hands to the submit core as
+ * `bill`. It used to be recomputed from `isBillableClientActor(whoever is
+ * saving)` and written on both create AND edit, while `createdBy` — the actor
+ * the cron resolves — stayed frozen at creation. So the pair drifted apart on
+ * every save by a different party, and money moved the wrong way in both
+ * directions: a client pressing Save on a staff-set pace flipped the flag to
+ * true against a staff createdBy, and staff bumping Outputs per run on a
+ * client's own schedule flipped it to false while the client was still charged.
+ *
+ * The fix is the same shape as the outputsPerRun/prompt preservation above — the
+ * stored value beats what the current save implies — with one difference: this
+ * one is preserved for EVERY actor, not just clients.
+ */
+describe("configureClientAgentScheduleAction — billClientCredits is create-only", () => {
+  const STORED = {
+    id: "pr1",
+    clientId: "c1",
+    customAgentId: CUSTOM_AGENT_ID,
+    cadence: "weekly",
+    status: "active",
+    outputsPerRun: 3,
+    prompt: "Staff standing instruction.",
+    weekdays: [1, 3, 5],
+    hour: 9,
+    minute: 0,
+    createdBy: "u-client",
+  } as any;
+
+  const STAFF = { ...CLIENT, uid: "u-staff", role: "KAROS_EMPLOYEE", clientId: null };
+  const IMPERSONATED = { ...CLIENT, impersonatedBy: "u-admin" };
+
+  const input = {
+    clientId: "c1",
+    customAgentId: CUSTOM_AGENT_ID,
+    postsPerWeek: 2,
+    outputsPerRun: 3,
+    prompt: "Staff standing instruction.",
+    hour: 10,
+    minute: 0,
+  };
+
+  beforeEach(() => {
+    (dataClientAgents.getClientAgentByKey as any).mockResolvedValue(umbrella("live"));
+    (data.getClient as any).mockResolvedValue({ id: "c1", customAgentIds: [CUSTOM_AGENT_ID] });
+    (data.listJobs as any).mockResolvedValue([]);
+    (data.updatePlannedScheduledRun as any).mockResolvedValue(undefined);
+    (data.createPlannedScheduledRun as any).mockResolvedValue("pr-new");
+  });
+
+  for (const [label, actor] of [
+    ["a client", CLIENT],
+    ["staff", STAFF],
+    ["an impersonated admin", IMPERSONATED],
+  ] as const) {
+    it(`does not touch the stored flag when ${label} edits an existing schedule`, async () => {
+      (sharedActions.requireClientAccess as any).mockResolvedValue(actor);
+      (data.listPlannedScheduledRuns as any).mockResolvedValue([
+        { ...STORED, billClientCredits: true },
+      ]);
+      const { configureClientAgentScheduleAction } = await import(
+        "@/lib/actions/planned-run-actions"
+      );
+
+      await configureClientAgentScheduleAction(input);
+
+      const patch = (data.updatePlannedScheduledRun as any).mock.calls[0][1];
+      // Absent from the patch entirely, not written back as the same value: the
+      // action must not have an opinion about a flag it is not setting.
+      expect(patch).not.toHaveProperty("billClientCredits");
+      // The pace the save WAS about still lands.
+      expect(patch.weekdays).toHaveLength(2);
+      expect(patch.hour).toBe(10);
+    });
+  }
+
+  it("leaves a stored false alone too — an edit cannot start billing a client", async () => {
+    (sharedActions.requireClientAccess as any).mockResolvedValue(CLIENT);
+    (data.listPlannedScheduledRuns as any).mockResolvedValue([
+      { ...STORED, billClientCredits: false },
+    ]);
+    const { configureClientAgentScheduleAction } = await import(
+      "@/lib/actions/planned-run-actions"
+    );
+
+    await configureClientAgentScheduleAction(input);
+
+    expect((data.updatePlannedScheduledRun as any).mock.calls[0][1]).not.toHaveProperty(
+      "billClientCredits",
+    );
+  });
+
+  it("leaves a legacy row's absent flag absent rather than deciding for it", async () => {
+    // A row written before the field existed. An edit must not invent an intent
+    // for it — the cron's own legacy fallback (the actor test) owns that row.
+    (sharedActions.requireClientAccess as any).mockResolvedValue(STAFF);
+    (data.listPlannedScheduledRuns as any).mockResolvedValue([STORED]);
+    const { configureClientAgentScheduleAction } = await import(
+      "@/lib/actions/planned-run-actions"
+    );
+
+    await configureClientAgentScheduleAction(input);
+
+    expect((data.updatePlannedScheduledRun as any).mock.calls[0][1]).not.toHaveProperty(
+      "billClientCredits",
+    );
+  });
+
+  it("SETS the flag on a create, agreeing with the createdBy written beside it", async () => {
+    (sharedActions.requireClientAccess as any).mockResolvedValue(CLIENT);
+    (data.listPlannedScheduledRuns as any).mockResolvedValue([]);
+    const { configureClientAgentScheduleAction } = await import(
+      "@/lib/actions/planned-run-actions"
+    );
+
+    await configureClientAgentScheduleAction(input);
+
+    expect(data.createPlannedScheduledRun).toHaveBeenCalledWith(
+      expect.objectContaining({ billClientCredits: true, createdBy: "u-client" }),
+    );
+  });
+
+  it("creates a staff-set pace as unbilled", async () => {
+    (sharedActions.requireClientAccess as any).mockResolvedValue(STAFF);
+    (data.listPlannedScheduledRuns as any).mockResolvedValue([]);
+    const { configureClientAgentScheduleAction } = await import(
+      "@/lib/actions/planned-run-actions"
+    );
+
+    await configureClientAgentScheduleAction(input);
+
+    expect(data.createPlannedScheduledRun).toHaveBeenCalledWith(
+      expect.objectContaining({ billClientCredits: false, createdBy: "u-staff" }),
+    );
+  });
+
+  it("creates an admin's View-as-Client pace as unbilled, and the flag now governs", async () => {
+    // Sequence 3: the impersonated session carries the CLIENT's uid, so createdBy
+    // is the client and the actor test alone would charge them. The flag records
+    // the truth, and since the cron passes it as `bill`, the truth wins.
+    (sharedActions.requireClientAccess as any).mockResolvedValue(IMPERSONATED);
+    (data.listPlannedScheduledRuns as any).mockResolvedValue([]);
+    const { configureClientAgentScheduleAction } = await import(
+      "@/lib/actions/planned-run-actions"
+    );
+
+    await configureClientAgentScheduleAction(input);
+
+    expect(data.createPlannedScheduledRun).toHaveBeenCalledWith(
+      expect.objectContaining({ billClientCredits: false, createdBy: "u-client" }),
+    );
+  });
+});

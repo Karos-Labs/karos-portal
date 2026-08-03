@@ -21,7 +21,11 @@ import {
   creditBlockReason,
   isBillableClientActor,
 } from "@/lib/credits";
-import { toClientPortalView } from "@/lib/client-visibility";
+import {
+  toClientPortalView,
+  toStaffShellView,
+  type StaffShellClientView,
+} from "@/lib/client-visibility";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
@@ -32,6 +36,7 @@ import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { ClientContextBar } from "@/components/client-context-bar";
 import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
+import { StaffShellMain } from "@/components/staff-shell-main";
 import type { ActionItemNotification, AgentReviewNotification, Client, ClientTask } from "@/lib/types";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -44,7 +49,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (shouldBlockForOnboarding({ isImpersonating, user })) redirect("/onboarding");
 
   let pendingCount = 0;
-  let clients: Client[] = [];
+  // The PROJECTION, not the documents: this array is a prop of the Sidebar, a
+  // "use client" component that renders on every staff page, so a whole Client
+  // here puts every client's join token into every one of those RSC payloads.
+  // StaffShellClientView carries exactly what the picker rows and the rail read.
+  let clients: StaffShellClientView[] = [];
 
   // Staff bell feeds are cross-client, so they need the viewer's client scope:
   // admins see every client, an employee only their assigned ones - the same
@@ -104,7 +113,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   if (adminData) {
     pendingCount = adminData.allUsers.filter((u) => u.disabled && !u.approvedAt).length;
-    clients = adminData.allClients;
+    clients = adminData.allClients.map(toStaffShellView);
   }
 
   // ── Client portal shell (CLIENT_USER only) ──
@@ -190,6 +199,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               clientId={client.id}
               viewerUid={user.uid}
               clientName={client.name}
+              // Same predicate the correction price above uses, for the same
+              // reason: the copilot's Refresh Task Map chip charges on press, and
+              // an admin in "View as Client" reads CLIENT_USER here while paying
+              // nothing — so a role test would quote them a price they never pay.
+              viewerIsBilled={isBillableClientActor(user)}
               userName={user.name}
               hasGoogleIntegration={integrations.some(
                 (i) => i.platform === "google" && integrationIsUsable(i),
@@ -197,7 +211,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               client={{
                 name: client.name,
                 website: client.website,
-                industry: client.industry,
                 isAiProcessing: isAiProcessingLockActive(client),
               }}
               report={
@@ -233,14 +246,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           )}
           {/* Client-context mode gets its own persistent bar - see F60. */}
           <ClientContextBar />
-          {/* Scroll reserve, same ladder as the client shell. The staff main had
-              none, so the last rows of a fully-scrolled page sat behind the
-              copilot strip. Below md the reserve covers the STACK - copilot
-              strip on top of the 54px bottom tab bar (MOBILE_TAB_BAR_H, client
-              context); at md+ the bar is gone and only the strip needs clearing. */}
-          <main className="flex-1 overflow-x-clip px-4 pb-28 pt-6 md:px-8 md:pb-16 md:pt-8 lg:pb-8">
+          {/* Scroll reserve, and it is CONDITIONAL here where the client shell's
+              is flat — the bottom chrome it clears (tab bar + copilot strip)
+              only exists in client-context mode. StaffShellMain reads the same
+              context both of those gate on; see #127 in that file. */}
+          <StaffShellMain>
             <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
-          </main>
+          </StaffShellMain>
         </div>
         {/* Docked copilot right-rail - visible when admin selects a client via "View as Client" */}
         <StaffCopilotDock userName={user.name} viewerUid={user.uid} />

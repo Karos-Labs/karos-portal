@@ -142,6 +142,14 @@ export type PlanResult =
 export interface ApplyOutcome {
   origin: BundleOrigin;
   ref: string;
+  /**
+   * The client whose record this write landed in — the VALIDATED id off the
+   * plan, not the one the file declares. Required rather than optional: the
+   * outcome panel turns it into the link an operator follows to go and check
+   * the record they just changed, and an optional field is one a caller can
+   * drop in silence.
+   */
+  clientId: string;
   clientName: string;
   /** Honest per-half reporting — a green refresh next to a refused snapshot. */
   refresh: { applied: boolean; docs: number; competitors: number; client: number; error: string | null };
@@ -548,6 +556,7 @@ export async function applyOpsBundleAction(input: {
   const outcome: ApplyOutcome = {
     origin,
     ref,
+    clientId: plan.clientId,
     clientName: plan.clientName,
     refresh: { applied: false, ...written, error: null },
     seoGeo: { applied: false, skippedReason: null, error: null },

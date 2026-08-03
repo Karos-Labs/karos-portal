@@ -70,8 +70,27 @@ export interface Client {
   id: string;
   name: string;
   website?: string;
+  /**
+   * LEGACY SPELLING OF `category`, and the reason it is still here.
+   *
+   * `industry` and `category` were the same fact under two names, with two
+   * editors: staff typed an industry into the Clients-page dialog while the
+   * client typed a category into their own profile chip, and the copilot and the
+   * intel pipeline read only the staff one. They are one field now and
+   * `category` is it.
+   *
+   * NEVER WRITTEN. No editor, action or pipeline sets this any more, and it is
+   * read in exactly one place — `clientCategoryValue` in lib/utils.ts, as the
+   * fallback for a document written before the rename. Kept on the type because
+   * stored documents still carry it; deleting it would delete those clients'
+   * only category until somebody retyped it.
+   */
   industry?: string;
-  /** Client-editable market category / vertical (self-reported). */
+  /**
+   * The client's market category / vertical, self-reported and client-editable.
+   * THE field — read through `clientCategoryValue`, written clamped to
+   * CLIENT_CATEGORY_MAX_LENGTH by both editors.
+   */
   category?: string;
   /** Client-editable team-size bucket, e.g. "1–10". */
   teamSize?: string;
@@ -181,8 +200,69 @@ export interface Client {
    * regenerations, so the configured cadence never drifts. Null while disabled.
    */
   intelScheduleNextRunAt?: number | null;
+  /**
+   * IANA zone this client's own calendar DAY is read in (e.g.
+   * "America/Sao_Paulo"). Staff-set from the Clients page.
+   *
+   * THE FIELD lib/scheduling.ts's docstring says does not exist. It said
+   * "fixing it properly means giving `Client` an IANA zone (it has none; only
+   * `RunCadence.timezone` and `PlannedScheduledRun.timeZone` carry one)", and
+   * the daily digest is the first surface that CANNOT work without one: a mail
+   * that claims to carry "today's" clips has to know whose today it means, and
+   * the server's is a container's, almost always UTC.
+   *
+   * SCOPE, deliberately narrow. This is read by the digest (which local day it
+   * sends, and at which local hour), and by nothing else yet: `startOfDayMs`
+   * and the chain planners still bucket on the runtime's zone, exactly as
+   * before. Threading it through them is the wider data change that docstring
+   * describes, and it is not this field's arrival.
+   *
+   * Absent ⇒ `runtimeTimeZone()`. Read through `clientTimeZone` (lib/
+   * client-timezone), never off the record, so an invalid stored id falls back
+   * instead of throwing inside Intl.
+   */
+  timeZone?: string;
+  /**
+   * How many clips and how many posts one calendar day holds for this client.
+   * Absent ⇒ one item a day, which is what both day planners did before this
+   * existed. See lib/daily-pace.ts for the whole rule.
+   *
+   * `null` is how CLEARING it is stored: `updateClient` merges, so an absent key
+   * would leave a previous pace in place when staff empty both boxes. Both
+   * absent and null resolve to the same default.
+   */
+  dailyPace?: ClientDailyPace | null;
+  /**
+   * Send this client a daily email carrying that day's calendar items.
+   * Opt-in, staff-set, default OFF: `/api/daily-digest` skips every client
+   * that has not been switched on.
+   */
+  dailyDigestEnabled?: boolean;
+  /**
+   * Epoch millis of the START of the last local day a digest was sent for.
+   * The cron's idempotence marker: it runs hourly, so without this a client
+   * would get the same mail every hour from their local send time to midnight.
+   * Written only after a send actually succeeds.
+   */
+  lastDigestSentDay?: number;
   createdAt: number;
   createdBy: string;
+}
+
+/**
+ * A client's daily content pace: the per-day ceiling for each of the two lanes
+ * a calendar day has.
+ *
+ * Both numbers are OPTIONAL and the object's PRESENCE is what turns paced
+ * placement on. An absent `dailyPace` keeps the single shared slot a day that
+ * both planners have always had, so switching this feature on changes nothing
+ * for a client nobody has configured. See `resolveDailyPace`.
+ */
+export interface ClientDailyPace {
+  /** Video deliverables (podcast cuts, shorts) one day holds. Default 1. */
+  clipsPerDay?: number;
+  /** Written posts one day holds, per content family. Default 1. */
+  postsPerDay?: number;
 }
 
 /* ─────────────────────── Client Access Requests ────────────────────────── */
@@ -368,7 +448,27 @@ export interface ExternalJobArtifact {
   contentType?: string;
   /** Per the lab contract, only files under an outputs client/ folder are client-visible. */
   clientFacing: boolean;
-  /** Platform-hosted URL (client-facing, re-hosted) or service URL (internal). */
+  /**
+   * Platform-hosted URL once the file has been copied into our storage, else the
+   * agent service's own URL.
+   *
+   * WHICH ONE YOU GET DEPENDS ON THE LIST YOU READ IT FROM, and the difference
+   * matters because a service URL is a V4 signed link that expires 7 days after
+   * the run. `Job.external.artifacts` is the run record and keeps the service URL
+   * for anything that could not be copied, so staff can still fetch it; an
+   * asset's `meta.artifacts` is written only from files whose bytes reached
+   * platform storage (the webhook's `rehosted` list). This comment used to claim
+   * client-facing implied re-hosted, which is what finding #47 was.
+   *
+   * SCOPED TO ASSETS WRITTEN SINCE THAT FIX, because the unscoped version of this
+   * sentence — "a client is never given a link that will expire" — was flatly
+   * contradicted by `asset-images.ts`, which states the residual at the readers:
+   * documents written BEFORE the fix can still hold an agent-service URL in
+   * `meta.artifacts`, nothing can recognise one (no host or shape distinguishes it
+   * from a legitimate hosted link), and those assets play until their link dies.
+   * A backfill is the fix and has not been written. Two comments from one change
+   * disagreeing about the same field is worse than either gap.
+   */
   url?: string;
 }
 
@@ -609,7 +709,20 @@ export interface PlannedScheduledRun {
   timeZone?: string;
   /** Distinct deliverables requested from each scheduled run. Defaults to 1. */
   outputsPerRun?: number;
-  /** Whether each scheduled fire spends the client's credits. */
+  /**
+   * Whether each scheduled fire spends the client's credits — the money switch,
+   * and the only field that decides it. The cron passes it to the submit core as
+   * `bill`, overriding the actor test that `createdBy` would otherwise imply.
+   *
+   * Set ONCE, at creation, from the creating actor, and never rewritten: an edit
+   * of the pace preserves it. (It used to be recomputed on every save while
+   * `createdBy` stayed frozen, so the two disagreed and fires were billed to the
+   * wrong party — or to nobody.)
+   *
+   * `undefined` on rows written before the field existed. Those fall back to the
+   * actor test, deliberately: an absent flag is no recorded intent, and reading
+   * it as `false` would silently stop charging a fleet of live schedules.
+   */
   billClientCredits?: boolean;
   /** Next fire time (epoch millis) — the scheduling cursor the cron drains. */
   nextRunAt: number;
@@ -630,6 +743,23 @@ export interface PlannedScheduledRun {
   lastError?: string | null;
   /** Epoch millis of `lastError`. */
   lastErrorAt?: number | null;
+  /**
+   * Non-null from the instant a fire CLAIMS its slot until the cron settles that
+   * fire (submitted, refused, or thrown), and cleared to null when it does.
+   *
+   * The claim advances `nextRunAt` and stamps `lastRunAt` in one transaction
+   * BEFORE the submit — correct for double-fire safety, and lossy without this
+   * field: a Cloud Run timeout or a container recycle in that window leaves a
+   * row with a fresh `lastRunAt`, a null `lastError`, an advanced `nextRunAt`
+   * and NO job. Nothing else on the row tells that apart from a clean fire, so
+   * no alert fires and the "Stuck" flag never trips — `nextRunAt` is
+   * legitimately in the future.
+   *
+   * A row still carrying it at its NEXT claim is that vanished fire, and the
+   * cron reports it then. `undefined` on rows written before the field existed,
+   * and `null` on every settled row.
+   */
+  fireInFlightSince?: number | null;
   createdBy: string;
   createdAt: number;
   updatedAt: number;
@@ -947,6 +1077,19 @@ export interface ActivityLog {
   /** Display name: "System AI", "Tomer H.", etc. */
   actor: string;
   actorRole: "system" | "staff" | "client";
+  /**
+   * Uid of the admin who was in "View as Client" when this row was written.
+   *
+   * Present only on rows `sessionSafeActor` re-attributed, so it says WHICH
+   * staff member is behind a row whose display name is the agency's. Stored,
+   * never displayed — the timeline's RSC projection is a whitelist and this is
+   * not on it, so a staff uid never reaches a client's browser.
+   *
+   * Absent means only "this row does not carry the signal": rows written before
+   * the field existed never recorded the difference, so nothing may read its
+   * absence as proof the client acted themselves.
+   */
+  impersonatedBy?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -1012,6 +1155,13 @@ export interface ClientIntegration {
   accountName?: string;
   /** Credential key→value pairs matching the platform's field keys. Encrypted at rest — decrypted transparently by listClientIntegrations. */
   credentials: Record<string, string>;
+  /**
+   * True when stored credentials could not be decrypted in THIS environment
+   * (no TOKEN_ENCRYPTION_KEY — e.g. local dev reading production-written
+   * blobs). The connection exists; its secrets are unreadable here. Never
+   * persisted — set by listClientIntegrations at read time.
+   */
+  credentialsUnavailable?: boolean;
   /** "manual" = keys pasted by a staff member; "oauth" = OAuth flow */
   method: "manual" | "oauth";
   /**
@@ -1317,7 +1467,11 @@ export interface ClientTask {
    * `externalJobId` — platform Job id of the agent-service run dispatched for this task;
    * `agentName`, `executing`, `type`, `artifact`, `artifactImageUrl`, `artifactAssetIds`,
    * `approvedAssetId`, `adjustmentFeedback`, `executionError`, `aiPlan`, `recipient`,
-   * `failedUpload*`, `published*`, `autoCompletedReason`.
+   * `failedUpload*`, `published*`, `autoCompletedReason`;
+   * `noDeliverable` — the run this task dispatched reported success and produced
+   * nothing. Never read on its own: `ranWithoutDeliverable` (task-outcome-copy.ts)
+   * asks whether the task is still sitting in that state, because only task-sync
+   * clears the flag while eight other writers move the state.
    */
   metadata?: Record<string, unknown>;
   /**
@@ -1428,6 +1582,15 @@ export type CreditOperation =
   | "agent_launch"
   /** Purchase of an additional LinkedIn employee-advocacy seat beyond the plan limit. */
   | "seat_purchase"
+  /**
+   * A one-off AI tool the client pressed in the portal — account suggestions on
+   * the X intake form, a task-map refresh, an audience simulation. Not the
+   * copilot, not a task run, not an agent run: those have their own operations
+   * and their own labels, and folding these into one of them would make the
+   * client's own spend breakdown name the wrong feature. The reason line
+   * carries which tool it was.
+   */
+  | "ai_tool"
   | "manual";
 
 /**
@@ -1644,7 +1807,12 @@ export interface XDraftFeedback {
   account: string;
   jobId?: string;
   assetId?: string;
-  /** Which draft in the batch, e.g. "Avenue 3 · News-reaction". */
+  /**
+   * Which draft in the batch: `${accountTitle} · ${laneHeading}`, minted by the
+   * review pane and byte-identical wherever it is written (see x-options.ts's
+   * header — the learning log joins on it). Raw lab vocabulary by design;
+   * `refLaneLabel` is what a client reads.
+   */
   draftRef?: string;
   /** "note" = free-form client feedback, not tied to one draft. */
   action: "posted" | "posted_with_edits" | "not_posted" | "note";
@@ -1670,7 +1838,12 @@ export interface LiDraftFeedback {
   account: string;
   jobId?: string;
   assetId?: string;
-  /** Which draft in the batch, e.g. "Account 1 · Karos Labs — Company page". */
+  /**
+   * Which draft in the batch: `${accountTitle} · ${laneHeading}`, minted by the
+   * review pane and byte-identical wherever it is written (see x-options.ts's
+   * header — the learning log joins on it). Raw lab vocabulary by design;
+   * `refLaneLabel` is what a client reads.
+   */
   draftRef?: string;
   /**
    * "note" = free-form client feedback, not tied to one draft.
@@ -1998,7 +2171,12 @@ export interface RedditDraftFeedback {
   account: string;
   jobId?: string;
   assetId?: string;
-  /** Which draft, e.g. "Karos Labs — company account · Draft 1 · Thorough value answer". */
+  /**
+   * Which draft in the batch: `${accountTitle} · ${laneHeading}`, minted by the
+   * review pane and byte-identical wherever it is written (see x-options.ts's
+   * header — the learning log joins on it). Raw lab vocabulary by design;
+   * `refLaneLabel` is what a client reads.
+   */
   draftRef?: string;
   /**
    * "note" = free-form client feedback, not tied to one draft.

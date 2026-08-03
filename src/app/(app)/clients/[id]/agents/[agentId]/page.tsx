@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import {
-  getClient,
   getClientCredits,
   getCustomAgent,
   listAssets,
@@ -18,8 +17,9 @@ import { AgentIdentity } from "@/components/agent-identity";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { deliveredAgentIds, isLaunchInFlight, rosterStatus } from "@/lib/client-agents";
+import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
@@ -37,10 +37,13 @@ import { evaluateLegacyRunGate } from "@/lib/client-agent-runs";
 import { agentArchetype } from "@/lib/agent-archetype";
 import {
   agentProducedAssets,
+  agentsWithDeliveredWork,
+  agentsWithUpcomingContent,
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
   templateDetails,
+  umbrellaForAgent,
 } from "@/lib/agent-detail-archetypes";
 import {
   agentInputsView,
@@ -58,6 +61,7 @@ import {
   buildXAgentIntakeView,
 } from "@/lib/agent-intake-views";
 import {
+  agentKeyMatchesClientSlug,
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
@@ -164,14 +168,33 @@ export default async function ClientAgentDetailPage({
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   const viewerIsClient = !isStaff;
 
   const agent = await getCustomAgent(agentId);
   if (!agent || !agent.enabled) notFound();
+
+  // THE BINDING, on the surface that resolves the pair — not only on the three
+  // that LIST it. A per-client agent instance runs an entry skill baked under
+  // one client's lab folder (see agentKeyMatchesClientSlug), and the roster, the
+  // settings page and the delivered-work read all drop an instance belonging to
+  // another client. This route did not: `/clients/A/agents/<instance-of-B>`
+  // resolved, and rendered A's status strip, setup facts, intake panes, schedule
+  // controls and run gesture around an agent that can only ever draft for B. The
+  // submit core refuses the pair at run time, so nothing wrong could be
+  // GENERATED — what shipped was a page telling one client an agent was theirs.
+  //
+  // Refused for staff as well, and that is the same rule rather than an extra
+  // one: both branches of the roster filter on this predicate regardless of who
+  // is looking, and a staff run dialog opened here would build a submission both
+  // submit cores reject.
+  //
+  // `notFound()`, matching the client gate below: a client probing ids must not
+  // learn which agents the lab has, and a distinct refusal here would answer
+  // exactly that for every instance key it guessed.
+  if (!agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) notFound();
 
   const [jobs, credits, scheduledRuns, umbrellas, assets, integrations, contextItems] =
     await Promise.all([
@@ -186,24 +209,35 @@ export default async function ClientAgentDetailPage({
     listContextItems({ clientId: id }),
   ]);
 
-  // A client may only open an agent they were granted - or one that has already
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const now = Date.now();
+  const umbrella = umbrellaForAgent(umbrellas, agent.id);
+  // Has this agent landed work here? Asked ONCE, through the function the roster
+  // lists by, and used for both the gate below and the status strip further
+  // down. It was two reads: an inline job scan here and `produced.length > 0 ||
+  // hasDeliveredByJob` there. The inline scan was job-only, so a client whose
+  // Workspace was full of an agent's lab-imported posts got a 404 from the
+  // agent's own page — and the roster, reading the same job-only rule, did not
+  // list the agent either.
+  const hasDelivered = agentsWithDeliveredWork({
+    assets,
+    jobs,
+    agents: [agent],
+    umbrellas,
+    clientSlug: client.agentsRepoSlug,
+    viewerIsClient,
+    now,
+  }).has(agent.id);
+
+  // A client may only open an agent they were granted — or one that has already
   // delivered for them, the same rule the roster uses to decide what to list.
   // Same answer for "not granted" and "does not exist": a client probing ids
   // must not learn which agents the lab has.
-  if (viewerIsClient) {
-    const successful = new Set(["review", "approved", "delivered"]);
-    const earned = jobs.some(
-      (job) =>
-        job.external?.taskType === "custom" &&
-        successful.has(job.status) &&
-        (job.customAgentId === agent.id || job.agentName === agent.name),
-    );
-    if (!(client.customAgentIds ?? []).includes(agent.id) && !earned) notFound();
+  if (viewerIsClient && !(client.customAgentIds ?? []).includes(agent.id) && !hasDelivered) {
+    notFound();
   }
 
   const summary = toSummary(agent);
-  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
-  const now = Date.now();
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
   const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
   const creditBlockReasons: Record<string, string> =
@@ -232,7 +266,6 @@ export default async function ClientAgentDetailPage({
   ]);
   const agentSetup = await buildAgentSetup(id, [summary], panes);
   const scheduleRows = toScheduleRows(scheduledRuns, viewerIsClient);
-  const umbrella = umbrellas.find((u) => u.customAgentId === agent.id) ?? null;
   const rows = umbrella
     ? await toClientAgentRows({
         umbrellas: [umbrella],
@@ -254,24 +287,10 @@ export default async function ClientAgentDetailPage({
   const row = rows[0] ?? null;
 
   const schedule = scheduleRows.find((s) => s.agentId === agent.id) ?? null;
-  // Whether this agent has ever landed work here, read from the SAME job join
-  // the roster reads (deliveredAgentIds) rather than from `produced` below: a
-  // client's `produced` is the 30-day archive set, so an agent whose only
-  // delivery was two months ago would be "Not set up yet" on this page and
-  // "Runs on request" on the card that opened it.
-  const hasDelivered = deliveredAgentIds(jobs, new Map([[agent.name, agent.id]])).has(agent.id);
-  const status = rosterStatus({
-    launchState: umbrella?.launchState ?? null,
-    scheduleRefusal: schedule?.status === "active" ? schedule.lastError : null,
-    scheduleActive: schedule?.status === "active",
-    hasDelivered,
-  });
-  const blurb = clientAgentBlurb({
-    key: agent.key,
-    name: agent.name,
-    clientBlurb: agent.clientBlurb ?? null,
-  });
-
+  // The name fallback `lastRunFailedAgentIds` attributes pre-customAgentId runs
+  // by. "Has it delivered?" is NOT re-derived here — it was answered above,
+  // before the gate, through the same function the roster lists by.
+  const agentIdByName = new Map([[agent.name, agent.id]]);
   // ── What this agent has already delivered (§7.3 identity) ──
   // The attribution join, the client's delivered-work-only filter and the
   // delivery stamp all moved to agent-detail-archetypes.ts when the second and
@@ -281,11 +300,73 @@ export default async function ClientAgentDetailPage({
   const produced = agentProducedAssets({
     assets,
     jobs,
-    agent: { id: agent.id, name: agent.name },
+    // The KEY rides along with the name: a lab-imported asset carries the repo
+    // folder it came from ("instagram-agent") and nothing else, and the key is
+    // the spelling of this agent closest to it.
+    agent: { id: agent.id, name: agent.name, key: agent.key },
     umbrella,
     umbrellas,
     viewerIsClient,
     now,
+  });
+
+  // `produced` is this page's LIST; `hasDelivered` above is the strip's VERDICT,
+  // and it is also what the roster card that opened this page reads, so the two
+  // pages cannot disagree.
+  //
+  // WHAT THE `|| produced.length > 0` IS FOR, restated because its old reason
+  // has been closed above and a comment naming a cause that can no longer
+  // happen is worse than no comment. The reason given here used to be the
+  // binding: `agentsWithDeliveredWork` filters its candidates by
+  // `agentKeyMatchesClientSlug` and `agentProducedAssets` does not, so for an
+  // agent bound to another client the verdict could be false while the list was
+  // non-empty — a strip reading "Not set up yet" above a shelf of work. This
+  // route now refuses that pair outright, so that particular divergence is
+  // unreachable and this line no longer changes any rendered page.
+  //
+  // Kept anyway, and deliberately: the invariant the page needs is that the
+  // strip never contradicts the list under it, and the two answers are computed
+  // by two functions that a review pass has already made disagree twice. This
+  // costs a boolean OR; re-deriving the invariant from "the two computations
+  // agree today" is what let it break before.
+  const stripHasDelivered = hasDelivered || produced.length > 0;
+
+  const status = rosterStatus({
+    launchState: umbrella?.launchState ?? null,
+    // Raw refusal + raw status: `rosterStatus` owns both the pause rule and
+    // the freshness window, so the roster card and this page cannot end up
+    // ageing the same refusal differently.
+    scheduleRefusal: schedule?.lastError ?? null,
+    scheduleRefusalAt: schedule?.lastErrorAt ?? null,
+    scheduleActive: schedule?.status === "active",
+    hasDelivered: stripHasDelivered,
+    // Read through the SAME helper the roster uses (lastRunFailedAgentIds), not
+    // re-derived from `agentRuns` below: that list is staff-only and capped at
+    // eight rows, so a client's page would answer this differently — or not at
+    // all — from the card that opened it.
+    lastRunFailed: lastRunFailedAgentIds(jobs, agentIdByName, { staff: isStaff }).has(agent.id),
+    // The same flag `lastRunFailedAgentIds` already takes, handed on rather than
+    // re-derived: a client's badge is never moved by a run that broke on our side
+    // (AF-14), and the two answers have to come off one boolean or this page and
+    // the card that opened it can disagree about which reader they are for.
+    viewerIsStaff: isStaff,
+    // AF-5, through the same helper both roster branches read, and with the same
+    // (viewer-independent) arguments — the strip, the header badge and the card
+    // that opened this page must all say one word.
+    hasUpcomingContent: agentsWithUpcomingContent({
+      assets,
+      jobs,
+      agents: [agent],
+      umbrellas,
+      clientSlug: client.agentsRepoSlug,
+      now,
+    }).has(agent.id),
+    now,
+  });
+  const blurb = clientAgentBlurb({
+    key: agent.key,
+    name: agent.name,
+    clientBlurb: agent.clientBlurb ?? null,
   });
 
   // ── WHICH PAGE SHAPE (CD-I1) ──
@@ -295,14 +376,13 @@ export default async function ClientAgentDetailPage({
   // connectors and feedback are the common chassis and render for all three.
   const archetype = agentArchetype({ key: agent.key, name: agent.name });
 
-  // The agent's own weekly schedule row, unredacted, for the day projections.
+  // The agent's own schedule row, unredacted, for the day projections.
   // `scheduleRows` above is the client-safe projection and deliberately drops
-  // the fields projectRunOccurrences needs.
-  const plannedRun =
-    scheduledRuns.find(
-      (run) =>
-        run.customAgentId === agent.id && run.cadence === "weekly" && run.status !== "completed",
-    ) ?? null;
+  // the fields projectRunOccurrences needs — so this reads the SAME selection
+  // (`selectAgentSchedule`) rather than a fifth private copy of the weekly-only
+  // filter. It had one, and it was the copy that made the Reddit panel print
+  // "Not looking yet" for a daily agent that drafts every day.
+  const plannedRun = selectAgentSchedule(scheduledRuns, agent.id)?.schedule ?? null;
 
   const clipView =
     archetype === "clip_maker"
@@ -507,13 +587,34 @@ export default async function ClientAgentDetailPage({
     : [];
 
   // The only work this page may announce as happening NOW: a run this viewer's
-  // own side started. Exactly the two the run banners already mount. A
-  // scheduled fire is deliberately excluded - it is not something the reader
-  // just asked for, and saying it is running states outright that production is
-  // not day-of (A3/A4). A launch in flight is excluded too: the launch card is
-  // already narrating it in three phases, and a second voice would be a second
-  // copy of that story to keep in step.
-  const running = Boolean(row?.activeRun || legacyRun);
+  // own side started. A scheduled fire is deliberately excluded — it is not
+  // something the reader just asked for, and saying it is running states outright
+  // that production is not day-of (A3/A4). A launch in flight is excluded too:
+  // the launch card is already narrating it in three phases, and a second voice
+  // would be a second copy of that story to keep in step.
+  //
+  // AF-9: it used to be exactly the two runs a BANNER is mounted for, and those
+  // two do not cover the run this page's own controls fire most. `row.activeRun`
+  // matches `runType: "manual_template"` only, and `legacyRun` is nulled outright
+  // for an umbrella-bound agent — so a staff "Run now" or "Test run" from the
+  // Control Room, on the flagship umbrella agent, left the page with no in-flight
+  // mark at all and no AutoRefresh. Pressing the button and being sent nowhere
+  // visible is exactly the post-gesture confusion this item is about.
+  //
+  // Same authorship rule as `legacyRun` (`createdBy === user.uid`), so it can
+  // still only ever announce work this reader asked for. Test runs count for
+  // staff, who are the only people who can fire one and the people waiting on it.
+  const viewerRunInFlight = jobs.some(
+    (job) =>
+      job.external?.taskType === "custom" &&
+      (job.status === "queued" || job.status === "running") &&
+      job.runType !== "launch" &&
+      (isStaff || job.runType !== "test") &&
+      job.createdBy === user.uid &&
+      (job.customAgentId === agent.id ||
+        (!job.customAgentId && job.agentName === agent.name)),
+  );
+  const running = Boolean(row?.activeRun || legacyRun) || viewerRunInFlight;
 
   // Order-independent: `produced` is sorted for a client and unsorted for
   // staff, and this line has to give the same answer to both.
@@ -540,7 +641,11 @@ export default async function ClientAgentDetailPage({
 
   return (
     <>
-      {(launchInFlight || row?.activeRun || legacyRun) && <AutoRefresh />}
+      {/* AF-9: `running` already is "a run this viewer started is in flight", so
+          the poller and the mark on the strip can no longer answer that question
+          differently — which they did, and which is why a staff run left a static
+          page behind it. */}
+      {(launchInFlight || running) && <AutoRefresh />}
       <div className="mb-4">
         <Link
           href={`/clients/${id}/agents`}
@@ -564,11 +669,18 @@ export default async function ClientAgentDetailPage({
         }
       />
 
+      {/* One banner, two registers — the roster page's idiom (agents/page.tsx),
+          for the same reason. This tree renders for BOTH readers, so the client
+          sentence was telling a KAROS_ADMIN to contact the Karos team; staff are
+          the people who clear this, so theirs names the cause instead. Problem,
+          then what to do, then the reassurance: the reassurance sat between the
+          other two and buried the action. */}
       {!agentServiceConfigured && (
         <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
           <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-          Agent runs are paused right now - starting a new post will not work until this clears. Your
-          Karos team has been notified. Everything below is unaffected.
+          {viewerIsClient
+            ? "Agent runs are paused right now. Starting a new post will not work until this clears. Contact your Karos team if you need a post today. Everything below is unaffected."
+            : "Agent runs are paused. The agent-service environment is not configured, so starting a post will fail until it is set. Everything below is unaffected."}
         </p>
       )}
 
@@ -590,7 +702,14 @@ export default async function ClientAgentDetailPage({
               row. Both read the SAME resolved `status`, so the rule that a
               schedule refusal outranks Live (F24/F129) cannot hold in one place
               and not the other. */}
-          <AgentStatusStrip status={status} running={running} facts={statusFacts} />
+          {/* `staffNote` is AF-5's operational truth and is passed for staff
+              only — the client reads the word alone, which is the ruling. */}
+          <AgentStatusStrip
+            status={status}
+            running={running}
+            facts={statusFacts}
+            {...(isStaff && status.staffNote ? { staffNote: status.staffNote } : {})}
+          />
 
           {/* ── THE ARCHETYPE HERO (CD-I1) ──
               Deliberately ABOVE the controls band. Albert asked for the clip
@@ -618,18 +737,11 @@ export default async function ClientAgentDetailPage({
             </section>
           )}
 
-          {finderView && (
-            <DailyFinderPanel
-              clientId={id}
-              view={finderView}
-              scheduleActive={schedule?.status === "active"}
-              emptyHint={
-                schedule?.status === "active"
-                  ? "It looks once a day and only brings back a thread worth answering - some days there is nothing good, and a forced reply is worse than none."
-                  : "Your Karos team sets how often this agent goes looking. Nothing runs until they do."
-              }
-            />
-          )}
+          {/* No `scheduleActive` and no `emptyHint`: both were this page's own
+              derivation of "is it running?" from the redacted schedule row,
+              beside a strip the server had already derived from the raw run.
+              The panel reads `view.scheduleState` — one answer, one source. */}
+          {finderView && <DailyFinderPanel clientId={id} view={finderView} />}
 
           {/* Hero: the launch card for a non-live umbrella (§7.1 states 1–3),
               the working agent once it is live. An agent with no umbrella at
@@ -650,10 +762,19 @@ export default async function ClientAgentDetailPage({
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
             />
-          ) : status.tone === "live" || hasDelivered ? (
+          ) : schedule?.status === "active" || hasDelivered ? (
             /* The legacy shape (CD-H8): no umbrella was ever bound, but a weekly
-               schedule is firing - so this agent genuinely IS producing, and the
-               roster and header badge it Live. It is also the flagship case, not
+               schedule is firing — so this agent genuinely IS producing, and the
+               roster and header badge it Live.
+
+               THE SCHEDULE, not `status.tone === "live"`. The tone was standing
+               in for "a schedule is firing", and it stopped being able to the
+               moment anything else could outrank Live: a failed last run (or a
+               refusal) flipped the tone to `attention` and this whole panel
+               vanished, replaced by an EmptyState reading "Not set up yet" — on
+               an agent with an active weekly schedule. A run that failed is
+               precisely when its owner needs the controls, so the branch now
+               asks the question it always meant. It is also the flagship case, not
                an edge one: Karos Labs' own Instagram Agent predates the umbrella
                model. It used to render one sentence and nothing else, which made
                the most-looked-at agent in the portal the one with no way to make
@@ -782,7 +903,7 @@ export default async function ClientAgentDetailPage({
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-4 py-3 text-xs text-muted-2">
                 {archetype === "template_calendar"
                   ? "Nothing yet. Finished work appears here once your Karos team has approved it."
-                  : "Nothing else yet - everything this agent has made is above."}
+                  : "Nothing else yet. Everything this agent has made is above."}
               </p>
             ) : (
               <ul className="space-y-1.5">
@@ -921,7 +1042,7 @@ export default async function ClientAgentDetailPage({
               </ul>
             )}
             <Link
-              href={`/clients/${id}/settings`}
+              href={`/clients/${id}/settings?tab=channels`}
               className="mt-2 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
             >
               Manage connections <Icon name="ArrowRight" className="h-3 w-3" />

@@ -7,9 +7,14 @@ import {
   verifyOAuthState,
   buildCallbackUrl,
   getAppOrigin,
+  getRequestedScopes,
 } from "@/lib/integrations/oauth";
 import { GOOGLE_UNIFIED_SUB_PLATFORM_IDS } from "@/lib/integrations/platforms";
-import { errorPage, successPage } from "@/lib/integrations/oauth-popup";
+import {
+  errorPage,
+  successPage,
+  OAUTH_UNSUPPORTED_CHANNEL_MESSAGE,
+} from "@/lib/integrations/oauth-popup";
 
 /* ── Token exchange ──────────────────────────────────────────────────── */
 
@@ -286,28 +291,48 @@ export async function GET(
   const oauthError = sp.get("error");
   const oauthErrorDesc = sp.get("error_description");
 
+  // EVERY MESSAGE BELOW IS CLIENT COPY, and it did not read as any. This handler
+  // answers with the popup shell (oauth-popup.ts), which renders the message as
+  // HTML in the window a client opened from "Add a channel" and posts it to the
+  // card behind it — so these are read by the person connecting, not by a fetch
+  // caller. They shipped as protocol notes: four carried the spaced hyphen the
+  // client copy rules ban ("Invalid callback - missing code or state.") and the
+  // words were the flow's internals rather than anything the reader can act on —
+  // "State mismatch", "Invalid state signature", "PKCE verifier missing",
+  // "Unknown provider". The sibling authorize route already wrote em dashes and
+  // plain sentences, so the two halves of one popup disagreed.
+  //
+  // None of them names a parameter, a cookie or a protocol step. The ones written
+  // here as sentences end in what the reader can do, because their causes (a
+  // redirect that came back incomplete, a cookie that expired or was blocked, a
+  // signature that does not verify, a verifier this browser no longer has) are all
+  // the same thing to a client and the honest answer to each is to start the
+  // connection again. OAUTH_UNSUPPORTED_CHANNEL_MESSAGE is the exception and offers
+  // no next step ON PURPOSE — there is none to offer, the portal cannot connect
+  // that channel at all — which is also why it is asked for from oauth-popup.ts
+  // instead of being spelled here and in the authorize route separately.
   if (oauthError) {
     return errorPage(provider, oauthErrorDesc ?? oauthError, origin);
   }
   if (!code || !state) {
-    return errorPage(provider, "Invalid callback - missing code or state.", origin);
+    return errorPage(provider, "That channel didn't send back everything we needed — start the connection again.", origin);
   }
 
   // Verify state against the cookie value (CSRF check)
   const cookieStore = await cookies();
   const savedState = cookieStore.get("karos_oauth_state")?.value;
   if (!savedState || savedState !== state) {
-    return errorPage(provider, "State mismatch - please try connecting again.", origin);
+    return errorPage(provider, "We couldn't match this window to the connection you started — start it again.", origin);
   }
   cookieStore.delete("karos_oauth_state");
 
   const parsed = verifyOAuthState(state);
   if (!parsed || parsed.provider !== provider) {
-    return errorPage(provider, "Invalid state signature.", origin);
+    return errorPage(provider, "We couldn't verify where this connection came back from — start it again.", origin);
   }
 
   const config = OAUTH_CONFIGS[provider];
-  if (!config) return errorPage(provider, "Unknown provider.", origin);
+  if (!config) return errorPage(provider, OAUTH_UNSUPPORTED_CHANNEL_MESSAGE, origin);
 
   // Retrieve PKCE verifier if needed
   let codeVerifier: string | null = null;
@@ -315,7 +340,11 @@ export async function GET(
     codeVerifier = cookieStore.get("karos_oauth_pkce")?.value ?? null;
     cookieStore.delete("karos_oauth_pkce");
     if (!codeVerifier) {
-      return errorPage(provider, "PKCE verifier missing - please try again.", origin);
+      return errorPage(
+        provider,
+        "We couldn't finish this connection securely — start it again.",
+        origin,
+      );
     }
   }
 
@@ -340,8 +369,24 @@ export async function GET(
     // google-business-profile.ts) keeps working unchanged, unaware a unified
     // flow was involved. A Google access token is scope-checked per API call,
     // not per issuing flow, so one token pair is valid across all four.
+    //
+    // ...but only for the scopes the consent screen actually asked for. Business
+    // Profile's business.manage is gated behind GOOGLE_BUSINESS_PROFILE_APPROVED
+    // (see oauth.ts), so until Google approves it this token carries no Business
+    // Profile grant. Writing an "active" google_business_profile doc anyway would
+    // show the client a connected channel that 403s on every call — so drop it
+    // from the fan-out unless the scope was genuinely requested. Self-heals the
+    // day the flag flips; the standalone google_business_profile connector is
+    // unaffected and still requests the scope on its own.
+    const unifiedScopes = getRequestedScopes("google_unified");
     const platformsToWrite =
-      provider === "google_unified" ? GOOGLE_UNIFIED_SUB_PLATFORM_IDS : [provider];
+      provider === "google_unified"
+        ? GOOGLE_UNIFIED_SUB_PLATFORM_IDS.filter(
+            (p) =>
+              p !== "google_business_profile" ||
+              unifiedScopes.includes("https://www.googleapis.com/auth/business.manage"),
+          )
+        : [provider];
 
     for (const platform of platformsToWrite) {
       // Each sub-service has its own notion of "account" (e.g. the YouTube channel
@@ -374,7 +419,19 @@ export async function GET(
 
     return successPage(provider, accountName, origin);
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Connection failed - please try again.";
+    // STATED HOLE, and it is the bigger half of this popup's copy problem: on the
+    // common path `e.message` is reflected verbatim, and the throws above are not
+    // written for this reader — `Token exchange failed (400)`, `Unsupported
+    // provider: …`, plus whatever `error_description` TikTok returns. Same for the
+    // provider's own `error` at the top of this handler, which is a raw OAuth code
+    // reflected as prose — and `access_denied` is what a provider sends when the
+    // client simply cancels on the consent screen, so that path is an ordinary
+    // outcome rather than a rare fault. Both are left alone here
+    // deliberately: replacing them is a product call about what a client is told
+    // when a connection fails and what a cancel should say, not a copy pass, and
+    // guessing at it would trade a jargon message for a wrong one. Only the
+    // literals this handler writes itself are fixed.
+    const message = e instanceof Error ? e.message : "Something went wrong connecting that channel — try again.";
     return errorPage(provider, message, origin);
   }
 }

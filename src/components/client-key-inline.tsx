@@ -54,7 +54,7 @@ export function ClientKeyInline({
         setConfirming(false);
         router.refresh();
       } catch {
-        setError("Could not replace the key - ask your Karos team.");
+        setError("Could not replace the key. Ask your Karos team.");
       }
     });
   }

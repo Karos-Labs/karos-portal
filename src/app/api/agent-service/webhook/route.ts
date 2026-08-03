@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { assetTitleFromJobTitle } from "@/lib/job-title";
 import {
@@ -9,6 +10,7 @@ import {
   getCustomAgent,
   getJob,
   getJobByExternalServiceId,
+  isJobInFlight,
   listClientSeats,
   updateJob,
   upsertSeatVoiceProfile,
@@ -23,20 +25,32 @@ import {
 } from "@/lib/agent-service/verify";
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
-import type { AssetType, ExternalJobArtifact, JobStatus } from "@/lib/types";
+import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
+import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import {
+  ARTIFACT_FETCH_TIMEOUT_MS,
+  ARTIFACT_UPLOAD_TIMEOUT_MS,
+  REHOST_DEADLINE_MS,
+} from "@/lib/agent-service/rehost-budget";
 import { orderKeyForCreatedAt } from "@/lib/post-chain";
 import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
 import { getClientAgent } from "@/lib/data-client-agents";
 import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
-import { autoCompleteTasksByTrigger, syncTaskForJobOutcome } from "@/lib/task-sync";
+import {
+  autoCompleteTasksByTrigger,
+  findDispatchingTask,
+  syncTaskForJobOutcome,
+} from "@/lib/task-sync";
 import { notifyJobFailure } from "@/lib/job-alerts";
 import { logger } from "@/services/logger";
 
+// The re-host phase is budgeted to end well inside this (rehost-budget.ts),
+// leaving the claim and the writes after it the remainder.
 export const maxDuration = 120;
 
 const REHOST_FILE_LIMIT_BYTES = 25 * 1024 * 1024;
@@ -52,20 +66,10 @@ const STATUS_MAP: Record<AgentServiceWebhookPayload["status"], JobStatus> = {
   cancelled: "cancelled",
 };
 
-const ASSET_TYPE_MAP = {
-  social_post: "social_post",
-  newsletter_issue: "email",
-  blog_article: "article",
-  landing_page: "note",
-  custom: "note",
-} as const satisfies Record<
-  "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom",
-  AssetType
->;
-
-// Asset types a custom job may request via metadata.asset_type (whitelist — a
-// hint is only honored if it's one of these, otherwise we fall back to "note").
-const VALID_HINT_TYPES = new Set<AssetType>(["social_post", "instagram_post", "email", "article", "note"]);
+// The task-type map, the metadata.asset_type whitelist and the draft-only fence
+// over both now live in one module (agent-service/deliverable-asset-type.ts),
+// because the type decides whether the product will offer to PUBLISH the
+// deliverable — see `deliverableAssetType` at the asset write below.
 
 const TEXT_EXTENSIONS = [".md", ".html", ".txt"];
 const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
@@ -123,13 +127,53 @@ function extension(name: string): string {
   return i >= 0 ? name.slice(i).toLowerCase() : "";
 }
 
+const MB = 1024 * 1024;
+
+/**
+ * Bytes as whole megabytes for the run log — and the rounding DIRECTION is part
+ * of the sentence, not a detail.
+ *
+ * `Math.round` on both halves of a comparison made the reason contradict itself:
+ * a 25.4 MB artifact against a 25 MB cap logged "it is 25 MB, over the 25 MB
+ * per-file limit", which is the message a staff member reads to decide whether to
+ * raise the cap. Every file between 25.0 and 25.5 MB said that, and the run-total
+ * message had the same property near 150 MB.
+ *
+ * So a size that BROKE a limit rounds up and a size already CONSUMED rounds down.
+ * Both err away from the claim being made, so neither can read as equal to the
+ * limit it is being compared against. The cost is that a 25.4 MB file is logged
+ * as 26 MB — an overstatement under 1 MB, which cannot change the decision this
+ * sentence exists to inform (whether to raise the cap) and cannot contradict it.
+ */
+function mbAtLeast(bytes: number): number {
+  return Math.ceil(bytes / MB);
+}
+
+/** A size already consumed — rounded down, so it never claims more than it used. */
+function mbAtMost(bytes: number): number {
+  return Math.floor(bytes / MB);
+}
+
+/** An exact limit. The constants are whole megabytes, so this is lossless. */
+function mbExact(bytes: number): number {
+  return bytes / MB;
+}
+
 /**
  * Agent-service webhook receiver. Verifies the HMAC signature (fail-closed:
  * without AGENT_WEBHOOK_SECRET every request is rejected), updates the
  * mirrored `jobs` doc, re-hosts client-facing artifacts into the platform's
  * own storage, creates a reviewable asset, and records token usage/cost.
+ *
+ * Two phases, split by `claimExternalJobCompletion`. Everything that can throw
+ * or run long — the refund, the template lookup, and the artifact re-host — runs
+ * BEFORE the claim and fails the delivery with a retryable 503; the claim is the
+ * single gate on every persisted side effect after it, and an advisory
+ * status pre-filter above the expensive work keeps a settled redelivery from
+ * paying for it twice. See TOMER-HANDOVER §4.1c.
  */
 export async function POST(req: NextRequest) {
+  const handlerStartedAt = Date.now();
   const secretsEnv = process.env.AGENT_WEBHOOK_SECRET;
   if (!secretsEnv) {
     return NextResponse.json({ error: "Webhook not configured" }, { status: 503 });
@@ -180,9 +224,65 @@ export async function POST(req: NextRequest) {
     }
   }
   if (!job || !job.external) {
-    // Unknown job — 404 so the service's delivery queue retries: the write
-    // race window closes long before the retry schedule runs out.
-    return NextResponse.json({ error: "No matching platform job" }, { status: 404 });
+    // No job matched. This wants a RETRY — the submission race the fallback
+    // above exists for is exactly the window a second attempt closes — and it
+    // used to ask for one with a 404 and a comment saying so. The sender does
+    // not read comments: `deliverWebhook` classifies EVERY 4xx as "rejected"
+    // (agent-service/src/webhooks/deliver.ts), and the webhooks worker returns
+    // on "rejected" instead of throwing (agent-service/src/queue/webhooks.ts),
+    // so BullMQ never re-queues it. One attempt, then the delivery is gone.
+    //
+    // Gone is unrecoverable, not merely late: `reconcileOneJob` deliberately
+    // leaves a job the service reports as `done` alone so this webhook's
+    // redelivery can attach the deliverables (reconcile-job.ts). With no
+    // redelivery the run sits queued/running for ever, no asset is written, and
+    // a client-charged run is never refunded.
+    //
+    // So this joins the two conditions below it at 503, the code the sender
+    // does retry, with their wording. ONE rule holds the seam — 5xx retryable,
+    // 4xx permanent — instead of an exemption list inside the sender for the
+    // 4xx codes that secretly meant "try again". The receiver's remaining 4xx
+    // (400 malformed, 401 bad signature) are permanent for real.
+    //
+    // THE COST, STATED: a delivery that can never match — a deleted job, a
+    // payload from another environment, a client or serviceJobId mismatch — is
+    // now retried across the queue's full ~42-minute schedule instead of once.
+    // Bounded, and cheap: this check sits above every expensive phase, so an
+    // attempt costs one or two Firestore reads and no re-host.
+    console.error(
+      `[webhook] no platform job matched service job ${payload.job_id} ` +
+        `(client ${payload.client_id}, platform_job_id ${payload.metadata?.platform_job_id ?? "absent"}). ` +
+        `Delivery failed for retry.`,
+    );
+    return NextResponse.json(
+      { error: "No matching platform job — retry delivery" },
+      { status: 503 },
+    );
+  }
+
+  // Advisory pre-filter — an OPTIMISATION, not a second gate. The claim below
+  // stays the sole authority on whether a delivery may proceed; this only spares
+  // an already-settled REDELIVERY the expensive pre-claim work the claim would
+  // make it throw away: the refund, the template lookup, and above all the
+  // artifact re-host, which can move up to REHOST_TOTAL_LIMIT_BYTES per attempt
+  // under a fresh path segment that nothing records. It reads the `job` already
+  // in hand, so it costs no extra Firestore read.
+  //
+  // This is not a rare race. The sender abandons each delivery at 30s
+  // (agent-service/src/webhooks/deliver.ts) while the re-host budget below is
+  // longer, so exactly the slow manifests that budget exists for get retried on
+  // the service's schedule (agent-service/src/queue/webhooks.ts). Without this
+  // filter, every one of those attempts re-hosts the whole manifest again.
+  //
+  // It relies on one invariant: a job's status only ever moves TOWARD terminal —
+  // created `queued`, then written once to a terminal value. Nothing resurrects a
+  // job to `queued`/`running` (`retryJobAction` submits a NEW job rather than
+  // reopening this one). Given that, "terminal here" implies "terminal at the
+  // claim", so the filter can only ever agree with the claim. If that invariant
+  // is ever broken this filter must go, because it would then reject deliveries
+  // the claim would have accepted.
+  if (!isJobInFlight(job.status)) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
   }
 
   const status = STATUS_MAP[payload.status] ?? "failed";
@@ -207,6 +307,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Run shape, derived once ──
+  // A launch run is a setup run that designs the client's templates: its
+  // deliverables are working material for staff, NOT content. They land as
+  // staff-only assets, skip the chain entirely (nothing about them belongs on a
+  // calendar), and the umbrella advances to curation. A Control Room "Test Run"
+  // gets the same exclusion for a different reason (staff verifying the
+  // pipeline, not a one-time setup artifact). Our own job doc is the source of
+  // truth for the run type; the metadata echo is the fallback for a job written
+  // before the field was stamped. Derived here, above the claim, because the
+  // re-host below needs it and because one derivation is the only way both the
+  // template gate and the asset flags can agree.
+  const clientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
+  const isLaunchRun =
+    (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(clientAgentId);
+  const isTestRun = (job.runType ?? payload.metadata?.karos_run_type) === "test";
+
   // The template stream this run was fired against, resolved BEFORE the claim
   // for the same reason the refund above is: the claim is single-use, so a
   // lookup that throws after it has no retry — redelivery would short-circuit
@@ -217,16 +333,14 @@ export async function POST(req: NextRequest) {
   // key is trusted from our job doc first and the metadata echo second, but a
   // stale or hand-crafted key must never write a stream name onto a client's
   // deliverable that their agent does not have, and an umbrella id from another
-  // tenant must never be read through at all.
-  const claimClientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
-  const claimIsLaunch =
-    (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(claimClientAgentId);
+  // tenant must never be read through at all. The archive groups by exactly
+  // this field, so a wrong value is worse than none.
   const runTemplateKey = job.templateKey ?? payload.metadata?.karos_template_key ?? null;
   let runTemplate: { key: string; name?: string } | null = null;
-  if (runTemplateKey && claimClientAgentId && !claimIsLaunch) {
+  if (runTemplateKey && clientAgentId && !isLaunchRun) {
     let umbrella;
     try {
-      umbrella = await getClientAgent(claimClientAgentId);
+      umbrella = await getClientAgent(clientAgentId);
     } catch {
       return NextResponse.json(
         { error: "Template lookup failed — retry delivery" },
@@ -239,64 +353,85 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Atomic claim — makes redelivery (sender retries on timeout) idempotent:
-  // exactly one delivery flips the job out of queued/running and runs the
-  // side effects (asset creation, usage logging).
-  const claimed = await claimExternalJobCompletion(job.id, status);
-  if (!claimed) {
-    return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
-  }
-  const now = Date.now();
-  const events = [...job.events];
-
-  // ── Launch runs (Phase 3 §8.2) ──
-  // A setup run designs the client's templates; its deliverables are working
-  // material for staff, NOT content. They land as staff-only assets, skip the
-  // chain entirely (nothing about them belongs on a calendar), and the
-  // umbrella advances to curation. Our own job doc is the source of truth for
-  // the run type; the metadata echo is the fallback for a job written before
-  // the field was stamped.
-  const clientAgentId = job.clientAgentId ?? payload.metadata?.karos_client_agent_id ?? null;
-  const isLaunchRun =
-    (job.runType ?? payload.metadata?.karos_run_type) === "launch" && Boolean(clientAgentId);
-  // Control Room "Test Run" (item 3, dry-run equivalent): the run is real, but
-  // its output must never reach a client or a calendar slot — same treatment
-  // as a launch deliverable, just for a different reason (staff verifying the
-  // pipeline, not a one-time setup artifact).
-  const isTestRun = (job.runType ?? payload.metadata?.karos_run_type) === "test";
-  let launchTemplatesJson: string | null = null;
-
-  // The template stream this run was fired against, WHITELISTED against the
-  // umbrella's own registry (§8.2). The key is trusted from our own job doc
-  // first and the metadata echo second, but either way it is only accepted if
-  // the umbrella actually has that template — a stale or hand-crafted key must
-  // never write a stream name onto a client's deliverable that their agent
-  // does not have, since the archive groups by exactly this field.
-
+  // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
+  // This used to run AFTER the claim, which is how a run lost its deliverables:
+  // the claim wrote status "review" first, then a wall-clock kill or an instance
+  // recycle during the fetch/upload loop left a success-looking job with zero
+  // assets, no error, the client's credits spent, and every redelivery
+  // answering "Already processed". Nothing could recover it — the stuck-job
+  // sweep only looks at queued/running, and the reconciler deliberately refuses
+  // to touch a job the service reports as done. Fetching first means a kill
+  // here costs a retry instead of a deliverable.
+  //
+  // `events` holds ONLY the lines THIS delivery adds. It is assembled from here
+  // on and persisted only after the claim, so a delivery that loses the race
+  // leaves no trace — and it is deliberately NOT seeded from `job.events`
+  // (finding #54): that array was read before the re-host, the re-host can take
+  // most of a minute, and the job doc is not this handler's alone. See the
+  // merge just above `updateJob` for what it is concatenated onto and why the
+  // base is re-read there rather than reused from here.
+  const events: JobRunEvent[] = [];
   const artifacts: ExternalJobArtifact[] = [];
-  const assetIds: string[] = [...job.assetIds];
+  // ── The two lists the asset is built from (findings #47, #50, #51) ──
+  // `artifacts` is the JOB's record: every entry the manifest declared, in
+  // manifest order, client-facing or not, and for an entry we could not copy it
+  // keeps the service's own URL so staff can still fetch the file from the job
+  // page while that link lives.
+  //
+  // `rehosted` is the CLIENT's record: only the entries whose bytes are now in
+  // our storage. The asset is built from this list and nothing else, which is
+  // the invariant that closes #47 — an agent-service artifact URL is a V4 signed
+  // GCS link with a 7-day TTL, so a client-facing asset carrying one plays for a
+  // week and then 403s forever, with nothing anywhere saying why.
+  //
+  // WHAT A CLIENT SEES for an artifact we could not copy, decided rather than
+  // defaulted: nothing. Not a link that works today and dies next week. The file
+  // stays on the run record for staff (the jobs page links every artifact), the
+  // reason is one loud error event per file, and if NOTHING was copied the run is
+  // treated as the zero-deliverable run it is — refunded, and the ticket released
+  // as retryable. The residual we accept: a 30 MB video the client could have
+  // watched this week is not offered at all, and the remedy is a human (raise the
+  // per-file limit, or hand the file over). A silent expiry is worse than an
+  // absence somebody is told about.
+  const rehosted: ExternalJobArtifact[] = [];
+  // One entry per client-facing artifact we could NOT copy: the file, and why.
+  const notRehosted: { name: string; reason: string }[] = [];
+  // The image files among them, kept separately for the carousel report below:
+  // slides and the cover are derived from the images we HAVE, so a missing
+  // slide-1 silently promotes slide-2 to the cover (#50).
+  const missingImages: string[] = [];
   let rehostedTotal = 0;
-  // Captured for the Task Map sync below (the run may have been dispatched by
-  // a board task — its ticket gets the deliverable for client preview).
-  let createdAssetId: string | null = null;
-  let taskArtifactContent = "";
-  let taskArtifactImage: string | null = null;
+  let launchTemplatesJson: string | null = null;
+  let primaryText: { artifact: AgentServiceArtifact; content: string } | null = null;
+  // A post is a multi-slide carousel: collect EVERY image, not just the
+  // first. Keyed by artifact name so we can restore slide order (slide-2
+  // before slide-10) regardless of artifact arrival order.
+  const imageEntries: { name: string; url: string }[] = [];
+  // Setup (launch) runs may emit one voice-profile--<seat-slug>.md per seat
+  // swept — captured off the same decoded bytes as primaryText, no second
+  // fetch (x-agent-v2). Launch runs only; launch deliverables stay staff-only
+  // regardless via launchDeliverable:true below.
+  const voiceProfileArtifacts: { seatSlug: string; content: string }[] = [];
+  // What is LEFT of the pre-claim deadline, counted from the top of the handler.
+  // Every network call below is bounded by this rather than by a fixed
+  // per-artifact constant, and a non-positive value means the budget is spent:
+  // start nothing new. See rehost-budget.ts for what that does and does not bound.
+  const remainingRehostMs = () => REHOST_DEADLINE_MS - (Date.now() - handlerStartedAt);
+  // Concurrent deliveries both re-host now (see the claim below), so each
+  // delivery writes under its own path segment. Sharing a path would mean the
+  // loser's upload replaces the object — and with it the Firebase download
+  // token — breaking the URL the winner already stored on the asset.
+  const deliveryNonce = randomUUID().slice(0, 8);
 
   if (payload.status === "done") {
-    let primaryText: { artifact: AgentServiceArtifact; content: string } | null = null;
-    // A post is a multi-slide carousel: collect EVERY image, not just the
-    // first. Keyed by artifact name so we can restore slide order (slide-2
-    // before slide-10) regardless of artifact arrival order.
-    const imageEntries: { name: string; url: string }[] = [];
-    // Setup (launch) runs may emit one voice-profile--<seat-slug>.md per seat
-    // swept — captured here off the same decoded bytes as primaryText, no
-    // second fetch. Only meaningful on launch runs; the artifact must be
-    // client_facing for the fetch below to even run (see the integration
-    // contract doc) — launch deliverables stay staff-only regardless via
-    // launchDeliverable:true below, so marking these client_facing is safe.
-    const voiceProfileArtifacts: { seatSlug: string; content: string }[] = [];
 
     for (const artifact of payload.artifacts) {
+      // The value checked IS the value passed, so AbortSignal.timeout can never
+      // be handed zero or a negative. Non-positive means the phase is spent:
+      // start nothing new and let the pre-claim check below fail the delivery
+      // for retry rather than doing work it is about to discard.
+      const fetchBudgetMs = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+      if (fetchBudgetMs <= 0) break;
       const entry: ExternalJobArtifact = {
         name: artifact.name,
         path: artifact.path,
@@ -306,89 +441,228 @@ export async function POST(req: NextRequest) {
         ...(artifact.content_type ? { contentType: artifact.content_type } : {}),
         url: artifact.url,
       };
-      const withinBudget =
-        artifact.bytes <= REHOST_FILE_LIMIT_BYTES &&
-        rehostedTotal + artifact.bytes <= REHOST_TOTAL_LIMIT_BYTES;
-      if (artifact.client_facing && artifact.url && withinBudget) {
+      // ONE reporting path for every way a client-facing artifact fails to
+      // arrive, so no reason can be quieter than another. The size-capped path
+      // used to fall straight through to `artifacts.push(entry)` logging NOTHING
+      // while the HTTP-error path logged — same outcome for the client, one of
+      // them invisible (#47).
+      let copiedIntoOurStorage = false;
+      const cannotRehost = (reason: string) => {
+        // The two lists stay mutually exclusive. Everything after the upload is
+        // pure, but a throw there would otherwise report a file that IS attached
+        // to the deliverable as missing from it — a log that contradicts the asset
+        // beside it is worse than one line fewer.
+        if (copiedIntoOurStorage) return;
+        notRehosted.push({ name: artifact.name, reason });
+        if (IMAGE_EXTENSIONS.includes(extension(artifact.name))) missingImages.push(artifact.name);
+        events.push({
+          at: Date.now(),
+          level: "error",
+          message:
+            `Could not re-host ${artifact.name} - ${reason}. ` +
+            `It stays on the run record for staff and is NOT attached to the client's deliverable.`,
+        });
+      };
+
+      if (!artifact.client_facing) {
+        // Internal working file: never re-hosted, never on the asset, not a
+        // failure. Its service URL on the job record is the intended state.
+      } else if (!artifact.url) {
+        cannotRehost("the service sent no download URL");
+      } else if (artifact.bytes > REHOST_FILE_LIMIT_BYTES) {
+        cannotRehost(
+          `it is ${mbAtLeast(artifact.bytes)} MB, past the ${mbExact(REHOST_FILE_LIMIT_BYTES)} MB per-file limit`,
+        );
+      } else if (rehostedTotal + artifact.bytes > REHOST_TOTAL_LIMIT_BYTES) {
+        // Says why THIS file was refused, not just how full the run is. "already
+        // copied 149 MB of its 150 MB limit" reads as though there was room.
+        cannotRehost(
+          `this run has already copied ${mbAtMost(rehostedTotal)} MB and this file would take it past its ${mbExact(REHOST_TOTAL_LIMIT_BYTES)} MB limit`,
+        );
+      } else {
         try {
           const res = await fetch(artifact.url, {
             headers: agentServiceFetchHeaders(artifact.url),
-            signal: AbortSignal.timeout(60_000),
+            signal: AbortSignal.timeout(fetchBudgetMs),
           });
           if (!res.ok) {
-            events.push({
-              at: Date.now(),
-              level: "error",
-              message: `Could not re-host ${artifact.name} (HTTP ${res.status}) - keeping service URL`,
-            });
-          }
-          if (res.ok) {
+            cannotRehost(`the service answered HTTP ${res.status}`);
+          } else {
             const bytes = Buffer.from(await res.arrayBuffer());
-            rehostedTotal += bytes.length;
-            const hosted = await uploadBytes({
-              bytes,
-              path: `agent-service/${job.id}/${artifact.sha256.slice(0, 12)}-${artifact.name}`,
-              contentType: artifact.content_type ?? "application/octet-stream",
-            });
-            entry.url = hosted.url;
-            // The setup run's structured output (seam T1). Captured here off
-            // the bytes we already fetched — no second round-trip — and only
-            // for launch runs, so a client agent that happens to ship a
-            // templates.json in a normal run can't reseed the registry.
-            if (isLaunchRun && isLaunchTemplatesArtifact(artifact.name)) {
-              launchTemplatesJson = bytes.toString("utf8").slice(0, 20_000);
-            }
-            const ext = extension(artifact.name);
-            if (TEXT_EXTENSIONS.includes(ext)) {
-              const content = bytes.toString("utf8");
-              const voiceProfileMatch = artifact.name
-                .split("/")
-                .pop()
-                ?.match(/^voice-profile--(.+)\.md$/i);
-              if (isLaunchRun && voiceProfileMatch) {
-                voiceProfileArtifacts.push({ seatSlug: voiceProfileMatch[1], content });
+            // Measured HERE, immediately before the upload, rather than before
+            // the body read above — reading the body spends phase budget too,
+            // and a budget measured before it would let a slow read push the
+            // upload past the deadline. Non-positive means don't start the
+            // upload: this artifact keeps its service URL on the job record, is
+            // reported as un-attachable below, and the top of the loop ends the
+            // phase.
+            const uploadBudgetMs = Math.min(ARTIFACT_UPLOAD_TIMEOUT_MS, remainingRehostMs());
+            if (uploadBudgetMs <= 0) {
+              cannotRehost("the run ran out of time before the file could be copied");
+            } else {
+              rehostedTotal += bytes.length;
+              const hosted = await uploadBytes({
+                bytes,
+                path: `agent-service/${job.id}/${deliveryNonce}/${artifact.sha256.slice(0, 12)}-${artifact.name}`,
+                contentType: artifact.content_type ?? "application/octet-stream",
+                timeoutMs: uploadBudgetMs,
+              });
+              entry.url = hosted.url;
+              copiedIntoOurStorage = true;
+              // The setup run's structured output (seam T1). Captured here off
+              // the bytes we already fetched — no second round-trip — and only
+              // for launch runs, so a client agent that happens to ship a
+              // templates.json in a normal run can't reseed the registry.
+              if (isLaunchRun && isLaunchTemplatesArtifact(artifact.name)) {
+                launchTemplatesJson = bytes.toString("utf8").slice(0, 20_000);
               }
-              // DRAFTS.md is the pinned deliverable-of-record for the drafting
-              // agents (X, LinkedIn) — prefer it deterministically over the
-              // size race, so a long sibling text file (a video brief, an
-              // about.txt) can never displace the batch the reader parses and
-              // the next run's anti-duplication re-injects.
-              const isDrafts = (a: AgentServiceArtifact) =>
-                a.name.split("/").pop()?.toLowerCase() === "drafts.md";
-              if (
-                !primaryText ||
-                (isDrafts(artifact) && !isDrafts(primaryText.artifact)) ||
-                (isDrafts(artifact) === isDrafts(primaryText.artifact) &&
-                  content.length > primaryText.content.length)
-              ) {
-                primaryText = { artifact, content };
+              const ext = extension(artifact.name);
+              if (TEXT_EXTENSIONS.includes(ext)) {
+                const content = bytes.toString("utf8");
+                // Setup-run per-seat voice profiles (x-agent-v2): captured off
+                // the same decoded bytes, launch runs only — same rule as the
+                // templates.json capture above.
+                const voiceProfileMatch = artifact.name
+                  .split("/")
+                  .pop()
+                  ?.match(/^voice-profile--(.+)\.md$/i);
+                if (isLaunchRun && voiceProfileMatch) {
+                  voiceProfileArtifacts.push({ seatSlug: voiceProfileMatch[1], content });
+                }
+                // DRAFTS.md is the pinned deliverable-of-record for the drafting
+                // agents (X, LinkedIn) — prefer it deterministically over the
+                // size race, so a long sibling text file (a video brief, an
+                // about.txt) can never displace the batch the reader parses and
+                // the next run's anti-duplication re-injects.
+                const isDrafts = (a: AgentServiceArtifact) =>
+                  a.name.split("/").pop()?.toLowerCase() === "drafts.md";
+                if (
+                  !primaryText ||
+                  (isDrafts(artifact) && !isDrafts(primaryText.artifact)) ||
+                  (isDrafts(artifact) === isDrafts(primaryText.artifact) &&
+                    content.length > primaryText.content.length)
+                ) {
+                  primaryText = { artifact, content };
+                }
+              } else if (IMAGE_EXTENSIONS.includes(ext)) {
+                imageEntries.push({ name: artifact.name, url: hosted.url });
               }
-            } else if (IMAGE_EXTENSIONS.includes(ext)) {
-              imageEntries.push({ name: artifact.name, url: hosted.url });
             }
           }
         } catch {
-          events.push({ at: Date.now(), level: "error", message: `Could not re-host ${artifact.name}` });
+          // The fetch timed out, the body read died, or the upload threw. This
+          // catch cannot tell the three apart, so the reason does not pretend to.
+          cannotRehost("the transfer failed");
         }
       }
       artifacts.push(entry);
+      if (copiedIntoOurStorage) rehosted.push(entry);
     }
+  }
 
-    // Natural-sort by filename so slide-2 precedes slide-10, then expose each
-    // image as a carousel slide the asset card can page through.
-    const orderedImageUrls = imageEntries
-      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-      .map((e) => e.url);
-    const slides =
-      orderedImageUrls.length > 1
-        ? orderedImageUrls.map((url) => ({ imageUrl: url }))
-        : undefined;
+  // Natural-sort by filename so slide-2 precedes slide-10, then expose each
+  // image as a carousel slide the asset card can page through.
+  const orderedImages = imageEntries.sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true }),
+  );
+  const orderedImageUrls = orderedImages.map((e) => e.url);
+  // #50 — the carousel that arrives short. `slides` and the cover below are
+  // derived from the images that re-hosted, so a failed slide leaves a carousel
+  // one photo shorter and, when it is the FIRST one, hands the cover to the next
+  // slide along. Both were silent. Nothing here can recover the missing photo;
+  // what it can do is stop the run reading as complete, and name the file that is
+  // now the cover so the two facts are in one place.
+  if (missingImages.length > 0 && orderedImages.length > 0) {
+    events.push({
+      at: Date.now(),
+      level: "error",
+      message:
+        `Carousel is short ${missingImages.length} photo(s) (${missingImages.join(", ")}) - ` +
+        `the deliverable carries ${orderedImages.length}, and the cover is now ${orderedImages[0]!.name}.`,
+    });
+  }
+  const slides =
+    orderedImageUrls.length > 1 ? orderedImageUrls.map((url) => ({ imageUrl: url })) : undefined;
+  // THE count of what the client is actually getting, and the reason it is not
+  // `artifacts.filter(clientFacing).length` any more (#51): that number counted
+  // what the manifest DECLARED. A 60s timeout or a non-200 on DRAFTS.md left it
+  // at 1 and created a titled asset with an empty body, an orderKey, a chain date
+  // and a place on the calendar — a deliverable, as far as every surface could
+  // tell, with nothing in it.
+  //
+  // "Copied" and not "has text": an image-only run is a real delivery whose
+  // primary text is legitimately empty (task-sync.ts, on `artifact: ""` being a
+  // real renderable state), and so is a PDF-only run. What is not a delivery is a
+  // run where nothing at all reached our storage.
+  const deliveredCount = rehosted.length;
+  // For the Task Map sync below: the run may have been dispatched by a board
+  // task, whose ticket gets the deliverable for client preview.
+  const taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
+  const taskArtifactImage = orderedImageUrls[0] ?? null;
 
-    // Setup-run voice profiles (§ blocker 2): generic on any custom agent with
+  // Last pre-claim guard: the re-host has eaten the budget this handler needed
+  // for the writes below, so fail the delivery instead of claiming a job we
+  // cannot finish paying out. 503 is retryable to the service (5xx maps to
+  // "unreachable" in agent-service/src/webhooks/deliver.ts, and the webhooks
+  // queue gives it exponential backoff over ~42 minutes), and nothing has been
+  // claimed, so the retry runs the whole delivery again with a fresh budget.
+  if (remainingRehostMs() <= 0) {
+    // Log it OUR side too. The sender abandons each delivery at 30s while this
+    // budget is longer, so by the time this 503 exists the socket is usually
+    // gone and nobody reads the body — the service just sees its own attempt
+    // time out. This line is the only place the real reason is legible.
+    console.error(
+      `[webhook] re-host budget exceeded for job ${job.id} (service job ${payload.job_id}): ` +
+        `${rehostedTotal} bytes re-hosted in ${Date.now() - handlerStartedAt}ms of ` +
+        `${REHOST_DEADLINE_MS}ms. Delivery failed for retry; nothing claimed.`,
+    );
+    return NextResponse.json(
+      { error: "Re-host budget exceeded — retry delivery" },
+      { status: 503 },
+    );
+  }
+
+  // ── Atomic claim ──
+  // The single gate on every persisted side effect below it: the asset, the job
+  // record, the launch-state advance, the task sync and the usage log. Exactly
+  // one delivery flips the job out of queued/running, which is what makes the
+  // service's redelivery idempotent.
+  //
+  // Deliberate trade (finding #45): because the re-host above now runs first,
+  // two GENUINELY CONCURRENT deliveries can both fetch and upload, and the one
+  // that loses this claim leaves its uploaded bytes orphaned in storage. We
+  // accept duplicate blobs — the alternative was re-hosting after the claim,
+  // where a wall-clock kill left a success-looking "review" job with no assets,
+  // no error, the client's credits spent, and no recovery path at all. A LATER
+  // redelivery of a settled job pays nothing: the advisory filter above turns it
+  // away before the re-host.
+  //
+  // The window this leaves: a kill between this claim and `createAsset` below
+  // still produces that unrecoverable state. What the reorder bought is its
+  // size — one Firestore write instead of the fetch and upload of a whole
+  // manifest.
+  const claimed = await claimExternalJobCompletion(job.id, status);
+  if (!claimed) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
+  }
+
+  const now = Date.now();
+  // Only the id THIS delivery creates, for the same reason `events` above holds
+  // only this delivery's lines: both are merged onto a freshly-read base at the
+  // write below. Unlike `events`, no second writer appends here today — job
+  // creation seeds it empty and this handler is the only thing that ever adds
+  // to it — so this half is symmetry with the events merge, not a loss being
+  // repaired.
+  const newAssetIds: string[] = [];
+  let createdAssetId: string | null = null;
+
+  if (payload.status === "done") {
+    // Setup-run voice profiles (x-agent-v2): generic on any custom agent with
     // seats, not gated to X — resolved via the job's customAgentId so LinkedIn/
     // Reddit adopt this with no webhook change once they emit the same
-    // artifact convention. Best-effort: a save failure here must not fail the
-    // whole delivery — the next launch run re-sweeps and overwrites anyway.
+    // artifact convention. Best-effort AND after the claim: a save failure here
+    // must not fail the whole delivery — the next launch run re-sweeps and
+    // overwrites anyway.
     if (isLaunchRun && voiceProfileArtifacts.length > 0) {
       try {
         const customAgent = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
@@ -426,17 +700,28 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const clientFacingCount = artifacts.filter((a) => a.clientFacing).length;
-    if (clientFacingCount > 0) {
+    if (deliveredCount > 0) {
       // Custom agents (e.g. the LinkedIn generators) produce any asset shape, so
-      // "note" is the safe default — but the submitter can hint the real type +
-      // platform through metadata, which lands the draft as a schedulable post
-      // with the right recommended window instead of a slot-less library note.
-      const hintedType = payload.metadata?.asset_type as AssetType | undefined;
-      const assetType =
-        payload.task_type === "custom" && hintedType && VALID_HINT_TYPES.has(hintedType)
-          ? hintedType
-          : (ASSET_TYPE_MAP[payload.task_type] ?? "note");
+      // the slot-less library note is the safe default — but the submitter can
+      // hint the real type + platform through metadata, which lands the draft as
+      // a schedulable post with the right recommended window.
+      //
+      // The hint is whitelisted AND fenced: the type is what decides whether the
+      // product offers to publish this deliverable, and a Reddit reply must never
+      // become publishable (#49 — the fence, the whitelist and the task-type map
+      // are all in agent-service/deliverable-asset-type.ts). The deliverable's own
+      // text is the primary signal, the run's identity strings the fallback.
+      const assetType = deliverableAssetType({
+        taskType: payload.task_type,
+        hint: payload.metadata?.asset_type,
+        content: primaryText?.content,
+        identity: [
+          job.agentName,
+          job.title,
+          payload.metadata?.karos_agent_key,
+          payload.metadata?.platform,
+        ],
+      });
       const platform = payload.metadata?.platform || undefined;
       // Strip the appended " - <client>" the submit paths add, so a client's
       // own workspace doesn't put their company name in half of every title.
@@ -464,7 +749,13 @@ export async function POST(req: NextRequest) {
           meta: {
             taskType: payload.task_type,
             agentsRepoSha: payload.agents_repo_sha,
-            artifacts: artifacts.filter((a) => a.clientFacing),
+            // ONLY the artifacts now in our own storage — see the `rehosted`
+            // note above. This was `artifacts.filter(clientFacing)`, which put
+            // every un-re-hosted 7-day service URL onto the client's asset:
+            // assetVideos/assetImages read this list, so a 30 MB clip over the
+            // per-file cap played for a week and then 403'd forever (#47), and a
+            // carousel's failed slide left its dying URL in the record (#50).
+            artifacts: rehosted,
             ...(slides ? { slides } : {}),
             // Staff-only working material, excluded from every client library
             // surface by getClientLibraryAssets. Flagged on the asset itself
@@ -500,7 +791,7 @@ export async function POST(req: NextRequest) {
           createdAt: now,
           updatedAt: now,
         });
-        assetIds.push(assetId);
+        newAssetIds.push(assetId);
         createdAssetId = assetId;
         // Auto-assign the new post its one-per-day chain date. Best-effort: the
         // job is already claimed (single delivery), so a reflow failure must not
@@ -549,6 +840,12 @@ export async function POST(req: NextRequest) {
           level: "error",
           message: `Failed to create deliverable asset: ${e instanceof Error ? e.message : "unknown error"}`,
         });
+        // Keyed by the JOB only, deliberately. A task-dispatched run whose asset
+        // write throws still lands its draft on the board ticket (task-sync
+        // below writes `artifact: taskArtifactContent` on the success path), so
+        // the client did receive the deliverable — just not into their library.
+        // The zero-deliverable branch below is the case where they received
+        // nothing at all, and that one pairs on the task key too.
         await refundJobCharge(
           job.id,
           `Auto-refund · asset creation failed · ${job.agentName}`.slice(0, 120),
@@ -556,13 +853,79 @@ export async function POST(req: NextRequest) {
           console.error("[webhook] refund after asset-creation failure also failed:", refundErr),
         );
       }
+    } else if (!isLaunchRun) {
+      // A run that finished with NOTHING THE CLIENT CAN SEE. The service says
+      // "done", so the refund above (gated on a non-done status) never fires and
+      // the asset-creation refund below it is unreachable — no asset was
+      // attempted. The client paid for a deliverable and received none, which is
+      // the same outcome as a failed run and is refunded the same way.
+      //
+      // REACHED TWO WAYS since #51: a manifest with no client-facing artifact at
+      // all, and a manifest whose client-facing artifacts all failed to reach our
+      // storage. The second used to create an empty titled asset instead, so it
+      // never refunded and never released the ticket. `notRehosted` below is what
+      // keeps the two apart in the log — "produced no deliverables" would be a
+      // lie about a run that produced a file we could not copy.
+      //
+      // BOTH LEDGER KEYS, because the charge is not always filed under the job.
+      // A run fired at the agent directly is charged under the JOB id; a run
+      // dispatched by a board task was charged under the TASK id before this job
+      // existed (execution-actions passes `jobId: task.id`), and the job itself
+      // was submitted as the non-billable task engine, so nothing was ever
+      // written under job.id for it. Task dispatch is the ordinary way a client
+      // spends agent credits, so looking up the job alone made this refund a
+      // no-op for most real runs. The task is resolved from OUR record of the
+      // dispatch (findDispatchingTask), not from the payload's word for it.
+      //
+      // Idempotent by construction: refundJobCharge writes the deterministic
+      // refund_<chargeEntryId> ledger id via tx.create() — keyed to the CHARGE,
+      // not to the key it was found under — so a redelivery that gets past the
+      // advisory filter, and the task-sync refund further down, cannot pay
+      // twice. A no-op for staff-fired runs, which were never charged.
+      const zeroDeliverableTask = await findDispatchingTask(
+        job.id,
+        job.clientId,
+        payload.metadata?.karos_task_id,
+      ).catch((e) => {
+        console.error("[webhook] dispatching-task lookup for zero-deliverable refund failed:", e);
+        return null;
+      });
+      const zeroDeliverableRefund = await refundJobCharge(
+        [job.id, zeroDeliverableTask?.id],
+        `Auto-refund · run produced no deliverables · ${job.agentName}`.slice(0, 120),
+      ).catch((refundErr) => {
+        console.error("[webhook] refund after zero-deliverable run failed:", refundErr);
+        return { refunded: false as const, amount: undefined };
+      });
+      if (zeroDeliverableRefund.refunded) {
+        events.push({
+          at: now,
+          level: "info",
+          message: `Refunded ${zeroDeliverableRefund.amount} credit${zeroDeliverableRefund.amount === 1 ? "" : "s"} — the run produced no client-facing deliverables`,
+        });
+      }
+      if (notRehosted.length > 0) {
+        events.push({
+          at: now,
+          level: "error",
+          message:
+            `No deliverable was created: the run produced ${notRehosted.length} client-facing file(s) ` +
+            `and none of them could be copied into platform storage. They are listed above with a reason each.`,
+        });
+      }
     }
-    taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
-    taskArtifactImage = orderedImageUrls[0] ?? null;
+    // Counts what was ATTACHED, not what the manifest declared, and names the
+    // shortfall rather than letting the run read as clean (#47/#50/#51). The
+    // per-file reasons are each on their own line above, so this one carries the
+    // names only: it is the line a reader sees first, not the record.
     events.push({
       at: now,
-      level: "success",
-      message: `Agent run complete - ${clientFacingCount} client-facing deliverable(s), attempt ${payload.attempt}`,
+      level: notRehosted.length > 0 ? "error" : "success",
+      message:
+        `Agent run complete - ${deliveredCount} client-facing deliverable(s) attached, attempt ${payload.attempt}` +
+        (notRehosted.length > 0
+          ? `. ${notRehosted.length} could not be re-hosted and are NOT on the deliverable: ${notRehosted.map((a) => a.name).join(", ")}`
+          : ""),
     });
   } else {
     events.push({
@@ -585,6 +948,37 @@ export async function POST(req: NextRequest) {
   const inputTokens = Object.values(payload.usage?.models ?? {}).reduce((s, m) => s + m.inputTokens, 0);
   const outputTokens = Object.values(payload.usage?.models ?? {}).reduce((s, m) => s + m.outputTokens, 0);
 
+  // ── The base the two arrays are merged onto (finding #54) ──
+  // `events` and `assetIds` are written as WHOLE ARRAYS, so whatever base they
+  // are built on is what survives — and `job` was read at the top of the
+  // handler, before a re-host that is budgeted to run for most of a minute.
+  // The job doc is not this handler's alone for that minute:
+  // `requestJobCancellation` (src/lib/actions/external-job-actions.ts) appends
+  // "Cancellation requested" with the same read-modify-write idiom and takes no
+  // claim, so a stop a staff member asked for mid-re-host was being erased by
+  // the write below. Re-reading here, as late as it can be read, shrinks the
+  // window that append can be lost in from the whole re-host to this one write.
+  //
+  // NOT re-read from the claim's own transaction snapshot, which was the other
+  // candidate: the claim happens before the asset write, the chain reflow and
+  // the options sync, so its snapshot is older than this one.
+  //
+  // WHAT THIS IS NOT: a transaction. An append landing between this read and
+  // the update is still overwritten. Closing that needs the merge to happen
+  // inside a transaction on the job doc, which is `src/lib/data.ts`'s to own.
+  //
+  // A failed read falls back to the array we already hold: the pre-re-host copy
+  // is stale but real, and dropping this delivery's own lines to punish a read
+  // failure would lose more than it protects.
+  let freshJob: Job | null = null;
+  try {
+    freshJob = await getJob(job.id);
+  } catch (e) {
+    console.error("[webhook] pre-write job re-read failed, merging onto the pre-re-host copy:", e);
+  }
+  const mergedEvents = [...(freshJob?.events ?? job.events), ...events];
+  const mergedAssetIds = [...(freshJob?.assetIds ?? job.assetIds), ...newAssetIds];
+
   // Best-effort like the blocks below it: the job is already claimed (single
   // delivery), so redelivery on a throw here would just be skipped as
   // "already processed" and never retry this write. Catching and continuing
@@ -594,8 +988,8 @@ export async function POST(req: NextRequest) {
   try {
     await updateJob(job.id, {
       status,
-      assetIds,
-      events,
+      assetIds: mergedAssetIds,
+      events: mergedEvents,
       error: payload.status === "done" ? null : (payload.error ?? payload.status),
       external: {
         ...job.external,

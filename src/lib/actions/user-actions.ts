@@ -16,9 +16,9 @@ import {
   stopImpersonation,
 } from "@/lib/auth";
 import { adminAuth } from "@/lib/firebase/admin";
-import { sendEmail, emailShell } from "@/lib/email";
+import { sendEmail, emailShell, html } from "@/lib/email";
 import type { AppUser, Role } from "@/lib/types";
-import { requireAdmin } from "./_shared";
+import { ownAccountSession, requireAdmin } from "./_shared";
 
 /** Where a stuck signup should write. Same fallback as sendSupportEmailAction. */
 const SUPPORT_EMAIL = process.env.ADMIN_EMAIL ?? "hello@karoslabs.com";
@@ -33,29 +33,69 @@ function signInUrl(): string {
  * revalidated /team, so a pending user learned nothing and a rejected one just
  * found their next sign-in failing (QA F115). Delivery soft-fails by design —
  * a mail outage must never block the account decision the admin just made.
+ *
+ * SOFT-FAIL MEANS THE WHOLE FUNCTION, not just the send. `sendEmail` returns a
+ * result rather than throwing, so the old `if (!result.ok)` looked like it
+ * honoured the promise above — but everything BEFORE the send could still throw
+ * past it, and both callers `await` this with no catch, after the upsert has
+ * already landed. That is the worst place to fail: the account is decided, the
+ * `revalidatePath` never runs, and the admin sees a thrown error over a change
+ * that did happen. Wrapped so the promise in the previous paragraph is kept by
+ * the code and not only by the comment.
  */
 async function notifyRegistrationDecision(opts: {
   to: string;
   name: string;
   approved: boolean;
 }) {
+  try {
+    await deliverRegistrationDecision(opts);
+  } catch (e) {
+    console.error(
+      `[registration] Failed to build ${opts.approved ? "approval" : "decline"} mail for ${opts.to}:`,
+      e,
+    );
+  }
+}
+
+async function deliverRegistrationDecision(opts: {
+  to: string;
+  name: string;
+  approved: boolean;
+}) {
   const heading = opts.approved ? "You're in" : "About your Karos Labs request";
+  // `html` rather than a bare template literal: `emailShell` now takes markup
+  // only from the tag, which is what keeps an interpolated value from reaching
+  // a client's mail unescaped. Both values here are ours (env-derived), so
+  // nothing changes about what these two mails render.
   const body = opts.approved
-    ? `<p style="margin:0 0 14px;">Your Karos Labs workspace is ready. Sign in to pick up where you left off.</p>
+    // "Sign in to get started", not "pick up where you left off": this person has
+    // never been inside the workspace — they were a pending self-signup — and an
+    // approved CLIENT_USER is sent to the onboarding wizard, not back to anything.
+    ? html`<p style="margin:0 0 14px;">Your Karos Labs workspace is ready. Sign in to get started.</p>
        <p style="margin:0;"><a href="${signInUrl()}" style="color:#FF6B2C;font-weight:600;text-decoration:none;">Sign in to Karos Labs &#8250;</a></p>`
-    : `<p style="margin:0 0 14px;">We weren't able to approve access for this address at the moment.</p>
+    : html`<p style="margin:0 0 14px;">We weren't able to approve access for this address at the moment.</p>
        <p style="margin:0;">If you think this is a mistake, reply to this email or write to <a href="mailto:${SUPPORT_EMAIL}" style="color:#FF6B2C;text-decoration:none;">${SUPPORT_EMAIL}</a> and we'll take another look.</p>`;
 
   const result = await sendEmail({
     to: opts.to,
     subject: opts.approved ? "Your Karos Labs account is approved" : "Your Karos Labs access request",
     html: emailShell({
-      clientName: opts.name,
+      recipientName: opts.name,
       heading,
       intro: opts.approved
         ? "An agency admin approved your account."
         : "An agency admin reviewed your access request.",
       body,
+      // ONE CLOSING LINE PER OCCASION, and neither of them is the shell's old
+      // deliverable footer (QA #150). The approval mail's reply path is real —
+      // `replyTo` below is the support address — and nothing in its body has
+      // offered it yet. The decline mail's body offers that same path in its
+      // last sentence, so its footer is null rather than a second copy of one
+      // invitation.
+      footer: opts.approved
+        ? "Questions about your account? Reply to this email and it reaches the Karos Labs team."
+        : null,
     }),
     replyTo: SUPPORT_EMAIL,
   });
@@ -136,7 +176,7 @@ export async function approveRegistrationAction(
       clientId = await createClient({
         name: newName,
         website: "",
-        industry: "",
+        category: "",
         contactEmail: existing.email,
         domains: [],
         description: "",
@@ -198,7 +238,12 @@ export async function toggleGroupAdminAction(uid: string, isGroupAdmin: boolean)
   if (user.role === "KAROS_ADMIN") {
     await upsertUser({ ...target, isGroupAdmin });
   } else if (user.role === "CLIENT_USER" && user.isGroupAdmin) {
-    if (target.clientId !== user.clientId) throw new Error("Forbidden - different group");
+    // A client group-admin reaches this, and components render a thrown
+    // message straight into their error banner — so it is a sentence, not the
+    // HTTP word plus a hyphenated note.
+    if (target.clientId !== user.clientId) {
+      throw new Error("That person isn't in your workspace, so you can't change their access.");
+    }
     if (target.uid === user.uid) throw new Error("Cannot change your own group admin status");
     await upsertUser({ ...target, isGroupAdmin });
   } else {
@@ -220,10 +265,19 @@ export async function stopImpersonationAction() {
   redirect("/team");
 }
 
-/** Update the current user's display name (and optional phone) in Firestore + Firebase Auth. */
+/**
+ * Update the current user's display name (and optional phone) in Firestore +
+ * Firebase Auth.
+ *
+ * `ownAccountSession` rather than `getCurrentUser`: under "View as Client" the
+ * session's subject is the CLIENT, so this rewrote their display name and phone
+ * — and mirrored the name onto their Firebase Auth identity — with no marker on
+ * the write and no activity row. See the note on IMPERSONATED_SELF_WRITE_MESSAGE.
+ */
 export async function updateUserProfileAction(name: string, phone?: string): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Name cannot be empty.");
   if (trimmed.length > 100) throw new Error("Name is too long (max 100 characters).");
@@ -242,8 +296,15 @@ export async function updatePasswordAction(
   currentPassword: string,
   newPassword: string,
 ): Promise<void> {
-  const user = await getCurrentUser();
-  if (!user || user.disabled) throw new Error("Unauthorized");
+  // Through the same gate as its siblings, and NOT because this one was
+  // exploitable: the verification round trip below signs in as the SUBJECT's
+  // email, which an impersonating admin cannot pass without the client's
+  // current password. That is an accident of the verification step rather than
+  // a decision, and it is the only thing standing between "View as Client" and
+  // taking over the account. Stated here so the accident stops being the guard.
+  const session = await ownAccountSession();
+  if (!session.ok) throw new Error(session.error);
+  const { user } = session;
   if (newPassword.length < 6) throw new Error("New password must be at least 6 characters.");
 
   const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;

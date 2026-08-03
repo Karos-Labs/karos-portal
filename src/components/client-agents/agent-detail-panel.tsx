@@ -110,9 +110,22 @@ export function AgentDetailPanel({
   // rather than a generic "unavailable", and it is disabled by the same
   // server-evaluated gate the action re-checks (F131).
   const runnableTemplate = templates.find((t) => agent.templateGates[t.key]?.allowed) ?? null;
-  const firstBlock = templates
+  const blocked = templates
     .map((t) => agent.templateGates[t.key])
-    .find((gate) => gate && !gate.allowed);
+    .filter((gate) => gate && !gate.allowed);
+  // A PAUSED FORMAT IS THE WEAKEST REASON, and it used to win by being first
+  // (AF-10). This button is not about one format — it is the page's primary
+  // gesture, and it picks whichever format is runnable — so quoting the registry's
+  // first blocked gate meant a client whose first format happened to be paused
+  // read "This format is paused" while the real answer for every other format was
+  // that they were out of credits. The credits rung is also the one that comes
+  // with a way out (the Contact-us row below), and it was being hidden by a state
+  // the client themselves chose and can undo from the row's own toggle.
+  //
+  // Ordered rather than special-cased on `credits_short`, so the same rule holds
+  // for a setup block or a launch-state block arriving behind a paused row.
+  const firstBlock =
+    blocked.find((gate) => gate?.code !== "template_paused") ?? blocked[0];
   // An empty registry produces NO gate to quote, so the two shapes that
   // legitimately have no templates - options-mode (final) and a live umbrella
   // whose formats are not seeded yet (temporary) - used to get a dead button
@@ -150,7 +163,7 @@ export function AgentDetailPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your {agent.activeRun.templateName ?? "next"} {noun} now - this takes 10–20
+              Making your {agent.activeRun.templateName ?? "next"} {noun} now. This takes 10–20
               minutes. Your Karos team reviews it when it lands, and finished work appears in your
               Workspace once approved.
             </p>
@@ -273,7 +286,12 @@ export function AgentDetailPanel({
               (§4.3). It stays intent-only: a note marker says the client wrote
               something, which they already know, and still reveals nothing
               about whether that day's post exists yet. */}
-          <WeekStrip week={agent.week} clientId={agent.clientId} onNote={setNoteDay} />
+          <WeekStrip
+            week={agent.week}
+            identity={agent.identity}
+            clientId={agent.clientId}
+            onNote={setNoteDay}
+          />
           {/* B2: the notes reach the people who apply them. The live CARD has
               always mounted this for staff; the detail page is where staff now
               read an agent, so without it the notes a client leaves had no

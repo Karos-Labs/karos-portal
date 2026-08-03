@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACTIVE_TASK_STATUSES,
   computeBoardCapacity,
   findDuplicateReason,
   inferTaskOwner,
   normalizeTitleForDedup,
+  queueCapacitySkipNote,
   taskWeekKey,
   titleSimilarity,
 } from "@/lib/task-dedup";
@@ -69,6 +71,45 @@ describe("computeBoardCapacity — the 15-cap counts ONLY karos_managed", () => 
       task({ title: "Write a Blog: Post!", status: "completed" }),
     ]);
     expect(existingTitles.has("write a blog post")).toBe(true);
+  });
+});
+
+describe("the capacity note said to a client", () => {
+  it("names Karos, and refuses the two words the counted statuses cannot back", () => {
+    // The note is this cap's rule said to a person, so every word has to be true
+    // of every status the cap counts. It read "Karos is already RUNNING its limit
+    // of 15 ACTIVE tasks for you", and two of the three counted statuses are not
+    // being run: a pending task is queued with nobody on it, and a review_pending
+    // one is finished work waiting on a human. "Active" is this constant's own
+    // name for the set, not the client's word — a client whose board shows one
+    // thing in progress was being told fifteen were running.
+    //
+    // Asked as the two words that made it false, not as a pinned sentence: reword
+    // it freely, and exactly two words are refused — the verb "running" and the
+    // adjective "active". Nothing wider is claimed, and the title used to claim
+    // it ("claims nothing the statuses cannot back"): four closed questions
+    // cannot vouch for a whole sentence, so "Karos has FINISHED its limit of 15
+    // tasks for you" is just as unbacked by a pending task and passes here. What
+    // a green tick buys is that the two words the shipped copy actually got wrong
+    // cannot come back. The scope half — that the note names Karos, so the limit
+    // reads as Karos's rather than as the client's whole board — is the `/Karos/`
+    // line below and nowhere else: an earlier version of this comment sent the
+    // reader to the copy-boundary suite for it, which asks nothing about this note.
+    // Both halves live here, and the word half belongs here in particular because
+    // it is a claim about what ACTIVE_TASK_STATUSES holds.
+    const note = queueCapacitySkipNote(3);
+    expect(note).toContain("3");
+    expect(note, "the note stopped naming whose limit this is").toMatch(/Karos/);
+    expect(note, "a pending task is queued, not running").not.toMatch(/\brunning\b/i);
+    expect(note, '"active" is the code\'s word for the counted set').not.toMatch(/\bactive\b/i);
+  });
+
+  it("goes red if the counted set changes, so the sentence gets re-read", () => {
+    // The tripwire under the test above: it reasons about which statuses count, so
+    // changing the set has to bring somebody back to the sentence. The policy
+    // docstring says the same thing the other way round — widening the cap without
+    // restating the note makes the portal lie.
+    expect(ACTIVE_TASK_STATUSES).toEqual(["pending", "in_progress", "review_pending"]);
   });
 });
 

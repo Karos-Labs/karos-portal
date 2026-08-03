@@ -6,7 +6,7 @@
  * client-safe.
  */
 
-import { applyChainAssignments, listAssets } from "@/lib/data";
+import { applyChainAssignments, getClient, listAssets } from "@/lib/data";
 import { planClientChain, type ChainAssignment, type ChainFamily } from "@/lib/post-chain";
 
 /**
@@ -23,12 +23,20 @@ export async function reflowClientChain(
   clientId: string,
   opts?: { mode?: "reflow" | "migrate"; now?: number; startDayMs?: number; families?: ChainFamily[] },
 ): Promise<{ changed: number; assignments: ChainAssignment[] }> {
-  const assets = await listAssets({ clientId });
+  // The client record comes along for ONE field: `dailyPace`, which decides how
+  // many items a calendar day holds for them (lib/daily-pace). A read failure or
+  // a client with nothing configured resolves to the one-item-a-day default, so
+  // this cannot change a calendar it has no instruction about.
+  const [assets, client] = await Promise.all([
+    listAssets({ clientId }),
+    getClient(clientId).catch(() => null),
+  ]);
   const assignments = planClientChain(assets, {
     now: opts?.now ?? Date.now(),
     ...(opts?.mode ? { mode: opts.mode } : {}),
     ...(opts?.startDayMs != null ? { startDayMs: opts.startDayMs } : {}),
     ...(opts?.families ? { families: opts.families } : {}),
+    pace: client?.dailyPace ?? null,
   });
   await applyChainAssignments(assignments);
   return { changed: assignments.length, assignments };

@@ -32,7 +32,7 @@ substitutions:
   _SHA: ""
   _APP_URL: ""
   _AGENT_SERVICE_URL: ""
-  _EMAIL_FROM: "Karos CMO <donotreply@karoslabs.com>"
+  _EMAIL_FROM: "Karos Labs <donotreply@karoslabs.com>"
   _ADMIN_EMAIL: "hello@karoslabs.com"
   # Failure-alert on-call list (job-alerts.ts) — separate from _ADMIN_EMAIL
   # above (support/signup mail). Keep in sync with cloudbuild.yaml's own copy.

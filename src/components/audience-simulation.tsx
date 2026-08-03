@@ -3,7 +3,12 @@
 import { useCallback, useRef, useState } from "react";
 import { Button, Badge, Skeleton, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-// Type-only import - erased at compile time, so the server-only engine never
+// The SAME constant the route charges from (lib/credits.ts is client-safe), so
+// the quote next to the button cannot drift away from the price at the till.
+// It is quoted from lib/credits.ts rather than assembled here: three surfaces
+// now announce a press price, and they say it in one voice.
+import { simulationPrice } from "@/lib/credits";
+// Type-only import — erased at compile time, so the server-only engine never
 // reaches the client bundle.
 import type { PersonaSimulationResult } from "@/lib/simulation-engine";
 
@@ -31,7 +36,15 @@ const SENTIMENT_META: Record<Sentiment, { tone: "success" | "warning" | "danger"
  * bar, sentiment indicator, and the raw qualitative critique. Handles the
  * parallel run with a graceful skeleton grid and isolates per-persona failures.
  */
-export function AudienceSimulation({ clientId, assetId }: { clientId: string; assetId: string }) {
+export function AudienceSimulation({
+  clientId,
+  assetId,
+  viewerIsClient = false,
+}: {
+  clientId: string;
+  assetId: string;
+  viewerIsClient?: boolean;
+}) {
   const [results, setResults] = useState<PersonaSimulationResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,13 +77,23 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
     }
   }, [clientId, assetId]);
 
-  // Intro state - nothing run yet.
+  // `viewerIsClient`, NOT `viewerIsBilled` — and the difference is money. Every
+  // mount derives this from a role test, so an admin in "View as Client" is
+  // quoted a price they will not be charged. This component sits four prop-hops
+  // below the server pages that know the difference; the residual is written out
+  // at simulationPrice in lib/credits.ts rather than implied away here.
+  const price = simulationPrice(viewerIsClient);
+
+  // Intro state — nothing run yet.
   if (!results && !loading && !error) {
     return (
       <EmptyState
         icon={<Icon name="Users" className="h-6 w-6" />}
         title="Pre-flight audience simulation"
-        description="Test this content against 2–4 distinct stakeholder personas (for example: buyers, strategists, skeptics, or competitors) before you publish."
+        description={
+          "Test this content against 2–4 distinct stakeholder personas (for example: buyers, strategists, skeptics, or competitors) before you publish." +
+          (price ? ` Each run costs ${price}.` : "")
+        }
         action={
           <Button size="sm" onClick={() => void run()}>
             <Icon name="Sparkles" className="h-3.5 w-3.5" />
@@ -89,14 +112,18 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
           <p className="text-sm font-medium text-foreground">Synthetic persona panel</p>
         </div>
         {!loading && (
-          <button
-            type="button"
-            onClick={() => void run()}
-            className="inline-flex items-center gap-1 text-xs text-neon transition-opacity hover:underline"
-          >
-            <Icon name="RefreshCw" className="h-3 w-3" />
-            Re-run
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Re-run is a second press at the same price, so it says so too. */}
+            {price && <span className="text-[11px] text-muted-2">{price}</span>}
+            <button
+              type="button"
+              onClick={() => void run()}
+              className="inline-flex items-center gap-1 text-xs text-neon transition-opacity hover:underline"
+            >
+              <Icon name="RefreshCw" className="h-3 w-3" />
+              Re-run
+            </button>
+          </div>
         )}
       </div>
 
@@ -118,7 +145,7 @@ export function AudienceSimulation({ clientId, assetId }: { clientId: string; as
       {!loading && results && results.length > 0 && (
         <p className="flex items-start gap-1.5 text-[11px] text-muted-2">
           <Icon name="Info" className="mt-0.5 h-3 w-3 shrink-0" />
-          Simulated reactions from AI personas - directional signal to refine before publishing, not a guarantee of real-world results.
+          Simulated reactions from AI personas. Directional signal to refine before publishing, not a guarantee of real-world results.
         </p>
       )}
     </div>

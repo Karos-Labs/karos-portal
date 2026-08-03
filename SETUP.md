@@ -117,7 +117,7 @@ To build/deploy one environment manually (e.g. for a break-glass fix):
 
 ```bash
 gcloud builds submit --project=<PROJECT_ID> --config cloudbuild.yaml \
-  --substitutions _APP_URL=https://<that-env's-url>,_EMAIL_FROM="Karos CMO <donotreply@karoslabs.com>"
+  --substitutions _APP_URL=https://<that-env's-url>,_EMAIL_FROM="Karos Labs <donotreply@karoslabs.com>"
 ```
 
 Server-side secrets are mounted from Secret Manager (see the `--set-secrets` list in

@@ -416,32 +416,245 @@ export const OPTIONS_TEMPLATE_KEY = "daily-post";
 const DELIVERED_JOB_STATUSES = new Set(["review", "approved", "delivered"]);
 
 /**
- * Which agents have already delivered work for this client, by customAgentId.
+ * What the JOBS say about delivered work — the two identities a delivered custom
+ * job can be attributed by, and nothing about any particular agent.
  *
- * ONE answer for every surface. The roster card, the detail page's status strip
- * and `rosterStatus` itself all need "has this agent ever produced", and three
- * spellings of it is how a card ends up disagreeing with the page it opens.
+ * HALF AN ANSWER, and named so. "Has this agent delivered?" is asked by the
+ * roster and by the agent detail page, and neither may ask it here: a lab
+ * import is written with `jobId: null`, so it produces no job and is invisible
+ * to this join. Under the old name (`deliveredAgentIds`) both surfaces read it
+ * as the whole answer, and an agent whose entire history was imported went
+ * missing from its client's roster while its posts sat in their Workspace.
  *
- * `agentIdByName` keeps runs fired before `customAgentId` existed attributable —
- * the same fallback join `agentProducedAssets` uses.
+ * The whole answer is `agentsWithDeliveredWork` in agent-detail-archetypes.ts —
+ * this join plus the asset attribution rungs — and it is the ONLY caller of this
+ * function. Anything else calling it is re-opening that gap.
+ *
+ * FACTS, NOT A RESOLVED SET, and that is the whole change of shape. This used to
+ * take an `agentIdByName` map and return resolved agent ids, which made one
+ * agent's answer depend on the OTHER agents the caller asked about: a map keyed
+ * on a display name holds one entry per name, so of two agents sharing a name
+ * only the last was attributable by the name rung. The roster asks about its
+ * whole candidate list (shadowing applies) and the detail page about one agent (a
+ * single-entry map, so it cannot), and the two therefore returned different
+ * answers for the SAME agent — the exact disagreement the shared function exists
+ * to remove. Returning the jobs' own facts leaves the per-agent read independent,
+ * so a list read is N single reads.
+ *
+ * `names` is the pre-`customAgentId` fallback and holds the recorded name
+ * VERBATIM, where `agentProducedAssets` compares case-insensitively and trimmed.
+ * A job whose recorded name differs only in case therefore counts as delivered
+ * work through the asset rungs and not through this one. Worth closing, but not
+ * by normalising on one side only: the caller compares `agent.name` against this
+ * set, and a fold applied here and not there would simply move which spellings
+ * miss.
+ *
+ * Only a job with NO `customAgentId` feeds `names`, which reproduces the
+ * `customAgentId ?? name` fallback chain exactly. Feeding every job's name in
+ * would credit an agent for a run whose own binding names a DIFFERENT agent that
+ * happens to share its display name — a mis-credit, and a widening of what both
+ * surfaces answered before.
  */
-export function deliveredAgentIds(
+export interface JobDeliveredWork {
+  /** `customAgentId` of every agent with a delivered custom job. */
+  ids: Set<string>;
+  /** Verbatim `agentName` of delivered custom jobs that carry no `customAgentId`. */
+  names: Set<string>;
+}
+
+export function jobDeliveredWork(
   jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName">[],
+  opts: {
+    /**
+     * Leave out `review` — jobs staff are still holding, whose every asset
+     * `getClientArchiveAssets` drops.
+     *
+     * Pass this for a CLIENT viewer. Without it a run in review lists the agent
+     * on the client's roster while the page under it is empty, which is the
+     * defect the roster fix exists to remove rather than a milder version of it.
+     * Staff keep `review`, because a run awaiting their own review is precisely
+     * the thing they need to see.
+     */
+    excludeInReview?: boolean;
+  } = {},
+): JobDeliveredWork {
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  for (const job of jobs) {
+    if (job.external?.taskType !== "custom") continue;
+    if (!DELIVERED_JOB_STATUSES.has(job.status)) continue;
+    if (opts.excludeInReview && job.status === "review") continue;
+    if (job.customAgentId) {
+      ids.add(job.customAgentId);
+      continue;
+    }
+    // A job with neither a binding nor a recorded name is dropped rather than
+    // guessed at. Read defensively even though `agentName` is typed as required:
+    // this runs over whatever Firestore actually holds.
+    if (typeof job.agentName === "string" && job.agentName !== "") names.add(job.agentName);
+  }
+  return { ids, names };
+}
+
+/**
+ * Which agents' MOST RECENT finished run failed, by customAgentId.
+ *
+ * The sibling of `jobDeliveredWork`, over the same job population and the same
+ * name fallback, because it answers the other half of the same question. The
+ * roster's status word was built from four inputs — launch state, schedule
+ * refusal, schedule active, delivered — and NONE of them can see a run that
+ * failed at the agent service: `schedule.lastError` only ever records a
+ * SUBMIT-time refusal (out of credits, a cap, a missing intake, the service
+ * down), while a run that submits cleanly and then fails writes `job.error`
+ * through the webhook and never touches the schedule row. So the pilot client's
+ * Instagram Agent carried a green "Live" badge whose only run, two days
+ * earlier, read "Failed".
+ *
+ * THE ORDERING RULE, and it is the whole helper:
+ *
+ *  1. Only the most recent run with a VERDICT counts. An old failure followed
+ *     by a later success is not "needs attention" — it is an agent that had a
+ *     bad day and then worked, and a badge that remembers the failure forever
+ *     is the stale-refusal defect wearing a different hat.
+ *  2. A run still in flight (queued/running) carries no verdict and is skipped
+ *     rather than treated as a success. Skipping is deliberate: a retry running
+ *     right now does not mean the last failure is fixed, so the previous
+ *     verdict stands until the retry produces one of its own — the same call
+ *     `deriveAgentHealth` makes when it reports "retrying" rather than
+ *     "healthy".
+ *  3. A CANCELLED run is skipped too. Somebody stopped it by hand; that says
+ *     nothing about whether the agent works, so it may neither raise attention
+ *     nor clear a failure that came before it.
+ *
+ * Ties (two verdicts on the same millisecond, which submission timestamps make
+ * all but impossible) resolve to the failure, so the answer never depends on
+ * the order the jobs happened to arrive in.
+ *
+ * SCOPE OF "EVERY SURFACE AGREES": the ORDERING RULE above is shared, and that is
+ * what the callers were disagreeing about. `agentIdByName` is still the caller's
+ * map, and a map keyed on a display name holds one entry per name — so for two
+ * agents sharing one, a roster (which builds the map over its whole list) and a
+ * detail page (which builds it for one agent) can still differ on a run fired
+ * before `customAgentId` existed. `jobDeliveredWork` had the same hole and no
+ * longer does; this one is knowingly left, because closing it means deciding how
+ * a latest-verdict comparison merges two attribution keys, which is its own
+ * change with its own tests rather than a rename.
+ */
+export function lastRunFailedAgentIds(
+  jobs: Pick<Job, "status" | "external" | "customAgentId" | "agentName" | "createdAt" | "runType">[],
   agentIdByName: Map<string, string>,
+  /**
+   * Staff see every run; a client sees neither launch runs nor test runs, so
+   * neither may move a client's badge. Without this a staff member testing an
+   * agent would put "Needs attention" on the client's card, pointing at a run
+   * the client cannot see and did not cause — the badge crying wolf, which is
+   * worse than the silence it replaced. Same predicate as the run list uses
+   * (client-agent-rows.ts, `staff || (runType !== "launch" && !== "test")`);
+   * the two must agree or the card and the list behind it tell different
+   * stories.
+   */
+  opts: { staff: boolean },
 ): Set<string> {
+  const latest = new Map<string, { at: number; failed: boolean }>();
+  for (const job of jobs) {
+    if (job.external?.taskType !== "custom") continue;
+    if (!opts.staff && (job.runType === "launch" || job.runType === "test")) continue;
+    const failed = job.status === "failed";
+    // Everything that is neither a landing nor a failure — queued, running,
+    // cancelled — is not a verdict and does not take part in the comparison.
+    if (!failed && !DELIVERED_JOB_STATUSES.has(job.status)) continue;
+    const agentId = job.customAgentId ?? agentIdByName.get(job.agentName);
+    if (!agentId) continue;
+    const seen = latest.get(agentId);
+    if (!seen || job.createdAt > seen.at || (job.createdAt === seen.at && failed)) {
+      latest.set(agentId, { at: job.createdAt, failed });
+    }
+  }
   return new Set(
-    jobs
-      .filter((job) => job.external?.taskType === "custom" && DELIVERED_JOB_STATUSES.has(job.status))
-      .map((job) => job.customAgentId ?? agentIdByName.get(job.agentName))
-      .filter((agentId): agentId is string => Boolean(agentId)),
+    [...latest].filter(([, verdict]) => verdict.failed).map(([agentId]) => agentId),
   );
 }
+
+/**
+ * How long a stored schedule refusal keeps forcing "Needs attention".
+ *
+ * `PlannedScheduledRun.lastError` clears only on the next CLEAN fire, so on a
+ * weekly cadence a refusal that a top-up fixed an hour later kept telling the
+ * client their agent needed them for up to seven more days. Three days is
+ * chosen against that cadence from both ends: comfortably shorter than the
+ * longest gap between fires (weekly), so a stale refusal can never sit out a
+ * whole cycle; and long enough to survive a weekend, so a Friday-evening
+ * refusal is still on the card on Monday morning when somebody is there to act
+ * on it.
+ *
+ * Ageing out is not forgetting. Nothing is written — this is a read-path
+ * window — so a refusal that is still true is re-raised by the very next
+ * refused fire (within a day for a daily schedule), and the refusal text and
+ * its "Last tried" stamp stay on the staff surfaces that render them
+ * regardless of age.
+ */
+export const SCHEDULE_REFUSAL_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
 
 export type RosterStatusTone = "live" | "attention" | "progress" | "idle" | "disabled";
 
 export interface RosterStatus {
   tone: RosterStatusTone;
   label: string;
+  /**
+   * The operational truth behind a word that does not come from this agent's own
+   * machinery — today only the AF-5 rung, where "Live" is claimed on the strength
+   * of content already on the client's calendar rather than on a schedule that is
+   * firing.
+   *
+   * STAFF SURFACES ONLY. It is set unconditionally (the function has no viewer
+   * argument and does not want one: the CLIENT-FACING word is the same for both
+   * readers by ruling, and a status that changed shape per viewer is how two
+   * surfaces come to disagree). Callers decide whether to paint it, and the
+   * client's branches do not.
+   */
+  staffNote?: string;
+}
+
+/**
+ * Why a client-facing "Live" is being claimed for an agent whose own schedule is
+ * not firing (AF-5). Operator voice: it names the cause and the evidence, because
+ * the person reading it is the one who would otherwise open a ticket about a
+ * green badge on a paused schedule.
+ */
+export const IMPORTED_CONTENT_STAFF_NOTE =
+  "Schedule is not firing. The client-facing status reads Live because upcoming content for this agent is already on their calendar, produced internally.";
+
+/**
+ * Whether a stored schedule refusal is recent enough to still be the client's
+ * current state. Blank is not a refusal; an UNDATED one is kept, because every
+ * writer sets `lastErrorAt` in the same patch as `lastError` (the scheduler
+ * routes, and planned-run-actions clears both together), so a refusal with no
+ * timestamp is a row we cannot age rather than one we know to be old — and
+ * hiding an alarm we cannot date is the wrong way to be wrong.
+ *
+ * A PAUSED SCHEDULE HAS NO CURRENT REFUSAL, and that rule lives here now.
+ * `lastError` is cleared in exactly three places — a clean fire, a resume to
+ * active, and a configure save — and pausing is none of them, so a refusal
+ * survives the pause that answers it and keeps badging the agent. Every caller
+ * had spotted that and written `schedule?.status === "active" ? lastError :
+ * null` into its own arguments; the rule written three times is the rule the
+ * fourth caller forgets, so the callers now hand over the refusal and the
+ * status and this decides.
+ *
+ * Keyed to `=== false`, so a caller that does not know the status still gets
+ * the alarm. That is the loud direction on purpose: an unanswerable "is it
+ * paused?" must not silence a refusal.
+ */
+function refusalIsCurrent(input: {
+  scheduleRefusal?: string | null;
+  scheduleRefusalAt?: number | null;
+  scheduleActive?: boolean;
+  now?: number;
+}): boolean {
+  if (!input.scheduleRefusal?.trim()) return false;
+  if (input.scheduleActive === false) return false;
+  if (input.scheduleRefusalAt == null) return true;
+  return (input.now ?? Date.now()) - input.scheduleRefusalAt < SCHEDULE_REFUSAL_FRESH_MS;
 }
 
 /**
@@ -457,6 +670,22 @@ export interface RosterStatus {
  * umbrella says, and painting it green because a database field says `live`
  * is the exact lie those two defects were about.
  *
+ * A FAILED LAST RUN outranks "Live" for the same reason and closes the other
+ * half of it. The refusal rung can only see a fire the scheduler turned away
+ * BEFORE a job existed; a run that submits cleanly and then fails at the agent
+ * service is invisible to it, which is how the pilot client's Instagram Agent
+ * came to show a green "Live" badge two days after its only run failed. The
+ * verdict comes from `lastRunFailedAgentIds`, which every call site shares so
+ * the card and the page it opens cannot hold two opinions of the ordering rule.
+ * It is a STAFF rung only — see `viewerIsStaff`, and AF-14 — because the green
+ * badge it was written to correct is on a staff surface, while on a client's it
+ * asks them to attend to a failure that is ours.
+ *
+ * Both rungs say "Needs attention" — one phrase, deliberately. The roster
+ * answers "is this working for me right now", and "no" is one answer however it
+ * got there; WHY is the detail page's job. A second phrase here would also be a
+ * second label map, and those are a standing defect class in this codebase.
+ *
  * "Live" is then either of the two things a client would call live: an umbrella
  * that has gone live, or — for an agent with no umbrella at all — a weekly
  * schedule that is actively producing. A granted agent that is neither is idle,
@@ -469,33 +698,155 @@ export interface RosterStatus {
  * is not un-set-up; it is set up and idle, and it runs when somebody asks it to.
  * The distinction lives HERE rather than in the strip so the roster card and the
  * detail page cannot end up holding two different opinions of the same agent.
+ *
+ * LIVE MEANS LIVE (AF-5), and it is the last rung on purpose. Albert: "it should
+ * still show that it's live even though we're creating it internally… if there's
+ * items on the calendar like Instagram or TikTok items, it should show us live."
+ * A stream whose posts Karos produces by hand and imports has no cron of its own
+ * — its `clientAgents` row may never have been launched and its schedule may be
+ * paused for exactly that reason — so every rung above answers "idle" for an
+ * agent the client can plainly see filling their calendar next week.
+ *
+ * It is applied to the IDLE OUTCOME rather than written into each idle branch,
+ * which is what keeps it from becoming a fourth way to outrank an alarm. A
+ * refusal, a failed last run, a launch in flight and a failed launch all decide
+ * before it and are untouched by it: the ruling is that we stop calling a
+ * producing agent idle, not that we start calling a broken one live. The staff
+ * note rides along so the surfaces that carry operator state can say why the word
+ * disagrees with the schedule row underneath it.
  */
 export function rosterStatus(input: {
   /** Null for a granted agent with no umbrella bound. */
   launchState: ClientAgentLaunchState | null;
-  /** The agent's weekly schedule refusal, already client-redacted. */
+  /**
+   * The agent's schedule refusal, already client-redacted — passed RAW, as
+   * stored. Callers used to null it out themselves for a paused schedule;
+   * `refusalIsCurrent` owns that rule now, so hand it over unfiltered or the
+   * rule exists in two places again.
+   */
   scheduleRefusal?: string | null;
-  /** True when a weekly schedule exists and is not paused. */
+  /**
+   * When that refusal was recorded (PlannedScheduledRun.lastErrorAt). Past
+   * SCHEDULE_REFUSAL_FRESH_MS it stops forcing the badge — see that constant
+   * for why, and note that nothing is written to make it so.
+   */
+  scheduleRefusalAt?: number | null;
+  /**
+   * True when a recurring schedule exists and is not paused. Read twice: it is
+   * the "Live" rung for an agent with no umbrella, AND the freshness test's
+   * pause rule (a refusal from before a pause is not the current state).
+   */
   scheduleActive?: boolean;
   /**
    * True when this agent has already landed work for this client — i.e. it has
-   * plainly been set up, whatever it has bound. Resolved by the callers from
-   * the job history through `deliveredAgentIds`, so every surface answers it
-   * the same way.
+   * plainly been set up, whatever it has bound. Resolved by the callers through
+   * `agentsWithDeliveredWork` (jobs AND the asset attribution rungs), so the
+   * roster card and the page it opens answer it the same way. A job-only read
+   * here is the defect that hid every lab-import-only agent.
    */
   hasDelivered?: boolean;
+  /**
+   * True when this agent's most recent run WITH A VERDICT failed. Resolved by
+   * the callers through `lastRunFailedAgentIds` — the ordering rule lives there,
+   * not here, so no surface holds an opinion of its own about what "failed last"
+   * means. That helper's doc states where the shared answer stops.
+   */
+  lastRunFailed?: boolean;
   /**
    * False when an admin has paused this agent (`CustomAgent.enabled`) — the
    * roster card must say "Coming Soon" rather than any live/progress/idle
    * word, whatever the umbrella or schedule underneath it looks like. This
    * outranks even a schedule refusal: a paused agent isn't "needing
-   * attention", it simply isn't running for anyone right now. Defaults to
-   * true so every existing caller (managed products, tests) is unaffected.
+   * attention", it simply isn't running for anyone right now — and it outranks
+   * the AF-5 upcoming-content rung for the same reason. Defaults to true so
+   * every existing caller (managed products, tests) is unaffected.
    */
   enabled?: boolean;
+  /**
+   * Whether the reader is STAFF — the gate on the `lastRunFailed` rung, and the
+   * only thing on this input that asks who is looking.
+   *
+   * AF-14 is absolute: "clients never see failed runs." The failed-last-run rung
+   * was added for the roster card that sat green above a run history whose last
+   * row read Failed, which is a STAFF complaint about a STAFF surface — but it
+   * was wired for both readers, so a production fire that failed at the agent
+   * service put "Needs attention" on the client's card. That badge asks the
+   * client to do something about an internal failure they cannot see, did not
+   * cause and have no lever over, and it does it on exactly the agents AF-5 is
+   * about: a stream we produce internally, whose posts are sitting on their
+   * calendar, is not something the client needs to attend to.
+   *
+   * A SCHEDULE REFUSAL IS NOT AFFECTED and still outranks Live for everyone
+   * (F24/F129). The two are different facts: a refusal is the scheduler turning a
+   * fire away for a reason the client owns (out of credits, an empty intake), and
+   * telling them is the whole point. A run that submitted cleanly and then broke
+   * is ours.
+   *
+   * DEFAULTS TO FALSE, which skips the rung — the quiet direction, opposite to
+   * `refusalIsCurrent`'s. The two defaults are chosen against their own failure
+   * modes: an undatable refusal that goes unsaid leaves a client stuck with no
+   * idea why, while an internal failure shown to a client is the thing AF-14
+   * forbids outright. Every staff call site passes it, and `lastRunFailedAgentIds`
+   * already takes the same `staff` flag, so the pair travels together.
+   */
+  viewerIsStaff?: boolean;
+  /**
+   * True when this agent's stream has content on the client's calendar for a day
+   * that has not happened yet (AF-5). Resolved by the callers through
+   * `agentsWithUpcomingContent`, which walks the SAME attribution rungs
+   * `agentsWithDeliveredWork` does, so "whose stream is this" is one answer here
+   * as everywhere else.
+   *
+   * A BOOLEAN, and that is the whole contract. How many items, which days and
+   * what they say are the calendar's business; this surface may only know that
+   * the client has some. Anything richer crossing the RSC boundary would publish
+   * the batch shape on a page whose entire job is to not (A3/A4).
+   */
+  hasUpcomingContent?: boolean;
+  /** Clock, for the refusal's freshness window. Defaults to now. */
+  now?: number;
 }): RosterStatus {
+  // An admin's pause outranks everything — refusal, failed run, AF-5 — because
+  // a paused agent isn't in any of those states: it simply isn't running for
+  // anyone right now, and "Coming Soon" is the one honest word for that.
   if (input.enabled === false) return { tone: "disabled", label: "Coming Soon" };
-  if (input.scheduleRefusal?.trim()) return { tone: "attention", label: "Needs attention" };
+  const status = rosterStatusCore(input);
+  // The AF-5 rung. Only an IDLE outcome is eligible: see the doc above for why
+  // this may not reach past an alarm or a launch narration.
+  if (status.tone !== "idle" || !input.hasUpcomingContent) return status;
+  return { tone: "live", label: "Live", staffNote: IMPORTED_CONTENT_STAFF_NOTE };
+}
+
+/** The four original rungs — see `rosterStatus` for the ordering rules. */
+function rosterStatusCore(input: {
+  launchState: ClientAgentLaunchState | null;
+  scheduleRefusal?: string | null;
+  scheduleRefusalAt?: number | null;
+  scheduleActive?: boolean;
+  hasDelivered?: boolean;
+  lastRunFailed?: boolean;
+  viewerIsStaff?: boolean;
+  now?: number;
+}): RosterStatus {
+  const attention: RosterStatus = { tone: "attention", label: "Needs attention" };
+  if (refusalIsCurrent(input)) return attention;
+  // A failed last run outranks Live, but never the launch states: `launching`
+  // and `curating` are a NEWER event than any finished run and the launch card
+  // is already narrating them, and `launch_failed` is the same alarm in more
+  // specific words. Replacing either with the generic phrase would lose
+  // information, not add it.
+  //
+  // STAFF ONLY (AF-14) — see `viewerIsStaff` for why a client's badge may not be
+  // moved by a run that broke on our side of the wire.
+  if (
+    input.lastRunFailed &&
+    input.viewerIsStaff &&
+    input.launchState !== "launching" &&
+    input.launchState !== "curating" &&
+    input.launchState !== "launch_failed"
+  ) {
+    return attention;
+  }
 
   if (input.launchState === null) {
     // No umbrella and no schedule firing: nobody has set this agent up for this

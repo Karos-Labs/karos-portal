@@ -189,7 +189,7 @@ export function BulkUploadClips({ clientId, bucketName }: { clientId: string; bu
       const { scheduled } = await bulkScheduleClipsAction(clientId, startAtMs);
       setScheduleResult(
         scheduled > 0
-          ? `Scheduled ${scheduled} clip${scheduled === 1 ? "" : "s"}, one per day from ${scheduleDate}.`
+          ? `Scheduled ${scheduled} clip${scheduled === 1 ? "" : "s"} from ${scheduleDate}, at this client's clip pace.`
           : "No unscheduled bulk-uploaded clips to schedule.",
       );
       router.refresh();
@@ -303,7 +303,7 @@ export function BulkUploadClips({ clientId, bucketName }: { clientId: string; bu
             ) : null}
             <p className="text-[11px] text-muted-2">
               {destinationPath
-                ? "Copy this exact path - a different client's id here would land these clips (or nothing, if Import from Storage can't find them) somewhere else."
+                ? "Copy this exact path. A different client's id here would land these clips (or nothing, if Import from Storage can't find them) somewhere else."
                 : "Set GCS_MEDIA_BUCKET to show this client's exact gcloud destination path."}
             </p>
           </div>
@@ -311,7 +311,7 @@ export function BulkUploadClips({ clientId, bucketName }: { clientId: string; bu
 
           <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
             <label className="text-xs text-muted" htmlFor="bulk-schedule-start">
-              Auto-Schedule Bulk Batch (1/day) from
+              Auto-Schedule Bulk Batch from
             </label>
             <input
               id="bulk-schedule-start"

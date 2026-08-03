@@ -23,6 +23,42 @@ prep agent job, or prep test data can't touch production's compute, secrets, or 
 
 ## What's still shared, and what that means
 
+Because Firestore/Auth are shared, prep is not a sandbox with fake data — it's a second
+frontend on top of the *real* clients/jobs/assets. Anything prep does that reaches outside
+the app (send an email, publish a scheduled post, spend agent credits) is a real action
+against a real client. The deploy config in this repo defaults prep to **not** be able to
+do those things automatically:
+
+- **`AGENT_SERVICE_URL` is left empty for prep**, so no agent-service job can be submitted
+  from prep and no agent run is billed twice. The mechanism, by name, because this bullet
+  previously justified itself with a component (`src/components/managed-products.tsx`) that
+  was deleted in `fbecbbf` — leaving nothing a reader could check:
+  `isAgentServiceConfigured()` in `src/lib/agent-service/client.ts` is true only when
+  `AGENT_SERVICE_URL` *and* `AGENT_SERVICE_TOKEN` are both set, and it is the first
+  statement of all three submit cores — `submitManagedJob` (`src/lib/jobs/submit-managed.ts`),
+  `submitCustomAgentJob` (`src/lib/jobs/submit-custom.ts`) and `submitCustomAgentRun`
+  (`src/lib/agent-service/run-custom-agent.ts`) — each returning "Agent service is not
+  configured" before a job row exists or anything is charged. The backstop is structural
+  rather than a fourth copy of that check: `config()` in the same client module throws on an
+  empty URL, so `submitAgentServiceJob` (and every other call to the service) cannot reach
+  the network from prep even if a future caller forgets to ask. In the UI the same predicate
+  now *disables* the run control rather than hiding a surface — `serviceConfigured` in
+  `src/components/custom-agents.tsx`.
+- **⚠️ That guard covers agent-service runs, and nothing else.** A content-generation task
+  started in prep does not stop when the agent service is absent: `runTaskExecution`
+  (`src/lib/execution-engine.ts`) gates both dispatch paths on `isAgentServiceConfigured()`
+  and falls through both to an in-process `generateText` on prep's own
+  `ANTHROPIC_API_KEY`, writing the artifact into the shared Firestore. If a client session
+  started it, `chargeClientModelCall` (`src/lib/actions/task-actions.ts`) has already taken
+  the real client's credits — it runs BEFORE the execution is queued, so the charge lands
+  even when the run itself does not. The intel/SEO-GEO pipeline
+  and the copilot never route through the agent service either. Empty `AGENT_SERVICE_URL`
+  buys you "no duplicate agent runs", not "prep cannot spend AI money or touch a real
+  client".
+- **No Cloud Scheduler job should point at prep's `/api/publish`, `/api/analytics/sync`,
+  `/api/*/reconcile`, etc.** Only wire Cloud Scheduler to production. Prep's `CRON_SECRET`
+  exists so those routes don't 503, but nothing should ever call them there — don't create
+  a scheduler job against the prep URL.
 - **Firebase Auth users are shared.** The same login works on both `PREP_APP_URL` and
   `PROD_APP_URL`. There is no separate prep signup.
 - **OAuth app credentials (LinkedIn/Twitter/Google/TikTok) are shared** — same client
@@ -36,6 +72,15 @@ prep agent job, or prep test data can't touch production's compute, secrets, or 
   with no verified sending domain can only deliver to the account owner's own verified
   addresses — so if a prep test run does hit `sendEmail()`, it physically cannot reach a
   real inbox outside your own team.
+- **`/api/daily-digest` is the one cron that mails clients directly**, so it deserves the
+  same warning twice over: no scheduler job against the prep URL, and prep's own client
+  records should have **Daily email** switched off. It is opt-in per client and off by
+  default, so a freshly seeded prep client cannot send anything; a Firestore import from
+  production carries the flag along with everything else, which is the case to watch.
+  Envelope is `EMAIL_FROM` (`PROD_EMAIL_FROM` / `PREP_EMAIL_FROM`), the same `hello@`
+  address the rest of the product sends from. `GET /api/daily-digest?dryRun=1` reports
+  what would go out without sending or marking anything — see `agent-service/DEPLOY.md`
+  §6 for the schedule (hourly, gated per client on their own timezone).
 - **No Cloud Scheduler job should point at prep's `/api/publish`, `/api/analytics/sync`,
   `/api/*/reconcile`, etc.** Only wire Cloud Scheduler to production.
 - Firebase-project-level config (`FIREBASE_SERVICE_ACCOUNT_KEY`, `NEXT_PUBLIC_FIREBASE_*`)
@@ -218,8 +263,8 @@ gh variable set PREP_APP_URL --body "https://<prep-cloud-run-url>"
 gh variable set PROD_APP_URL --body "https://<prod-cloud-run-url-or-custom-domain>"
 gh variable set PREP_AGENT_SERVICE_URL --body ""
 gh variable set PROD_AGENT_SERVICE_URL --body "<existing prod agent service URL, if any>"
-gh variable set PREP_EMAIL_FROM --body "Karos CMO Prep <onboarding@resend.dev>"
-gh variable set PROD_EMAIL_FROM --body "Karos CMO <donotreply@karoslabs.com>"
+gh variable set PREP_EMAIL_FROM --body "Karos Labs Prep <onboarding@resend.dev>"
+gh variable set PROD_EMAIL_FROM --body "Karos Labs <donotreply@karoslabs.com>"
 gh variable set PREP_ADMIN_EMAIL --body "hello@karoslabs.com"
 gh variable set PROD_ADMIN_EMAIL --body "hello@karoslabs.com"
 ```

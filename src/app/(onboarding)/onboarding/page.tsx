@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getClient, listClientIntegrations } from "@/lib/data";
-import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
+import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
@@ -11,7 +11,7 @@ export const metadata = { title: "Welcome · Karos CMO" };
 
 const NOTICE_COPY: Record<string, string> = {
   denied: "LinkedIn connection was cancelled. You can try again anytime.",
-  not_configured: "LinkedIn connection isn't configured yet - you can finish setup and connect it later.",
+  not_configured: "LinkedIn connection isn't configured yet. You can finish setup and connect it later.",
   invalid_state: "That LinkedIn link expired. Please try connecting again.",
   error: "Something went wrong connecting LinkedIn. You can try again or finish setup without it.",
 };
@@ -47,6 +47,7 @@ export default async function OnboardingPage({
       notice={notice}
       integrations={sanitizeIntegrations(rawIntegrations)}
       oauthEnabledPlatforms={getOAuthEnabledPlatforms()}
+      googleBusinessProfileRequested={googleBusinessProfileRequested()}
       linkedinSeats={linkedinSeats}
       seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
       seatCost={CREDIT_COSTS.employeeSeat}

@@ -5,11 +5,20 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
+import type { TaskOwner } from "@/lib/types";
 
 interface Props {
   clientId: string;
-  /** Optional callback fired after a task is successfully added. */
-  onAdded?: (owner: string) => void;
+  /**
+   * Fired after a task is successfully added, with the owner the ROUTER chose.
+   * The typed text goes through a model that decides between the two owners; the
+   * user does not pick, so the caller is the only thing that can put the board
+   * on the tab the new card actually landed on.
+   *
+   * Typed `TaskOwner`, not `string`: the mapping to a board tab has to be total,
+   * and it cannot be if the value is any string at all.
+   */
+  onAdded?: (owner: TaskOwner) => void;
   className?: string;
 }
 

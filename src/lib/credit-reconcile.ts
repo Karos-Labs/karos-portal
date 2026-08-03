@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminDb } from "@/lib/firebase/admin";
+import { IN_FLIGHT_JOB_STATUSES, isJobInFlight } from "@/lib/data";
 import { applyCredit, defaultClientCredits } from "@/lib/credits";
 import { newestUnrefundedCharge, refundEntryIdFor } from "@/lib/credit-reconcile-shared";
 import type { ClientCredits, ClientTask, CreditLedgerEntry, Job } from "@/lib/types";
@@ -96,7 +97,7 @@ export const UNSUBMITTED_AGENT_JOB_EXTRA_MS = 90 * 60 * 1000;
  * would otherwise be stranded (charge happens between createJob and submit).
  */
 export async function listStuckLocalJobs(staleBefore: number, limit = 25): Promise<Job[]> {
-  const snap = await jobsCol().where("status", "in", ["queued", "running"]).get();
+  const snap = await jobsCol().where("status", "in", IN_FLIGHT_JOB_STATUSES).get();
   return snap.docs
     .map((d) => ({ ...(d.data() as Job), id: d.id }))
     .filter((j) => {
@@ -120,18 +121,21 @@ type StagedRefund = {
 };
 
 /**
- * READ phase: locate the newest unpaired charge for `jobId` plus everything
- * the refund write needs. Returns null when there is nothing to refund
- * (never charged — e.g. staff-triggered or an autopilot batch charge without
- * a per-task jobId — or already refunded by a previous pass/inline refund).
- * Must run before any tx write (Firestore transactions read-then-write).
+ * READ phase: locate the newest unpaired charge filed under `ledgerKey` plus
+ * everything the refund write needs. Returns null when there is nothing to
+ * refund (never charged — e.g. staff-triggered or an autopilot batch charge
+ * without a per-task key — or already refunded by a previous pass/inline
+ * refund). Must run before any tx write (Firestore transactions read-then-write).
+ *
+ * `ledgerKey` is matched against the ledger entry's `jobId` FIELD, which is a
+ * pairing key and not always a Job id — see refundJobCharge below.
  */
 async function readRefundableCharge(
   tx: FirebaseFirestore.Transaction,
-  jobId: string,
+  ledgerKey: string,
   now: number,
 ): Promise<StagedRefund | null> {
-  const chargesSnap = await tx.get(ledgerCol().where("jobId", "==", jobId));
+  const chargesSnap = await tx.get(ledgerCol().where("jobId", "==", ledgerKey));
   const entries = chargesSnap.docs.map((d) => ({ ...(d.data() as CreditLedgerEntry), id: d.id }));
   const charge = newestUnrefundedCharge(entries);
   if (!charge) return null;
@@ -177,23 +181,56 @@ function stageRefundWrites(
 }
 
 /**
- * Refund the newest unpaired charge for `jobId`, if any — used when a
- * client-charged agent-service job terminates without deliverables (failed /
- * cancelled / dead-lettered webhook, or the agent-service reconciler flips a
- * stuck job). No-op for staff-fired runs (never charged). Same idempotency
- * contract as the sweeps: deterministic refund_<chargeEntryId> id via
- * tx.create(), so webhook redelivery or a concurrent sweep can't double-pay.
+ * Refund the newest unpaired charge filed under any of `ledgerKeys`, if there
+ * is one — used when a client-charged run terminates without deliverables
+ * (failed / cancelled / dead-lettered webhook, a "done" run that produced
+ * nothing, or the agent-service reconciler flipping a stuck job). No-op for
+ * staff-fired runs (never charged).
+ *
+ * ── WHY THIS TAKES A LIST ────────────────────────────────────────────────────
+ * The ledger's `jobId` field is a PAIRING KEY, and the app files charges under
+ * two different kinds of key depending on who started the run:
+ *
+ *   - a run fired straight at an agent (the run dialog, a schedule, MCP) is
+ *     charged in submitCustomAgentJob under the JOB id;
+ *   - a run dispatched by a BOARD TASK is charged in execution-actions under
+ *     the TASK id, before any job exists — and the job it later creates is
+ *     submitted as TASK_ENGINE_ACTOR, which is not billable, so no second
+ *     charge is ever written under the job id.
+ *
+ * Task dispatch is the ordinary way a client spends agent credits, so a
+ * webhook-side refund that only ever looked up the job id was a no-op for most
+ * real runs. Callers that know both keys pass both, newest-first-by-relevance;
+ * the FIRST key with something refundable wins, and only one refund is ever
+ * written per call.
+ *
+ * ── IDEMPOTENCY IS UNCHANGED ─────────────────────────────────────────────────
+ * The pairing is still `refund_<chargeEntryId>` written with tx.create(), which
+ * is keyed to the CHARGE, not to the key it was found under. So a redelivery
+ * that arrives with the job key, a task-sync refund that arrives with the task
+ * key, and a reconciler sweep can all race the same charge and exactly one of
+ * them pays. Widening the lookup cannot double-pay; it can only find a charge
+ * that was previously missed.
  */
 export async function refundJobCharge(
-  jobId: string,
+  ledgerKeys: string | readonly (string | null | undefined)[],
   reason: string,
 ): Promise<{ refunded: boolean; amount?: number; chargeEntryId?: string }> {
+  const keys = (typeof ledgerKeys === "string" ? [ledgerKeys] : ledgerKeys).filter(
+    (k): k is string => typeof k === "string" && k.length > 0,
+  );
+  if (keys.length === 0) return { refunded: false };
   return db().runTransaction(async (tx) => {
     const now = Date.now();
-    const staged = await readRefundableCharge(tx, jobId, now);
-    if (!staged) return { refunded: false };
-    stageRefundWrites(tx, staged, reason, now);
-    return { refunded: true, amount: staged.amount, chargeEntryId: staged.charge.id };
+    // Every read happens before the single write below, which is what Firestore
+    // transactions require — the loop reads, then breaks out to stage.
+    for (const key of new Set(keys)) {
+      const staged = await readRefundableCharge(tx, key, now);
+      if (!staged) continue;
+      stageRefundWrites(tx, staged, reason, now);
+      return { refunded: true, amount: staged.amount, chargeEntryId: staged.charge.id };
+    }
+    return { refunded: false };
   });
 }
 
@@ -276,7 +313,9 @@ export async function reconcileStuckJob(jobId: string, staleBefore: number): Pro
     const jobSnap = await tx.get(jobRef);
     if (!jobSnap.exists) return { action: "skipped", detail: "job deleted", refunded: false };
     const job = jobSnap.data() as Job;
-    if (job.status !== "queued" && job.status !== "running") {
+    // Same predicate as the sweep's own filter above, so the transactional half
+    // cannot disagree with the half that selected this job.
+    if (!isJobInFlight(job.status)) {
       return { action: "skipped", detail: `already ${job.status}`, refunded: false };
     }
     if (job.external?.serviceJobId) {

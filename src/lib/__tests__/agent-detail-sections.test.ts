@@ -90,7 +90,11 @@ describe("toAgentInputRows", () => {
   it("carries a label, a summary and a date — and none of the document's private fields", () => {
     const rows = toAgentInputRows({
       agent: "x",
-      company: makeIntake({ offLimits: "Never mention the lawsuit", cvUrl: "https://secret" }),
+      company: makeIntake({
+        offLimits: "Never mention the lawsuit",
+        cvUrl: "https://secret",
+        cvPath: "clients/c1/private/cv.pdf",
+      }),
       seats: [],
       intake: [],
       news: [],
@@ -100,21 +104,98 @@ describe("toAgentInputRows", () => {
     expect(company?.label).toBe("Company profile");
     expect(company?.detail).toBe("@karoslabs");
     expect(company?.updatedAt).toBe(NOW - 2 * DAY);
-    // The whole payload, not just the painted parts. `offLimits` is the
-    // client's own answer and `createdBy` is a uid; both belong on the intake
-    // page behind the client-safe views, not in a second payload with a second
-    // set of rules to keep in step.
+    // AF-7 MOVED THE LINE, and it is worth naming where it moved to. `offLimits`
+    // is the CLIENT'S OWN ANSWER, and Albert's ruling is that their answers show
+    // on the agent page rather than behind a button — so it is carried now, by
+    // way of `toXIntakeView`, the very whitelist the intake page renders.
+    expect(company?.answers).toEqual([
+      { label: "Account", value: "@karoslabs" },
+      { label: "Never post about", value: "Never mention the lawsuit" },
+    ]);
+    // What did NOT move: the document's own private fields. A uid, the CV's
+    // storage path and its signed URL are not answers to anything the client was
+    // asked, and no view carries them — asserted over the whole payload, because
+    // a field that reaches the browser is readable whether or not it is painted.
     const serialized = JSON.stringify(rows);
-    expect(serialized).not.toContain("lawsuit");
     expect(serialized).not.toContain("uid-staff");
     expect(serialized).not.toContain("secret");
+    expect(serialized).not.toContain("cv.pdf");
+    expect(serialized).not.toContain("createdBy");
+    expect(serialized).not.toContain("seatId");
   });
 
-  it("pins an input row to exactly its six fields", () => {
-    // The not-contains assertions above catch a leak of the values this
-    // fixture happens to carry; they would sail past a narrowly added field —
+  it("shows a seat only its OWN answers, never a colleague's", () => {
+    // The three families share one `agentIntake` collection and the band renders
+    // one row per seat, so the join that goes wrong here does not leak a private
+    // field — it puts one person's account and one person's off-limits list under
+    // another person's name, on a page they can both read.
+    const rows = toAgentInputRows({
+      agent: "linkedin",
+      company: null,
+      seats: [makeSeat(), makeSeat({ id: "seat-2", name: "Dana Levi", slug: "dana-levi" })],
+      intake: [
+        makeIntake({
+          id: "i-maya",
+          agent: "linkedin",
+          seatId: "seat-1",
+          handle: "@maya",
+          offLimits: "Maya's line",
+        }),
+        makeIntake({
+          id: "i-dana",
+          agent: "linkedin",
+          seatId: "seat-2",
+          handle: "@dana",
+          offLimits: "Dana's line",
+        }),
+      ],
+      news: [],
+      takes: [],
+    });
+    const maya = JSON.stringify(rows.find((r) => r.id === "seat-seat-1"));
+    expect(maya).toContain("@maya");
+    expect(maya).toContain("Maya&#39;s line".replace("&#39;", "'"));
+    expect(maya).not.toContain("@dana");
+    expect(maya).not.toContain("Dana");
+  });
+
+  it("reads answers through the client-safe views, never the document", () => {
+    // The rule AF-7 rests on: one whitelist, on the intake surface, and this band
+    // downstream of it. A field the view does not carry cannot be labelled into
+    // existence here — `cvName` crosses because `toLiIntakeView` decided it is
+    // safe, while `cvPath` and `cvUrl` beside it do not.
+    const rows = toAgentInputRows({
+      agent: "linkedin",
+      company: makeIntake({
+        agent: "linkedin",
+        handle: "@karoslabs",
+        role: "Founder",
+        cvName: "albert-cv.pdf",
+        cvPath: "clients/c1/private/albert-cv.pdf",
+        cvUrl: "https://signed.example/albert",
+      }),
+      seats: [],
+      intake: [],
+      news: [],
+      takes: [],
+    });
+    const company = rows.find((r) => r.id === "company");
+    expect(company?.answers).toContainEqual({ label: "CV on file", value: "albert-cv.pdf" });
+    expect(company?.answers).toContainEqual({ label: "Role", value: "Founder" });
+    const serialized = JSON.stringify(rows);
+    expect(serialized).not.toContain("clients/c1/private");
+    expect(serialized).not.toContain("signed.example");
+  });
+
+  it("pins an input row to exactly its seven fields", () => {
+    // The not-contains assertions above catch a leak of the values these
+    // fixtures happen to carry; they would sail past a narrowly added field —
     // a `seatId`, a `createdBy`, a `cvPath` on a document that has one. The
     // whitelist is the rule, so the key set is what the test asserts.
+    //
+    // `answers` is the seventh and is OPTIONAL, which is itself part of the
+    // contract: a row with nothing saved stays a plain link to its form rather
+    // than growing a disclosure that opens onto nothing.
     const rows = toAgentInputRows({
       agent: "x",
       company: makeIntake(),
@@ -123,16 +204,17 @@ describe("toAgentInputRows", () => {
       news: [],
       takes: [],
     });
+    const allowed = ["answers", "detail", "filled", "icon", "id", "label", "updatedAt"];
     for (const row of rows) {
-      expect(Object.keys(row).sort()).toEqual([
-        "detail",
-        "filled",
-        "icon",
-        "id",
-        "label",
-        "updatedAt",
-      ]);
+      expect(Object.keys(row).sort().every((key) => allowed.includes(key))).toBe(true);
+      // And every answer is exactly a question and an answer — no id, no raw
+      // field name, nothing that names the document it came out of.
+      for (const entry of row.answers ?? []) {
+        expect(Object.keys(entry).sort()).toEqual(["label", "value"]);
+      }
     }
+    // The seat's form is empty in this fixture, so it carries no drawer at all.
+    expect(rows.find((r) => r.id === "seat-seat-1")?.answers).toBeUndefined();
   });
 
   it("lists a seat whose form was never filled in, dated from the seat itself", () => {
@@ -373,10 +455,23 @@ describe("wiring", () => {
     // rosterStatus. A strip that decided its own tone from launchState would be
     // a second answer that quietly disagrees with the badge beside it.
     const src = route();
-    expect(src).toContain("<AgentStatusStrip status={status}");
+    // Whitespace-tolerant: the element gained AF-5's staff note and wraps over
+    // several lines now, and this test is about where the value COMES FROM.
+    expect(src).toMatch(/<AgentStatusStrip\s+status=\{status\}/);
     expect(code(source("src/components/client-agents/agent-sections.tsx"))).not.toContain(
       "launchState",
     );
+  });
+
+  it("shows AF-5's operational truth to staff and to nobody else", () => {
+    // The client-facing word is the same for both readers by ruling; what staff
+    // get extra is the sentence explaining why it disagrees with the schedule
+    // row under it. Gated at the boundary that knows the viewer, so the line is
+    // absent from a client's HTML rather than merely unpainted.
+    const src = route();
+    expect(src).toMatch(/isStaff && status\.staffNote \? \{ staffNote: status\.staffNote \}/);
+    const strip = source("src/components/client-agents/agent-sections.tsx");
+    expect(strip).toContain("{staffNote}");
   });
 
   it("links the existing intake pages instead of forking their forms", () => {

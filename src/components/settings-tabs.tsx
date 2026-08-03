@@ -9,9 +9,25 @@ export interface SettingsTab {
   id: string;
   label: string;
   icon: string;
-  /** Server-rendered section markup. Tabs with no content are dropped by the page. */
-  content: ReactNode;
+  /**
+   * Server-rendered section markup. Tabs with no content are dropped by the
+   * page before they reach this component.
+   */
+  content?: ReactNode;
 }
+
+/**
+ * EVERY ENTRY ON THIS ROW IS A TAB (AF-2).
+ *
+ * There used to be one that was not: an `href` entry that rendered as a link
+ * and navigated to /settings, sitting outside the `role="tablist"` element
+ * because a tablist's owned children must all be tabs. It carried the account
+ * settings, which are ordinary tabs now — so the exception, its ARIA carve-out
+ * and the panel-vs-link split that ran through every selection decision below
+ * are all gone with it.
+ */
+const ENTRY =
+  "flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-all duration-150";
 
 /**
  * Task grouping for the client settings page, which was a nine-section
@@ -56,11 +72,11 @@ export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initia
             <button
               key={tab.id}
               role="tab"
-              aria-selected={current.id === tab.id}
+              aria-selected={current?.id === tab.id}
               onClick={() => select(tab.id)}
               className={cn(
-                "flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-all duration-150",
-                current.id === tab.id
+                ENTRY,
+                current?.id === tab.id
                   ? "bg-surface text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.3)]"
                   : "text-muted hover:text-foreground",
               )}
@@ -72,7 +88,7 @@ export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initia
         </div>
       </div>
 
-      <div role="tabpanel">{current.content}</div>
+      {current ? <div role="tabpanel">{current.content}</div> : null}
     </>
   );
 }

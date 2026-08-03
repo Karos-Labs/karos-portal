@@ -57,14 +57,35 @@ export const LEGAL_TIERS: Record<string, readonly string[]> = {
   ...Object.fromEntries(INTERNAL_ONLY_DOC_TYPES.map((t) => [t, ["internal-only"] as const])),
 };
 
-/** Profile fields the refresh may FILL when empty. Never overwritten. */
+/**
+ * Profile fields the refresh may FILL when empty. Never overwritten.
+ *
+ * `industry` LEFT THIS LIST and is not simply gone: it is `category`'s legacy
+ * spelling (see Client.industry), nothing writes it any more, and a fill-only
+ * pass that still could would be quietly re-populating the field the app now
+ * only reads as a fallback. A proposal that names it is accepted and fills
+ * `category` instead — see PROFILE_FILL_ALIASES — so a payload written against
+ * the old key still works and still lands where every reader looks.
+ */
 const PROFILE_FILL_FIELDS = [
   "website",
-  "industry",
   "category",
   "description",
   "brandVoice",
 ] as const;
+
+/**
+ * Legacy proposal keys, and the field each one fills.
+ *
+ * A refresh payload is written by hand against the export's own vocabulary, and
+ * the export has been emitting `industry` for as long as the field has existed.
+ * Rejecting the key outright would fail a payload for using the name it was
+ * taught; mapping it keeps the write-forward rule (only `category` is ever
+ * stored) without breaking anything already drafted.
+ */
+const PROFILE_FILL_ALIASES: Record<string, (typeof PROFILE_FILL_FIELDS)[number]> = {
+  industry: "category",
+};
 
 const SOCIAL_LINK_KEYS = [
   "instagram",
@@ -669,11 +690,22 @@ function buildClientPlan(ctx: Ctx, raw: unknown, stored: Row, colorDocSupplied: 
   if (raw.profile !== undefined) {
     if (!isPlainObject(raw.profile)) fail(ctx, "client.profile", "expected an object");
     else {
-      rejectUnknownKeys(ctx, "client.profile", raw.profile, [...PROFILE_FILL_FIELDS, "socialLinks"]);
+      rejectUnknownKeys(ctx, "client.profile", raw.profile, [
+        ...PROFILE_FILL_FIELDS,
+        ...Object.keys(PROFILE_FILL_ALIASES),
+        "socialLinks",
+      ]);
       for (const f of PROFILE_FILL_FIELDS) {
-        const v = raw.profile[f];
+        // The field's own key wins; the legacy alias is only read when the
+        // proposal did not name the current one, so a payload carrying both
+        // cannot have the old spelling silently overwrite the new.
+        const alias = Object.keys(PROFILE_FILL_ALIASES).find(
+          (k) => PROFILE_FILL_ALIASES[k] === f,
+        );
+        const named = raw.profile[f] !== undefined ? f : alias;
+        const v = named === undefined ? undefined : raw.profile[named];
         if (v === undefined) continue;
-        const s = requireString(ctx, `client.profile.${f}`, v, { max: 4000 });
+        const s = requireString(ctx, `client.profile.${named}`, v, { max: 4000 });
         if (!s) continue;
         if (!isEmpty(stored[f])) {
           plan.skippedProfile.push({ field: f, reason: `already set to ${JSON.stringify(stored[f])} — fill-only field` });

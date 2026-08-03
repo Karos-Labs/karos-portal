@@ -6,20 +6,22 @@ import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
 import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
 import {
+  agentKeyMatchesClientSlug,
   clientSafeRefusal,
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
 } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { selectAgentSchedules, weeklyFireDays } from "@/lib/agent-schedule-selection";
 import { runRowLabel, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
 import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
 import { canNoteSlot } from "@/lib/slot-notes";
 import { parseXDrafts } from "@/lib/x-drafts";
-import { resolveOptions } from "@/lib/x-options";
-import { laneLabel } from "@/lib/draft-lane-label";
+import { resolveOptions, toClientXOption } from "@/lib/x-options";
+import { refLaneLabel } from "@/lib/draft-lane-label";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { ComponentProps } from "react";
@@ -73,6 +75,44 @@ export function toSummary(agent: CustomAgent): RunnableAgentSummary {
 }
 
 /**
+ * The agents the staff bind control may OFFER for this client.
+ *
+ * It asks the same questions `bindClientAgentAction` asks before it writes, and
+ * asks the binding one through the same predicate: enabled, not a per-client
+ * instance baked under a DIFFERENT client's lab folder
+ * (`agentKeyMatchesClientSlug` — the action refuses that pair outright, before
+ * any umbrella exists), and not already bound here.
+ *
+ * The binding question is the one the dropdown used to skip (#131). The roster
+ * rendered directly beneath it already dropped foreign instances, so one screen
+ * carried two lists that disagreed about which agents exist for this client —
+ * and choosing the extra one returned an error paragraph and wrote nothing. One
+ * rule governs the offer and the accept now.
+ *
+ * A PROJECTION, not just a filter: the control is a client component, so it
+ * receives id and name only. A `CustomAgent` carries the agent's instructions,
+ * its skill path and the lab manifest's own `description` (F127/CD-G2) — none
+ * of which may be serialized into a browser payload to populate a `<select>`.
+ */
+export function bindableAgents(args: {
+  /** The whole custom-agent catalogue, unfiltered (`listCustomAgents`). */
+  agents: CustomAgent[];
+  /** This client's lab-repo slug (`Client.agentsRepoSlug`). */
+  clientSlug: string | null | undefined;
+  /** `customAgentId`s this client already has an umbrella for. */
+  boundAgentIds: Set<string>;
+}): Array<{ id: string; name: string }> {
+  return args.agents
+    .filter(
+      (agent) =>
+        agent.enabled &&
+        agentKeyMatchesClientSlug(agent.key, args.clientSlug) &&
+        !args.boundAgentIds.has(agent.id),
+    )
+    .map((agent) => ({ id: agent.id, name: agent.name }));
+}
+
+/**
  * Custom-agent runs as slim rows. `staff` adds the /jobs link target AND the
  * submitted prompt: the raw request is an operator's free text (typos, stray
  * capitals) and never belongs in a client's run history, so it is dropped here
@@ -120,18 +160,31 @@ export function toRunRows(
  * not at render: everything on a ClientAgentScheduleRow is serialized into the
  * RSC payload the browser receives, so a raw internal string handed to a client
  * component is readable whether or not it is ever painted.
+ *
+ * WHICH ROWS AND WHICH ONE PER AGENT are both `agent-schedule-selection`'s to
+ * answer, not this function's. It used to keep its own
+ * `cadence === "weekly"` copy of the first question — one of five — so a daily
+ * schedule that was firing and billing reached the card as `schedule: null` and
+ * the client was offered "Start posting" for an agent already posting. And it
+ * answered the second by accident: it returned every match and let the caller's
+ * `new Map(...)` keep whichever came last, while the detail page's `.find` kept
+ * the first, so two surfaces could show two different schedules for one agent.
+ *
+ * A row whose cadence has no weekly pace (monthly) is dropped rather than
+ * quoted at one-a-week — see `weeklyFireDays`, which states that residual.
  */
 export function toScheduleRows(
   runs: Awaited<ReturnType<typeof listPlannedScheduledRuns>>,
   viewerIsClient: boolean,
 ): ClientAgentScheduleRow[] {
-  return runs
-    .filter((run) => run.cadence === "weekly" && run.status !== "completed")
-    .map((run) => ({
+  return [...selectAgentSchedules(runs).values()].flatMap(({ schedule: run }) => {
+    const postsPerWeek = weeklyFireDays(run);
+    if (postsPerWeek == null) return [];
+    return [{
       id: run.id,
       agentId: run.customAgentId,
-      status: run.status === "paused" ? "paused" : "active",
-      postsPerWeek: run.weekdays?.length ?? 1,
+      status: run.status === "paused" ? ("paused" as const) : ("active" as const),
+      postsPerWeek,
       // The multiplier stays: the client's pace dialog has to quote the REAL
       // weekly cost of a schedule someone set at more than one output per fire,
       // and it cannot do that without this number. No client-visible copy
@@ -147,31 +200,51 @@ export function toScheduleRows(
       minute: run.minute,
       // The scheduler's refusal, so a schedule that can never fire stops
       // rendering as a healthy "Live" agent.
+      //
+      // SUBMIT-TIME ONLY, and that is a known hole rather than a full answer.
+      // Enumerated, because the residual is only credible if the writers are:
+      // `/api/run-scheduled` SETS it when a fire is refused before a job row
+      // exists; `configureClientAgentScheduleAction` and
+      // `setPlannedRunStatusAction`'s resume only CLEAR it; nothing else in
+      // src/ touches the field. The agent-service webhook is not on that list —
+      // a run that submits cleanly and then fails lands on `job.error` and
+      // never reaches this row, so a schedule whose every run has failed for a
+      // month still arrives here with `lastError: null`. What covers that case
+      // is the roster's separate `lastRunFailed` rung (`lastRunFailedAgentIds`,
+      // read from jobs); closing it HERE needs run history this cannot invent.
       lastError: run.lastError
         ? viewerIsClient
           ? clientSafeRefusal(run.lastError)
           : run.lastError
         : null,
       lastErrorAt: run.lastErrorAt ?? null,
-    }));
+    }];
+  });
 }
 
 /**
- * Firing zone per custom agent, from its weekly schedule row.
+ * Firing zone per custom agent, from its governing schedule row.
  *
  * The week strip's day boundaries come from the SCHEDULE's stored IANA zone,
  * not the container's — the F108 contract, and the same source
  * `slotScheduleFor` uses when the slots were planned. Reading them in a
  * different zone than they were written in shifts the whole strip by a day for
  * any client who is not in the server's timezone.
+ *
+ * Reads the SAME selection `toScheduleRows` does — the second of the five
+ * weekly-only copies of that rule, and the one that quietly handed a daily
+ * agent's strip the container's zone. With two live rows it also picked
+ * whichever came last, so an agent could get one row's pace and another row's
+ * timezone. A monthly row still contributes its zone: it has no weekly pace to
+ * quote, but it is this agent's clock and the strip has to be drawn in some
+ * zone.
  */
 export function scheduleZonesByAgent(
   runs: Awaited<ReturnType<typeof listPlannedScheduledRuns>>,
 ): Map<string, string> {
   const zones = new Map<string, string>();
-  for (const run of runs) {
-    if (run.cadence !== "weekly" || run.status === "completed") continue;
-    if (run.timeZone) zones.set(run.customAgentId, run.timeZone);
+  for (const [customAgentId, { schedule }] of selectAgentSchedules(runs)) {
+    if (schedule.timeZone) zones.set(customAgentId, schedule.timeZone);
   }
   return zones;
 }
@@ -248,6 +321,71 @@ export async function buildAgentSetup(
     }),
   );
   return Object.fromEntries(resolved.filter((entry): entry is [string, AgentSetupState] => entry !== null));
+}
+
+/**
+ * The one run a card acknowledges: a manual "Run this template now" on a LIVE
+ * umbrella that is still queued or running.
+ *
+ * Scheduled fires are deliberately not matched (see `ClientAgentCardRow`), and
+ * for a client viewer the match also asks WHO pressed it — a staff "Run now"
+ * announced on the client's page is work the client did not ask for.
+ *
+ * Its own function so the boolean twin below cannot drift from the row it
+ * stands in for: the two must answer the same question, and they did not have
+ * to when one of them was a copy.
+ */
+function activeTemplateRun(args: {
+  umbrella: ClientAgent;
+  jobs: Job[];
+  viewerIsClient: boolean;
+  viewerUid: string;
+}): Job | undefined {
+  if (args.umbrella.launchState !== "live") return undefined;
+  return args.jobs.find(
+    (job) =>
+      job.clientAgentId === args.umbrella.id &&
+      job.runType === "manual_template" &&
+      (job.status === "queued" || job.status === "running") &&
+      (!args.viewerIsClient || job.createdBy === args.viewerUid),
+  );
+}
+
+/**
+ * Would `toClientAgentRows` return a row with a non-null `activeRun`? — the one
+ * bit the agents roster needs to decide whether to mount `<AutoRefresh />`.
+ *
+ * #130: the roster's client branch used to get that bit by awaiting the whole
+ * projection and discarding everything else. Per live umbrella that is a
+ * `listAgentSlots` query and a `listClientAgentFeedback` query, plus a
+ * `getAsset` on an options day, spent to build a week strip, template gates,
+ * today's option texts and a feedback list that the roster renders nowhere.
+ * This reads no Firestore at all: the umbrellas and the jobs are already in the
+ * caller's hand, and the answer only ever depended on those.
+ *
+ * It repeats the projection's own skip — an umbrella whose bound agent was
+ * deleted or disabled produces no row, so it cannot produce an active run
+ * either — and asks the shared predicate for the rest.
+ */
+export function hasActiveTemplateRun(args: {
+  umbrellas: ClientAgent[];
+  agentsById: Map<string, CustomAgent>;
+  jobs: Job[];
+  viewerIsClient: boolean;
+  viewerUid: string;
+}): boolean {
+  return args.umbrellas.some((umbrella) => {
+    const agent = args.agentsById.get(umbrella.customAgentId);
+    if (!agent || !agent.enabled) return false;
+    return (
+      activeTemplateRun({
+        umbrella,
+        jobs: args.jobs,
+        viewerIsClient: args.viewerIsClient,
+        viewerUid: args.viewerUid,
+      }) !== undefined
+    );
+  });
 }
 
 /**
@@ -343,6 +481,13 @@ export async function toClientAgentRows(args: {
     // fulfilment status here would let a client tell a pre-generated day from a
     // day-of one, which is precisely the distinction the slot model exists to
     // erase (§4.1).
+    //
+    // THIS IS THE REDACTION LAYER, and `upcomingSlots` is not (#163). It hands
+    // back the stored AgentSlot documents whole — assetId, jobId, optionRefs,
+    // optionPick and all — so the `week` projection below, and the `today`
+    // block that lets option texts cross for the current day only, are what
+    // stand between those fields and the RSC payload. Harden A3/A4 here; a new
+    // consumer of `upcomingSlots` owns its own projection.
     const zone = args.scheduleZones.get(umbrella.customAgentId) ?? runtimeTimeZone();
     // The day boundary in the SCHEDULE's zone (F108), not the container's —
     // otherwise a client one timezone east is told today has passed.
@@ -364,43 +509,48 @@ export async function toClientAgentRows(args: {
       const todaySlot = slots.find((slot) => slot.dateKey === todayKey);
       if (todaySlot && (todaySlot.optionRefs?.length ?? 0) > 0) {
         if (todaySlot.optionPick) {
-          // F70: the ref's tail is the LAB's lane vocabulary ("News-reaction
-          // (live)", "Avenue 2"), which no client surface may render raw. The
-          // direction stored at pick time is already humanised; the fallback
-          // runs the tail through the same laneLabel every other path uses, so
-          // a pick made before the field existed still reads properly.
+          // F70: a ref is `account · lane`, and its tail is the LAB's lane
+          // vocabulary ("Avenue 2 · News-reaction (live)"), which no client
+          // surface may render raw. The direction stored at pick time is already
+          // humanised; the fallback runs the ref through the shared helper — the
+          // one home for that rule — so a pick made before the field existed
+          // still reads properly. NULL rather than "Draft" when the ref names no
+          // lane: the receipt puts this word in a client's sentence, and an
+          // internal status word does not belong there (#155).
           const pick = todaySlot.optionPick;
           today = {
             slotId: todaySlot.id,
             options: [],
-            pickedDirection:
-              pick.direction ?? laneLabel(pick.optionRef.split(" · ").slice(1).join(" · ")),
+            pickedDirection: pick.direction?.trim() || refLaneLabel(pick.optionRef),
           };
         } else if (todaySlot.assetId) {
           const batchAsset = await getAsset(todaySlot.assetId);
           const batch = batchAsset ? parseXDrafts(batchAsset.content ?? "") : null;
           const options = batch ? resolveOptions(batch, todaySlot.optionRefs ?? []) : [];
           if (options.length > 0) {
-            today = { slotId: todaySlot.id, options, pickedDirection: null };
+            // The account heading is humanised HERE, not at render: the option
+            // objects are serialized into the RSC payload, so "Albert Kattan
+            // (seat 1, handle pending)" that a component declines to paint is
+            // still readable in view-source.
+            today = {
+              slotId: todaySlot.id,
+              options: options.map(toClientXOption),
+              pickedDirection: null,
+            };
           }
         }
       }
     }
 
-    // The one run the card acknowledges: a "Run now" the viewer just pressed.
-    // Scheduled fires are deliberately invisible here (see ClientAgentCardRow).
-    // For a client that scoping must include WHO pressed it: a staff "Run now"
-    // announced on the client's page is work the client did not ask for — the
-    // same viewer rule the legacy path already applies to its own run.
-    const pending = live
-      ? args.jobs.find(
-          (job) =>
-            job.clientAgentId === umbrella.id &&
-            job.runType === "manual_template" &&
-            (job.status === "queued" || job.status === "running") &&
-            (!args.viewerIsClient || job.createdBy === args.viewerUid),
-        )
-      : undefined;
+    // The one run the card acknowledges — see `activeTemplateRun` above for the
+    // rule, which `hasActiveTemplateRun` shares so the roster's AutoRefresh bit
+    // cannot disagree with the row it stands in for.
+    const pending = activeTemplateRun({
+      umbrella,
+      jobs: args.jobs,
+      viewerIsClient: args.viewerIsClient,
+      viewerUid: args.viewerUid,
+    });
 
     rows.push({
       id: umbrella.id,

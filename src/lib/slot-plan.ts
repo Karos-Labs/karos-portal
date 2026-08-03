@@ -27,6 +27,7 @@ import {
   isReferenceDocAsset,
   templateForAsset,
 } from "@/lib/post-chain";
+import { firingWeekdays } from "@/lib/agent-schedule-selection";
 import { zonedWallToUtc } from "@/lib/run-cadence";
 import {
   agentSlotDocId,
@@ -60,21 +61,22 @@ export interface SlotSchedule {
  * Read a schedule row as a slot cadence. `fallbackZone` is used only for rows
  * written before `timeZone` existed — the same fallback the scheduler itself
  * applies, passed in so this module stays pure.
+ *
+ * The firing days come from `firingWeekdays`, the one home for that question —
+ * this was the third of five call sites carrying its own `cadence === "weekly"`
+ * test, and a DAILY row stores no `weekdays` array, so a daily umbrella got no
+ * slot plan at all and its whole calendar was empty while it posted every day.
+ * A cadence with no weekday decomposition (monthly, once) still returns null,
+ * because a weekday grid has nowhere to put it.
  */
 export function slotScheduleFor(
   run: Pick<PlannedScheduledRun, "weekdays" | "weekday" | "timeZone" | "status" | "cadence">,
   fallbackZone: string,
 ): SlotSchedule | null {
-  if (run.cadence !== "weekly") return null;
-  const weekdays =
-    run.weekdays && run.weekdays.length > 0
-      ? [...new Set(run.weekdays)]
-      : run.weekday != null
-        ? [run.weekday]
-        : [];
-  if (weekdays.length === 0) return null;
+  const weekdays = firingWeekdays(run);
+  if (!weekdays) return null;
   return {
-    weekdays: weekdays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort((a, b) => a - b),
+    weekdays,
     timeZone: run.timeZone || fallbackZone,
     status: run.status,
   };

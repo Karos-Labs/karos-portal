@@ -1685,12 +1685,12 @@ export function buildAnswerGrid(
   probes: GeoProbe[],
 ): QuestionRow[] {
   const byKey = new Map<string, GeoProbe>();
-  for (const p of probes) byKey.set(`${p.prompt} ${p.engine}`, p);
+  for (const p of probes) byKey.set(`${p.prompt}\x00${p.engine}`, p);
   return intentPrompts.map(({ prompt, intent }) => ({
     prompt,
     intent,
     cells: engines.map((engine) => {
-      const probe = byKey.get(`${prompt} ${engine}`);
+      const probe = byKey.get(`${prompt}\x00${engine}`);
       return {
         engine,
         source: probe?.source ?? ENGINE_PROVIDERS[engine],

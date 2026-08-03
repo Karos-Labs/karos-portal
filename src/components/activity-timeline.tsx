@@ -8,6 +8,12 @@ import { AgentMark } from "@/components/agent-identity";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { CLIENT_SAFE_ACTOR, SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
+import { researchReportReadyTitle } from "@/lib/activity-titles";
+import { intakePageAction } from "@/lib/agent-intake-links";
+// The run-state register, from the pure module rather than components/job-status
+// — that file re-exports these words but drags `Badge` and JSX along, and this
+// row wants the label without the badge.
+import { jobStatusLabel } from "@/lib/job-status-copy";
 import { addActivityNoteAction } from "@/lib/actions";
 import type { ActivityEventType, ClientReport, Job, Role } from "@/lib/types";
 
@@ -85,16 +91,50 @@ function eventsFromLogs(logs: TimelineActivity[]): TimelineEvent[] {
   }));
 }
 
-function eventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
+/**
+ * The staff face of the jobs stream: one row per run, titled with that run's
+ * OWN state.
+ *
+ * Every row used to be titled `<agent> delivered a draft`, with no reference to
+ * `j.status` — a field the projection does carry (TimelineJob above,
+ * populated in tasks-body.tsx). A queued run, a running one, a cancelled one
+ * and a failed one all announced a delivery, so this timeline could not be read
+ * for run state at all. The status reached the row in exactly one place, the
+ * DESCRIPTION, which printed `Failed: …` underneath — so a failed run rendered
+ * a single row that claimed the delivery and reported the failure in the same
+ * breath.
+ *
+ * The words come from the run-state register (`job-status-copy.ts`), not from a
+ * map spelled here. That register exists because "what do we call this run
+ * state" had been answered in more than one place and the copies disagreed —
+ * its own docstring names which, and no count is repeated here, because a count
+ * in a comment is a claim this file cannot check. Another local answer is the
+ * defect, not the fix. The `Failed:` prefix went with the change — the title carries
+ * the state now, and printing it twice was how the row contradicted itself in
+ * the first place. The error text itself stays, unprefixed, and is still the
+ * raw operator-facing message: this branch is staff-only (the client branch
+ * below takes its copy from `clientSafeRefusal` at the server boundary).
+ *
+ * RESIDUAL, stated because the row cannot fix it: the STAMP is `j.createdAt`,
+ * the instant the run was submitted, while the LABEL is the run's state as of
+ * this render. A run submitted Monday and delivered Tuesday sits under Monday
+ * reading "Delivered". Jobs carry no per-transition timestamps, so an honest
+ * "delivered at" is a data-layer change rather than a rendering one.
+ *
+ * Exported for test: a node run cannot mount this component (the staff branch
+ * renders AddNoteForm, which calls useRouter), and the rule worth pinning is
+ * that no two run states share a title.
+ */
+export function eventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
   return jobs.map((j) => ({
     id: `job:${j.id}`,
     timestamp: j.createdAt,
     type: "CAMPAIGN_CREATED" as ActivityEventType,
-    title: `${j.agentName} delivered a draft`,
-    description:
-      j.status === "failed"
-        ? `Failed: ${j.error ?? "Unknown error"}`
-        : j.title || undefined,
+    title: `${j.agentName} · ${jobStatusLabel(j.status)}`,
+    // The stored error REPLACES the run's own title only when there is one. A
+    // failed run with no message used to read "Failed: Unknown error", a phrase
+    // that says nothing the title does not now say by itself.
+    description: (j.status === "failed" && j.error ? j.error : j.title) || undefined,
     actor: "Staff",
     actorRole: "staff" as const,
     agentIdentity: j.agentName,
@@ -120,8 +160,17 @@ function dayKeyOf(t: number): string {
  *
  * So runs collapse to one row per agent per day, stamped at that day's last
  * fire, and the run's internal title (the catalog product code plus the client
- * name) is dropped. Failures stay one row each - a failed run is a distinct
- * event with its own message - but under a title that matches what happened.
+ * name) is dropped. Failures stay one row each — a failed run is a distinct
+ * event with its own message — but under a title that matches what happened.
+ *
+ * AND THAT IS WHY THIS BRANCH DOES NOT ASK `job-status-copy` the way the staff
+ * branch above now does. The register answers "what is this ONE run's state
+ * called"; a collapsed row has no one run and therefore no one state, and the
+ * two words it does need ("worked on your content", "couldn't finish a run")
+ * are the only two distinctions a client is told. Pointing this branch at the
+ * register to make the two halves match would republish the run ladder —
+ * Queued, Running, In review — to the viewer the collapse exists to keep it
+ * from.
  */
 function clientEventsFromJobs(jobs: TimelineJob[]): TimelineEvent[] {
   const events: TimelineEvent[] = [];
@@ -181,7 +230,9 @@ function eventsFromReport(report: ClientReport | null, viewerIsClient: boolean):
       id: `report:${report.id}`,
       timestamp: report.createdAt,
       type: "INTEL_GENERATION" as ActivityEventType,
-      title: "Research report ready",
+      // Same words the two WRITERS store, from one home: a client reads either
+      // this derived row or a persisted one, never both (hasIntelLog below).
+      title: researchReportReadyTitle(),
       description: `Full competitive analysis · Score: ${report.overallScore}/100 (${report.overallGrade}) · ${report.reportDate}`,
       actor: viewerIsClient ? CLIENT_SAFE_ACTOR : SYSTEM_AI_ACTOR_NAME,
       actorRole: "system" as const,
@@ -218,76 +269,58 @@ function buildEvents(
 
 /* ── Event type config ───────────────────────────────────────────────── */
 
+/**
+ * The GLYPH each event type draws with. Presentation only — no words.
+ *
+ * IT CARRIED A `label` AND NOTHING RENDERED IT. `EventRow` reads `icon`,
+ * `dotClass` and `iconClass`; the eleven labels beside them were painted
+ * nowhere, on any surface, for either viewer. That is worse than dead weight
+ * here: it was a second vocabulary for `ActivityEventType`, in Title Case
+ * against the sentence-case rule, and one of its entries was the internal
+ * product name ("Intel Report") that `researchReportReadyTitle` exists to keep
+ * off a client's timeline. A row's words come from its `title` — written by the
+ * server (activity-titles.ts) or derived above — and an unrendered map of
+ * alternative names is exactly what somebody wires up later because it is
+ * sitting there looking authoritative.
+ *
+ * Deleted rather than corrected: correcting it would have kept a second answer
+ * to "what is this event called", spelled better.
+ */
 const EVENT_CONFIG: Record<
   ActivityEventType,
-  { icon: string; dotClass: string; iconClass: string; label: string }
+  { icon: string; dotClass: string; iconClass: string }
 > = {
-  SCRAPE: {
-    icon: "Globe",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Website Scraped",
-  },
+  SCRAPE: { icon: "Globe", dotClass: "bg-surface", iconClass: "text-foreground/70" },
   INTEL_GENERATION: {
     icon: "ChartNoAxesColumn",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "Intel Report",
   },
-  CAMPAIGN_CREATED: {
-    icon: "Bot",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Campaign",
-  },
-  CAMPAIGN_DELIVERED: {
-    icon: "Mail",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Delivered",
-  },
-  COMPETITOR_ADDED: {
-    icon: "UserPlus",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Competitor Added",
-  },
+  CAMPAIGN_CREATED: { icon: "Bot", dotClass: "bg-surface", iconClass: "text-foreground/70" },
+  CAMPAIGN_DELIVERED: { icon: "Mail", dotClass: "bg-surface", iconClass: "text-foreground/70" },
+  COMPETITOR_ADDED: { icon: "UserPlus", dotClass: "bg-surface", iconClass: "text-foreground/70" },
   COMPETITOR_REMOVED: {
     icon: "UserMinus",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "Competitor Removed",
   },
   COMPETITOR_ANALYZED: {
     icon: "Sparkles",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "AI Analysis",
   },
   CONTEXT_DOC_UPDATED: {
     icon: "FileText",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "Docs Updated",
   },
   MANUAL_NOTE: {
     icon: "MessageSquare",
     dotClass: "bg-surface",
     iconClass: "text-foreground/70",
-    label: "Note",
   },
-  CLIENT_CREATED: {
-    icon: "UserCheck",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Client Created",
-  },
-  BRANDING_UPDATED: {
-    icon: "Palette",
-    dotClass: "bg-surface",
-    iconClass: "text-foreground/70",
-    label: "Branding",
-  },
+  CLIENT_CREATED: { icon: "UserCheck", dotClass: "bg-surface", iconClass: "text-foreground/70" },
+  BRANDING_UPDATED: { icon: "Palette", dotClass: "bg-surface", iconClass: "text-foreground/70" },
 };
 
 /* ── Date helpers ────────────────────────────────────────────────────── */
@@ -469,6 +502,28 @@ export function ActivityTimeline({
 
   const isStaff = currentUserRole === "KAROS_ADMIN" || currentUserRole === "KAROS_EMPLOYEE";
 
+  // #92. THE EMPTY STATE IS THE FIRST THING A BRAND-NEW CLIENT SEES ON THIS TAB,
+  // and it read "Run an agent →" over a hard-coded link to `/clients/<id>/agents`
+  // — the roster whose client branch states in its own comment that it carries no
+  // Run button ("a client's run gesture lives only inside a detail page"). That
+  // made this the FOURTH control offering a run on a page built to refuse one, so
+  // it asks the resolver the other three already ask instead of being edited into
+  // a fourth spelling of the same promise.
+  //
+  // `agentId: null` is the honest answer FROM HERE, not a shortcut. This is a
+  // browser component handed a serialized timeline; resolving "which of this
+  // client's agents may they open" is a Firestore read, and the surface that
+  // mounts it (progress-view.tsx → tasks-body.tsx) is not this change's to edit.
+  // So the resolver returns its no-destination branch: the roster, named for what
+  // it is, with the verb dropped. It is also the state this empty state describes
+  // — a client with nothing on their timeline yet is the client least likely to
+  // have a resolvable instance.
+  //
+  // The real `isStaff` is passed rather than a literal `false`, so the wording
+  // stays correct if the control is ever shown to both roles; today only the
+  // client branch renders it.
+  const runControl = intakePageAction({ clientId, isStaff, agentId: null });
+
   const allEvents = buildEvents(activityLogs, jobs, report, currentUserRole);
   const visibleEvents = allEvents.slice(0, shown);
   const remaining = allEvents.length - shown;
@@ -505,12 +560,15 @@ export function ActivityTimeline({
               Every agent run, brand update, and competitor change shows up here as your team works.
             </p>
             {!isStaff && (
+              /* The label and the href come from the same call and are rendered
+                 on the same element — the arrow rides inside the resolved label,
+                 so a control that has lost its destination cannot keep an arrow
+                 pointing at one. */
               <Link
-                href={`/clients/${clientId}/agents`}
+                href={runControl.href}
                 className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-neon hover:underline"
               >
-                Run an agent
-                <Icon name="ArrowRight" className="h-3 w-3" />
+                {runControl.label}
               </Link>
             )}
           </div>

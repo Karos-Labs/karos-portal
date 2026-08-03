@@ -2,26 +2,48 @@
  * Admin-extensible platform registry.
  * Add a new entry here and it will automatically appear as a card on every
  * client's Integrations tab — no other changes required.
+ *
+ * AUDIENCE MARKERS. Every string-typed field in the two interfaces below carries
+ * `@clientCopy`, `@staffCopy` or `@notCopy`, and the client-copy guard
+ * (`client-copy-boundary.test.ts`) reads the markers off these declarations to
+ * decide what to sweep. It FAILS CLOSED: a new string field with no marker turns
+ * the guard red rather than being skipped, because "which audience reads this"
+ * is a question only the person adding the field can answer — deriving it from
+ * render sites is what let seven admin-only credential hints look like client
+ * copy while the two lines a client actually reads went unnoticed.
  */
 
+/**
+ * Credential fields for the manual-setup accordion.
+ *
+ * Every string field here is `@staffCopy`: the ONLY render site is the "Manual
+ * credentials" accordion inside `{isAdmin && …}` (integrations-tab.tsx). A client
+ * never sees a token field, so these may keep naming developer portals, PKCE and
+ * consent flows, and their spaced hyphens are an operator's own punctuation.
+ */
 export interface PlatformField {
+  /** @notCopy Form state key. */
   key: string;
+  /** @staffCopy */
   label: string;
   type: "text" | "password";
+  /** @staffCopy */
   placeholder?: string;
-  /** Helper text displayed below the input */
+  /** @staffCopy Helper text displayed below the input */
   hint?: string;
   required?: boolean;
 }
 
 export interface PlatformConfig {
+  /** @notCopy Provider id — matches the stored integration document. */
   id: string;
+  /** @clientCopy Rendered ungated in the card header and the "Add a channel" list. */
   name: string;
-  /** Lucide icon name — must exist in lucide-react */
+  /** @notCopy Lucide icon name — must exist in lucide-react */
   icon: string;
-  /** Brand hex color for the icon background tint */
+  /** @notCopy Brand hex color for the icon background tint */
   color: string;
-  /** One-line description shown on the card */
+  /** @clientCopy One-line description shown ungated on the card and in the picker. */
   description: string;
   /** Credential fields for manual setup */
   fields: PlatformField[];
@@ -140,6 +162,26 @@ export function platformLabel(id: string): string {
   return PLATFORM_LABELS[id] ?? id.replace(/_/g, " ");
 }
 
+/**
+ * The channel catalog — and it has TWO audiences, split by which render site
+ * reads the field. Whoever edits an entry is editing one or the other.
+ *
+ * `name` and `description` are CLIENT copy. integrations-tab.tsx renders them
+ * ungated in the "Add a channel" list and in every card header, on a page a
+ * CLIENT_USER reaches (clients/[id]/settings) and inside the onboarding wizard
+ * (onboarding-socials-step.tsx). So they follow the client copy rules: sentence
+ * case, em dash, and no developer vocabulary — the Reddit and LinkedIn Company
+ * Page lines both carried a spaced hyphen, and the latter also named the
+ * "Community Management API", which is our integration problem and not a
+ * description of what the client gets.
+ *
+ * `fields[].label / placeholder / hint` are OPERATOR copy. Their only render
+ * site is the "Manual credentials" accordion, which is inside `{isAdmin && …}`
+ * (integrations-tab.tsx) — a client never sees a token field, so those hints may
+ * keep naming the LinkedIn Developer Portal, PKCE and consent flows. The
+ * client-copy guard scopes itself by that gate rather than by field name, so
+ * moving one of these into an ungated position brings it into scope.
+ */
 export const PLATFORM_REGISTRY: PlatformConfig[] = [
   {
     id: "instagram",
@@ -221,7 +263,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     icon: "Building2",
     color: "#0A66C2",
     description:
-      "Read company-page follower demographics and post analytics - a separate LinkedIn app from personal posting (Community Management API).",
+      "Read company-page follower demographics and post analytics. A separate LinkedIn connection from personal posting.",
     fields: [
       {
         key: "accessToken",
@@ -322,7 +364,7 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     name: "Reddit",
     icon: "MessageSquare",
     color: "#FF4500",
-    description: "Read account history, karma, and thread activity (draft-first - never auto-posts).",
+    description: "Read account history, karma, and thread activity. Draft-first, never auto-posts.",
     fields: [
       {
         key: "accessToken",

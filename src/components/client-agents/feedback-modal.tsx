@@ -66,7 +66,7 @@ export function ClientAgentFeedbackModal({
 
   const reach =
     scope === "agent"
-      ? `Shapes everything ${agentName} makes - every format, every post from here on.`
+      ? `Shapes everything ${agentName} makes. Every format, every post from here on.`
       : `Shapes only "${templateName ?? templateKey}" posts. Nothing else this agent makes changes.`;
 
   function submit() {
@@ -139,7 +139,7 @@ export function ClientAgentFeedbackModal({
             rows={3}
             placeholder={
               scope === "agent"
-                ? "e.g. Keep it plain - no exclamation marks, no emoji."
+                ? "e.g. Keep it plain. No exclamation marks, no emoji."
                 : "e.g. Lead with the number, not the setup."
             }
             aria-label="Your feedback"

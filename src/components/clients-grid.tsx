@@ -7,7 +7,8 @@ import { Card, Badge, Button, Input, Select, Textarea, Label } from "@/component
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { updateClientAction, deleteClientAction } from "@/lib/actions";
-import { cn } from "@/lib/utils";
+import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
+import { MAX_PER_DAY } from "@/lib/daily-pace";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { LOW_CREDIT_THRESHOLD } from "@/lib/constants";
 import type { Client } from "@/lib/types";
@@ -45,13 +46,25 @@ function EditClientModal({
   const [form, setForm] = useState({
     name: client.name ?? "",
     website: client.website ?? "",
-    industry: client.industry ?? "",
+    // PREFILLED THROUGH THE FALLBACK, so a client whose only stored value is the
+    // legacy `industry` opens this dialog with their current category in the box
+    // rather than an empty one that would blank it on save.
+    category: clientCategoryValue(client) ?? "",
     contactEmail: client.contactEmail ?? "",
     domains: (client.domains ?? []).join(", "),
     description: client.description ?? "",
     brandVoice: client.brandVoice ?? "",
     agentsRepoSlug: client.agentsRepoSlug ?? "",
+    timeZone: client.timeZone ?? "",
+    // BLANK IS A REAL VALUE HERE, and it is why these are not prefilled with 1.
+    // An empty pace box means "no pace set", which puts the client on the single
+    // item a day both planners have always done. Prefilling the default would
+    // make opening this dialog and pressing Save silently split the client's
+    // days into two lanes. See lib/daily-pace.
+    clipsPerDay: client.dailyPace?.clipsPerDay?.toString() ?? "",
+    postsPerDay: client.dailyPace?.postsPerDay?.toString() ?? "",
   });
+  const [dailyDigestEnabled, setDailyDigestEnabled] = useState(client.dailyDigestEnabled === true);
 
   // Logo - uploaded/removed immediately via the logo API route (client already exists).
   const [logoUrl, setLogoUrl] = useState(client.logoUrl ?? "");
@@ -117,12 +130,19 @@ function EditClientModal({
       await updateClientAction(client.id, {
         name: form.name.trim(),
         website: form.website.trim(),
-        industry: form.industry.trim(),
+        category: form.category.trim(),
         contactEmail: form.contactEmail.trim().toLowerCase(),
         domainsCsv: form.domains,
         description: form.description.trim(),
         brandVoice: form.brandVoice.trim(),
         agentsRepoSlug: form.agentsRepoSlug.trim().toLowerCase(),
+        timeZone: form.timeZone.trim(),
+        // Sent as typed. The action clamps and decides whether the pair means
+        // "no pace" (both blank ⇒ the field is cleared) — a browser is not where
+        // a stored ceiling gets validated.
+        clipsPerDay: form.clipsPerDay.trim(),
+        postsPerDay: form.postsPerDay.trim(),
+        dailyDigestEnabled,
       });
       onClose();
       router.refresh();
@@ -216,9 +236,20 @@ function EditClientModal({
             <Label>Name *</Label>
             <Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Acme Co" />
           </div>
+          {/* THE SAME FIELD THE CLIENT'S OWN PROFILE CHIP EDITS (CD-L). This box
+              said "Industry" and wrote `client.industry`, while the client typed
+              a category into the chip in their sidebar — one fact, two fields,
+              two ceilings, and only the staff one reached the copilot and the
+              intel pipeline. One field now, under the name the chip uses, capped
+              where the chip is measured. */}
           <div>
-            <Label>Industry</Label>
-            <Input value={form.industry} onChange={(e) => set("industry", e.target.value)} placeholder="SaaS, retail…" />
+            <Label>Category</Label>
+            <Input
+              value={form.category}
+              onChange={(e) => set("category", e.target.value)}
+              placeholder="SaaS, retail…"
+              maxLength={CLIENT_CATEGORY_MAX_LENGTH}
+            />
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -231,9 +262,19 @@ function EditClientModal({
             <Input value={form.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} placeholder="marketing@acme.com" />
           </div>
         </div>
+        {/* MEETING DOMAIN LIVES HERE NOW, and only here (CD-L P1). The client
+            portal's Brand Profile sheet used to offer the same field to the
+            client's own users, which put a routing control with somebody else's
+            meetings on the other end of it inside a self-service form. The
+            server action behind that form no longer accepts the field either.
+            The label says what it DOES rather than naming the mechanism, since
+            "auto-routing" was the one word an operator had to already know. */}
         <div>
-          <Label>Email domains (for auto-routing meetings)</Label>
+          <Label>Meeting domains</Label>
           <Input value={form.domains} onChange={(e) => set("domains", e.target.value)} placeholder="acme.com, acmecorp.com" />
+          <p className="mt-1 text-xs text-muted-2">
+            Meetings from this email domain auto-assign to this client
+          </p>
         </div>
         <div>
           <Label>Lab repo slug (karos-agents clients/ folder)</Label>
@@ -259,6 +300,75 @@ function EditClientModal({
             onChange={(e) => set("brandVoice", e.target.value)}
             placeholder="Tone, vocabulary, do's and don'ts. Agents use this to stay on-brand."
           />
+        </div>
+
+        {/* ── Daily pace + digest (AF-19) ──────────────────────────────────
+            Plain labels, and the helper text says what LEAVING THEM BLANK
+            does, because blank is the value that keeps a client exactly as
+            they are today. The two boxes are the ceilings both day planners
+            fill a calendar day to (lib/daily-pace). */}
+        <div className="rounded-[10px] border border-border bg-surface-2 p-3">
+          <p className="text-xs font-semibold">Daily pace</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Clips a day</Label>
+              <Input
+                type="number"
+                min={1}
+                max={MAX_PER_DAY}
+                value={form.clipsPerDay}
+                onChange={(e) => set("clipsPerDay", e.target.value)}
+                placeholder="1"
+              />
+            </div>
+            <div>
+              <Label>Posts a day</Label>
+              <Input
+                type="number"
+                min={1}
+                max={MAX_PER_DAY}
+                value={form.postsPerDay}
+                onChange={(e) => set("postsPerDay", e.target.value)}
+                placeholder="1"
+              />
+            </div>
+          </div>
+          <p className="mt-1.5 text-xs text-muted-2">
+            How much of one calendar day this client&apos;s content fills. Leave both blank
+            for one item a day, which is the default. Set them and a day holds that many
+            clips and that many posts.
+          </p>
+        </div>
+
+        <div className="rounded-[10px] border border-border bg-surface-2 p-3">
+          <label className="flex cursor-pointer items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={dailyDigestEnabled}
+              onChange={(e) => setDailyDigestEnabled(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--neon)]"
+            />
+            <span>
+              <span className="text-xs font-semibold">Daily email</span>
+              <span className="mt-1 block text-xs text-muted-2">
+                Sends this client one email each morning in their own timezone, listing
+                that day&apos;s clips and posts from their calendar. Off unless you switch
+                it on.
+              </span>
+            </span>
+          </label>
+          <div className="mt-3">
+            <Label>Timezone</Label>
+            <Input
+              value={form.timeZone}
+              onChange={(e) => set("timeZone", e.target.value)}
+              placeholder="e.g. America/Sao_Paulo"
+            />
+            <p className="mt-1 text-xs text-muted-2">
+              Decides which day the email covers and when it goes out. Blank uses the
+              server&apos;s timezone.
+            </p>
+          </div>
         </div>
         {error && <p className="text-xs text-danger">{error}</p>}
         <Button className="w-full" loading={loading} onClick={submit}>
@@ -375,7 +485,7 @@ export function ClientsGrid({
       ? clients.filter(
           (c) =>
             c.name.toLowerCase().includes(needle) ||
-            (c.industry ?? "").toLowerCase().includes(needle) ||
+            (clientCategoryValue(c) ?? "").toLowerCase().includes(needle) ||
             (c.website ?? "").toLowerCase().includes(needle),
         )
       : clients;
@@ -433,7 +543,7 @@ export function ClientsGrid({
                       <ClientAvatar client={c} />
                       <div>
                         <p className="font-semibold">{c.name}</p>
-                        <p className="text-xs text-muted-2">{c.industry || c.website || "-"}</p>
+                        <p className="text-xs text-muted-2">{clientCategoryValue(c) || c.website || "-"}</p>
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -468,8 +578,16 @@ export function ClientsGrid({
                 </Card>
               </Link>
 
-              {/* Action buttons - revealed on card hover */}
-              <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+              {/*
+                Edit and Delete, and they must be REACHABLE, not merely present.
+                `opacity-0 group-hover:opacity-100` alone leaves both invisible on
+                a touch device (no hover exists) and gives a keyboard user no
+                visible focus ring — on a DESTRUCTIVE control. Same defect the task
+                board's action row carried (#89); the two extra conditions reveal
+                the row on focus and on any device that cannot hover, and change
+                nothing about the pointer experience.
+              */}
+              <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                 <button
                   onClick={() => setEditTarget(c)}
                   className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-surface text-muted-2 shadow-sm transition-colors hover:border-foreground/30 hover:text-foreground"

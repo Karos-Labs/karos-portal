@@ -8,6 +8,7 @@
  * still receive the outcome-focused fallback at the bottom of this file.
  */
 
+import { isPublishHold } from "@/lib/asset-status-copy";
 import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 
@@ -240,7 +241,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "LinkedIn drafts",
       intro:
-        "Drafts the next company-page post from your LinkedIn agent data: the company page, seats, and ongoing drops. Voice, topics, and cadence are built from that data - this form only scopes the run. Draft-only; a person always posts.",
+        "Drafts the next company-page post from your LinkedIn agent data: the company page, seats, and ongoing drops. Voice, topics, and cadence are built from that data. This form only scopes the run. Draft-only; a person always posts.",
       fields: [
         {
           key: "request",
@@ -333,7 +334,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "X drafts",
       intro:
-        "Drafts a week of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data - this form only scopes the run. Draft-only; nothing posts without a human.",
+        "Drafts a week of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data. This form only scopes the run. Draft-only; nothing posts without a human.",
       fields: [
         {
           key: "run_scope",
@@ -377,7 +378,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     profile: {
       eyebrow: "Reddit reply",
       intro:
-        "Finds a live thread worth answering and drafts one genuinely helpful reply, from your Reddit agent data. The subreddits, the questions worth answering and the voice are built from that data - this form only scopes the run. We never post to Reddit; you post the reply yourself.",
+        "Finds a live thread worth answering and drafts one genuinely helpful reply, from your Reddit agent data. The subreddits, the questions worth answering and the voice are built from that data. This form only scopes the run. We never post to Reddit; you post the reply yourself.",
       fields: [
         {
           key: "request",
@@ -832,10 +833,81 @@ export function clientSafeRefusal(refusal: string): string {
  * (both are written for the client and the dialog links off the setup ones).
  */
 export function clientSafeRunError(error: string): string {
-  return isClientReadableRefusal(error)
-    ? error
-    : "This run could not be started right now. Your Karos team has been notified.";
+  return isClientReadableRefusal(error) ? error : CLIENT_RUN_REFUSAL_MESSAGE;
 }
+
+/**
+ * The one sentence a client gets for a run their press could not start.
+ *
+ * It used to end "Your Karos team has been notified." — and on this path
+ * nothing notified anyone: no email, no Slack, no task, no activity row, not
+ * even a logger. Every agent-service outage, timeout and 5xx landed here, so
+ * the strongest promise in the product sat on the path with the least backing
+ * behind it, while the SCHEDULED twin (notifyScheduleFireFailure, fired from
+ * the run-scheduled and scheduler routes) pairs a weaker sentence with a real
+ * alert. Neither existing notifier fits a client-fired run — one wants a
+ * `scheduleId` this path has none of and would email "Scheduled run failed to
+ * fire" about a manual press; the other stamps `INTEL_GENERATION` /
+ * "Workspace update didn't finish" onto the client's timeline — so the
+ * sentence is now one the code can keep, and it hands the client the two
+ * things they can actually do. A ContactUsButton already sits in both cards
+ * that render this.
+ */
+export const CLIENT_RUN_REFUSAL_MESSAGE =
+  "This run could not be started right now. Try again shortly, or contact your Karos team.";
+
+/**
+ * The one sentence a client gets when a WRITE they asked the copilot for did not
+ * land — today, `edit_output` saving a revised deliverable.
+ *
+ * WHY A FOURTH SENTENCE, since reusing one is normally the right answer. The
+ * three above all name a RUN or a POST: `clientSafeRefusal` says "could not start
+ * on its last scheduled run", `clientSafeRunError` says "this run could not be
+ * started", `clientSafePublishError` says "this post didn't go out as scheduled".
+ * A client who asked the copilot to reword a caption started no run and posted
+ * nothing, so all three would describe an event that did not happen — which is
+ * the "tells the client something false" half of the defect, not a fix for the
+ * "leaks internals" half. The shape is genuinely new; the WORDING deliberately is
+ * not, so the two read as one product voice.
+ *
+ * Same rules as its siblings: no promise the code does not keep (nothing here
+ * notifies anyone — the caller logs the real error for staff instead), and the
+ * two things the client can actually do.
+ *
+ * Kept in this module because this is where the client-safe failure vocabulary
+ * already lives — despite the filename, which is now narrower than the file. All
+ * four sentences being findable in one place is worth more than a tidy name.
+ */
+export const CLIENT_SAVE_REFUSAL_MESSAGE =
+  "That change couldn't be saved right now. Try again shortly, or contact your Karos team.";
+
+/**
+ * What a client is allowed to read of a FAILED PUBLISH — the publish twin of
+ * clientSafeRefusal above.
+ *
+ * `Asset.publishError` holds whatever the platform SDK threw: "Could not
+ * determine LinkedIn person URN", "No Instagram Business Account linked to any
+ * page", "Media container failed: <Meta's own message>", "Publisher not
+ * implemented for platform: <x>". The codebase already classes the field as
+ * internal — redactLockedAsset excludes it by construction — but that redaction
+ * only covers LOCKED assets, and a failed publish is by definition past due,
+ * so every one of them took the un-redacted path.
+ *
+ * The client still learns their post did not go out and that Karos can get it
+ * out; what they no longer read is the exception. The ONE allowlisted string is
+ * the ordering hold, which is composed as client copy in the first place
+ * (publishHoldMessage) and explains a benign, self-clearing wait.
+ *
+ * Applied at the server boundary — asset-visibility.ts's two client
+ * projections — so the raw string never reaches the RSC payload. Staff
+ * surfaces read the asset un-projected and keep the exception.
+ */
+export function clientSafePublishError(publishError: string): string {
+  return isPublishHold(publishError) ? publishError : CLIENT_PUBLISH_FAILURE_MESSAGE;
+}
+
+export const CLIENT_PUBLISH_FAILURE_MESSAGE =
+  "This post didn't go out as scheduled. Your Karos team can get it posted.";
 
 /**
  * Key prefixes of the per-client agent instances: one imported customAgents doc

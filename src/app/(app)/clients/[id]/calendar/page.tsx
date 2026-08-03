@@ -1,6 +1,5 @@
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { getClient } from "@/lib/data";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { CalendarBody } from "@/app/(app)/calendar/calendar-body";
 
 /**
@@ -18,8 +17,7 @@ export default async function ClientCalendarPage({ params }: { params: Promise<{
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   return <CalendarBody user={user} viewClientId={client.id} />;
 }

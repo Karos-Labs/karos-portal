@@ -2,18 +2,18 @@ import Link from "next/link";
 import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
+import { assetStatusLabel } from "@/lib/asset-status-copy";
+import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
 import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
+import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { postKind } from "@/lib/calendar-kind";
+import { clientSafePublishError } from "@/lib/custom-agent-launch";
 import type { Asset, ClientTask } from "@/lib/types";
 
-const ASSET_TYPE_LABEL: Record<Asset["type"], string> = {
-  instagram_post: "Instagram post",
-  social_post: "Social post",
-  email: "Email",
-  article: "Article",
-  note: "Note",
-};
-
+// ASSET_TYPE_LABEL moved to @/lib/asset-type-copy: the copilot's system prompt
+// needs the same words from a server-only module, and a component-local map is
+// not reachable from there. Tones stay here — presentation is this file's
+// business, the same split asset-status-copy.ts made.
 const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info"> = {
   draft: "warning",
   approved: "success",
@@ -31,18 +31,53 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
  * posts surface here only as whitelist placeholders (template name as title,
  * type, status - no content/image/meta). Titles are rendered verbatim below, so
  * an un-redacted future title would leak; the redaction stays at the page.
+ *
+ * THAT SENTENCE IS A CONTRACT, AND ONE FIELD NO LONGER RELIES ON IT.
+ * `publishError` holds the platform SDK's own exception, and the attention row
+ * below quotes the stored field as its hint. Everything else in this component is a
+ * title, a type or a count — a mount that forgot the projection would ship a
+ * future title, which is bad; this one would ship a stack-adjacent provider
+ * error, and it is the one field with a named client-safe answer. So the row
+ * asks `clientSafePublishError` for a client viewer, keyed to this component's
+ * own `viewerIsClient` argument.
+ *
+ * NOT A SECOND RULE — the same function the server boundary calls
+ * (lib/asset-visibility applies it to both client asset projections, and that is
+ * still what keeps the exception out of the RSC PAYLOAD, which a render can
+ * never do). This keeps it off the SCREEN, and the two agree because there is
+ * one function rather than two spellings. It is idempotent on an already-safe
+ * string, so the doubled call changes nothing on the path that works.
  */
 export function ClientHomeOverview({
+  clientId,
   tasks,
   assets,
   viewerIsClient = false,
 }: {
+  /**
+   * Whose account this page is. Needed only so the archive links resolve for a
+   * STAFF reader: `?tab=archive` is read by ProgressView alone, and TasksBody
+   * mounts ProgressView only with a client in scope, so the flat
+   * `/tasks?tab=archive` these two links used to carry dropped a staff viewer
+   * onto the cross-client board with no archive at all — the same defect as #90
+   * on the three agent intake pages, found by grepping its shape rather than
+   * its symptom.
+   *
+   * The attention rows below were long read as NOT that shape, on the grounds
+   * that the board does hold this client's tasks. It holds them on one of two
+   * disjoint OWNER TABS, and a bare `/tasks` picks the wrong one for half of
+   * them — see `taskBoardHref` at the foot of this file (#101). Nothing in this
+   * card is staff-reachable in practice: the page hands `tasks` an empty array
+   * for a staff viewer, so every attention row is a client's.
+   */
+  clientId: string;
   tasks: ClientTask[];
   assets: Asset[];
   /** Whose "Recent activity" this is - see the list below (A3/A4). */
   viewerIsClient?: boolean;
 }) {
-  // Counted off the deliverables themselves, not off agent runs in `review` -
+  const archive = clientArchiveLink({ clientId, isStaff: !viewerIsClient });
+  // Counted off the deliverables themselves, not off agent runs in `review` —
   // the row links into the deliverable archive, so the number has to describe
   // the same data the client is about to see.
   const deliverablesInReview = assets.filter((a) => a.status === "draft");
@@ -52,7 +87,15 @@ export function ClientHomeOverview({
   // integration, upstream error) used to be silent - status stays "scheduled"
   // forever with only publishError set, and nothing on this page said so.
   // Same "failed" classification the calendar itself renders (calendar-kind.ts)
-  // - one predicate, not a second ad hoc copy of it.
+  // — one predicate, not a second ad hoc copy of it.
+  //
+  // Which is why an ordering-HELD post is no longer counted here, without a
+  // word of it in this file: the cron stores its benign hold in the very same
+  // publishError field, so this row used to announce "1 post failed to publish"
+  // and then quote the hold sentence as the hint — a red attention row over a
+  // paragraph explaining that nothing is wrong. postKind tells the two apart
+  // now, and a hold asks nothing of the client, so it belongs on no attention
+  // list; the calendar shows it as waiting, which is where it is.
   const failedPublishes = assets.filter((a) => postKind(a) === "failed");
   const attentionCount =
     deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length + failedPublishes.length;
@@ -128,12 +171,28 @@ export function ClientHomeOverview({
             {failedPublishes.length > 0 && (
               <AttentionRow
                 tone="danger"
-                href="/calendar"
+                // The calendar this reader can actually use. A bare `/calendar`
+                // is the CROSS-CLIENT overview for staff, so a staff reader on
+                // this client's dashboard clicking "3 posts failed to publish"
+                // landed on every client's grid and had to find them again —
+                // the same wrong-surface defect `clientArchiveLink` above fixes
+                // for the archive, and `taskBoardHref` below for the board. A
+                // client has no client-scoped route (the staff one redirects
+                // them straight back), so theirs stays flat.
+                href={viewerIsClient ? "/calendar" : `/clients/${clientId}/calendar`}
                 icon="TriangleAlert"
                 label={`${failedPublishes.length} post${failedPublishes.length === 1 ? "" : "s"} failed to publish`}
+                // ONE failure quotes the stored reason; several cannot, so they
+                // get the destination instead. For a client the stored reason is
+                // the one client-safe sentence (it already names the way out:
+                // Karos can get it posted), and the row lands them on the
+                // calendar chip whose panel repeats it beside the only publish
+                // control a client has — "Mark as posted", for the case they
+                // posted it themselves. Staff keep the exception: it is the
+                // whole diagnostic value of the row.
                 hint={
                   failedPublishes.length === 1
-                    ? (failedPublishes[0]!.publishError ?? "Review it on the calendar.")
+                    ? failedPublishText(failedPublishes[0]!, viewerIsClient)
                     : "Review them on the calendar."
                 }
               />
@@ -154,12 +213,12 @@ export function ClientHomeOverview({
                 // says the right thing: they show up once the team is done.
                 icon="Sparkles"
                 label={`${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"} in review`}
-                hint="Your Karos team is reviewing these - they'll appear in your archive when ready."
+                hint="Your Karos team is reviewing these. They'll appear in your archive when ready."
               />
             )}
             {reviewPendingTasks.length > 0 && (
               <AttentionRow
-                href="/tasks"
+                href={taskBoardHref(reviewPendingTasks)}
                 icon="Eye"
                 label={`${reviewPendingTasks.length} task${reviewPendingTasks.length === 1 ? "" : "s"} ready for review`}
                 hint="Completed work waiting for your sign-off."
@@ -167,7 +226,7 @@ export function ClientHomeOverview({
             )}
             {pendingTasks.length > 0 && (
               <AttentionRow
-                href="/tasks"
+                href={taskBoardHref(pendingTasks)}
                 icon="Circle"
                 label={`${pendingTasks.length} pending task${pendingTasks.length === 1 ? "" : "s"}`}
                 hint="Open items on your workspace board."
@@ -182,7 +241,7 @@ export function ClientHomeOverview({
         <div className="mb-4 flex items-center justify-between">
           <CardTitle>Recent activity</CardTitle>
           <Link
-            href="/tasks?tab=archive"
+            href={archive.href}
             className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
           >
             Open archive
@@ -219,8 +278,13 @@ export function ClientHomeOverview({
                       {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(stampOf(a))}
                     </p>
                   </div>
-                  <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"} className="capitalize">
-                    {a.status}
+                  {/* The register, not the stored enum under CSS `capitalize` —
+                      which rendered "Published" to a client whose archive one
+                      click away said "Posted", and would have printed any new
+                      Firestore status verbatim. The tone map stays: a tone is
+                      presentation, a word is copy. */}
+                  <Badge tone={ASSET_STATUS_TONE[a.status] ?? "neutral"}>
+                    {assetStatusLabel(a.status, viewerIsClient)}
                   </Badge>
                 </>
               );
@@ -229,7 +293,7 @@ export function ClientHomeOverview({
               return (
                 <li key={a.id}>
                   {inArchive ? (
-                    <Link href="/tasks?tab=archive" className={`${base} transition-colors hover:border-border-strong`}>
+                    <Link href={archive.href} className={`${base} transition-colors hover:border-border-strong`}>
                       {body}
                     </Link>
                   ) : (
@@ -247,6 +311,78 @@ export function ClientHomeOverview({
 
 const ATTENTION_ROW_BASE =
   "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
+
+/**
+ * What this reader is told about ONE post that did not go out.
+ *
+ * Exported for test: the rule is that a client reads no raw provider exception
+ * off this row while staff still do, and that is a fact about the returned
+ * string rather than about anything rendered around it.
+ *
+ * The client branch is not a new sentence — it is `clientSafePublishError`, the
+ * one that composes the client's answer for every publish surface. On the path
+ * that works it is already applied at the server boundary and returns its input
+ * unchanged; this is the mechanical version of the docstring at the top of this
+ * file, so a mount that hands over un-projected assets loses a title rather than
+ * a provider secret.
+ *
+ * The absent-field branch returns BEFORE the sanitizer rather than falling
+ * through it: an in-house fallback line is not a stored publish error, and
+ * feeding it to a function whose job is to collapse anything unrecognised would
+ * silently replace our own sentence with the generic one. `postKind` makes the
+ * branch unreachable for a "failed" post today — it derives that kind FROM the
+ * field — and it is kept because "unreachable" is a claim about another module.
+ */
+export function failedPublishText(asset: Asset, viewerIsClient: boolean): string {
+  const stored = asset.publishError;
+  if (stored == null) return "Review it on the calendar.";
+  return viewerIsClient ? clientSafePublishError(stored) : stored;
+}
+
+/**
+ * The Workspace board, opened on a tab that actually holds this row's work (#101).
+ *
+ * The board has TWO tabs, split by task owner, and they are disjoint by
+ * construction: `?owner=client` selects the client tab and anything else — a bare
+ * `/tasks` included — selects "karos". So these rows counted tasks of either
+ * owner and then sent the client to the karos tab, which for a client whose
+ * review-pending work is all client-owned holds none of it. QA F64 fixed exactly
+ * this in the notification bell and left it here.
+ *
+ * KEYED TO A TASK, NOT TO AN OWNER, and that is the point rather than a
+ * shorthand. `?task=` makes the board resolve the tab itself
+ * (`ownerTab(inferOwner(linkedTask))`), and it OUTRANKS `?owner=` whenever the
+ * task resolves — so the decision is asked of the surface that owns it. Building
+ * `?owner=` here would mean copying TWO rules that are each already spelled more
+ * than once: owner→tab (tasks-board.tsx and notification-bell.tsx) and
+ * owner-inference for a task whose `owner` field is unset (tasks-board.tsx,
+ * task-dedup.ts, execution-engine.ts, task-sync.ts). Neither of those is this
+ * card's to own, and a copy of either is the kind of duplicate this campaign
+ * keeps paying for.
+ *
+ * TWO RESIDUALS, because a promise a file cannot keep is worse than a stated
+ * limit:
+ *
+ *  - The row is a COUNT and the link is singular. When a row's tasks span both
+ *    owners, no single link opens a tab holding all of them; this opens the tab
+ *    holding the FIRST — the same tab the bell would open for that card — and
+ *    the ticket with it. Splitting the row per owner needs the mapping written
+ *    here after all.
+ *  - "The board holds this task" is not guaranteed, only overwhelmingly likely.
+ *    Both surfaces read `listClientTasks` for this client, but with different
+ *    windows: this page takes the 50 newest pending/review_pending, the board
+ *    the 200 newest of every status. A client with more than 200 live tasks can
+ *    therefore have a row whose task the board's page does not contain — and
+ *    then `?task=` resolves to nothing and the board opens on its default tab,
+ *    which is exactly today's behaviour. It degrades to the bug, never past it.
+ *
+ * Exported for test: the rule is which PARAM the board is keyed on, and that is
+ * a fact about the returned string, not about anything rendered.
+ */
+export function taskBoardHref(tasks: ClientTask[]): string {
+  const first = tasks[0];
+  return first ? `/tasks?task=${encodeURIComponent(first.id)}` : "/tasks";
+}
 
 /**
  * `href` is optional: a row whose items have no screen a client can open is

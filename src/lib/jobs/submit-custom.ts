@@ -39,6 +39,7 @@ import {
 } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { logActivity } from "@/lib/actions/_shared";
 import { customRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
@@ -73,6 +74,10 @@ const RESERVED_METADATA = new Set([
   "karos_run_type",
   "karos_client_agent_id",
   "karos_template_key",
+  // The producing agent's key. The delivery handler fences a draft-only agent's
+  // asset type on it (agent-service/deliverable-asset-type.ts), so a caller that
+  // could set it could unfence its own run.
+  "karos_agent_key",
 ]);
 
 export interface SubmitCustomAgentInput {
@@ -86,8 +91,28 @@ export interface SubmitCustomAgentInput {
    * outruns the dispatcher's own externalJobId write.
    */
   taskId?: string;
-  /** Server-controlled multiplier for scheduled runs requesting multiple outputs. */
+  /**
+   * Server-controlled multiplier for scheduled runs requesting multiple outputs
+   * — one per output. Clamped to the agent's own outputs-per-fire ceiling
+   * (`scheduleLimitsFor`), never to a flat number; see the clamp below.
+   */
   chargeMultiplier?: number;
+  /**
+   * EXPLICIT billing decision, overriding the actor test below.
+   *
+   * Only for callers that hold a STORED billing intent the acting user cannot
+   * express — today just the scheduled-run cron. A schedule row carries
+   * `billClientCredits` (who agreed to pay) while `createdBy` (the actor the
+   * cron resolves) is frozen at creation, so the two could disagree and the
+   * actor won: a client's pace saved on a staff-created schedule fired free
+   * despite the dialog quoting a weekly price, and an admin's "View as Client"
+   * creation charged the client the flag said not to charge.
+   *
+   * Absent ⇒ `isBillableClientActor(user)` decides, exactly as before. Every
+   * other caller (the run dialog, launches, MCP, the task engine) leaves it
+   * absent, so nothing but the cron changes behaviour.
+   */
+  bill?: boolean;
   /**
    * How this run was initiated in the launch-vs-runs model. Stamped on the job
    * doc AND echoed to the service as `karos_run_type`, so the webhook can
@@ -169,8 +194,28 @@ export async function submitCustomAgentJob(
     };
   }
 
-  const prompt = input.prompt.trim();
-  if (!prompt) return { error: "Describe what you want the agent to produce." };
+  /**
+   * HOW MANY OUTPUTS THIS FIRE ASKS FOR — clamped once, and the same number is
+   * both instructed and billed.
+   *
+   * The cron composed "Create exactly N distinct outputs" from the schedule's
+   * STORED `outputsPerRun` while the charge below clamped the same value to
+   * `scheduleLimitsFor(agent.key)`. On an un-retro-clamped legacy row those two
+   * numbers differ, so the model was told to produce more than the client was
+   * billed for — and for Reddit, told to write five replies into someone else's
+   * community when the product is one. One clamp, one number, composed here
+   * where the agent is already in hand rather than at a caller that would have
+   * to load it again.
+   */
+  const maxMultiplier = scheduleLimitsFor(agent.key).maxOutputsPerRun;
+  const multiplier = Math.max(1, Math.min(maxMultiplier, Math.round(input.chargeMultiplier ?? 1)));
+
+  const requested = input.prompt.trim();
+  const prompt =
+    multiplier > 1
+      ? `Create exactly ${multiplier} distinct outputs for this run.\n\n${requested}`
+      : requested;
+  if (!requested) return { error: "Describe what you want the agent to produce." };
   if (prompt.length > MAX_PROMPT_CHARS) {
     return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
   }
@@ -216,7 +261,7 @@ export async function submitCustomAgentJob(
         // CD-E1: this used to send clients to an "Agent-specific documents"
         // section of the rail that no longer exists — intake moved onto the
         // agent's own page. Named the way the F25-pattern gate reasons name it.
-        error: `${X_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
     try {
@@ -242,7 +287,7 @@ export async function submitCustomAgentJob(
   if (isLinkedInAgent(agent.key)) {
     if (!(await hasLinkedInAgentIntake(input.clientId, agent.key))) {
       return {
-        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
     try {
@@ -261,7 +306,7 @@ export async function submitCustomAgentJob(
   if (isRedditAgent(agent.key)) {
     if (!(await hasRedditAgentIntake(input.clientId))) {
       return {
-        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. Nothing has run.`,
+        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. Nothing has run.`,
       };
     }
     try {
@@ -313,14 +358,28 @@ export async function submitCustomAgentJob(
     updatedAt: now,
   });
 
-  // Charge upfront (billable client actors only — staff and cron never charge)
-  // with jobId pairing so the webhook's failure refund and the reconcile sweeps
-  // can hand the credits back.
-  const multiplier = Math.max(1, Math.min(10, Math.round(input.chargeMultiplier ?? 1)));
+  // Charge upfront (billable client actors only — staff and cron never charge,
+  // unless the caller states otherwise via `bill`) with jobId pairing so the
+  // webhook's failure refund and the reconcile sweeps can hand the credits back.
+  // Both are keyed off the ledger entry's jobId, not the actor, so a charge made
+  // on an explicit `bill` still refunds normally.
+  // THE CEILING IS THE PRODUCT'S, NOT A ROUND NUMBER. This clamped at 10 while
+  // the layer that writes schedules clamps at `scheduleLimitsFor(agent.key)` —
+  // 5 outputs a fire generally, and 1 for Reddit, where a reply is a post into
+  // someone else's community. The value normally arrives pre-clamped, so this
+  // was mostly a latent hole; a last line of defence that admits twice what the
+  // product sells is not one, and the campaign already fixed exactly this shape
+  // one layer up (planned-run-actions.ts).
+  //
+  // Keyed to the AGENT rather than to a constant, and that is what makes it more
+  // than tidying: F27 left `plannedScheduledRuns` rows written BEFORE the Reddit
+  // cap un-clamped on disk, nothing re-validates a row on read, and the cron
+  // bills chargeMultiplier = outputsPerRun on every fire. A flat ceiling of 5
+  // would wave those through at five times the product.
   const runCost = input.charge
     ? input.charge.amount
     : (agent.creditCost ?? CREDIT_COSTS.customAgentRun) * multiplier;
-  if (isBillableClientActor(user)) {
+  if (input.bill ?? isBillableClientActor(user)) {
     try {
       await chargeClientCredits({
         clientId: input.clientId,
@@ -382,6 +441,11 @@ export async function submitCustomAgentJob(
           Object.entries(input.extraMetadata ?? {}).filter(([key]) => !RESERVED_METADATA.has(key)),
         ),
         platform_job_id: jobId,
+        // Echoed back on the completion so the webhook can identify the agent
+        // that produced the deliverable without a second read — the identity the
+        // draft-only asset-type fence trusts first (the agent's display name,
+        // which travels on the job doc, is its rename-fragile fallback).
+        karos_agent_key: agent.key.slice(0, MAX_KEY_CHARS),
         ...(input.taskId ? { karos_task_id: input.taskId } : {}),
         ...(jobToken ? { karos_job_token: jobToken, karos_mcp_url: `${origin}/api/mcp` } : {}),
         // Launch-vs-runs routing. Echoed back by the service (the

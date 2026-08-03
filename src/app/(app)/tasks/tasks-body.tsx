@@ -16,6 +16,7 @@ import { contentLabelsByAsset, runRowLabel } from "@/lib/agent-identity-map";
 import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
 import { clientSafeActor } from "@/lib/activity-actors";
 import { isRunMachineryTitle } from "@/lib/activity-titles";
+import { pastRunStatuses } from "@/lib/calendar-past-runs";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import type { AppUser, ClientTask } from "@/lib/types";
 
@@ -41,7 +42,7 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
             description="What's next on the board, what already happened, and everything your agents have delivered."
           />
           <p className="text-sm text-muted-2">
-            Your account isn&apos;t linked to a workspace yet - contact your Karos account manager.
+            Your account isn&apos;t linked to a workspace yet. Contact your Karos account manager.
           </p>
         </div>
       );
@@ -135,8 +136,20 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
         ...clientSafeActor(log.actor, log.actorRole, isClientViewer),
       }));
     const agentLabelByAssetId = contentLabelsByAsset(assets, jobs, umbrellas);
+    // WHICH run states this viewer may be narrated at all is the calendar's
+    // rule, and it has one home: pastRunStatuses in lib/calendar-past-runs. This
+    // file used to answer half of it inline (`isClientViewer && status ===
+    // "failed"`), which is how the two came apart — a staff-cancelled run was
+    // already absent from the client's calendar while still being narrated here.
+    // Both withheld states are refunded outcomes, so neither is work the client
+    // received, and this timeline collapses everything non-failed into "<agent>
+    // worked on your content" — a claim a deliberately stopped run does not
+    // support. The staff set holds every JobStatus, so no run state is withheld
+    // from staff here.
+    const timelineStatuses = pastRunStatuses({ isClient: isClientViewer });
     const timelineJobs: TimelineJob[] = jobs
       .filter((job) => !isClientViewer || (job.runType !== "launch" && job.runType !== "test"))
+      .filter((job) => timelineStatuses.has(job.status))
       .map((job) => ({
         id: job.id,
         agentName: runRowLabel(job, umbrellas),

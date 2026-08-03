@@ -12,20 +12,28 @@ import {
   updateContextDocSummary,
   updateContextDocContent,
   logFeedback,
-  chargeClientCredits,
-  creditClientCredits,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
   approveSeoGeoRecommendation,
 } from "@/lib/data";
 import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
-import type { AppUser, ContextDocTier } from "@/lib/types";
+import type { ContextDocTier } from "@/lib/types";
 import { requireStaff, requireAdmin, logActivity, logGenerationFailure } from "./_shared";
 import { MODELS } from "@/lib/constants";
 import { stripPipelineMarkers } from "@/lib/doc-render";
-import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import { CREDIT_COSTS } from "@/lib/credits";
+import {
+  chargeClientModelCall,
+  refundClientModelCall,
+  withClientModelCharge,
+} from "@/lib/client-model-charge";
 import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
+import {
+  researchReportReadyDescription,
+  researchReportReadyTitle,
+} from "@/lib/activity-titles";
+import { contextDocLabel } from "@/lib/context-doc-copy";
 import {
   computeFirstIntelScheduleRun,
   clampIntervalMonths,
@@ -39,49 +47,21 @@ function isContextDocTier(value: string): value is ContextDocTier {
 }
 
 /**
- * Charge a client user for a doc correction (staff + impersonated sessions are
- * free). Throws CreditError on denial. Returns the charge timestamp when a
- * charge actually happened, so a no-op correction can be refunded against the
- * right spend window; null means nothing was charged.
+ * Both correction paths below run through `withClientModelCharge`
+ * (lib/client-model-charge.ts), which is the app's single answer to "a client
+ * triggered a model call": it decides who pays (staff and View-as-Client are
+ * free), and it hands the credits back when the call fails. The local
+ * charge/refund pair that used to sit here refunded ONLY when the model returned
+ * an unchanged document — a thrown call left the client paying for a crash.
+ *
+ * The two specs are written out at their call sites rather than built by a
+ * helper here. Deliberate: `reason` is client copy stored in the ledger, and
+ * client-copy-boundary.test.ts sweeps it by following the literal from the
+ * persisting write back to the object it was written in. A helper that RETURNS
+ * the spec puts a call expression where that follow expects a literal, and the
+ * sweep goes quietly blind — which is exactly what happened the first time these
+ * were consolidated.
  */
-async function chargeDocCorrection(
-  user: AppUser,
-  clientId: string,
-  amount: number,
-  reason: string,
-): Promise<number | null> {
-  if (!isBillableClientActor(user)) return null;
-  const chargedAt = Date.now();
-  await chargeClientCredits({
-    clientId,
-    amount,
-    operation: "doc_correction",
-    reason,
-    actorUid: user.uid,
-    actorName: user.name,
-  });
-  return chargedAt;
-}
-
-/** Hand back a doc-correction charge for a correction that changed nothing. */
-async function refundDocCorrection(
-  user: AppUser,
-  clientId: string,
-  amount: number,
-  reason: string,
-  chargedAt: number,
-) {
-  await creditClientCredits({
-    clientId,
-    amount,
-    kind: "refund",
-    chargedAt,
-    operation: "doc_correction",
-    reason,
-    actorUid: user.uid,
-    actorName: user.name,
-  });
-}
 
 /**
  * Generate a short (2-sentence) company brief from the client's context docs.
@@ -116,6 +96,22 @@ export async function generateClientBriefAction(
 
   if (!source.trim()) return { ok: false, error: "No documents to summarize yet." };
 
+  // Past the cache, so this WILL call a model. One Haiku call, priced at
+  // `CREDIT_COSTS.taskAssist` (1) — the rate whose own definition is "small
+  // Haiku task helpers". The cached return above is free; only a real
+  // regeneration costs anything, and `force` is supplied by the caller, which
+  // is what made this rerunnable on demand and unmetered.
+  const briefCharge = {
+    user,
+    clientId,
+    amount: CREDIT_COSTS.taskAssist,
+    operation: "ai_tool" as const,
+    // Client copy: the ledger feed renders ungated to a CLIENT_USER.
+    reason: "Company description",
+  };
+  const { denied: briefDenied, chargedAt: briefChargedAt } = await chargeClientModelCall(briefCharge);
+  if (briefDenied !== null) return { ok: false, error: briefDenied };
+
   const { generateText } = await import("ai");
   const { anthropic } = await import("@ai-sdk/anthropic");
   const MODEL = MODELS.HAIKU;
@@ -131,13 +127,14 @@ export async function generateClientBriefAction(
       system:
         "Write a plain, factual company description in exactly two short sentences (about two lines total). " +
         "Describe what the company does and who it serves. " +
-        "Do NOT use em dashes (—). Do NOT use marketing hype or adjectives like 'leading' or 'innovative'. " +
+        "Do NOT use em dashes ( · ). Do NOT use marketing hype or adjectives like 'leading' or 'innovative'. " +
         "Return only the description text, no preamble.",
       messages: [{ role: "user", content: `Company: ${client.name}\n\n${source}` }],
       maxOutputTokens: 160,
     }));
   } catch (err) {
     logger.logGenerationFailure(briefUsageMeta, err);
+    await refundClientModelCall(briefCharge, briefChargedAt, "Refund · company description failed");
     throw err;
   }
 
@@ -155,7 +152,14 @@ export async function generateClientBriefAction(
     .replace(/^["']|["']$/g, "")
     .slice(0, 320);
 
-  if (!brief) return { ok: false, error: "Could not generate a description." };
+  if (!brief) {
+    await refundClientModelCall(
+      briefCharge,
+      briefChargedAt,
+      "Refund · company description came back empty",
+    );
+    return { ok: false, error: "Could not generate a description." };
+  }
 
   await updateClient(clientId, { brief });
   revalidatePath(`/clients/${clientId}`);
@@ -279,15 +283,15 @@ export async function generateIntelReportAction(
       const { runIntelReportPipeline } = await import("@/lib/intel");
       await runIntelReportPipeline(clientId, runSpecificContext);
       await updateClient(clientId, { lastIntelReportAt: Date.now() });
-      const ctxNote = runSpecificContext?.trim()
-        ? ` - with run-specific context: "${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
-        : "";
+      const focus = runSpecificContext?.trim()
+        ? `"${runSpecificContext.trim().slice(0, 100)}${runSpecificContext.trim().length > 100 ? "…" : ""}"`
+        : undefined;
       await logActivity({
         clientId,
         timestamp: Date.now(),
         type: "INTEL_GENERATION",
-        title: "Intel Report generated",
-        description: `Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical)${ctxNote}`,
+        title: researchReportReadyTitle(),
+        description: researchReportReadyDescription({ recurring: false, focus }),
         actor: SYSTEM_AI_ACTOR_NAME,
         actorRole: "system",
       });
@@ -422,10 +426,35 @@ export async function generateDocSummaryAction(
   if (!doc) return [];
 
   // Serve cached summary if the doc content hasn't changed since last generation.
+  // No model call, no charge — which is the common case by a wide margin.
   if (doc.summary?.length && doc.summaryVersion === doc.version) {
     return doc.summary;
   }
 
+  // ── FREE, PENDING A DECISION (finding #168) ──────────────────────────────
+  // A cache MISS here runs one Haiku call and does not charge. That is a
+  // DELIBERATE hold, not an oversight, and it is the open half of #168: the
+  // choice is "1 credit" or "free and documented", and this is the documented
+  // free half until Daniel rules. Do not price it in passing.
+  //
+  // What is on the record for that decision:
+  //
+  //  - NOBODY PRESSES THIS. The summary is generated when the document drawer
+  //    OPENS, so a price here bills a client for reading a file they already
+  //    own, with no button to decline at. A client with eight context documents
+  //    would pay eight credits to read their own documents once.
+  //  - THE CACHE KEY IS THE DOC VERSION, and a staff or cron intel refresh bumps
+  //    it. So a charge here would land on a client who opened a document the
+  //    team had just regenerated — paying for a change they did not ask for.
+  //    That is the strongest argument for keeping it free, and it is the reason
+  //    the cheaper-looking "just charge 1 credit" is not the safe default.
+  //  - IF IT IS EVER PRICED, the honest form is not a charge on drawer open: it
+  //    is generating the summary as part of the refresh that bumped the version
+  //    (staff-side, uncharged), or an explicit "Summarise" the client presses
+  //    with the price stated next to it.
+  //
+  // The exposure while it stays free is bounded by the cache above: one Haiku
+  // call per document VERSION, not per view.
   const { generateText } = await import("ai");
   const { anthropic } = await import("@ai-sdk/anthropic");
   const MODEL = MODELS.HAIKU;
@@ -440,7 +469,7 @@ export async function generateDocSummaryAction(
       model: anthropic(MODEL),
       system:
         "You are a strategic analyst. Distill the document into exactly 4-5 high-impact executive insights. " +
-        "Return ONLY a valid JSON array of strings — no markdown, no preamble, no trailing text. " +
+        "Return ONLY a valid JSON array of strings. No markdown, no preamble, no trailing text. " +
         "Each string: max 20 words, starts with an action verb or key noun, concrete and specific.",
       messages: [
         {
@@ -475,6 +504,11 @@ export async function generateDocSummaryAction(
       .filter((l) => l.length > 8)
       .slice(0, 5);
   }
+
+  // Parsed to nothing: the call succeeded but the panel has no bullets to show,
+  // so there is nothing to cache. (Nothing to refund either while this call is
+  // free — see the #168 note above.)
+  if (bullets.length === 0) return [];
 
   const { id: docId, version: docVersion } = doc;
   after(async () => {
@@ -513,7 +547,7 @@ export async function applyTargetedDocCorrectionAction(
     if (!changed) {
       return {
         error:
-          "We could not apply that correction safely — nothing was changed and you have not been charged. Try naming the fact more specifically.",
+          "We could not apply that correction safely. Nothing was changed and you have not been charged. Try naming the fact more specifically.",
       };
     }
     return { ok: true };
@@ -541,34 +575,45 @@ async function applyTargetedDocCorrection(
   const client = await getClient(doc.clientId);
   if (!client) throw new Error("Client not found");
 
-  const chargedAt = await chargeDocCorrection(
+  const charge = {
     user,
-    doc.clientId,
-    CREDIT_COSTS.targetedCorrection,
-    `Doc correction · ${doc.docType}`,
-  );
+    clientId: doc.clientId,
+    amount: CREDIT_COSTS.targetedCorrection,
+    operation: "doc_correction" as const,
+    // The ledger feed is rendered ungated to a CLIENT_USER in CreditsPanel, so
+    // this string is client copy that happens to arrive through Firestore.
+    reason: `Document correction · ${contextDocLabel(doc.docType)}`,
+  };
 
-  const { applyDocCorrections } = await import("@/lib/intel");
-  const corrected = await applyDocCorrections(client, doc.docType, doc.content, corrections);
+  const outcome = await withClientModelCharge(charge, async ({ refund }) => {
+    const { applyDocCorrections } = await import("@/lib/intel");
+    const corrected = await applyDocCorrections(client, doc.docType, doc.content, corrections);
 
-  // applyDocCorrections returns the original content when structural checks fail —
-  // skip the write entirely rather than bumping the version with unchanged data.
-  // The charge happens before the model call, so hand it back: a client must not
-  // pay for a correction that was discarded.
-  if (corrected.trim() === doc.content.trim()) {
-    if (chargedAt !== null) {
-      await refundDocCorrection(
-        user,
-        doc.clientId,
-        CREDIT_COSTS.targetedCorrection,
-        `Refund · discarded doc correction · ${doc.docType}`,
-        chargedAt,
-      );
+    // applyDocCorrections returns the original content when structural checks fail —
+    // skip the write entirely rather than bumping the version with unchanged data.
+    // The charge happens before the model call, so hand it back: a client must not
+    // pay for a correction that was discarded. (The OTHER way this call can fail —
+    // it throws — is refunded by the wrapper, not here.)
+    if (corrected.trim() === doc.content.trim()) {
+      await refund(`Refund · discarded document correction · ${contextDocLabel(doc.docType)}`);
+      return { changed: false };
     }
-    return { changed: false };
-  }
 
-  await updateContextDocContent(documentId, corrected);
+    await updateContextDocContent(documentId, corrected);
+    return { changed: true };
+  });
+
+  // A denial is surfaced the way this file has always surfaced one: thrown, and
+  // caught by the exported action, which returns it as `{ error }` because a
+  // thrown server-action error is masked in production.
+  if (!outcome.ok) throw new Error(outcome.denied);
+  if (!outcome.result.changed) return { changed: false };
+
+  // Everything below is post-correction bookkeeping on a write that already
+  // landed. It sits OUTSIDE the charge wrapper on purpose: the client paid for
+  // the correction, they got the correction, and a failure to log an activity
+  // row afterwards is not something to hand credits back for.
+  const { applyDocCorrections } = await import("@/lib/intel");
 
   // A correction edits exactly one stored row — the one the viewer opened, which
   // the picker resolves to the client-facing copy. Its internal twin is what the
@@ -606,7 +651,9 @@ async function applyTargetedDocCorrection(
       clientId: doc.clientId,
       timestamp: now,
       type: "CONTEXT_DOC_UPDATED",
-      title: `${doc.docType} corrected (targeted)`,
+      // `doc.docType` is stored kebab-case, and this row is on the CLIENT's
+      // timeline: it read "branding-guidelines corrected (targeted)".
+      title: `${contextDocLabel(doc.docType)} corrected`,
       description: corrections.length > 160 ? corrections.slice(0, 157) + "…" : corrections,
       actor: user.name,
       actorRole,
@@ -669,7 +716,11 @@ export async function applyDocCorrectionAction(
       clientId,
       timestamp: now,
       type: "CONTEXT_DOC_UPDATED",
-      title: `${docType} corrected via Fix with Review`,
+      // Same row on the same client timeline. "Fix with Review" is the name of
+      // the STAFF surface that applied it, which the client has never seen; what
+      // distinguishes this row from the targeted one, in their terms, is that a
+      // person checked it first.
+      title: `${contextDocLabel(docType)} corrected after review`,
       description: corrections.length > 160 ? corrections.slice(0, 157) + "…" : corrections,
       actor: user.name,
       actorRole: "staff",
@@ -722,28 +773,58 @@ async function applyGlobalDocCorrection(clientId: string, corrections: string): 
   if (!allDocs.length) throw new Error("No documents found for this client");
 
   // Global corrections rewrite every context doc (one model call each) — the
-  // most expensive client-triggerable action, priced accordingly.
-  await chargeDocCorrection(
-    user,
-    clientId,
-    CREDIT_COSTS.globalCorrection,
-    "Global doc correction",
-  );
+  // most expensive client-triggerable action, priced accordingly. It is also
+  // the one most likely to fail partway, which is why it runs inside the
+  // charge wrapper: a Promise.all that rejects used to leave the client 15
+  // credits down with no refund path at all.
+  const outcome = await withClientModelCharge(
+    {
+      user,
+      clientId,
+      amount: CREDIT_COSTS.globalCorrection,
+      operation: "doc_correction" as const,
+      // Client copy: the ledger feed renders ungated to a CLIENT_USER.
+      reason: "Global document correction",
+    },
+    async ({ refund }) => {
+      const { applyDocCorrections } = await import("@/lib/intel");
 
-  const { applyDocCorrections } = await import("@/lib/intel");
+      // Apply corrections to every doc in parallel — the prompt is instructed
+      // to only modify facts it finds, so docs without the incorrect data are
+      // returned unchanged and we skip the write.
+      //
+      // ALL-OR-NOTHING REFUND OVER A NOT-ALL-OR-NOTHING WRITE, stated because it
+      // is a real hole and not one worth closing the other way. `Promise.all`
+      // rejects on the FIRST failing document while its siblings keep going, and
+      // the ones that already resolved have already written. The charge wrapper
+      // then refunds the whole 15 credits for the throw — so a correction that
+      // landed on four of five documents can end up free.
+      //
+      // Left as it is on purpose: it errs in the CLIENT's favour, and every
+      // alternative errs against them (keep the 15 for a correction that half
+      // failed, or refund proportionally for a run whose real cost is already
+      // spent). The bound is 15 credits per failed global correction, and the
+      // client sees the error and can re-run — the second run corrects only what
+      // is still wrong, so nothing is lost but the credits we chose not to keep.
+      const changes = await Promise.all(
+        allDocs.map(async (doc) => {
+          const corrected = await applyDocCorrections(client, doc.docType, doc.content, corrections);
+          // Only write if the content actually changed to avoid spurious version bumps.
+          if (corrected.trim() === doc.content.trim()) return false;
+          await updateContextDocContent(doc.id, corrected);
+          return true;
+        }),
+      );
 
-  // Apply corrections to every doc in parallel — the prompt is instructed
-  // to only modify facts it finds, so docs without the incorrect data are
-  // returned unchanged and we skip the write.
-  await Promise.all(
-    allDocs.map(async (doc) => {
-      const corrected = await applyDocCorrections(client, doc.docType, doc.content, corrections);
-      // Only write if the content actually changed to avoid spurious version bumps.
-      if (corrected.trim() !== doc.content.trim()) {
-        await updateContextDocContent(doc.id, corrected);
+      // Same rule the targeted path has always had, which this path never got:
+      // a correction that changed no document is a correction the client did
+      // not receive. Every doc came back unchanged ⇒ hand the credits back.
+      if (!changes.some(Boolean)) {
+        await refund("Refund · global correction changed nothing");
       }
-    }),
+    },
   );
+  if (!outcome.ok) throw new Error(outcome.denied);
 
   const actorRole = user.role === "CLIENT_USER" ? "client" : "staff";
   const now = Date.now();
@@ -789,17 +870,4 @@ export async function updateContextItemNoteAction(id: string, note: string) {
   if (!item) throw new Error("Context item not found");
   await updateContextItem(id, { note: note.trim() });
   revalidatePath(`/clients/${item.clientId}`);
-}
-
-/** Upload a PDF report file to Firebase Storage and return its durable download URL. */
-export async function uploadReportPdfAction(
-  clientId: string,
-  bytes: number[],
-): Promise<string> {
-  await requireStaff();
-  const { uploadBytes } = await import("@/lib/storage");
-  const buffer = Buffer.from(bytes);
-  const path = `clients/${clientId}/reports/${Date.now()}_intel.pdf`;
-  const { url } = await uploadBytes({ bytes: buffer, path, contentType: "application/pdf" });
-  return url;
 }

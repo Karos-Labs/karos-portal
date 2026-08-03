@@ -109,7 +109,7 @@ export function AgentEconomicsCard({
             {launchCreditCost != null ? (
               <span className="font-mono text-foreground">{launchCreditCost} credits</span>
             ) : (
-              <span className="text-warning">not set - clients cannot launch it</span>
+              <span className="text-warning">not set. Clients cannot launch it</span>
             )}
           </p>
           <Button size="sm" variant="ghost" onClick={measure} loading={pending} disabled={pending}>
@@ -124,7 +124,7 @@ export function AgentEconomicsCard({
                  that the price comes from measurement, so "not measurable yet"
                  is the honest answer and staff launches are what fix it. */
               <p className="text-[11px] text-muted-2">
-                Not measurable yet - {calibration.launchRuns} setup run
+                Not measurable yet · {calibration.launchRuns} setup run
                 {calibration.launchRuns === 1 ? "" : "s"} and {calibration.runRuns} normal run
                 {calibration.runRuns === 1 ? "" : "s"} with a reported cost, across all clients.
                 Staff launches are free and are what produce this measurement.

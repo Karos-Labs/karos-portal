@@ -10,6 +10,14 @@ import { JobDeleteButton } from "@/components/job-delete";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { retryJobAction } from "@/lib/actions";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
+import { JOB_STATUS_META, jobStatusLabel } from "@/lib/job-status-copy";
+import {
+  ALL_JOB_BUCKETS,
+  jobBucketLabel,
+  jobBucketTone,
+  jobInBucket,
+  type JobBucket,
+} from "@/lib/job-list-buckets";
 import type { JobStatus } from "@/lib/types";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -29,26 +37,34 @@ export interface JobListRow {
   error?: string | null;
 }
 
-/** Every state JobStatusBadge can render, in lifecycle order. */
-const STATUSES: JobStatus[] = [
-  "queued",
-  "running",
-  "review",
-  "approved",
-  "delivered",
-  "failed",
-  "cancelled",
-];
+/**
+ * Every state the dropdown offers, in lifecycle order — READ OFF THE REGISTER
+ * rather than typed here.
+ *
+ * `JOB_STATUS_META` is a `Record<JobStatus, …>`, which tsc keeps total, and its
+ * insertion order already IS the lifecycle order this list was hand-written in. So
+ * a state added to the union appears in this filter without anyone remembering,
+ * where the literal it replaces would have silently stopped offering one.
+ */
+const STATUSES = Object.keys(JOB_STATUS_META) as JobStatus[];
 
-/** The three buckets the summary chips group by - a superset of one-status filtering. */
-type StatusFilter = "" | "active" | "failed" | "completed" | JobStatus;
-
-const COMPLETED_STATUSES = new Set<JobStatus>(["review", "approved", "delivered"]);
+/**
+ * What the filter state can hold: nothing, one bucket, or one exact status.
+ *
+ * A bucket key and a status can collide (`review` and `failed` are both), which is
+ * harmless here only because `jobInBucket` and `job.status === filter` agree
+ * whenever they do — a single-state bucket matches exactly the state it names. The
+ * bucket branch is asked first either way.
+ */
+type StatusFilter = "" | JobBucket | JobStatus;
 
 function matchesStatusFilter(job: JobListRow, filter: StatusFilter): boolean {
   if (!filter) return true;
-  if (filter === "active") return job.status === "queued" || job.status === "running";
-  if (filter === "completed") return COMPLETED_STATUSES.has(job.status);
+  // The chips' own test, not a second copy of it — a chip that counts a row the
+  // list then hides is the shape of the defect this replaced.
+  if ((ALL_JOB_BUCKETS as readonly string[]).includes(filter)) {
+    return jobInBucket(job.status, filter as JobBucket);
+  }
   return job.status === filter;
 }
 
@@ -64,12 +80,18 @@ const PAGE = 50;
  * which is what makes the search instant; the paging cap is what keeps the DOM
  * from being the bottleneck.
  *
- * The summary chips (Active / Failed / Completed) are a second, coarser filter
- * over the SAME `status` state the dropdown drives - clicking one sets it to a
- * composite bucket ("active" = queued|running, "completed" = review|approved|
- * delivered), clicking the same chip again clears it. This mirrors the
- * dashboard's other filter-on-click surfaces (e.g. the Agent Leaderboard)
- * instead of inventing a second, disconnected filter mechanism.
+ * The summary chips are a second, coarser filter over the SAME `status` state the
+ * dropdown drives — clicking one sets it to a bucket, clicking the same chip again
+ * clears it. This mirrors the dashboard's other filter-on-click surfaces (e.g. the
+ * Agent Leaderboard) instead of inventing a second, disconnected filter mechanism.
+ *
+ * WHICH buckets exist, what each holds and what each is called all live in
+ * lib/job-list-buckets — deliberately not named here. This comment used to say
+ * "Active / Failed / Completed" and spell out that "completed" meant
+ * review|approved|delivered, and it was accurate: `review` really was counted as
+ * completed, so "Completed 14" sat above fourteen rows badged "In review". A
+ * grouping described in two places is a grouping that can be wrong in one of
+ * them, so the row now renders whatever the module enumerates.
  */
 export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boolean }) {
   const [status, setStatus] = useState<StatusFilter>("");
@@ -83,16 +105,19 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
     return [...byId].sort((a, b) => a[1].localeCompare(b[1]));
   }, [jobs]);
 
+  // Counted off the same predicate the filter uses, over the buckets the module
+  // enumerates — so adding a bucket adds a chip, and no chip can count a row the
+  // filter would then hide. The old version spelled its own if/else chain beside
+  // `matchesStatusFilter`'s, which is how "Completed" came to include `review` in
+  // one of them.
   const counts = useMemo(() => {
-    let active = 0;
-    let failed = 0;
-    let completed = 0;
+    const out = new Map<JobBucket, number>(ALL_JOB_BUCKETS.map((b) => [b, 0]));
     for (const job of jobs) {
-      if (job.status === "queued" || job.status === "running") active++;
-      else if (job.status === "failed") failed++;
-      else if (COMPLETED_STATUSES.has(job.status)) completed++;
+      for (const bucket of ALL_JOB_BUCKETS) {
+        if (jobInBucket(job.status, bucket)) out.set(bucket, out.get(bucket)! + 1);
+      }
     }
-    return { active, failed, completed };
+    return out;
   }, [jobs]);
 
   const filtered = useMemo(() => {
@@ -116,7 +141,7 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
     };
   }
 
-  function toggleChip(bucket: "active" | "failed" | "completed") {
+  function toggleChip(bucket: JobBucket) {
     reset(setStatus)(status === bucket ? "" : bucket);
   }
 
@@ -126,30 +151,19 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
           while any run is in flight - same 4s polling AutoRefresh already
           uses on the single-job detail page - so nobody has to hit refresh to
           watch a run finish. */}
-      {counts.active > 0 && <AutoRefresh />}
+      {counts.get("active")! > 0 && <AutoRefresh />}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <SummaryChip
-          label="Active"
-          count={counts.active}
-          tone="info"
-          active={status === "active"}
-          onClick={() => toggleChip("active")}
-        />
-        <SummaryChip
-          label="Failed"
-          count={counts.failed}
-          tone="danger"
-          active={status === "failed"}
-          onClick={() => toggleChip("failed")}
-        />
-        <SummaryChip
-          label="Completed"
-          count={counts.completed}
-          tone="neon"
-          active={status === "completed"}
-          onClick={() => toggleChip("completed")}
-        />
+        {ALL_JOB_BUCKETS.map((bucket) => (
+          <SummaryChip
+            key={bucket}
+            label={jobBucketLabel(bucket)}
+            count={counts.get(bucket) ?? 0}
+            tone={jobBucketTone(bucket)}
+            active={status === bucket}
+            onClick={() => toggleChip(bucket)}
+          />
+        ))}
       </div>
 
       <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
@@ -167,7 +181,11 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
           <option value="">All statuses</option>
           {STATUSES.map((value) => (
             <option key={value} value={value}>
-              {value}
+              {/* The register, not `{value}`. This dropdown printed the raw
+                  database word while the badge on every row it filters printed
+                  the register's — one state, two names, one screen, which is the
+                  same defect as the calendar legend's "Pending review". */}
+              {jobStatusLabel(value)}
             </option>
           ))}
         </Select>
@@ -255,8 +273,13 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
   );
 }
 
-const CHIP_TONE_CLASS: Record<"info" | "danger" | "neon", string> = {
+/**
+ * Keyed over `jobBucketTone`'s return type, so a tone that module can produce and
+ * this table cannot paint is a compile error rather than an unstyled chip.
+ */
+const CHIP_TONE_CLASS: Record<ReturnType<typeof jobBucketTone>, string> = {
   info: "border-info/40 bg-info/10 text-info",
+  warning: "border-warning/40 bg-warning/10 text-warning",
   danger: "border-danger/40 bg-danger/10 text-danger",
   neon: "border-neon/40 bg-neon/10 text-neon",
 };
@@ -270,7 +293,7 @@ function SummaryChip({
 }: {
   label: string;
   count: number;
-  tone: "info" | "danger" | "neon";
+  tone: ReturnType<typeof jobBucketTone>;
   active: boolean;
   onClick: () => void;
 }) {

@@ -23,27 +23,54 @@ export interface BriefField {
   valueKind?: "string" | "stringList";
 }
 
+/**
+ * AUDIENCE MARKERS — see platforms.ts for the convention and the guard that
+ * reads it. The five `@clientCopy` fields are the ones `managedCatalogEntries()`
+ * copies into the `AgentCatalogEntry` that the client copilot's system prompt is
+ * built from, so they are read by a model the client is charged for and whose
+ * output the client reads.
+ *
+ * `briefFields` and `inputFiles` carry no markers and are NOT swept: no component
+ * renders them and `managedCatalogEntries()` passes only their `key`s to the
+ * prompt. Mark those interfaces if that changes.
+ */
 export interface ManagedProduct {
   taskType: ManagedTaskType;
+  /** @clientCopy */
   name: string;
+  /** @clientCopy Folded into the catalog description the copilot prompt carries. */
   tagline: string;
+  /** @clientCopy Same. */
   description: string;
+  /** @notCopy Lucide icon name. */
   icon: string;
-  /** icon chip color — matches the agents-hub chip treatment */
+  /** @notCopy icon chip color — matches the agents-hub chip treatment */
   color: string;
+  /** @clientCopy Written into the prompt as "produces: …". */
   deliverables: string[];
+  /** @clientCopy Written into the prompt as "runtime: …". */
   estimate: string;
   briefFields: BriefField[];
   inputFiles: AgentAttachmentProfile;
 }
 
+/**
+ * The managed-product catalog. `name`, `tagline`, `description`, `deliverables`
+ * and `estimate` are CLIENT copy, and the surface that makes them so is not a
+ * screen: `managedCatalogEntries()` (agent-roster.ts) folds `tagline` and
+ * `description` into the `AgentCatalogEntry` that `buildProactiveSystemAppendix`
+ * writes into the copilot's system prompt — the same model a CLIENT_USER's dock
+ * talks to, which paraphrases whatever it is handed. Two descriptions carried a
+ * spaced hyphen for exactly that reason: nothing renders them, so no render
+ * review ever looked at them.
+ */
 export const MANAGED_PRODUCTS: ManagedProduct[] = [
   {
     taskType: "social_post",
     name: "Social posts",
     tagline: "Instagram & TikTok content from the client's content system",
     description:
-      "Runs the Instagram/TikTok content agent: researches what's working, then produces ready-to-review posts - visual, caption, and hashtags - using the client's emitted generators when they exist.",
+      "Runs the Instagram/TikTok content agent: researches what's working, then produces ready-to-review posts. Visual, caption, and hashtags. Using the client's emitted generators when they exist.",
     icon: "Camera",
     color: "#E879F9",
     deliverables: ["Post visual per item", "caption.txt + about.txt per item", "Research trail (internal)"],
@@ -108,7 +135,7 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     name: "Blog article",
     tagline: "SEO-aware article with keyword research built in",
     description:
-      "Runs the blog agent: scans the search landscape for the topic, then writes a sourced article in the client's voice - markdown plus rendered HTML.",
+      "Runs the blog agent: scans the search landscape for the topic, then writes a sourced article in the client's voice. Markdown plus rendered HTML.",
     icon: "PenLine",
     color: "#34D399",
     deliverables: ["Article (.md + .html)", "Meta/caption files", "Keyword & SERP research (internal)"],

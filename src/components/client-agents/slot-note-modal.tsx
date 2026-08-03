@@ -71,7 +71,7 @@ export function SlotNoteModal({
       title={`Note for ${dayName}`}
       // The label is already a noun for the post ("Daily post", "By The Numbers"),
       // so appending "post" produced "About this one Daily post post".
-      description={`About this one - the ${day.label} going out that day, not a standing rule. To change what this agent always does, use Give feedback instead.`}
+      description={`About this one. The ${day.label} going out that day, not a standing rule. To change what this agent always does, use Give feedback instead.`}
       footer={
         <div className="flex items-center justify-end gap-2">
           <Button variant="ghost" onClick={onClose} disabled={pending}>

@@ -7,16 +7,24 @@ import { Card, Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
-import { assetImages, assetLiMedia, assetVideos } from "@/lib/asset-images";
+import { assetStatusLabel, isPublishHold, PUBLISH_HOLD_HEADING } from "@/lib/asset-status-copy";
+import {
+  assetDownloadTargets,
+  assetImages,
+  assetLiMedia,
+  assetVideoSrc,
+  assetVideos,
+} from "@/lib/asset-images";
 import {
   updateAssetAction,
   approveAssetAction,
   recommendAssetScheduleAction,
   unscheduleAssetAction,
   publishAssetNowAction,
-  markAssetPostedAction,
 } from "@/lib/actions";
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
+import { isAssetPublishable } from "@/lib/asset-visibility";
+import { MarkPostedRow } from "@/components/mark-posted-row";
 import { AgentMark, SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { parseXDrafts } from "@/lib/x-drafts";
@@ -259,7 +267,7 @@ function ApprovePanel({
                   })}
                 </button>
               )}
-              {suggestedReason ? ` - ${suggestedReason}` : ""}
+              {suggestedReason ? ` · ${suggestedReason}` : ""}
             </span>
           </p>
         )
@@ -475,21 +483,24 @@ export function AssetCard({
   // Surfaces failures from approve / save / unschedule so those actions don't fail silently.
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Manual push available when a connected platform can carry this asset type.
+  // Manual push available when a connected platform can carry this asset type
+  // AND the asset itself may go out at all. That second half is
+  // isAssetPublishable — the shared rule the modal and publishAssetNowAction ask
+  // too. This gate used to be "not already published" and nothing else, so the
+  // one control that really posts to a live account was offered on unapproved
+  // drafts and on calendar-only placeholders.
   const compatibleConnected = (PUBLISHABLE_PLATFORMS[asset.type] ?? []).filter((p) =>
     (connectedPlatforms ?? []).includes(p),
   );
   const canPublishNow =
-    canApprove && compatibleConnected.length > 0 && asset.status !== "published";
+    canApprove && compatibleConnected.length > 0 && isAssetPublishable(asset);
 
-  // Marking a by-hand post live needs no integration and no staff role - it's a
-  // statement about what the user already did, and for a client posting from
-  // their phone it's the ONLY thing that can move the asset off "approved".
-  // Drafts are excluded (nothing's been approved to post yet) as are
-  // placeholders (roadmap entries that were never meant to go out).
-  const canMarkPosted =
-    (asset.status === "approved" || asset.status === "scheduled" || asset.status === "delivered") &&
-    asset.publishMode !== "placeholder";
+  // "Mark as posted" is NOT decided here. This card used to carry its own
+  // eligibility test, its own handler and its own copy of the error text — and
+  // that test was missing the future-dated clause, so on the staff Assets list
+  // and the job detail page an upcoming post showed an enabled button that
+  // failed on click. It renders MarkPostedRow instead; the rule is
+  // lib/mark-posted, asked there and again by the server action.
 
   // Notes have no scheduling dimension; everything else can land on the calendar.
   const calendarEligible = asset.type !== "note";
@@ -512,6 +523,10 @@ export function AssetCard({
   // clips carry ONLY this, no caption or photo, so it must count toward
   // hasPreview below or the card renders the empty "no preview" state).
   const videos = assetVideos(asset);
+  // Photos and clips are both downloadable. The helper answers WHAT is on
+  // offer, not who may have it: this card's locked handling is the early return
+  // below, exactly as it was, and the server gate is the one that counts.
+  const downloads = assetDownloadTargets(asset);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // When the webhook didn't write structured meta.slides, treat the recovered
@@ -603,22 +618,6 @@ export function AssetCard({
     }
   }
 
-  /** Record a by-hand post. See markAssetPostedAction - this is the only route
-   *  to "published" that doesn't go through a platform integration. */
-  async function handleMarkPosted() {
-    setBusy(true);
-    setActionError(null);
-    try {
-      const result = await markAssetPostedAction(asset.id);
-      if (!result.ok) setActionError(result.error);
-      else router.refresh();
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : "Couldn't mark this as posted");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function saveEdit() {
     setBusy(true);
     setActionError(null);
@@ -694,7 +693,14 @@ export function AssetCard({
               )}
             </div>
             <Badge tone={statusTone(asset.status)} className="shrink-0">
-              {asset.status}
+              {/* The staff register, not the stored enum. This card is staff-only
+                  (both mounts are: app/(app)/jobs/[id] requires KAROS_ADMIN or
+                  KAROS_EMPLOYEE, and assets-view's pages redirect a CLIENT_USER
+                  away), so the word changes from a lowercase "draft" to
+                  "Awaiting review" — which is what the group heading directly
+                  above this card in assets-view already says. One state, one
+                  word, on one screen. */}
+              {assetStatusLabel(asset.status, false)}
             </Badge>
           </div>
           {liBatch ? (
@@ -746,7 +752,7 @@ export function AssetCard({
               </div>
             ) : (
               <p className="mt-1 text-sm text-muted">
-                {xDraftCount} drafts across {xBatch.accounts.length} accounts - about a week of posting.
+                {xDraftCount} drafts across {xBatch.accounts.length} accounts. About a week of posting.
                 Expand to read and pick favorites.
               </p>
             )
@@ -806,10 +812,13 @@ export function AssetCard({
             </button>
           ) : videos.length > 0 ? (
             <div className="mt-2 space-y-2">
-              {videos.map((v) => (
+              {/* Played through our own route so the URL is signed per
+                  request — the one stored on the asset expires after 7 days
+                  and nothing re-signs it. */}
+              {videos.map((v, i) => (
                 <video
                   key={v.url}
-                  src={v.url}
+                  src={assetVideoSrc(asset.id, i)}
                   controls
                   preload="metadata"
                   className="max-h-96 w-full max-w-sm rounded-lg border border-border bg-black object-contain"
@@ -840,7 +849,7 @@ export function AssetCard({
                   ))}
                 </ul>
               ) : (
-                <p className="text-xs text-muted-2">No preview - this asset has no caption or photos yet.</p>
+                <p className="text-xs text-muted-2">No preview. This asset has no caption or photos yet.</p>
               )}
             </div>
           )}
@@ -936,12 +945,30 @@ export function AssetCard({
             </div>
           )}
 
-          {/* Last publish failure (manual push or auto cron) */}
+          {/* Last publish state (manual push or auto cron).
+              `publishError` carries TWO different facts — a real failure, and the
+              cron's benign ordering hold — so this asks the ONE shared predicate
+              rather than assuming the field means failure. It was the fourth
+              reader of that field and the only one still assuming, so a staff
+              operator read "Publish failed: This post is waiting for …", a
+              heading contradicting its own paragraph. Staff-only surface, so the
+              client half of ledger row 48 was already closed; this closes the
+              staff half. No staff word is reworded — "Publish failed" is simply
+              no longer applied to a fact that is not a failure. */}
           {publishError && asset.status !== "published" && (
-            <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
-              <Icon name="CircleAlert" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
-              <p className="text-xs text-danger">Publish failed: {publishError}</p>
-            </div>
+            isPublishHold(publishError) ? (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-muted-2/30 bg-foreground/[0.03] px-2.5 py-1.5">
+                <Icon name="Clock" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-2" />
+                <p className="text-xs text-muted-2">
+                  {PUBLISH_HOLD_HEADING}: {publishError}
+                </p>
+              </div>
+            ) : (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-danger/30 bg-danger/10 px-2.5 py-1.5">
+                <Icon name="CircleAlert" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-danger" />
+                <p className="text-xs text-danger">Publish failed: {publishError}</p>
+              </div>
+            )
           )}
 
           {/* Approve / save / unschedule failure */}
@@ -970,21 +997,21 @@ export function AssetCard({
               {open ? "Collapse" : "Expand"}
             </button>
             <span className="text-xs text-muted-2">· {relativeTime(asset.createdAt)}</span>
-            {galleryImages.length > 0 && (
+            {/* One control per downloadable payload — photos and clips both.
+                Gating this on photos alone left every bulk-uploaded clip with
+                no download button anywhere in the product. */}
+            {downloads.map((d) => (
               <a
-                href={`/api/assets/${asset.id}/download`}
+                key={d.href}
+                href={d.href}
                 download
                 className="inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-foreground"
-                title={
-                  galleryImages.length > 1
-                    ? `Download all ${galleryImages.length} photos as a zip`
-                    : "Download photo"
-                }
+                title={d.title}
               >
                 <Icon name="Download" className="h-3.5 w-3.5" />
-                {galleryImages.length > 1 ? `Download all (${galleryImages.length})` : "Download"}
+                {d.label}
               </a>
-            )}
+            ))}
             {asset.status === "draft" && asset.recommendedAt && (
               <span
                 className="inline-flex items-center gap-1 text-xs text-muted-2"
@@ -1029,18 +1056,9 @@ export function AssetCard({
                   Publish Now
                 </Button>
               )}
-              {canMarkPosted && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleMarkPosted}
-                  loading={busy}
-                  title="You posted this yourself - mark it live so the calendar and status reflect it"
-                >
-                  <Icon name="CheckCheck" className="h-3.5 w-3.5" />
-                  Mark as posted
-                </Button>
-              )}
+              {/* Renders itself, or nothing — see the note beside canPublishNow. */}
+              <MarkPostedRow asset={asset} variant="button" />
+
               {canApprove && asset.status === "draft" && !approving && (
                 <div className="flex items-center gap-2">
                   <Button

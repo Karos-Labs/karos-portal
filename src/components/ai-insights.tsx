@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardTitle, Badge, EmptyState, Skeleton } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { stripPipelineMarkers } from "@/lib/doc-render";
+// Quoted from the pricing home, off the same constant the route charges from.
+import { insightsRefreshPrice } from "@/lib/credits";
 import { normalizeDashes } from "@/lib/text-utils";
 
 /**
@@ -14,7 +16,19 @@ import { normalizeDashes } from "@/lib/text-utils";
  * same way the copilot dock consumes /chat. Mounted in the client dashboard's
  * Performance section.
  */
-export function AiInsights({ clientId }: { clientId: string }) {
+export function AiInsights({
+  clientId,
+  viewerIsBilled,
+}: {
+  clientId: string;
+  /**
+   * `isBillableClientActor()` for this session, resolved on the server. REQUIRED
+   * rather than defaulted: the "Refresh" button spends a credit, and a mount
+   * site that forgot to answer would silently go back to charging in silence —
+   * so the compiler asks instead of a default deciding.
+   */
+  viewerIsBilled: boolean;
+}) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +41,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
   // rather than any prose - a warning badge doesn't make invented budget advice safe.
   const [needsConnection, setNeedsConnection] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const refreshPrice = insightsRefreshPrice(viewerIsBilled);
 
   // The fetch + stream itself. Every setState here happens after the first
   // `await`, so it's safe to kick off directly from an effect (the
@@ -101,14 +116,25 @@ export function AiInsights({ clientId }: { clientId: string }) {
           <Badge tone="neon">Beta</Badge>
           {isDemoData && <Badge tone="warning">Demo data</Badge>}
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={loading}
-          className="text-xs text-neon transition-opacity hover:underline disabled:opacity-40"
-        >
-          {loading ? "Analyzing…" : "Refresh"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* THE ANNOUNCE. Every "Refresh" is `?force=1`, which skips the cache
+              and rebuilds the briefing from a model call the client now pays
+              for — so the price is stated at the control, before the press, and
+              not learned afterwards from the balance. One line covers all three
+              presses in this card (this button and the two "Try again"s below,
+              which call the same forced `load()`). */}
+          {refreshPrice && (
+            <span className="text-[11px] text-muted-2">Each refresh costs {refreshPrice}</span>
+          )}
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="text-xs text-neon transition-opacity hover:underline disabled:opacity-40"
+          >
+            {loading ? "Analyzing…" : "Refresh"}
+          </button>
+        </div>
       </div>
 
       {error ? (
@@ -129,7 +155,7 @@ export function AiInsights({ clientId }: { clientId: string }) {
           description="Connect a social account and we'll brief you weekly on what's working."
           action={
             <Link
-              href={`/clients/${clientId}/settings`}
+              href={`/clients/${clientId}/settings?tab=channels`}
               className="text-xs text-neon underline-offset-2 hover:underline"
             >
               Connect a channel

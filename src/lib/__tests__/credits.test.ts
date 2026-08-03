@@ -1,8 +1,14 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import {
+  CREDIT_BUCKET_LABEL,
+  CREDIT_COSTS,
   CREDIT_OPERATION_LABEL,
   creditBucketFor,
+  type CreditBucket,
 } from "@/lib/credits";
-import type { CreditOperation } from "@/lib/types";
+import type { CreditOperation, JobRunType } from "@/lib/types";
 import { describe, expect, it } from "vitest";
 import {
   CREDIT_BLOCK_REASON,
@@ -15,7 +21,9 @@ import {
   creditBlockReason,
   creditMonthKey,
   creditWeekKey,
+  creditsLabel,
   defaultClientCredits,
+  insightsRefreshPrice,
   isBillableClientActor,
   rollCreditWindows,
   scheduledAgentWeeklyCost,
@@ -245,6 +253,44 @@ describe("availableCredits", () => {
   });
 });
 
+/**
+ * THE PLURAL, asked of the helper rather than of a price.
+ *
+ * A price quote's number is a CONSTANT, and a test that compares the quote with
+ * a string built from that same constant stays green through the exact bug it
+ * should catch: `${CREDIT_COSTS.taskExecution} credits` matched
+ * "5 credits" AND would have matched "1 credits" after a reprice. So the rule is
+ * exercised at the numbers themselves, where a literal oracle is possible.
+ */
+describe("creditsLabel", () => {
+  it("pluralises off the number, including the singular a reprice would expose", () => {
+    expect(creditsLabel(1)).toBe("1 credit");
+    expect(creditsLabel(2)).toBe("2 credits");
+    expect(creditsLabel(5)).toBe("5 credits");
+    expect(creditsLabel(0)).toBe("0 credits");
+  });
+
+  it("never says token — that word belongs to PATs and LLM counts", () => {
+    expect(creditsLabel(1)).not.toMatch(/token/i);
+  });
+});
+
+/**
+ * The free case is NULL, not "0 credits" and not "": every control renders its
+ * price only when truthy, so anything else would put a number on a surface that
+ * is never charged. Asked of one quote here; the other two assert the same in
+ * client-model-metering.test.ts, beside the charge each of them mirrors.
+ */
+describe("a press price for a reader who is not billed", () => {
+  it("is null rather than a zero or an empty string", () => {
+    expect(insightsRefreshPrice(false)).toBeNull();
+  });
+
+  it("is the quote itself for a reader who is", () => {
+    expect(insightsRefreshPrice(true)).toBe(creditsLabel(CREDIT_COSTS.chatMessage));
+  });
+});
+
 describe("isBillableClientActor", () => {
   it("bills real client users only", () => {
     expect(isBillableClientActor({ role: "CLIENT_USER" })).toBe(true);
@@ -265,19 +311,29 @@ describe("isBillableClientActor", () => {
  * a stable label and a bucket.
  */
 describe("credit ledger presentation", () => {
+  /**
+   * The union is READ OUT OF types.ts rather than retyped here. The hand-kept
+   * list this replaces was eight names long and the test promised "every
+   * operation in the union" — a name that outran its assertion the moment a
+   * ninth was added, which is exactly what happened when `ai_tool` landed. A
+   * label map missing an entry renders a blank chip in the client's own spend
+   * breakdown, so the sweep has to widen by itself.
+   */
+  const operationsInTheUnion = (): CreditOperation[] => {
+    const src = readFileSync(resolve(__dirname, "..", "types.ts"), "utf8");
+    const union = /export type CreditOperation =([\s\S]*?);\n/.exec(src);
+    expect(union, "CreditOperation is no longer a string-literal union in types.ts").not.toBeNull();
+    return [...union![1].matchAll(/\|\s*"([a-z_]+)"/g)].map((m) => m[1] as CreditOperation);
+  };
+
   it("labels every operation in the union", () => {
-    const operations: CreditOperation[] = [
-      "agent_run",
-      "chat_message",
-      "task_execution",
-      "doc_correction",
-      "custom_agent_run",
-      "agent_launch",
-      "seat_purchase",
-      "manual",
-    ];
+    const operations = operationsInTheUnion();
+    // Non-vacuity: a regex that matched nothing would make the loop below a
+    // no-op and this test a green light over an unlabelled operation.
+    expect(operations.length).toBeGreaterThanOrEqual(9);
+    expect(operations).toContain("ai_tool");
     for (const op of operations) {
-      expect(CREDIT_OPERATION_LABEL[op]).toBeTruthy();
+      expect(CREDIT_OPERATION_LABEL[op], `no ledger label for "${op}"`).toBeTruthy();
     }
   });
 
@@ -293,13 +349,71 @@ describe("credit ledger presentation", () => {
   });
 
   it("falls back honestly when the job is gone or predates run-type stamping", () => {
-    // Not a guess at which kind it was — an undifferentiated bucket.
-    expect(creditBucketFor("custom_agent_run", null)).toBe("other");
-    expect(creditBucketFor("custom_agent_run")).toBe("other");
+    // Not a guess at which KIND of run it was — but still a run, because the
+    // operation says so. Collapsing this into "other" is what made a client
+    // whose history predates run-type stamping read "Other usage" and nothing
+    // else, for spend that was entirely agent runs.
+    expect(creditBucketFor("custom_agent_run", null)).toBe("runs");
+    expect(creditBucketFor("custom_agent_run")).toBe("runs");
+    expect(creditBucketFor("agent_run")).toBe("runs");
+    expect(CREDIT_BUCKET_LABEL.runs).toBe("Runs (kind not recorded)");
+    // AND IT MAY NOT READ AS A TOTAL. It sits in the same row as "Scheduled
+    // runs" and "Runs you started"; a residual named like their sum makes the
+    // row look as though it double-counts. Asked as the closed question rather
+    // than pinning one wording: the residual's label may not be a prefix of, or
+    // contained in, either sibling — which is what "Agent runs" was.
+    for (const sibling of [CREDIT_BUCKET_LABEL.scheduled, CREDIT_BUCKET_LABEL.manual]) {
+      const words = CREDIT_BUCKET_LABEL.runs.toLowerCase().split(/\s+/);
+      expect(
+        words.every((w) => sibling.toLowerCase().includes(w)),
+        `the residual bucket reads as a total of "${sibling}"`,
+      ).toBe(false);
+    }
   });
 
   it("leaves non-agent operations out of the agent buckets", () => {
     expect(creditBucketFor("chat_message")).toBe("other");
     expect(creditBucketFor("task_execution", "scheduled")).toBe("other");
+    // …including the run type they can never legitimately carry: `other` is
+    // "not an agent run", not "no run type".
+    expect(creditBucketFor("doc_correction", "manual")).toBe("other");
+    expect(creditBucketFor("ai_tool", "scheduled")).toBe("other");
+  });
+
+  it("labels every bucket creditBucketFor can return", () => {
+    const returned = new Set<CreditBucket>();
+    const operations: CreditOperation[] = [
+      "agent_launch",
+      "custom_agent_run",
+      "agent_run",
+      "chat_message",
+      "task_execution",
+      "doc_correction",
+      "seat_purchase",
+      "ai_tool",
+      "manual",
+    ];
+    const runTypes: Array<JobRunType | null | undefined> = [
+      "launch",
+      "scheduled",
+      "manual",
+      "manual_template",
+      "test",
+      null,
+      undefined,
+    ];
+    for (const op of operations) {
+      for (const rt of runTypes) returned.add(creditBucketFor(op, rt));
+    }
+    // Non-vacuity: the loops above must actually reach more than one bucket,
+    // or an unlabelled one could hide behind an empty set.
+    expect(returned.size).toBeGreaterThanOrEqual(5);
+    for (const bucket of returned) {
+      expect(CREDIT_BUCKET_LABEL[bucket], `no label for bucket "${bucket}"`).toBeTruthy();
+    }
+    // Two buckets rendered side by side on one row must not share a word for
+    // two different things.
+    const labels = Object.values(CREDIT_BUCKET_LABEL);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });

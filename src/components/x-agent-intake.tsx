@@ -17,6 +17,13 @@ import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "
 import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
 import { SavedFormCard } from "@/components/saved-form-card";
+import { ClientSeatRemove } from "@/components/client-seat-remove";
+import {
+  clientArchiveLink,
+  intakeAnchorId,
+  intakeSeatAnchorId,
+} from "@/lib/agent-intake-links";
+import { intakeSave } from "@/lib/intake-save";
 import {
   addXDraftFeedbackAction,
   addXSeatAction,
@@ -52,7 +59,12 @@ export interface XFeedbackRowView {
   id: string;
   account: string;
   action: string;
-  draftRef?: string;
+  /**
+   * The lane this row was written against, humanised server-side
+   * (agent-intake-views' draftLabelOf). Absent when the stored ref names no
+   * lane; the raw ref never crosses — it is the log's join key, not copy.
+   */
+  draftLabel?: string;
   createdAt: number;
 }
 
@@ -165,13 +177,22 @@ function RosterInput({
   function propose() {
     setError(null);
     startProposing(async () => {
-      const result = await proposeXRosterAction({ clientId, ...(seatName ? { seatName } : {}) });
-      if (result.error || !result.handles) {
+      const result = await intakeSave(
+        () => proposeXRosterAction({ clientId, ...(seatName ? { seatName } : {}) }),
+        // Not a save: this builds a proposal. The funnel's save sentence would
+        // also have WON over this call site's own "Could not build a proposal."
+        // below, because `result.error ?? …` prefers whatever the funnel put there.
+        "We couldn't build a proposal. Refresh the page to check you're still signed in, then try again.",
+      );
+      // `handles` exists only on the action's own result, never on the funnel's
+      // failure — so it is read through the narrowing rather than asserted.
+      const handles = "handles" in result ? result.handles : undefined;
+      if (result.error || !handles) {
         setError(result.error ?? "Could not build a proposal.");
         return;
       }
-      onChange(result.handles.map((h) => h.handle).join(", "));
-      setWhy(result.handles);
+      onChange(handles.map((h) => h.handle).join(", "));
+      setWhy(handles);
     });
   }
 
@@ -189,7 +210,7 @@ function RosterInput({
         id={`${idPrefix}-roster`}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="@handle, @handle - or let us propose a list"
+        placeholder="@handle, @handle. Or let us propose a list"
       />
       <p className="mt-1 text-xs text-muted">{helper}</p>
       {fieldError(error)}
@@ -197,7 +218,7 @@ function RosterInput({
         <ul className="mt-2 space-y-1 rounded-md border border-border bg-surface-2 p-3">
           {why.map((h) => (
             <li key={h.handle} className="text-xs text-muted">
-              <span className="text-foreground">{h.handle}</span> - {h.why}
+              <span className="text-foreground">{h.handle}</span> · {h.why}
             </li>
           ))}
         </ul>
@@ -223,7 +244,9 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
   function save() {
     setError(null);
     start(async () => {
-      const result = await saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster, premium, announcements });
+      const result = await intakeSave(() =>
+        saveXCompanyIntakeAction({ clientId, handle, comeAcross, offLimits, roster, premium, announcements }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -306,7 +329,7 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
           value={roster}
           onChange={setRoster}
           idPrefix="xc"
-          helper="Optional; this turns on the engagement lane. We propose from what we already know about your business - you approve or edit. Every handle is verified live before any engagement."
+          helper="Optional; this turns on the engagement lane. We propose from what we already know about your business. You approve or edit. Every handle is verified live before any engagement."
         />
         {!intake ? (
           <div>
@@ -316,7 +339,7 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
               rows={3}
               value={announcements}
               onChange={(e) => setAnnouncements(e.target.value)}
-              placeholder="One per line. A launch, a milestone, a hire - a line each is enough; we turn them into posts."
+              placeholder="One per line. A launch, a milestone, a hire. A line each is enough; we turn them into posts."
             />
           </div>
         ) : null}
@@ -354,14 +377,16 @@ function SeatTakes({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   function submitTake() {
     setTakeError(null);
     start(async () => {
-      const result = await addXTakeAction({
-        clientId,
-        seatId: seat.id,
-        take,
-        date: today(),
-        topic,
-        url: takeUrl,
-      });
+      const result = await intakeSave(() =>
+        addXTakeAction({
+          clientId,
+          seatId: seat.id,
+          take,
+          date: today(),
+          topic,
+          url: takeUrl,
+        }),
+      );
       if (result.error) {
         setTakeError(result.error);
         return;
@@ -395,7 +420,7 @@ function SeatTakes({ clientId, seat }: { clientId: string; seat: XSeatView }) {
           <Input
             value={takeUrl}
             onChange={(e) => setTakeUrl(e.target.value)}
-            placeholder="Source link - only if your take contains a number"
+            placeholder="Source link. Only if your take contains a number"
           />
         </div>
         {fieldError(takeError)}
@@ -417,7 +442,16 @@ function SeatTakes({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   );
 }
 
-function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
+function SeatCard({
+  clientId,
+  seat,
+  runInFlight,
+}: {
+  clientId: string;
+  seat: XSeatView;
+  /** Passed through to the remove confirm — see ClientSeatRemove. */
+  runInFlight: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -430,7 +464,9 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
   function saveSeat() {
     setError(null);
     start(async () => {
-      const result = await saveXSeatIntakeAction({ clientId, seatId: seat.id, handle, offLimits, roster, premium });
+      const result = await intakeSave(() =>
+        saveXSeatIntakeAction({ clientId, seatId: seat.id, handle, offLimits, roster, premium }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -468,7 +504,20 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
       ]}
       open={editing}
       onEdit={() => setEditing(true)}
-      footer={<SeatTakes clientId={clientId} seat={seat} />}
+      footer={
+        <>
+          <SeatTakes clientId={clientId} seat={seat} />
+          {/* In the footer so it renders in BOTH states: a seat added by
+              mistake is one nobody has opened, and hiding the way back behind
+              "Edit" is how it became permanent. */}
+          <ClientSeatRemove
+            clientId={clientId}
+            seatId={seat.id}
+            seatName={seat.name}
+            runInFlight={runInFlight}
+          />
+        </>
+      }
     >
       <div className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -491,7 +540,7 @@ function SeatCard({ clientId, seat }: { clientId: string; seat: XSeatView }) {
             value={roster}
             onChange={setRoster}
             idPrefix={`xs-${seat.id}`}
-            helper="Optional; this turns on your engagement lane. We propose people worth being near - you approve or edit."
+            helper="Optional; this turns on your engagement lane. We propose people worth being near. You approve or edit."
           />
         </div>
         <div>
@@ -544,7 +593,9 @@ function AddSeatForm({ clientId }: { clientId: string }) {
   function add() {
     setError(null);
     start(async () => {
-      const result = await addXSeatAction({ clientId, name, handle, offLimits, roster, premium, firstTakes });
+      const result = await intakeSave(() =>
+        addXSeatAction({ clientId, name, handle, offLimits, roster, premium, firstTakes }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -609,7 +660,7 @@ function AddSeatForm({ clientId }: { clientId: string }) {
           value={roster}
           onChange={setRoster}
           idPrefix="xa"
-          helper="Optional; this turns on your engagement lane. We propose people worth being near - you approve or edit."
+          helper="Optional; this turns on your engagement lane. We propose people worth being near. You approve or edit."
         />
         <PremiumField idPrefix="xa" value={premium} onChange={setPremium} />
         <div>
@@ -619,7 +670,7 @@ function AddSeatForm({ clientId }: { clientId: string }) {
             rows={4}
             value={firstTakes}
             onChange={(e) => setFirstTakes(e.target.value)}
-            placeholder={"3 to 5 rough one-liners of what you actually think - one per line.\nGTM, hiring, AI, the grind. We turn each into a post in your voice."}
+            placeholder={"3 to 5 rough one-liners of what you actually think. One per line.\nGTM, hiring, AI, the grind. We turn each into a post in your voice."}
           />
           <p className="mt-1 text-xs text-muted">
             The single highest-leverage input for your seat. Rough is perfect; we do the wordsmithing.
@@ -663,12 +714,17 @@ function FeedbackBox({
 
   const accountName = (id: string) =>
     id === "company" ? "Company page" : id === "program" ? "Everything" : (seats.find((s) => s.id === id)?.name ?? "Seat");
+  // #90: `?tab=archive` is read only by ProgressView, and a staff viewer at the
+  // flat /tasks never gets one. The destination and its label move together.
+  const archive = clientArchiveLink({ clientId, isStaff });
 
   function submit() {
     setError(null);
     setSent(false);
     start(async () => {
-      const result = await addXDraftFeedbackAction({ clientId, account, action: "note", reason: note });
+      const result = await intakeSave(() =>
+        addXDraftFeedbackAction({ clientId, account, action: "note", reason: note }),
+      );
       if (result.error) {
         setError(result.error);
         return;
@@ -683,13 +739,13 @@ function FeedbackBox({
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not - in your own words, as much detail as you like.
+        Tell us what is working and what is not. In your own words, as much detail as you like.
         It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
         picking, editing and skipping happens on the drafts themselves, in{" "}
-        <a href="/tasks?tab=archive" className="underline hover:text-foreground">
-          your archive
+        <a href={archive.href} className="underline hover:text-foreground">
+          {archive.label}
         </a>
-        - and each of those choices reaches the agent too.
+        , and each of those choices reaches the agent too.
       </p>
       {runs.length > 0 ? (
         /* The run's state through the app's own mapper - these used to print the
@@ -747,7 +803,7 @@ function FeedbackBox({
           <Button onClick={submit} disabled={pending || !note.trim()}>
             {pending ? "Sending…" : "Send feedback"}
           </Button>
-          {sent ? <span className="text-xs text-muted">Sent - it feeds the next run.</span> : null}
+          {sent ? <span className="text-xs text-muted">Sent. It feeds the next run.</span> : null}
         </div>
       </div>
       {recent.length > 0 ? (
@@ -756,7 +812,7 @@ function FeedbackBox({
             <li key={f.id} className="text-xs text-muted">
               <span className="text-foreground">{accountName(f.account)}</span> ·{" "}
               {f.action === "note" ? "feedback" : f.action.replace(/_/g, " ")}
-              {f.draftRef ? ` · ${f.draftRef}` : ""} · {relativeTime(f.createdAt)}
+              {f.draftLabel ? ` · ${f.draftLabel}` : ""} · {relativeTime(f.createdAt)}
             </li>
           ))}
         </ul>
@@ -774,6 +830,7 @@ export function XAgentIntake({
   news,
   feedback,
   runs,
+  runInFlight,
   isStaff,
 }: {
   clientId: string;
@@ -782,19 +839,43 @@ export function XAgentIntake({
   news: XNewsRowView[];
   feedback: XFeedbackRowView[];
   runs: XRunRowView[];
-  /** Whose vocabulary the run rows are written in - see FeedbackBox. */
+  /**
+   * A run this agent has in flight already holds its payload, so the remove
+   * confirm says a removed seat may still come back with drafts (#84).
+   *
+   * A PROP, not `runs.some(…)`. `runs` is the DISPLAY list, and for a client it
+   * is collapsed to one row per calendar day — so a run queued at 09:00 is not
+   * in it once a later run the same day lands, and the warning went to staff
+   * and not to the client who pressed Remove. The server answers this from the
+   * unfiltered scan (see `anyRunInFlight` in lib/agent-intake-views.ts).
+   */
+  runInFlight: boolean;
+  /** Whose vocabulary the run rows are written in — see FeedbackBox. */
   isStaff: boolean;
 }) {
   return (
     <div className="space-y-6">
-      <CompanyForm clientId={clientId} intake={company} />
-      <div className="space-y-4">
+      {/* The anchors the agent page's inputs band links each of its rows to
+          (#85). Both sides derive them from the SAME row id through
+          intakeAnchorId, so a row cannot end up pointing at a hash that
+          matches nothing — which scrolls nowhere and raises nothing. */}
+      <div id={intakeAnchorId("company")} className="scroll-mt-24">
+        <CompanyForm clientId={clientId} intake={company} />
+      </div>
+      {/* The takes row is client-wide (its count is every seat's takes) and the
+          take boxes live one per seat card, so the seat LIST is where that row
+          lands — there is no single takes surface to point at. */}
+      <div id={intakeAnchorId("takes")} className="space-y-4 scroll-mt-24">
         {seats.map((seat) => (
-          <SeatCard key={seat.id} clientId={clientId} seat={seat} />
+          <div key={seat.id} id={intakeSeatAnchorId(seat.id)} className="scroll-mt-24">
+            <SeatCard clientId={clientId} seat={seat} runInFlight={runInFlight} />
+          </div>
         ))}
         <AddSeatForm clientId={clientId} />
       </div>
-      <CompanyNewsBox clientId={clientId} rows={news} />
+      <div id={intakeAnchorId("news")} className="scroll-mt-24">
+        <CompanyNewsBox clientId={clientId} rows={news} />
+      </div>
       <FeedbackBox
         clientId={clientId}
         seats={seats}

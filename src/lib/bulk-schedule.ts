@@ -1,5 +1,5 @@
 /**
- * Pure "1 clip per day" sequencer for bulk-uploaded video clips.
+ * Pure day sequencer for bulk-uploaded video clips.
  *
  * Deliberately separate from `planClientChain` (post-chain.ts): that planner
  * only re-dates assets carrying chain provenance (an orderKey or
@@ -11,7 +11,9 @@
  * Reuses the same day/slot math and weekend policy as the chain planner
  * (startOfDayMs/chainSlotForDay from post-chain.ts, chainAllowsDay from
  * scheduling.ts) so a bulk batch lands on the same kind of days a chain-
- * planned post would.
+ * planned post would — and the same DayLedger (lib/daily-pace), so the client's
+ * pace means one thing across both planners. It used to be "1 clip per day",
+ * structurally; it is now `clipsPerDay`, defaulting to 1.
  *
  * CLIENT-SAFE: no firebase-admin, no data.ts. Importable by server actions,
  * API routes, and the CLI script (scripts/upload-local-clips.ts) alike.
@@ -19,6 +21,12 @@
 
 import { chainAllowsDay } from "@/lib/scheduling";
 import { chainSlotForDay, startOfDayMs } from "@/lib/post-chain";
+import {
+  createDayLedger,
+  LEGACY_PACE,
+  type PaceLane,
+  type ResolvedPace,
+} from "@/lib/daily-pace";
 
 function nextDayStart(dayStartMs: number): number {
   const d = new Date(dayStartMs);
@@ -32,33 +40,53 @@ export interface BulkScheduleAssignment {
   scheduledAt: number;
 }
 
+/** One already-booked day, and which lane of it the booking claimed. */
+export interface OccupiedDay {
+  lane: PaceLane;
+  dayStartMs: number;
+}
+
 /**
- * Assigns each id in order to the next available day starting at
- * `opts.startDayMs`, skipping days already occupied (by the id itself having
- * no conflict logic — occupancy is purely `opts.occupiedDayStarts`, e.g. this
- * client's other already-scheduled social content) and weekend days the
- * platform doesn't post on (chainAllowsDay).
+ * Assigns each id in order to the next day whose CLIP lane still has room,
+ * starting at `opts.startDayMs`, skipping weekend days the platform doesn't post
+ * on (chainAllowsDay).
+ *
+ * The batch is clips by definition (this is the bulk clip uploader's planner),
+ * so every id here books the clip lane. `opts.occupied` is the client's other
+ * already-dated social content WITH its lane, which is what lets a paced client
+ * put two clips and a post on one day while an unpaced one keeps the single slot
+ * a day it has always had: with no pace, the ledger drops the lane from its key
+ * and any dated post fills the day for clips too.
  */
 export function planBulkSchedule(
   ids: string[],
   opts: {
     startDayMs: number;
     platform?: string;
-    /** Server-local day starts (startOfDayMs) already booked for this client/family. */
-    occupiedDayStarts?: Set<number>;
+    /** The client's resolved pace. Absent ⇒ one item a day, as before. */
+    pace?: ResolvedPace;
+    /** This client's other already-scheduled social content, by day and lane. */
+    occupied?: readonly OccupiedDay[];
   },
 ): BulkScheduleAssignment[] {
-  const occupied = new Set(opts.occupiedDayStarts ?? []);
+  const ledger = createDayLedger(opts.pace ?? LEGACY_PACE);
+  for (const booked of opts.occupied ?? []) {
+    ledger.book(booked.lane, startOfDayMs(booked.dayStartMs));
+  }
   let cursor = startOfDayMs(opts.startDayMs);
   const assignments: BulkScheduleAssignment[] = [];
 
   for (const id of ids) {
-    while (occupied.has(cursor) || !chainAllowsDay("social_post", opts.platform, new Date(cursor).getDay())) {
+    while (
+      ledger.isFull("clip", cursor) ||
+      !chainAllowsDay("social_post", opts.platform, new Date(cursor).getDay())
+    ) {
       cursor = nextDayStart(cursor);
     }
     assignments.push({ id, scheduledAt: chainSlotForDay(cursor) });
-    occupied.add(cursor);
-    cursor = nextDayStart(cursor);
+    ledger.book("clip", cursor);
+    // Stays on the day while the clip lane has room. At the default ceiling of 1
+    // the loop above steps off it immediately, which is the old walk.
   }
 
   return assignments;

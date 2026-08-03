@@ -11,10 +11,14 @@ import {
   getClientInsightsCache,
   upsertClientInsightsCache,
 } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
 import { engagementIsMockOrStale, rankByEngagement } from "@/lib/analytics";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
 import { MODELS } from "@/lib/constants";
+import { CREDIT_COSTS } from "@/lib/credits";
+import { chargeClientModelCall, refundOnce } from "@/lib/client-model-charge";
+import { clientCategoryValue } from "@/lib/utils";
 import type { Asset, ClientMarketingAnalytics } from "@/lib/types";
 
 export const maxDuration = 30;
@@ -33,8 +37,19 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * Cached by digest content (not time): a plain page load reuses the last
  * briefing unless the underlying digest actually changed since — the LLM only
  * reruns when there's something new to report, or when the widget's explicit
- * "Refresh" button passes `?force=1`. Read-only and cheap (Haiku) — no credit
- * charge, staff and client alike.
+ * "Refresh" button passes `?force=1`.
+ *
+ * WHO PAYS, and the line this note used to get wrong. It said "no credit
+ * charge, staff and client alike", and for the path it was describing that is
+ * still true and deliberate: an automatic rerun is triggered by NEW DATA, not
+ * by the client, and a client cannot manufacture analytics rows by clicking. So
+ * the cache-miss path stays free.
+ *
+ * `?force=1` is not that path. It skips the cache read outright, so the Refresh
+ * button was an unmetered model call a client could press as often as they
+ * liked — the same shape as the four unmetered calls this cluster closed. It is
+ * charged at `CREDIT_COSTS.chatMessage` (1), the existing rate for one
+ * client-pressed model call, and refunded if the briefing never streams.
  */
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -49,6 +64,37 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   const force = new URL(req.url).searchParams.get("force") === "1";
 
+  // The charge for a FORCED refresh, defined once and taken at whichever of the
+  // two streaming paths below actually reaches a model. Deliberately not taken
+  // up here: every early return between this point and the streams — no
+  // connected channel, no assets, an unchanged digest — is a path that runs no
+  // model, and a client must not be charged for one.
+  const insightsCharge = {
+    user,
+    clientId,
+    amount: CREDIT_COSTS.chatMessage,
+    operation: "ai_tool" as const,
+    // Client copy: the ledger feed renders ungated to a CLIENT_USER.
+    reason: "Insights refresh",
+  };
+  /**
+   * Hand it back when the briefing never made it to the client. ONCE-ONLY, and
+   * that is the whole point of the handle: `onError` below is called by the AI
+   * SDK once per `error` part, not once per stream, so a run that emits two of
+   * them called this twice — and `creditClientCredits` has no idempotency key,
+   * so the client was paid twice for one charge. A no-op until the charge is
+   * actually taken (unforced reruns are free — see the note above).
+   */
+  let refundForcedRerun: (reason: string) => Promise<void> = async () => {};
+  /** Charge for the forced rerun; returns a 402 response when refused. */
+  async function chargeForcedRerun(): Promise<Response | null> {
+    if (!force) return null;
+    const { denied, chargedAt } = await chargeClientModelCall(insightsCharge);
+    if (denied !== null) return Response.json({ error: denied }, { status: 402 });
+    refundForcedRerun = refundOnce(insightsCharge, chargedAt);
+    return null;
+  }
+
   const [client, records, assets, integrations, cached] = await Promise.all([
     getClient(clientId),
     listClientMarketingAnalytics(clientId),
@@ -57,6 +103,27 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     force ? Promise.resolve(null) : getClientInsightsCache(clientId),
   ]);
   if (!client) return Response.json({ error: "Client not found" }, { status: 404 });
+
+  // STAFF SCOPE. The only role test at the top of this handler was the
+  // CLIENT_USER branch, so an employee 404'd on /clients/[id] could read that
+  // client's briefing — their engagement figures, their winners and losers, and
+  // the report prose built from them — through this route. Same predicate the
+  // pages ask, asked unconditionally rather than under `role ===
+  // "KAROS_EMPLOYEE"`: admins and a client on their own account already pass it,
+  // an unknown role must not. Refusal reuses the shape one line up.
+  //
+  // ABOVE THE CHARGE, and that is a fact about POSITION, not about this line's
+  // text. `chargeForcedRerun()` — declared above, called at BOTH streaming paths
+  // below — is the only place this handler spends the client's credits, and both
+  // of its call sites are further down the same straight-line flow as this
+  // statement: nothing between here and them can be entered without passing
+  // here. A refused actor therefore cannot reach a charge. The test that holds
+  // this asks it that way round — it spies on the charge and asserts the refused
+  // actor never reached it — rather than asking whether a fence appears
+  // somewhere before a charge in the source.
+  if (!canViewClient(user, client)) {
+    return Response.json({ error: "Client not found" }, { status: 404 });
+  }
 
   // QA F125 (second half): metrics rows are written per published asset, so they can name a
   // platform the client never connected (an Instagram row on a Google/LinkedIn/YouTube
@@ -137,18 +204,25 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       "produced so far and what stage it's in, (2) that once content publishes and gathers engagement, this panel will " +
       "start surfacing real performance and optimization moves. Keep the whole thing under 120 words.";
 
-    const pipelinePrompt = `Client: ${client.name}${client.industry ? ` (${client.industry})` : ""}
+    const pipelineCategory = clientCategoryValue(client);
+    const pipelinePrompt = `Client: ${client.name}${pipelineCategory ? ` (${pipelineCategory})` : ""}
 
 CONTENT PIPELINE DATA (measured; do not invent beyond this):
 ${JSON.stringify(activity, null, 2)}
 
 Write the update now.`;
 
+    const refused = await chargeForcedRerun();
+    if (refused) return refused;
+
     const pipelineResult = streamText({
       model: MODEL,
       system: pipelineSystem,
       prompt: pipelinePrompt,
-      onError: ({ error }) => console.error("[ai-insights] Pipeline stream failed:", error),
+      onError: ({ error }) => {
+        console.error("[ai-insights] Pipeline stream failed:", error);
+        void refundForcedRerun("Refund · insights refresh failed");
+      },
       onFinish: ({ text, usage }) => {
         after(async () => {
           try {
@@ -191,18 +265,25 @@ Write the update now.`;
     "(2) what's winning and why, (3) the optimization choices the engine is making next (double down on winners, phase out losers). " +
     "Keep the whole thing under 160 words.";
 
-  const prompt = `Client: ${client.name}${client.industry ? ` (${client.industry})` : ""}
+  const category = clientCategoryValue(client);
+  const prompt = `Client: ${client.name}${category ? ` (${category})` : ""}
 
 PERFORMANCE DATA (measured; do not invent beyond this):
 ${JSON.stringify(digest, null, 2)}
 
 Write the briefing now.`;
 
+  const refused = await chargeForcedRerun();
+  if (refused) return refused;
+
   const result = streamText({
     model: MODEL,
     system,
     prompt,
-    onError: ({ error }) => console.error("[ai-insights] Briefing stream failed:", error),
+    onError: ({ error }) => {
+      console.error("[ai-insights] Briefing stream failed:", error);
+      void refundForcedRerun("Refund · insights refresh failed");
+    },
     onFinish: ({ text, usage }) => {
       after(async () => {
         try {

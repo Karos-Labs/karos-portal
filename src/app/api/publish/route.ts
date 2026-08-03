@@ -1,5 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { listScheduledAssets, listAssets, listClientIntegrations, updateAsset, markAssetPublished, markIntegrationExpired, claimAssetForPublish, releaseAssetPublishClaim } from "@/lib/data";
+import { publishHoldMessage } from "@/lib/asset-status-copy";
+import { isInClientArchive } from "@/lib/asset-visibility";
 import { blockingPredecessor } from "@/lib/post-chain";
 import {
   TokenExpiredError,
@@ -86,7 +88,20 @@ export async function GET(req: NextRequest) {
       // waits AND flags without anyone having to intervene in the common case.
       const blocker = blockingPredecessor(asset, assetsByClient.get(asset.clientId) ?? []);
       if (blocker) {
-        const message = `Waiting for "${blocker.title}" - it comes earlier in this series and is still ${blocker.status}. This post goes out once that one is published (or removed).`;
+        // Client copy, composed in one place (lib/asset-status-copy): this
+        // string is stored on the asset and read by the client on four
+        // surfaces, so it may not carry a spaced hyphen or the raw Firestore
+        // status enum, and it is the one publishError that clientSafePublishError
+        // allowlists through to them verbatim.
+        //
+        // Whether the sentence may NAME the blocker is a visibility question,
+        // and isInClientArchive is the predicate that already answers it — the
+        // blocker is usually the draft behind this post, and no client surface
+        // lists a draft. Asked here rather than inside the copy helper so that
+        // helper stays dependency-free and client-bundle-safe.
+        const message = publishHoldMessage(blocker, {
+          clientCanSeeBlocker: isInClientArchive(blocker, now),
+        });
         await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
         return { assetId: asset.id, platform: asset.scheduledPlatform ?? "none", status: "held", error: message };
       }
@@ -157,6 +172,16 @@ export async function GET(req: NextRequest) {
         }
         // Transient error — leave as "scheduled" so the next cron tick retries,
         // but record the failure so the asset card can surface it.
+        //
+        // STORED RAW, ON PURPOSE — the same decision `publishAssetNowAction`
+        // records at its own catch, and the reason is worth having at both
+        // writers rather than at neither. This is the platform SDK's exception
+        // and the only thing that names which integration broke; staff read the
+        // asset un-projected. A client never reads this string: both client
+        // asset projections collapse it through `clientSafePublishError`
+        // (lib/asset-visibility) before it can cross the RSC boundary. The hold
+        // above is the one publishError composed AS client copy, which is why
+        // that branch builds a sentence and this one does not.
         const message = e instanceof Error ? e.message : "Unknown error";
         await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
         return {

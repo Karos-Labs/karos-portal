@@ -1,4 +1,28 @@
 import "server-only";
+import { ENGINE_LABELS } from "@/lib/seo-geo";
+
+/**
+ * The answer engines this platform actually measures, as the scoring rubric
+ * below names them — read off `ENGINE_LABELS` rather than typed out (#142).
+ *
+ * The GEO dimension of the Intel Report and the client's SEO/GEO dashboard are
+ * two Karos assessments of the same thing, and a client can open both. Call
+ * directive B2 (2026-07-27) cut the tracked set to the engines with a wired
+ * provider — set, chips and scoring inputs all followed — but this rubric was
+ * prose, so it went on grading "mentions in ChatGPT/Perplexity/Gemini
+ * responses": naming an engine nothing measures, and omitting Claude, which
+ * everything else does. That disagreement was already inside this one file —
+ * `METRICS_RULES` below sources geo_visibility_index from the OpenAI / Gemini /
+ * Anthropic capture — and inside one prompt, since report.ts appends the
+ * measured per-engine rows under those same three labels.
+ *
+ * Keyed to the `EngineId` map, so the next roster change carries this sentence
+ * with it instead of leaving it behind. (Deliberately NOT the provider names in
+ * METRICS_RULES: those come from `ProviderSource` and answer a different
+ * question — which vendor's API produced the number, not which engine a buyer
+ * asked.)
+ */
+const TRACKED_ENGINE_NAMES = Object.values(ENGINE_LABELS).join("/");
 
 /**
  * Core research invariants from RESEARCH-ENGINE.md.
@@ -275,7 +299,7 @@ Score {COMPANY_NAME} and 8-15 real competitors across 8 weighted dimensions (0-1
 1. **Content & Messaging** (15%) — headline clarity, value proposition strength, copy quality, voice consistency, social proof integration, content depth and frequency
 2. **Conversion Optimization** (15%) — CTA placement and wording strength, UX flow logic, trust signals at decision points, pricing transparency, signup/contact friction
 3. **SEO & Discoverability** (12%) — title tag and meta quality, primary keyword ownership, content depth vs. search intent, backlink signal strength, technical indexability
-4. **GEO & AI Discoverability** (8%) — structured data markup quality, llms.txt presence, mentions in ChatGPT/Perplexity/Gemini responses, citability signals vs. competitors
+4. **GEO & AI Discoverability** (8%) — structured data markup quality, llms.txt presence, mentions in ${TRACKED_ENGINE_NAMES} responses, citability signals vs. competitors
 5. **Competitive Positioning** (15%) — differentiation clarity, pricing vs. named competitors, category ownership, messaging contrast against rivals
 6. **Brand & Trust** (10%) — visual consistency across all channels, social proof quality, testimonials, press coverage, brand voice coherence
 7. **Growth & Strategy** (10%) — business model clarity, pricing architecture, observable growth loops, retention signals, market timing

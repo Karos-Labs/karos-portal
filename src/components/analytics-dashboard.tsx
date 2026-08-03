@@ -261,7 +261,7 @@ export function AgentFeedbackHistoryTable({ rows, clients, agentNames }: AgentFe
         <EmptyState
           icon={<Icon name="MessageSquare" className="h-5 w-5" />}
           title="No agent feedback yet"
-          description="Notes clients and staff leave on a live agent - from its feedback panel or from Copilot chat - appear here."
+          description="Notes clients and staff leave on a live agent. From its feedback panel or from Copilot chat. Appear here."
         />
       ) : (
         <div className="overflow-x-auto">
@@ -296,7 +296,10 @@ export function AgentFeedbackHistoryTable({ rows, clients, agentNames }: AgentFe
                     </span>
                   </td>
                   <td className="py-2 pr-4 text-muted-2">
-                    {r.category ? FEEDBACK_CATEGORY_LABEL[r.category] : "-"}
+                    {/* An en dash as the "no value" glyph: AF-8 takes the em
+                        dash out of client COPY, and an empty cell here would be
+                        a missing value rather than one shown as absent. */}
+                    {r.category ? FEEDBACK_CATEGORY_LABEL[r.category] : "–"}
                   </td>
                   <td className="py-2 pr-4">
                     <Badge tone={r.status === "active" ? "success" : "neutral"}>

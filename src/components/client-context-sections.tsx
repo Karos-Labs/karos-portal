@@ -266,7 +266,9 @@ export function CompetitorTrack({
                   disabled={isRemoving}
                   aria-label={`Stop tracking ${c.company}`}
                   title="Stop tracking"
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 opacity-0 transition-colors group-hover:opacity-100 hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+                  // Reachable without a pointer: this removes a tracked competitor,
+                  // and hover-only reveal hides it entirely on touch (#89's shape).
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 opacity-0 transition-colors group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 hover:bg-danger/10 hover:text-danger disabled:opacity-50"
                 >
                   {isRemoving ? (
                     <Icon name="Loader" className="h-3 w-3 animate-spin" />
@@ -419,7 +421,7 @@ export function BrandColorsSection({
                           shows the hex and the role. */}
                       {showUsage && (
                         <span className="ml-1 font-sans text-muted-2">
-                          · {color.usagePct != null ? `${color.usagePct}%` : "-"}
+                          · {color.usagePct != null ? `${color.usagePct}%` : "–"}
                         </span>
                       )}
                     </>

@@ -42,7 +42,7 @@ function alertShell(opts: { heading: string; rows: Array<[string, string]>; link
   <div style="background:#07090b;padding:32px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
     <div style="max-width:600px;margin:0 auto;background:#0d1117;border:1px solid #20303a;border-radius:16px;overflow:hidden;">
       <div style="padding:24px 28px;border-bottom:1px solid #20303a;">
-        <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos<span style="color:#e8f0ec;">CMO</span></span>
+        <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos Labs</span>
       </div>
       <div style="padding:28px;color:#e8f0ec;">
         <h1 style="font-size:20px;margin:0 0 16px;color:#e8f0ec;">${esc(opts.heading)}</h1>

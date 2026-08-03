@@ -35,7 +35,7 @@ export function RegenerateWorkspaceButton({
         disabled={isAiProcessing}
         title={
           isAiProcessing
-            ? "Karos Agents are already building this workspace - please wait for it to finish"
+            ? "Karos Agents are already building this workspace. Please wait for it to finish"
             : "Re-run the Intel Report pipeline: rebuilds this client's documents and their SEO/GEO intel"
         }
       >

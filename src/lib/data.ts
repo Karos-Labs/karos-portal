@@ -56,13 +56,18 @@ import {
   defaultClientCredits,
   rollCreditWindows,
 } from "@/lib/credits";
+import { canViewClient } from "@/lib/client-visibility";
 import { resolveContentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { engagementScore, rankByEngagement } from "@/lib/analytics";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
-import { encryptCredentials, decryptCredentials } from "@/lib/crypto/token-cipher";
+import {
+  encryptCredentials,
+  decryptCredentials,
+  decryptCredentialsAvailable,
+} from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
 import { competitorBrandKeys, looksLikeUrlInput } from "@/lib/competitor-input";
@@ -145,6 +150,54 @@ export async function getUserByEmail(email: string): Promise<AppUser | null> {
   return snap.empty ? null : (snap.docs[0].data() as AppUser);
 }
 
+/**
+ * THE PERSON BEHIND A CLIENT ACCOUNT — the address the Brand Profile sheet
+ * offers when nobody has filled in a contact email (CD-L P1).
+ *
+ * The relationship is `AppUser.clientId`, the same join `/team` and the team
+ * manager already read; this states it once, server-side, so the panel can have
+ * the answer without the user collection crossing to a browser.
+ *
+ * WHICH user, when a workspace has several: the GROUP ADMIN first — that is the
+ * seat that manages the others, so it is the account's owner in the only sense
+ * this app records — then the oldest account, which is the one that opened the
+ * workspace. Sorted in memory rather than by `orderBy`, which would need a
+ * composite index for a query that returns a handful of rows.
+ *
+ * Pending and disabled seats are skipped: an unapproved registration is not
+ * somebody to hand a client's mail to.
+ *
+ * THE SEAT, not just its address — `getClientOwnerEmail` below is this function
+ * with the name thrown away, and it had thrown the name away since it was
+ * written. The daily digest greets a person, so it needs both, and re-running
+ * the same query in a second exported function is how two answers to "who is the
+ * owner" start.
+ */
+export async function getClientOwner(
+  clientId: string,
+): Promise<{ email: string; name: string } | null> {
+  if (!clientId) return null;
+  const snap = await col
+    .users()
+    .where("clientId", "==", clientId)
+    .where("role", "==", "CLIENT_USER")
+    .get();
+  const seats = snap.docs
+    .map((d) => d.data() as AppUser)
+    .filter((u) => !!u.email && !u.disabled)
+    .sort(
+      (a, b) =>
+        Number(b.isGroupAdmin === true) - Number(a.isGroupAdmin === true) ||
+        (a.createdAt ?? 0) - (b.createdAt ?? 0),
+    );
+  const owner = seats[0];
+  return owner ? { email: owner.email, name: owner.name ?? "" } : null;
+}
+
+export async function getClientOwnerEmail(clientId: string): Promise<string> {
+  return (await getClientOwner(clientId))?.email ?? "";
+}
+
 /** `impersonatedBy` marks a session, never the stored user: callers routinely spread a
  * session user in here, and persisting it would exempt that client from credit billing
  * for good. Deleted rather than omitted, so a doc corrupted by an earlier write heals. */
@@ -194,19 +247,82 @@ export async function countUsers(): Promise<number> {
 
 /* ----------------------------- clients ----------------------------- */
 
+const byNewestFirst = (a: Client, b: Client) => (b.createdAt ?? 0) - (a.createdAt ?? 0);
+
+/**
+ * The clients a staff surface lists. `employeeId` scopes it to what that
+ * EMPLOYEE may see — the same rule `canViewClient` states, asked as a query.
+ *
+ * TWO FIELDS EXPRESS ONE RELATIONSHIP and this reads BOTH, because reading one
+ * hid every assignment an admin has actually made. `Client.assignedEmployeeIds`
+ * holds the client's side; `AppUser.assignedClientIds` holds the user's, and
+ * both of the admin's assignment UIs (`createTeamMemberAction`,
+ * `approveRegistrationAction`) write only the user's. This query read the client
+ * side alone, so an employee assigned the normal way could OPEN a client by URL
+ * — `canViewClient` accepts either field — and saw NO clients in any of the
+ * eight staff lists that feed off this call. Reachable but unlisted is worse
+ * than fenced out: nothing tells them where to go.
+ *
+ * The shape is awkward and worth stating: `assignedClientIds` lives on the USER
+ * document, so a clients-collection query cannot `array-contains` it. Hence a
+ * UNION of two sources rather than one query — the array-contains, plus a
+ * batched fetch of the ids the user document names. Deduplicated by document id
+ * (an employee recorded on both sides appears once), and an id whose client has
+ * since been deleted is dropped rather than surfaced as a hole (`d.exists`).
+ *
+ * READ COST, since this replaced one query: 1 collection query (billed per
+ * matching document, minimum one) + 1 user document + one batched `getAll` of
+ * however many ids the user document names that the query did not already
+ * return. Single-digit reads per call at pilot volume, and unchanged for the
+ * unscoped (admin) path, which still reads the collection once.
+ *
+ * ONE HOME, and exactly how far that goes. `canViewClient` is the single
+ * authority on "may this actor see this client" and is applied here as the
+ * FINAL gate, so this query can never be WIDER than the predicate — a predicate
+ * that grows a restriction narrows this list with it, for free. What the gate
+ * cannot do is make the union COMPLETE: a predicate that grows a new WAY to be
+ * assigned would need a third source here, and would silently under-list until
+ * it got one. That is the residual, it is pinned by a test that derives its
+ * expectation from `canViewClient` itself over an assignment matrix
+ * (`client-list-visibility.test.ts`), and the thing that actually retires it is the
+ * data migration onto one field — which is Daniel's call, not this file's.
+ */
 export async function listClients(opts?: { employeeId?: string }): Promise<Client[]> {
-  let snap;
-  if (opts?.employeeId) {
-    snap = await col
-      .clients()
-      .where("assignedEmployeeIds", "array-contains", opts.employeeId)
-      .get();
-  } else {
-    snap = await col.clients().get();
+  const employeeId = opts?.employeeId;
+  if (!employeeId) {
+    const snap = await col.clients().get();
+    return snap.docs.map((d) => withId<Client>(d)).sort(byNewestFirst);
   }
-  return snap.docs
-    .map((d) => withId<Client>(d))
-    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
+  const [namedOnClient, user] = await Promise.all([
+    col.clients().where("assignedEmployeeIds", "array-contains", employeeId).get(),
+    // A missing user document contributes nothing rather than voiding the query
+    // above: the client side of the relationship is a legitimate signal on its
+    // own, and losing it would be a second lockout.
+    getUser(employeeId),
+  ]);
+
+  const byId = new Map<string, Client>();
+  for (const d of namedOnClient.docs) byId.set(d.id, withId<Client>(d));
+
+  const assignedClientIds = user?.assignedClientIds ?? [];
+  const missing = [...new Set(assignedClientIds.filter((id) => !!id && !byId.has(id)))];
+  if (missing.length > 0) {
+    const docs = await adminDb().getAll(...missing.map((id) => col.clients().doc(id)));
+    for (const d of docs) if (d.exists) byId.set(d.id, withId<Client>(d));
+  }
+
+  // The predicate has the last word — see ONE HOME above. Built as an employee
+  // viewer because that is what the option means; `assignedClientIds` comes from
+  // the user document just read, so the answer here matches the one the
+  // `/clients/[id]` guard gives for the same person.
+  const viewer: Pick<AppUser, "role" | "uid" | "clientId" | "assignedClientIds"> = {
+    role: "KAROS_EMPLOYEE",
+    uid: employeeId,
+    clientId: null,
+    assignedClientIds,
+  };
+  return [...byId.values()].filter((c) => canViewClient(viewer, c)).sort(byNewestFirst);
 }
 
 export const getClient = cache(async (id: string): Promise<Client | null> => {
@@ -232,7 +348,7 @@ export async function updateClient(id: string, data: Partial<Client>): Promise<v
 export async function completeOnboarding(
   uid: string,
   clientId: string,
-  clientPatch: Partial<Pick<Client, "name" | "industry" | "brandVoice">>,
+  clientPatch: Partial<Pick<Client, "name" | "category" | "brandVoice">>,
 ): Promise<void> {
   const userRef = col.users().doc(uid);
   const clientRef = col.clients().doc(clientId);
@@ -428,7 +544,7 @@ export async function listStuckManagedJobs(staleBefore: number, limit = 25): Pro
   const snap = await col
     .jobs()
     .where("agentId", "==", "agent-service")
-    .where("status", "in", ["queued", "running"])
+    .where("status", "in", IN_FLIGHT_JOB_STATUSES)
     .get();
   return snap.docs
     .map((d) => withId<Job>(d))
@@ -445,6 +561,31 @@ export async function getJobByExternalServiceId(serviceJobId: string): Promise<J
 }
 
 /**
+ * The non-terminal job statuses — the single home for this set.
+ *
+ * It answers one question in two shapes: the array feeds Firestore
+ * `where("status", "in", ...)` queries, `isJobInFlight` answers the same
+ * question about a job already in memory.
+ *
+ * SCOPE, stated rather than claimed as a universal. Four call sites read this:
+ * `claimExternalJobCompletion` below, `listStuckManagedJobs`,
+ * `listStuckLocalJobs` / `reconcileStuckJob` in credit-reconcile, and the
+ * runway in-flight filter. It is NOT every in-flight comparison in the repo —
+ * roughly a dozen others still hand-roll `status !== "queued" && !== "running"`
+ * (external-job-actions, agent-health, client-agent-rows, jobs-list and
+ * others). Converting one of those is welcome; asserting here that none exist
+ * would be a claim this file cannot verify, and an earlier draft of this
+ * comment made exactly that claim while a counterexample sat inside the very
+ * sweep it named.
+ */
+export const IN_FLIGHT_JOB_STATUSES: readonly JobStatus[] = ["queued", "running"];
+
+/** True while a job has not reached a terminal status (IN_FLIGHT_JOB_STATUSES). */
+export function isJobInFlight(status: JobStatus): boolean {
+  return IN_FLIGHT_JOB_STATUSES.includes(status);
+}
+
+/**
  * Atomically claims a webhook completion for an external job: flips the job
  * out of queued/running exactly once. Returns false when another delivery
  * already claimed it — the caller must then skip all side effects.
@@ -455,7 +596,7 @@ export async function claimExternalJobCompletion(jobId: string, status: JobStatu
     const snap = await tx.get(ref);
     if (!snap.exists) return false;
     const job = snap.data() as Job;
-    if (job.status !== "queued" && job.status !== "running") return false;
+    if (!isJobInFlight(job.status)) return false;
     tx.update(ref, { status, updatedAt: Date.now() });
     return true;
   });
@@ -517,6 +658,12 @@ export async function listDuePlannedScheduledRuns(before?: number, limit = 25): 
  * completes a one-off) and stamps `lastRunAt` in the same transaction.
  * Returns false if another tick already claimed it, it was paused/completed,
  * or the cadence moved on — the caller should skip the run, not retry.
+ *
+ * It also opens the fire's IN-FLIGHT window (`fireInFlightSince`), which the
+ * caller closes once the fire settles. Stamped here rather than by the caller
+ * immediately afterwards on purpose: a marker written after the claim has its
+ * own unobserved window, and that window is the whole defect it exists to make
+ * visible.
  */
 export async function claimPlannedScheduledRun(
   id: string,
@@ -532,6 +679,7 @@ export async function claimPlannedScheduledRun(
     if (run.nextRunAt !== expectedNextRunAt) return false;
     tx.update(ref, {
       lastRunAt: Date.now(),
+      fireInFlightSince: Date.now(),
       updatedAt: Date.now(),
       ...("completed" in advance ? { status: "completed" as const } : { nextRunAt: advance.nextRunAt }),
     });
@@ -632,7 +780,18 @@ export async function applyChainAssignments(
             : { publishMode: doc.publishMode !== "manual" && doc.publishMode !== "placeholder" ? "manual" as const : doc.publishMode }),
           ...(preferredPlatform ? { scheduledPlatform: preferredPlatform } : {}),
           recommendedAt: assignment.scheduledAt,
-          recommendedReason: "One post per day - assigned by the content chain",
+          // Client-visible: asset-card renders recommendedReason as text and as a
+          // tooltip, and redactLockedAsset withholds it only for locked future-dated
+          // assets — so an unlocked draft carries it to the client.
+          //
+          // IT USED TO OPEN "One post per day." That was the planner's own rule
+          // written into a stored string, and the rule is now the client's
+          // configurable pace (lib/daily-pace) — so on any client set to more
+          // than one a day the sentence stamped onto every draft would be a
+          // plain contradiction of the calendar beside it. This says what the
+          // field is for and makes no claim about how many, which is true at
+          // every pace and needs no plumbing to stay true.
+          recommendedReason: "Assigned by the content chain",
           updatedAt: Date.now(),
         },
         { merge: true },
@@ -1322,6 +1481,43 @@ export async function getClientContextDocByTier(
   return snap.empty ? null : withId<ClientContextDoc>(snap.docs[0]);
 }
 
+/**
+ * Read one context doc, accepting an ORDERED list of tiers and returning the
+ * first of them that exists.
+ *
+ * The tier list is an argument rather than a fallback baked into
+ * `getClientContextDocByTier`, and that is the whole design: a cross-tier
+ * fallback is WRONG at most of the places a context doc is read, so it may only
+ * exist where a caller has asked for it by name.
+ *
+ *  - `src/lib/branding.ts` and `src/lib/actions/branding-actions.ts` read a doc
+ *    and then write back at `doc.tier` (`tier: brandingDoc?.tier ?? "internal"`).
+ *    A read that quietly resolved to the client tier would publish internal
+ *    branding copy into the client-facing document.
+ *  - `src/lib/actions/intel-actions.ts` refuses cross-tier fallback outright for
+ *    anything a CLIENT_USER can trigger, so internal analyst copy can never
+ *    reach a client through a model. Its two comments say so in those words.
+ *
+ * So: only a caller reading for CONTEXT — never to target a write — may name
+ * more than one tier, and it names which ones. An ALLOWLIST in preference
+ * order, not "try the other one": a tier absent from the list is never read,
+ * which is what keeps `internal-only` (client-guidelines, action-plan — the
+ * never-published tier) out of every caller that does not spell it.
+ *
+ * One parallel round trip, not a chain: the preference order decides which
+ * result wins, not which query runs.
+ */
+export async function getClientContextDocInTierOrder(
+  clientId: string,
+  docType: string,
+  tiers: readonly ContextDocTier[],
+): Promise<ClientContextDoc | null> {
+  const found = await Promise.all(
+    tiers.map((tier) => getClientContextDocByTier(clientId, docType, tier)),
+  );
+  return found.find((doc) => doc !== null) ?? null;
+}
+
 /** Create or overwrite one context document (keyed on clientId + docType + tier). */
 export async function upsertClientContextDoc(
   doc: Omit<ClientContextDoc, "id">,
@@ -1504,12 +1700,23 @@ export async function getAgentProfileDocData(
 
 /* -------------------- client integrations --------------------------- */
 
-/** List all social/channel integrations for a client. Credentials are decrypted for the caller. */
+/**
+ * List all social/channel integrations for a client. Credentials are decrypted
+ * for the caller — leniently: a value this environment cannot decrypt (no
+ * TOKEN_ENCRYPTION_KEY, e.g. local dev reading production-written blobs) is
+ * dropped and the row flagged `credentialsUnavailable`, because every page that
+ * lists a client rides this and none of them render a token. The strict decrypt
+ * stays on the paths that consume the plaintext (publish, analytics sync).
+ */
 export async function listClientIntegrations(clientId: string): Promise<ClientIntegration[]> {
   const snap = await col.clientIntegrations().where("clientId", "==", clientId).get();
   return snap.docs
     .map((d) => withId<ClientIntegration>(d))
-    .map((i) => (i.credentials ? { ...i, credentials: decryptCredentials(i.credentials) } : i))
+    .map((i) => {
+      if (!i.credentials) return i;
+      const { credentials, unavailable } = decryptCredentialsAvailable(i.credentials);
+      return { ...i, credentials, ...(unavailable ? { credentialsUnavailable: true } : {}) };
+    })
     .sort((a, b) => a.platform.localeCompare(b.platform));
 }
 
@@ -1843,10 +2050,26 @@ export async function listReviewJobs(
     // Newest first and bounded, exactly like the staff feed below — this half
     // was neither. Firestore hands back document order, so the bell's rows sat
     // in whatever sequence the collection happened to be in, and every review
-    // in the queue crossed into the payload. A runway sweep tops a client up
-    // with up to fourteen jobs in one minute (A3/A4), so an uncapped feed turns
-    // one fire into fourteen bell rows carrying the same stamp — the batch tell
-    // on the shell of every page. The cap is the same 15 the staff feed uses.
+    // in the queue crossed into the payload. The cap is the same 15 the staff
+    // feed uses, and it is a PAYLOAD BOUND: it keeps an unbounded review queue
+    // out of the RSC payload, and nothing more.
+    //
+    // IT IS NOT THE A3/A4 REMEDY, and this comment used to say it was. A runway
+    // sweep tops a client up with up to RUNWAY_MAX_JOBS_PER_CLIENT jobs in one
+    // minute (default 14, runway.ts) — fourteen is under fifteen, so the cap
+    // never bites on the very scenario it was written for, and a cap that did
+    // bite would still hand the bell several rows carrying one stamp. What
+    // closes it is the GRAIN the rows are told at: reviewFeedRows in
+    // notification-rows.ts collapses a client's whole review queue to one
+    // stampless row, whatever length this array is. Guarded by
+    // src/lib/__tests__/client-review-feed-grain.test.ts.
+    //
+    // STATED RESIDUAL: what the client SEES is one row, but this array still
+    // crosses the RSC boundary intact, so a client's browser holds up to 15 job
+    // titles and their same-minute stamps for a feed that prints none of them.
+    // Narrowing it to what the summary row needs means changing
+    // AgentReviewNotification, which the staff feed below shares — out of scope
+    // here, and named rather than half-done.
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, opts?.limit ?? 15)
     .map((j) => ({
@@ -2405,6 +2628,20 @@ export async function listClientSeats(clientId: string): Promise<ClientSeat[]> {
   return snap.docs.map((d) => withId<ClientSeat>(d)).sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/**
+ * Drop the seat row itself. A HARD delete, not a flag: `addXSeatAction` and
+ * `addLinkedInSeatAction` both reuse an existing seat by matching on `slug`, so
+ * a hidden-but-stored seat would be found by the re-add of the same name and
+ * silently resurrect the removed person's answers — while a second seat with
+ * that slug would break the per-seat agent file keys the slug exists to be.
+ *
+ * The documents that hang off a seat are NOT removed here (see
+ * removeClientSeatAction, which owns that order); this is the last step of it.
+ */
+export async function deleteClientSeat(id: string): Promise<void> {
+  await col.clientSeats().doc(id).delete();
+}
+
 /** One intake doc per (clientId, agent, seatId); seatId null = the company page. */
 export async function getAgentIntake(
   clientId: string,
@@ -2470,6 +2707,18 @@ export async function clearAgentIntakeFields(
   await col.agentIntake().doc(id).update({ ...deletions, updatedAt: Date.now() });
 }
 
+/**
+ * Drop one intake document whole — the seat-removal path only.
+ *
+ * The form paths never call this: they upsert, because an empty answer is a
+ * saved answer. What this is for is a seat that no longer exists, whose intake
+ * doc would otherwise be unreachable from every surface (all of them list by
+ * seat) while `listAgentIntake` kept returning it.
+ */
+export async function deleteAgentIntake(id: string): Promise<void> {
+  await col.agentIntake().doc(id).delete();
+}
+
 export async function addXNewsUpdate(data: Omit<XNewsUpdate, "id">): Promise<string> {
   const ref = await col.xNewsUpdates().add(data);
   return ref.id;
@@ -2490,6 +2739,33 @@ export async function listXTakes(clientId: string, seatId?: string): Promise<XTa
   if (seatId) q = q.where("seatId", "==", seatId);
   const snap = await q.get();
   return snap.docs.map((d) => withId<XTake>(d)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * Delete every take belonging to one seat, and report how many went.
+ *
+ * A take is that person's own one-liner and the input a run drafts their posts
+ * from, so it goes with the seat. Leaving them behind is not neutral: nothing
+ * lists a removed seat's takes, so they become unreachable text that still
+ * counts — the agent page's "Takes & topics" row reads `listXTakes(clientId)`
+ * with no seat filter, and would keep telling the client "4 takes on file"
+ * about a person they had just removed.
+ *
+ * Returns how many went. NO CALLER READS IT TODAY — removeClientSeatAction
+ * discards it — so this is a convenience for a future caller and not a fact any
+ * surface currently reports.
+ */
+export async function deleteXTakesForSeat(clientId: string, seatId: string): Promise<number> {
+  const takes = await listXTakes(clientId, seatId);
+  // Chunked at 400 like deleteClientCascade above: a write batch caps at 500,
+  // and the take box has no ceiling — one seat dropping a take a day for two
+  // years would exceed it and throw mid-removal.
+  for (let i = 0; i < takes.length; i += 400) {
+    const batch = adminDb().batch();
+    for (const take of takes.slice(i, i + 400)) batch.delete(col.xTakes().doc(take.id));
+    await batch.commit();
+  }
+  return takes.length;
 }
 
 export async function addXDraftFeedback(data: Omit<XDraftFeedback, "id">): Promise<string> {

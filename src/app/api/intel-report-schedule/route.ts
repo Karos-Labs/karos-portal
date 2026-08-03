@@ -10,6 +10,10 @@ import { requireCronSecret } from "@/lib/cron-auth";
 import { computeNextIntelScheduleRun } from "@/lib/intel-schedule";
 
 import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
+import {
+  researchReportReadyDescription,
+  researchReportReadyTitle,
+} from "@/lib/activity-titles";
 export const maxDuration = 300;
 
 /**
@@ -20,9 +24,15 @@ export const maxDuration = 300;
  * for clients with an admin-configured schedule (intelScheduleEnabled) whose
  * intelScheduleNextRunAt has passed; nothing else calls this pipeline.
  *
- * nextRunAt always advances from the slot that just fired (not "now"), so the
- * admin's configured cadence stays on a fixed calendar grid regardless of cron
- * tick frequency or processing delay.
+ * nextRunAt advances from the slot that just fired (not "now"), so the admin's
+ * configured cadence stays on a fixed calendar grid regardless of cron tick
+ * frequency or processing delay — and then forward past every slot the clock
+ * has already overtaken (`after: now`). The anchor alone was right for ONE
+ * missed tick and wrong for a backlog: a client whose monthly regeneration
+ * missed three months got three full pipelines on three successive ticks about
+ * fifteen minutes apart, each overwriting the last, because each advance landed
+ * the cursor back in the past. An outage must not become a burst of the most
+ * expensive operation in the product.
  */
 export async function GET(req: NextRequest) {
   const unauthorized = requireCronSecret(req);
@@ -64,8 +74,8 @@ export async function GET(req: NextRequest) {
         clientId: client.id,
         timestamp: now,
         type: "INTEL_GENERATION",
-        title: "Intel Report generated (scheduled)",
-        description: "Full competitive intelligence pipeline completed (5 core research agents + SEO/GEO multi-model vertical) - recurring schedule",
+        title: researchReportReadyTitle(),
+        description: researchReportReadyDescription({ recurring: true }),
         actor: SYSTEM_AI_ACTOR_NAME,
         actorRole: "system",
       });
@@ -78,7 +88,14 @@ export async function GET(req: NextRequest) {
       await logGenerationFailure(client.id, failure);
       await updateClient(client.id, {
         ...(failure ? {} : { lastIntelReportAt: now }),
-        intelScheduleNextRunAt: computeNextIntelScheduleRun({ intervalMonths, dayOfMonth, from: dueAt }),
+        intelScheduleNextRunAt: computeNextIntelScheduleRun({
+          intervalMonths,
+          dayOfMonth,
+          from: dueAt,
+          // Keep the grid, but never hand back a cursor the clock has already
+          // passed — that is what turns a missed month into a burst.
+          after: now,
+        }),
       });
     }
   }

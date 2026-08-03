@@ -3,8 +3,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
+// Quoted from the pricing home, off the same constant the swarm route charges.
+import { taskMapRefreshPrice } from "@/lib/credits";
 import { renderSectionBody } from "@/lib/doc-render";
 import { StrategyWarRoom } from "@/components/strategy-war-room";
 import type { Client, ClientReport } from "@/lib/types";
@@ -30,10 +33,25 @@ interface MentionableAgent {
   id: string;
   displayName: string;
   icon: string;
-  platform: string | null;
+  /**
+   * Which platform this agent posts to (AF-20), resolved by the route through
+   * lib/content-platform and sent as a token. Null for the agents that target
+   * none (Landing Builder), and those keep their stored lucide icon.
+   */
+  platform: SocialPlatform | null;
 }
 
-/** A focused-agent chip set by picking `@AgentName` - biases, not locks, the chat. */
+/**
+ * A focused-agent chip set by picking `@AgentName` - biases, not locks, the chat.
+ *
+ * Deliberately NOT carrying a platform of its own, even though the chip draws
+ * one: focus is set from two places, and only one of them holds a roster row.
+ * The other is the copilot's own `set_agent_focus` marker, which names an agent
+ * in prose mid-stream from inside a hook that never sees the mention list. A
+ * field here would be filled on one path and empty on the other, so the same
+ * chip would wear a logo or not depending on how the user got to it. The chip
+ * looks the id up in the roster at render instead - one answer, both paths.
+ */
 interface FocusAgent {
   id: string;
   name: string;
@@ -68,6 +86,13 @@ interface ProactiveAction {
   icon: string;
   label: string;
   sublabel: string;
+  /**
+   * What one press of THIS chip costs the reader, when it costs them anything.
+   * Only Refresh Task Map charges per press; the other three send an ordinary
+   * chat turn, which is priced by the input bar's own message charge and not by
+   * the chip. Null for a reader who is not billed (staff, View as Client).
+   */
+  price?: string | null;
   /** Chat message this chip sends. Omitted for chips handled by a dedicated UI. */
   trigger?: string;
   color: string;
@@ -80,7 +105,7 @@ interface ProactiveAction {
   deep?: boolean;
 }
 
-function buildProactiveActions(): ProactiveAction[] {
+function buildProactiveActions(viewerIsBilled: boolean): ProactiveAction[] {
   return [
     {
       // Handled by the Strategy War Room, not the chat path - so no trigger.
@@ -91,6 +116,12 @@ function buildProactiveActions(): ProactiveAction[] {
       icon: "ListTodo",
       label: "Refresh Task Map",
       sublabel: "Rebuild your task map from calendar gaps and past performance",
+      // THE ANNOUNCE. Pressing this chip does not open a confirmation — the War
+      // Room mounts and the debate (six model calls) starts immediately, so the
+      // charge is committed by the press itself. The price therefore belongs on
+      // the chip, quoted from the constant /api/tasks/generate-swarm charges
+      // from, in the same voice Audience Simulation uses.
+      price: taskMapRefreshPrice(viewerIsBilled),
       color: "#FF6B2C",
     },
     {
@@ -163,7 +194,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
     id: "edit-output",
     label: "/edit-output",
     hint: "Revise a post or asset you already have",
-    scaffold: "I'd like to revise one of my generated posts - here's what to change: ",
+    scaffold: "I'd like to revise one of my generated posts. Here's what to change: ",
   },
   {
     id: "schedule-run",
@@ -190,6 +221,59 @@ const SLASH_COMMANDS: SlashCommand[] = [
     scaffold: "I want to give feedback on ",
   },
 ];
+
+/**
+ * The "View" link on a task the copilot just added — written as MARKDOWN,
+ * because an assistant turn is rendered through `renderSectionBody`, which
+ * escapes the text first and then formats it, and turns a link into an anchor
+ * only when the href is http(s), mailto, a fragment, or a genuinely same-origin
+ * path (`isSafeHref`).
+ *
+ * KEYED ON `?task=`, NOT `?owner=`, and that is a ruling rather than a
+ * shorthand. The board's two tabs are split by owner and are DISJOINT:
+ * `?owner=client` selects the client tab and everything else — a bare `/tasks`
+ * included — selects "karos", so a link that guesses lands the reader on a board
+ * that does not hold the card it just named. `?task=` makes the board resolve
+ * the tab itself (`ownerTab(inferOwner(linkedTask))`, tasks-board.tsx) and open
+ * the ticket with it, so neither the owner→tab mapping nor the owner inference
+ * for a task with no stored owner is copied here. `taskBoardHref` in
+ * client-home-overview.tsx reached the same answer against the same two rules;
+ * this is that answer applied to the copilot, not a second opinion.
+ *
+ * WHY THE COPILOT NEEDS THE LINK AND QuickAddTaskBar DOES NOT. F65 put the named
+ * announcement on both, and the two recover differently: the quick-add bar sits
+ * ON the board and moves it to the right tab through `onAdded`, while the
+ * copilot is a dock over whatever page the reader is on. Without this the reply
+ * named a card with no way to reach it — and the id needed to reach it was being
+ * fetched from the action and thrown away.
+ *
+ * Empty string when the action returned no id, so the sentence just ends.
+ */
+function taskLink(taskId: string | undefined): string {
+  return taskId ? ` [View](/tasks?task=${encodeURIComponent(taskId)})` : "";
+}
+
+/**
+ * What the transcript says after `/add-task`.
+ *
+ * Pure and exported so the sentence and its link can be asserted as text and as
+ * RENDERED markup — the two ways this can silently stop working are the id going
+ * missing from the sentence and `renderSectionBody` declining to make an anchor
+ * of it.
+ */
+export function addTaskReply(
+  result: Pick<
+    Awaited<ReturnType<typeof ingestCustomUserTaskAction>>,
+    "ok" | "title" | "taskId" | "error" | "duplicate"
+  >,
+): string {
+  if (!result.ok) {
+    return result.duplicate
+      ? (result.error ?? "That's already on your task board.")
+      : (result.error ?? "Couldn't add that task. Try again.");
+  }
+  return `Added${result.title ? ` "${result.title}"` : ""} to your task board.${taskLink(result.taskId)}`;
+}
 
 /* ── Copilot hook ────────────────────────────────────────────────────── */
 
@@ -450,17 +534,13 @@ function useCopilot(
 
       try {
         const result = await ingestCustomUserTaskAction(clientId, trimmed);
-        const reply = result.ok
-          ? `Added${result.title ? ` "${result.title}"` : ""} to your task board.`
-          : result.duplicate
-            ? (result.error ?? "That's already on your task board.")
-            : (result.error ?? "Couldn't add that task - try again.");
+        const reply = addTaskReply(result);
         setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: reply } : m)));
         if (result.ok) onTasksCreated();
       } catch {
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === assistantId ? { ...m, content: "Couldn't add that task - try again." } : m,
+            m.id === assistantId ? { ...m, content: "Couldn't add that task. Try again." } : m,
           ),
         );
       } finally {
@@ -497,22 +577,29 @@ function TypingDots() {
 /**
  * The four AI actions. Extracted from the welcome column so the same list can
  * render in the strip above the input bar once a transcript exists (QA F88).
+ *
+ * Exported so the price on the Refresh Task Map chip can be asserted as RENDERED
+ * MARKUP rather than as a string a component might or might not paint. It takes
+ * no hooks and no router, so it renders standalone.
  */
-function ActionChips({
+export function ActionChips({
   onRun,
   onRefreshTaskMap,
   isAiProcessing,
+  viewerIsBilled,
 }: {
   /** Sends the action's chat trigger; `display` is what the transcript shows (QA F15). */
   onRun: (trigger: string, display: string, deep?: boolean) => void;
   onRefreshTaskMap: () => void;
   isAiProcessing?: boolean;
+  /** `isBillableClientActor()` for this session — decides whether a price is quoted. */
+  viewerIsBilled: boolean;
 }) {
   return (
     // Two-by-two below lg so all four land above the fold in the mobile sheet;
     // one column in the desktop rail, which is only 380px wide (QA F94).
     <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-col">
-      {buildProactiveActions().map((action) => {
+      {buildProactiveActions(viewerIsBilled).map((action) => {
         const locked = action.id === "scan_inbox" && isAiProcessing;
         return (
           <button
@@ -537,8 +624,13 @@ function ActionChips({
               {/* Two lines, not `truncate`: the longest sublabels clipped
                   mid-phrase on a single line (QA F88). */}
               <p className="line-clamp-2 text-[11px] text-muted">
-                {locked ? "Locked - a workspace build is already running" : action.sublabel}
+                {locked ? "Locked. A workspace build is already running" : action.sublabel}
               </p>
+              {/* Its own line rather than appended to the sublabel above, which
+                  is `line-clamp-2` and would drop the price on a narrow chip. */}
+              {action.price && !locked && (
+                <p className="mt-0.5 text-[10px] text-muted-2">Costs {action.price} a press</p>
+              )}
             </div>
             <Icon
               name="ArrowRight"
@@ -560,6 +652,7 @@ function ProactiveWelcome({
   send,
   onRefreshTaskMap,
   isAiProcessing,
+  viewerIsBilled,
 }: {
   clientName: string;
   userName?: string;
@@ -569,6 +662,8 @@ function ProactiveWelcome({
   onRefreshTaskMap: () => void;
   /** True while a background AI generation cycle is running - locks the Refresh Task Map chip. */
   isAiProcessing?: boolean;
+  /** `isBillableClientActor()` for this session — decides whether a price is quoted. */
+  viewerIsBilled: boolean;
 }) {
   // Kept on the prop chain (layout → dock → widget) but no longer decorates the
   // Refresh Task Map chip: a Google connection changed the icon to a globe while
@@ -617,6 +712,7 @@ function ProactiveWelcome({
         onRun={send}
         onRefreshTaskMap={onRefreshTaskMap}
         isAiProcessing={isAiProcessing}
+        viewerIsBilled={viewerIsBilled}
       />
 
       {/* Quick text suggestions */}
@@ -692,6 +788,15 @@ interface Props {
    *  hand one user's conversation to the next (staff→client leaks internal text). */
   viewerUid: string;
   clientName: string;
+  /**
+   * `isBillableClientActor()` for this session, resolved on the server.
+   *
+   * REQUIRED, with no default: the Refresh Task Map chip commits a charge the
+   * moment it is pressed, and a mount site that forgot to answer would go back
+   * to charging in silence — the exact defect this prop exists to close. So the
+   * compiler asks every site rather than a default answering for it.
+   */
+  viewerIsBilled: boolean;
   /** When true the chat panel opens automatically on mount (CLIENT_USER login). */
   defaultOpen?: boolean;
   /** Display name of the currently logged-in user (for personalised greeting). */
@@ -699,7 +804,7 @@ interface Props {
   /** Whether this client has an active Google integration (shows Gmail chip). */
   hasGoogleIntegration?: boolean;
   /** Minimal client snapshot injected into the proactive welcome context. */
-  client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
+  client?: Pick<Client, "name" | "website" | "isAiProcessing">;
   /** Latest intel report headline data for greeting context. */
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
   /** Render as an always-open panel filling its container (right rail) instead of a floating popup. */
@@ -714,6 +819,7 @@ export function ChatbotWidget({
   clientId,
   viewerUid,
   clientName,
+  viewerIsBilled,
   defaultOpen = false,
   userName,
   hasGoogleIntegration = false,
@@ -759,6 +865,11 @@ export function ChatbotWidget({
   // Fetched independently of a chat turn - the `@` dropdown has to be ready
   // the moment the client starts typing, not after their first message lands.
   const [mentionableAgents, setMentionableAgents] = useState<MentionableAgent[]>([]);
+  // The focused chip's mark, resolved from the roster rather than stored on the
+  // focus itself, so both ways of setting focus reach the same answer.
+  const focusAgentPlatform: SocialPlatform | null = focusAgent
+    ? mentionableAgents.find((a) => a.id === focusAgent.id)?.platform ?? null
+    : null;
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/clients/${clientId}/agents/mentionable`)
@@ -965,6 +1076,7 @@ export function ChatbotWidget({
                 send={send}
                 onRefreshTaskMap={openWarRoom}
                 isAiProcessing={client?.isAiProcessing}
+                viewerIsBilled={viewerIsBilled}
               />
             ) : (
               <ChatEmptyState clientName={clientName} send={send} />
@@ -1037,6 +1149,7 @@ export function ChatbotWidget({
                     onRun={send}
                     onRefreshTaskMap={openWarRoom}
                     isAiProcessing={client?.isAiProcessing}
+                    viewerIsBilled={viewerIsBilled}
                   />
                 </div>
               )}
@@ -1058,7 +1171,15 @@ export function ChatbotWidget({
               switch agents / go back to general (set_agent_focus). */}
           {focusAgent && (
             <div className="mx-3 mb-2 flex w-fit items-center gap-1.5 rounded-full border border-neon/30 bg-neon-soft px-2.5 py-1 text-[11px] text-neon">
-              <Icon name="AtSign" className="h-3 w-3" />
+              {/* The same mark the picker row wore, looked up rather than
+                  carried - see FocusAgent. The @ stays when the agent targets
+                  no platform, and when focus was set by the copilot naming an
+                  agent that is not on this client's roster. */}
+              {focusAgentPlatform ? (
+                <SocialPlatformMark platform={focusAgentPlatform} className="h-3 w-3" />
+              ) : (
+                <Icon name="AtSign" className="h-3 w-3" />
+              )}
               Focused on {focusAgent.name}
               <button
                 type="button"
@@ -1092,7 +1213,16 @@ export function ChatbotWidget({
                         i === clampedIndex ? "bg-surface-2" : "hover:bg-surface-2",
                       )}
                     >
-                      <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      {/* AF-20: the platform this agent posts to, so tagging
+                          one says what you are about to get. An agent that
+                          targets no platform (Landing Builder) keeps the stored
+                          icon it has always had - the route sends null rather
+                          than a nearest guess. */}
+                      {a.platform ? (
+                        <SocialPlatformMark platform={a.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      ) : (
+                        <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      )}
                       <span className="flex-1 truncate text-xs text-foreground">{a.displayName}</span>
                     </button>
                   ))}

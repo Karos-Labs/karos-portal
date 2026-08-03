@@ -54,9 +54,22 @@ interface Props {
   /** Signed-in viewer - scopes the persisted copilot transcript. */
   viewerUid: string;
   clientName: string;
+  /**
+   * `isBillableClientActor()` for this session, resolved on the server and
+   * passed straight through to the widget, whose Refresh Task Map chip quotes a
+   * price off it. Required at both mount sites (the client shell's layout and
+   * StaffCopilotDock) rather than defaulted — see the widget's own note.
+   */
+  viewerIsBilled: boolean;
   userName?: string;
   hasGoogleIntegration?: boolean;
-  client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
+  /**
+   * `industry` used to travel this whole chain — layout → dock → widget — and
+   * was read by nothing at the far end. It is `category`'s legacy spelling now
+   * (see Client.industry), and the copilot gets the category from the server's
+   * own context builder, not from a prop.
+   */
+  client?: Pick<Client, "name" | "website" | "isAiProcessing">;
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
   /** Host shell - sets the left offset of the pinned strip. Defaults to the client portal. */
   shell?: CopilotShell;
@@ -68,7 +81,7 @@ interface Props {
  * it, so nothing jumps or resizes. The chat stays mounted (state preserved) and
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
-export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, client, report, shell = "client" }: Props) {
+export function CopilotDock({ clientId, viewerUid, clientName, viewerIsBilled, userName, hasGoogleIntegration, client, report, shell = "client" }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   /** Blocks the write-back below until the restore pass has run. */
@@ -150,6 +163,7 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
     clientId,
     viewerUid,
     clientName,
+    viewerIsBilled,
     userName,
     hasGoogleIntegration,
     client,

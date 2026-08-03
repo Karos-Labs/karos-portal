@@ -77,7 +77,9 @@ substitutions:
   _REGION: us-central1
   _REPO: karos-cmo
   _SERVICE: karos-cmo
-  # Set after the agent service is deployed (empty ⇒ managed products stay hidden):
+  # Set after the agent service is deployed. Empty ⇒ the three submit cores
+  # (submit-managed.ts, submit-custom.ts, run-custom-agent.ts) refuse before a job
+  # row exists or credits are charged, and the run control renders disabled:
   _AGENT_SERVICE_URL: ""
   _APP_URL: ""
   # Runway autopilot (src/app/api/runway) — off by default. Flip to "1" at the
@@ -97,7 +99,7 @@ substitutions:
   _RUNWAY_MAX_JOBS_PER_CLIENT: "14"
   # Per-environment sender identity — override for prep so test sends never
   # look like production mail (see DEPLOY_ENVIRONMENTS.md).
-  _EMAIL_FROM: "Karos CMO <donotreply@karoslabs.com>"
+  _EMAIL_FROM: "Karos Labs <donotreply@karoslabs.com>"
   _ADMIN_EMAIL: "hello@karoslabs.com"
   # Failure-alert on-call list (job-alerts.ts) — separate from _ADMIN_EMAIL
   # above (support/signup mail). If this ever needs more than one address,

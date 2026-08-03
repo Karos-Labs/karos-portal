@@ -24,10 +24,13 @@ import { cn, relativeTime } from "@/lib/utils";
 import {
   deleteTaskAction,
   previewPendingTasksBatchAction,
+  previewTaskRunAction,
   runPendingTasksBatchAction,
   updateTaskStatusAction,
 } from "@/lib/actions";
 import { TaskTicketModal } from "@/components/task-ticket-modal";
+import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
+import { TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
 import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
 type BoardStatus = Exclude<TaskStatus, "archived">;
@@ -35,11 +38,17 @@ type OwnerTab = "karos" | "client";
 type StatusFilter = "all" | BoardStatus;
 type BoardTask = ClientTask & { _clientName?: string };
 
-const BOARD_COLUMNS: { status: BoardStatus; label: string; icon: string }[] = [
-  { status: "pending", label: "Pending", icon: "Circle" },
-  { status: "in_progress", label: "In Progress", icon: "CirclePlay" },
-  { status: "review_pending", label: "Review Pending", icon: "Eye" },
-  { status: "completed", label: "Done", icon: "CircleCheck" },
+/**
+ * The board's columns: which states get a column, in which order, under which
+ * glyph. NO `label` any more — the word for a state comes from the register
+ * (lib/task-status-copy) at every one of the three places this board printed its
+ * own copy of it (the heading, the card badge, the filter option).
+ */
+const BOARD_COLUMNS: { status: BoardStatus; icon: string }[] = [
+  { status: "pending", icon: "Circle" },
+  { status: "in_progress", icon: "CirclePlay" },
+  { status: "review_pending", icon: "Eye" },
+  { status: "completed", icon: "CircleCheck" },
 ];
 
 const SOURCE_META: Record<TaskSource, { label: string; icon: string }> = {
@@ -58,11 +67,21 @@ const PRIORITY_META: Record<string, { tone: "danger" | "warning" | "neutral"; la
   low: { tone: "neutral", label: "Low" },
 };
 
-const STATUS_META: Record<BoardStatus, { label: string; dot: string }> = {
-  pending: { label: "Pending", dot: "bg-muted-2" },
-  in_progress: { label: "Running Agent", dot: "bg-neon" },
-  review_pending: { label: "Review Pending", dot: "bg-warning" },
-  completed: { label: "Done", dot: "bg-success" },
+/**
+ * The dot beside a state's name — presentation, and this board's own business,
+ * which is why it stayed here when the WORDS moved to the register.
+ *
+ * It used to carry a `label` too, and `in_progress`'s read "Running Agent" — on a
+ * badge painted from `task.status` alone, so it fired on the "Depending on you"
+ * tab where every row is a person's own work and no agent will ever run
+ * anything. The claim now hangs off `taskIsExecuting`, which is the only fact
+ * that can support it, and the badge just names the state.
+ */
+const STATUS_DOT: Record<BoardStatus, string> = {
+  pending: "bg-muted-2",
+  in_progress: "bg-neon",
+  review_pending: "bg-warning",
+  completed: "bg-success",
 };
 
 const PRIORITY_RANK: Record<string, number> = { high: 80, medium: 50, low: 25 };
@@ -70,6 +89,16 @@ const PRIORITY_RANK: Record<string, number> = { high: 80, medium: 50, low: 25 };
 function inferOwner(task: ClientTask): TaskOwner {
   if (task.owner) return task.owner;
   return task.source === "manual" ? "client_managed" : "karos_managed";
+}
+
+/**
+ * The tab an owner's work lives on — the board's ONE owner→tab mapping, asked by
+ * the deep link, by the owner filter, and by the reveal that follows a routed
+ * add. `TaskOwner` has two members, so this is total; it was three separate
+ * inline ternaries before, and the third one is what a routed add needed.
+ */
+function ownerTab(owner: TaskOwner): OwnerTab {
+  return owner === "client_managed" ? "client" : "karos";
 }
 
 function statusAfterDrop(status: BoardStatus): { status: BoardStatus; completedAt: number | null } {
@@ -213,6 +242,10 @@ function TaskCard({
   dragHandle,
   canDelete,
   onDelete,
+  runPrompt,
+  pricing,
+  onConfirmRun,
+  onCancelRun,
 }: {
   task: BoardTask;
   showClientName?: boolean;
@@ -222,13 +255,32 @@ function TaskCard({
   dragHandle?: { attributes: DraggableAttributes; listeners: SyntheticListenerMap | undefined };
   canDelete: boolean;
   onDelete: () => void;
+  /** Set once the server has priced this card's run — the credits to confirm. */
+  runPrompt: { credits: number } | null;
+  /** The price lookup for this card is in flight. */
+  pricing: boolean;
+  onConfirmRun: () => void;
+  onCancelRun: () => void;
 }) {
   const priority = PRIORITY_META[task.priority] ?? PRIORITY_META.low;
   const source = SOURCE_META[task.source] ?? SOURCE_META.manual;
-  const status = STATUS_META[task.status as BoardStatus];
-  const isExecuting = task.metadata?.executing === true;
+  const statusDot = STATUS_DOT[task.status as BoardStatus];
+  const isExecuting = taskIsExecuting(task);
   const hasError = Boolean(task.metadata?.executionError);
+  /**
+   * Released BECAUSE the run came back with nothing, and still sitting there —
+   * the whole conjunction is in `ranWithoutDeliverable`, because "was there a
+   * nothing-run" is not the question a card can answer with. Mutually exclusive
+   * with `hasError` by construction (it requires no stored error), so the two
+   * blocks below can never both paint.
+   */
+  const noDeliverable = ranWithoutDeliverable(task);
   const owner = inferOwner(task);
+  // Two-step confirm for this row's destructive control, the shape
+  // scheduled-runs.tsx uses for a scheduled-run delete: the trash icon arms the
+  // question, the question names the task, and `onDelete` (⇒ deleteTaskAction)
+  // is unreachable until "Yes, delete it".
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   return (
     <article
@@ -240,7 +292,13 @@ function TaskCard({
       )}
     >
       <button
-        className="absolute right-1 top-1 z-10 inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-2 opacity-0 transition-opacity hover:bg-surface-2 hover:text-muted group-hover:opacity-100"
+        // `focus-visible:opacity-100` because this is the ONE focusable control in a
+        // resting card — the finding that opened the touch-reach work said so — and
+        // at opacity 0 a keyboard user tabbing onto it saw nothing at all, focus ring
+        // included. No `[@media(hover:none)]` reveal: dragging on touch is served by
+        // the dnd sensors on the card itself, so a permanently visible handle on every
+        // mobile card would be a design change, not a fix.
+        className="absolute right-1 top-1 z-10 inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-2 opacity-0 transition-opacity hover:bg-surface-2 hover:text-muted group-hover:opacity-100 focus-visible:opacity-100"
         {...(dragHandle?.attributes ?? {})}
         {...(dragHandle?.listeners ?? {})}
         onClick={(e) => {
@@ -255,10 +313,12 @@ function TaskCard({
 
       <div className="mb-2 flex items-center justify-between gap-2 pr-6 text-xs">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", status.dot)} />
+          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDot)} />
           {/* truncate, not nowrap-overflow: on narrow columns an overflowing label
               renders under the translucent priority badge and garbles it */}
-          <span className="min-w-0 truncate text-[11px] font-medium text-muted">{status.label}</span>
+          <span className="min-w-0 truncate text-[11px] font-medium text-muted">
+            {taskStatusLabel(task.status)}
+          </span>
           <Badge tone={priority.tone} className="shrink-0 px-1.5 py-0 text-[9px]">
             {priority.label}
           </Badge>
@@ -283,6 +343,25 @@ function TaskCard({
         </div>
       </div>
 
+      {/* A run that reported success and delivered nothing. Warning, not danger:
+          it did not break, and the client has already had the credits back —
+          what they need is the fact and the way to try again. */}
+      {noDeliverable && (
+        <div
+          className="mb-2 rounded-md border border-warning/35 bg-warning/10 px-2 py-1.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-[11px] font-medium text-warning">Nothing came back from this run.</p>
+          <button
+            onClick={() => onMove("in_progress")}
+            className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-warning underline underline-offset-2"
+          >
+            <Icon name="RotateCcw" className="h-3 w-3" />
+            Run it again
+          </button>
+        </div>
+      )}
+
       {hasError && !isExecuting && (
         <div
           className="mb-2 rounded-md border border-danger/35 bg-danger/10 px-2 py-1.5"
@@ -302,7 +381,7 @@ function TaskCard({
       {isExecuting && (
         <div className="mb-2 flex items-center gap-1.5 rounded-md border border-neon/30 bg-neon/10 px-2 py-1">
           <Icon name="Loader" className="h-3 w-3 animate-spin text-neon" />
-          <span className="text-[11px] font-medium text-neon">Agent running</span>
+          <span className="text-[11px] font-medium text-neon">{TASK_RUNNING_LABEL}</span>
         </div>
       )}
 
@@ -326,11 +405,89 @@ function TaskCard({
         <span className="ml-auto shrink-0 whitespace-nowrap">{relativeTime(task.updatedAt || task.createdAt)}</span>
       </div>
 
-      {/* Actions only take space while hovered/focused, so the resting card
-          height stays compact. flex-wrap: on narrow columns the buttons stack
-          instead of spilling past the card border. */}
+      {/* Both confirms render OUTSIDE the action row below, on purpose: that row
+          is still hover-revealed wherever a pointer exists, and a confirmation
+          that vanishes when the pointer leaves the card is not a confirmation.
+          The run confirm can also be raised by a drag that ends nowhere near
+          this card. */}
+      {confirmingDelete && (
+        <div
+          className="mt-2 rounded-md border border-danger/35 bg-danger/10 px-2 py-1.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="line-clamp-3 text-[11px] leading-relaxed text-danger">
+            Delete &ldquo;{task.title}&rdquo;? This cannot be undone.
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => {
+                setConfirmingDelete(false);
+                onDelete();
+              }}
+              className="rounded-md border border-danger/40 bg-danger/15 px-2 py-1 text-[11px] font-medium text-danger hover:border-danger/60"
+            >
+              Yes, delete it
+            </button>
+            <button
+              onClick={() => setConfirmingDelete(false)}
+              className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+            >
+              Keep it
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* The per-card twin of the batch runner's price panel
+          (RunPendingTasksButton above): state the credits, then charge only on
+          confirm. The figure is the server's own planned cost for this task, not
+          a constant. */}
+      {runPrompt && (
+        <div
+          className="mt-2 rounded-md border border-neon/30 bg-neon/10 px-2 py-1.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-[11px] leading-relaxed text-foreground">
+            {"Runs this task now for "}
+            <span className="font-medium text-neon">
+              {`${runPrompt.credits} credit${runPrompt.credits === 1 ? "" : "s"}`}
+            </span>
+            .
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={onConfirmRun}
+              className="rounded-md border border-neon/30 bg-neon/15 px-2 py-1 text-[11px] font-medium text-neon hover:border-neon/50"
+            >
+              {`Run & charge ${runPrompt.credits} credit${runPrompt.credits === 1 ? "" : "s"}`}
+            </button>
+            <button
+              onClick={onCancelRun}
+              className="rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* REACHABLE WITHOUT A POINTER. This row used to be `hidden … group-hover:flex`
+          — display:none until hover — so on a touch device every per-card action
+          was unreachable, and `group-focus-within` could not rescue it from the
+          inside because a `hidden` child is not focusable.
+
+          The resting state is now `flex`; the HIDE is what carries a condition,
+          `@media (hover: hover)`, which is the very media query Tailwind v4 wraps
+          `group-hover:` in (compile `group-hover:flex` and read it). So the hide
+          and the reveal are co-extensive BY CONSTRUCTION: no device can be told to
+          hide this row without also being able to hover it back, and a device with
+          no hover keeps the row. Where a pointer exists the resting card height is
+          exactly what it was.
+
+          flex-wrap: on narrow columns the buttons stack instead of spilling past
+          the card border. */}
       <div
-        className="mt-2 hidden flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 group-hover:flex group-focus-within:flex"
+        className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 [@media(hover:hover)]:hidden group-hover:flex group-focus-within:flex"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -341,21 +498,29 @@ function TaskCard({
             <Icon name="ExternalLink" className="h-3 w-3 shrink-0" />
             Open Details
           </button>
-          {task.status !== "in_progress" && (
+          {/* onMove is routed through the board's price gate, so this button
+              (and the retry above) asks before a managed run charges. While the
+              price panel is up the button is gone — the panel is the control. */}
+          {task.status !== "in_progress" && !runPrompt && (
             <button
               onClick={() => onMove("in_progress")}
-              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1.5 text-xs font-medium text-neon hover:border-neon/50"
+              disabled={pricing}
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-neon/30 bg-neon/10 px-2.5 py-1.5 text-xs font-medium text-neon hover:border-neon/50 disabled:opacity-50"
             >
-              <Icon name="Play" className="h-3 w-3 shrink-0" />
+              <Icon
+                name={pricing ? "Loader" : "Play"}
+                className={cn("h-3 w-3 shrink-0", pricing && "animate-spin")}
+              />
               {owner === "karos_managed" ? "Run Agent" : "Start"}
             </button>
           )}
         </div>
-        {canDelete && (
+        {canDelete && !confirmingDelete && (
           <button
-            onClick={onDelete}
+            onClick={() => setConfirmingDelete(true)}
             className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-muted hover:bg-danger/10 hover:text-danger"
             title="Delete task"
+            aria-label="Delete task"
           >
             <Icon name="Trash2" className="h-3.5 w-3.5" />
           </button>
@@ -372,6 +537,10 @@ function SortableTaskCard({
   onMove,
   canDelete,
   onDelete,
+  runPrompt,
+  pricing,
+  onConfirmRun,
+  onCancelRun,
 }: {
   task: BoardTask;
   showClientName?: boolean;
@@ -379,11 +548,15 @@ function SortableTaskCard({
   onMove: (status: BoardStatus) => void;
   canDelete: boolean;
   onDelete: () => void;
+  runPrompt: { credits: number } | null;
+  pricing: boolean;
+  onConfirmRun: () => void;
+  onCancelRun: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { kind: "task-card", status: task.status },
-    disabled: task.metadata?.executing === true,
+    disabled: taskIsExecuting(task),
   });
 
   const style = {
@@ -401,6 +574,10 @@ function SortableTaskCard({
         onMove={onMove}
         canDelete={canDelete}
         onDelete={onDelete}
+        runPrompt={runPrompt}
+        pricing={pricing}
+        onConfirmRun={onConfirmRun}
+        onCancelRun={onCancelRun}
         dragHandle={{ attributes, listeners }}
       />
     </div>
@@ -409,7 +586,6 @@ function SortableTaskCard({
 
 function BoardColumn({
   status,
-  label,
   icon,
   tasks,
   showClientName,
@@ -418,9 +594,12 @@ function BoardColumn({
   onMoveTask,
   onDeleteTask,
   canDelete,
+  runPrompt,
+  pricingTaskId,
+  onConfirmRun,
+  onCancelRun,
 }: {
   status: BoardStatus;
-  label: string;
   icon: string;
   tasks: BoardTask[];
   showClientName?: boolean;
@@ -429,18 +608,25 @@ function BoardColumn({
   onMoveTask: (task: BoardTask, status: BoardStatus) => void;
   onDeleteTask: (task: BoardTask) => void;
   canDelete: boolean;
+  /** The one card, board-wide, currently showing a run price to confirm. */
+  runPrompt: { taskId: string; credits: number } | null;
+  pricingTaskId: string | null;
+  onConfirmRun: () => void;
+  onCancelRun: () => void;
 }) {
   const droppableId = `column:${status}`;
   const { setNodeRef, isOver } = useDroppable({ id: droppableId, data: { kind: "column", status } });
-  const columnStatus = STATUS_META[status];
   const isTarget = Boolean(draggingTaskId) && isOver;
 
   return (
     <section className="flex min-w-0 flex-col">
       <div className="mb-2 flex items-center gap-2 px-1">
         <Icon name={icon} className="h-4 w-4 text-muted" />
-        <h3 className="text-sm font-semibold text-foreground">{label}</h3>
-        <span className={cn("h-2 w-2 rounded-full", columnStatus.dot)} />
+        {/* The heading asks the register with THIS column's own status, rather
+            than printing a word the mount handed down — so the heading and the
+            badges under it cannot be given two different names for one state. */}
+        <h3 className="text-sm font-semibold text-foreground">{taskStatusLabel(status)}</h3>
+        <span className={cn("h-2 w-2 rounded-full", STATUS_DOT[status])} />
         <span className="ml-auto rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-muted">
           {tasks.length}
         </span>
@@ -463,6 +649,10 @@ function BoardColumn({
                 onMove={(next) => onMoveTask(task, next)}
                 canDelete={canDelete}
                 onDelete={() => onDeleteTask(task)}
+                runPrompt={runPrompt?.taskId === task.id ? { credits: runPrompt.credits } : null}
+                pricing={pricingTaskId === task.id}
+                onConfirmRun={onConfirmRun}
+                onCancelRun={onCancelRun}
               />
             ))}
             {tasks.length === 0 && (
@@ -472,7 +662,11 @@ function BoardColumn({
                   isTarget ? "border-neon/50 bg-neon/10" : "border-border/90",
                 )}
               >
-                <p className="px-4 text-xs text-muted-2">{isTarget ? "Drop task here" : `No ${label.toLowerCase()} tasks`}</p>
+                {/* The register's word again, lower-cased into the sentence —
+                    the fourth place this column had a name for its own state. */}
+                <p className="px-4 text-xs text-muted-2">
+                  {isTarget ? "Drop task here" : `No ${taskStatusLabel(status).toLowerCase()} tasks`}
+                </p>
               </div>
             )}
           </div>
@@ -487,9 +681,30 @@ interface Props {
   currentUserRole: Role;
   showClientName?: boolean;
   clientId?: string;
+  /**
+   * The owner the router just sent a newly added task to, with a `nonce` that
+   * changes on every add.
+   *
+   * `ingestCustomUserTaskAction` puts the typed text through a model that picks
+   * the owner — the client never chooses it — and its success line names the
+   * card ("Added …"). Without this the board stayed on whatever tab it was on,
+   * so a task routed to Automated while the client sat on "Depending on you"
+   * was announced by name and rendered nowhere.
+   *
+   * The nonce is what makes a SECOND add to the same tab register: the owner
+   * alone does not change between two adds, so an owner-only comparison fires
+   * once and then goes quiet.
+   */
+  revealOwner?: { owner: TaskOwner; nonce: number } | null;
 }
 
-export function TasksBoard({ tasks, currentUserRole, showClientName = false, clientId }: Props) {
+export function TasksBoard({
+  tasks,
+  currentUserRole,
+  showClientName = false,
+  clientId,
+  revealOwner = null,
+}: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Deep link from the notification bell: ?owner= picks the tab, ?task= opens
@@ -500,9 +715,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   const taskParam = searchParams.get("task");
   const linkedTask = taskParam ? tasks.find((t) => t.id === taskParam) : undefined;
   const initialTab: OwnerTab = linkedTask
-    ? inferOwner(linkedTask) === "client_managed"
-      ? "client"
-      : "karos"
+    ? ownerTab(inferOwner(linkedTask))
     : ownerParam === "client"
       ? "client"
       : "karos";
@@ -515,12 +728,19 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   const [execError, setExecError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(linkedTask?.id ?? null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  // The one card, board-wide, whose run has been priced and is awaiting a yes.
+  const [runPrompt, setRunPrompt] = useState<{ taskId: string; credits: number } | null>(null);
+  const [pricingTaskId, setPricingTaskId] = useState<string | null>(null);
   const dragSnapshotRef = useRef<BoardTask[] | null>(null);
   const [, startTransition] = useTransition();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const canDelete = true;
-  void currentUserRole;
+  // The price confirmation exists to protect a CLIENT's credits, so staff never
+  // meet it — not even the round trip that prices the run. An admin in "View as
+  // Client" also reads as CLIENT_USER here and is sorted out by the server's own
+  // `billable` verdict in askToRun, which is the only place that can know.
+  const isClientViewer = currentUserRole === "CLIENT_USER";
 
   // Sync local state when the server re-fetches tasks (e.g., after router.refresh()).
   // Uses the "store previous prop" pattern (react.dev/learn/you-might-not-need-an-effect)
@@ -542,7 +762,28 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
     if (taskParam) setSelectedTaskId(linkedTask?.id ?? null);
   }
 
-  const hasExecuting = localTasks.some((t) => t.metadata?.executing === true);
+  // FOLLOW THE ROUTER'S VERDICT (same store-previous-prop pattern as the two
+  // blocks above). The quick-add bar hands the routed owner up on every
+  // successful add; the board goes to that owner's tab.
+  //
+  // The tab is not the only thing that can hide a brand-new card, and a reveal
+  // that fixes one of three is a promise half kept: a `statusFilter` on anything
+  // but Pending hides a just-created task just as completely, and so does a
+  // stale search query the routed title does not match (the model rewrites what
+  // the client typed). Both are cleared, so the card the success line names is
+  // on screen.
+  const revealNonce = revealOwner?.nonce ?? null;
+  const [prevRevealNonce, setPrevRevealNonce] = useState(revealNonce);
+  if (prevRevealNonce !== revealNonce) {
+    setPrevRevealNonce(revealNonce);
+    if (revealOwner) {
+      setActiveTab(ownerTab(revealOwner.owner));
+      setStatusFilter("all");
+      setSearch("");
+    }
+  }
+
+  const hasExecuting = localTasks.some(taskIsExecuting);
   const refreshBoard = useCallback(() => router.refresh(), [router]);
   useEffect(() => {
     if (!hasExecuting) return;
@@ -572,9 +813,7 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
   );
 
   const visibleTasks = useMemo(() => {
-    const ownerFiltered = localTasks.filter((task) =>
-      activeTab === "karos" ? inferOwner(task) === "karos_managed" : inferOwner(task) === "client_managed",
-    );
+    const ownerFiltered = localTasks.filter((task) => ownerTab(inferOwner(task)) === activeTab);
     const query = search.trim().toLowerCase();
 
     return ownerFiltered.filter((task) => {
@@ -614,6 +853,82 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
       }
       router.refresh();
     });
+  }
+
+  /**
+   * True when this status move is the one that spends credits: moving a
+   * karos_managed task into In Progress is what updateTaskStatusAction claims,
+   * charges and dispatches. Every other move on this board is free — a "Start"
+   * on client-owned work charges nothing and must not grow a price dialog.
+   */
+  function chargesCredits(task: BoardTask, nextStatus: BoardStatus): boolean {
+    return nextStatus === "in_progress" && inferOwner(task) === "karos_managed";
+  }
+
+  /**
+   * The single door every board path into a status change goes through — card
+   * button, retry link, drag into a column, ticket-modal footer. A billable run
+   * is priced and confirmed first; everything else commits straight away, so the
+   * gate cannot be walked around by picking a different control.
+   */
+  function requestStatusChange(
+    task: BoardTask,
+    nextStatus: BoardStatus,
+    fallbackSnapshot?: BoardTask[],
+  ) {
+    if (isClientViewer && chargesCredits(task, nextStatus)) {
+      // Leave the board exactly as it was while the question is open: a drag
+      // has already moved the card optimistically, and nothing has been charged.
+      if (fallbackSnapshot) setLocalTasks(fallbackSnapshot);
+      askToRunTask(task);
+      return;
+    }
+    commitStatusChange(task, nextStatus, fallbackSnapshot);
+  }
+
+  /** Price the run server-side, then ask. Nothing is claimed or charged yet. */
+  function askToRunTask(task: BoardTask) {
+    setExecError(null);
+    setRunPrompt(null);
+    setPricingTaskId(task.id);
+    startTransition(async () => {
+      const res = await previewTaskRunAction(task.id, task.clientId);
+      setPricingTaskId(null);
+      if (!res.ok) {
+        setExecError(res.error ?? "Could not check what this run costs");
+        return;
+      }
+      // Nothing will be charged (staff, or an admin viewing as this client), so
+      // there is nothing to confirm — run it.
+      if (!res.billable) {
+        commitStatusChange(task, "in_progress");
+        return;
+      }
+      // A billable run whose price did not come back must NOT fall through to a
+      // zero: "Run & charge 0 credits" over a real charge is consent to the
+      // wrong amount, which is worse than refusing to quote.
+      if (typeof res.credits !== "number") {
+        setExecError("Could not check what this run costs. Try again in a moment.");
+        return;
+      }
+      setRunPrompt({ taskId: task.id, credits: res.credits });
+    });
+  }
+
+  function confirmTaskRun() {
+    if (!runPrompt) return;
+    const task = localTasks.find((t) => t.id === runPrompt.taskId);
+    // Clear FIRST, so a second press during the transition cannot commit twice:
+    // the charge sits behind an atomic claim server-side, but a UI that lets a
+    // client press "charge me" twice is not something to leave to that.
+    setRunPrompt(null);
+    if (!task) {
+      // The panel outlived its card (a refresh archived or deleted it). Say so
+      // rather than silently doing nothing — the client pressed a charge button.
+      setExecError("That task is no longer on your board. Nothing was charged.");
+      return;
+    }
+    commitStatusChange(task, "in_progress");
   }
 
   function handleDelete(task: BoardTask) {
@@ -677,7 +992,9 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
       return;
     }
 
-    commitStatusChange(previousTask, targetStatus, snapshot);
+    // Dragging a managed card into In Progress is the run button by another
+    // name — same claim, same charge — so it meets the same price gate.
+    requestStatusChange(previousTask, targetStatus, snapshot);
   }
 
   // Client-owned work never sits in "Review Pending" (that state is for AI drafts
@@ -804,10 +1121,19 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
                 className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground @3xl:flex-none @3xl:shrink-0"
               >
                 <option value="all">All statuses</option>
-                <option value="pending">Pending</option>
-                <option value="in_progress">In Progress</option>
-                <option value="review_pending">Review Pending</option>
-                <option value="completed">Done</option>
+                {/* Generated from the column list, worded by the register. These
+                    four options were the board's THIRD hand-typed copy of the
+                    state names, sitting inches under the headings and the badges
+                    that spelled them twice more. Off BOARD_COLUMNS rather than
+                    `visibleColumns`: which states the filter can NAME is not the
+                    same question as which get a column on this tab, and a client
+                    task stuck in review_pending is shown in Pending rather than
+                    dropped, so the option still selects something. */}
+                {BOARD_COLUMNS.map((column) => (
+                  <option key={column.status} value={column.status}>
+                    {taskStatusLabel(column.status)}
+                  </option>
+                ))}
               </select>
               {showClientName && (
                 <select
@@ -872,15 +1198,18 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
             <BoardColumn
               key={column.status}
               status={column.status}
-              label={column.label}
               icon={column.icon}
               tasks={tasksByColumn[column.status]}
               showClientName={showClientName}
               draggingTaskId={draggingTaskId}
               onOpenTask={(id) => setSelectedTaskId(id)}
-              onMoveTask={(task, nextStatus) => commitStatusChange(task, nextStatus)}
+              onMoveTask={(task, nextStatus) => requestStatusChange(task, nextStatus)}
               onDeleteTask={handleDelete}
               canDelete={canDelete}
+              runPrompt={runPrompt}
+              pricingTaskId={pricingTaskId}
+              onConfirmRun={confirmTaskRun}
+              onCancelRun={() => setRunPrompt(null)}
             />
           ))}
         </div>
@@ -894,12 +1223,19 @@ export function TasksBoard({ tasks, currentUserRole, showClientName = false, cli
             if (status === "archived") return;
             const current = localTasks.find((task) => task.id === id);
             if (!current) return;
-            commitStatusChange(current, status as BoardStatus);
+            // The ticket footer's "Move to In Progress" charges exactly like the
+            // card button, and the modal closes on press — so the price panel it
+            // raises lands on the card the client just came from.
+            requestStatusChange(current, status as BoardStatus);
             void cid;
           }}
           onLocalUpdate={(updated) =>
             setLocalTasks((prev) => prev.map((task) => (task.id === updated.id ? { ...updated } : task)))
           }
+          // The ticket footer's delete is the SAME handler the card's trash icon
+          // reaches — one delete path, one authorization, one optimistic removal
+          // and one rollback. It is the only one a touch device can get to.
+          onDelete={() => handleDelete(selectedTask)}
         />
       )}
     </>

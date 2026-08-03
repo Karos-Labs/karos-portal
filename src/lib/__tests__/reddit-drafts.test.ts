@@ -395,7 +395,14 @@ describe("the Reddit intake follows them too", () => {
     // empty page. The copy names the approval step and links the destination —
     // it no longer names the unit the work ships in.
     expect(intake).toContain("Once your Karos team has approved the replies");
-    expect(intake).toContain('href="/tasks?tab=archive"');
+    // The URL itself is no longer written here. This page is staff-reachable and
+    // `?tab=` is read only by ProgressView, which TasksBody mounts only with a
+    // client in scope — so a staff viewer at the flat /tasks got the
+    // cross-client board and no archive at all (#90). The destination and its
+    // label are resolved per role by clientArchiveLink, whose own answers are
+    // pinned in agent-intake-navigation.test.ts.
+    expect(intake).toContain("clientArchiveLink({ clientId, isStaff })");
+    expect(intake).toContain("href={archive.href}");
   });
 });
 

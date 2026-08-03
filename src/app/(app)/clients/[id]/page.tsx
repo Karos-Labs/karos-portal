@@ -1,7 +1,6 @@
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
 import {
-  getClient,
   getClientSeoGeo,
   listAssets,
   listJobs,
@@ -10,6 +9,7 @@ import {
   listClientCompetitors,
 } from "@/lib/data";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
+import { isBillableClientActor } from "@/lib/credits";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
@@ -33,10 +33,14 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   const isClientViewer = user.role === "CLIENT_USER";
+  // NOT the same question as isClientViewer, and the difference is money: an
+  // admin in "View as Client" reads CLIENT_USER but is never charged. Surfaces
+  // that quote a price ask this one; surfaces that pick a vocabulary ask the
+  // other.
+  const viewerIsBilled = isBillableClientActor(user);
 
   const [assets, jobs, integrations, seoGeo, tasks, competitors] = await Promise.all([
     listAssets({ clientId: id }),
@@ -79,6 +83,11 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       assets={analyticsAssets}
       jobs={jobs}
       integrations={integrations}
+      // The chart names statuses, and this one mount serves both readers: a
+      // client reads "Posted", staff read "Awaiting review" (asset-status-copy's
+      // two registers). Separate from hideStats below on purpose — that one is
+      // about layout, this one is about vocabulary.
+      viewerIsClient={isClientViewer}
       // CD-H1: for a client the counter row is lifted to the top of Overview
       // (below), so the Performance tab must not repeat it - the same
       // hide-what-was-lifted contract the visibility panel already uses.
@@ -134,7 +143,9 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           <section className="space-y-3">{analytics}</section>
           <section className="space-y-3">{visibilityPanel}</section>
           <section className="space-y-3">
-            <AiInsights clientId={client.id} />
+            {/* Staff branch — agency overhead, never billed, so no price is
+                quoted here even though the refresh does spend Karos money. */}
+            <AiInsights clientId={client.id} viewerIsBilled={viewerIsBilled} />
           </section>
         </div>
       </>
@@ -179,7 +190,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   return (
     <>
       <p className="mb-6 text-sm text-muted">
-        {firstName ? `Welcome back, ${firstName}` : "Welcome back"} - here&apos;s what&apos;s
+        {firstName ? `Welcome back, ${firstName}` : "Welcome back"}. Here&apos;s what&apos;s
         happening across the {client.name} workspace.
       </p>
       <div className="space-y-8">
@@ -194,8 +205,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               assets={analyticsAssets}
               jobs={jobs}
               integrations={integrations}
+              // A3: the "Agent runs · Last run …" tile is the generation batch,
+              // so a client gets four tiles about their own content and none
+              // about our machinery. See the component's note.
+              viewerIsClient={isClientViewer}
             />
             <ClientHomeOverview
+              clientId={client.id}
               tasks={tasks}
               assets={overviewAssets}
               viewerIsClient={isClientViewer}
@@ -204,7 +220,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         </section>
         <section className="space-y-3">
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">AI Insights</p>
-          <AiInsights clientId={client.id} />
+          <AiInsights clientId={client.id} viewerIsBilled={viewerIsBilled} />
         </section>
         <ClientDashboardTabs performance={analytics} visibility={visibility} />
       </div>

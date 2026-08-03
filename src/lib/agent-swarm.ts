@@ -27,11 +27,12 @@ import {
   getTaskBoardCapacity,
   createClientTask,
 } from "@/lib/data";
-import { findDuplicateReason, normalizeTitleForDedup } from "@/lib/task-dedup";
+import { findDuplicateReason, normalizeTitleForDedup, queueCapacitySkipNote } from "@/lib/task-dedup";
 import { getClientCustomAgents, type ClientCustomAgentSummary } from "@/lib/agent-roster";
 import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engine";
 import { integrationIsUsable } from "@/lib/integration-status";
 import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -129,7 +130,8 @@ const TURN_ORDER: SwarmAgentId[] = ["seo", "creative", "data"];
 
 export interface SwarmContext {
   clientName: string;
-  industry?: string | null;
+  /** The client's category, resolved by `clientCategoryValue` at build time. */
+  category?: string | null;
   /** Connected platforms vs the 14-day calendar — where the gaps are. */
   gapSummary: string;
   /** Brand voice / tone / visual style guidance for the Creative Director. */
@@ -215,7 +217,7 @@ function buildTurnPrompt(
       ? ctx.customAgents.map((a) => `- ${a.id}: ${a.name} — ${a.description}`).join("\n")
       : "(none assigned to this client — use managed productTypes only)";
 
-  return `CLIENT: ${ctx.clientName}${ctx.industry ? ` — ${ctx.industry}` : ""}
+  return `CLIENT: ${ctx.clientName}${ctx.category ? ` — ${ctx.category}` : ""}
 DEBATE ROUND: ${round} of ${totalRounds}
 
 CONTENT & INTEGRATION GAPS:
@@ -500,7 +502,10 @@ export async function persistSwarmTasks(
 
   const notes = [
     duplicatesSkipped > 0 ? `${duplicatesSkipped} duplicate${duplicatesSkipped !== 1 ? "s" : ""} skipped` : "",
-    capSkipped > 0 ? `${capSkipped} deferred - queue at capacity` : "",
+    // The war-room console prints this note verbatim inside the CLIENT copilot
+    // dock (strategy-war-room.tsx, ConsoleLine "persisted"), so it is client
+    // copy — see queueCapacitySkipNote for why all three callers share it.
+    capSkipped > 0 ? queueCapacitySkipNote(capSkipped) : "",
   ].filter(Boolean);
   return {
     created: fresh.length,
@@ -586,7 +591,7 @@ export async function buildSwarmContext(
 
   return {
     clientName: client.name,
-    industry: client.industry,
+    category: clientCategoryValue(client),
     gapSummary,
     brandingSummary,
     benchmarkSummary,

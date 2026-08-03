@@ -1,6 +1,6 @@
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { normalizeDashes } from "@/lib/text-utils";
+import { taskIsExecuting } from "@/lib/task-status-copy";
 import type { ClientTask } from "@/lib/types";
 
 const ROLE_ICON: Record<string, string> = {
@@ -14,7 +14,9 @@ type StepTone = "done" | "review" | "active" | "failed" | "waiting" | "idle";
 function stepTone(task: ClientTask, blocked: boolean): StepTone {
   if (task.status === "completed") return "done";
   if (task.status === "review_pending") return "review";
-  if (task.metadata?.executing === true || task.status === "in_progress") return "active";
+  // The flag is asked through the register's own predicate — the sweep in
+  // task-status-copy.test.ts pins every render surface to it.
+  if (taskIsExecuting(task) || task.status === "in_progress") return "active";
   if (task.metadata?.executionError) return "failed";
   if (blocked) return "waiting";
   return "idle";
@@ -100,11 +102,16 @@ export function CampaignStepProgress({ tasks }: { tasks: ClientTask[] }) {
                   Waiting on &quot;{blockers[0].title}&quot;
                 </p>
               )}
-              {tone === "failed" && task.metadata?.executionError ? (
+              {/* The stored executionError is a raw engine diagnostic (model
+                  refusals, stack fragments) — client-copy-boundary pins it to
+                  ZERO text readers, so the sentence is fixed and the tone
+                  (which stepTone derives from the flag) decides whether to
+                  say it. */}
+              {tone === "failed" && (
                 <p className="mt-0.5 truncate text-xs text-danger">
-                  {normalizeDashes(String(task.metadata.executionError))}
+                  This step hit a problem. Your Karos team is on it.
                 </p>
-              ) : null}
+              )}
             </div>
           </div>
         );

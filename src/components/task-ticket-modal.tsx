@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect, useTransition, useRef } from "react";
+import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { renderAssetBody } from "@/lib/doc-render";
-import { normalizeDashes } from "@/lib/text-utils";
+import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
+import { taskPriorityLabel, TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
 import {
   getTaskCommentsAction,
   addTaskCommentAction,
@@ -59,14 +61,15 @@ function nextStatusFor(task: ClientTask): TaskStatus {
   return next;
 }
 
-const STATUS_LABEL: Record<TaskStatus, string> = {
-  pending:        "Pending",
-  in_progress:    "In Progress",
-  review_pending: "Review Pending",
-  completed:      "Done",
-  archived:       "Archived",
-};
-
+/**
+ * The GLYPH for a state — this ticket's own, and deliberately not shared with the
+ * board's column icons: the two disagree for `in_progress` (this header draws a
+ * clock, the column a play button) and folding them together would change a
+ * rendered icon to satisfy a consolidation. The WORDS come from the register
+ * (lib/task-status-copy), which is where the ticket's `STATUS_LABEL` went — it
+ * was a byte-for-byte copy of the board's column labels, and the board's card
+ * badge disagreed with both.
+ */
 const STATUS_ICON: Record<TaskStatus, string> = {
   pending:        "Circle",
   in_progress:    "Clock",
@@ -100,12 +103,19 @@ function ArtifactSection({
   taskType,
   agentName,
   mediaUrl,
+  libraryHref,
 }: {
   artifact: string;
   taskType: string;
   agentName?: string;
   /** Visual deliverable (image or video URL) produced by the agent run. */
   mediaUrl?: string | null;
+  /**
+   * Set when the run's only deliverable is a library file — a PDF, say, with no
+   * caption text and nothing previewable inline. Without it the section has
+   * nothing to draw and the client is asked to approve a blank card.
+   */
+  libraryHref?: string | null;
 }) {
   const isEmailArtifact = taskType === "integration_action";
   const isVideo = mediaUrl ? VIDEO_EXT.test(mediaUrl) : false;
@@ -139,11 +149,28 @@ function ArtifactSection({
         </div>
       )}
 
-      <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
-        <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
-          {normalizeDashes(artifact)}
-        </pre>
-      </div>
+      {/* No text, nothing previewable — say where the file is rather than
+          drawing an empty frame above a live Approve button. */}
+      {artifact.trim() === "" && !mediaUrl && libraryHref && (
+        <div className="rounded-md border border-border bg-surface-2 p-3">
+          <p className="text-xs leading-relaxed text-muted">
+            This deliverable is a file with no preview.{" "}
+            <Link href={libraryHref} className="text-neon underline underline-offset-2">
+              Open it in Assets
+            </Link>{" "}
+            to read it before approving.
+          </p>
+        </div>
+      )}
+
+      {/* An image-only run has no text body; an empty frame reads as a failure. */}
+      {artifact.trim() !== "" && (
+        <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-3">
+          <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
+            {artifact}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }
@@ -252,7 +279,7 @@ function ReviewPanel({
               Auto-publish at the scheduled time
             </span>
             <span className="block text-[11px] text-muted">
-              Requires the target channel to be connected with auto-publish enabled - otherwise it
+              Requires the target channel to be connected with auto-publish enabled. Otherwise it
               lands on the calendar, where you open the post and press Publish Now.
             </span>
           </span>
@@ -348,17 +375,34 @@ function AiPlanSection({
   initialPlan: string | null;
 }) {
   const [plan, setPlan] = useState<string | null>(initialPlan);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   // A guide the user just asked for opens; one that was already stored starts
   // folded so it cannot push the comment box below the fold.
   const [expanded, setExpanded] = useState(!initialPlan);
 
+  // The action returns its refusal as `{ plan: "", error }` — a credit denial
+  // among them. Throwing that away made every refusal look like a dead button:
+  // the control vanished while pending, came back, and said nothing. Same
+  // pattern the approve / adjust handlers above use.
   function generate() {
+    setPlanError(null);
     startTransition(async () => {
-      const result = await generateTaskPlanAction(taskId, clientId);
-      if (result.plan) {
-        setPlan(result.plan);
-        setExpanded(true);
+      // The try/catch is the other half of the same defect: refusals come back
+      // as `{ plan: "", error }`, but a model or provider failure REJECTS
+      // (task-actions.ts logs and rethrows). An un-caught rejection here escapes
+      // the transition to an error boundary and leaves exactly the dead button
+      // this fix exists to remove.
+      try {
+        const result = await generateTaskPlanAction(taskId, clientId);
+        if (result.plan) {
+          setPlan(result.plan);
+          setExpanded(true);
+        } else {
+          setPlanError(result.error ?? "Could not generate the execution guide.");
+        }
+      } catch {
+        setPlanError("Could not generate the execution guide right now. Try again in a moment.");
       }
     });
   }
@@ -396,6 +440,13 @@ function AiPlanSection({
         )}
       </div>
 
+      {planError && (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-danger/25 bg-danger/10 px-3 py-2">
+          <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger mt-px" />
+          <p className="text-xs text-danger break-words">{planError}</p>
+        </div>
+      )}
+
       {isPending ? (
         <div className="flex items-center gap-2 py-4 text-xs text-muted">
           <Icon name="Loader" className="h-3.5 w-3.5 animate-spin text-neon" />
@@ -413,7 +464,7 @@ function AiPlanSection({
           />
         ) : (
           <p className="text-xs text-muted">
-            Execution guide ready - {countPlanSteps(plan)}. Press Show to read it.
+            Execution guide ready · {countPlanSteps(plan)}. Press Show to read it.
           </p>
         )
       ) : (
@@ -565,9 +616,18 @@ interface Props {
   onClose: () => void;
   onStatusChange: (id: string, status: TaskStatus, clientId: string) => void;
   onLocalUpdate: (updated: ClientTask & { _clientName?: string }) => void;
+  /**
+   * Dismiss this task — the board's one delete path, which is what reaches
+   * `deleteTaskAction` (and its authorization). REQUIRED, not optional: the
+   * board card's own trash icon lives in a pointer-revealed row, so this footer
+   * is the only delete a phone can reach, and a prop that a mount may silently
+   * omit is the shape that left `onAdded` dead for every render. tsc is the
+   * guard — every mount must hand this over.
+   */
+  onDelete: () => void;
 }
 
-export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }: Props) {
+export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, onDelete }: Props) {
   const src = SOURCE_LABEL[task.source] ?? SOURCE_LABEL.manual;
   const prio = PRIORITY_COLOR[task.priority] ?? PRIORITY_COLOR.low;
   const initialPlan = (task.metadata?.aiPlan as string | undefined) ?? null;
@@ -575,14 +635,37 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
   const taskType = (task.metadata?.type as string | undefined) ?? "content_generation";
   const executingAgentName = (task.metadata?.agentName as string | undefined) ?? undefined;
   const artifactMediaUrl = (task.metadata?.artifactImageUrl as string | undefined) ?? null;
+  /**
+   * The three shapes a deliverable comes in — text, an inline image or video,
+   * or a library file with no preview. `deliveredNothing` in task-sync counts
+   * all three as "something came back", so the ticket has to be able to show
+   * all three; gating on the text alone is what left a live Approve button over
+   * an empty card.
+   */
+  const artifactLibraryHref =
+    ((task.metadata?.artifactAssetIds as string[] | undefined) ?? []).length > 0
+      ? `/clients/${task.clientId}/assets`
+      : null;
   const isReviewPending = task.status === "review_pending";
-  const isExecuting = task.metadata?.executing === true;
+  const isExecuting = taskIsExecuting(task);
+  /**
+   * The run reported success and handed the ticket nothing (task-sync's
+   * `deliveredNothing`), and the task is still sitting where that left it.
+   * Without this the ticket just went quiet: it dropped back to pending with no
+   * explanation, having previously shown an "artifact" that was only the task's
+   * own title.
+   */
+  const noDeliverable = ranWithoutDeliverable(task);
   const failedUpload = task.metadata?.failedUpload as boolean | undefined;
   const failedUploadError = task.metadata?.failedUploadError as string | undefined;
   const nextStatus = nextStatusFor(task);
   // The AI plan is a guide for the client to execute the task themselves -
   // not useful for karos_managed tasks our own agents already run.
   const isClientManaged = inferOwner(task) === "client_managed";
+  // Two-step confirm for the footer's destructive control, the same shape the
+  // card's trash icon uses: the button arms the question, and `onDelete`
+  // (⇒ deleteTaskAction, which authorizes) is unreachable until "Yes, delete it".
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -655,11 +738,14 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
               </span>
               <span
                 className={cn(
-                  "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold capitalize",
+                  "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold",
                   prio,
                 )}
               >
-                {task.priority}
+                {/* The register, not the stored value under CSS `capitalize`.
+                    Casing is not a label: it renders whatever the database
+                    holds, and it cannot fix a value that is not already a word. */}
+                {taskPriorityLabel(task.priority)}
               </span>
               {failedUpload && (
                 <span className="inline-flex items-center gap-1 rounded-full border border-danger/30 bg-danger/10 px-2 py-0.5 text-[10px] font-semibold text-danger">
@@ -673,7 +759,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
                 ) : (
                   <Icon name={STATUS_ICON[task.status]} className="h-3 w-3" />
                 )}
-                {isExecuting ? "AI Working…" : STATUS_LABEL[task.status]}
+                {isExecuting ? TASK_RUNNING_LABEL : taskStatusLabel(task.status)}
               </span>
             </div>
             {/* Title */}
@@ -689,7 +775,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
                 className="mt-1 inline-flex items-center gap-1 text-xs text-neon hover:underline"
               >
                 <Icon name="Boxes" className="h-3 w-3" />
-                Part of a campaign - view run
+                Part of a campaign · view run
               </a>
             )}
           </div>
@@ -718,13 +804,41 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
             </div>
           )}
 
+          {/* A run that finished with nothing to review. Sits where the
+              deliverable would have been, so the answer to "where is it?" is in
+              the place the client looked. The money is stated in the credit
+              history, which carries the refund row — not restated here, because
+              task-sync cannot tell an already-refunded charge from one that was
+              never made. */}
+          {noDeliverable && (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-4 py-3">
+              <p className="text-sm font-medium text-warning">
+                This run finished without producing anything
+              </p>
+              <p className="mt-0.5 text-xs text-muted">
+                There is nothing to review, so the task is back on your board. Move it to In
+                Progress to run it again.
+              </p>
+            </div>
+          )}
+
           {/* Generated artifact (review_pending only) */}
-          {isReviewPending && artifact && !isExecuting && (
+          {/*
+            EITHER HALF of the deliverable opens this section, not the text
+            alone. An image-only or asset-only run writes `artifact: ""` — a
+            value no writer produced before task-sync dropped its `|| task.title`
+            fallback — and this section is the only place `artifactImageUrl` is
+            ever painted. Gating it on the text meant such a run rendered as
+            literally nothing above a live Approve button: the client was asked
+            to approve a deliverable they had never been shown.
+          */}
+          {isReviewPending && (artifact || artifactMediaUrl || artifactLibraryHref) && !isExecuting && (
             <ArtifactSection
-              artifact={artifact}
+              artifact={artifact ?? ""}
               taskType={taskType}
               agentName={executingAgentName}
               mediaUrl={artifactMediaUrl}
+              libraryHref={artifactLibraryHref}
             />
           )}
 
@@ -761,36 +875,89 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate }
           <CommentsSection taskId={task.id} clientId={task.clientId} />
         </div>
 
-        {/* Footer */}
-        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-surface-2 px-5 py-3">
-          <p className="text-xs text-muted-2">
-            Created {relativeTime(task.createdAt)}
-          </p>
-          {/* For review_pending, the footer CTA is handled inside ReviewPanel.
-              For other states, show the standard "Move to" button. */}
-          {!isReviewPending && (
-            <button
-              onClick={() => {
-                onStatusChange(task.id, nextStatus, task.clientId);
-                onClose();
-              }}
-              disabled={isExecuting}
-              className="flex items-center gap-1.5 rounded-md border border-border bg-surface-3 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-40"
-            >
-              <Icon
-                name={
-                  nextStatus === "completed"
-                    ? "Check"
-                    : nextStatus === "in_progress"
-                      ? "Play"
-                      : nextStatus === "review_pending"
-                        ? "Eye"
-                        : "RotateCcw"
-                }
-                className="h-3 w-3"
-              />
-              Move to {STATUS_LABEL[nextStatus]}
-            </button>
+        {/* Footer — and the one delete control that exists at EVERY width.
+            The card's own trash icon lives in a row that is revealed by hover
+            wherever a pointer exists, and a tap on the card opens THIS panel over
+            the board, so without a delete here a client on a phone could add
+            tasks from the always-visible quick-add bar and never remove one.
+            "Open Details" is the tap itself and "Run Agent"/"Start" is the Move
+            button beside this; delete was the action with no second home. */}
+        <div className="shrink-0 border-t border-border bg-surface-2 px-5 py-3">
+          {confirmingDelete ? (
+            <div className="rounded-md border border-danger/35 bg-danger/10 px-3 py-2">
+              {/* The task is named by the heading directly above this panel, so
+                  the question does not repeat the title. */}
+              <p className="text-xs leading-relaxed text-danger">
+                Delete this task? This cannot be undone.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => {
+                    setConfirmingDelete(false);
+                    onDelete();
+                    onClose();
+                  }}
+                  className="rounded-md border border-danger/40 bg-danger/15 px-2.5 py-1.5 text-xs font-medium text-danger transition-colors hover:border-danger/60"
+                >
+                  Yes, delete it
+                </button>
+                <button
+                  onClick={() => setConfirmingDelete(false)}
+                  className="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground"
+                >
+                  Keep it
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-muted-2">Created {relativeTime(task.createdAt)}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Off mid-run for the reason deleteTaskAction refuses it: the run
+                    would keep burning compute with no task left for its webhook to
+                    land on, and the upfront charge could never be refunded. Said
+                    here rather than left to a refusal after the press. */}
+                <button
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={isExecuting}
+                  title={
+                    isExecuting
+                      ? "Wait for the run to finish before dismissing this task"
+                      : "Delete task"
+                  }
+                  className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-40"
+                >
+                  <Icon name="Trash2" className="h-3 w-3" />
+                  Delete
+                </button>
+                {/* For review_pending, the primary CTA is handled inside
+                    ReviewPanel. For other states, show the "Move to" button. */}
+                {!isReviewPending && (
+                  <button
+                    onClick={() => {
+                      onStatusChange(task.id, nextStatus, task.clientId);
+                      onClose();
+                    }}
+                    disabled={isExecuting}
+                    className="flex items-center gap-1.5 rounded-md border border-border bg-surface-3 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-40"
+                  >
+                    <Icon
+                      name={
+                        nextStatus === "completed"
+                          ? "Check"
+                          : nextStatus === "in_progress"
+                            ? "Play"
+                            : nextStatus === "review_pending"
+                              ? "Eye"
+                              : "RotateCcw"
+                      }
+                      className="h-3 w-3"
+                    />
+                    Move to {taskStatusLabel(nextStatus)}
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>

@@ -203,11 +203,15 @@ export function BrandingModal({
     }
   }
 
+  // Sentence case, and the same words as the control that opens it: the client
+  // rail's pencil is aria-labelled "Edit branding guidelines"
+  // (client-context-sections.tsx), so Title Case here made the dialog disagree
+  // with its own trigger.
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={existing ? "Edit Branding Guidelines" : "Set Branding Guidelines"}
+      title={existing ? "Edit branding guidelines" : "Set branding guidelines"}
       description="These guidelines are used by AI agents to produce on-brand content for this client."
       className="max-w-xl"
     >
@@ -241,7 +245,7 @@ export function BrandingModal({
           <Label>Dominant color palette</Label>
           <p className="mb-2 text-[11px] text-muted-2">
             Up to 4 colors ordered by visual prominence. Color 1 = most dominant (logo, main CTA). No dark/light constraints.
-            {allowUsagePct && " Usage % is internal - clients see the swatches only."}
+            {allowUsagePct && " Usage % is internal. Clients see the swatches only."}
           </p>
           <div className="space-y-2">
             {colors.map((entry, idx) => (
@@ -275,7 +279,7 @@ export function BrandingModal({
                       max={100}
                       value={entry.usagePct}
                       onChange={(e) => updateColor(idx, { usagePct: e.target.value })}
-                      placeholder="-"
+                      placeholder="–"
                       aria-label={`Usage percentage for color ${idx + 1}`}
                       className="w-[72px] pr-5 text-center font-mono text-xs"
                     />
@@ -307,7 +311,7 @@ export function BrandingModal({
                 }
               >
                 Usage total {usageTotal}%
-                {usageTotal === 100 ? "" : " - a brand mix normally adds up to 100%."}
+                {usageTotal === 100 ? "" : "a brand mix normally adds up to 100%."}
               </p>
             )}
           </div>

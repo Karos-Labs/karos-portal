@@ -31,6 +31,8 @@ interface Props {
   clientId: string;
   integrations: IntegrationView[];
   oauthEnabledPlatforms: string[];
+  /** False until Google approves Business Profile access — see oauth.ts. */
+  googleBusinessProfileRequested: boolean;
   currentUserRole: Role;
   /** Sanitized LinkedIn employee seats (no tokens) for the multi-seat workspace. */
   linkedinSeats?: SeatView[];
@@ -440,8 +442,8 @@ function PlatformCard({
 
         {pendingVerification && (
           <p className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-[11px] leading-relaxed text-warning">
-            {platform.name} is reviewing our developer account. Connecting is not available yet -
-            your Karos team will turn it on the moment it is approved.
+            {platform.name} is reviewing our developer account. Connecting is not available yet.
+            Your Karos team will turn it on the moment it is approved.
           </p>
         )}
 
@@ -453,7 +455,7 @@ function PlatformCard({
           <p className="text-[11px] text-warning/80">
             {isAdmin
               ? "OAuth env vars not set. The button above will fail until configured."
-              : "This channel isn't connectable yet - ask your Karos team to finish setting it up."}
+              : "This channel isn't connectable yet. Ask your Karos team to finish setting it up."}
           </p>
         )}
 
@@ -545,7 +547,7 @@ function PlatformCard({
         {platform.id === "linkedin" && isConnected && (
           <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
             <Icon name="Users" className="h-3.5 w-3.5" />
-            Manage Employee Seats
+            Manage employee seats
             {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? 2})`}
           </Button>
         )}
@@ -637,13 +639,18 @@ function PlatformCard({
         </div>
       )}
 
-      {/* LinkedIn employee-advocacy multi-seat workspace - modal, not inline,
-          so an unbounded roster never resizes the card in the grid. */}
+      {/* LinkedIn employee-advocacy multi-seat workspace — modal, not inline,
+          so an unbounded roster never resizes the card in the grid.
+
+          Titled "Employee seats" and not "Company Employee Roster": this card is
+          on the client settings page AND inside the onboarding wizard, and the
+          button that opens it says "Manage employee seats" — a dialog must not
+          rename the thing its own trigger just named. */}
       {platform.id === "linkedin" && isConnected && (
         <Modal
           open={seatsOpen}
           onClose={() => setSeatsOpen(false)}
-          title="Company Employee Roster"
+          title="Employee seats"
           description="Add teammates to publish and measure content on their own LinkedIn handle."
           className="max-w-2xl"
         >
@@ -681,6 +688,7 @@ function GoogleUnifiedCard({
   isOAuthEnabled,
   isConnecting,
   isAdmin,
+  businessProfileRequested,
   onOAuthConnect,
   onDisconnected,
 }: {
@@ -692,6 +700,13 @@ function GoogleUnifiedCard({
   isOAuthEnabled: boolean;
   isConnecting: boolean;
   isAdmin: boolean;
+  /**
+   * Whether the consent request actually asks for Business Profile. Google
+   * gates that scope behind a manual approval, and until it lands the portal
+   * deliberately leaves it out — so the card must not count it as a service
+   * the client failed to connect.
+   */
+  businessProfileRequested: boolean;
   onOAuthConnect: () => void;
   onDisconnected: () => void;
 }) {
@@ -701,10 +716,16 @@ function GoogleUnifiedCard({
   const [subError, setSubError] = useState<string | null>(null);
 
   const byId = new Map(integrations.map((i) => [i.platform, i]));
-  const connectedCount = GOOGLE_SUB_SERVICES.filter((s) => byId.has(s.id)).length;
-  const allConnected = connectedCount === GOOGLE_SUB_SERVICES.length;
+  // A service the consent screen never asked for is not one the client failed
+  // to connect. Without this the gated Business Profile scope makes a perfect
+  // connect read "2 / 3 connected" and never reach the healthy badge.
+  const offered = GOOGLE_SUB_SERVICES.filter(
+    (s) => s.id !== "google_business_profile" || businessProfileRequested,
+  );
+  const connectedCount = offered.filter((s) => byId.has(s.id)).length;
+  const allConnected = connectedCount === offered.length;
   const anyConnected = connectedCount > 0;
-  const anyNeedsReconnect = GOOGLE_SUB_SERVICES.some((s) => {
+  const anyNeedsReconnect = offered.some((s) => {
     const i = byId.get(s.id);
     return i && integrationNeedsReconnect(i);
   });
@@ -765,7 +786,7 @@ function GoogleUnifiedCard({
               )
             ) : anyConnected ? (
               <Badge tone="warning">
-                {connectedCount} / {GOOGLE_SUB_SERVICES.length} connected
+                {connectedCount} / {offered.length} connected
               </Badge>
             ) : (
               <Badge tone="neutral">Not connected</Badge>
@@ -779,7 +800,7 @@ function GoogleUnifiedCard({
               here (it keeps its own standalone card + OAuth below, since it's
               also a publish target), so this pill isn't part of GOOGLE_SUB_SERVICES. */}
           <div className="flex flex-wrap gap-1.5 pt-1.5">
-            {[...GOOGLE_SUB_SERVICES, { id: "youtube", label: "YouTube" }].map((s) => {
+            {[...offered, { id: "youtube", label: "YouTube" }].map((s) => {
               const connected = s.id === "youtube" ? youtubeConnected : byId.has(s.id);
               return (
                 <span
@@ -834,7 +855,7 @@ function GoogleUnifiedCard({
           <p className="text-[11px] text-warning/80">
             {isAdmin
               ? "OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will fail until configured."
-              : "Google Suite isn't connectable yet - ask your Karos team to finish setting it up."}
+              : "Google Suite isn't connectable yet. Ask your Karos team to finish setting it up."}
           </p>
         )}
 
@@ -896,7 +917,7 @@ function GoogleUnifiedCard({
                 </p>
               )}
               <p className="pt-1 text-[11px] text-muted-2">
-                Reconnecting always goes through the button above - Google issues one token pair
+                Reconnecting always goes through the button above. Google issues one token pair
                 covering all three services at once, so there&apos;s no separate per-service OAuth.
               </p>
             </div>
@@ -913,6 +934,7 @@ export function IntegrationsTab({
   clientId,
   integrations,
   oauthEnabledPlatforms,
+  googleBusinessProfileRequested,
   currentUserRole,
   linkedinSeats = [],
   seatLimit = 2,
@@ -1116,6 +1138,7 @@ export function IntegrationsTab({
             youtubeConnected={integrations.some((i) => i.platform === "youtube")}
             clientId={clientId}
             isOAuthEnabled={oauthEnabledPlatforms.includes("google_unified")}
+            businessProfileRequested={googleBusinessProfileRequested}
             isConnecting={connectingPlatform === "google_unified"}
             isAdmin={isAdmin}
             onOAuthConnect={() => openOAuthPopup("google_unified")}

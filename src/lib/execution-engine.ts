@@ -28,6 +28,7 @@ import { submitManagedJob } from "@/lib/jobs/submit-managed";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
 import type { AppUser, ClientTask, CustomAgent, ManagedTaskType, TaskOwner } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 import { logger } from "@/services/logger";
 import type { ModelId } from "@/lib/constants";
 
@@ -402,7 +403,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
         task.priority,
         taskType,
         client.name,
-        client.industry,
+        clientCategoryValue(client) ?? undefined,
         client.website,
         client.brandVoice,
         adjustmentFeedback,
@@ -530,7 +531,7 @@ export async function dispatchArtifactEmail(
     <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#07090b;padding:32px;color:#e8f0ec;">
       <div style="max-width:600px;margin:0 auto;background:#0d1117;border:1px solid #20303a;border-radius:16px;overflow:hidden;">
         <div style="padding:20px 28px;border-bottom:1px solid #20303a;">
-          <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos<span style="color:#e8f0ec;">CMO</span></span>
+          <span style="color:#FF6B2C;font-weight:700;font-size:18px;letter-spacing:0.4px;">Karos Labs</span>
         </div>
         <div style="padding:28px;">
           <p style="color:#9c9ca3;font-size:13px;margin:0 0 12px;">Delivered by Karos on behalf of ${safeClientName}</p>

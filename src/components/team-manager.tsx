@@ -132,6 +132,45 @@ function UserRow({
               <option value="CLIENT_USER">Client</option>
             </Select>
 
+            {/* REASSIGNMENT, which had no control until now.
+                `canViewClient` fences an employee out of a client they are not
+                assigned to. The two writers of that assignment both ran ONCE —
+                account creation and registration approval — so an admin could
+                enforce the fence and had no screen able to change it after the
+                fact. The create form has had this picker all along; this is the
+                same picker on an existing member.
+
+                Admin-only, which is what keeps the fence closed: a fenced
+                employee cannot call updateTeamMemberAction (requireAdmin), so
+                granting is possible and self-granting is not. */}
+            {u.role === "KAROS_EMPLOYEE" && clients.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {clients.map((c) => {
+                  const on = (u.assignedClientIds ?? []).includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      disabled={actionPending}
+                      title={on ? `Unassign ${c.name}` : `Assign ${c.name}`}
+                      onClick={() =>
+                        act(() =>
+                          updateTeamMemberAction(u.uid, {
+                            assignedClientIds: on
+                              ? (u.assignedClientIds ?? []).filter((x) => x !== c.id)
+                              : [...(u.assignedClientIds ?? []), c.id],
+                          }),
+                        )
+                      }
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors disabled:opacity-50 ${on ? "border-neon/40 bg-neon-soft text-neon" : "border-border text-muted"}`}
+                    >
+                      {c.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {!isSelf && (
               <Button
                 size="sm"

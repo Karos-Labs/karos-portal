@@ -2,12 +2,16 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { requireTaskAccess, campaignDependencyBlocker } from "./_shared";
+import {
+  TASK_LEFT_REVIEW_MESSAGE,
+  TASK_NOT_IN_REVIEW_MESSAGE,
+  campaignDependencyBlocker,
+  requireTaskAccess,
+} from "./_shared";
 import {
   getClient,
   updateClientTask,
   createTaskComment,
-  chargeClientCredits,
   claimTaskForExecution,
   claimTaskCompletion,
   releaseTaskClaim,
@@ -17,7 +21,7 @@ import {
   listAssets,
   listClientIntegrations,
 } from "@/lib/data";
-import { CreditError, isBillableClientActor } from "@/lib/credits";
+import { chargeClientModelCall } from "@/lib/client-model-charge";
 import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
@@ -38,6 +42,12 @@ const ALERT_EMAIL = "hello@karoslabs.com";
  * via plannedTaskExecutionCost so media-heavy agent runs price above the
  * in-process baseline. Returns the denial message when the charge is refused,
  * null when it went through (or wasn't needed).
+ *
+ * Charges through `chargeClientModelCall` (lib/client-model-charge.ts) rather
+ * than reaching for `chargeClientCredits` itself: who pays for a
+ * client-triggered model call is one decision, and this file used to be the
+ * fourth place that answered it. `jobId: task.id` is what pairs the crash
+ * reconciler's refund to this charge, so it stays.
  */
 async function chargeTaskExecution(
   user: AppUser,
@@ -45,22 +55,15 @@ async function chargeTaskExecution(
   task: ClientTask,
   reasonPrefix: string,
 ): Promise<string | null> {
-  if (!isBillableClientActor(user)) return null;
-  try {
-    await chargeClientCredits({
-      clientId,
-      amount: await plannedTaskExecutionCost(task),
-      operation: "task_execution",
-      reason: `${reasonPrefix} · ${task.title.slice(0, 80)}`,
-      jobId: task.id,
-      actorUid: user.uid,
-      actorName: user.name,
-    });
-    return null;
-  } catch (e) {
-    if (e instanceof CreditError) return e.message;
-    throw e;
-  }
+  const { denied } = await chargeClientModelCall({
+    user,
+    clientId,
+    amount: await plannedTaskExecutionCost(task),
+    operation: "task_execution",
+    reason: `${reasonPrefix} · ${task.title.slice(0, 80)}`,
+    jobId: task.id,
+  });
+  return denied;
 }
 
 /* ── Trigger: manual drag Pending → In Progress ──────────────────── */
@@ -78,7 +81,9 @@ export async function startTaskExecutionAction(
   if (!access.ok) return { ok: false, error: access.error };
   const { user, task } = access;
   if (inferOwnerEngine(task) !== "karos_managed") {
-    return { ok: false, error: "Task is not karos_managed" };
+    // Not the stored owner value: this is returned to a CLIENT_USER's task card
+    // (see requireTaskAccess), and "karos_managed" is a Firestore word.
+    return { ok: false, error: "Karos agents don't run this task. It's one for your team to complete." };
   }
   if (task.metadata?.executing === true) {
     return { ok: true }; // already running — don't double-trigger
@@ -96,7 +101,7 @@ export async function startTaskExecutionAction(
   if (blocker) {
     return {
       ok: false,
-      error: `Waiting on "${blocker}" to finish first - this campaign step runs after it.`,
+      error: `Waiting on "${blocker}" to finish first. This campaign step runs after it.`,
     };
   }
 
@@ -215,7 +220,7 @@ export async function approveTaskArtifactAction(
   // completed out from under the client.
   const task = await claimTaskCompletion(taskId, clientId);
   if (!task) {
-    return { ok: false, error: "Task is not in review_pending state" };
+    return { ok: false, error: TASK_LEFT_REVIEW_MESSAGE };
   }
 
   let approvedAssetId: string | null = null;
@@ -310,7 +315,7 @@ export async function requestAdjustmentsAction(
   // Atomic claim: verifies ownership + review_pending + not already executing,
   // and flips to in_progress — two concurrent submits can't both charge.
   const claimed = await claimTaskForExecution(taskId, clientId, ["review_pending"]);
-  if (!claimed) return { ok: false, error: "Task is not in review_pending state" };
+  if (!claimed) return { ok: false, error: TASK_LEFT_REVIEW_MESSAGE };
 
   let denied: string | null;
   try {
@@ -328,7 +333,10 @@ export async function requestAdjustmentsAction(
   await createTaskComment({
     taskId,
     clientId,
-    content: `[Adjustment Request] ${trimmed}`,
+    // The comment list in task-ticket-modal renders this verbatim, and a CLIENT
+    // reads it: it is their own request, echoed back. "[Adjustment Request]" was
+    // a Title Case machine tag on a client's own words.
+    content: `Adjustment requested: ${trimmed}`,
     authorName: user.name,
     authorRole: user.role,
     createdAt: Date.now(),
@@ -364,8 +372,10 @@ export async function publishIntegrationAction(
   const { user, task: preflight } = access;
 
   const client = await getClient(clientId);
+  // NOT the lost-race sentence: this is a preflight, so it also fires for a task
+  // that is still pending or was finished days ago and never left review at all.
   if (preflight.status !== "review_pending") {
-    return { ok: false, error: "Task is not in review_pending state" };
+    return { ok: false, error: TASK_NOT_IN_REVIEW_MESSAGE };
   }
   if (!preflight.metadata?.artifact) {
     return { ok: false, error: "No artifact to publish" };
@@ -377,7 +387,7 @@ export async function publishIntegrationAction(
   if (!recipient) {
     return {
       ok: false,
-      error: "No recipient email - add a contact email to the client profile.",
+      error: "No recipient email. Add a contact email to the client profile.",
     };
   }
 
@@ -386,7 +396,7 @@ export async function publishIntegrationAction(
   // reverted so the task stays reviewable.
   const task = await claimTaskCompletion(taskId, clientId);
   if (!task) {
-    return { ok: false, error: "Task is not in review_pending state" };
+    return { ok: false, error: TASK_LEFT_REVIEW_MESSAGE };
   }
 
   const result = await dispatchArtifactEmail(task, client?.name ?? "Your Team", recipient);

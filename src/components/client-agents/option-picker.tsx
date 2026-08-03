@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { pickAgentSlotOptionAction } from "@/lib/actions/slot-option-actions";
+import { optionsLead, type ClientXOption } from "@/lib/x-options";
 import { normalizeDashes } from "@/lib/text-utils";
-import type { XOption } from "@/lib/x-options";
 
 /**
  * Today's three options, and the one gesture that turns one of them into a post
@@ -28,12 +28,10 @@ export function OptionPicker({
   clientId,
   slotId,
   options,
-  onPicked,
 }: {
   clientId: string;
   slotId: string;
-  options: XOption[];
-  onPicked?: () => void;
+  options: ClientXOption[];
 }) {
   const router = useRouter();
   const [editingRef, setEditingRef] = useState<string | null>(null);
@@ -44,7 +42,7 @@ export function OptionPicker({
 
   if (options.length === 0) return null;
 
-  function pick(option: XOption, finalText?: string) {
+  function pick(option: ClientXOption, finalText?: string) {
     setError(null);
     setBusyRef(option.ref);
     startTransition(async () => {
@@ -60,7 +58,11 @@ export function OptionPicker({
         return;
       }
       setEditingRef(null);
-      onPicked?.();
+      // `router.refresh()` IS the notification: the panel above is server-rendered
+      // and re-reads the picked slot. There used to be an `onPicked?.()` here as
+      // well, declared and never passed by the one mount
+      // (client-agents/agent-detail-panel.tsx) — a second channel for the same
+      // fact that was dead in every render.
       router.refresh();
     });
   }
@@ -71,10 +73,10 @@ export function OptionPicker({
         <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
           Today&rsquo;s post
         </h2>
-        <p className="mt-1 text-xs text-muted-2">
-          {options.length} directions to choose from. Pick one, edit it if you want, and post it -
-          choosing costs nothing.
-        </p>
+        {/* The count is a variable and a one-option day is expected, so the
+            plural and the "pick one" both live in optionsLead, where they are
+            guarded once and testable. */}
+        <p className="mt-1 text-xs text-muted-2">{optionsLead(options.length)}</p>
       </div>
 
       <ul className="space-y-2">
@@ -88,7 +90,13 @@ export function OptionPicker({
             >
               <div className="mb-1.5 flex flex-wrap items-center gap-2">
                 <Badge tone="neutral">{option.direction}</Badge>
-                <span className="text-[11px] text-muted-2">{option.account}</span>
+                {/* Humanised server-side (toClientXOption), and null when the
+                    batch heading held nothing a client would recognise — in
+                    which case the day says nothing about the account rather
+                    than printing a seat number. */}
+                {option.account ? (
+                  <span className="text-[11px] text-muted-2">{option.account}</span>
+                ) : null}
                 {option.posts.length > 1 && (
                   <span className="text-[11px] text-muted-2">
                     Thread · {option.posts.length} posts
@@ -164,7 +172,7 @@ export function OptionPicker({
       {error && <p className="mt-2 text-xs text-warning">{error}</p>}
       <p className="mt-2 text-[11px] text-muted-2">
         The one you choose lands in your Workspace ready to post. Mark it posted once it&rsquo;s up
-        - that&rsquo;s what teaches this agent what you actually publish.
+. That&rsquo;s what teaches this agent what you actually publish.
       </p>
     </div>
   );
@@ -174,13 +182,19 @@ export function OptionPicker({
  * What the day shows once a choice has been made. The other two options are
  * gone deliberately: re-offering a direction the client already declined
  * invites second-guessing a decision the system has already acted on.
+ *
+ * The direction is a BADGE, the same register it has on the cards above — it is
+ * a sentence-cased label, so inline it produced a stray capital mid-sentence
+ * ("You chose the Contrarian take post for today", #155). Null when the stored
+ * ref names no lane, and then the receipt simply does not mention one.
  */
-export function OptionPicked({ direction }: { direction: string }) {
+export function OptionPicked({ direction }: { direction: string | null }) {
   return (
     <div className="rounded-[var(--radius)] border border-border bg-surface-2/50 p-3">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Icon name="Check" className="h-4 w-4 text-success" />
-        <p className="text-sm text-foreground">You chose the {direction} post for today</p>
+        <p className="text-sm text-foreground">You chose today&rsquo;s post</p>
+        {direction ? <Badge tone="neutral">{direction}</Badge> : null}
       </div>
       <p className="mt-1 text-[11px] text-muted-2">
         It&rsquo;s in your Workspace ready to post. Mark it posted once it&rsquo;s up.

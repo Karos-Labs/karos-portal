@@ -80,41 +80,6 @@ export async function createScheduledRunAction(
   return { id };
 }
 
-export async function updateScheduledRunAction(
-  id: string,
-  input: ScheduledRunInput,
-): Promise<{ error?: string }> {
-  await requireAdmin();
-  const existing = await getScheduledRun(id);
-  if (!existing) return { error: "Scheduled run not found." };
-  const invalid = validate(input);
-  if (invalid) return { error: invalid };
-  const agent = await getCustomAgent(input.agentId);
-  if (!agent) return { error: "Agent not found." };
-  // An edit can swap the agent and re-enable the row, so it clears the gates too.
-  const client = await getClient(existing.clientId);
-  if (client) {
-    const blocked = await unfireableScheduleReason(client, agent);
-    if (blocked) return { error: blocked };
-  }
-
-  await updateScheduledRun(id, {
-    agentId: agent.id,
-    label: agent.name,
-    entrySkillDir: agent.entrySkillDir,
-    prompt: input.prompt.trim(),
-    cadence: input.cadence,
-    assetType: input.assetType,
-    platform: input.platform || undefined,
-    enabled: input.enabled !== false,
-    // Recompute the next fire from the (possibly changed) cadence.
-    nextRunAt: computeNextRunAt(input.cadence),
-    updatedAt: Date.now(),
-  });
-  revalidatePath(`/clients/${existing.clientId}/settings`);
-  return {};
-}
-
 export async function toggleScheduledRunAction(
   id: string,
   enabled: boolean,

@@ -1,8 +1,8 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
+import { adminAuth } from "@/lib/firebase/admin";
 import {
-  getClient,
   getClientCredits,
   listClientIntegrations,
   listCreditLedger,
@@ -12,10 +12,11 @@ import {
   listTranscripts,
   getClientSettings,
 } from "@/lib/data";
-import { getOAuthEnabledPlatforms } from "@/lib/integrations/oauth";
+import { listClientAgents } from "@/lib/data-client-agents";
+import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
 import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
-import { summarizeClientSpend } from "@/lib/credit-reporting";
+import { spendAgentNames, summarizeClientSpend } from "@/lib/credit-reporting";
 
 /** Rows the "Recent activity" feed shows. */
 const LEDGER_FEED_LIMIT = 15;
@@ -32,6 +33,8 @@ import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
+import { AccountProfilePanel, AccountSecurityPanel } from "@/components/settings-form";
+import { ACCOUNT_TABS } from "@/lib/account-settings-tabs";
 import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { relativeTime } from "@/lib/utils";
 import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat, JobRunType, ScheduledRun } from "@/lib/types";
@@ -56,8 +59,7 @@ export default async function ClientSettingsPage({
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   const isAdmin = user.role === "KAROS_ADMIN";
   const isStaff = isAdmin || user.role === "KAROS_EMPLOYEE";
@@ -70,7 +72,12 @@ export default async function ClientSettingsPage({
     // fifteen rows would be a breakdown of this week presented as a breakdown
     // of spend.
     listCreditLedger(id, LEDGER_SUMMARY_LIMIT),
-    isAdmin ? listCustomAgents() : Promise.resolve([]),
+    // Read for EVERY role now, not just admins. The admin-only cards below are
+    // still the only thing rendered from it, but the credits panel needs the
+    // library to name the agent behind a charge: with only the client's jobs to
+    // go on, an agent whose runs carry no `customAgentId` was billed to them as
+    // "Removed agent" while it sat in the library, enabled and firing.
+    listCustomAgents(),
     getClientSettings(id),
     isAdmin ? listScheduledRuns({ clientId: id }) : Promise.resolve([]),
   ])) as [ClientIntegration[], Transcript[], ClientCredits, CreditLedgerEntry[], CustomAgent[], ClientSettings | null, ScheduledRun[]];
@@ -79,17 +86,24 @@ export default async function ClientSettingsPage({
   // lives on the JOB, not the ledger row, so the jobs are joined here on the
   // server - the browser never needs them and a client payload carrying every
   // job would be both wasteful and a staff-detail leak.
-  const spendJobs = await listJobs({ clientId: id });
+  const [spendJobs, spendUmbrellas] = await Promise.all([
+    listJobs({ clientId: id }),
+    listClientAgents({ clientId: id }),
+  ]);
   const runTypeByJobId: Record<string, JobRunType | undefined> = {};
   for (const job of spendJobs) runTypeByJobId[job.id] = job.runType;
-  const agentNameById: Record<string, string> = {};
-  for (const job of spendJobs) {
-    if (job.customAgentId) agentNameById[job.customAgentId] = job.agentName;
-  }
   const spendByAgent = summarizeClientSpend({
     ledger: creditLedger,
     runTypeByJobId,
-    agentNameById,
+    // All three sources, resolved by the one helper — the jobs alone left every
+    // charge from an agent with no `customAgentId` on its runs unnamed, and the
+    // umbrella rung is what stops this page printing a second name for an agent
+    // the client already knows by their own (§7.3).
+    agentNameById: spendAgentNames({
+      customAgents,
+      jobs: spendJobs,
+      umbrellas: spendUmbrellas,
+    }),
   });
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
@@ -133,6 +147,7 @@ export default async function ClientSettingsPage({
       clientId={client.id}
       integrations={sanitizedIntegrations}
       oauthEnabledPlatforms={oauthEnabledPlatforms}
+      googleBusinessProfileRequested={googleBusinessProfileRequested()}
       currentUserRole={user.role}
       linkedinSeats={sanitizedLinkedinSeats}
       seatLimit={client.linkedinSeatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
@@ -149,7 +164,7 @@ export default async function ClientSettingsPage({
         <Card>
           <CardTitle className="mb-1">AI agent access</CardTitle>
           <p className="mb-3 text-sm text-muted-2">
-            Agents this client&apos;s users can run from their AI Agents page. Each run charges the
+            Agents this client&apos;s users can run from their AI agents page. Each run charges the
             client&apos;s credits.
           </p>
           <ClientAgentAccessCard
@@ -166,7 +181,18 @@ export default async function ClientSettingsPage({
           <CardTitle className="mb-1">Scheduled runs</CardTitle>
           <p className="mb-3 text-sm text-muted-2">
             Fire a custom agent for this client on a recurring cadence (e.g. the LinkedIn
-            company-page generator, Tue–Thu). Runs are draft-first and never charge credits.
+            company-page generator, Tue–Thu). Runs are draft-first and never charge the
+            client&apos;s credits — the model spend is ours and appears in no credit ledger.
+          </p>
+          {/* Where these DON'T show up. A schedule nobody can see is a schedule
+              nobody turns off, and this card creates rows that are absent from
+              the calendar entirely and separate from the pace on the AI agents
+              page — so an agent can be running on both at once. Said here, on
+              the only surface that can create one. */}
+          <p className="mb-3 text-sm text-muted-2">
+            These are separate from an agent&apos;s pace on the AI agents page, and they do not
+            appear on the calendar. An agent can be running on both at once — check the AI agents
+            page, which now lists any schedule set here.
           </p>
           <ScheduledRunsCard
             clientId={client.id}
@@ -180,6 +206,15 @@ export default async function ClientSettingsPage({
     </div>
   );
 
+  /**
+   * THE MEETINGS SURFACE A CLIENT REACHES (AF-1).
+   *
+   * This tab predates the branch and is exactly where the product owner wants
+   * it — "I like that in the settings" — so nothing here changed when the rail
+   * lost its Meetings row. It is named here only because it is now the whole of
+   * a client's route to their calls, and a later edit that thins it out would
+   * be removing the destination rather than a duplicate of one.
+   */
   const meetingsSection = (
     <Card>
       <CardTitle className="mb-3">Meetings</CardTitle>
@@ -208,7 +243,39 @@ export default async function ClientSettingsPage({
     </Card>
   );
 
-  // F56: the key is a standing credential - staff and the workspace's own group
+  /**
+   * The viewer's own account panels — built only for the client whose page this
+   * is (see the block on `tabs`). The Firebase Auth record is read for the same
+   * reason /settings reads it: the security panel offers a password form only
+   * to an account that HAS a password, and which providers are linked lives on
+   * the auth record rather than on the app user.
+   */
+  const accountTabs: SettingsTab[] | null =
+    user.role === "CLIENT_USER"
+      ? await (async () => {
+          const firebaseUser = await adminAuth().getUser(user.uid);
+          return [
+            {
+              id: ACCOUNT_TABS.profile,
+              label: "Profile information",
+              icon: "User",
+              content: <AccountProfilePanel user={user} clientName={client.name} />,
+            },
+            {
+              id: ACCOUNT_TABS.security,
+              label: "Account security",
+              icon: "Shield",
+              content: (
+                <AccountSecurityPanel
+                  providers={firebaseUser.providerData.map((p) => p.providerId)}
+                />
+              ),
+            },
+          ];
+        })()
+      : null;
+
+  // F56: the key is a standing credential — staff and the workspace's own group
   // admin only, and whoever can see it can rotate it.
   const teamSection =
     client.clientKeyId && (isStaff || user.isGroupAdmin) ? (
@@ -221,7 +288,7 @@ export default async function ClientSettingsPage({
       </Card>
     ) : null;
 
-  const tabs: SettingsTab[] = [
+  const sections: SettingsTab[] = [
     { id: "profile", label: "Profile", icon: "Building2", content: profileSection },
     { id: "channels", label: "Channels", icon: "Share2", content: channelsSection },
     { id: "credits", label: "Credits", icon: "Coins", content: creditsSection },
@@ -230,20 +297,28 @@ export default async function ClientSettingsPage({
     { id: "team", label: "Team", icon: "Users", content: teamSection },
   ].filter((t) => t.content !== null);
 
+  /**
+   * THE VIEWER'S OWN ACCOUNT, AS TABS ON THIS PAGE (AF-2).
+   *
+   * These were an "Account settings" entry that navigated to /settings — a
+   * second settings page with a second tab strip. "It's just supposed to be
+   * seamless", so the two panels are tabs here and /settings redirects a client
+   * back to them.
+   *
+   * CLIENT_USER only, and that is the whole distinction rather than a
+   * gate-by-default: this page is about the CLIENT, and for a client their
+   * company and their account are the same settings surface. For staff it is
+   * somebody else's company, and their own account is /settings — putting their
+   * password form on a client's page would be the hop back again, pointing the
+   * other way.
+   */
+  const tabs: SettingsTab[] = accountTabs ? [...sections, ...accountTabs] : sections;
+
   return (
     <>
       <PageHeader
         title="Settings"
         description="Credits and usage, connected channels, automation, meetings, and teammates."
-        action={
-          <Link
-            href="/settings"
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            <Icon name="User" className="h-3.5 w-3.5" />
-            Account settings
-          </Link>
-        }
       />
 
       {/* CLIENT_USER already sees this via the (app) shell's own wrapper - only

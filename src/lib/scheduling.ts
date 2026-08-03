@@ -7,11 +7,60 @@
  * platform — rather than an extra model call: it's free, instant, testable, and
  * good enough as a default the user can always override in the schedule form.
  *
- * All times are computed in the server's local timezone (matches how the
- * datetime-local schedule form interprets times for staff).
+ * All times are computed in the runtime's local timezone (matches how the
+ * datetime-local schedule form interprets times for staff). This file also
+ * holds the one definition of "which calendar day is this instant on" — see the
+ * section immediately below.
  */
 
 import type { AssetType } from "@/lib/types";
+
+/* ══════════════════ the local calendar day (one definition) ══════════════════ */
+
+/**
+ * WHICH CALENDAR DAY AN INSTANT FALLS ON, written once.
+ *
+ * `startOfDayMs` is the bucket and `sameLocalDay` is the comparison, and the
+ * second is DEFINED from the first so the two cannot answer differently. They
+ * were two exported functions with two bodies — one here, one in post-chain.ts,
+ * the pair of them the "one definition of 'same day'" this comment used to
+ * claim on its own — and post-chain.ts now re-exports these rather than
+ * restating them, so every caller of either import path gets this code.
+ *
+ * WHOSE CLOCK, stated because it is a real cost and not a detail. "Local" here
+ * is THE RUNTIME'S OWN ZONE: server-local inside a server action, cron or
+ * script; the BROWSER's zone inside a client component. A day boundary is
+ * therefore the boundary of whichever machine asked, never the client's own.
+ *
+ * What that costs today, stated no wider than it is:
+ *  · The chain still places exactly ONE post per day per family, in every zone:
+ *    its slots are a fixed server-local hour a day apart, so they stay a day
+ *    apart wherever they are read. What can shift is WHICH day — a slot lands
+ *    on the client's next date when their offset carries CHAIN_SLOT_HOUR past
+ *    midnight (from a UTC container at 11:00, that is UTC+13 and beyond).
+ *  · `isAssetUnlockedForClient` (post-chain.ts) unlocks at SERVER midnight. For
+ *    a client west of the server that instant is still the previous afternoon
+ *    where they are — a post dated Tuesday becomes readable during their
+ *    Monday. East of it, some hours into their own Tuesday.
+ *  · A guard evaluated on BOTH sides — `markPostedBlock` is the one that is —
+ *    can disagree between browser and server inside that offset window. The
+ *    server's answer is the one that counts; the UI is never the guard.
+ *
+ * Fixing it properly means giving `Client` an IANA zone (it has none; only
+ * `RunCadence.timezone` and `PlannedScheduledRun.timeZone` carry one) and
+ * threading it through every caller of these two functions — a data change plus
+ * a decision about what a "day" means for a client with staff in three
+ * countries. Until that decision is made this is the behaviour, and it is
+ * pinned by test rather than left implicit — see local-day-one-definition.test.ts.
+ */
+export function startOfDayMs(t: number): number {
+  return new Date(t).setHours(0, 0, 0, 0);
+}
+
+/** True when both instants fall on the same runtime-local calendar day. */
+export function sameLocalDay(a: number, b: number): boolean {
+  return startOfDayMs(a) === startOfDayMs(b);
+}
 
 /** A recurring weekly engagement window: days 0=Sun..6=Sat at hour:minute. */
 interface OptimalWindow {
@@ -168,19 +217,6 @@ export function recommendPublishTime(opts: {
   return null; // unreachable in practice (60-day horizon)
 }
 
-/** Exported for callers outside this file that need the same day comparison
- *  the density recommender uses (e.g. the client reschedule action's
- *  same-day-same-family collision guard) — one definition of "same day". */
-export function sameLocalDay(a: number, b: number): boolean {
-  const da = new Date(a);
-  const db = new Date(b);
-  return (
-    da.getFullYear() === db.getFullYear() &&
-    da.getMonth() === db.getMonth() &&
-    da.getDate() === db.getDate()
-  );
-}
-
 /**
  * No more than this many pieces should land on a single day before we spread
  * to the next. Matches the content chain's one-post-per-day rule
@@ -233,6 +269,105 @@ export function recommendPublishTimeWithDensity(opts: {
   }
   // Everything in the horizon is crowded — fall back to the base optimal slot.
   return base;
+}
+
+/* ══════════ schedule-form field validation (pure, client-safe) ══════════ */
+
+/**
+ * The closed question this section answers: **can a number that is not a finite
+ * number reach a stored schedule field?**
+ *
+ * A PlannedScheduledRun stores its intent as plain numbers (hour, minute,
+ * weekday, dayOfMonth, …) and every path that turns them into a fire time is
+ * arithmetic. So a bad number is not "input that gets rejected downstream" — it
+ * IS a schedule, and it is a schedule that bills:
+ *
+ *  · An EMPTY `<input type="time">` is the string `""`. Split on ":" and mapped
+ *    through `Number`, that is `[0]` — hour 0, minute undefined — which is
+ *    indistinguishable from a client deliberately choosing 00:00, so a
+ *    fat-fingered field silently moved every future post to the middle of the
+ *    night.
+ *  · A NON-NUMERIC value is NaN, and NaN survives Math.round / Math.min /
+ *    Math.max unchanged. It reaches storage, renders as "NaN:NaN", and makes
+ *    the next-fire search return no candidate — so the schedule fires roughly
+ *    whenever the cron happens to catch it, drifting.
+ *
+ * Both are answered here, in one place, before the payload leaves the browser.
+ *
+ * MIDNIGHT STAYS REACHABLE. An hour of 0 is a real time of day and "00:00"
+ * parses to hour 0. What is refused is the ABSENCE of a choice, never a
+ * legitimate zero — which is also why the sweep below tests `Number.isFinite`
+ * rather than falsiness.
+ */
+
+/** Result of reading a schedule field off a form: the value, or what to show. */
+export type ScheduleFieldResult<T> = ({ ok: true } & T) | { ok: false; error: string };
+
+/** `HH:MM`, optionally with the seconds a stepped time input can append. */
+const WALL_CLOCK_RE = /^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/;
+
+const TIME_MISSING = "Choose a time of day before saving.";
+const TIME_UNREADABLE = "Enter a valid time of day, for example 09:30.";
+
+/**
+ * Strictly reads an `<input type="time">` value into the hour/minute a schedule
+ * stores. Anything that is not a real 24-hour wall clock — empty, blank,
+ * partial, out of range — comes back as a message the person can read instead
+ * of a number the scheduler would fire on.
+ */
+export function parseWallClockTime(
+  raw: string | null | undefined,
+): ScheduleFieldResult<{ hour: number; minute: number }> {
+  const value = (raw ?? "").trim();
+  if (value === "") return { ok: false, error: TIME_MISSING };
+  const match = WALL_CLOCK_RE.exec(value);
+  if (!match) return { ok: false, error: TIME_UNREADABLE };
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return { ok: false, error: TIME_UNREADABLE };
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) {
+    return { ok: false, error: TIME_UNREADABLE };
+  }
+  return { ok: true, hour, minute };
+}
+
+/**
+ * Name of the first entry that is a number but not a finite one, else null.
+ *
+ * Mechanical on purpose: it walks the object it is HANDED rather than a
+ * hand-written list of field names, so a schedule payload that grows a new
+ * numeric field is swept the day it is added and nobody has to remember. A
+ * missing (`undefined`) field is not this function's business — the server
+ * decides what a field's absence means — and `0` is a legitimate value for
+ * every numeric schedule field that can hold it.
+ */
+export function firstNonFiniteScheduleField(payload: Record<string, unknown>): string | null {
+  for (const [key, value] of Object.entries(payload)) {
+    if (typeof value === "number" && !Number.isFinite(value)) return key;
+  }
+  return null;
+}
+
+/**
+ * The one pre-flight both schedule dialogs run before calling their server
+ * action: the typed time of day, plus a finiteness sweep of every other number
+ * the form is about to send.
+ *
+ * The sweep's message never names the offending field — a field name is an
+ * internal identifier, and the only way a client sees this branch at all is a
+ * page whose state is already wrong.
+ */
+export function validateScheduleTiming(input: {
+  time: string | null | undefined;
+  /** Every other number the form is about to send, by payload key. */
+  counts?: Record<string, unknown>;
+}): ScheduleFieldResult<{ hour: number; minute: number }> {
+  const parsed = parseWallClockTime(input.time);
+  if (!parsed.ok) return parsed;
+  if (input.counts && firstNonFiniteScheduleField(input.counts) !== null) {
+    return { ok: false, error: "Those settings could not be read. Reload the page and try again." };
+  }
+  return parsed;
 }
 
 /**

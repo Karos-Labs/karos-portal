@@ -28,7 +28,7 @@ import {
   agentKeyMatchesClientSlug,
   perClientAgentSlug,
 } from "@/lib/custom-agent-launch";
-import type { Client, CustomAgent } from "@/lib/types";
+import type { Client, CustomAgent, JobRunType } from "@/lib/types";
 
 /* limits — mirror agent-service/src/schemas/task-types/custom.json */
 const MAX_INSTRUCTIONS_CHARS = 12_000;
@@ -37,12 +37,17 @@ const MAX_KEY_CHARS = 120;
 const MAX_NAME_CHARS = 200;
 
 /**
- * Shared core that fires a custom agent for a client, used by both the
- * interactive `runCustomAgentAction` (which layers auth + the allowlist +
- * billing on top) and the /api/scheduler cron (which fires it free, with no
- * user session). Creates the mirrored `jobs` doc, optionally charges the
- * client, submits to the agent service, and mirrors the failure-cleanup +
- * refund contract. Callers own authorization; this function does not check it.
+ * Shared core that fires a custom agent for a client. Creates the mirrored
+ * `jobs` doc, optionally charges the client, submits to the agent service, and
+ * mirrors the failure-cleanup + refund contract. Callers own authorization;
+ * this function does not check it.
+ *
+ * ONE CALLER TODAY: the `/api/scheduler` cron, which fires the `scheduledRuns`
+ * rows free with no user session. This note used to claim the interactive
+ * `runCustomAgentAction` came through here too; it has not since that action
+ * moved to lib/jobs/submit-custom.ts, and the stale claim is part of why the
+ * job fields below went unnoticed — a core believed to serve the run dialog
+ * looks like it must already be writing what the run dialog's rows carry.
  *
  * `charge` null ⇒ a free run (staff, admin "view as client", or system-fired
  * scheduled runs) — no credit ledger is touched. `extraMetadata` rides through
@@ -56,6 +61,21 @@ export async function submitCustomAgentRun(args: {
   contextFiles?: AgentServiceContextFile[];
   extraMetadata?: Record<string, string>;
   charge?: { amount: number } | null;
+  /**
+   * How this run was initiated, stamped on the job doc exactly as the twin core
+   * (lib/jobs/submit-custom.ts) stamps it. Everything §6 reports splits on this
+   * field: the client's spend breakdown separates a schedule firing from a run
+   * they started, and §6.3's launch-price calibration measures a launch against
+   * scheduled + manual runs as its denominator.
+   *
+   * OPTIONAL, AND ABSENT MEANS ABSENT. A run through this core with no run type
+   * is stamped with none and reports as an unclassified agent run — which is
+   * what it is. It is deliberately not defaulted to "scheduled" on the grounds
+   * that today's only caller is a scheduler: a default keyed to who happens to
+   * call a function is a label that becomes a lie the moment a second caller
+   * appears, and this one would be a lie about money on a client's bill.
+   */
+  runType?: JobRunType;
 }): Promise<{ jobId?: string; error?: string }> {
   const { agent, client, actor } = args;
   if (!isAgentServiceConfigured()) {
@@ -98,7 +118,7 @@ export async function submitCustomAgentRun(args: {
         // exists — intake moved onto the agent's own page. Kept identical to
         // the submit core's twin; a client must not read two different routes
         // to the same form depending on which path refused.
-        error: `${X_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
+        error: `${X_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
     try {
@@ -123,7 +143,7 @@ export async function submitCustomAgentRun(args: {
   if (isLinkedInAgent(agent.key)) {
     if (!(await hasLinkedInAgentIntake(client.id, agent.key))) {
       return {
-        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
+        error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
     try {
@@ -145,7 +165,7 @@ export async function submitCustomAgentRun(args: {
   if (isRedditAgent(agent.key)) {
     if (!(await hasRedditAgentIntake(client.id))) {
       return {
-        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI Agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. Nothing has run.`,
+        error: `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. Nothing has run.`,
       };
     }
     try {
@@ -161,6 +181,24 @@ export async function submitCustomAgentRun(args: {
   const jobId = await createJob({
     clientId: client.id,
     agentId: "agent-service",
+    // WHICH AGENT THIS RUN BELONGS TO. Omitted until 2026-08-01 while the twin
+    // core always wrote it, so every job this core produced was invisible to
+    // everything that joins a run to an agent by id.
+    //
+    // WHAT THAT ACTUALLY COST, stated narrowly because the first version of this
+    // note claimed more: the STAFF economics card and the launch-price
+    // calibration both filter on this field, so these runs' real Anthropic
+    // dollars were missing from the very measurement that sets the setup price.
+    //
+    // IT DID **NOT** PUT "Removed agent" ON A CLIENT'S BILL, and saying so here
+    // was a false premise dressed as a reason. This core has ONE caller —
+    // /api/scheduler — and it passes `charge: null`; that route's own docstring
+    // says every fire here is free to the client and absent from the credit
+    // ledger. A run that never reaches the ledger cannot mis-name a row in it.
+    // The client-bill symptom is real and belongs to the twin core, which
+    // already stamped this field; #58 is fixed at the READER (spendAgentNames).
+    customAgentId: agent.id,
+    ...(args.runType ? { runType: args.runType } : {}),
     agentName: agent.name,
     title: jobTitleForClient(agent.name, client.name),
     status: "queued",
@@ -211,7 +249,25 @@ export async function submitCustomAgentRun(args: {
       },
       callback_url: `${appUrl.replace(/\/$/, "")}/api/agent-service/webhook`,
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),
-      metadata: { platform_job_id: jobId, ...(args.extraMetadata ?? {}) },
+      metadata: {
+        // Caller keys FIRST so this core's own keys cannot be shadowed by an
+        // extraMetadata entry — platform_job_id is how the webhook finds the job
+        // when the serviceJobId write loses the race, and karos_agent_key is what
+        // the delivery handler fences a draft-only agent's asset type on. The
+        // twin core states the same rule as a reserved-key list
+        // (lib/jobs/submit-custom.ts); here the ordering is the whole rule, so
+        // there is no second list to keep in step.
+        ...(args.extraMetadata ?? {}),
+        platform_job_id: jobId,
+        // WHICH AGENT PRODUCED THE RUN, echoed back by the service so the webhook
+        // can ask it without a second Firestore read. It matters most on this core:
+        // its one caller, the recurring-run cron, is also the only place in the tree
+        // today that sends an `asset_type` hint (the schedule row's own type), and
+        // that hint is exactly what could type a Reddit reply as a publishable post.
+        // The agent's display NAME travels on the job doc and is the fence's
+        // fallback; a rename would silence it, a key would not.
+        karos_agent_key: agent.key.slice(0, MAX_KEY_CHARS),
+      },
     });
     submittedServiceJobId = submitted.job_id;
     await updateJob(jobId, {

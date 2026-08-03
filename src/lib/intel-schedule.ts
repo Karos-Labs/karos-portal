@@ -17,8 +17,25 @@ export interface IntelScheduleInfo {
   lastIntelReportAt: number | null;
 }
 
+/**
+ * The five fields this projection actually reads.
+ *
+ * Named as a Pick rather than taking the whole `Client` so a caller holding a
+ * narrowed staff/portal projection can ask without carrying a full client
+ * document just to satisfy the signature — the shells deliberately ship less
+ * than a document now (see StaffShellClientView).
+ */
+export type ClientIntelScheduleFields = Pick<
+  Client,
+  | "intelScheduleEnabled"
+  | "intelScheduleIntervalMonths"
+  | "intelScheduleDayOfMonth"
+  | "intelScheduleNextRunAt"
+  | "lastIntelReportAt"
+>;
+
 /** Project a Client doc's flat schedule fields into the shape the Schedule modal expects. */
-export function clientIntelSchedule(client: Client): IntelScheduleInfo {
+export function clientIntelSchedule(client: ClientIntelScheduleFields): IntelScheduleInfo {
   return {
     enabled: client.intelScheduleEnabled ?? false,
     intervalMonths: client.intelScheduleIntervalMonths ?? MIN_INTERVAL_MONTHS,
@@ -51,25 +68,64 @@ export function computeFirstIntelScheduleRun(dayOfMonth: number, from: number = 
   return d.getTime();
 }
 
+/** One step of the grid: `intervalMonths` on from `at`, pinned to `dayOfMonth`. */
+function stepIntelSchedule(at: number, intervalMonths: number, dayOfMonth: number): number {
+  const d = new Date(at);
+  d.setDate(1); // avoid month-overflow when the current day doesn't exist in the target month
+  d.setMonth(d.getMonth() + intervalMonths);
+  d.setDate(clampDayOfMonth(d.getFullYear(), d.getMonth(), dayOfMonth));
+  d.setHours(9, 0, 0, 0);
+  return d.getTime();
+}
+
 /**
  * Advance to the next run, `intervalMonths` after `from` (the slot that just
  * fired), pinned to `dayOfMonth`. Anchoring from the previous slot (not "now")
  * keeps the cadence on a fixed grid — e.g. every 2 months on the 1st always
  * lands on Jan/Mar/May 1st, regardless of an unrelated manual regenerate or
  * cron processing delay.
+ *
+ * `after` is what makes that anchor safe for a BACKLOG. One missed tick is what
+ * the fixed grid is for; three missed months are not. Advancing a single step
+ * from a slot that fired late lands the cursor in the PAST, the row reads as
+ * due again on the next tick ~15 minutes later, and a client who missed three
+ * regenerations gets three full Intel Report + SEO/GEO pipelines in 45 minutes,
+ * each overwriting the last — the most expensive operation in the product,
+ * fired as a burst by an outage. With `after` the grid is walked forward whole
+ * intervals until it is genuinely ahead of that instant, so the calendar days
+ * stay on the admin's grid AND the cursor never lands behind the clock.
+ * `/api/run-scheduled` already made this choice (it advances from `now`); this
+ * is the same rule, keeping the grid the anchor buys.
+ *
+ * DIRECTION, since a regeneration is a real cost: `after` only ever moves the
+ * result FORWARD by whole intervals. It cannot make a schedule fire sooner or
+ * more often than a bare step would.
  */
 export function computeNextIntelScheduleRun(opts: {
   intervalMonths: number;
   dayOfMonth: number;
   from?: number;
+  /** The cursor must land strictly after this instant (the cron passes "now"). */
+  after?: number;
 }): number {
   const from = opts.from ?? Date.now();
-  const d = new Date(from);
-  d.setDate(1); // avoid month-overflow when the current day doesn't exist in the target month
-  d.setMonth(d.getMonth() + opts.intervalMonths);
-  d.setDate(clampDayOfMonth(d.getFullYear(), d.getMonth(), opts.dayOfMonth));
-  d.setHours(9, 0, 0, 0);
-  return d.getTime();
+  // Stored intervals are clamped to 1..24 on write (clampIntervalMonths), but a
+  // row is not re-validated on read: a 0 or a NaN would step nowhere and make
+  // the walk below spin, and — before there was a walk — made the row due again
+  // on every single tick. Floored at one month, which is the fewest fires the
+  // field can honestly mean.
+  const step = Math.max(1, Math.round(opts.intervalMonths) || 1);
+  let at = stepIntelSchedule(from, step, opts.dayOfMonth);
+  if (opts.after != null) {
+    // Bounded so a wildly stale `from` (a hand-edited row, a clock jump) cannot
+    // spin: 1,200 steps is a century at the shortest step. Hitting the bound
+    // returns the furthest point reached, which is the OLD behaviour for that
+    // row — due again next tick — not a worse one.
+    for (let i = 0; i < 1_200 && at <= opts.after; i++) {
+      at = stepIntelSchedule(at, step, opts.dayOfMonth);
+    }
+  }
+  return at;
 }
 
 function ordinal(n: number): string {

@@ -1,4 +1,4 @@
-import type { AppUser } from "@/lib/types";
+import type { AppUser, ClientIntegration } from "@/lib/types";
 
 /**
  * Role gate for the copilot's write tools.
@@ -22,9 +22,24 @@ import type { AppUser } from "@/lib/types";
  * withheld from clients until it is named here on purpose.
  *
  * Why these are safe to expose: `send_support_email` mails the client's own
- * Karos team, `fetch_gmail_context` reads the thread the client is already
- * party to, and `create_tasks` writes to that client's own board — all
- * client-tier state the portal already lets them change by hand.
+ * Karos team, `fetch_gmail_context` reads only the caller's OWN mailbox because
+ * `integrationBelongsToCaller` gates it to the person who granted the token, and
+ * `create_tasks` writes to that client's own board — all client-tier state the
+ * portal already lets them change by hand.
+ *
+ * The gmail clause here used to justify itself on thread membership — that
+ * whatever it read, the asker was necessarily part of. (The old wording is not
+ * reproduced, so nobody skimming mistakes it for the live rationale; a test pins
+ * its absence.) It was false. The `google` integration is stored one-per-WORKSPACE
+ * (`${clientId}_google`, data.ts) from one individual's personal OAuth grant, so
+ * in any multi-seat workspace — the designed norm: a client key auto-approves
+ * signups into a group, and group admins manage others in it — a second user
+ * asking the copilot to scan "their" inbox was handed the FIRST user's private
+ * email. The premise held only for a single-seat workspace and nobody said so.
+ * This entry was carried across when e440f0b inverted the denylist to an
+ * allowlist precisely so each inclusion would be a deliberate act; the carry-over
+ * is the failure that inversion existed to prevent. The premise is now true
+ * because the read site enforces it, not because a comment asserts it.
  *
  * The §3 capability-matrix tools (chat/route.ts) are safe for the same reason:
  * `find_output` only reads this client's own already-prompt-scoped assets,
@@ -117,11 +132,11 @@ export function copilotToolsFor<T extends Record<string, unknown>>(
  * actionable rather than a dead end.
  */
 export const BRANDING_TOOL_REFUSAL =
-  "Branding guidelines can't be changed from chat. You can edit them yourself from the brand panel in the left rail — the pencil beside Brand colors — or ask your Karos team to make the change.";
+  "Branding guidelines can't be changed from chat. You can edit them yourself from the brand panel in the left rail. The pencil beside Brand colors. Or ask your Karos team to make the change.";
 
 /** The line a non-allowlisted tool gives back when no better one is written. */
 export const COPILOT_TOOL_REFUSAL =
-  "That isn't something I can change from chat — ask your Karos team and they'll take care of it.";
+  "That isn't something I can change from chat. Ask your Karos team and they'll take care of it.";
 
 /** Tool-specific refusals, so the message can name the surface that DOES work. */
 const REFUSAL_BY_TOOL: Record<string, string> = {
@@ -153,3 +168,64 @@ export function brandingToolRefusal(
 ): string | null {
   return copilotToolRefusal(user, "update_branding_guidelines");
 }
+
+/* ── Gmail: whose mailbox is this? ──────────────────────────────────────── */
+
+/**
+ * Whether a client integration was granted by the person now asking to use it.
+ *
+ * `upsertClientIntegration` keys integration docs `${clientId}_${platform}`, so a
+ * workspace holds exactly ONE `google` row — written from one individual's
+ * personal OAuth grant, with that person's verified address recorded in
+ * `accountName` (task-actions.ts checks it against Google's tokeninfo before
+ * storing, so it is trustworthy). Until this gate existed the copilot resolved
+ * that row with no reference to who was asking, and read the mailbox behind it.
+ *
+ * FAILS CLOSED on a blank or missing `accountName`: a grant we cannot attribute
+ * to a person is not one we may read on anyone's behalf. Case- and
+ * whitespace-insensitive, because an address is the same address either way and
+ * the alternative is a gate that leaks on a stray trailing space.
+ *
+ * Deliberately says nothing about roles. Staff are subject to it too — a token
+ * that reads one human's private mail should be usable only by that human, and
+ * widening that is a product decision to be taken on purpose, not a default.
+ *
+ * FOLLOW-UP, not done here: the real model is one integration doc per USER
+ * (`${clientId}_${userUid}_${platform}`), which would make a second seat's grant
+ * representable at all instead of overwriting the first's. That is a migration of
+ * live production Firestore, so this gate is the correct fix for now — it closes
+ * the read with the identity the existing schema already records.
+ */
+export function integrationBelongsToCaller(
+  integration: Pick<ClientIntegration, "accountName">,
+  callerEmail: string | null | undefined,
+): boolean {
+  const grantor = (integration.accountName ?? "").trim().toLowerCase();
+  const caller = (callerEmail ?? "").trim().toLowerCase();
+  if (!grantor || !caller) return false;
+  return grantor === caller;
+}
+
+/**
+ * The ONE thing `fetch_gmail_context` says when it will not read a mailbox.
+ *
+ * Both reasons share this string, and share it as a constant rather than as two
+ * copies of the same prose: there is no Google grant in this workspace, and
+ * there is one but it is somebody else's. A distinct message for the second case
+ * would itself be the disclosure — it would tell user B that user A connected
+ * their mail. So this must never name the grantor, never say "connected by
+ * someone else", and never hint that a token exists. The refused path has to be
+ * indistinguishable from the unconnected one, which is why the route gates at
+ * the lookup and lets one branch serve both.
+ *
+ * Text is otherwise unchanged from the original unconnected-case copy, on
+ * purpose. The one edit is punctuation: the spaced hyphen ledger F71 bans in
+ * client copy sat at the END of one concatenated literal with the word that
+ * follows it in the next, which is how it survived a sweep looking for `" - "` a
+ * literal at a time.
+ */
+export const GMAIL_UNAVAILABLE_MESSAGE =
+  "No Google Workspace integration found for this account. " +
+  "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab)" +
+  "you will be prompted to grant Gmail read access. " +
+  "In the meantime, I can still build a task map from your meetings and context documents.";

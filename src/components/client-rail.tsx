@@ -9,8 +9,10 @@ import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { ClientDocuments } from "@/components/client-documents";
 import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { AccountMenu } from "@/components/account-menu";
+import { LogoutButton } from "@/components/logout-button";
 import { ThemeSwitch } from "@/components/theme-switch";
-import { NotificationBell } from "@/components/notification-bell";
+import { NotificationBell, useNotificationDismissals } from "@/components/notification-bell";
+import { unreadNotificationCount } from "@/lib/notification-rows";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { isAiProcessingLockActive } from "@/lib/constants";
@@ -79,12 +81,32 @@ export function ClientRail({
 
   // The Library merged into the Workspace's Archive tab (2026-07) - one page
   // for board + activity + everything the agents delivered.
-  const primaryNav: NavItem[] = [
+  //
+  // "AI agents" in sentence case because that is the heading of the page it
+  // opens (clients/[id]/agents/page.tsx). A nav label and the header it lands
+  // on are one string said twice, and this pair used to disagree — the label
+  // read "AI Agents" and the client arrived at "AI agents" (#141).
+  const tabNav: NavItem[] = [
     { href: home, label: "Dashboard", icon: "LayoutDashboard", exact: true },
-    { href: `${home}/agents`, label: "AI Agents", icon: "Bot" },
+    { href: `${home}/agents`, label: "AI agents", icon: "Bot" },
     { href: "/calendar", label: "Calendar", icon: "CalendarClock" },
     { href: "/tasks", label: "Workspace", icon: "ListChecks" },
   ];
+  /**
+   * MEETINGS IS NOT A RAIL DESTINATION (AF-1).
+   *
+   * #134 read the /transcripts page — client-scoped, `excludeHiddenFromClient`
+   * redacted, with its own client copy — as a page whose absence from the
+   * client's nav was a defect, and put a Meetings row here to close it. The
+   * product owner ruled the other way: the feature stays ("it doesn't hurt")
+   * but it is reached FROM SETTINGS, not from the rail. "I like that in the
+   * settings."
+   *
+   * So the rail and the phone bar render the same four destinations, and the
+   * client's route to /transcripts is the Meetings tab on their Settings page,
+   * which lists their calls and links to the full page. Nothing about the page
+   * or its scoping changed — only which surface offers it.
+   */
   const settingsItem: NavItem = { href: `${home}/settings`, label: "Settings", icon: "Settings" };
 
   // Bar + sheet frame are shared with the staff shell's client-context mode -
@@ -92,9 +114,21 @@ export function ClientRail({
   // navigation.
   const [companyOpen, setCompanyOpen] = useCompanySheet();
 
-  // The same three feeds the bell counts, so the Company tab's dot and the
-  // badge inside the sheet can never disagree (CD-H5).
-  const unread = actionItems.length + reviewJobs.length + taskAlerts.length;
+  // The dismissal set the bells below share with this count (#105). It used to
+  // live inside each bell, so clearing a meeting action item shrank the panel
+  // and left this tab's dot counting the row that had just gone.
+  const dismissals = useNotificationDismissals();
+
+  // The same three feeds the bell counts, THROUGH THE SAME FUNCTION, so the
+  // Company tab's dot and the badge inside the sheet can never disagree
+  // (CD-H5, #105). `viewerIsClient` is not a flag this shell chooses: the app
+  // layout mounts ClientRail only for a CLIENT_USER, which is also why both
+  // bells below are hard-wired to it — so the count and the panel collapse the
+  // review queue at the same grain (#118).
+  const unread = unreadNotificationCount(
+    { actionItems, reviewJobs, taskAlerts },
+    { viewerIsClient: true, dismissed: dismissals.dismissed },
+  );
 
   return (
     <>
@@ -122,10 +156,23 @@ export function ClientRail({
               bounded (4 tabs, ≤6 documents, ≤5 tracked competitors, ≤4
               swatches), so the compacted stack fits; overflow-y-auto remains
               the safety valve for genuinely short windows rather than clipping
-              a whole section away. */}
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-4 pb-0 pt-4">
+              a whole section away.
+
+              ONE gap between sections — space-y-1.5, the staff rail's own
+              (sidebar.tsx, `clientSections`). It was space-y-0.5 here, and the
+              two wrappers below carried an mt-4 on top of it that the other
+              two sections had nothing to answer with: Tailwind v4 compiles
+              space-y to a margin-BOTTOM, so the two margins added rather than
+              overriding and the rail ran 34 / 34 / 14 / 12. That is why Brand
+              Colors read as glued to the last competitor row — not because
+              12px is small, but because the two gaps above it were nearly
+              three times it. Dropping the mt-4 leaves every section on the
+              same border-t + pt rhythm and the same 6px outer gap, which is
+              the sidebar the product owner said looked better — and it gives
+              the no-scroll contract 16px back. */}
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-4 pb-0 pt-4">
             <nav className="flex flex-col gap-0.5">
-              {primaryNav.map((item) => {
+              {tabNav.map((item) => {
                 const active = isActive(pathname, item);
                 return (
                   <Link
@@ -151,11 +198,11 @@ export function ClientRail({
               })}
             </nav>
 
-            <div className="mt-4 border-t border-border pt-4">
-              <ClientProfilePanel client={client} />
+            <div className="border-t border-border pt-4">
+              <ClientProfilePanel client={client} compact />
             </div>
 
-            <div className="mt-4 border-t border-border pt-4">
+            <div className="border-t border-border pt-4">
               <ClientDocuments
                 contextDocs={contextDocs}
                 isAdmin={isAdmin}
@@ -188,7 +235,10 @@ export function ClientRail({
             <div className="mb-2 flex items-center gap-2">
               {spendableCredits != null && (
                 <Link
-                  href={settingsItem.href}
+                  /* Deep-links the Credits section: settings opens on whichever
+                     tab is first for this role otherwise, so a pill that says
+                     "credits" landed people on Profile. */
+                  href={`${settingsItem.href}?tab=credits`}
                   className="flex min-w-0 flex-1 items-center justify-between rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
                 >
                   <span className="flex items-center gap-1.5">
@@ -204,6 +254,7 @@ export function ClientRail({
                 taskAlerts={taskAlerts}
                 panelPlacement="up"
                 viewerIsClient
+                dismissals={dismissals}
               />
             </div>
             <AccountMenu user={user} client={client} settingsHref={settingsItem.href} />
@@ -232,8 +283,8 @@ export function ClientRail({
         <div className="flex items-center gap-2">
           {spendableCredits != null && (
             <Link
-              href={settingsItem.href}
-              aria-label={`${spendableCredits} credits remaining, open settings`}
+              href={`${settingsItem.href}?tab=credits`}
+              aria-label={`${spendableCredits} credits remaining, open credits settings`}
               className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
             >
               <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
@@ -245,7 +296,8 @@ export function ClientRail({
 
       {/* ── Mobile bottom tab bar (last tab = Company sheet) ── */}
       <MobileTabBar
-        items={primaryNav}
+        /* The same four the desktop rail renders: one nav, two widths. */
+        items={tabNav}
         companyOpen={companyOpen}
         onOpenCompany={() => setCompanyOpen(true)}
         /* CD-H5: the bell moved off the top bar into the sheet, so the tab
@@ -278,6 +330,9 @@ export function ClientRail({
         />
 
         <div className="space-y-0.5 border-t border-border pt-4">
+          {/* No Meetings row here either (AF-1): the Settings row below is the
+              client's one route to it at every width, and the sheet must not
+              re-open a destination the rail was just told to stop offering. */}
           {/* Explicit close: the sheet's on-navigation effect never fires when
               the link's route is already current (same-route trap - twin of the
               staff sheet's CD-G9c bounce-3). */}
@@ -302,8 +357,12 @@ export function ClientRail({
           {/* The bell's full panel, reachable at phone width now that the top
               bar no longer carries it (CD-H5). panelPlacement="up" opens it
               over the sheet body and the max-height keeps it inside the
-              sheet's own scroll container instead of running off the bottom -
-              the constraint the staff mount already uses. */}
+              sheet's own scroll container instead of running off the bottom —
+              the constraint the staff mount already uses.
+              onNavigate is the same explicit close the Settings row above
+              carries: a bell row whose destination is the route already open
+              navigates nowhere, so the hook's on-navigation effect never fires
+              and the sheet sits over the page looking frozen. */}
           <NotificationBell
             actionItems={actionItems}
             reviewJobs={reviewJobs}
@@ -312,11 +371,18 @@ export function ClientRail({
             panelPlacement="up"
             panelClassName="max-h-[45vh]"
             viewerIsClient
+            dismissals={dismissals}
+            onNavigate={() => setCompanyOpen(false)}
           />
           <div className="px-0">
             <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
           </div>
           <ThemeSwitch />
+          {/* Sign out lives ONLY in the desktop rail's account menu, and that
+              rail is display:none below md — so a client on a phone had no way
+              out of their session at all. Same tail placement the staff sheet
+              already uses. */}
+          <LogoutButton compact />
         </div>
       </MobileCompanySheet>
     </>

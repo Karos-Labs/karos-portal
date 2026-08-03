@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { ModelMessage } from "ai";
 
 import { getCurrentUser } from "@/lib/auth";
+import { canViewClient } from "@/lib/client-visibility";
 import {
   getClient,
   getClientReport,
@@ -21,33 +22,38 @@ import {
   createClientTask,
   getTaskBoardCapacity,
   getClientPerformanceBenchmarks,
-  chargeClientCredits,
   getClientCredits,
 } from "@/lib/data";
 import { listClientAgents, listClientAgentFeedback } from "@/lib/data-client-agents";
-import { findDuplicateReason } from "@/lib/task-dedup";
+import { findDuplicateReason, queueCapacitySkipNote } from "@/lib/task-dedup";
 import {
+  CLIENT_PRICE_ROWS,
   CREDIT_COSTS,
-  TASK_EXECUTION_COSTS,
-  CreditError,
-  isBillableClientActor,
   availableCredits,
+  clientPriceText,
+  creditsLabel,
 } from "@/lib/credits";
+import { chargeClientModelCall } from "@/lib/client-model-charge";
 import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
+import { clientCategoryValue } from "@/lib/utils";
 import {
   brandingToolRefusal,
   copilotToolsFor,
+  GMAIL_UNAVAILABLE_MESSAGE,
+  integrationBelongsToCaller,
   isStaffCopilotActor,
 } from "@/lib/copilot-tool-access";
+import { assetStatusLabel } from "@/lib/asset-status-copy";
+import { clientSafeRunError, CLIENT_SAVE_REFUSAL_MESSAGE } from "@/lib/custom-agent-launch";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
-import { isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
+import { isInClientArchive, isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { getClientCustomAgents, buildAgentCatalog } from "@/lib/agent-roster";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
-import { sendEmail } from "@/lib/email";
+import { sendEmail, supportRequestEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
 import { fetchGmailMessages, GmailTokenExpiredError } from "@/lib/integrations/gmail";
 import { logger } from "@/services/logger";
@@ -117,29 +123,83 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return Response.json({ error: "Client not found" }, { status: 404 });
   }
 
+  // STAFF SCOPE. The only role test at the top of this handler was the
+  // CLIENT_USER branch, so an employee 404'd on /clients/[id] could open a
+  // copilot on any client — and this is the richest read in the app: the
+  // Promise.all above has already loaded that client's report, competitors,
+  // context documents, jobs, assets, integrations and benchmarks, and the tools
+  // registered below write to their tasks and assets. Same predicate the pages
+  // ask, asked unconditionally rather than under `role === "KAROS_EMPLOYEE"`:
+  // admins pass it, a client on their own account passes it (including an admin
+  // in a "View as Client" session, whose `clientId` is the client they are
+  // viewing), and an unknown role does not. Refusal reuses the shape one line up.
+  //
+  // ABOVE THE CHARGE, deliberately, and that is a fact about POSITION rather
+  // than about this line's text: the `chargeClientModelCall` immediately below
+  // is a Firestore transaction against the client's balance, and a refused actor
+  // must not reach a write of any kind. Nothing sits between the two statements,
+  // so the only way to the charge is through here — and the test that holds this
+  // spies on the charge and asserts the refused actor never reached it, rather
+  // than asking whether a fence appears somewhere before a charge in the source.
+  if (!canViewClient(user, client)) {
+    return Response.json({ error: "Client not found" }, { status: 404 });
+  }
+
   // Client users spend 1 credit per copilot message (staff chat and admin
   // "View as Client" sessions are free). The charge enforces the balance +
   // weekly/monthly caps; denials return 402 with a readable message the dock
   // renders inline.
+  //
+  // `chargeClientModelCall` rather than an inline isBillableClientActor +
+  // try/catch: this route was one of four hand-written spellings of the same
+  // block, and the differences between them were not deliberate. It charges
+  // rather than wrapping with `withClientModelCharge` because the model call
+  // this pays for is a STREAM that outlives the handler — there is no `try`
+  // here for a refund to hang off. What a failed stream owes the client is a
+  // separate question from this cluster's, and it is not answered here.
   let credits: ClientCredits | null = null;
-  if (isBillableClientActor(user)) {
-    try {
-      await chargeClientCredits({
-        clientId,
-        amount: CREDIT_COSTS.chatMessage,
-        operation: "chat_message",
-        reason: "Copilot chat message",
-        actorUid: user.uid,
-        actorName: user.name,
-      });
-    } catch (e) {
-      if (e instanceof CreditError) {
-        return Response.json({ error: e.message }, { status: 402 });
-      }
-      throw e;
-    }
+  const chatCharge = await chargeClientModelCall({
+    user,
+    clientId,
+    amount: CREDIT_COSTS.chatMessage,
+    operation: "chat_message",
+    reason: "Copilot chat message",
+  });
+  if (chatCharge.denied !== null) {
+    return Response.json({ error: chatCharge.denied }, { status: 402 });
+  }
+  if (chatCharge.chargedAt !== null) {
     credits = await getClientCredits(clientId);
   }
+
+  // WHOSE VOCABULARY THIS SESSION SPEAKS, asked once, for the whole handler.
+  //
+  // The route admits a CLIENT_USER for their own clientId and serves BOTH docks,
+  // so every string composed below — the system prompt, the §3 tool results, the
+  // deep links, the failure sentences — is client copy whenever this is true.
+  // One binding, read by all of them, because the defect this closes was the
+  // same question answered twice.
+  //
+  // WHAT "VIEW AS CLIENT" GETS, spelled out because the previous note here said
+  // the opposite of what the code does. An impersonating admin arrives as
+  // `role: "CLIENT_USER"` carrying `impersonatedBy` (auth.ts), `isStaffCopilotActor`
+  // denies them on purpose, so `viewerIsClient` is TRUE and they get the CLIENT
+  // register AND the CLIENT deep link — both, not one of each. That is the point
+  // of the mode: they are looking at what the client sees. It is also the only
+  // link that works for them, because `/jobs` guards on `requireUser(["KAROS_ADMIN",
+  // "KAROS_EMPLOYEE"])` against `user.role` — which is CLIENT_USER in that session
+  // — so a "helpfully" staff deep link would redirect them to /dashboard.
+  //
+  // Executed to confirm, not read off: role KAROS_ADMIN → viewerIsClient=false,
+  // "Awaiting review", staff link; CLIENT_USER + impersonatedBy → true, "Draft",
+  // client link; plain CLIENT_USER → true, "Draft", client link.
+  //
+  // The reschedule tool's write path calls `isStaffCopilotActor` again at its own
+  // site. Same predicate, deliberately spelled out there, because it is asking a
+  // different QUESTION of it — "may this session write staff-tier state?" rather
+  // than "whose words do I use?" — and those two are allowed to diverge later.
+  // What must not happen is a second ANSWER to either.
+  const viewerIsClient = !isStaffCopilotActor(user);
 
   // Locked (future-dated) content never reaches a client-facing model prompt —
   // and neither does staff-only working material. Launch deliverables and
@@ -167,12 +227,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     jobs,
     promptAssets,
     promptContextDocs,
-    { canUpdateBranding: isStaffCopilotActor(user) },
+    // Two separate questions, passed separately on purpose: which TOOLS to
+    // describe, and whose VOCABULARY to write in. They happen to be the same
+    // predicate today; folding them into one flag would mean a future change to
+    // who may edit branding silently changed what words a client reads.
+    { canUpdateBranding: !viewerIsClient, viewerIsClient },
   );
 
   /* ── Shared Google integration lookup ────────────────────────────── */
+  // Gated on GRANTOR IDENTITY, not just usability. The `google` integration is
+  // one row per WORKSPACE (`${clientId}_google`) written from one individual's
+  // personal OAuth grant, and multi-seat workspaces are the norm — so resolving
+  // it by platform alone handed user B user A's private inbox (and staff opening
+  // that client's copilot got it too). `integrationBelongsToCaller` matches the
+  // recorded grantor against the caller and fails closed when it cannot.
+  //
+  // Gating HERE rather than inside the tool is what makes the degraded path
+  // indistinguishable from an unconnected workspace: `hasGmailIntegration` below
+  // goes false as well, so the prompt's Scenario-D block is withheld and its
+  // silence rule ("never mention email integration, Gmail, or inbox
+  // connectivity") applies. So WITHIN THIS SESSION a non-grantor sees exactly
+  // what an unconnected workspace looks like.
+  //
+  // Two honest limits on that, because an overstated guarantee is worse than a
+  // stated one:
+  //  - it is identity, not role. A staff member is normally not the grantor and
+  //    so loses the scan — but a staff member who granted it themselves keeps
+  //    it, correctly, because the mailbox is theirs.
+  //  - it covers this route. The Integrations settings payload still carries
+  //    `accountName` for every row (sanitizeIntegrations strips credentials, not
+  //    that field), so the grantor's address is in that page's RSC payload even
+  //    though no surface renders it. Narrowing that is a separate change.
   const googleIntegration = integrations.find(
-    (i) => i.platform === "google" && integrationIsUsable(i),
+    (i) =>
+      i.platform === "google" &&
+      integrationIsUsable(i) &&
+      integrationBelongsToCaller(i, user.email),
   );
 
   // Build dynamic proactive appendix with the managed-product catalog (karos-agents
@@ -216,12 +306,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Make the copilot credits-aware for client users: it can quote run costs,
   // warn on a low balance, and explain why an action was declined.
   //
-  // Custom agent runs are the dominant client spend and the only thing the
-  // Agents page charges, yet neither they nor the employee seat appeared in
-  // the price list the model is told never to go beyond — so it either
-  // declined or quoted the 5-credit task baseline against a real 25 (QA F95).
+  // THE PRICE LIST IS NOT WRITTEN HERE. It is CLIENT_PRICE_ROWS in lib/credits.ts,
+  // the same array the client's own rate card renders, because this block used to
+  // be a hand-assembled second copy of that card and the two had gone out of step
+  // in the same direction: neither carried `agent_launch`, the one-time agent
+  // setup charge — the largest single thing a client is billed for. Paired with
+  // the "never invent credit figures beyond these" instruction that closes this
+  // block, that omission meant a client asking what setup costs was quoted the
+  // per-RUN price or nothing at all.
+  //
+  // WHAT THE SETUP ROW CAN AND CANNOT SAY HERE. Its price is per agent
+  // (CustomAgent.launchCreditCost) and `ClientCustomAgentSummary` — what
+  // getClientCustomAgents hands this route — does not carry that field, so the
+  // per-agent figures are NOT available in this prompt and nothing below
+  // pretends otherwise. The row states the shape of the charge and names the
+  // page that shows the number, which is an answer; a guessed figure is not.
+  const priceLines = CLIENT_PRICE_ROWS.map(
+    (row) =>
+      `  - ${row.label}: ${clientPriceText(row, { withUnit: true })}` +
+      (row.note ? ` (${row.note})` : ""),
+  ).join("\n");
   const agentPriceLines = customAgents
-    .map((a) => `  - ${a.name}: ${a.creditCost ?? CREDIT_COSTS.customAgentRun} credits per run`)
+    .map((a) => `  - ${a.name}: ${creditsLabel(a.creditCost ?? CREDIT_COSTS.customAgentRun)} per run`)
     .join("\n");
   const creditsAppendix = credits
     ? `\n\n## Usage credits\n` +
@@ -229,19 +335,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // clipped by the weekly/monthly caps. Quoting the raw balance is the
       // same mistake F102 fixed on the rail, the panel and the agents page:
       // a capped client would be told a number they cannot spend.
-      `This client pays for AI actions with credits. Spendable right now: ${availableCredits(credits)} credits — ` +
+      `This client pays for AI actions with credits. Spendable right now: ${availableCredits(credits)} credits` +
       `quote THIS figure when asked what they have; it is the balance already clipped by their spend caps. ` +
       `Used ${credits.weekSpent}${credits.weeklyLimit != null ? ` of ${credits.weeklyLimit}` : ""} this week, ` +
       `${credits.monthSpent}${credits.monthlyLimit != null ? ` of ${credits.monthlyLimit}` : ""} this month.\n` +
-      `Costs: chat message ${CREDIT_COSTS.chatMessage}; task execution ${CREDIT_COSTS.taskExecution} baseline, or by product — ` +
-      `blog article ${TASK_EXECUTION_COSTS.blog_article}, newsletter ${TASK_EXECUTION_COSTS.newsletter_issue}, ` +
-      `social posts ${TASK_EXECUTION_COSTS.social_post}, landing page ${TASK_EXECUTION_COSTS.landing_page}; ` +
-      `doc correction ${CREDIT_COSTS.targetedCorrection} (global ${CREDIT_COSTS.globalCorrection}).\n` +
-      `AI agent runs (the Agents page) cost ${CREDIT_COSTS.customAgentRun} credits per run by default; some agents are priced individually. ` +
+      `What each action costs. This is the same price list the client reads on their settings page:\n${priceLines}\n` +
       (agentPriceLines
-        ? `This client's agents and their exact prices:\n${agentPriceLines}\n`
+        ? `This client's agents and the exact price of one run of each:\n${agentPriceLines}\n`
         : `This client has no AI agents assigned yet.\n`) +
-      `An extra LinkedIn employee-advocacy seat beyond the plan's limit costs ${CREDIT_COSTS.employeeSeat} credits, charged once — it is not a monthly subscription.\n` +
       `If spendable credits are under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
     : "";
 
@@ -336,9 +437,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const mentionableNames = customAgents.map((a) => liveByCustomAgentId.get(a.id)?.displayName ?? a.name);
 
   const focusAppendix = focusedAgent
-    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusedAgent.displayName}** — this STAYS active across turns ` +
+    ? `\n\n## FOCUSED AGENT\nThe user is currently focused on **${focusedAgent.displayName}**. This STAYS active across turns ` +
       `until they explicitly ask to switch to a different agent or return to the general copilot; never drop it on your own. ` +
-      `Prioritize this agent in your answers${focusedAgent.templates.length > 0 ? ` — its templates: ${focusedAgent.templates.map((t) => t.name).join(", ")}` : ""}. ` +
+      `Prioritize this agent in your answers${focusedAgent.templates.length > 0 ? `its templates: ${focusedAgent.templates.map((t) => t.name).join(", ")}` : ""}. ` +
       `Still answer anything else they ask; this is a focus, not a restriction. ` +
       `If they ask (in plain text, not @mention) to switch to another agent or go back to general, call set_agent_focus.` +
       (() => {
@@ -350,7 +451,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         return md ? `\n\n${md}` : "";
       })()
     : mentionableNames.length > 0
-      ? `\n\n## AGENT FOCUS\nNo agent is focused right now — you're the general copilot. If the user asks in plain text ` +
+      ? `\n\n## AGENT FOCUS\nNo agent is focused right now. You're the general copilot. If the user asks in plain text ` +
         `to talk to / focus on one of their agents (${mentionableNames.join(", ")}), call set_agent_focus ` +
         `to switch into it; it then stays focused across turns until they ask to switch again or return here.`
       : "";
@@ -360,6 +461,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // unambiguous ISO instant so a tool call's datetime input is computed from
   // the same instant the model reasons about, not re-derived from prose.
   const nowAppendix = `\n\n## CURRENT DATE/TIME\n${new Date().toISOString()} (UTC). Convert relative dates ("next Thursday", "in two weeks") from this instant.`;
+
+  /**
+   * AF-8 REACHES THE MODEL'S OWN SENTENCES TOO.
+   *
+   * "Why is there an M dash? We don't use those." The static guard
+   * (client-copy-boundary.test.ts) can sweep every string this repo ships, but
+   * the copilot's replies are written at runtime and are the one client-facing
+   * surface no test can read. Without this the house rule holds everywhere
+   * except the surface a client actually converses with — and an LLM left to
+   * itself reaches for the em dash constantly.
+   *
+   * Stated as a substitution rather than a prohibition: "don't use X" invites
+   * the model to find the nearest lookalike, and a spaced hyphen is the other
+   * thing this app's copy rules refuse.
+   */
+  const styleAppendix =
+    `\n\n## WRITING STYLE\nNever use an em dash (—) in your replies. Use a comma, a full stop, or "·" instead. ` +
+    `Do not substitute a spaced hyphen (" - ") either. An en dash is fine for ranges ("3–4 posts", "10–20 minutes").`;
 
   const systemPrompt =
     `${baseSystemPrompt}\n\n` +
@@ -382,7 +501,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     creditsAppendix +
     agentFeedbackAppendix +
     focusAppendix +
-    nowAppendix;
+    nowAppendix +
+    styleAppendix;
 
   /* ── Shared tools ─────────────────────────────────────────────────── */
 
@@ -457,13 +577,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ subject, message }) => {
       const adminEmail = process.env.ADMIN_EMAIL;
-      const emailHtml = `
-        <p><strong>Client:</strong> ${client.name} (${clientId})</p>
-        <p><strong>Submitted by:</strong> ${user.name ?? user.email}</p>
-        <hr style="border:none;border-top:1px solid #20303a;margin:12px 0;" />
-        <p><strong>Message:</strong></p>
-        <p style="white-space:pre-wrap;">${message.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>
-      `;
+      // ONE template for this email, shared with the Support form's action —
+      // they were two hand-written copies of the same mail to the same inbox,
+      // each carrying the same injection. This copy escaped `message` on the
+      // very next line and interpolated `client.name` and `user.name ?? user.email`
+      // raw, so a display name holding markup rendered as markup for whoever
+      // reads the Karos inbox. `supportRequestEmail` escapes every field it is
+      // given, so nothing here has to know which of them is hostile.
+      const emailHtml = supportRequestEmail({
+        fromName: user.name ?? user.email,
+        fromEmail: user.email,
+        subject,
+        message,
+        client: { name: client.name, id: clientId },
+      });
       if (adminEmail) {
         const result = await sendEmail({
           to: adminEmail,
@@ -477,7 +604,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           console.error(
             `[copilot] Support email failed for client ${clientId}: ${result.error}`,
           );
-          return "I couldn't send the support email just now - please try again shortly, or email hello@karoslabs.com directly.";
+          return "I couldn't send the support email just now. Please try again shortly, or email hello@karoslabs.com directly.";
         }
       } else {
         console.log("[copilot] Support email (ADMIN_EMAIL not set):", { subject, message, clientId });
@@ -499,13 +626,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ),
     }),
     execute: async ({ maxEmails }) => {
+      // One branch, two reasons: no grant in this workspace, or a grant that is
+      // not the caller's. They MUST stay one branch returning one string — a
+      // separate message for the second case would disclose that someone else
+      // connected their mail. Hence the shared constant, pinned by a test.
       if (!googleIntegration) {
-        return (
-          "No Google Workspace integration found for this account. " +
-          "To enable Gmail scanning, sign in with Google via the Login page (or Integrations tab) - " +
-          "you will be prompted to grant Gmail read access. " +
-          "In the meantime, I can still build a task map from your meetings and context documents."
-        );
+        return GMAIL_UNAVAILABLE_MESSAGE;
       }
 
       const accessToken = googleIntegration.credentials.access_token;
@@ -520,17 +646,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         if (err instanceof GmailTokenExpiredError) {
           await markIntegrationExpired(clientId, "google").catch(() => {});
           if (err.reason === "insufficient_scope") {
+            // The second clause used to read "or the Gmail API isn't enabled for
+            // this integration" — our own console configuration, named in
+            // developer vocabulary, and a cause the remedy in the very next
+            // sentence cannot address. A client re-approving the consent screen
+            // a second time would fail again with no idea why. Name only the
+            // cause they can act on, then hand the other one to us.
             return (
-              "Gmail access was denied - the gmail.readonly permission wasn't granted during sign-in, " +
-              "or the Gmail API isn't enabled for this integration. " +
-              "Please sign out and sign back in with Google, and make sure to approve the Gmail permission on the consent screen. " +
+              "Gmail access was denied. The Gmail read permission wasn't granted during sign-in. " +
+              "Please sign out and sign back in with Google, and approve the Gmail permission on the consent screen. " +
+              "If it still doesn't take, tell your Karos team. That one is ours to fix, not yours. " +
               "I can still work from your meetings and context documents in the meantime."
             );
           }
           return (
             "Your Google access token has expired. " +
             "Please sign out and sign back in with Google to restore Gmail access. " +
-            "I can still build a task map from your existing context - just let me know."
+            "I can still build a task map from your existing context. Just let me know."
           );
         }
         return "Failed to connect to Gmail. Check your network and try again.";
@@ -556,7 +688,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const extractionPrompt = buildGmailExtractionPrompt(
         emails,
         client.name,
-        client.industry ?? "business",
+        clientCategoryValue(client) ?? "business",
       );
 
       const { object: extracted, usage: haikuUsage } = await generateObject({
@@ -579,7 +711,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       );
 
       if (extracted.tasks.length === 0) {
-        return `Analyzed ${emails.length} operational signals - no actionable items detected. Your queue looks clear for now.`;
+        return `Analyzed ${emails.length} operational signals. No actionable items detected. Your queue looks clear for now.`;
       }
 
       // Three-tier dedup (task-dedup.ts) — Gmail candidates are title-only, so
@@ -591,7 +723,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const dupSkipped = extracted.tasks.length - deduped.length;
 
       if (deduped.length === 0) {
-        return `Analyzed ${emails.length} operational signals - all extracted items already exist in your task board (${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped).`;
+        return `Analyzed ${emails.length} operational signals. All extracted items already exist in your task board (${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped).`;
       }
 
       // The cap bounds the Karos AI execution queue only — client_managed
@@ -629,7 +761,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       const notes = [
         dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
-        capSkipped > 0 ? `${capSkipped} deferred - Karos-managed queue capacity reached` : "",
+        capSkipped > 0 ? queueCapacitySkipNote(capSkipped) : "",
       ].filter(Boolean);
       const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return (
@@ -654,7 +786,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Set owner='karos_managed' for tasks Karos AI or staff will execute; 'client_managed' for tasks the client must do themselves. " +
       "Every karos_managed content task MUST name its executing agent: set productType for a managed product, OR agentId for a custom agent (from AVAILABLE AI EXECUTION AGENTS). Never set both. " +
       "Exception: if the user has @mentioned/focused one agent (see FOCUSED AGENT below), a karos_managed task with neither set defaults to that agent automatically. " +
-      `The Karos AI execution queue holds at most ${MAX_ACTIVE_TASKS} active karos_managed tasks per client — karos_managed proposals beyond the free capacity are rejected; client_managed tasks are uncapped. ` +
+      `The Karos AI execution queue holds at most ${MAX_ACTIVE_TASKS} active karos_managed tasks per client · karos_managed proposals beyond the free capacity are rejected; client_managed tasks are uncapped. ` +
       "Pass an empty tasks array when the board already covers all observable signals.",
     inputSchema: z.object({
       tasks: z
@@ -679,7 +811,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .string()
               .optional()
               .describe(
-                "The id of a CUSTOM agent (from AVAILABLE AI EXECUTION AGENTS, marked 'custom agent') that will execute this task — use INSTEAD of productType when a custom agent fits. Must be an exact id from that list; never invented",
+                "The id of a CUSTOM agent (from AVAILABLE AI EXECUTION AGENTS, marked 'custom agent') that will execute this task. Use INSTEAD of productType when a custom agent fits. Must be an exact id from that list; never invented",
               ),
             platform: z
               .enum(["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"])
@@ -691,7 +823,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .min(0)
               .max(100)
               .optional()
-              .describe("Contextual priority weight per CONTEXTUAL PRIORITY SCORING — how critical the underlying gap is"),
+              .describe("Contextual priority weight per CONTEXTUAL PRIORITY SCORING. How critical the underlying gap is"),
           }),
         )
         // Room for a full Scan & Refresh in ONE call: up to 6 "depending on
@@ -703,7 +835,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ tasks }) => {
       if (tasks.length === 0) {
-        return "No new tasks created - the task board already covers all observable signals.";
+        return "No new tasks created. The task board already covers all observable signals.";
       }
 
       // @mention default (§3): a karos_managed task with no executor named
@@ -743,7 +875,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           pool,
         );
         if (reason) {
-          dupReasons.push(`"${t.title}" - ${reason}`);
+          dupReasons.push(`"${t.title}" · ${reason}`);
           continue;
         }
         if (t.owner === "karos_managed") {
@@ -772,9 +904,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
       if (freshTasks.length === 0) {
         if (capSkipped > 0 && dupSkipped === 0) {
-          return `Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks) - no tasks created. Ask the user to complete or approve existing tasks first.`;
+          return `Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). No tasks created. Ask the user to complete or approve existing tasks first.`;
         }
-        return `No tasks created - ${capSkipped > 0 ? `${capSkipped} blocked by the Karos queue capacity and ` : ""}the rest duplicate existing work:\n${dupReasons.join("\n")}`;
+        return `No tasks created. ${capSkipped > 0 ? `${capSkipped} blocked by the Karos queue capacity and ` : ""}The rest duplicate existing work:\n${dupReasons.join("\n")}`;
       }
 
       const now = Date.now();
@@ -821,7 +953,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const count = freshTasks.length;
       const notes = [
         dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
-        capSkipped > 0 ? `${capSkipped} karos_managed dropped - AI queue capacity (${MAX_ACTIVE_TASKS} active) reached` : "",
+        capSkipped > 0 ? queueCapacitySkipNote(capSkipped) : "",
       ].filter(Boolean);
       const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return `Created ${count} task${count !== 1 ? "s" : ""} in your task board${skipNote}.`;
@@ -832,36 +964,94 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   /**
    * One deep link per viewer role, resolved server-side (redaction-at-the-
-   * boundary, same doctrine every other projection on this route follows).
+   * boundary, same doctrine every other projection on this route follows), or
+   * NULL when this viewer has no screen that holds this output.
+   *
    * Staff get the exact per-job route (`/jobs/{id}`) when one exists, or the
-   * agent page with `?asset=` (OutputsHub auto-opens the modal from it).
-   * Clients never get `/jobs` or `/assets` — both redirect a CLIENT_USER away
-   * — so they get the agent detail page they actually have, or the Workspace
-   * as a last resort.
+   * agent page with `?asset=` (OutputsHub auto-opens the modal from it), or the
+   * client-scoped Assets list — three returns, none of them null, and none of
+   * them filtered by anything a staff account cannot see. Only a client can be
+   * told there is nowhere to go.
+   *
+   * A CLIENT'S LINK IS GATED ON THE DESTINATION'S OWN FILTER (#102), and the
+   * gate is the whole fix. Two things were wrong with the old two lines.
+   *
+   *  1. The fallback was a bare `/tasks` — the Workspace BOARD. That surface
+   *     holds tasks, not deliverables; `client-home-overview.tsx` reasons
+   *     exactly that about the same set two screens away ("The Workspace board
+   *     holds tasks, not deliverables, so it does not contain these either").
+   *     The archive is a TAB of the same route, and `?tab=archive` is the param
+   *     ProgressView actually reads.
+   *  2. Adding the param alone would still have lied. `promptAssets` filters out
+   *     future-dated, launch and test-run assets and nothing else, so a DRAFT is
+   *     reachable by `find_output` — and a draft is excluded from a client's
+   *     archive BY DESIGN (`getClientArchiveAssets`), and from the agent detail
+   *     page's own list too, which runs the same filter. So both client
+   *     destinations provably exclude exactly the thing the link would name.
+   *
+   * So the client branch asks `isInClientArchive` — the predicate the archive
+   * itself is built from, the same one `client-home-overview.tsx` asks before it
+   * makes a row a link — and offers no link at all when the answer is no. The
+   * callers drop the markdown line rather than printing a dead one; the tool
+   * still reports the output's title, status and content, which is what was
+   * asked for. Silence beats "[View this output]" landing on a list that
+   * excludes it.
+   *
+   * `nowMs` rather than a fresh `Date.now()`: the archive is a 30-day window, so
+   * this is a time-dependent question, and it must be answered at the same
+   * instant the rest of this handler used.
    */
+  // `viewerIsClient` is bound once, near the top of this handler, and decides
+  // BOTH the link below and the register the §3 tools speak in — see the note
+  // there for what "View as Client" gets and why.
+
   // Arrow expression, not a function declaration — narrowing `user` to
   // non-null (the route's early `if (!user...) return` above) does not
   // survive into a hoisted `function` declaration's body, only into a
   // closure, which is also why every tool below is defined the same way.
-  const deepLinkForAsset = (asset: Asset): string => {
+  const deepLinkForAsset = (asset: Asset): string | null => {
     const job = asset.jobId ? (jobs.find((j) => j.id === asset.jobId) ?? null) : null;
     const identity = resolveContentIdentity({ asset, job }, umbrellas as ClientAgentIdentity[]);
     const umbrella = identity.clientAgentId
       ? umbrellas.find((u) => u.id === identity.clientAgentId)
       : undefined;
-    if (isStaffCopilotActor(user)) {
+    if (!viewerIsClient) {
       if (job) return `/jobs/${job.id}`;
       if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}?asset=${asset.id}`;
       return `/assets?clientId=${clientId}`;
     }
+    if (!isInClientArchive(asset, nowMs)) return null;
     if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}`;
-    return "/tasks";
+    return "/tasks?tab=archive";
   };
+
+  /** The "[View this output]" line, or nothing when no screen holds it. */
+  const viewOutputLine = (asset: Asset): string => {
+    const href = deepLinkForAsset(asset);
+    return href ? `[View this output](${href})` : "";
+  };
+
+  /**
+   * The publish state of one output, as the ACTOR reading it is told it.
+   *
+   * Tool text is copy. The model paraphrases whatever this returns straight
+   * back into the dock, so an interpolated `asset.status` here reaches a client
+   * as prose in any wording the model likes ("status: scheduled") — the same
+   * defect the rendered badges had, one indirection out, and not one a render
+   * gate can catch. Sanitizing at the boundary means the enum is absent from
+   * what the model is given, rather than present and hopefully rephrased.
+   *
+   * `find_output` is on the client allowlist (copilot-tool-access) and the
+   * route's own gate only checks WHICH client's assets a caller may reach, so
+   * the viewer is the one thing this cannot take as a constant.
+   */
+  const statusLabelForActor = (status: Asset["status"]): string =>
+    assetStatusLabel(status, viewerIsClient);
 
   const findOutputTool = tool({
     description:
       "Look up one of this client's own generated outputs (assets) by id or a fragment of its title. " +
-      "Call this BEFORE edit_output, reschedule_output, or when the user asks about the status of something specific — you need the exact id first.",
+      "Call this BEFORE edit_output, reschedule_output, or when the user asks about the status of something specific. You need the exact id first.",
     inputSchema: z.object({
       query: z.string().describe("An asset id, or part of its title"),
     }),
@@ -876,21 +1066,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (matches.length > 1) {
         const top = matches.slice(0, 5);
         return (
-          `Found ${matches.length} matching outputs — which one did you mean?\n` +
-          top.map((a) => `- "${a.title || "Untitled"}" (${a.status}) — id: ${a.id}`).join("\n")
+          `Found ${matches.length} matching outputs. Which one did you mean?\n` +
+          top
+            .map((a) => `- "${a.title || "Untitled"}" (${statusLabelForActor(a.status)}) · id: ${a.id}`)
+            .join("\n")
         );
       }
       const asset = matches[0];
       const rawContent = asset.content ?? "";
       const content = rawContent.slice(0, 4000);
+      // The view line and the blank line above it drop together — a trailing
+      // empty line is the tell that a link was expected and withheld, and the
+      // model reads it as one.
+      const view = viewOutputLine(asset);
       return [
-        `**${asset.title || "Untitled"}** — status: ${asset.status}` +
+        `**${asset.title || "Untitled"}** · status: ${statusLabelForActor(asset.status)}` +
           (asset.scheduledAt ? `, scheduled for ${new Date(asset.scheduledAt).toISOString()}` : ""),
         `id: ${asset.id}`,
         "",
         content + (rawContent.length > 4000 ? "\n[…truncated]" : ""),
-        "",
-        `[View this output](${deepLinkForAsset(asset)})`,
+        ...(view ? ["", view] : []),
       ].join("\n");
     },
   });
@@ -898,7 +1093,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const editOutputTool = tool({
     description:
       "Save a revised version of one of this client's own generated outputs. Look it up with find_output first, " +
-      "draft the full replacement text yourself based on what the user asked to change (not a diff — the complete new content), then call this.",
+      "draft the full replacement text yourself based on what the user asked to change (not a diff, the complete new content), then call this.",
     inputSchema: z.object({
       assetId: z.string().describe("Exact asset id from find_output"),
       newContent: z.string().describe("The complete replacement content"),
@@ -906,20 +1101,46 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ assetId, newContent, newTitle }) => {
       const existing = promptAssets.find((a) => a.id === assetId);
-      if (!existing) return "I don't have that output — look it up with find_output first.";
+      if (!existing) return "I don't have that output. Look it up with find_output first.";
       try {
         await updateAssetAction(assetId, { content: newContent, ...(newTitle ? { title: newTitle } : {}) });
       } catch (e) {
+        // SANITIZED AT THE BOUNDARY, because this string is payload: the model
+        // paraphrases whatever the tool returns back into the client's dock, so
+        // the exception itself is what has to be absent — not merely unrendered.
+        //
+        // What was going out: `updateAssetAction` throws bare internal words
+        // ("Unauthorized", "Forbidden", "Asset not found") and, underneath it,
+        // whatever the Admin SDK throws. Executed with Firebase unconfigured, a
+        // CLIENT read back "Couldn't save that: Firebase Admin is not configured.
+        // Provide FIREBASE_SERVICE_ACCOUNT_KEY, the discrete FIREBASE_* vars, or
+        // Application Default Credentials with FIREBASE_PROJECT_ID set." — env var
+        // names and credential mechanisms, in a chat panel. This is #121's defect
+        // (raw internal failure text to a client) in the one channel #121 did not
+        // look at, and no render gate can catch it.
+        //
+        // STAFF KEEP THE REAL ERROR: they are the ones who fix it, and a staff dock
+        // is the fastest place to see it. A client's copy is one sentence that
+        // promises nothing the code cannot keep.
+        //
+        // The client path LOGS the real cause, so sanitizing does not also destroy
+        // the only trace — otherwise every client-side save failure becomes
+        // invisible, which is a worse outcome than the leak.
+        if (viewerIsClient) {
+          console.error(`[copilot] edit_output failed for client ${clientId}, asset ${assetId}:`, e);
+          return CLIENT_SAVE_REFUSAL_MESSAGE;
+        }
         return `Couldn't save that: ${e instanceof Error ? e.message : "unknown error"}.`;
       }
-      return `Saved. [View this output](${deepLinkForAsset(existing)})`;
+      const view = viewOutputLine(existing);
+      return view ? `Saved. ${view}` : "Saved.";
     },
   });
 
   const runAgentNowTool = tool({
     description:
       "Trigger an ad-hoc run of one of this client's custom agents right now, billed at its normal per-run rate. " +
-      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling — this spends credits.",
+      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name"),
       prompt: z.string().optional().describe("Optional extra instruction for this run"),
@@ -937,8 +1158,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
       });
-      if (result.error) return `Couldn't start that run: ${result.error}`;
-      return `Started a run of **${match.name}** — it takes 10–20 minutes, and your Karos team reviews the result before it reaches your Workspace.`;
+      if (result.error) {
+        // REUSED, not re-answered: `clientSafeRunError` is exactly this shape (a
+        // run that would not start) and already passes setup refusals and credit
+        // denials through verbatim, which are the two things a client here DOES
+        // need to read.
+        //
+        // Applied again at this boundary even though `runCustomAgentAction`
+        // sanitizes internally, because it does so behind `isBillableClientActor`
+        // — which EXCLUDES an impersonating admin, so "View as Client" was shown
+        // the raw config error and did not see what the client sees. Two
+        // predicates, two answers; the boundary asks the one that governs
+        // vocabulary. Idempotent: the generic sentence is not on the allowlist, so
+        // re-sanitizing it returns the same sentence.
+        return viewerIsClient
+          ? clientSafeRunError(result.error)
+          : `Couldn't start that run: ${result.error}`;
+      }
+      return `Started a run of **${match.name}**. It takes 10–20 minutes, and your Karos team reviews the result before it reaches your Workspace.`;
     },
   });
 
@@ -954,7 +1191,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     execute: async ({ assetId, newScheduledAt }) => {
       const parsed = Date.parse(newScheduledAt);
       if (Number.isNaN(parsed)) {
-        return "That date didn't parse — give it as ISO 8601, e.g. 2026-08-06T13:00:00.000Z.";
+        return "That date didn't parse. Give it as ISO 8601, e.g. 2026-08-06T13:00:00.000Z.";
       }
       // Real (non-impersonated) staff get the full-power path — no day/status
       // guard rails, since that surface is already theirs via the Assets UI.
@@ -966,26 +1203,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           if (!asset) return "Couldn't find that output.";
           await scheduleAssetAction(assetId, parsed, asset.scheduledPlatform, asset.publishMode);
         } catch (e) {
+          // NOT sanitized, and that is correct rather than an oversight: this
+          // branch is inside `isStaffCopilotActor(user)`, so only a real
+          // (non-impersonated) staff account can reach it. Staff are owed the
+          // exception.
           return `Couldn't reschedule: ${e instanceof Error ? e.message : "unknown error"}.`;
         }
         return `Moved to ${new Date(parsed).toISOString()}.`;
       }
-      const result = await clientRescheduleAssetAction(assetId, parsed);
-      if (!result.ok) return result.error;
+      // The CLIENT path, and it DOES need a sanitizer — an earlier version of the
+      // comment above certified it as safe because every *refusal* the action
+      // composes is client copy. True, and not the whole story: the action opens
+      // with `requireAssetAccess`, which THROWS bare "Unauthorized" / "Asset not
+      // found" / "Forbidden" rather than returning a refusal. Uncaught, the AI SDK
+      // hands the throw straight to a client's model, which paraphrases it.
+      //
+      // Returned refusals still pass through verbatim — those are written for this
+      // reader. Only the throws are collapsed.
+      try {
+        const result = await clientRescheduleAssetAction(assetId, parsed);
+        if (!result.ok) return result.error;
+      } catch (e) {
+        console.error("[copilot] reschedule_output threw for a client", e);
+        return CLIENT_SAVE_REFUSAL_MESSAGE;
+      }
       return `Moved to ${new Date(parsed).toISOString()}.`;
     },
   });
 
   const provideFeedbackTool = tool({
     description:
-      "Record standing feedback on one of this client's LIVE agents — tone, formatting, or topic preferences that should " +
+      "Record standing feedback on one of this client's LIVE agents. Tone, formatting, or topic preferences that should " +
       "shape everything it makes from here on (or one format only, if scoped to a template). This is not a one-off request: " +
       "it's injected into every future run of that agent.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name, matched against this client's live agents"),
       text: z.string().describe("The feedback itself, in the client's own words"),
       scope: z.enum(["agent", "template"]).default("agent"),
-      templateKey: z.string().optional().describe("Required when scope is 'template' — one of the agent's own format keys"),
+      templateKey: z.string().optional().describe("Required when scope is 'template'. One of the agent's own format keys"),
       category: z.enum(FEEDBACK_CATEGORIES as [string, ...string[]]).optional(),
     }),
     execute: async ({ agentQuery, text, scope, templateKey, category }) => {
@@ -1005,7 +1260,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...(category ? { category } : {}),
       });
       if (result.error) return result.error;
-      return `Saved — this ${
+      return `Saved. This ${
         scope === "template" ? `shapes only "${templateKey}" posts` : `applies to everything ${umbrella.displayName} makes`
       } from here on.`;
     },
@@ -1032,14 +1287,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Switch which agent this conversation is focused on, or return to the general copilot. Call this when the user asks " +
       "IN PLAIN TEXT (not via the @mention picker) to talk to/focus on a specific agent, to switch to a different one, or to " +
       "stop focusing / go back to the general copilot. Matches against ALL of this client's agents, not only live ones. " +
-      "Once focused, it stays focused across turns until they ask again — never call action='clear' unasked.",
+      "Once focused, it stays focused across turns until they ask again. Never call action='clear' unasked.",
     inputSchema: z.object({
       action: z.enum(["focus", "clear"]),
-      agentQuery: z.string().optional().describe("Required when action is 'focus' — the agent's name"),
+      agentQuery: z.string().optional().describe("Required when action is 'focus'. The agent's name"),
     }),
     execute: async ({ action, agentQuery }) => {
       if (action === "clear") {
-        return "Back to the general copilot — I'm not focused on a specific agent anymore.\n\n<!-- COPILOT_FOCUS:null -->";
+        return "Back to the general copilot. I'm not focused on a specific agent anymore.\n\n<!-- COPILOT_FOCUS:null -->";
       }
       const q = (agentQuery ?? "").trim().toLowerCase();
       if (!q) return "Which agent would you like to focus on?";
@@ -1060,7 +1315,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
       const payload = JSON.stringify(resolved);
       return (
-        `Switched focus to **${resolved.name}** — I'll prioritize it until you ask to focus on a different agent ` +
+        `Switched focus to **${resolved.name}**. I'll prioritize it until you ask to focus on a different agent ` +
         `or go back to general.\n\n<!-- COPILOT_FOCUS:${payload} -->`
       );
     },

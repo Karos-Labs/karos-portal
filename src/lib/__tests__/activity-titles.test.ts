@@ -10,6 +10,7 @@ import {
   opsImportTitle,
   intelReportImportedTitle,
   managedRunStartedTitle,
+  researchReportReadyTitle,
   templateRunStartedTitle,
 } from "@/lib/activity-titles";
 
@@ -27,6 +28,18 @@ import {
  * drifts out of the classifier's reach.
  */
 
+/**
+ * The files that mint a MACHINERY title, i.e. one the classifier has to hide
+ * from a client's timeline. Not every file that logs activity.
+ *
+ * competitor-actions.ts left this list on 2026-07-31: its only machinery row was
+ * the retired intel-report import (QA #99), and the titles it still writes
+ * ("Competitor added: …", "Competitor intelligence updated") are account events
+ * that belong on the client's timeline — both are asserted NOT machinery below.
+ * Dropping it narrows nothing, because "has no machinery title minted outside
+ * the builders" walks the whole of src/ and would catch that file re-inlining
+ * one; this list only buys a sharper failure message for the known writers.
+ */
 const WRITERS = [
   "src/lib/jobs/submit-managed.ts",
   "src/lib/jobs/submit-custom.ts",
@@ -35,7 +48,6 @@ const WRITERS = [
   "src/lib/actions/client-agent-run-actions.ts",
   "src/lib/actions/lab-output-actions.ts",
   "src/lib/actions/ops-import-actions.ts",
-  "src/lib/actions/competitor-actions.ts",
 ] as const;
 
 function read(rel: string): string {
@@ -87,14 +99,50 @@ describe("run-machinery activity titles", () => {
     // Deliberately narrow. These are events in the client's account, not the
     // dispatcher's bookkeeping, and a client's timeline is the right place for
     // every one of them.
+    //
+    // BOTH SPELLINGS of every title reworded as client copy on 2026-07-31 (the
+    // seventh-channel pass) — SIX of them, and the first count here said three.
+    // The three it left out were the two `${docType} corrected …` forms and the
+    // feedback row's template slug, which are precisely the ones whose stored
+    // rows could drift from this matcher unnoticed: an inventory that undercounts
+    // is wrong in the direction that hides retroactivity debt.
+    //
+    // The old spellings are what months of Firestore rows still say and what a
+    // client's timeline renders today, so dropping them here would stop pinning
+    // the rows that actually exist; the new ones are what the writers mint from
+    // now on. Neither may become machinery — un-hiding is not the risk, HIDING an
+    // account event is.
+    //
+    // The interpolated ones are pinned at a REAL value on each side of the
+    // rename: the old form printed the Firestore key ("branding-guidelines", and
+    // "numbers" for the feedback row), the new one prints the name a client
+    // recognises.
     for (const title of [
       "Competitor added: Acme",
       "Competitor intelligence updated",
       "Brand guidelines updated",
-      "Intel Report generated",
-      "Workspace generation stopped early",
       "SEO/GEO fix approved",
       "Set Instagram's pace: 3 posting days a week",
+      // ── retroactive ⇢ current, one pair per reworded title ──
+      // 1. the research report (three retroactive spellings, two writers)
+      "Intel Report generated",
+      "Intel Report generated (scheduled)",
+      researchReportReadyTitle(),
+      // 2. a generation cycle that stopped
+      "Workspace generation stopped early",
+      "Workspace update didn't finish",
+      // 3. the competitor discovery pass
+      "Competitors discovered & analyzed",
+      "Competitors discovered and analyzed",
+      // 4. a targeted document correction
+      "branding-guidelines corrected (targeted)",
+      "Branding guidelines corrected",
+      // 5. the same correction taken through review
+      "branding-guidelines corrected via Fix with Review",
+      "Branding guidelines corrected after review",
+      // 6. feedback on one agent format
+      "Feedback on Instagram · by-the-numbers",
+      "Feedback on Instagram · By The Numbers",
     ]) {
       expect(isRunMachineryTitle(title), `${title} is not machinery`).toBe(false);
     }
@@ -116,7 +164,7 @@ describe("run-machinery activity titles", () => {
 
   it("has no machinery title minted outside the builders", () => {
     // The same guard, asked of the whole tree rather than a list that could go
-    // stale: a sixth writer added tomorrow fails here.
+    // stale: a writer added tomorrow, on or off WRITERS, fails here.
     const offenders: string[] = [];
     for (const file of walk(join(process.cwd(), "src"))) {
       if (file.endsWith("activity-titles.ts")) continue;

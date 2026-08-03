@@ -1,11 +1,13 @@
 import "server-only";
 
+import { cache } from "react";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import { adminAuth } from "@/lib/firebase/admin";
-import { getUser, upsertUser, countUsers, getClientByKeyId } from "@/lib/data";
-import type { AppUser, Role } from "@/lib/types";
+import { getUser, upsertUser, countUsers, getClient, getClientByKeyId } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
+import type { AppUser, Client, Role } from "@/lib/types";
 
 export const SESSION_COOKIE = "karos_session";
 export const IMPERSONATE_COOKIE = "karos_impersonate";
@@ -231,7 +233,29 @@ export async function getUserFromToken(decoded: DecodedIdToken): Promise<AppUser
   return await getUser(decoded.uid);
 }
 
-async function getSessionUser(): Promise<AppUser | null> {
+/**
+ * Resolve the signed-in identity behind the session cookie — ONCE PER REQUEST.
+ *
+ * React-`cache`d for a correctness reason, not a speed one. Resolving a session
+ * is not a read: `ensureUserDoc` UPSERTS the user document when the address on
+ * the Firebase identity has drifted from the stored one, and it can mint a doc
+ * outright. Meanwhile `logActivity` resolves the session on every row that
+ * claims a client acted (to catch impersonation), and eight of its callers fire
+ * it and forget it — so a request could run several independent
+ * `verifySessionCookie` + upsert cycles, and an activity log could be the thing
+ * that triggered a write to a user record. Sharing one resolution per request
+ * means the log can only ever observe the write the request was already making.
+ *
+ * Same idiom as `getClient` in data.ts. React's cache is per-request, so no
+ * identity is ever shared between two requests; callers get a shallow copy so a
+ * caller that mutates its user cannot reach into another's.
+ *
+ * NOT a substitute for re-reading after a cookie change: nothing in this app
+ * mints or swaps a session and then re-reads it inside the same request (the
+ * session route responds immediately, and both impersonation actions redirect),
+ * which is what makes the caching safe.
+ */
+const resolveSessionUser = cache(async (): Promise<AppUser | null> => {
   const store = await cookies();
   const cookie = store.get(SESSION_COOKIE)?.value;
   if (!cookie) return null;
@@ -249,6 +273,11 @@ async function getSessionUser(): Promise<AppUser | null> {
   } catch {
     return null;
   }
+});
+
+async function getSessionUser(): Promise<AppUser | null> {
+  const user = await resolveSessionUser();
+  return user ? { ...user } : null;
 }
 
 export async function getCurrentUser(): Promise<AppUser | null> {
@@ -275,27 +304,17 @@ export async function getViewingContext(): Promise<{
   isImpersonating: boolean;
   realAdmin?: AppUser;
 }> {
-  const store = await cookies();
-  const cookie = store.get(SESSION_COOKIE)?.value;
-  if (!cookie) redirect("/login");
-
-  let realUser: AppUser | null = null;
-  try {
-    const decoded = await adminAuth().verifySessionCookie(cookie, true);
-    if (isEmailUnverified(decoded)) redirect("/login");
-    realUser = await ensureUserDoc({
-      uid: decoded.uid,
-      email: decoded.email,
-      name: (decoded.name as string) || undefined,
-      picture: (decoded.picture as string) || undefined,
-    });
-  } catch {
-    redirect("/login");
-  }
-
+  // Through the shared resolver rather than a second inline copy of it: this
+  // runs in the app layout on every page, so the duplicate was a second
+  // verifySessionCookie plus a second ensureUserDoc (which can write) on every
+  // request that also called getCurrentUser. Every arm of the old try/catch —
+  // no cookie, a bad cookie, an unverified address, a throw from Firestore —
+  // redirected to /login, and every one of them is a null from the resolver.
+  const realUser = await getSessionUser();
   if (!realUser) redirect("/login");
   if (realUser.disabled) redirect("/pending");
 
+  const store = await cookies();
   if (realUser.role === "KAROS_ADMIN") {
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
@@ -340,6 +359,40 @@ export async function requireUser(roles?: Role[]): Promise<AppUser> {
   if (user.disabled) redirect("/pending");
   if (roles && !roles.includes(user.role)) redirect("/dashboard");
   return user;
+}
+
+/**
+ * Load the client behind a `/clients/[id]` route, or refuse — THE server-side
+ * half of the assignment fence (see canViewClient for why the fence is a
+ * permission and not a sort order).
+ *
+ * Replaces the `getClient(id); if (!client) notFound()` pair every one of those
+ * routes was doing, so "does it exist" and "may you open it" are answered
+ * together and a new route under `/clients/[id]` cannot get one without the
+ * other. `getClient` is React-`cache`d, so the nested layout and the page it
+ * wraps still make one Firestore read between them.
+ *
+ * ONE response for "no such client" and "not yours", deliberately: a distinct
+ * 403 would turn the route into an oracle for which client ids exist. Same
+ * idiom `requireTaskAccess` uses for foreign task ids.
+ *
+ * The layout checks too, and the PAGE's check is the one that counts. A layout
+ * is not re-rendered on navigation (next/dist/docs — file-conventions/layout.md
+ * and the glossary's "Layout" entry; instant-navigation.md spells out that a
+ * client transition only re-renders BELOW the layout the two routes share), so
+ * a guard placed only in the layout is skipped on every client-side move
+ * between two `/clients/[id]/…` pages. The layout's copy exists for the other
+ * reason: it BUILDS a payload (the staff rail), and a payload has to be
+ * authorised where it is built.
+ *
+ * `notFound()` rather than Next's `forbidden()` on purpose — beyond the oracle
+ * point above, `forbidden()` needs the `authInterrupts` experimental flag,
+ * which this app does not set.
+ */
+export async function requireVisibleClient(user: AppUser, clientId: string): Promise<Client> {
+  const client = await getClient(clientId);
+  if (!client || !canViewClient(user, client)) notFound();
+  return client;
 }
 
 export function isAdmin(user: AppUser | null) {

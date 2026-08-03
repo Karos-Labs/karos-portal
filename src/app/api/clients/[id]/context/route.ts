@@ -2,12 +2,33 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth";
 import { createContextItem, getClient, listContextItems } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
 import { uploadBytes } from "@/lib/storage";
 import { contextKind } from "@/lib/context";
 
 export const maxDuration = 60;
 
 const MAX_BYTES = 4 * 1024 * 1024; // 4 MB self-imposed cap on a context item
+
+/**
+ * STAFF SCOPE, on BOTH handlers — a read fence that leaves the write open is not
+ * a fence, and this file exports two handlers.
+ *
+ * Each one's only role test was a CLIENT_USER branch, so an employee 404'd on
+ * /clients/[id] could list any client's context items through GET and attach a
+ * file to any client through POST. Both now ask the predicate the pages ask,
+ * UNCONDITIONALLY rather than under `role === "KAROS_EMPLOYEE"`: admins and (on
+ * GET) a client on their own account already pass it, and an unknown role must
+ * not. The refusal reuses the "Client not found" shape both handlers already
+ * return for a missing client, so it does not confirm the client exists.
+ *
+ * Written out at each handler rather than lifted into a local helper on purpose:
+ * the tripwire in `client-api-access-guard.test.ts` counts `canViewClient(` calls
+ * against the exported handlers it finds on disk, so a file that hides the call
+ * behind a helper can add a third unfenced handler and still pass. The RULE has
+ * one home (`canViewClient`); the two lines repeated here are the refusal shape,
+ * which is per-route by design.
+ */
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -18,7 +39,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const client = await getClient(clientId);
-  if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  if (!client || !canViewClient(user, client)) {
+    return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
 
   const items = await listContextItems({ clientId });
   return NextResponse.json({
@@ -48,7 +71,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const { id: clientId } = await params;
   const client = await getClient(clientId);
-  if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  if (!client || !canViewClient(user, client)) {
+    return NextResponse.json({ error: "Client not found" }, { status: 404 });
+  }
 
   const form = await req.formData();
   const file = form.get("file");

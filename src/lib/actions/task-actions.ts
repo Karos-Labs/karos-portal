@@ -17,8 +17,6 @@ import {
   listCustomAgents,
   listTaskComments,
   createTaskComment,
-  chargeClientCredits,
-  creditClientCredits,
   claimTaskForExecution,
   releaseTaskClaim,
 } from "@/lib/data";
@@ -32,68 +30,34 @@ import {
   buildTaskExecutionPlanPrompt,
   buildTaskIngestionRoutingPrompt,
 } from "@/lib/ai/prompts/proactive-assistant";
-import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
+import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import { chargeClientModelCall, withClientModelCharge } from "@/lib/client-model-charge";
 import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { logger } from "@/services/logger";
 import type { AppUser, TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 
 /**
- * Charge a client user for a small Haiku task helper (plan generation,
- * custom-task classification). Staff and impersonated sessions are free.
- * Returns the denial message, or null when the charge went through.
+ * The charge spec for a small Haiku task helper (plan generation, custom-task
+ * classification). Staff and impersonated sessions are free — that decision,
+ * and the refund pairing, belong to `withClientModelCharge`
+ * (lib/client-model-charge.ts), which is the app's one way to say "a client
+ * triggered a model call".
+ *
+ * The charge stays where it always was, BEFORE the capacity and duplicate
+ * checks: the Haiku routing call it pays for has already cost real money by the
+ * time those checks run, and its output is what the duplicate check compares.
+ * So a refused write is refunded, not reordered (QA F61) — and now a THROWN
+ * call is refunded too, which the hand-paired version never did.
  */
-async function chargeTaskAssist(
-  user: AppUser,
-  clientId: string,
-  reason: string,
-): Promise<{ denied: string | null; chargedAt: number | null }> {
-  if (!isBillableClientActor(user)) return { denied: null, chargedAt: null };
-  const chargedAt = Date.now();
-  try {
-    await chargeClientCredits({
-      clientId,
-      amount: CREDIT_COSTS.taskAssist,
-      operation: "task_execution",
-      reason,
-      actorUid: user.uid,
-      actorName: user.name,
-    });
-    return { denied: null, chargedAt };
-  } catch (e) {
-    if (e instanceof CreditError) return { denied: e.message, chargedAt: null };
-    throw e;
-  }
-}
-
-/**
- * Hand a taskAssist charge back when the platform then refuses to create the
- * task. The charge stays where it is, BEFORE the capacity and duplicate checks:
- * the Haiku routing call it pays for has already cost real money by the time
- * those checks run, and its output is what the duplicate check compares. So a
- * refused write is refunded, not reordered (QA F61).
- */
-async function refundTaskAssist(
-  user: AppUser,
-  clientId: string,
-  chargedAt: number | null,
-  reason: string,
-): Promise<void> {
-  if (!isBillableClientActor(user) || chargedAt == null) return;
-  try {
-    await creditClientCredits({
-      clientId,
-      amount: CREDIT_COSTS.taskAssist,
-      kind: "refund",
-      chargedAt,
-      operation: "task_execution",
-      reason,
-      actorUid: user.uid,
-      actorName: user.name,
-    });
-  } catch (e) {
-    // Never turn a refusal into a crash — the task wasn't created either way.
-    console.error("[task-assist] refund failed:", e);
-  }
+function taskAssistCharge(user: AppUser, clientId: string, reason: string) {
+  return {
+    user,
+    clientId,
+    amount: CREDIT_COSTS.taskAssist,
+    operation: "task_execution" as const,
+    reason,
+  };
 }
 
 /**
@@ -125,7 +89,7 @@ export async function updateTaskStatusAction(
   // the board while still counting in the tab total (QA F54). Refuse the move
   // server-side, whichever UI path asks for it.
   if (status === "review_pending" && inferOwnerEngine(task) === "client_managed") {
-    return { ok: false, error: "Tasks you own go straight to Done — Review Pending is for Karos drafts." };
+    return { ok: false, error: "Tasks you own go straight to Done. Review Pending is for Karos drafts." };
   }
 
   const triggersExecution =
@@ -145,7 +109,7 @@ export async function updateTaskStatusAction(
     if (blocker) {
       return {
         ok: false,
-        error: `Waiting on "${blocker}" to finish first - this campaign step runs after it.`,
+        error: `Waiting on "${blocker}" to finish first. This campaign step runs after it.`,
       };
     }
 
@@ -172,22 +136,27 @@ export async function updateTaskStatusAction(
     if (!claimed) {
       return { ok: false, error: "Task is already running or not in a runnable state" };
     }
-    if (isBillableClientActor(user)) {
-      try {
-        await chargeClientCredits({
-          clientId,
-          amount: await plannedTaskExecutionCost(claimed),
-          operation: "task_execution",
-          reason: `Task execution · ${claimed.title.slice(0, 80)}`,
-          jobId: id,
-          actorUid: user.uid,
-          actorName: user.name,
-        });
-      } catch (e) {
-        await releaseTaskClaim(id, claimed.status);
-        if (e instanceof CreditError) return { ok: false, error: e.message };
-        throw e;
-      }
+    // Through `chargeClientModelCall` like every other client-triggered model
+    // call. It also no longer needs its own isBillableClientActor test — the
+    // helper owns that question, and asking it twice is how the four spellings
+    // of this block came to disagree.
+    let denied: string | null;
+    try {
+      ({ denied } = await chargeClientModelCall({
+        user,
+        clientId,
+        amount: await plannedTaskExecutionCost(claimed),
+        operation: "task_execution",
+        reason: `Task execution · ${claimed.title.slice(0, 80)}`,
+        jobId: id,
+      }));
+    } catch (e) {
+      await releaseTaskClaim(id, claimed.status);
+      throw e;
+    }
+    if (denied !== null) {
+      await releaseTaskClaim(id, claimed.status);
+      return { ok: false, error: denied };
     }
     // Re-opening a Done card clears its completion timestamp.
     if (claimed.status === "completed" || claimed.completedAt != null) {
@@ -207,6 +176,58 @@ export async function updateTaskStatusAction(
   revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };
+}
+
+/**
+ * Read-only price + billability preview of ONE task run, so the client is told
+ * what pressing Run (or dragging a card into In Progress) costs BEFORE it
+ * charges — the same announce-then-confirm shape
+ * previewPendingTasksBatchAction already gives the batch runner. Nothing is
+ * claimed, charged or run here.
+ *
+ * `billable` is the server's own isBillableClientActor verdict and is the only
+ * honest source for it: an admin in "View as Client" carries role CLIENT_USER
+ * in the browser, so a UI-side role test would put a price confirmation in
+ * front of a session that is never charged. false ⇒ this move costs the client
+ * nothing and needs no confirmation.
+ *
+ * The figure comes from plannedTaskExecutionCost — the exact function
+ * updateTaskStatusAction charges with — so the price quoted is the price taken.
+ */
+export async function previewTaskRunAction(
+  id: string,
+  clientId: string,
+): Promise<{ ok: boolean; credits?: number; billable?: boolean; error?: string }> {
+  const access = await requireTaskAccess(id, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  const { user, task } = access;
+
+  // Only the karos_managed → In Progress move triggers an agent and a charge.
+  // Moving client-owned work costs nothing, and staff runs are agency overhead.
+  const charges = isBillableClientActor(user) && inferOwnerEngine(task) === "karos_managed";
+  if (!charges) return { ok: true, credits: 0, billable: false };
+
+  // The §2 refusal the run itself would give, surfaced instead of a price:
+  // quoting credits for a run that will be refused is worse than refusing now.
+  const blocked = await clientTaskRunRefusal({ user, clientId, task });
+  if (blocked) return { ok: false, error: blocked };
+
+  // The queue cap too, for the same reason: `updateTaskStatusAction` enforces it
+  // on a completed -> in_progress move (a re-opened Done card is a net new
+  // active slot), so quoting a price the run would then refuse asks the client
+  // to consent to a charge that cannot happen. Same wording as the run's own
+  // refusal so the two cannot read as different problems.
+  if (task.status === "completed") {
+    const capacity = await getTaskBoardCapacity(clientId);
+    if (capacity.activeCount >= MAX_ACTIVE_TASKS) {
+      return {
+        ok: false,
+        error: `The Karos AI queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
+      };
+    }
+  }
+
+  return { ok: true, credits: await plannedTaskExecutionCost(task), billable: true };
 }
 
 /** Create a task manually from the Tasks page or client page. */
@@ -263,7 +284,7 @@ export async function deleteTaskAction(
   if (task.metadata?.executing === true) {
     return {
       ok: false,
-      error: "This task is currently executing - wait for the run to finish before dismissing it.",
+      error: "This task is currently executing. Wait for the run to finish before dismissing it.",
     };
   }
 
@@ -328,46 +349,53 @@ export async function generateTaskPlanAction(
   const cached = task.metadata?.aiPlan;
   if (typeof cached === "string" && cached.trim()) return { plan: cached };
 
-  const { denied } = await chargeTaskAssist(user, clientId, `AI plan · ${task.title.slice(0, 80)}`);
-  if (denied) return { plan: "", error: denied };
-
   const client = await getClient(clientId);
 
   const taskPlanUsageMeta = {
     clientId, agentId: null, agentName: "Task Plan",
     modelName: MODELS.HAIKU, operation: "task_plan",
   };
-  let text: string;
-  let usage: { inputTokens?: number; outputTokens?: number };
-  try {
-    ({ text, usage } = await generateText({
-      model: anthropic(MODELS.HAIKU),
-      prompt: buildTaskExecutionPlanPrompt(
-        task.title,
-        task.description,
-        task.source,
-        task.priority,
-        client?.name ?? "the client",
-        client?.industry,
-        client?.website,
-      ),
-    }));
-  } catch (err) {
-    logger.logGenerationFailure(taskPlanUsageMeta, err);
-    throw err;
-  }
+  const outcome = await withClientModelCharge(
+    taskAssistCharge(user, clientId, `AI plan · ${task.title.slice(0, 80)}`),
+    async () => {
+      let text: string;
+      let usage: { inputTokens?: number; outputTokens?: number };
+      try {
+        ({ text, usage } = await generateText({
+          model: anthropic(MODELS.HAIKU),
+          prompt: buildTaskExecutionPlanPrompt(
+            task.title,
+            task.description,
+            task.source,
+            task.priority,
+            client?.name ?? "the client",
+            client ? clientCategoryValue(client) ?? undefined : undefined,
+            client?.website,
+          ),
+        }));
+      } catch (err) {
+        logger.logGenerationFailure(taskPlanUsageMeta, err);
+        // Rethrown, so the wrapper refunds. The client asked for a plan and got
+        // an error; they are not paying for it.
+        throw err;
+      }
 
-  after(() =>
-    logger.logUsage({
-      ...taskPlanUsageMeta,
-      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
-    }),
+      after(() =>
+        logger.logUsage({
+          ...taskPlanUsageMeta,
+          inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+        }),
+      );
+
+      await updateClientTask(taskId, {
+        metadata: { ...(task.metadata ?? {}), aiPlan: text },
+        updatedAt: Date.now(),
+      });
+      return text;
+    },
   );
-
-  await updateClientTask(taskId, {
-    metadata: { ...(task.metadata ?? {}), aiPlan: text },
-    updatedAt: Date.now(),
-  });
+  if (!outcome.ok) return { plan: "", error: outcome.denied };
+  const text = outcome.result;
 
   revalidatePath("/tasks");
   return { plan: text };
@@ -407,15 +435,38 @@ export async function ingestCustomUserTaskAction(
   ]);
   if (!client) return { ok: false, error: "Client not found" };
 
-  const { denied, chargedAt } = await chargeTaskAssist(user, clientId, "Custom task ingestion");
-  if (denied) return { ok: false, error: denied };
+  const outcome = await withClientModelCharge(
+    taskAssistCharge(user, clientId, "Custom task ingestion"),
+    ({ refund }) => ingestRoutedTask({ user, clientId, client, capacity, trimmed, refund }),
+  );
+  return outcome.ok ? outcome.result : { ok: false, error: outcome.denied };
+}
+
+type IngestResult = Awaited<ReturnType<typeof ingestCustomUserTaskAction>>;
+
+/**
+ * The charged half of task ingestion: the Haiku routing call and the three
+ * outcomes it can lead to. Split out so the whole of it sits inside the charge
+ * wrapper — a throw from `generateObject` here is refunded by the wrapper,
+ * which is what the hand-paired version missed while correctly refunding the
+ * two REFUSALS below it.
+ */
+async function ingestRoutedTask(args: {
+  user: AppUser;
+  clientId: string;
+  client: NonNullable<Awaited<ReturnType<typeof getClient>>>;
+  capacity: Awaited<ReturnType<typeof getTaskBoardCapacity>>;
+  trimmed: string;
+  refund: (reason: string) => Promise<void>;
+}): Promise<IngestResult> {
+  const { user, clientId, client, capacity, trimmed, refund } = args;
 
   // Build a brief capability summary for the routing prompt from the repo agents
   // the Karos team can run for clients.
   const agents = await listCustomAgents();
   const agentSummary = agents
     .filter((a) => a.enabled)
-    .map((a) => (a.description ? `${a.name} — ${a.description}` : a.name))
+    .map((a) => (a.description ? `${a.name} · ${a.description}` : a.name))
     .join("; ") || "none configured";
 
   const routingSchema = z.object({
@@ -438,7 +489,7 @@ export async function ingestCustomUserTaskAction(
       prompt: buildTaskIngestionRoutingPrompt(
         trimmed,
         client.name,
-        client.industry ?? "marketing",
+        clientCategoryValue(client) ?? "marketing",
         agentSummary,
       ),
     }));
@@ -457,7 +508,7 @@ export async function ingestCustomUserTaskAction(
   // The cap bounds the Karos AI execution queue only — apply it after routing,
   // once we know which owner the task landed on.
   if (parsed.owner === "karos_managed" && capacity.activeCount >= MAX_ACTIVE_TASKS) {
-    await refundTaskAssist(user, clientId, chargedAt, "Refund · task queue at capacity");
+    await refund("Refund · task queue at capacity");
     return {
       ok: false,
       error: `The Karos AI queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
@@ -468,7 +519,7 @@ export async function ingestCustomUserTaskAction(
   // against the same snapshot the cap was computed from.
   const dupReason = findDuplicateReason({ title: parsed.title }, capacity.tasks);
   if (dupReason) {
-    await refundTaskAssist(user, clientId, chargedAt, "Refund · duplicate task not created");
+    await refund("Refund · duplicate task not created");
     // `duplicate` lets the UI render this as information, not a red failure —
     // nothing went wrong, the work is already on the board.
     return {

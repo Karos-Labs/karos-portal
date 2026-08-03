@@ -1,6 +1,6 @@
-import { notFound, redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
-import { getClient, listAssets } from "@/lib/data";
+import { redirect } from "next/navigation";
+import { requireUser, requireVisibleClient } from "@/lib/auth";
+import { listAssets } from "@/lib/data";
 import { PageHeader } from "@/components/ui";
 import { AssetsView } from "@/components/assets-view";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
@@ -21,8 +21,7 @@ export default async function ClientAssetsPage({ params }: { params: Promise<{ i
     redirect("/dashboard");
   }
 
-  const client = await getClient(id);
-  if (!client) notFound();
+  const client = await requireVisibleClient(user, id);
 
   const assets = getClientLibraryAssets(await listAssets({ clientId: id }));
 

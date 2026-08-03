@@ -17,8 +17,11 @@ import {
   shiftDateKey,
   weekdayOfDateKey,
   activeTemplates,
-  deliveredAgentIds,
+  jobDeliveredWork,
+  lastRunFailedAgentIds,
   rosterStatus,
+  IMPORTED_CONTENT_STAFF_NOTE,
+  SCHEDULE_REFUSAL_FRESH_MS,
 } from "@/lib/client-agents";
 import type { ClientAgentTemplate } from "@/lib/types";
 
@@ -409,19 +412,236 @@ describe("rosterStatus", () => {
     });
   });
 
+  /* ── a failed last run outranks Live ── */
+
+  it("stops badging Live for STAFF when the most recent run failed", () => {
+    // The production case: the pilot's Instagram Agent, green "Live" badge, one
+    // run two days earlier reading "Failed". The refusal rung could not see it —
+    // that run SUBMITTED fine and died at the agent service, which writes
+    // job.error and never touches schedule.lastError.
+    expect(
+      rosterStatus({ launchState: "live", lastRunFailed: true, viewerIsStaff: true }),
+    ).toEqual({ tone: "attention", label: "Needs attention" });
+    // Same for the unbound-but-scheduled shape (Instagram's own): a schedule
+    // that is firing does not make a failing agent live.
+    expect(
+      rosterStatus({
+        launchState: null,
+        scheduleActive: true,
+        lastRunFailed: true,
+        viewerIsStaff: true,
+      }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+  });
+
+  it("never moves a CLIENT's badge for a run that broke on our side (AF-14)", () => {
+    // The green badge this rung was written to correct is on a STAFF surface. On
+    // a client's it asks them to attend to an internal failure they cannot see,
+    // did not cause and have no lever over — and AF-14 is absolute about it.
+    expect(rosterStatus({ launchState: "live", lastRunFailed: true })).toEqual({
+      tone: "live",
+      label: "Live",
+    });
+    expect(
+      rosterStatus({ launchState: null, scheduleActive: true, lastRunFailed: true }),
+    ).toEqual({ tone: "live", label: "Live" });
+    // Explicitly false reads the same as omitted — the default is the quiet one.
+    expect(
+      rosterStatus({ launchState: "live", lastRunFailed: true, viewerIsStaff: false }),
+    ).toEqual({ tone: "live", label: "Live" });
+  });
+
+  it("keeps a schedule REFUSAL loud for a client, failed run or not (F24/F129)", () => {
+    // The viewer split is about failures that are ours. A refusal is the
+    // scheduler turning a fire away for a reason the client owns — out of
+    // credits, an empty intake — and telling them is the entire point of it.
+    expect(
+      rosterStatus({ launchState: "live", scheduleRefusal: "Out of credits." }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+  });
+
+  it("reuses 'Needs attention' rather than inventing a second failure phrase", () => {
+    // One phrase for one answer. A second label here would also be a second
+    // status-label map, which is a standing defect class in this codebase.
+    expect(
+      rosterStatus({ launchState: "live", lastRunFailed: true, viewerIsStaff: true }).label,
+    ).toBe(rosterStatus({ launchState: "live", scheduleRefusal: "Turned away." }).label);
+  });
+
+  it("keeps the launch narration — it is newer, or more specific, than a finished run", () => {
+    // A setup in flight is a NEWER event than any completed run, and the launch
+    // card is already narrating it in three phases. Asked as STAFF, so the rung
+    // is live and the launch states are demonstrably outranking it rather than
+    // winning by default.
+    const staff = { lastRunFailed: true, viewerIsStaff: true } as const;
+    expect(rosterStatus({ launchState: "launching", ...staff })).toMatchObject({
+      tone: "progress",
+    });
+    expect(rosterStatus({ launchState: "curating", ...staff })).toMatchObject({
+      tone: "progress",
+    });
+    // Same alarm, more specific words — swapping in the generic phrase would
+    // lose the fact that it is the SETUP that failed.
+    expect(rosterStatus({ launchState: "launch_failed", ...staff })).toEqual({
+      tone: "attention",
+      label: "Setup needs attention",
+    });
+  });
+
+  /* ── a refusal ages out (read-path only, nothing is written) ── */
+
+  it("stops a stale refusal forcing 'Needs attention' forever", () => {
+    const now = 1_800_000_000_000;
+    const refusal = { launchState: "live" as const, scheduleRefusal: "Turned away.", now };
+    // Fresh: still the client's current state.
+    expect(
+      rosterStatus({ ...refusal, scheduleRefusalAt: now - 60 * 60 * 1000 }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+    // Just inside the window.
+    expect(
+      rosterStatus({ ...refusal, scheduleRefusalAt: now - SCHEDULE_REFUSAL_FRESH_MS + 1 }),
+    ).toMatchObject({ tone: "attention" });
+    // Past it: lastError only clears on the next CLEAN fire, so on a weekly
+    // cadence a refusal a top-up fixed an hour later kept saying "Needs
+    // attention" for another week.
+    expect(
+      rosterStatus({ ...refusal, scheduleRefusalAt: now - SCHEDULE_REFUSAL_FRESH_MS - 1 }),
+    ).toEqual({ tone: "live", label: "Live" });
+  });
+
+  it("shows an undated refusal rather than hiding an alarm it cannot age", () => {
+    // Every writer sets lastErrorAt in the same patch as lastError, so an
+    // undated refusal is a row we cannot date, not one we know to be old.
+    expect(
+      rosterStatus({ launchState: "live", scheduleRefusal: "Turned away.", now: 1 }),
+    ).toMatchObject({ tone: "attention" });
+  });
+
+  it("still lets a stale refusal's agent fail on its own account", () => {
+    // Ageing the refusal out must not paint over a run that actually failed.
+    const now = 1_800_000_000_000;
+    expect(
+      rosterStatus({
+        launchState: "live",
+        scheduleRefusal: "Turned away.",
+        scheduleRefusalAt: now - SCHEDULE_REFUSAL_FRESH_MS - 1,
+        lastRunFailed: true,
+        viewerIsStaff: true,
+        now,
+      }),
+    ).toMatchObject({ tone: "attention", label: "Needs attention" });
+  });
+
+  /* ── AF-5: live means live ── */
+
+  describe("upcoming content on the calendar (AF-5)", () => {
+    // Albert: "it should still show that it's live even though we're creating it
+    // internally… if there's items on the calendar like Instagram or TikTok
+    // items, it should show us live." The stream has no cron of its own — we
+    // produce its posts by hand and import them — so every other rung answers
+    // idle for an agent the client can watch filling next week.
+
+    it("turns 'Runs on request' into Live", () => {
+      const idle = { launchState: null, scheduleActive: false, hasDelivered: true } as const;
+      expect(rosterStatus(idle)).toMatchObject({ tone: "idle", label: "Runs on request" });
+      expect(rosterStatus({ ...idle, hasUpcomingContent: true })).toMatchObject({
+        tone: "live",
+        label: "Live",
+      });
+    });
+
+    it("turns 'Not set up yet' into Live, bound or unbound", () => {
+      // The imported-stream case in both of its shapes: an agent nobody ever
+      // bound an umbrella for, and one bound but never launched because the
+      // launch run is not how its posts get made.
+      expect(rosterStatus({ launchState: null })).toMatchObject({ label: "Not set up yet" });
+      expect(rosterStatus({ launchState: null, hasUpcomingContent: true })).toMatchObject({
+        tone: "live",
+        label: "Live",
+      });
+      expect(rosterStatus({ launchState: "not_launched" })).toMatchObject({
+        label: "Not set up yet",
+      });
+      expect(
+        rosterStatus({ launchState: "not_launched", hasUpcomingContent: true }),
+      ).toMatchObject({ tone: "live", label: "Live" });
+    });
+
+    it("carries a staff note saying WHY the word disagrees with the schedule", () => {
+      // The client sees the word; staff see the word plus the operational truth,
+      // which is the other half of the ruling. Only this rung sets it.
+      const promoted = rosterStatus({ launchState: null, hasUpcomingContent: true });
+      expect(promoted.staffNote).toBe(IMPORTED_CONTENT_STAFF_NOTE);
+      expect(rosterStatus({ launchState: "live" }).staffNote).toBeUndefined();
+      expect(
+        rosterStatus({ launchState: null, scheduleActive: true, hasUpcomingContent: true })
+          .staffNote,
+        "a schedule that IS firing needs no explanation",
+      ).toBeUndefined();
+    });
+
+    it("never reaches past a refusal, an alarm, or a launch narration", () => {
+      // The ruling is that we stop calling a PRODUCING agent idle, not that we
+      // start calling a broken one live. Only an idle outcome is eligible.
+      expect(
+        rosterStatus({
+          launchState: "live",
+          scheduleRefusal: "Out of credits.",
+          hasUpcomingContent: true,
+        }),
+      ).toMatchObject({ tone: "attention", label: "Needs attention" });
+      expect(
+        rosterStatus({
+          launchState: null,
+          lastRunFailed: true,
+          viewerIsStaff: true,
+          hasUpcomingContent: true,
+        }),
+      ).toMatchObject({ tone: "attention" });
+      expect(
+        rosterStatus({ launchState: "launching", hasUpcomingContent: true }),
+      ).toMatchObject({ tone: "progress", label: "Setting up" });
+      expect(
+        rosterStatus({ launchState: "launch_failed", hasUpcomingContent: true }),
+      ).toMatchObject({ tone: "attention", label: "Setup needs attention" });
+    });
+
+    it("gives a CLIENT Live where a failed fire would have said 'Needs attention'", () => {
+      // The two rulings meeting: AF-14 skips the failure rung for a client, so
+      // AF-5's promotion is reachable on exactly the agents it was written for —
+      // an imported stream whose last internal fire broke.
+      const state = { launchState: null, lastRunFailed: true, hasUpcomingContent: true } as const;
+      expect(rosterStatus(state)).toEqual({
+        tone: "live",
+        label: "Live",
+        staffNote: IMPORTED_CONTENT_STAFF_NOTE,
+      });
+      // Staff, same agent, same instant: the failure is theirs to see.
+      expect(rosterStatus({ ...state, viewerIsStaff: true })).toMatchObject({
+        tone: "attention",
+        label: "Needs attention",
+      });
+    });
+  });
+});
+
+/**
+ * The admin pause (main's coming-soon roster). `enabled: false` outranks every
+ * other input — including AF-5's upcoming-content promotion — because a paused
+ * agent isn't live, failing, or idle: it simply isn't running for anyone.
+ */
+describe("rosterStatus · Coming Soon", () => {
   it("defaults to enabled when the caller omits it, unaffected", () => {
     expect(rosterStatus({ launchState: "live" })).toEqual({ tone: "live", label: "Live" });
   });
 
   it("says Coming Soon for a paused agent, outranking every other input", () => {
-    // enabled:false has to win over EVERYTHING else — a live umbrella with an
-    // active, unrefused schedule and delivered work is still "Coming Soon" the
-    // moment an admin pauses it, not a stale "Live" the toggle can't override.
     expect(
       rosterStatus({
         launchState: "live",
         scheduleActive: true,
         hasDelivered: true,
+        hasUpcomingContent: true,
         enabled: false,
       }),
     ).toEqual({ tone: "disabled", label: "Coming Soon" });
@@ -436,12 +656,159 @@ describe("rosterStatus", () => {
 });
 
 /**
- * The one join every surface asks "has this agent ever produced for us" with.
- * Three spellings of it is how a roster card ends up disagreeing with the page
- * it opens — which is exactly what "Not set up yet · Last delivered 7d ago" was.
+ * The ordering rule behind the badge: only the most recent run WITH A VERDICT
+ * counts. An old failure followed by a success is an agent that had a bad day
+ * and then worked — and a badge that remembers the failure forever is the
+ * stale-refusal defect wearing a different hat.
  */
-describe("deliveredAgentIds", () => {
+describe("lastRunFailedAgentIds", () => {
   const byName = new Map([["Instagram Agent", "ca-ig"]]);
+  const job = (over: Record<string, unknown>) =>
+    ({
+      id: "j1",
+      clientId: "c1",
+      agentId: "agent-service",
+      agentName: "Instagram Agent",
+      status: "failed",
+      createdAt: 1_000,
+      external: { taskType: "custom" },
+      ...over,
+    }) as never;
+
+  it("flags an agent whose most recent run failed", () => {
+    expect([...lastRunFailedAgentIds([job({ customAgentId: "ca-ig" })], byName, { staff: false })]).toEqual(["ca-ig"]);
+  });
+
+  it("clears the flag when a later run succeeded — order-independently", () => {
+    const older = job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 });
+    const newer = job({ customAgentId: "ca-ig", status: "delivered", createdAt: 2_000 });
+    // Both input orders, because listJobs' sort is not this helper's business.
+    expect(lastRunFailedAgentIds([older, newer], byName, { staff: false }).size).toBe(0);
+    expect(lastRunFailedAgentIds([newer, older], byName, { staff: false }).size).toBe(0);
+    // And the reverse: a success followed by a failure IS flagged.
+    expect(
+      lastRunFailedAgentIds(
+        [
+          job({ customAgentId: "ca-ig", status: "delivered", createdAt: 1_000 }),
+          job({ customAgentId: "ca-ig", status: "failed", createdAt: 2_000 }),
+        ],
+        byName,
+        { staff: false },
+      ).size,
+    ).toBe(1);
+  });
+
+  it("does not treat a run in flight as a failure, or as a fix", () => {
+    // No verdict yet: a queued/running job alone flags nothing…
+    for (const status of ["queued", "running"]) {
+      expect(lastRunFailedAgentIds([job({ customAgentId: "ca-ig", status })], byName, { staff: false }).size).toBe(0);
+    }
+    // …and a retry now in flight does not clear the failure it is retrying.
+    expect(
+      lastRunFailedAgentIds(
+        [
+          job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 }),
+          job({ customAgentId: "ca-ig", status: "running", createdAt: 2_000 }),
+        ],
+        byName,
+        { staff: false },
+      ).size,
+    ).toBe(1);
+  });
+
+  it("ignores a cancelled run — a human stopping a run is not a verdict", () => {
+    expect(lastRunFailedAgentIds([job({ customAgentId: "ca-ig", status: "cancelled" })], byName, { staff: false }).size).toBe(0);
+    expect(
+      lastRunFailedAgentIds(
+        [
+          job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 }),
+          job({ customAgentId: "ca-ig", status: "cancelled", createdAt: 2_000 }),
+        ],
+        byName,
+        { staff: false },
+      ).size,
+    ).toBe(1);
+  });
+
+  it("counts review and approved as landings, like jobDeliveredWork does", () => {
+    for (const status of ["review", "approved", "delivered"]) {
+      expect(
+        lastRunFailedAgentIds(
+          [
+            job({ customAgentId: "ca-ig", status: "failed", createdAt: 1_000 }),
+            job({ customAgentId: "ca-ig", status, createdAt: 2_000 }),
+          ],
+          byName,
+          { staff: false },
+        ).size,
+      ).toBe(0);
+    }
+  });
+
+  it("does not let a staff-only run move a client's badge", () => {
+    // A staff member testing an agent, or a launch run, is invisible to the
+    // client's run list (client-agent-rows filters both) — so neither may put
+    // "Needs attention" on the client's card, pointing at a failure they can
+    // neither see nor have caused. Staff, who CAN see those runs, still do.
+    for (const runType of ["launch", "test"] as const) {
+      const staffOnly = [job({ customAgentId: "ca-ig", status: "failed", runType })];
+      expect(lastRunFailedAgentIds(staffOnly, byName, { staff: false }).size).toBe(0);
+      expect(lastRunFailedAgentIds(staffOnly, byName, { staff: true }).has("ca-ig")).toBe(true);
+    }
+    // A client's own failed run still counts, for both.
+    const clientRun = [job({ customAgentId: "ca-ig", status: "failed", runType: "scheduled" })];
+    expect(lastRunFailedAgentIds(clientRun, byName, { staff: false }).has("ca-ig")).toBe(true);
+  });
+
+  it("keeps the same job scope and name fallback as its sibling", () => {
+    // Non-custom jobs are not this roster's runs.
+    expect(
+      lastRunFailedAgentIds(
+        [job({ customAgentId: "ca-ig", external: { taskType: "social_post" } })],
+        byName,
+        { staff: false },
+      ).size,
+    ).toBe(0);
+    // Runs fired before customAgentId existed still attribute by name…
+    expect([...lastRunFailedAgentIds([job({})], byName, { staff: false })]).toEqual(["ca-ig"]);
+    // …and what cannot be attributed is dropped rather than guessed at.
+    expect(lastRunFailedAgentIds([job({ agentName: "Someone Else" })], byName, { staff: false }).size).toBe(0);
+  });
+
+  it("answers per agent, not per client", () => {
+    const twoAgents = new Map([
+      ["Instagram Agent", "ca-ig"],
+      ["X Agent", "ca-x"],
+    ]);
+    expect([
+      ...lastRunFailedAgentIds(
+        [
+          job({ customAgentId: "ca-ig", status: "failed" }),
+          job({ customAgentId: "ca-x", agentName: "X Agent", status: "delivered" }),
+        ],
+        twoAgents,
+        { staff: false },
+      ),
+    ]).toEqual(["ca-ig"]);
+  });
+});
+
+/**
+ * The JOB half of "has this agent ever produced for us".
+ *
+ * Scope is the point of the name: this join sees jobs and nothing else, so a
+ * lab import (`jobId: null`) is invisible to it. The surfaces ask
+ * `agentsWithDeliveredWork`, which is this plus the asset attribution rungs —
+ * see agent-detail-archetypes.test.ts for the tests that pin that, including
+ * the tripwire that keeps this function's caller count at one and the agreement
+ * test that pins two same-named agents to one answer each.
+ *
+ * It returns FACTS ABOUT THE JOBS — two sets of attribution keys — and takes no
+ * agent list at all. That is what makes the caller's per-agent read independent
+ * of the other agents it asked about; the tests below are about the two sets'
+ * contents, not about any agent.
+ */
+describe("jobDeliveredWork", () => {
   const job = (over: Record<string, unknown>) =>
     ({
       id: "j1",
@@ -455,28 +822,45 @@ describe("deliveredAgentIds", () => {
 
   it("counts review, approved and delivered — the work exists in all three", () => {
     for (const status of ["review", "approved", "delivered"]) {
-      expect([...deliveredAgentIds([job({ status, customAgentId: "ca-ig" })], byName)]).toEqual([
-        "ca-ig",
-      ]);
+      const work = jobDeliveredWork([job({ status, customAgentId: "ca-ig" })]);
+      expect([...work.ids], status).toEqual(["ca-ig"]);
     }
   });
 
   it("ignores runs that never landed, and non-custom jobs", () => {
-    expect(
-      deliveredAgentIds(
-        [
-          job({ status: "failed", customAgentId: "ca-ig" }),
-          job({ status: "queued", customAgentId: "ca-ig" }),
-          job({ status: "delivered", customAgentId: "ca-ig", external: { taskType: "social_post" } }),
-        ],
-        byName,
-      ).size,
-    ).toBe(0);
+    const work = jobDeliveredWork([
+      job({ status: "failed", customAgentId: "ca-ig" }),
+      job({ status: "queued", customAgentId: "ca-ig" }),
+      job({ status: "delivered", customAgentId: "ca-ig", external: { taskType: "social_post" } }),
+    ]);
+    expect(work.ids.size).toBe(0);
+    // Nor may a job the status/scope filter dropped leak in through the name set.
+    expect(work.names.size).toBe(0);
   });
 
-  it("falls back to the agent NAME for runs fired before customAgentId existed", () => {
-    expect([...deliveredAgentIds([job({})], byName)]).toEqual(["ca-ig"]);
-    // And drops what it cannot attribute rather than guessing.
-    expect(deliveredAgentIds([job({ agentName: "Someone Else" })], byName).size).toBe(0);
+  it("keeps the agent NAME of runs fired before customAgentId existed, verbatim", () => {
+    const work = jobDeliveredWork([job({})]);
+    expect(work.ids.size).toBe(0);
+    expect([...work.names]).toEqual(["Instagram Agent"]);
+  });
+
+  it("drops a job it can attribute by neither key rather than guessing", () => {
+    // `agentName` is typed as required, but this runs over whatever Firestore
+    // holds, and a nameless unbound job must not become an empty-string key that
+    // some agent could match.
+    const work = jobDeliveredWork([job({ agentName: "" }), job({ agentName: undefined })]);
+    expect(work.ids.size).toBe(0);
+    expect(work.names.size).toBe(0);
+  });
+
+  it("does NOT put a bound job's name in the name set", () => {
+    // The name set is the fallback for a job with no binding, exactly as the old
+    // `customAgentId ?? agentIdByName.get(name)` chain was. If a bound job's name
+    // went in too, an agent that merely SHARES a display name with the agent the
+    // job names would be credited with that run — a mis-credit, and wider than
+    // what either surface answered before. Red if the `else` becomes unconditional.
+    const work = jobDeliveredWork([job({ customAgentId: "ca-ig" })]);
+    expect([...work.ids]).toEqual(["ca-ig"]);
+    expect(work.names.size).toBe(0);
   });
 });

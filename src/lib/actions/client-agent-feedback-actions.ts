@@ -128,12 +128,21 @@ export async function addClientAgentFeedbackAction(input: {
     updatedAt: now,
   });
 
+  // The row is on the CLIENT's timeline, and `templateKey` is the join SLUG
+  // ("numbers"), not the name the client picked from ("By The Numbers"). The
+  // registry lookup cannot miss — validateFeedbackScope above already refused a
+  // key that is not one of `umbrella.templates` — and if it somehow did, the row
+  // names the agent without the format rather than printing the slug.
+  const templateName = scope.templateKey
+    ? (umbrella.templates.find((t) => t.key === scope.templateKey)?.name ?? null)
+    : null;
+
   void logActivity({
     clientId: input.clientId,
     timestamp: now,
     type: "CAMPAIGN_CREATED",
-    title: scope.templateKey
-      ? `Feedback on ${umbrella.displayName} · ${scope.templateKey}`
+    title: templateName
+      ? `Feedback on ${umbrella.displayName} · ${templateName}`
       : `Feedback on ${umbrella.displayName}`,
     actor: user.name,
     actorRole: roleOf(user),
@@ -198,7 +207,7 @@ export async function withdrawClientAgentFeedbackAction(input: {
   const row = await getClientAgentFeedback(input.feedbackId);
   if (!row || row.clientId !== input.clientId) return { error: "Feedback not found." };
   if (row.createdBy !== user.uid) {
-    return { error: "Only the person who wrote a note can withdraw it — staff can resolve it instead." };
+    return { error: "Only the person who wrote a note can withdraw it. Staff can resolve it instead." };
   }
   await updateClientAgentFeedback(row.id, { status: "withdrawn" });
   revalidatePath(`/clients/${input.clientId}/agents`);
@@ -233,7 +242,7 @@ export async function setClientAgentFeedbackStatusAction(input: {
   const row = await getClientAgentFeedback(input.feedbackId);
   if (!row) return { error: "Feedback not found." };
   if (row.status === "withdrawn") {
-    return { error: "The person who wrote this note withdrew it — only they can raise it again." };
+    return { error: "The person who wrote this note withdrew it. Only they can raise it again." };
   }
   await updateClientAgentFeedback(row.id, { status: input.status });
   revalidatePath(`/clients/${row.clientId}/agents`);

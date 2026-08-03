@@ -2,19 +2,21 @@ import "server-only";
 
 import type { Asset, Client, ClientCompetitor, ClientContextDoc, ClientReport, Job } from "@/lib/types";
 import { effectiveDominantColors } from "@/lib/branding";
+import { assetTypeLabel } from "@/lib/asset-type-copy";
+import { contextDocLabel } from "@/lib/context-doc-copy";
+import { jobStatusLabel } from "@/lib/job-status-copy";
+import { clientCategoryValue } from "@/lib/utils";
 
 /* ── Shared helpers ──────────────────────────────────────────────────── */
 
-const DOC_TYPE_LABELS: Record<string, string> = {
-  "brand-voice": "Brand Voice",
-  "market-strategy": "Market Strategy",
-  "competitor-analysis": "Competitor Analysis",
-  "product-information": "Product Information",
-  "branding-guidelines": "Branding Guidelines",
-  "target-audience": "Target Audience",
-  "client-guidelines": "Client Guidelines",
-  "action-plan": "Action Plan",
-};
+/*
+ * The doc-type name map used to be a private copy here, spelled in Title Case.
+ * It now comes from context-doc-copy.ts, because the same map is needed in
+ * PROSE a client reads (activity titles, credit-ledger reasons) and a second
+ * copy is how the two come apart. The names arrive sentence case, which is what
+ * the heading below wanted anyway: this text is read by the model, and the model
+ * paraphrases whatever case it is handed straight back to the client.
+ */
 
 export function buildCopilotSystemPrompt(
   client: Client,
@@ -24,12 +26,29 @@ export function buildCopilotSystemPrompt(
   assets: Asset[],
   contextDocs: ClientContextDoc[] = [],
   /**
-   * Mirrors the tool registry the route actually hands to the model. The
-   * branding tool is staff-only (copilot-tool-access.ts), and describing a tool
-   * a client session does not have just teaches the model to promise it.
+   * `canUpdateBranding` mirrors the tool registry the route actually hands to the
+   * model. The branding tool is staff-only (copilot-tool-access.ts), and
+   * describing a tool a client session does not have just teaches the model to
+   * promise it.
+   *
+   * `viewerIsClient` is WHOSE VOCABULARY THIS PROMPT IS WRITTEN IN, and it is a
+   * separate question from capability on purpose.
+   *
+   * THE SYSTEM PROMPT IS PAYLOAD, NOT PLUMBING. Everything below is text the
+   * model reads and paraphrases back into the dock, so an interpolated enum here
+   * reaches a client as prose exactly the way an interpolated `asset.status` in a
+   * tool result did — one indirection further out, and with no render to gate.
+   * The block above literally instructs the model "Never show the client raw
+   * field names, database ids, or internal status codes" and then handed it
+   * `paused`, `review` and `instagram_post` to work from; an instruction the
+   * prompt itself breaks is the weakest kind of guarantee there is.
+   *
+   * Defaults to the SAFE answer (client) so a caller that forgets the flag
+   * withholds internal vocabulary rather than leaking it.
    */
-  opts: { canUpdateBranding?: boolean } = {},
+  opts: { canUpdateBranding?: boolean; viewerIsClient?: boolean } = {},
 ): string {
+  const viewerIsClient = opts.viewerIsClient !== false;
   const today = new Date().toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -59,10 +78,33 @@ export function buildCopilotSystemPrompt(
   parts.push("## CLIENT PROFILE");
   parts.push(`- **Name:** ${client.name}`);
   if (client.website) parts.push(`- **Website:** ${client.website}`);
-  if (client.industry) parts.push(`- **Industry:** ${client.industry}`);
+  // THE FIELD THE CLIENT CAN SEE AND CHANGE. This line used to read `industry`,
+  // which only staff could edit, so a client who set their own category watched
+  // the copilot brief itself on a value they had no way to reach. One field, one
+  // reader — the label stays "Industry" because that is the word the model
+  // reasons in, not a field name it is being shown.
+  const category = clientCategoryValue(client);
+  if (category) parts.push(`- **Industry:** ${category}`);
   if (client.description) parts.push(`- **Description:** ${client.description}`);
   if (client.contactEmail) parts.push(`- **Contact:** ${client.contactEmail}`);
-  parts.push(`- **Status:** ${client.status}`);
+  // DROPPED for a client session rather than relabelled, and that is the fix.
+  //
+  // `Client.status` is `"active" | "paused" | "archived"` — the ACCOUNT's
+  // lifecycle in our books, not a property of the client's marketing. There is
+  // no client-facing register for it and there should not be one: "paused" and
+  // "archived" are commercial states a client learns from their account manager,
+  // not from a chatbot that would relay them on request ("what's my account
+  // status?"), and "active" tells them nothing they cannot see by being logged
+  // in. Inventing a euphemism would only make the copilot fluent about something
+  // it has no business discussing.
+  //
+  // NOTE this is NOT the asset-status question. `assetStatusLabel` would be the
+  // wrong home for this union — different key domain, different reader, and the
+  // words do not overlap.
+  //
+  // Staff keep the real value: for them it is operational context, and the staff
+  // dock is where "why is this account paused" is a legitimate question.
+  if (!viewerIsClient) parts.push(`- **Status:** ${client.status}`);
   parts.push("");
 
   // Context documents (new pipeline — primary source of truth)
@@ -90,7 +132,7 @@ export function buildCopilotSystemPrompt(
       }
     }
     for (const doc of byDocType.values()) {
-      const label = DOC_TYPE_LABELS[doc.docType] ?? doc.docType;
+      const label = contextDocLabel(doc.docType);
       const tierLabel = doc.tier === "internal" ? "Internal" : "Client-facing";
       parts.push(`### ${label} [${tierLabel} · v${doc.version}]`);
       // Include up to 800 chars of content per doc (strip frontmatter)
@@ -167,7 +209,16 @@ export function buildCopilotSystemPrompt(
   if (jobs.length > 0) {
     parts.push("## RECENT JOB HISTORY");
     for (const j of jobs.slice(0, 10)) {
-      parts.push(`- ${j.agentName}: "${j.title}" — **${j.status}**`);
+      // RELABELLED, not dropped: run state is something a client legitimately
+      // reads — the same words JobStatusBadge already paints for them on the
+      // dashboard and every intake surface — so the content belongs here and only
+      // the vocabulary was wrong. `job-status-copy` is the register those badges
+      // read, asked here so the dock and the badge cannot say different words
+      // about the same run ("review" vs "In review").
+      //
+      // Not viewer-split, because that register is not: unlike a deliverable's
+      // publish status, a run's state reads the same to whoever is watching it.
+      parts.push(`- ${j.agentName}: "${j.title}" — **${jobStatusLabel(j.status)}**`);
     }
     parts.push("");
   }
@@ -178,9 +229,18 @@ export function buildCopilotSystemPrompt(
       acc[a.type] = (acc[a.type] ?? 0) + 1;
       return acc;
     }, {});
-    parts.push("## GENERATED ASSETS");
+    // RELABELLED: a client knowing they have twelve Instagram posts on file is
+    // the point of the block; being handed `instagram_post` is not. The register
+    // is the one client-home-overview's deliverable cards already read, so the
+    // dock and the cards name a kind of post the same way.
+    //
+    // The NOUN is viewer-split even though the type label is not: "asset" is
+    // internal vocabulary (staff say it, the §3 tools say "output" to clients),
+    // and this heading is prose the model paraphrases.
+    parts.push(viewerIsClient ? "## OUTPUTS PRODUCED SO FAR" : "## GENERATED ASSETS");
+    const noun = viewerIsClient ? "output" : "asset";
     for (const [type, count] of Object.entries(byType)) {
-      parts.push(`- ${type}: ${count} asset${count !== 1 ? "s" : ""}`);
+      parts.push(`- ${assetTypeLabel(type)}: ${count} ${noun}${count !== 1 ? "s" : ""}`);
     }
     parts.push("");
   }

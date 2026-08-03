@@ -57,8 +57,11 @@ export function sanitizeIntegrations(integrations: ClientIntegration[]): Integra
  * Strips tokens from a LinkedIn integration's raw employee seats before they
  * cross into any client component's props — only whether a token is present
  * (`connected`) crosses, never the token itself, encrypted or not. Shared by
- * every surface that renders the Company Employee Roster (settings page,
+ * every surface that renders the employee-seat roster (settings page,
  * onboarding wizard) so a client's true seat state never drifts between them.
+ * (It used to name that roster "the Company Employee Roster" — the third name
+ * the thing had, retired with #83. These are the LinkedIn sign-ins we publish
+ * and measure with, not the `clientSeats` an agent drafts for.)
  */
 export function sanitizeLinkedinSeats(seats: EmployeeSeat[] | undefined): SeatView[] {
   return (seats ?? []).map((s) => ({

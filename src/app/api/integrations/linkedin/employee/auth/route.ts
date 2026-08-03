@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
-import { listEmployeeSeats } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
+import { getClient, listEmployeeSeats } from "@/lib/data";
 import {
   OAUTH_CONFIGS,
   isOAuthEnabled,
   signOAuthState,
   buildEmployeeCallbackUrl,
+  getRequestedScopes,
 } from "@/lib/integrations/oauth";
 
 /**
@@ -14,7 +16,8 @@ import {
  * callback exchanges the code and attaches the encrypted tokens to that seat —
  * so multiple distinct employee handles connect independently under one client.
  *
- * Auth: staff, or the client's own user. GET (browser navigation).
+ * Auth: staff assigned to this client, or the client's own user. GET (browser
+ * navigation).
  */
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
@@ -31,9 +34,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "clientId and seatId are required" }, { status: 400 });
   }
 
+  // Staff are scoped to their assigned clients, not admitted by role alone:
+  // `signOAuthState` below binds `clientId` into the token the callback trusts,
+  // so an unfenced employee could attach a real LinkedIn identity to a seat on
+  // a client they were never assigned. The client's own user stays pinned to
+  // their own workspace as before.
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
-  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const client = await getClient(clientId);
+  const permitted = isStaff
+    ? !!client && canViewClient(user, client)
+    : user.role === "CLIENT_USER" && user.clientId === clientId && !!client;
+  if (!permitted) {
+    // The shape a missing seat already answers with, so a refusal says nothing
+    // about whether this client or this seat exists.
+    return NextResponse.json({ error: "Employee seat not found" }, { status: 404 });
   }
 
   if (!isOAuthEnabled("linkedin")) {
@@ -56,7 +70,12 @@ export async function GET(req: NextRequest) {
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("client_id", process.env[cfg.envClientId] ?? "");
   authUrl.searchParams.set("redirect_uri", buildEmployeeCallbackUrl());
-  authUrl.searchParams.set("scope", cfg.scopes.join(" "));
+  // getRequestedScopes, not cfg.scopes — reading `.scopes` directly bypasses the
+  // extendedScopes approval gate, so this flow would keep requesting an
+  // unapproved scope (and get the whole authorize request rejected) after a
+  // future edit adds one to the linkedin config. No behaviour change today:
+  // linkedin has no extendedScopes, so both resolve to the same four scopes.
+  authUrl.searchParams.set("scope", getRequestedScopes("linkedin").join(" "));
   authUrl.searchParams.set("state", state);
 
   return NextResponse.redirect(authUrl.toString());

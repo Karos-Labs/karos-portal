@@ -1,6 +1,5 @@
 "use server";
 
-import { intelReportImportedTitle } from "@/lib/activity-titles";
 import { revalidatePath } from "next/cache";
 import {
   getClient,
@@ -12,9 +11,7 @@ import {
   updateClientCompetitor,
   getClientContextDocByTier,
   upsertClientContextDoc,
-  upsertClientReport,
 } from "@/lib/data";
-import { parseMarkdownReport, buildClientReport } from "@/lib/report-parser";
 import { competitorBrandKeys, parseCompetitorInput } from "@/lib/competitor-input";
 import type { ClientCompetitor } from "@/lib/types";
 import { requireStaff, requireClientAccess, logActivity } from "./_shared";
@@ -181,49 +178,6 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
       updatedAt: now,
     })),
   );
-}
-
-/**
- * Parse a raw Markdown report, persist it, and bulk-create competitor rows.
- * Admin/employee only. Overwrites any existing report for this client.
- */
-export async function importReportAction(
-  clientId: string,
-  markdown: string,
-  pdfUrl?: string,
-): Promise<void> {
-  const user = await requireStaff();
-
-  const client = await getClient(clientId);
-  if (!client) throw new Error("Client not found");
-
-  const parsed = parseMarkdownReport(markdown);
-  const report = buildClientReport(clientId, parsed, markdown, pdfUrl);
-  await upsertClientReport(report);
-
-  const now = Date.now();
-  await replaceReportCompetitors(
-    clientId,
-    parsed.competitorRows.map((row) => ({
-      ...row,
-      clientId,
-      source: "report" as const,
-      createdAt: now,
-      updatedAt: now,
-    })),
-  );
-
-  await logActivity({
-    clientId,
-    timestamp: now,
-    type: "INTEL_GENERATION",
-    title: intelReportImportedTitle(),
-    description: `Markdown report parsed - score ${report.overallScore}/100 (${report.overallGrade}), ${parsed.competitorRows.length} competitors`,
-    actor: user.name,
-    actorRole: "staff",
-  });
-
-  revalidatePath(`/clients/${clientId}`);
 }
 
 /** Manually add a competitor to a client's tracker. */
@@ -477,7 +431,8 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
     clientId,
     timestamp: now,
     type: "COMPETITOR_ANALYZED",
-    title: "Competitors discovered & analyzed",
+    // Prose on the client's timeline, so "and" rather than an ampersand.
+    title: "Competitors discovered and analyzed",
     description: `AI identified and profiled ${object.competitors.length} competitors`,
     actor: SYSTEM_AI_ACTOR_NAME,
     actorRole: "system",

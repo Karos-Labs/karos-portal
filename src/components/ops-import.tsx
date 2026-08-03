@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Badge, Button, Card, CardTitle, EmptyState, Spinner } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { Modal } from "@/components/modal";
@@ -37,6 +38,14 @@ interface SourceRow {
   origin: BundleOrigin;
   ref: string;
   label: string;
+  /**
+   * The client this card NAMES — paired with `clientName` from the same source
+   * so the header's link and the header's title can never point at two
+   * different clients. It is not the authority on where the write lands: a
+   * misfiled bundle declaring another client is re-judged by the validator, and
+   * the outcome panel's link uses the plan's validated id instead.
+   */
+  clientId: string | null;
   clientName: string | null;
   /** Shape counts (inbox) or repo path (lab) - whatever the source can cheaply say. */
   subtitle: string | null;
@@ -86,6 +95,7 @@ function inboxRow(b: InboxBundleRow): SourceRow {
     origin: "inbox",
     ref: b.file,
     label: b.file,
+    clientId: b.clientId,
     clientName: b.clientName,
     subtitle: b.counts
       ? `${b.counts.docs} document${b.counts.docs === 1 ? "" : "s"} · ` +
@@ -118,6 +128,7 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
           origin: "lab",
           ref: p.ref,
           label: p.name,
+          clientId: c.clientId,
           clientName: c.clientName,
           subtitle: p.ref,
           error: p.error,
@@ -218,7 +229,21 @@ export function OpsImport({ bundles }: { bundles: InboxBundleRow[] }) {
           description={
             scan
               ? "The scan found no committed proposals, and the inbox is empty."
-              : "Click Check for updates to scan the lab repo, or drop proposal JSONs into OPS_IMPORT_DIR."
+              : "Scan the lab repo for committed proposals, or drop proposal JSONs into OPS_IMPORT_DIR."
+          }
+          // The description used to say "Click Check for updates" and point at a
+          // control somewhere else on the page. An empty state that names the
+          // next step can carry it (#108) — same handler as the strip above, so
+          // there is one scan, offered twice, not two.
+          action={
+            <Button size="sm" variant="subtle" disabled={scanning} onClick={checkForUpdates}>
+              {scanning ? (
+                <Spinner className="h-3.5 w-3.5" />
+              ) : (
+                <Icon name="RefreshCw" className="h-3.5 w-3.5" />
+              )}
+              {scan ? "Scan again" : "Check for updates"}
+            </Button>
           }
         />
       ) : (
@@ -332,7 +357,7 @@ function ScanSummary({ scan }: { scan: UpdateScan }) {
   return (
     <div className="rounded-lg border border-border bg-surface-2 px-4 py-3">
       <p className="text-sm">
-        Scanned <span className="font-mono text-xs">{scan.repo}</span> - {scan.checked} client
+        Scanned <span className="font-mono text-xs">{scan.repo}</span> · {scan.checked} client
         {scan.checked === 1 ? "" : "s"} with a lab slug.{" "}
         {propsFound === 0 && runsFound === 0 ? (
           <span className="text-muted">Nothing new.</span>
@@ -358,7 +383,7 @@ function ScanSummary({ scan }: { scan: UpdateScan }) {
               >
                 <div className="min-w-0">
                   <p className="text-xs font-medium">
-                    {c.clientName} - {c.newRuns.length} un-imported run{c.newRuns.length === 1 ? "" : "s"}
+                    {c.clientName} · {c.newRuns.length} un-imported run{c.newRuns.length === 1 ? "" : "s"}
                   </p>
                   <p className="truncate font-mono text-[10px] text-muted-2">
                     {c.newRuns.map((r) => r.runName).join(" · ")}
@@ -380,8 +405,33 @@ function ScanSummary({ scan }: { scan: UpdateScan }) {
  * The confirm dialog's manifest: what lands, in nouns, before anything is
  * written - and only what is TICKED. A confirm that listed the whole bundle
  * after the operator narrowed it would be worse than no confirm at all.
+ *
+ * ONE ITEM IS NOT COVERED BY THE REASSURANCE, so it is not listed under it
+ * (#106). The reassurance is scoped to what it is actually true of: PROFILE
+ * FIELDS are fill-only (`skippedProfile` below is the proof), while documents,
+ * competitors and the SEO/GEO snapshot are UPDATED IN PLACE — the core's own
+ * header says so ("documents may be updated or created", "every other client
+ * profile field is FILL-ONLY"). An earlier version of this fix told the operator
+ * the palette was unique in overwriting anything, which is a second false
+ * statement on the dialog that authorizes the write, and worse than the blanket
+ * promise it replaced. What IS unique to the palette is that it replaces values
+ * a human chose in a field with no history — which
+ * `buildWriteOps` replaces wholesale: dominantColors and the four legacy
+ * scalars are overwritten from the proposal, hand-picked hexes included, and
+ * `brandNeutralLight` is nulled when the incoming palette has three entries.
+ * The palette therefore leaves the list, gets its own warning row, and that row
+ * renders in BOTH faces of this component: the bulk confirm passes `compact`,
+ * which used to suppress the caveat entirely while still writing every palette
+ * it listed.
+ *
+ * EXPORTED FOR THE RENDER TEST, not for reuse. What this paints is the claim
+ * under test, and from `OpsImport` it is three states deep — a server action
+ * for the plan, a click to open the confirm — which `renderToStaticMarkup`
+ * cannot drive. A source scan cannot tell "the caveat is conditional" from "the
+ * caveat is spelled somewhere in this file", which is exactly the confusion
+ * that shipped the bug.
  */
-function WriteManifest({ pick, compact }: { pick: Pick_; compact?: boolean }) {
+export function WriteManifest({ pick, compact }: { pick: Pick_; compact?: boolean }) {
   const { plan, selectedKeys, includeSeoGeo } = pick;
   const on = new Set(selectedKeys);
   const lines: string[] = [];
@@ -404,9 +454,9 @@ function WriteManifest({ pick, compact }: { pick: Pick_; compact?: boolean }) {
     for (const f of plan.brandingFills) lines.push(`Fill brandingGuidelines.${f}`);
   }
   const paletteKey = plan.items.find((i) => i.kind === "palette")?.key;
-  if (paletteKey && on.has(paletteKey) && plan.colors) {
-    lines.push(`Replace brand palette (${plan.colors.to.join(", ")})`);
-  }
+  // Not pushed into `lines` — see the note above; it is the one item the line
+  // above the list does not describe.
+  const palette = paletteKey && on.has(paletteKey) ? plan.colors : null;
   if (includeSeoGeo && plan.seoGeo?.ok) {
     lines.push(`Import SEO/GEO snapshot captured ${plan.seoGeo.capturedOn}`);
   }
@@ -415,7 +465,9 @@ function WriteManifest({ pick, compact }: { pick: Pick_; compact?: boolean }) {
     <div className={cn("space-y-1.5", compact && "mt-1.5")}>
       {!compact && (
         <p className="text-xs text-muted-2">
-          Nothing is deleted. Fields a human already filled are skipped, never overwritten.
+          {palette
+            ? "No row is deleted. Profile FIELDS a human already filled are skipped, except the brand palette below. Documents, competitors and the SEO/GEO snapshot are updated in place."
+            : "No row is deleted. Profile fields a human already filled are skipped. Documents, competitors and the SEO/GEO snapshot are updated in place."}
         </p>
       )}
       <ul className="space-y-1 text-xs text-muted">
@@ -426,7 +478,45 @@ function WriteManifest({ pick, compact }: { pick: Pick_; compact?: boolean }) {
           </li>
         ))}
       </ul>
+      {palette && (
+        <p className="flex gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1.5 text-[11px] text-warning">
+          <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            Replaces the brand palette: {palette.from.join(", ") || "no colors stored"} becomes{" "}
+            {palette.to.join(", ")}, including hexes a human picked, and a three-color palette
+            leaves the fourth slot empty. Nothing on this page puts it back.
+          </span>
+        </p>
+      )}
     </div>
+  );
+}
+
+/**
+ * The way to the record this page writes to (#110).
+ *
+ * This surface changes another client's documents, competitor rows and brand
+ * profile, and it is unreviewable until somebody goes and looks — which used to
+ * cost a manual navigation plus a name-to-client lookup, because nothing here
+ * rendered the `clientId` it had been carrying all along.
+ */
+function ClientRecordLink({
+  clientId,
+  children,
+  className,
+}: {
+  clientId: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={`/clients/${clientId}`}
+      className={cn("inline-flex items-center gap-1 text-neon hover:underline", className)}
+    >
+      {children}
+      <Icon name="ArrowUpRight" className="h-3 w-3 shrink-0" />
+    </Link>
   );
 }
 
@@ -464,6 +554,11 @@ function BundleCard({
         <div className="min-w-0">
           <CardTitle>{row.clientName ?? row.label}</CardTitle>
           <p className="mt-1 font-mono text-xs text-muted-2">{row.label}</p>
+          {row.clientId && (
+            <ClientRecordLink clientId={row.clientId} className="mt-1.5 text-xs">
+              Open the client record
+            </ClientRecordLink>
+          )}
           {row.subtitle && <p className="mt-1.5 truncate text-xs text-muted">{row.subtitle}</p>}
           {prior && (
             <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
@@ -471,7 +566,7 @@ function BundleCard({
               Imported {importedOn(prior.importedAt)} by {prior.actor}
               {prior.partial && " (selected items only)"}
               {prior.changedSince && (
-                <span className="text-warning">· the file has changed since - import it again</span>
+                <span className="text-warning">· the file has changed since. Import it again</span>
               )}
             </p>
           )}
@@ -651,7 +746,7 @@ function PlanCard({
       {totalCount > 1 && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[11px] text-muted-2">
-            {pickedCount} of {totalCount} selected - untick anything you do not want.
+            {pickedCount} of {totalCount} selected. Untick anything you do not want.
           </p>
           <div className="flex gap-2">
             <button
@@ -704,7 +799,7 @@ function PlanCard({
             // Say it, rather than quietly folding a create into an update.
             note={
               c.reconciled
-                ? `Already in the roster (matched by ${c.reconciled.matchedBy}) - will update the existing row.`
+                ? `Already in the roster (matched by ${c.reconciled.matchedBy}). Will update the existing row.`
                 : null
             }
             checked={isOn(c.key)}
@@ -748,12 +843,12 @@ function PlanCard({
       {plan.skippedProfile.length > 0 && (
         <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5">
           <p className="text-xs font-medium text-muted">
-            Skipped - a human already set these, and a refresh never overwrites them:
+            Skipped. A human already set these, and a refresh never overwrites them:
           </p>
           <ul className="mt-1.5 space-y-0.5">
             {plan.skippedProfile.map((s) => (
               <li key={s.field} className="text-[11px] text-muted-2">
-                {s.field} - {s.reason}
+                {s.field} · {s.reason}
               </li>
             ))}
           </ul>
@@ -771,7 +866,7 @@ function PlanCard({
       {plan.warnings.length > 0 && (
         <div className="rounded-md border border-warning/30 bg-warning/10 px-3.5 py-2.5">
           <p className="text-xs font-medium text-warning">
-            {plan.warnings.length} warning{plan.warnings.length === 1 ? "" : "s"} - not blocking, but read them:
+            {plan.warnings.length} warning{plan.warnings.length === 1 ? "" : "s"}, not blocking, but read them:
           </p>
           <ul className="mt-1.5 space-y-0.5">
             {plan.warnings.map((w, i) => (
@@ -794,7 +889,7 @@ function PlanCard({
           {plan.lockedReason}
         </p>
       ) : plan.counts.totalWrites === 0 && !plan.seoGeo?.ok ? (
-        <p className="text-xs text-muted">Nothing to write - the bundle matches what is already stored.</p>
+        <p className="text-xs text-muted">Nothing to write. The bundle matches what is already stored.</p>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-muted">
@@ -828,7 +923,7 @@ function SeoGeoCard({
   if (!seoGeo.ok) {
     return (
       <div className="rounded-md border border-danger/30 bg-danger/10 px-3.5 py-3">
-        <p className="text-xs font-medium text-danger">SEO/GEO snapshot refused - the refresh half can still import.</p>
+        <p className="text-xs font-medium text-danger">SEO/GEO snapshot refused. The refresh half can still import.</p>
         <ul className="mt-1.5 space-y-0.5">
           {seoGeo.errors.map((e, i) => (
             <li key={i} className="font-mono text-[11px] text-danger/90">
@@ -848,10 +943,10 @@ function SeoGeoCard({
       </p>
       <p className="mt-1.5 text-[11px] text-muted">Currently stored: {seoGeo.storedProvenance}</p>
       <p className="mt-1 text-[11px] text-muted-2">
-        It will be stamped as a hand import, keeping its own capture date and pipeline stamp -
+        It will be stamped as a hand import, keeping its own capture date and pipeline stamp.
         {seoGeo.willReadAsLegacy
-          ? " it renders with the legacy banner, as an unstamped or superseded capture should."
-          : " its pipeline stamp is current, so no legacy banner."}
+          ? " It renders with the legacy banner, as an unstamped or superseded capture should."
+          : " Its pipeline stamp is current, so no legacy banner."}
       </p>
       {seoGeo.warnings.map((w, i) => (
         <p key={i} className="mt-1 text-[11px] text-warning">
@@ -862,7 +957,13 @@ function SeoGeoCard({
   );
 }
 
-function OutcomePanel({ outcome }: { outcome: ApplyOutcome }) {
+/**
+ * What the write actually did, and where to go and check it.
+ *
+ * EXPORTED FOR THE RENDER TEST for the same reason as WriteManifest above: it
+ * is only mounted once an apply has come back, which no static render can reach.
+ */
+export function OutcomePanel({ outcome }: { outcome: ApplyOutcome }) {
   const { refresh, seoGeo } = outcome;
   const clean = refresh.applied && !refresh.error && !seoGeo.error;
   return (
@@ -878,19 +979,25 @@ function OutcomePanel({ outcome }: { outcome: ApplyOutcome }) {
       <ul className="mt-1.5 space-y-0.5 text-[11px] text-muted">
         <li>
           {refresh.error
-            ? `Refresh failed - ${refresh.error}`
+            ? `Refresh failed · ${refresh.error}`
             : `${refresh.docs} document(s), ${refresh.competitors} competitor row(s), ${refresh.client} client update.`}
         </li>
         <li>
           {seoGeo.applied
             ? "SEO/GEO snapshot imported and stamped as a hand import."
             : seoGeo.error
-              ? `SEO/GEO refused - ${seoGeo.error}`
+              ? `SEO/GEO refused · ${seoGeo.error}`
               : seoGeo.skippedReason
-                ? `SEO/GEO skipped - ${seoGeo.skippedReason}`
+                ? `SEO/GEO skipped · ${seoGeo.skippedReason}`
                 : "No SEO/GEO snapshot in this bundle."}
         </li>
       </ul>
+      {/* The validated id off the plan, so this lands on the record that was
+          actually written even if the bundle was filed under another client.
+          The apply revalidates /clients/<id>, so the page it opens is fresh. */}
+      <ClientRecordLink clientId={outcome.clientId} className="mt-2 text-[11px]">
+        Check {outcome.clientName}&apos;s record
+      </ClientRecordLink>
     </div>
   );
 }

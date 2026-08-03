@@ -32,10 +32,12 @@ import {
   resolveRecCopy,
   type EngineId,
   type Lever,
+  type RecImpact,
   type Recommendation,
   type SeoGeoInsights,
   type SubMetrics,
   type VisibilityGap,
+  type VisibilityIndexResult,
 } from "@/lib/seo-geo";
 import type { ManagedTaskType } from "@/lib/types";
 
@@ -127,6 +129,107 @@ function checkBreakdown(registry: typeof SEO_CHECKS, checks: SeoGeoInsights["seo
   }));
 }
 
+/**
+ * "N of M AI engines", off the SAME `computeVisibilityIndex` RESULT the headline
+ * score was read from — the whole point being that a caller cannot hand this the
+ * live index and the stored coverage pair at the same time (QA #123).
+ *
+ * The headline went live in 682e188 while every sentence describing its coverage
+ * stayed on the frozen `geoVisibilityEnginesScored` / `geoVisibilityEnginesTotal`
+ * fields, so a snapshot captured under an older scoring formula printed a real
+ * score directly above "based on 0 of 5 AI engines", or "no engines measured this
+ * run" directly above "based on 4 of 5 AI engines". Same shape as the bug the
+ * comment in buildScoreViews describes, one line further down the tile.
+ *
+ * THE INVARIANT, AS IT ACTUALLY HOLDS. Taking the RESULT OBJECT rather than the
+ * insights record is what keeps it closed: engine numbers may come from a
+ * `computeVisibilityIndex` result and from nowhere else — re-reading the stored
+ * fields "for the denominator" is exactly what re-opens the bug. It is NOT
+ * "derived exactly once per render", and this docstring used to say so:
+ * `buildContextLine` runs the derivation a second time for the capture strip,
+ * which sits above the tile and makes the same claim. That second call is safe
+ * for a different reason, and it is the reason worth keeping —
+ * `visibilityFromSnapshot` below is the SINGLE EXPRESSION in this module that maps
+ * a snapshot to these numbers, and it is pure over `insights.perEngine`, so two
+ * invocations on one snapshot cannot disagree. Add a second such expression and
+ * the guarantee is gone; the call count is not what protects it.
+ *
+ * WHAT IT DOES NOT TRUST. `enginesScored` counts the engines inside
+ * `perEngineScore`, so the numerator is exactly the number of rows the tile draws
+ * underneath the sentence — a client can count them. The denominator is not
+ * equally safe, and the old claim that "scored can never exceed total" was true of
+ * this file's two call sites, not of the type:
+ *   - `enginesTotal` is a roster size only when the caller leaves
+ *     `computeVisibilityIndex`'s default (`perEngine.length`). Both call sites here
+ *     do. `src/lib/intel/seo-geo.ts` passes `ENGINE_ROSTER.length` explicitly —
+ *     harmless today only because it maps that same roster to build `perEngine`, so
+ *     the explicit total equals the default. Nothing holds it there, and
+ *     `computeVisibilityIndex(rows, N)` with `N < rows.length` returns scored > total.
+ *   - the returned `enginesTotal` falls back to `live.length` (`enginesTotal ||
+ *     live.length`) while `dataCoveragePct` divides by the RAW parameter, so an
+ *     explicit `0` yields `{scored: 3, total: 3, pct: 0}` — one result object
+ *     carrying two different denominators, which is the #123 shape in miniature.
+ * So: the denominator is clamped to at least the number of scored rows on screen,
+ * and the percentage is recomputed from the pair this function prints. The meter
+ * and the sentence beneath it are one derivation whatever the caller passed.
+ *
+ * NO ROWS AT ALL is a different statement from no engine ANSWERING, and the tile
+ * must not merge them. `perEngine: []` is reachable (an imported bundle only has to
+ * carry an array — src/lib/seo-geo-import.ts), and it used to read "based on 0 of 0
+ * AI engines", which says we attempted nothing; two UNAVAILABLE rows honestly read
+ * "0 of 2", we asked two and got none. `fraction` is null in the no-rows state and
+ * every surface says the snapshot carries no engine data rather than print a
+ * fraction over zero.
+ *
+ * EXPORTED FOR ONE REASON: neither call site in this file can produce the
+ * divergent result described above, because both leave `enginesTotal` to default.
+ * Left private, the clamp and the recomputed percentage would be unenforceable —
+ * every assertion this module can make about them passes equally with them
+ * deleted, which is precisely how a stated mechanism stops being in force. The
+ * signature is unchanged and still refuses an insights record, so this does not
+ * reopen #123: a caller must still hand it a `computeVisibilityIndex` result.
+ * Pinned in src/lib/__tests__/stale-claims-visibility-coverage.test.ts.
+ */
+export function engineCoverage(live: VisibilityIndexResult): {
+  scored: number;
+  total: number;
+  pct: number;
+  /** "2 of 3"; null when the snapshot has no engine rows and no fraction is honest. */
+  fraction: string | null;
+  /** Agrees with the TOTAL, so a one-engine snapshot never says "1 of 1 engines". */
+  engineNoun: "engine" | "engines";
+} {
+  const scored = live.enginesScored;
+  const total = Math.max(live.enginesTotal, scored);
+  return {
+    scored,
+    total,
+    pct: total > 0 ? Math.round((scored / total) * 100) : 0,
+    fraction: total > 0 ? `${scored} of ${total}` : null,
+    engineNoun: total === 1 ? "engine" : "engines",
+  };
+}
+
+/**
+ * The one expression in this module that turns a snapshot into visibility numbers
+ * — see engineCoverage. Pure over `insights.perEngine`, which is what lets the
+ * tile and the capture strip agree without sharing a call.
+ */
+function visibilityFromSnapshot(insights: SeoGeoInsights): {
+  live: VisibilityIndexResult;
+  coverage: ReturnType<typeof engineCoverage>;
+} {
+  const live = computeVisibilityIndex(insights.perEngine ?? []);
+  return { live, coverage: engineCoverage(live) };
+}
+
+/** What every surface says when the snapshot carries no engine rows at all. */
+const NO_ENGINE_DATA = {
+  band: "no engine data in this snapshot",
+  line: "no AI engine data in this snapshot",
+  sentence: "This snapshot carries no AI engine data.",
+} as const;
+
 export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoBand = scoreBand(insights.seoScore);
   const geoBand = scoreBand(insights.geoReadiness);
@@ -141,7 +244,9 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   // from one computeVisibilityIndex call makes that contradiction structurally
   // impossible: the big number is always calculateOverallVisibilityScore() of
   // the same rounded integers shown in the cards beneath it.
-  const liveVisibility = computeVisibilityIndex(insights.perEngine);
+  // Every engine number on this tile — the band, the meter, the sentence under
+  // it and the tooltip — comes off this one result. See engineCoverage.
+  const { live: liveVisibility, coverage: visCoverage } = visibilityFromSnapshot(insights);
   const visBand = scoreBand(liveVisibility.index);
 
   const seoMeasured = insights.seoDataCoveragePct > 0;
@@ -152,6 +257,14 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   // the same set every card and gap below uses — not the full prompt set, which
   // includes the questions that name the client and hit by construction.
   const categoryCount = insights.categoryPresence?.total ?? 0;
+  // A snapshot with NO engine rows says so, rather than printing "0 of 0", which
+  // claims a measurement attempt that never happened. See engineCoverage.
+  const noEngineData = visCoverage.fraction === null;
+  /** The explainer's coverage sentence: "can" on a current snapshot, "could" on a legacy one. */
+  const coverageSentence = (verb: "can" | "could") =>
+    noEngineData
+      ? NO_ENGINE_DATA.sentence
+      : `Based on the ${visCoverage.fraction} ${visCoverage.engineNoun} we ${verb} measure.`;
 
   return [
     {
@@ -185,16 +298,25 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       label: "AI visibility today",
       // CD-J1 bounce 2b: only claim the category scope when the record carries it.
       explainer: basis.categoryScoped
-        ? `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand — the questions new customers ask. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we can measure. This is the number the fixes below are designed to move.`
-        : `How often AI assistants actually named or recommended you on this snapshot, measured across all the buyer questions we asked — including the ones naming your brand, which is why it isn't comparable with a current snapshot. Based on the ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} engines we could measure.`,
+        ? `How often AI assistants actually name or recommend you right now, when we ask them the ${categoryCount || "real"} category questions that don't mention your brand, the questions new customers ask. ${coverageSentence("can")} This is the number the fixes below are designed to move.`
+        : `How often AI assistants actually named or recommended you on this snapshot, measured across all the buyer questions we asked, including the ones naming your brand, which is why it isn't comparable with a current snapshot. ${coverageSentence("could")}`,
       value: visibilityMeasured ? liveVisibility.index : null,
       tone: visibilityMeasured ? visBand.tone : "neutral",
-      bandLabel: visibilityMeasured ? visBand.label : "no engines measured this run",
-      coveragePct:
-        insights.geoVisibilityEnginesTotal > 0
-          ? Math.round((insights.geoVisibilityEnginesScored / insights.geoVisibilityEnginesTotal) * 100)
-          : 0,
-      coverageLine: `based on ${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines`,
+      // Already live (`visibilityMeasured` is liveVisibility.enginesScored > 0);
+      // it was the coverage line beneath it that still read the frozen pair, which
+      // is how "no engines measured this run" came to sit above "based on 4 of 5
+      // AI engines". Both now answer to the same count. The two zero states are
+      // NOT the same sentence: engines that came back empty were measured and
+      // scored nothing; no rows at all means the snapshot never carried any.
+      bandLabel: visibilityMeasured
+        ? visBand.label
+        : noEngineData
+          ? NO_ENGINE_DATA.band
+          : "no engines measured this run",
+      coveragePct: visCoverage.pct,
+      coverageLine: noEngineData
+        ? NO_ENGINE_DATA.line
+        : `based on ${visCoverage.fraction} AI ${visCoverage.engineNoun}`,
       breakdownTitle: "Score by engine",
       // Same perEngineScore array the headline above was averaged from
       // (calculateOverallVisibilityScore) — the tile and its own breakdown can
@@ -267,10 +389,19 @@ export function buildContextLine(insights: SeoGeoInsights, now = Date.now()): st
   if (capturedNothing(insights)) {
     return `${dated} · AI answer capture did not complete this run`;
   }
+  // The capture strip sits a few centimetres above the visibility tile and makes
+  // the same claim, so it goes through the same derivation (QA #123). Left on the
+  // stored pair it was the third contradiction on the page: a strip saying "4 of 5
+  // AI engines measured" over a tile whose own count is 2. This is a second
+  // invocation, not a second derivation — see engineCoverage.
+  const { coverage } = visibilityFromSnapshot(insights);
+  const asked = insights.promptSet.length;
   return [
     dated,
-    `${insights.promptSet.length} real buyer questions`,
-    `${insights.geoVisibilityEnginesScored} of ${insights.geoVisibilityEnginesTotal} AI engines measured`,
+    `${asked} real buyer question${asked === 1 ? "" : "s"}`,
+    coverage.fraction
+      ? `${coverage.fraction} AI ${coverage.engineNoun} measured`
+      : NO_ENGINE_DATA.line,
   ].join(" · ");
 }
 
@@ -332,7 +463,7 @@ export function buildQuestionPlanLine(insights: SeoGeoInsights): string {
   }
   const cat = presenceCounts(insights.categoryPresence).planned;
   const brand = presenceCounts(insights.brandPresence).planned;
-  return `We ask ${asked} questions on every snapshot — ${cat} about your category, and ${brand} that name you directly. Only the ${cat} category questions count toward how you compare with competitors.`;
+  return `We ask ${asked} questions on every snapshot · ${cat} about your category, and ${brand} that name you directly. Only the ${cat} category questions count toward how you compare with competitors.`;
 }
 
 export interface CitationView {
@@ -371,7 +502,7 @@ export function buildCitationView(insights: SeoGeoInsights): CitationView {
         ? `We couldn't measure any ${basis.answers} this run, so there is nothing to count citations against yet.`
         : cited > 0
           ? `Your site was cited as a source in ${cited} of ${of} ${basis.answers} across every engine we measured.`
-          : `Your site was never cited as a source in the ${of} ${basis.answers} we measured — earning citations from these domains' territory is what moves the visibility score.`,
+          : `Your site was never cited as a source in the ${of} ${basis.answers} we measured. Earning citations from these domains' territory is what moves the visibility score.`,
     emptyLine: "No engine cited any source domain on the answers we measured this run.",
   };
 }
@@ -435,14 +566,14 @@ export function buildSnapshotTrust(insights: SeoGeoInsights): SnapshotTrustView 
     ? " Question counts also differed between snapshots back then, so the totals here won't match a current snapshot's."
     : "";
   const scopeLine = unscoped
-    ? " Its engine-by-engine figures cover every question we asked, including the ones that name you — current snapshots measure those on category questions only."
+    ? " Its engine-by-engine figures cover every question we asked, including the ones that name you. Current snapshots measure those on category questions only."
     : "";
   return {
     isLegacy: true,
     title: "These results are from an earlier measurement setup",
     description:
       (preRedeploy
-        ? `This snapshot was captured on ${formatCaptured(insights.capturedAt)}, before we rebuilt how visibility is measured. Read the numbers as history rather than your position today — a refresh re-measures everything on the current setup.`
+        ? `This snapshot was captured on ${formatCaptured(insights.capturedAt)}, before we rebuilt how visibility is measured. Read the numbers as history rather than your position today. A refresh re-measures everything on the current setup.`
         : "How we measure visibility has changed since this snapshot, so these numbers aren't directly comparable with a current one. A refresh re-measures everything on the current setup.") +
       countsLine +
       scopeLine,
@@ -759,12 +890,12 @@ export function buildEngineViews(
         {
           label: "cited as a source",
           value: pct(cat.citationRate),
-          explainer: `How often the engine linked to your website as a source for its answer — ${fraction(citedCount, n, basis.answers)}. Being cited means the AI is reading your site, not just remembering your name.`,
+          explainer: `How often the engine linked to your website as a source for its answer · ${fraction(citedCount, n, basis.answers)}. Being cited means the AI is reading your site, not just remembering your name.`,
         },
         {
           label: "answered first",
           value: pct(cat.firstPositionRate),
-          explainer: `When the answer listed brands, how often yours came first — ${fraction(firstCount, n, basis.answers)}. First mention carries the most weight with buyers skimming an answer.`,
+          explainer: `When the answer listed brands, how often yours came first · ${fraction(firstCount, n, basis.answers)}. First mention carries the most weight with buyers skimming an answer.`,
         },
       ],
       // F10: `cat.`, not `row.` — the chip sat in the same card as "cited as a
@@ -898,12 +1029,12 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
         ? {
             value: `${Math.round(insights.rosterSharePct)}%`,
             pct: Math.round(insights.rosterSharePct),
-            caption: `of every brand mention across you and the ${competitors} competitor${competitors === 1 ? "" : "s"} we track — measured on category questions only`,
+            caption: `of every brand mention across you and the ${competitors} competitor${competitors === 1 ? "" : "s"} we track. Measured on category questions only`,
             // CD-J1 directive 3: state the basis. This is computed on category
             // questions alone; the branded ones name the client by construction,
             // and counting them would be scoring yourself on your own name.
             explainer:
-              "Your share of every brand mention across the category answers we measured, counting you and the competitors we track. Questions that name you are left out — being named in a question about you isn't visibility. It's the single number for how much of the AI conversation you own.",
+              "Your share of every brand mention across the category answers we measured, counting you and the competitors we track. Questions that name you are left out. Being named in a question about you isn't visibility. It's the single number for how much of the AI conversation you own.",
           }
         : null,
   };
@@ -955,8 +1086,135 @@ export function buildRosterDrift(insights: SeoGeoInsights, tracked?: TrackedComp
  * labels out of the RSC payload entirely. Only title and description are touched —
  * impact, vertical, recId and the approval state are the snapshot's own facts.
  */
-export function healRecommendations(recommendations: Recommendation[]): Recommendation[] {
-  return recommendations.map((r) => ({ ...r, ...resolveRecCopy(r.recId, r) }));
+const IMPACT_RANK: Record<RecImpact, number> = { high: 3, medium: 2, low: 1 };
+
+export function healRecommendations(
+  recommendations: Recommendation[],
+  /**
+   * The snapshot's approvals, when the caller has them.
+   *
+   * Only ever used to CHOOSE which member of a collapsed group keeps its recId
+   * (see the second pass below) — nothing here reads or writes approval state,
+   * and a caller that omits it gets the same rows in the same order.
+   */
+  opts?: { approvedRecIds?: readonly string[] },
+): Recommendation[] {
+  // Dedupe BEFORE healing, and by the same rule `dedupeGapsByRecId` applies to
+  // the gaps these rows are built from (src/lib/seo-geo.ts): keep the strongest
+  // member, preserve first-seen order, and promote the vertical to "BOTH" when
+  // the group disagrees.
+  //
+  // Why it is needed here at all: a snapshot captured before that dedupe existed
+  // persisted two rows for one recId. Healing their copy through today's
+  // REC_COPY then made them TEXTUALLY IDENTICAL while they kept contradictory
+  // impact and channel chips — the same action listed twice on a client's plan,
+  // disagreeing with itself. And because both rows carry the same recId (which
+  // is what `approveSeoGeoRecommendation` stores), approving one flipped both.
+  const byId = new Map<string, Recommendation>();
+  const verticals = new Map<string, Set<Lever>>();
+  const order: string[] = [];
+
+  for (const rec of recommendations) {
+    const seen = verticals.get(rec.recId) ?? new Set<Lever>();
+    seen.add(rec.vertical);
+    verticals.set(rec.recId, seen);
+
+    const held = byId.get(rec.recId);
+    if (!held) {
+      byId.set(rec.recId, rec);
+      order.push(rec.recId);
+    } else if (IMPACT_RANK[rec.impact] > IMPACT_RANK[held.impact]) {
+      byId.set(rec.recId, rec);
+    }
+  }
+
+  const healed = order.map((recId) => {
+    const rec = byId.get(recId)!;
+    const seen = verticals.get(recId)!;
+    const merged = seen.size > 1 ? { ...rec, vertical: "BOTH" as Lever } : rec;
+    return { ...merged, ...resolveRecCopy(merged.recId, merged) };
+  });
+
+  return collapseIdenticalCopy(healed, opts?.approvedRecIds ?? []);
+}
+
+/**
+ * The SECOND duplicate class (AF-11): different rec ids that heal to the same
+ * words.
+ *
+ * Albert saw the same approved item twice. The pass above closes the case where
+ * one recId appears twice; this closes the one where two ids render byte for
+ * byte identically, which is a different defect wearing the same face:
+ *
+ *  • PER-ENGINE TWINS. `resolveRecCopy` keys on `recId.split(":")[0]`, so
+ *    `GEO-11:chatgpt` and `GEO-11:gemini` both resolve to one entry in REC_COPY.
+ *    `dedupeGapsByRecId` keeps them apart on purpose — five engines' findings
+ *    must not silently merge into one GAP — but that is a claim about the
+ *    technical detail staff read, not about the plain-English row a client
+ *    approves, and there is exactly one change to make either way.
+ *  • FALLBACK TWINS. Every id REC_COPY does not know resolves to the single
+ *    REC_FALLBACK, so N unmapped findings render as N rows all reading "A
+ *    technical finding your team is reviewing".
+ *
+ * WHY IT SHOWS UP AT APPROVAL. Each twin carries its own recId, and that is what
+ * `approveSeoGeoRecommendation` stores — so one row turns green while its
+ * identical neighbour keeps a grey Approve button. Before the click the pair
+ * reads as one undifferentiated list; the green treatment is what makes the
+ * duplicate visible, which is exactly where Albert met it.
+ *
+ * WHY IT SURVIVED AT ALL. `buildRecommendations` dedupes on the rendered TITLE
+ * at capture, this module deduped on recId at render, and the two keys disagree.
+ * Any snapshot that did not go through `buildRecommendations` therefore ships
+ * twins: an Ops-Import bundle (copied verbatim, validated for shape only) and
+ * anything captured before the title dedupe landed. Keying the render pass the
+ * same way the capture pass is keyed is what finally makes them agree.
+ *
+ * SAME MERGE RULES as the recId pass — strongest impact, verticals promoted to
+ * BOTH on disagreement, first-seen order — plus one of its own: an ALREADY
+ * APPROVED member keeps its recId as the survivor's. Without that, collapsing a
+ * pair whose approved half was not the first-seen one would show the client an
+ * un-approved row for something they had already approved, which is a worse lie
+ * than the duplicate. Approving the survivor stores one id, and the group renders
+ * as one row, so it cannot recur.
+ */
+function collapseIdenticalCopy(
+  healed: Recommendation[],
+  approvedRecIds: readonly string[],
+): Recommendation[] {
+  const approved = new Set(approvedRecIds);
+  const byCopy = new Map<string, Recommendation>();
+  const verticals = new Map<string, Set<Lever>>();
+  const order: string[] = [];
+
+  for (const rec of healed) {
+    // The copy a reader actually compares — both fields, because two rows with
+    // one title and two different explanations are two rows. Joined on U+FFFC,
+    // written as an ESCAPE and never as a byte so the file stays greppable: a
+    // separator that can occur in copy would let "ab" + "c" collide with "a" +
+    // "bc" and collapse two real findings into one.
+    const key = `${rec.title.trim().toLowerCase()}\uFFFC${(rec.description ?? "").trim().toLowerCase()}`;
+    const seen = verticals.get(key) ?? new Set<Lever>();
+    seen.add(rec.vertical);
+    verticals.set(key, seen);
+
+    const held = byCopy.get(key);
+    if (!held) {
+      byCopy.set(key, rec);
+      order.push(key);
+      continue;
+    }
+    // Identity first: whichever member the client already approved is the one
+    // whose id the surviving row must carry.
+    const recId = approved.has(rec.recId) && !approved.has(held.recId) ? rec.recId : held.recId;
+    const stronger = IMPACT_RANK[rec.impact] > IMPACT_RANK[held.impact] ? rec : held;
+    byCopy.set(key, { ...stronger, recId });
+  }
+
+  return order.map((key) => {
+    const rec = byCopy.get(key)!;
+    const seen = verticals.get(key)!;
+    return seen.size > 1 ? { ...rec, vertical: "BOTH" as Lever } : rec;
+  });
 }
 
 export interface RosterSanity {
@@ -1032,7 +1290,7 @@ export function buildRosterSanity(
     headline: `None of the ${n} tracked competitor${n === 1 ? "" : "s"} appear in the AI answers we measured`,
     detail: suggestions.length
       ? `Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. Consider tracking: ${suggestions.join(", ")}.`
-      : "Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. The discovery pass found no untracked brands either — worth checking the client's category and question set.",
+      : "Every comparison on this page is scored against brands the engines never named, so the client sees a race they aren't in. The discovery pass found no untracked brands either. Worth checking the client's category and question set.",
   };
 }
 

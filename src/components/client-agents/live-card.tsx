@@ -4,7 +4,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { SocialPlatformMark } from "@/components/agent-identity";
+import { platformForAgentIdentity } from "@/lib/content-platform";
 import { ContactUsButton } from "@/components/contact-us-modal";
+import { NO_FORMATS_YET } from "@/lib/client-agent-format-copy";
 import { moveTemplateKey } from "@/lib/client-agent-runs";
 import { markSlotNoteAppliedAction } from "@/lib/actions/slot-note-actions";
 import { formatDate, relativeTime } from "@/lib/utils";
@@ -80,10 +83,14 @@ export function TemplateRows({
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
+  // The launch card says this too, for the same empty registry — so the sentence
+  // lives in client-agent-format-copy and both read it. It used to be written
+  // twice, and the two copies had already drifted: the other one called a format
+  // a "template stream", which is the schema's word and not the client's.
   if (templates.length === 0) {
     return (
       <p className="mt-4 rounded-md border border-border bg-surface-2/70 px-3 py-2 text-xs text-muted-2">
-        This agent has no formats registered yet - your Karos team is setting them up.
+        {NO_FORMATS_YET}
       </p>
     );
   }
@@ -195,6 +202,48 @@ export function TemplateRows({
                   <p className="mt-0.5 line-clamp-2 text-[11px] leading-relaxed text-muted-2">
                     {template.rationale}
                   </p>
+                )}
+                {/* ── AF-6: an example of each format, without opening it ──
+                    Albert asked to see "the different templates we produce for
+                    that client and an example of each". The expansion below has
+                    always listed a format's posts, but a reader scanning the list
+                    had a column of names and no idea what any of them look like.
+
+                    Collapsed only, deliberately: the expansion opens onto the
+                    same set with this very post at the top of it, so painting
+                    both would show one deliverable twice under two headings.
+
+                    Nothing here is a new permission — `detail.example` is the
+                    newest row of the same archive-filtered join the list uses, so
+                    a client sees an example only of work that has been delivered
+                    to them. */}
+                {detail?.example && !open && (
+                  <div className="mt-1.5 flex items-center gap-2 rounded-md border border-border/60 bg-surface-2 px-2 py-1.5">
+                    {detail.example.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={detail.example.imageUrl}
+                        alt=""
+                        className="h-9 w-9 shrink-0 rounded object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-surface-2/70 text-muted-2">
+                        <Icon name="FileText" className="h-3.5 w-3.5" aria-hidden="true" />
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                        Example
+                      </span>
+                      <span className="block truncate text-[11px] text-foreground">
+                        {detail.example.title}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[11px] text-muted-2">
+                      {relativeTime(detail.example.at)}
+                    </span>
+                  </div>
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-0.5">
@@ -358,19 +407,29 @@ const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  * "ready"/"coming" distinction, no asset link and no count: a pre-generated
  * post and a day-of run project into an identical chip, and that
  * indistinguishability is the churn guard, not a copy choice (§4.1).
+ *
+ * AF-20's mark is safe under that rule for one reason worth stating: it is
+ * resolved from the AGENT, so it is the same glyph on every chip in the strip.
+ * Reading it off a per-day asset would be the churn guard broken - days with a
+ * pre-generated post would render differently from day-of days, which is
+ * exactly the distinction the strip exists to withhold.
  */
 export function WeekStrip({
   week,
+  identity,
   clientId,
   onNote,
 }: {
   week: ClientAgentCardRow["week"];
+  /** The agent's `"<key> <name>"` string - the platform mark's one source here. */
+  identity?: string;
   clientId?: string;
   /** Present ⇒ days are pressable and open the note editor (detail page only). */
   onNote?: (day: ClientAgentCardRow["week"][number]) => void;
 }) {
   if (week.length === 0) return null;
   const interactive = Boolean(onNote && clientId);
+  const platform = identity ? platformForAgentIdentity(null, identity) : null;
   return (
     <div className="mt-4">
       <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
@@ -382,6 +441,9 @@ export function WeekStrip({
           const at = new Date(Date.UTC(y, mo - 1, d));
           const body = (
             <>
+              {platform && (
+                <SocialPlatformMark platform={platform} className="mr-1.5 inline h-3 w-3 align-[-0.1em] text-muted-2" />
+              )}
               <span className="text-muted-2">
                 {WEEKDAY[at.getUTCDay()]} {at.getUTCDate()}
               </span>
