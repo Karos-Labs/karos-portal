@@ -16,6 +16,8 @@ import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import type { Client, SocialLinks } from "@/lib/types";
 import { clampClientCategoryValue } from "@/lib/utils";
+import { toStoredPace } from "@/lib/daily-pace";
+import { isValidTimeZone } from "@/lib/run-cadence";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import { requireStaff, logGenerationFailure } from "./_shared";
 
@@ -213,12 +215,48 @@ export async function updateClientProfileAction(
   return { ok: true };
 }
 
-export async function updateClientAction(id: string, input: Partial<Client> & { domainsCsv?: string }) {
+export async function updateClientAction(
+  id: string,
+  input: Partial<Client> & {
+    domainsCsv?: string;
+    /** As typed in the Edit dialog. Blank/unusable ⇒ that lane has no ceiling set. */
+    clipsPerDay?: string;
+    postsPerDay?: string;
+  },
+) {
   await requireStaff();
   const patch: Partial<Client> = { ...input };
   if (input.domainsCsv !== undefined) {
     patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
     delete (patch as { domainsCsv?: string }).domainsCsv;
+  }
+  // THE PACE, from the two typed boxes. Sent as strings and resolved here, not
+  // in the browser: these are ceilings a day planner walks, and a 0 or a NaN
+  // reaching storage is a cursor that never finds a free day (see clampPerDay).
+  // Both blank ⇒ `undefined`, which CLEARS the field and puts the client back on
+  // the single item a day.
+  if (input.clipsPerDay !== undefined || input.postsPerDay !== undefined) {
+    // `null` rather than a dropped key when both boxes are blank: updateClient
+    // merges, so an absent key would leave the previous pace in place and
+    // clearing the boxes would appear to do nothing. Both spellings resolve to
+    // the one-item-a-day default on the read side.
+    patch.dailyPace =
+      toStoredPace({
+        clipsPerDay: Number(input.clipsPerDay),
+        postsPerDay: Number(input.postsPerDay),
+      }) ?? null;
+  }
+  delete (patch as Partial<Client> & { clipsPerDay?: string }).clipsPerDay;
+  delete (patch as Partial<Client> & { postsPerDay?: string }).postsPerDay;
+  // An unresolvable zone is stored as empty rather than kept: `clientTimeZone`
+  // would fall back to the runtime's anyway, and a box that keeps showing a
+  // typo the product is ignoring is worse than one that clears.
+  if (patch.timeZone !== undefined) {
+    const zone = patch.timeZone.trim();
+    patch.timeZone = isValidTimeZone(zone) ? zone : "";
+  }
+  if (patch.dailyDigestEnabled !== undefined) {
+    patch.dailyDigestEnabled = patch.dailyDigestEnabled === true;
   }
   if (patch.contactEmail) patch.contactEmail = patch.contactEmail.toLowerCase();
   // The same ceiling the client's own form is held to. A category typed by staff
@@ -239,6 +277,11 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
   delete (patch as Partial<Client> & { clientKeyId?: string }).clientKeyId;
   delete (patch as Partial<Client> & { createdAt?: number }).createdAt;
   delete (patch as Partial<Client> & { createdBy?: string }).createdBy;
+  // The digest cron's own bookkeeping. It is a record of what was SENT, so a
+  // staff edit that set it would suppress a client's mail for that day (or, set
+  // backwards, send it twice). Nothing in the UI offers it; this action takes a
+  // whole Partial<Client>, so the strip is what makes that true of the API too.
+  delete (patch as Partial<Client> & { lastDigestSentDay?: number }).lastDigestSentDay;
   // `assignedEmployeeIds` is now a PERMISSION (canViewClient), and this action
   // is gated on requireStaff() alone while taking a whole Partial<Client> — so
   // an employee the fence excludes could post their own uid into the array and

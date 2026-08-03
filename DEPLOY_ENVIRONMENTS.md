@@ -72,6 +72,15 @@ do those things automatically:
   with no verified sending domain can only deliver to the account owner's own verified
   addresses — so if a prep test run does hit `sendEmail()`, it physically cannot reach a
   real inbox outside your own team.
+- **`/api/daily-digest` is the one cron that mails clients directly**, so it deserves the
+  same warning twice over: no scheduler job against the prep URL, and prep's own client
+  records should have **Daily email** switched off. It is opt-in per client and off by
+  default, so a freshly seeded prep client cannot send anything; a Firestore import from
+  production carries the flag along with everything else, which is the case to watch.
+  Envelope is `EMAIL_FROM` (`PROD_EMAIL_FROM` / `PREP_EMAIL_FROM`), the same `hello@`
+  address the rest of the product sends from. `GET /api/daily-digest?dryRun=1` reports
+  what would go out without sending or marking anything — see `agent-service/DEPLOY.md`
+  §6 for the schedule (hourly, gated per client on their own timezone).
 - **No Cloud Scheduler job should point at prep's `/api/publish`, `/api/analytics/sync`,
   `/api/*/reconcile`, etc.** Only wire Cloud Scheduler to production.
 - Firebase-project-level config (`FIREBASE_SERVICE_ACCOUNT_KEY`, `NEXT_PUBLIC_FIREBASE_*`)
