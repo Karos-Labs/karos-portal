@@ -8,7 +8,7 @@ import {
 } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { assetImages } from "@/lib/asset-images";
-import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { clientVisibleCalendarAssets } from "@/lib/client-calendar";
 import {
   identitiesByClient,
   runRowLabel,
@@ -16,9 +16,8 @@ import {
   type ClientAgentIdentity,
 } from "@/lib/agent-identity-map";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
-import { isClientCalendarStatus, postKind } from "@/lib/calendar-kind";
+import { postKind } from "@/lib/calendar-kind";
 import { projectPastRuns } from "@/lib/calendar-past-runs";
-import { dedupeCalendarAssets } from "@/lib/calendar-dedupe";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import {
@@ -42,7 +41,7 @@ import {
   type ScheduleAgentOption,
 } from "@/components/run-calendar";
 import type { ReactNode } from "react";
-import type { Asset, AppUser, AssetType } from "@/lib/types";
+import type { Asset, AppUser, AssetType, Client } from "@/lib/types";
 
 /** Plain-English noun for what a run actually produced. */
 const OUTPUT_NOUN: Record<AssetType, [string, string]> = {
@@ -113,6 +112,10 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   let clientOptions: CalendarClientOption[] = [];
   let defaultClientId: string | undefined;
   let nameOf: (id: string) => string | undefined = () => undefined;
+  // The client record in scope, when exactly one is. Read for its `dailyPace`
+  // by the runway badge below, so the badge measures against the pace the
+  // planners actually fill this client's days at.
+  let scopedClient: Client | undefined;
   let title = "Agent Calendar";
   const description = "What your agents will run, and everything they've already produced.";
 
@@ -145,6 +148,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       idSet = new Set([viewClient.id]);
       singleFilter = { clientId: viewClient.id };
       single = true;
+      scopedClient = viewClient;
       defaultClientId = viewClient.id;
       title = `${viewClient.name} · Calendar`;
       // "View as client" is scoped to this one client — the schedule-run
@@ -176,45 +180,22 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
 
   const scheduledRuns = inScope(runsRaw);
   const jobs = inScope(jobsRaw);
-  // Clients never see internal drafts (matches /assets). Future scheduled
-  // deliverables also pass through the shared redaction boundary so the
-  // calendar cannot expose their content, images, or download controls before
-  // the scheduled day. Staff continue to receive the full assets for review.
+  // WHAT A VIEWER'S CALENDAR IS MADE OF now lives in lib/client-calendar, and
+  // this page is one of its two readers — the daily digest is the other, and it
+  // has to be able to say it is showing the calendar rather than something like
+  // it (AF-19: the mail is DRIVEN BY the calendar).
   //
-  // The draft rule itself lives with the classifier (isClientCalendarStatus),
-  // because the legend has to know it too: a chip for a status this filter drops
-  // is a filter a client can never make dim anything.
-  const scopedAssets = inScope(assetsRaw).filter((a) => !isClient || isClientCalendarStatus(a.status));
-  const visibleAssets = isClient
-    ? getClientLibraryAssets(scopedAssets, { forClient: true })
-    : scopedAssets;
-
-  // Duplicate DOCUMENTS become duplicate CELLS, because the posts map below is
-  // 1:1 and run-calendar just buckets what it gets by day. The bulk-upload
-  // replay hole that minted them is closed on the write side now, but the
-  // documents it already wrote are still in Firestore and no cleanup has run —
-  // so the calendar defends itself here (lib/calendar-dedupe). Nothing is
-  // deleted and nothing is counted: the client simply sees one cell per post,
-  // with no hint that a second copy existed.
-  //
-  // Deduped ONCE, here, and every reader downstream takes the result. The run
-  // cards ("drafted 8 posts") and the runway badge read the same assets, so a
-  // list still holding both copies would print a deliverable twice on a past-run
-  // card and over-count the days the calendar is filled through.
-  //
-  // Grouped on the UNREDACTED assets, then rendered from the visible copies. A
-  // client's future-dated posts reach `visibleAssets` as placeholders whose meta
-  // is stripped to `{locked}`, so keying off those would compare two blanks —
-  // the gcsPath the whole decision rests on would be gone. Mapping each visible
-  // asset back to its own pre-redaction twin keys the decision on the real path
-  // and the real dates. Only the survivors' ids come back out; no redacted field
-  // is bypassed. For staff `visibleAssets` IS `scopedAssets`, so this is a
-  // straight pass.
-  const rawById = new Map(scopedAssets.map((a) => [a.id, a]));
-  const survivorIds = new Set(
-    dedupeCalendarAssets(visibleAssets.map((a) => rawById.get(a.id) ?? a)).map((a) => a.id),
-  );
-  const assets = visibleAssets.filter((a) => survivorIds.has(a.id));
+  // The four steps it runs, unchanged and in the same order: drop the statuses a
+  // client's calendar is not made of (drafts), pass the rest through the shared
+  // client redaction boundary so future-dated content cannot cross before its
+  // day, dedupe the duplicate DOCUMENTS the closed bulk-upload replay hole left
+  // behind (keyed on the raw twins, since a redacted copy has no gcsPath), and
+  // hand back the survivors. Deduped ONCE: the run cards ("drafted 8 posts") and
+  // the runway badge read the same list, so a list still holding both copies
+  // would print a deliverable twice and over-count the days filled through.
+  const scopedAssets = inScope(assetsRaw);
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const assets = clientVisibleCalendarAssets(scopedAssets, { isClient, now: Date.now() });
 
   // Agent lookups: by id for scheduled runs, by name for past jobs (jobs store
   // the agent's name, not its id). These stay JOIN keys - what a card PRINTS
@@ -549,7 +530,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   if (single && !isClient) {
     // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
     const now = Date.now();
-    const runway = computeRunway(assets, [], now);
+    const runway = computeRunway(assets, [], now, undefined, scopedClient?.dailyPace);
     if (runway.activeFamilies.length > 0) {
       const fmt = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
       if (runway.coveredThroughMs == null) {
