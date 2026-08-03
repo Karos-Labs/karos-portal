@@ -384,7 +384,7 @@ describe("the client's company panel resolves identically in both shells", () =>
       contactEmail: "hi@acme.test",
       socialLinks: { instagram: "acme" },
     });
-    const client = toClientPortalView(full) as Record<string, unknown>;
+    const client = toClientPortalView(full) as unknown as Record<string, unknown>;
     const staff = toStaffShellView(full) as Record<string, unknown>;
     for (const f of panelFields) {
       expect(client[f], `client portal view drops ${f}`).toBeDefined();
