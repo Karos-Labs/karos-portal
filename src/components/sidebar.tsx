@@ -576,55 +576,21 @@ export function Sidebar({
     </nav>
   );
 
-  // CD-G4: the chip's ↗ opens the client's REAL website, not /clients/[id] —
-  // the nav's Dashboard tab already goes there in client view, so the internal
-  // link was a duplicate. Same protocol normalisation the Competitor Track rows
-  // use for their own ↗. Null when the client has no website on file, and the
-  // chip falls back to the internal link rather than rendering a dead control.
-  const clientWebsite = activeClient?.client.website?.trim();
-  const clientSiteHref = clientWebsite
-    ? clientWebsite.startsWith("http")
-      ? clientWebsite
-      : `https://${clientWebsite}`
-    : null;
-
   /**
-   * THE EXTRA BUTTON — the whole difference between this rail's company panel
-   * and the client's own (V3).
+   * THE EXTRA BUTTON IS GONE (CD-L P5).
    *
-   * Staff used to get a company CHIP here (logo + name + this ↗) while the
-   * client got the full ClientProfilePanel, so a staff member in client
-   * context saw no bio and none of the client's social handles — the two
-   * halves of AF-4 — on the desktop rail. The panel is mounted below instead,
-   * and this control rides into its header rather than living on a row of its
-   * own: "the same, with the extra buttons". Sized to the panel's own header
-   * buttons (h-6 with a 14px glyph) so the cluster reads as one group.
+   * This rail used to hand ClientProfilePanel a ↗ to the client's own website
+   * (CD-G4), described in its own comment as "the whole difference between the
+   * two views of this panel". The product owner walked both views and ruled the
+   * difference out: "The rest of this page should be the exact same", with
+   * Schedule and Regenerate on the DOCUMENTS heading as the only staff extras
+   * left anywhere in the client-context stack.
+   *
+   * Staff can still reach the site — it is the Website field in the Brand
+   * Profile sheet the panel's contact button opens, and every Competitor Track
+   * row below keeps its own ↗. What is removed is a control that made the two
+   * mounts render differently, which is the thing being fixed.
    */
-  const clientSiteAction = activeClient ? (
-    clientSiteHref ? (
-      <a
-        href={clientSiteHref}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={() => setOpen(false)}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-        aria-label="Open client website in a new tab"
-        title="Open client website"
-      >
-        <Icon name="ArrowUpRight" className="h-3.5 w-3.5" />
-      </a>
-    ) : (
-      <Link
-        href={`/clients/${activeClient.client.id}`}
-        onClick={() => setOpen(false)}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-        aria-label="Go to client dashboard"
-        title="Go to client dashboard"
-      >
-        <Icon name="ArrowUpRight" className="h-3.5 w-3.5" />
-      </Link>
-    )
-  ) : null;
 
   // Client-context sections appended below core nav when a client is active.
   // CD-G4: the top block — logo, nav, company panel, and the rule above the
@@ -646,16 +612,14 @@ export function Sidebar({
           hold and in the same place the client rail keeps it: first section
           under the nav, directly above Documents (V3). Same component, same
           `compact` — the rail is the no-scroll layout the clamp was written
-          for (CD-E3) — plus the staff ↗ in its header. The chip it replaces
-          drew the logo and the name and stopped there, so bio and handles, the
-          two things AF-4 put on the client's rail, were the two things a staff
-          member in client context could not see. */}
+          for (CD-E3) — and now the same PROPS, full stop: the staff ↗ that used
+          to ride in its header was the last divergence between the two views
+          and CD-L P5 removed it. The chip this replaced drew the logo and the
+          name and stopped there, so bio and handles, the two things AF-4 put on
+          the client's rail, were the two things a staff member in client
+          context could not see. */}
       <div className="border-t border-border pt-4">
-        <ClientProfilePanel
-          client={activeClient.client}
-          compact
-          headerAction={clientSiteAction}
-        />
+        <ClientProfilePanel client={activeClient.client} compact />
       </div>
 
       <div className="border-t border-border pt-4">

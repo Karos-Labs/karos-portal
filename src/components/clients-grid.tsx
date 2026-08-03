@@ -231,9 +231,19 @@ function EditClientModal({
             <Input value={form.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} placeholder="marketing@acme.com" />
           </div>
         </div>
+        {/* MEETING DOMAIN LIVES HERE NOW, and only here (CD-L P1). The client
+            portal's Brand Profile sheet used to offer the same field to the
+            client's own users, which put a routing control with somebody else's
+            meetings on the other end of it inside a self-service form. The
+            server action behind that form no longer accepts the field either.
+            The label says what it DOES rather than naming the mechanism, since
+            "auto-routing" was the one word an operator had to already know. */}
         <div>
-          <Label>Email domains (for auto-routing meetings)</Label>
+          <Label>Meeting domains</Label>
           <Input value={form.domains} onChange={(e) => set("domains", e.target.value)} placeholder="acme.com, acmecorp.com" />
+          <p className="mt-1 text-xs text-muted-2">
+            Meetings from this email domain auto-assign to this client
+          </p>
         </div>
         <div>
           <Label>Lab repo slug (karos-agents clients/ folder)</Label>

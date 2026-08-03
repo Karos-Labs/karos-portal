@@ -46,8 +46,11 @@ const AGENTS_PAGE = "src/app/(app)/clients/[id]/agents/page.tsx";
 const LAYOUT = "src/app/(app)/layout.tsx";
 const SETTINGS_PAGE = "src/app/(app)/clients/[id]/settings/page.tsx";
 
+const PANEL = "src/components/client-profile-panel.tsx";
+
 const sidebar = source(SIDEBAR);
 const rail = source(RAIL);
+const panelSrc = source(PANEL);
 
 /** A flat route's page module. Every route in play here is a literal segment. */
 const pageOf = (route: string) => source(`src/app/(app)${route}/page.tsx`);
@@ -337,24 +340,48 @@ describe("AF-3 · View-as-Client and the client's own view are the same view", (
     expect(desktopStack(staffDesktop())).toEqual(expected);
   });
 
-  it("clamps it in both no-scroll rails and hands only staff the extra button", () => {
-    // "The same, with the extra buttons." `compact` is the no-scroll contract's
-    // clamp (CD-E3) and both desktop rails are under it, so both pass it; the ↗
-    // to the client's own website is staff's, and rides in the panel's header
-    // rather than on a row of its own.
+  it("mounts the panel with IDENTICAL props on both desktop rails", () => {
+    // THE RULING THAT REPLACED "the same, with the extra buttons" (CD-L P5).
+    // This test used to REQUIRE the divergence it now forbids: it asserted the
+    // staff mount carried `headerAction={clientSiteAction}` and the client's
+    // did not. The product owner walked both views and ruled that out — "The
+    // rest of this page should be the exact same" — leaving Schedule and
+    // Regenerate on the DOCUMENTS heading as the only staff extras in the
+    // stack. So the two mounts are compared as EXPRESSIONS, minus the one token
+    // that cannot match (each shell names its own client), and any future prop
+    // added to one and not the other fails here rather than on a screenshot.
     const mount = (slice: string) => {
       const at = slice.indexOf("<ClientProfilePanel");
       expect(at, "no ClientProfilePanel mount").toBeGreaterThan(-1);
       return flat(slice.slice(at, slice.indexOf("/>", at) + 2));
     };
+    const props = (m: string) => m.replace(/client=\{[^}]*\}/, "client={…}");
+    expect(props(mount(railDesktop()))).toBe(props(mount(staffDesktop())));
+    // Non-vacuity: the comparison is of a real mount carrying the real prop,
+    // not of two empty strings. `compact` is the no-scroll contract's clamp
+    // (CD-E3) and both desktop rails are under it.
+    expect(props(mount(railDesktop()))).toBe("<ClientProfilePanel client={…} compact />");
+    // The staff ↗ is gone from the panel AND from the shell that built it, so
+    // there is no slot left for the next divergence to arrive through.
+    expect(panelSrc).not.toContain("headerAction");
+    expect(flat(sidebar)).not.toContain("const clientSiteAction");
+    expect(sidebar).not.toContain("Open client website");
+  });
+
+  it("keeps Schedule and Regenerate as the only staff extras in the stack", () => {
+    // The other side of the same ruling, stated positively: staff DO get two
+    // controls the client does not, both on the Documents heading, and they are
+    // ClientDocuments' own (gated on `isAdmin` inside it) rather than something
+    // a shell adds. So the permitted difference lives in one component, and the
+    // rails themselves are twins.
+    const docs = source("src/components/client-documents.tsx");
+    expect(docs).toContain("Schedule");
+    expect(docs).toContain("Regenerate");
+    // Both shells mount that component the same way, extras and all.
     for (const slice of [railDesktop(), staffDesktop()]) {
-      expect(mount(slice)).toMatch(/\bcompact\b/);
+      expect(slice).toContain("<ClientDocuments");
+      expect(slice).toContain("isAdmin");
     }
-    expect(mount(staffDesktop())).toContain("headerAction={clientSiteAction}");
-    expect(mount(railDesktop())).not.toContain("headerAction");
-    // And the extra button is a real destination, not a decoration.
-    expect(flat(sidebar)).toContain("const clientSiteAction = activeClient ? (");
-    expect(sidebar).toContain("Open client website");
   });
 
   /* ── V2: one section rhythm ─────────────────────────────────────────── */

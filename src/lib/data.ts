@@ -145,6 +145,41 @@ export async function getUserByEmail(email: string): Promise<AppUser | null> {
   return snap.empty ? null : (snap.docs[0].data() as AppUser);
 }
 
+/**
+ * THE PERSON BEHIND A CLIENT ACCOUNT — the address the Brand Profile sheet
+ * offers when nobody has filled in a contact email (CD-L P1).
+ *
+ * The relationship is `AppUser.clientId`, the same join `/team` and the team
+ * manager already read; this states it once, server-side, so the panel can have
+ * the answer without the user collection crossing to a browser.
+ *
+ * WHICH user, when a workspace has several: the GROUP ADMIN first — that is the
+ * seat that manages the others, so it is the account's owner in the only sense
+ * this app records — then the oldest account, which is the one that opened the
+ * workspace. Sorted in memory rather than by `orderBy`, which would need a
+ * composite index for a query that returns a handful of rows.
+ *
+ * Pending and disabled seats are skipped: an unapproved registration is not
+ * somebody to hand a client's mail to.
+ */
+export async function getClientOwnerEmail(clientId: string): Promise<string> {
+  if (!clientId) return "";
+  const snap = await col
+    .users()
+    .where("clientId", "==", clientId)
+    .where("role", "==", "CLIENT_USER")
+    .get();
+  const seats = snap.docs
+    .map((d) => d.data() as AppUser)
+    .filter((u) => !!u.email && !u.disabled)
+    .sort(
+      (a, b) =>
+        Number(b.isGroupAdmin === true) - Number(a.isGroupAdmin === true) ||
+        (a.createdAt ?? 0) - (b.createdAt ?? 0),
+    );
+  return seats[0]?.email ?? "";
+}
+
 /** `impersonatedBy` marks a session, never the stored user: callers routinely spread a
  * session user in here, and persisting it would exempt that client from credit billing
  * for good. Deleted rather than omitted, so a doc corrupted by an earlier write heals. */

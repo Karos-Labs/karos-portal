@@ -8,12 +8,14 @@ import {
   updateClient,
   deleteClientCascade,
   getClientByKeyId,
+  getClientOwnerEmail,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
 } from "@/lib/data";
 import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import type { Client, SocialLinks } from "@/lib/types";
+import { clampClientCategoryValue } from "@/lib/utils";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import { requireStaff, logGenerationFailure } from "./_shared";
 
@@ -125,9 +127,46 @@ export async function regenerateClientKeyAction(clientId: string): Promise<{ cli
 }
 
 /**
+ * The client's own address book, and the whole of it.
+ *
+ * Same authorization as `updateClientProfileAction` below, because it answers a
+ * question about the same record: staff, or a member of this client's own
+ * workspace. Anyone else gets an empty string rather than a refusal — the caller
+ * is a prefill, and a modal that opens with an error banner because a stale tab
+ * asked about the wrong workspace is worse than one that opens with an empty
+ * field.
+ *
+ * No prose in either branch on purpose: this crosses to a client's browser, and
+ * the only thing it can say is an address the caller already has a right to.
+ */
+export async function clientOwnerEmailAction(clientId: string): Promise<{ email: string }> {
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
+    return { email: "" };
+  }
+  return { email: await getClientOwnerEmail(clientId) };
+}
+
+/**
  * Client-editable profile fields (self-service). A CLIENT_USER may update their
- * own client's category / team size / social links / short description; staff may
- * update any client. Deliberately narrow — no access to keys, employees, status, etc.
+ * own client's category / team size / social links / contact email / website /
+ * short description; staff may update any client. Deliberately narrow — no
+ * access to keys, employees, status, etc.
+ *
+ * THREE FIELDS LEFT THIS ACTION WITH THE UI THAT SENT THEM (CD-L P1/P2), and
+ * dropping them from the signature is the point rather than housekeeping — an
+ * input this action still accepts is an input a crafted request can still write,
+ * whatever the form on screen offers:
+ *
+ *  • `domainsCsv` decided which Fireflies transcripts auto-assign to a client.
+ *    A client user could set it, which is a routing control with somebody else's
+ *    meetings on the other end of it. It is staff-only now, through
+ *    `updateClientAction`, which is where the Edit dialog already wrote it.
+ *  • `brandVoice` duplicated the Brand Voice DOCUMENT. The field and the doc are
+ *    untouched; nothing writes to the field from the portal any more.
+ *  • `industry` was the second editor for the tag chip's idea. `category` is the
+ *    one that stays, and it is the one the chip renders.
  */
 export async function updateClientProfileAction(
   id: string,
@@ -137,12 +176,8 @@ export async function updateClientProfileAction(
     description?: string;
     socialLinks?: SocialLinks;
     // Brand profile fields — editable by the client's own users as well as staff.
-    brandVoice?: string;
     contactEmail?: string;
     website?: string;
-    industry?: string;
-    /** Comma-separated meeting domains, e.g. "company.com, sub.company.com" */
-    domainsCsv?: string;
   },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const user = await requireUser();
@@ -153,16 +188,14 @@ export async function updateClientProfileAction(
 
   const clean = (v?: string) => (typeof v === "string" ? v.trim() : undefined);
   const patch: Partial<Client> = {};
-  if (input.category !== undefined) patch.category = clean(input.category);
+  // The cap the input already enforces, enforced again where it counts: the
+  // chip's one-line contract is a property of the STORED value, so a request
+  // that did not come from that input cannot re-open the wrapping this closed.
+  if (input.category !== undefined) patch.category = clampClientCategoryValue(input.category);
   if (input.teamSize !== undefined) patch.teamSize = clean(input.teamSize);
   if (input.description !== undefined) patch.description = clean(input.description);
-  if (input.brandVoice !== undefined) patch.brandVoice = clean(input.brandVoice);
   if (input.contactEmail !== undefined) patch.contactEmail = clean(input.contactEmail)?.toLowerCase();
   if (input.website !== undefined) patch.website = clean(input.website);
-  if (input.industry !== undefined) patch.industry = clean(input.industry);
-  if (input.domainsCsv !== undefined) {
-    patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
-  }
   if (input.socialLinks !== undefined) {
     const links: SocialLinks = {};
     for (const [k, val] of Object.entries(input.socialLinks)) {
@@ -185,6 +218,9 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
     delete (patch as { domainsCsv?: string }).domainsCsv;
   }
   if (patch.contactEmail) patch.contactEmail = patch.contactEmail.toLowerCase();
+  // The same ceiling the client's own form is held to. A category typed by staff
+  // renders in the same chip, in the same rail, at the same width.
+  if (patch.category !== undefined) patch.category = clampClientCategoryValue(patch.category);
   // Store just the client folder slug even if a full repo URL/path was pasted.
   if (patch.agentsRepoSlug !== undefined) patch.agentsRepoSlug = normalizeLabSlug(patch.agentsRepoSlug);
   // Immutable / security-sensitive fields — only dedicated actions may change these.
