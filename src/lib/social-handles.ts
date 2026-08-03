@@ -79,6 +79,45 @@ export interface SocialAccount {
   value: string;
   /** Absolute profile URL, or null when the stored text yields nothing to open. */
   url: string | null;
+  /**
+   * There is no username here worth PRINTING — render the platform's logo alone
+   * (CD-L P4).
+   *
+   * Some platforms address an account by an internal id rather than by a name a
+   * person chose. A YouTube channel URL is the case in the field:
+   * `youtube.com/channel/UC-jjSXlt8b_nkBBf60B-xCg` parses correctly, and the
+   * panel then printed "@UC-jjSXlt8b_nkBBf60B-xCg" beside the YouTube mark —
+   * 25 characters of database key on a client's own company panel, wider than
+   * every other chip in the row and readable by nobody.
+   *
+   * `handle` and `value` are still filled in, because the id is what the link
+   * needs and what storage must keep; this flag is the RENDER instruction, and
+   * a real `/@handle` URL never sets it. The logo alone still opens the profile
+   * and still carries the platform name as its accessible name.
+   */
+  logoOnly: boolean;
+}
+
+/**
+ * Does this read as a name somebody CHOSE, or as an id a platform issued?
+ *
+ * Asked of the parsed value, so it covers a bare stored id as well as one that
+ * arrived inside a URL. Deliberately generous — a handle nobody can resolve is
+ * still the client's own text (see this module's opening note), and the only
+ * thing riding on a `false` is whether the chip prints it.
+ */
+export function looksLikeHumanHandle(value: string): boolean {
+  const v = (value ?? "").trim();
+  if (!v) return false;
+  // YouTube's channel id, by its own documented shape: "UC" + 22 characters.
+  if (/^UC[A-Za-z0-9_-]{20,}$/.test(v)) return false;
+  // Every handle these six platforms issue fits here — X caps at 15, TikTok at
+  // 24, Instagram and YouTube at 30 — so nothing short is ever rejected.
+  if (v.length <= 20) return true;
+  // Past that, a WORD-SHAPED slug is still somebody's name
+  // ("karos-labs-international", a LinkedIn company page); an unbroken run of
+  // characters that long is an identifier.
+  return v.length <= 30 && /^[A-Za-z0-9]+([-_.][A-Za-z0-9]+)+$/.test(v);
 }
 
 /**
@@ -96,7 +135,12 @@ export function socialAccount(platform: SocialPlatform, raw: string): SocialAcco
     // space, a stray comma) is the client's text and is kept as-is.
     const value = stripQuery(trimmed).replace(/^@+/, "");
     if (!value) return null;
-    return { handle: `@${value}`, value, url: PLATFORM_BASE[platform] + value };
+    return {
+      handle: `@${value}`,
+      value,
+      url: PLATFORM_BASE[platform] + value,
+      logoOnly: !looksLikeHumanHandle(value),
+    };
   }
 
   // A link. Take it apart by hand rather than with URL(): the field holds
@@ -121,18 +165,24 @@ export function socialAccount(platform: SocialPlatform, raw: string): SocialAcco
   const value = handleSegment.replace(/^@+/, "");
   if (!value) return null;
 
+  // `/channel/` names an ID BY CONSTRUCTION — that is what the segment means on
+  // YouTube — so the logo-only rule is decided by the path here rather than
+  // guessed from the characters that follow it. `/@handle`, `/c/` and `/user/`
+  // all name something a person picked and keep their text.
+  const logoOnly = prefix === "channel" || !looksLikeHumanHandle(value);
+
   // A link on a host this platform does not own is still a link the client put
   // there — open exactly it, rather than rebuilding a URL on the wrong domain
   // from a segment that may not be a handle at all.
   const known = !isHost || PLATFORM_HOSTS[platform].some((h) => host === h || host.endsWith(`.${h}`));
   if (!known) {
-    return { handle: `@${value}`, value, url: `https://${stripQuery(withoutProtocol)}` };
+    return { handle: `@${value}`, value, url: `https://${stripQuery(withoutProtocol)}`, logoOnly };
   }
 
   const base = prefix
     ? `https://${PLATFORM_HOSTS[platform][0]}/${prefix}/`
     : PLATFORM_BASE[platform];
-  return { handle: `@${value}`, value, url: base + value };
+  return { handle: `@${value}`, value, url: base + value, logoOnly };
 }
 
 /** The display handle, or the trimmed input when there is nothing to parse. */

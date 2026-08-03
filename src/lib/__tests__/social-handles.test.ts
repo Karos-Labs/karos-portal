@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { socialAccount, socialHandle, socialHandleValue } from "@/lib/social-handles";
+import {
+  looksLikeHumanHandle,
+  socialAccount,
+  socialHandle,
+  socialHandleValue,
+} from "@/lib/social-handles";
 
 /**
  * AF-4's shortening rule, asked of the shapes the field actually holds.
@@ -35,11 +40,13 @@ describe("a full link becomes the username", () => {
       handle: "@karos-labs",
       value: "karos-labs",
       url: "https://linkedin.com/company/karos-labs",
+      logoOnly: false,
     });
     expect(socialAccount("linkedin", "https://www.linkedin.com/in/ada-lovelace/")).toEqual({
       handle: "@ada-lovelace",
       value: "ada-lovelace",
       url: "https://linkedin.com/in/ada-lovelace",
+      logoOnly: false,
     });
   });
 
@@ -95,6 +102,72 @@ describe("what cannot be parsed is not discarded", () => {
     // renders a chip with no link rather than dropping the row.
     expect(socialHandle("instagram", "ask marketing for it")).toBe("@ask marketing for it");
     expect(socialHandle("instagram", "  spaced  ")).toBe("@spaced");
+  });
+});
+
+/* ── CD-L P4: an id is not a handle ──────────────────────────────────────── */
+
+describe("an account addressed by an id renders as the logo alone", () => {
+  it("flags a YouTube channel URL, which is the case in the field", () => {
+    // What the panel printed on a real client: 25 characters of database key
+    // beside the YouTube mark, wider than every other chip in the row.
+    const account = socialAccount("youtube", "https://www.youtube.com/channel/UC-jjSXlt8b_nkBBf60B-xCg");
+    expect(account?.logoOnly).toBe(true);
+    // The link still works and storage still keeps the id — logoOnly is a
+    // RENDER instruction, not a reason to drop what the client stored.
+    expect(account?.url).toBe("https://youtube.com/channel/UC-jjSXlt8b_nkBBf60B-xCg");
+    expect(account?.value).toBe("UC-jjSXlt8b_nkBBf60B-xCg");
+    expect(socialHandleValue("youtube", "https://www.youtube.com/channel/UC-jjSXlt8b_nkBBf60B-xCg")).toBe(
+      "UC-jjSXlt8b_nkBBf60B-xCg",
+    );
+  });
+
+  it("keeps the @handle of a real YouTube profile", () => {
+    // The other half of the ruling, and the one that makes it a rule rather
+    // than a ban on YouTube.
+    const account = socialAccount("youtube", "https://www.youtube.com/@karoslabs");
+    expect(account?.logoOnly).toBe(false);
+    expect(account?.handle).toBe("@karoslabs");
+    expect(socialAccount("youtube", "karoslabs")?.logoOnly).toBe(false);
+    // /c/ and /user/ name something a person picked, the way /channel/ does not.
+    expect(socialAccount("youtube", "https://youtube.com/c/karoslabs")?.logoOnly).toBe(false);
+    expect(socialAccount("youtube", "https://youtube.com/user/karoslabs")?.logoOnly).toBe(false);
+  });
+
+  it("reads /channel/ as an id by construction, not by counting characters", () => {
+    // A short channel segment is still a channel id: the PATH says so. Guessing
+    // from the characters would print this one and hide the long ones, which is
+    // the inconsistency the structural rule exists to avoid.
+    expect(socialAccount("youtube", "https://youtube.com/channel/abc123")?.logoOnly).toBe(true);
+  });
+
+  it("recognises a bare channel id stored with no URL around it", () => {
+    // Four surfaces write this field, and one of them stores whatever was
+    // pasted. The shape test is what covers that path.
+    expect(socialAccount("youtube", "UC-jjSXlt8b_nkBBf60B-xCg")?.logoOnly).toBe(true);
+    expect(socialAccount("youtube", "@UC-jjSXlt8b_nkBBf60B-xCg")?.logoOnly).toBe(true);
+  });
+
+  it("does not mistake a long, word-shaped slug for an id", () => {
+    // The false positive a bare "longer than 20" rule would create: LinkedIn
+    // company slugs are real names and routinely run past twenty characters.
+    expect(looksLikeHumanHandle("karos-labs-international")).toBe(true);
+    expect(
+      socialAccount("linkedin", "https://www.linkedin.com/company/karos-labs-international/")?.logoOnly,
+    ).toBe(false);
+    // And the ordinary short handles every other platform issues.
+    for (const v of ["karoslabs", "karos.labs", "ada-lovelace", "a"]) {
+      expect(looksLikeHumanHandle(v), v).toBe(true);
+    }
+  });
+
+  it("rejects the shapes that are not names", () => {
+    expect(looksLikeHumanHandle("")).toBe(false);
+    expect(looksLikeHumanHandle("   ")).toBe(false);
+    // An unbroken run past twenty characters is an identifier.
+    expect(looksLikeHumanHandle("aB3xQ9zK1mN7pR2sT5vW8y")).toBe(false);
+    // Longer than any of these platforms issues, whatever its shape.
+    expect(looksLikeHumanHandle("a-b-c-d-e-f-g-h-i-j-k-l-m-n-o-p")).toBe(false);
   });
 });
 
