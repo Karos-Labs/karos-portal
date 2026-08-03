@@ -166,9 +166,17 @@ export async function getUserByEmail(email: string): Promise<AppUser | null> {
  *
  * Pending and disabled seats are skipped: an unapproved registration is not
  * somebody to hand a client's mail to.
+ *
+ * THE SEAT, not just its address — `getClientOwnerEmail` below is this function
+ * with the name thrown away, and it had thrown the name away since it was
+ * written. The daily digest greets a person, so it needs both, and re-running
+ * the same query in a second exported function is how two answers to "who is the
+ * owner" start.
  */
-export async function getClientOwnerEmail(clientId: string): Promise<string> {
-  if (!clientId) return "";
+export async function getClientOwner(
+  clientId: string,
+): Promise<{ email: string; name: string } | null> {
+  if (!clientId) return null;
   const snap = await col
     .users()
     .where("clientId", "==", clientId)
@@ -182,7 +190,12 @@ export async function getClientOwnerEmail(clientId: string): Promise<string> {
         Number(b.isGroupAdmin === true) - Number(a.isGroupAdmin === true) ||
         (a.createdAt ?? 0) - (b.createdAt ?? 0),
     );
-  return seats[0]?.email ?? "";
+  const owner = seats[0];
+  return owner ? { email: owner.email, name: owner.name ?? "" } : null;
+}
+
+export async function getClientOwnerEmail(clientId: string): Promise<string> {
+  return (await getClientOwner(clientId))?.email ?? "";
 }
 
 /** `impersonatedBy` marks a session, never the stored user: callers routinely spread a
@@ -769,8 +782,16 @@ export async function applyChainAssignments(
           recommendedAt: assignment.scheduledAt,
           // Client-visible: asset-card renders recommendedReason as text and as a
           // tooltip, and redactLockedAsset withholds it only for locked future-dated
-          // assets — so an unlocked draft carries it to the client. Em dash, per F71.
-          recommendedReason: "One post per day. Assigned by the content chain",
+          // assets — so an unlocked draft carries it to the client.
+          //
+          // IT USED TO OPEN "One post per day." That was the planner's own rule
+          // written into a stored string, and the rule is now the client's
+          // configurable pace (lib/daily-pace) — so on any client set to more
+          // than one a day the sentence stamped onto every draft would be a
+          // plain contradiction of the calendar beside it. This says what the
+          // field is for and makes no claim about how many, which is true at
+          // every pace and needs no plumbing to stay true.
+          recommendedReason: "Assigned by the content chain",
           updatedAt: Date.now(),
         },
         { merge: true },

@@ -200,8 +200,69 @@ export interface Client {
    * regenerations, so the configured cadence never drifts. Null while disabled.
    */
   intelScheduleNextRunAt?: number | null;
+  /**
+   * IANA zone this client's own calendar DAY is read in (e.g.
+   * "America/Sao_Paulo"). Staff-set from the Clients page.
+   *
+   * THE FIELD lib/scheduling.ts's docstring says does not exist. It said
+   * "fixing it properly means giving `Client` an IANA zone (it has none; only
+   * `RunCadence.timezone` and `PlannedScheduledRun.timeZone` carry one)", and
+   * the daily digest is the first surface that CANNOT work without one: a mail
+   * that claims to carry "today's" clips has to know whose today it means, and
+   * the server's is a container's, almost always UTC.
+   *
+   * SCOPE, deliberately narrow. This is read by the digest (which local day it
+   * sends, and at which local hour), and by nothing else yet: `startOfDayMs`
+   * and the chain planners still bucket on the runtime's zone, exactly as
+   * before. Threading it through them is the wider data change that docstring
+   * describes, and it is not this field's arrival.
+   *
+   * Absent ⇒ `runtimeTimeZone()`. Read through `clientTimeZone` (lib/
+   * client-timezone), never off the record, so an invalid stored id falls back
+   * instead of throwing inside Intl.
+   */
+  timeZone?: string;
+  /**
+   * How many clips and how many posts one calendar day holds for this client.
+   * Absent ⇒ one item a day, which is what both day planners did before this
+   * existed. See lib/daily-pace.ts for the whole rule.
+   *
+   * `null` is how CLEARING it is stored: `updateClient` merges, so an absent key
+   * would leave a previous pace in place when staff empty both boxes. Both
+   * absent and null resolve to the same default.
+   */
+  dailyPace?: ClientDailyPace | null;
+  /**
+   * Send this client a daily email carrying that day's calendar items.
+   * Opt-in, staff-set, default OFF: `/api/daily-digest` skips every client
+   * that has not been switched on.
+   */
+  dailyDigestEnabled?: boolean;
+  /**
+   * Epoch millis of the START of the last local day a digest was sent for.
+   * The cron's idempotence marker: it runs hourly, so without this a client
+   * would get the same mail every hour from their local send time to midnight.
+   * Written only after a send actually succeeds.
+   */
+  lastDigestSentDay?: number;
   createdAt: number;
   createdBy: string;
+}
+
+/**
+ * A client's daily content pace: the per-day ceiling for each of the two lanes
+ * a calendar day has.
+ *
+ * Both numbers are OPTIONAL and the object's PRESENCE is what turns paced
+ * placement on. An absent `dailyPace` keeps the single shared slot a day that
+ * both planners have always had, so switching this feature on changes nothing
+ * for a client nobody has configured. See `resolveDailyPace`.
+ */
+export interface ClientDailyPace {
+  /** Video deliverables (podcast cuts, shorts) one day holds. Default 1. */
+  clipsPerDay?: number;
+  /** Written posts one day holds, per content family. Default 1. */
+  postsPerDay?: number;
 }
 
 /* ─────────────────────── Client Access Requests ────────────────────────── */

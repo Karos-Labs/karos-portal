@@ -55,9 +55,10 @@ loadEnvFile(resolve(process.cwd(), ".env"));
 import { initializeApp, getApps, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { Storage } from "@google-cloud/storage";
-import { planBulkSchedule, detectFormatTags } from "../src/lib/bulk-schedule";
+import { planBulkSchedule, detectFormatTags, type OccupiedDay } from "../src/lib/bulk-schedule";
+import { paceLaneFor, resolveDailyPace } from "../src/lib/daily-pace";
 import { chainFamilyFor, startOfDayMs } from "../src/lib/post-chain";
-import type { AssetType } from "../src/lib/types";
+import type { Asset, AssetType, Client } from "../src/lib/types";
 
 interface Credentials {
   projectId: string;
@@ -236,16 +237,23 @@ async function main() {
     console.log(`\n🗓  Auto-scheduling ${registeredIds.length} clip(s), 1/day from ${scheduleStartFlag}…`);
     const startAtMs = new Date(`${scheduleStartFlag}T00:00:00`).getTime();
 
-    const allSnap = await db.collection("assets").where("clientId", "==", clientId).get();
-    const occupiedDayStarts = new Set<number>();
+    const [allSnap, clientSnap] = await Promise.all([
+      db.collection("assets").where("clientId", "==", clientId).get(),
+      db.collection("clients").doc(clientId).get(),
+    ]);
+    const occupied: OccupiedDay[] = [];
     for (const doc of allSnap.docs) {
-      const data = doc.data() as { type?: AssetType; scheduledAt?: number };
-      if (data.scheduledAt != null && chainFamilyFor((data.type ?? "social_post") as AssetType) === "social") {
-        occupiedDayStarts.add(startOfDayMs(data.scheduledAt));
+      const data = { ...(doc.data() as Partial<Asset>), id: doc.id } as Asset;
+      const type = (data.type ?? "social_post") as AssetType;
+      if (data.scheduledAt != null && chainFamilyFor(type) === "social") {
+        occupied.push({ lane: paceLaneFor(data), dayStartMs: startOfDayMs(data.scheduledAt) });
       }
     }
+    // Same pace the in-app action reads, so the CLI and the button place a batch
+    // identically for the same client.
+    const pace = resolveDailyPace((clientSnap.data() as Client | undefined)?.dailyPace);
 
-    const assignments = planBulkSchedule(registeredIds, { startDayMs: startAtMs, platform: "tiktok", occupiedDayStarts });
+    const assignments = planBulkSchedule(registeredIds, { startDayMs: startAtMs, platform: "tiktok", pace, occupied });
     for (const assignment of assignments) {
       await db.collection("assets").doc(assignment.id).update({
         status: "scheduled",
