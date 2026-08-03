@@ -9,6 +9,8 @@ import { contextFileList, downloadContextFiles } from "./context-files.js";
 import { collectArtifacts, guessContentType, snapshotOutputs } from "./artifacts.js";
 import { extractUsage, isResultMessage, TranscriptStreamer } from "./transcript.js";
 import { KAROS_MCP_ALLOWED_TOOLS, karosMcpServers } from "./mcp.js";
+import { isTransientError, isTransientResultError } from "./error-classification.js";
+import { restoreCheckpoint, saveCheckpoint } from "./checkpoint.js";
 
 const SELF_TIMEOUT_BUFFER_MS = 45_000;
 
@@ -36,11 +38,6 @@ function buildStepAgentDefinitions(
       } satisfies AgentDefinition,
     ]),
   );
-}
-
-function isTransientError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return /ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|50\d|overloaded|rate.?limit/i.test(message);
 }
 
 /**
@@ -87,6 +84,10 @@ async function main(): Promise<void> {
 
   let report: RunnerCompleteBody = { outcome: "failed", error: "runner did not finish", transient: true };
   const transcript = new TranscriptStreamer(callback);
+  // Set once the workspace exists, so the finally block below can save a
+  // checkpoint even when the failure was thrown (not delivered as a result
+  // message) — as long as there's an output tree to snapshot.
+  let checkpointTarget: { repoDir: string; clientSlug: string } | undefined;
 
   try {
     const workspace = await prepareWorkspace({
@@ -96,6 +97,7 @@ async function main(): Promise<void> {
       ...(spec.clientSlug ? { clientSlug: spec.clientSlug } : {}),
       ...(spec.agentVersion ? { agentVersion: spec.agentVersion } : {}),
     });
+    checkpointTarget = { repoDir: workspace.repoDir, clientSlug: workspace.clientSlug };
     report.agentsRepoSha = workspace.agentsRepoSha;
 
     await writeClientContext({ repoDir: workspace.repoDir, brief: spec.brief });
@@ -109,7 +111,24 @@ async function main(): Promise<void> {
     });
     console.log(`workspace ready: sha=${workspace.agentsRepoSha} skills=${linkedSkills.length}`);
 
+    // Taken BEFORE restoring a checkpoint: collectArtifacts diffs against
+    // this baseline, so restored files still read as "new" and get uploaded
+    // even if the agent never touches them again this attempt.
     const before = await snapshotOutputs(workspace.repoDir, workspace.clientSlug);
+    let resumedFileCount = 0;
+    if (spec.attempt > 1) {
+      resumedFileCount = await restoreCheckpoint(callback, workspace.repoDir).catch((err) => {
+        console.warn(
+          "checkpoint restore failed, continuing from scratch:",
+          err instanceof Error ? err.message : err,
+        );
+        return 0;
+      });
+      if (resumedFileCount > 0) {
+        console.log(`resumed ${resumedFileCount} file(s) from attempt ${spec.attempt - 1}'s checkpoint`);
+      }
+    }
+
     const isoDate = new Date().toISOString().slice(0, 10);
     const prompt = taskConfig.buildPrompt(spec, {
       clientSlug: workspace.clientSlug,
@@ -117,6 +136,7 @@ async function main(): Promise<void> {
       isoDate,
       contextFileList: contextFileList(downloaded),
       clientScaffolded: workspace.clientScaffolded,
+      resumedFileCount,
     });
     const mcpServers = karosMcpServers(spec);
     const stepAgents = buildStepAgentDefinitions(taskConfig.stepModels);
@@ -180,7 +200,7 @@ async function main(): Promise<void> {
             report = {
               ...report,
               outcome: "failed",
-              transient: true,
+              transient: isTransientResultError(message.subtype, message.errors),
               error: `run errored: ${message.subtype}${message.errors?.length ? ` — ${message.errors.join("; ")}` : ""}`,
             };
           }
@@ -230,6 +250,13 @@ async function main(): Promise<void> {
       ...(report.agentsRepoSha ? { agentsRepoSha: report.agentsRepoSha } : {}),
     };
   } finally {
+    // No point saving on the last attempt — a transient verdict past
+    // maxAttempts dead-letters the job with no further attempt to restore into.
+    if (report.outcome === "failed" && report.transient && spec.attempt < spec.maxAttempts && checkpointTarget) {
+      await saveCheckpoint(callback, checkpointTarget.repoDir, checkpointTarget.clientSlug, spec.attempt).catch(
+        (err) => console.warn("checkpoint save failed:", err instanceof Error ? err.message : err),
+      );
+    }
     await transcript.close();
     await callback.complete(report);
   }

@@ -50,6 +50,25 @@ export interface ArtifactEntry {
   url?: string;
 }
 
+export interface CheckpointFileEntry {
+  /** repo-relative path under the output roots (see runner/src/artifacts.ts outputRoots) */
+  path: string;
+  url: string;
+  bytes: number;
+}
+
+/**
+ * Snapshot of a failed attempt's output-tree state, saved by the runner so a
+ * retry can restore prior progress instead of re-running the whole skill
+ * from scratch (see runner/src/checkpoint.ts). Wholly replaced on each save —
+ * only the most recent attempt's state is worth restoring.
+ */
+export interface JobCheckpoint {
+  attempt: number;
+  files: CheckpointFileEntry[];
+  bytes: number;
+}
+
 export interface JobRecord {
   id: string;
   /** optimistic-concurrency version, bumped by JobsStore.update */
@@ -76,6 +95,8 @@ export interface JobRecord {
   runnerReport?: RunnerCompleteBody;
   /** total artifact bytes stored so far (cap enforcement) */
   artifactBytes?: number;
+  /** most recent attempt's saved output-tree state; see JobCheckpoint */
+  checkpoint?: JobCheckpoint;
 }
 
 export type RunnerOutcome = "done" | "failed" | "cancelled";
@@ -126,6 +147,9 @@ export interface JobSpec {
   timeoutMs: number;
   callbackBaseUrl: string;
   runnerToken: string;
+  /** 1 on the first run; >1 means a prior attempt failed transiently and this is a retry. */
+  attempt: number;
+  maxAttempts: number;
   /** Job-scoped Karos MCP connection. Present only when the platform supplied both values. */
   karosMcp?: {
     url: string;

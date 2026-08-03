@@ -39,6 +39,8 @@ export interface PromptContext {
   isoDate: string;
   contextFileList: string;
   clientScaffolded: boolean;
+  /** Files restored from a prior failed attempt's checkpoint, if this run is a retry. */
+  resumedFileCount?: number;
 }
 
 // Agents run on Opus 4.8 for output quality parity with local Claude Code runs.
@@ -90,7 +92,10 @@ function commonPreamble(spec: JobSpec, ctx: PromptContext): string {
   const scaffoldNote = ctx.clientScaffolded
     ? `\nThis client does not yet have a folder in the lab repo, so a minimal clients/${ctx.clientSlug}/ scaffold was created for this run. client_context/ is the authoritative context for this client.`
     : "";
-  return `You are running a production job for client "${ctx.clientSlug}" (job ${spec.jobId}, ${ctx.isoDate}).
+  const resumeNote = ctx.resumedFileCount
+    ? `\n\nRESUMED RUN — this is attempt ${spec.attempt} of ${spec.maxAttempts}. The previous attempt failed transiently after writing ${ctx.resumedFileCount} file(s) under clients/${ctx.clientSlug}/outputs/, which have been restored into this workspace unchanged. Inspect what already exists under clients/${ctx.clientSlug}/outputs/${ctx.runFolder}/ before generating anything — finish or fix what's incomplete rather than regenerating work that already succeeded.`
+    : "";
+  return `You are running a production job for client "${ctx.clientSlug}" (job ${spec.jobId}, ${ctx.isoDate}).${resumeNote}
 
 INPUTS
 - The platform brief: client_context/brief.md (read it first).
@@ -145,6 +150,13 @@ export const TASK_TYPE_CONFIGS: Record<TaskType, TaskTypeConfig> = {
     maxTurns: 400,
     maxBudgetUsd: 45,
     model: AGENT_MODEL,
+    // Inert until the karos-agents Instagram skill's Phase 1 research
+    // fan-out names this subagent_type on its Task tool calls (see
+    // buildStepAgentDefinitions in runner/src/main.ts) — that skill change
+    // is staged on an unmerged branch pending a quality check, not baked
+    // into the runner image yet. Registering the definition now is harmless:
+    // an AgentDefinition nothing calls by name has no effect.
+    stepModels: { research: "claude-sonnet-4-6" },
     // "fonts" is required: the render engine (render.mjs → Playwright) waits on
     // document.fonts.ready and treats a font-load failure as a hard failure, so
     // slides render blank without egress to Google Fonts / Fontshare.

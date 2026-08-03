@@ -20,4 +20,6 @@ export interface ArtifactStore {
   finalizeTranscript(jobId: string): Promise<string | undefined>;
   /** Open a stored artifact for serving (local store); GCS returns signed URLs instead. */
   open?(jobId: string, storagePath: string): Promise<Readable>;
+  /** Best-effort cleanup of a job's saved checkpoint files once it reaches a terminal state. */
+  deleteCheckpoint(jobId: string): Promise<void>;
 }

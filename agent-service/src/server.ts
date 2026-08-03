@@ -24,6 +24,10 @@ export interface ServerDeps {
 
 export const MAX_ARTIFACT_FILE_BYTES = 100 * 1024 * 1024;
 export const MAX_ARTIFACT_TOTAL_BYTES = 500 * 1024 * 1024;
+// A checkpoint only needs to carry enough of the output tree to skip
+// redoing finished work on retry — a small slice of the client-artifact
+// budget above, not a full mirror of it.
+export const MAX_CHECKPOINT_TOTAL_BYTES = 50 * 1024 * 1024;
 
 /**
  * The whole JobSpec travels to the runner as ONE env var (JOB_SPEC_B64), and
@@ -46,6 +50,8 @@ function estimatedSpecB64Bytes(deps: ServerDeps, request: JobRecord["request"]):
     timeoutMs: 3_600_000,
     callbackBaseUrl: deps.config.internalBaseUrl,
     runnerToken: "0".repeat(64),
+    attempt: deps.config.maxAttempts,
+    maxAttempts: deps.config.maxAttempts,
   };
   // base64 inflates 3 bytes → 4 chars.
   return Math.ceil(Buffer.byteLength(JSON.stringify(worstCase), "utf8") / 3) * 4;

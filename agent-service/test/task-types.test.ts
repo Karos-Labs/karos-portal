@@ -16,6 +16,10 @@ describe("resolveTaskConfig", () => {
     expect(resolveTaskConfig("social_post", {})).toBe(getTaskTypeConfig("social_post"));
   });
 
+  it("registers a research stepModel for social_post pending the matching skill-side subagent name", () => {
+    expect(getTaskTypeConfig("social_post").stepModels).toEqual({ research: "claude-sonnet-4-6" });
+  });
+
   it("resolves entry skill and merges skill roots for custom", () => {
     const config = resolveTaskConfig("custom", CUSTOM_BRIEF);
     expect(config.entrySkillDir).toBe("products/live/instagram-agent");
@@ -75,6 +79,8 @@ describe("resolveTaskConfig", () => {
       timeoutMs: 60_000,
       callbackBaseUrl: "http://localhost:8080",
       runnerToken: "t",
+      attempt: 1,
+      maxAttempts: 2,
     };
     const prompt = getTaskTypeConfig("social_post").buildPrompt(spec, {
       clientSlug: "xodigital",
@@ -104,6 +110,8 @@ describe("resolveTaskConfig", () => {
       timeoutMs: 60_000,
       callbackBaseUrl: "http://localhost:8080",
       runnerToken: "t",
+      attempt: 1,
+      maxAttempts: 2,
     };
     const prompt = config.buildPrompt(spec, {
       clientSlug: "xodigital",
@@ -128,6 +136,8 @@ describe("resolveTaskConfig", () => {
       timeoutMs: 60_000,
       callbackBaseUrl: "http://localhost:8080",
       runnerToken: "t",
+      attempt: 1,
+      maxAttempts: 2,
     };
     const prompt = config.buildPrompt(spec, {
       clientSlug: "xodigital",
