@@ -34,6 +34,8 @@ export function buildJobSpec(config: ServiceConfig, record: JobRecord): JobSpec 
     timeoutMs: taskConfig.timeoutMs || config.defaultTimeoutMs,
     callbackBaseUrl: config.internalBaseUrl,
     runnerToken: record.runnerToken,
+    attempt: record.attempt,
+    maxAttempts: record.maxAttempts,
   };
   if (record.request.client_slug) spec.clientSlug = record.request.client_slug;
   if (record.request.agent_version) spec.agentVersion = record.request.agent_version;

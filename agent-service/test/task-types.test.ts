@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveTaskConfig, getTaskTypeConfig } from "../src/task-types.js";
+import { TASK_TYPES } from "../src/types.js";
 import type { JobSpec } from "../src/types.js";
 
 const CUSTOM_BRIEF = {
@@ -14,6 +15,16 @@ const CUSTOM_BRIEF = {
 describe("resolveTaskConfig", () => {
   it("returns the static config untouched for catalog task types", () => {
     expect(resolveTaskConfig("social_post", {})).toBe(getTaskTypeConfig("social_post"));
+  });
+
+  it("registers a research stepModel for social_post pending the matching skill-side subagent name", () => {
+    expect(getTaskTypeConfig("social_post").stepModels).toEqual({ research: "claude-sonnet-4-6" });
+  });
+
+  it("dials every task type down from the SDK's high-effort default", () => {
+    for (const taskType of TASK_TYPES) {
+      expect(getTaskTypeConfig(taskType).effort).toBe("medium");
+    }
   });
 
   it("resolves entry skill and merges skill roots for custom", () => {
@@ -39,6 +50,15 @@ describe("resolveTaskConfig", () => {
   it("honours include_client_skills=false", () => {
     const config = resolveTaskConfig("custom", { ...CUSTOM_BRIEF, include_client_skills: false });
     expect(config.includeClientSkills).toBe(false);
+  });
+
+  it("defaults custom agents onto the same research stepModel, overridable per-brief", () => {
+    expect(resolveTaskConfig("custom", CUSTOM_BRIEF).stepModels).toEqual({ research: "claude-sonnet-4-6" });
+    const overridden = resolveTaskConfig("custom", {
+      ...CUSTOM_BRIEF,
+      step_models: { research: "claude-haiku-4-5-20251001" },
+    });
+    expect(overridden.stepModels).toEqual({ research: "claude-haiku-4-5-20251001" });
   });
 
   it("throws on traversal or out-of-tree paths", () => {
@@ -75,6 +95,8 @@ describe("resolveTaskConfig", () => {
       timeoutMs: 60_000,
       callbackBaseUrl: "http://localhost:8080",
       runnerToken: "t",
+      attempt: 1,
+      maxAttempts: 2,
     };
     const prompt = getTaskTypeConfig("social_post").buildPrompt(spec, {
       clientSlug: "xodigital",
@@ -104,6 +126,8 @@ describe("resolveTaskConfig", () => {
       timeoutMs: 60_000,
       callbackBaseUrl: "http://localhost:8080",
       runnerToken: "t",
+      attempt: 1,
+      maxAttempts: 2,
     };
     const prompt = config.buildPrompt(spec, {
       clientSlug: "xodigital",
@@ -128,6 +152,8 @@ describe("resolveTaskConfig", () => {
       timeoutMs: 60_000,
       callbackBaseUrl: "http://localhost:8080",
       runnerToken: "t",
+      attempt: 1,
+      maxAttempts: 2,
     };
     const prompt = config.buildPrompt(spec, {
       clientSlug: "xodigital",

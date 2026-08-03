@@ -12,6 +12,8 @@ function spec(): JobSpec {
     timeoutMs: 1000,
     callbackBaseUrl: "http://api:8080",
     runnerToken: "runner-token",
+    attempt: 1,
+    maxAttempts: 2,
   };
 }
 

@@ -97,6 +97,17 @@ if ! have secrets describe apify-token --project "$PROJECT_ID"; then
     echo "  skipped apify-token — remove APIFY_TOKEN from cloudbuild.yaml deploy-worker --set-secrets or the deploy will fail"
   fi
 fi
+if ! have secrets describe xai-api-key --project "$PROJECT_ID"; then
+  # Powers the X agent's live X reads. The worker mounts it as XAI_API_KEY;
+  # deploy-worker's --set-secrets references it unconditionally, so a missing
+  # secret fails that Cloud Build step outright rather than degrading quietly.
+  read -rsp "  xAI API key (blank to skip, disables the X agent's live X reads): " XAI_KEY; echo
+  if [ -n "$XAI_KEY" ]; then
+    secret_put xai-api-key "$XAI_KEY"
+  else
+    echo "  skipped xai-api-key — remove XAI_API_KEY from cloudbuild.yaml deploy-worker --set-secrets or the deploy will fail"
+  fi
+fi
 
 say "IAM bindings"
 # Both runtimes read their secrets.

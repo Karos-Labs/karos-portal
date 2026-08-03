@@ -44,6 +44,13 @@ export class GcsArtifactStore implements ArtifactStore {
     return { url, storagePath: relPath };
   }
 
+  async deleteCheckpoint(jobId: string): Promise<void> {
+    await this.storage
+      .bucket(this.bucketName)
+      .deleteFiles({ prefix: this.objectPath(jobId, "_checkpoint/") })
+      .catch(() => undefined);
+  }
+
   async appendTranscript(jobId: string, ndjsonChunk: string): Promise<void> {
     // Zero-padded millis + per-process counter: lexicographic order ≈ arrival order.
     const seq = `${String(Date.now()).padStart(15, "0")}-${String(this.chunkSeq++).padStart(6, "0")}`;

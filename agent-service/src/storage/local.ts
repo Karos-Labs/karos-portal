@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, appendFile, stat } from "node:fs/promises";
+import { mkdir, appendFile, stat, rm } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -49,6 +49,10 @@ export class LocalArtifactStore implements ArtifactStore {
       url: `${this.publicBaseUrl}/v1/jobs/${jobId}/artifacts/${encodeURI(relPath)}`,
       storagePath: relPath,
     };
+  }
+
+  async deleteCheckpoint(jobId: string): Promise<void> {
+    await rm(this.artifactDiskPath(jobId, "_checkpoint"), { recursive: true, force: true }).catch(() => undefined);
   }
 
   async appendTranscript(jobId: string, ndjsonChunk: string): Promise<void> {

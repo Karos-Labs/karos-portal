@@ -16,5 +16,14 @@ export async function finalizeJob(
   if (transcriptUrl) {
     await deps.store.update(record.id, (r) => ({ ...r, transcriptUrl }));
   }
+  // The job is terminal — no further attempt will ever restore this
+  // checkpoint, so there's nothing left for it to do but take up storage.
+  if (record.checkpoint) {
+    await deps.artifactStore.deleteCheckpoint(record.id).catch(() => undefined);
+    await deps.store.update(record.id, (r) => {
+      const { checkpoint: _checkpoint, ...rest } = r;
+      return rest as JobRecord;
+    });
+  }
   await enqueueWebhook(deps.webhooksQueue, record.id);
 }

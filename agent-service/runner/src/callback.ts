@@ -1,7 +1,15 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
+import { createWriteStream } from "node:fs";
 import type { JobSpec, JobUsage, RunnerCompleteBody } from "../../src/types.js";
 import { fetchIdToken } from "../../src/gcp-identity.js";
+
+export interface CheckpointManifest {
+  attempt?: number;
+  files: Array<{ path: string; bytes: number }>;
+}
 
 /**
  * HTTP client for the service's /internal endpoints. App-level auth is the
@@ -61,6 +69,48 @@ export class ServiceCallback {
     if (!response.ok) {
       throw new Error(`artifact upload failed (${response.status}) for ${params.relPath}`);
     }
+  }
+
+  async uploadCheckpointFile(params: { absPath: string; relPath: string; attempt: number }): Promise<void> {
+    const data = await readFile(params.absPath);
+    const form = new FormData();
+    form.set("path", params.relPath);
+    form.set("attempt", String(params.attempt));
+    form.set("file", new Blob([new Uint8Array(data)]), path.basename(params.relPath));
+    const response = await fetch(this.url("checkpoint"), {
+      method: "POST",
+      headers: await this.headers(),
+      body: form,
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!response.ok) {
+      throw new Error(`checkpoint upload failed (${response.status}) for ${params.relPath}`);
+    }
+  }
+
+  async fetchCheckpointManifest(): Promise<CheckpointManifest> {
+    const response = await fetch(this.url("checkpoint"), {
+      method: "GET",
+      headers: await this.headers(),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) return { files: [] };
+    return (await response.json()) as CheckpointManifest;
+  }
+
+  async downloadCheckpointFile(relPath: string, destAbsPath: string): Promise<void> {
+    const response = await fetch(`${this.url("checkpoint/download")}?path=${encodeURIComponent(relPath)}`, {
+      method: "GET",
+      headers: await this.headers(),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`checkpoint download failed (${response.status}) for ${relPath}`);
+    }
+    await pipeline(
+      Readable.fromWeb(response.body as import("node:stream/web").ReadableStream),
+      createWriteStream(destAbsPath),
+    );
   }
 
   async complete(body: RunnerCompleteBody): Promise<void> {
