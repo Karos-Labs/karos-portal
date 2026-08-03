@@ -309,6 +309,12 @@ Run the "landing-builder" skill (products/live/landing-page/landing-builder/SKIL
     maxBudgetUsd: 45,
     model: AGENT_MODEL,
     effort: "medium",
+    // Default for every custom agent, overridable per-agent via brief.step_models
+    // (resolveTaskConfig only replaces this if the brief sets its own). Inert
+    // for a skill that doesn't name a "research" subagent_type on its Task tool
+    // fan-out — X (e13) and LinkedIn (e10) do; wiring more agents onto this is
+    // a skill-side change, not a service-side one.
+    stepModels: { research: "claude-sonnet-4-6" },
     egressGroups: ["core", "research", "image_sourcing", "social_platforms", "fonts"],
     buildPrompt: (spec, ctx) => {
       const brief = spec.brief;

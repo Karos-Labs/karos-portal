@@ -17,12 +17,18 @@ const SELF_TIMEOUT_BUFFER_MS = 45_000;
 /**
  * Turns a task config's `stepModels` (from brief.step_models, see
  * resolveTaskConfig) into the SDK's `options.agents` shape — one
- * AgentDefinition per named step, model-only. `description`/`prompt` are
- * required by AgentDefinition but are inert placeholders here: this call
- * exists purely to carry a model override for a subagent name the skill's own
- * steps must already delegate to via the Task tool for it to have any effect
- * (see docs/one-pagers/x-agent-v2-integration-contract.md). Reusable verbatim
- * once other agents adopt the same named-subagent-step convention.
+ * AgentDefinition per named step. `description`/`prompt` are required by
+ * AgentDefinition but are inert placeholders here: this call exists purely to
+ * carry a model override for a subagent name the skill's own steps must
+ * already delegate to via the Task tool for it to have any effect (see
+ * docs/one-pagers/x-agent-v2-integration-contract.md). Reusable verbatim once
+ * other agents adopt the same named-subagent-step convention.
+ *
+ * Every generated definition also gets `effort: "low"` — anything reached
+ * through this mechanism is, by construction, a named research/data-gathering
+ * fan-out step (never the main creative thread, which keeps its own effort
+ * from the task config), so a lighter reasoning budget costs nothing the
+ * skill's own synthesis of already-fetched data actually needs.
  */
 function buildStepAgentDefinitions(
   stepModels: Record<string, string> | undefined,
@@ -35,6 +41,7 @@ function buildStepAgentDefinitions(
         description: `Step "${step}" (model routed via CustomAgent.stepModels)`,
         prompt: `You are the "${step}" step of this run. Follow the skill's own instructions for this step.`,
         model,
+        effort: "low",
       } satisfies AgentDefinition,
     ]),
   );

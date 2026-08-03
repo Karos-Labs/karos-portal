@@ -52,6 +52,15 @@ describe("resolveTaskConfig", () => {
     expect(config.includeClientSkills).toBe(false);
   });
 
+  it("defaults custom agents onto the same research stepModel, overridable per-brief", () => {
+    expect(resolveTaskConfig("custom", CUSTOM_BRIEF).stepModels).toEqual({ research: "claude-sonnet-4-6" });
+    const overridden = resolveTaskConfig("custom", {
+      ...CUSTOM_BRIEF,
+      step_models: { research: "claude-haiku-4-5-20251001" },
+    });
+    expect(overridden.stepModels).toEqual({ research: "claude-haiku-4-5-20251001" });
+  });
+
   it("throws on traversal or out-of-tree paths", () => {
     expect(() => resolveTaskConfig("custom", { ...CUSTOM_BRIEF, entry_skill_dir: "products/../../etc" })).toThrow(
       /invalid entry_skill_dir/,
