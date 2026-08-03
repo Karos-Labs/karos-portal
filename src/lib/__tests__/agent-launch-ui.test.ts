@@ -31,7 +31,7 @@ describe("custom agent launch profiles", () => {
     // A linkedin-ish import that is NOT an e10 agent still gets the founder brief.
     const linkedin = launchProfileFor({ key: "acme-linkedin-ghostwriter", name: "LinkedIn Ghostwriter" });
     const shorts = launchProfileFor({ key: "branded-shorts", name: "Branded Shorts" });
-    const x = launchProfileFor({ key: "karos-x-agent", name: "X Agent" });
+    const x = launchProfileFor({ key: "karos-x-agent-v2", name: "X Agent" });
 
     expect(instagram.fields.map((field) => field.key)).toEqual(
       expect.arrayContaining(["run_mode", "request", "platform", "post_count"]),
@@ -224,7 +224,7 @@ describe("staff hub client eligibility", () => {
   });
 
   it("leaves an unbound agent runnable for every client, slug or not", () => {
-    for (const key of ["karos-x-agent", "karos-reddit-agent", "branded-shorts"]) {
+    for (const key of ["karos-x-agent-v2", "karos-reddit-agent", "branded-shorts"]) {
       expect(eligibleFor(key)).toEqual(["Geektime", "Karos Labs", "New Client"]);
     }
   });

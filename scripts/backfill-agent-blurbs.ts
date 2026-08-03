@@ -110,7 +110,7 @@ const BLURBS: Array<{ key: RegExp; blurb: string }> = [
       "Improve your Instagram reach with a daily post, different templates, and an agent that scans what is working in your niche.",
   },
   {
-    key: /^karos-x-agent$/,
+    key: /^karos-x-agent-v2$/,
     blurb:
       "Grow your following on X with a post a day, written in your voice from what your industry is talking about right now.",
   },

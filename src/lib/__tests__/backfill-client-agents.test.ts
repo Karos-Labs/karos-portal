@@ -151,7 +151,7 @@ describe("planClient — template seeding (§9 step 2)", () => {
   });
 
   it("leaves the X umbrella's registry empty — the daily pick has no streams", () => {
-    const x = agent({ id: "ag-x", key: "karos-x-agent", name: "X Agent" });
+    const x = agent({ id: "ag-x", key: "karos-x-agent-v2", name: "X Agent" });
     const result = plan({
       grantedAgentIds: ["ag-x"],
       agents: new Map([["ag-x", x]]),

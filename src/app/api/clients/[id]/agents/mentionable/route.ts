@@ -63,8 +63,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     getClientCustomAgents(clientId),
   ]);
   // The whole catalog doc, not just its icon: the agent KEY is the precise
-  // source for a platform mark ("karos-x-agent" answers exactly, a display name
-  // only guesses), and it never leaves this route — see `platform` below.
+  // source for a platform mark ("karos-x-agent-v2" answers exactly, a display
+  // name only guesses), and it never leaves this route — see `platform` below.
   const customAgentById = new Map(customAgents.map((a) => [a.id, a]));
   const liveUmbrellaByCustomAgentId = new Map(
     umbrellas.filter((u) => u.launchState === "live").map((u) => [u.customAgentId, u]),

@@ -218,7 +218,7 @@ describe("agent data setup gate", () => {
   });
 
   it("gates exactly the three intake-driven agent identities", () => {
-    expect(isXAgentIdentity("karos-x-agent")).toBe(true);
+    expect(isXAgentIdentity("karos-x-agent-v2")).toBe(true);
     expect(isLinkedInAgentIdentity("karos-linkedin-agent")).toBe(true);
     expect(isLinkedInAgentIdentity("karos-linkedin-company-karoslabs")).toBe(true);
     expect(isRedditAgentIdentity("karos-reddit-agent")).toBe(true);
@@ -278,7 +278,7 @@ describe("per-client agent instance binding", () => {
 
   it("leaves agents bound to no client runnable for everyone", () => {
     const unbound = [
-      "karos-x-agent",
+      "karos-x-agent-v2",
       "karos-linkedin-agent",
       "karos-reddit-agent",
       "karos-tiktok-agent",

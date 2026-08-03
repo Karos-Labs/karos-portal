@@ -53,8 +53,8 @@ const PRODUCT_BLURBS: Record<string, string> = {
  */
 const BLURBS: Array<{ matches: (identity: string) => boolean; blurb: string }> = [
   {
-    // The X agent (e13). Multi-seat, sources from live conversation.
-    matches: (identity) => identity.startsWith("karos-x-agent "),
+    // The X agent (e13, karos-x-agent-v2). Multi-seat, sources from live conversation.
+    matches: (identity) => identity.startsWith("karos-x-agent-v2 "),
     blurb:
       "Grow your following on X with a post a day, written in your voice from what your industry is talking about right now.",
   },

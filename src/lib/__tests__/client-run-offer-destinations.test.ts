@@ -301,7 +301,7 @@ function agent(over: Partial<CustomAgent> & Pick<CustomAgent, "id" | "key">): Cu
 }
 
 describe("#114 — a client may only open an intake page for an agent they have", () => {
-  const X = agent({ id: "x1", key: "karos-x-agent" });
+  const X = agent({ id: "x1", key: "karos-x-agent-v2" });
   const LI_ACME = agent({ id: "li-acme", key: "karos-linkedin-company-acme" });
 
   const ask = (over: Partial<Parameters<typeof requireIntakeAgentAccess>[0]> = {}) =>
@@ -321,7 +321,7 @@ describe("#114 — a client may only open an intake page for an agent they have"
     await expect(ask({ grantedAgentIds: [] })).rejects.toThrow("NEXT_NOT_FOUND");
     await expect(ask({ grantedAgentIds: null })).rejects.toThrow("NEXT_NOT_FOUND");
     // Granted, but the lab disabled it — not an agent they have.
-    D.listCustomAgents.mockResolvedValue([agent({ id: "x1", key: "karos-x-agent", enabled: false })]);
+    D.listCustomAgents.mockResolvedValue([agent({ id: "x1", key: "karos-x-agent-v2", enabled: false })]);
     await expect(ask()).rejects.toThrow("NEXT_NOT_FOUND");
     // Granted an agent of a DIFFERENT family: the X page is still not theirs.
     D.listCustomAgents.mockResolvedValue([LI_ACME]);
