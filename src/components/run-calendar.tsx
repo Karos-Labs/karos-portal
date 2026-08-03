@@ -4,13 +4,14 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
-import { AgentMark } from "@/components/agent-identity";
+import { ContentPlatformMark, SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { Badge, Button } from "@/components/ui";
 import { jobStatusMeta } from "@/components/job-status";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
+import { platformLabel } from "@/lib/integrations/platforms";
 import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
 import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calendar-past-runs";
 import { cn, relativeTime } from "@/lib/utils";
@@ -47,6 +48,13 @@ export interface CalendarRun {
   productName: string;
   productColor: string;
   productIcon: string;
+  /**
+   * The platform this run's content targets (AF-20), resolved server-side by
+   * lib/content-platform. A TOKEN, not the fields it came from: the boundary
+   * ships "instagram", never the umbrella row or the job's own agent name.
+   * Absent when nothing recorded names one - the mark then stays the agent's.
+   */
+  platform?: SocialPlatform;
   // past
   jobStatus?: JobStatus;
   /** Composed by the server: "drafted 8 posts". Never the record's own summary text. */
@@ -134,6 +142,16 @@ export interface CalendarPost {
    * error at every chip, label, tone and filter instead of a silent default.
    */
   kind: CalendarAssetKind;
+  /**
+   * The platform this post is FOR (AF-20), resolved server-side by
+   * lib/content-platform off the asset's own booked channel first.
+   *
+   * This is the field the projection's "a post names no agent at all" note
+   * anticipated: a post still names no agent, and this is not one - it is where
+   * the post is going, which is the one thing a client reading a chip wants to
+   * know. Absent when nothing recorded says, and the chip keeps its status dot.
+   */
+  platform?: SocialPlatform;
   images: AssetImage[];
   textPreview: string;
   /**
@@ -242,7 +260,12 @@ function RunChip({ run, size = "cell" }: { run: CalendarRun; size?: ChipSize }) 
         scheduled && run.zoneLabel ? ` ${run.zoneLabel}` : ""
       }${run.clientName ? ` · ${run.clientName}` : ""}`}
     >
-      <AgentMark identity={run.productName} icon={run.productIcon} className="h-2.5 w-2.5 shrink-0" />
+      <ContentPlatformMark
+        platform={run.platform}
+        identity={run.productName}
+        icon={run.productIcon}
+        className="h-2.5 w-2.5 shrink-0"
+      />
       <span className="truncate">{run.productName}</span>
     </div>
   );
@@ -305,9 +328,20 @@ function PostChip({
          projection (calendar-body) — so this prints whatever arrived rather than
          re-deciding which kinds are allowed one, which is how the held post's
          sentence would have been dropped on the way to the tooltip. */
-      title={`${postKindLabel(post.kind, viewerIsClient)}${post.publishError ? ` · ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
+      /* The platform is named in the tooltip as well as drawn: the mark is
+         aria-hidden, so this is the only place a screen reader meets it. */
+      title={`${postKindLabel(post.kind, viewerIsClient)}${post.platform ? ` · ${platformLabel(post.platform)}` : ""}${post.publishError ? ` · ${post.publishError}` : ""} · ${post.title} · ${timeStr(post.at)}`}
     >
-      <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
+      {/* The platform logo where the status dot was, at the run chip's own mark
+          size so the two chip families stay one row height. currentColor, so
+          the kind's tint (published green, failed red, dashed placeholder)
+          still reads off the mark exactly as it did off the dot. A post with no
+          resolved platform keeps the dot rather than borrowing a logo. */}
+      {post.platform ? (
+        <SocialPlatformMark platform={post.platform} className="h-2.5 w-2.5 shrink-0" />
+      ) : (
+        <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
+      )}
       <span className="truncate">{post.title}</span>
     </button>
   );
@@ -408,7 +442,12 @@ function ScheduledRunCard({
     <div className="rounded-lg border border-border bg-surface p-3">
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
-          <AgentMark identity={run.productName} icon={run.productIcon} className="h-4 w-4" />
+          <ContentPlatformMark
+            platform={run.platform}
+            identity={run.productName}
+            icon={run.productIcon}
+            className="h-4 w-4"
+          />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -850,7 +889,12 @@ function PastRunCard({
     <div className="rounded-lg border border-border bg-surface p-3" title={run.staffRef}>
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
-          <AgentMark identity={run.productName} icon={run.productIcon} className="h-4 w-4" />
+          <ContentPlatformMark
+            platform={run.platform}
+            identity={run.productName}
+            icon={run.productIcon}
+            className="h-4 w-4"
+          />
         </div>
         <div className="min-w-0 flex-1">
           {href ? (
@@ -1013,6 +1057,12 @@ function PostCard({
       )}
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
+          {/* Before the title, not on the thumbnail: a day card shows a cover
+              image when it has one, and the platform has to read on the cards
+              that don't. */}
+          {post.platform && (
+            <SocialPlatformMark platform={post.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+          )}
           <p className="truncate text-sm font-medium">{post.title}</p>
           <Badge tone={tone}>{label}</Badge>
           {post.clientName && <Badge tone="neutral">{post.clientName}</Badge>}

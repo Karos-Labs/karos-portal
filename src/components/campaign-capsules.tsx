@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import { Icon } from "@/components/icon";
+import { SocialPlatformMark } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
 import { groupIntoCampaignCapsules, type CampaignCapsule } from "@/lib/campaign-capsules";
+import { platformForAsset } from "@/lib/content-platform";
+import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset } from "@/lib/types";
 
 /** Asset-type → lucide icon for the piece chips (mirrors the detail modal). */
@@ -94,7 +97,9 @@ function Capsule({ capsule, onOpen }: { capsule: CampaignCapsule; onOpen: (id: s
       {/* Cross-channel journey */}
       {open && (
         <div className="flex items-stretch gap-1 overflow-x-auto border-t border-neon/15 px-3 py-2.5">
-          {capsule.assets.map((a, i) => (
+          {capsule.assets.map((a, i) => {
+            const platform = platformForAsset(a);
+            return (
             <div key={a.id} className="flex items-center gap-1">
               <button
                 type="button"
@@ -103,13 +108,23 @@ function Capsule({ capsule, onOpen }: { capsule: CampaignCapsule; onOpen: (id: s
                 title={a.title}
               >
                 <div className="flex items-center gap-1.5">
-                  <Icon name={TYPE_ICON[a.type] ?? "FileText"} className="h-3 w-3 shrink-0 text-muted-2" />
+                  {/* AF-20. The chip was already naming the platform - as the
+                      RAW id, so it printed "twitter" and "linkedin_community"
+                      at a client (the QA F122 class of defect PLATFORM_LABELS
+                      exists to end). It now draws the mark and prints the
+                      brand's own spelling, and falls back to the asset type
+                      only when nothing recorded names a platform. */}
+                  {platform ? (
+                    <SocialPlatformMark platform={platform} className="h-3 w-3 shrink-0 text-muted-2" />
+                  ) : (
+                    <Icon name={TYPE_ICON[a.type] ?? "FileText"} className="h-3 w-3 shrink-0 text-muted-2" />
+                  )}
                   <span
                     className="h-1.5 w-1.5 shrink-0 rounded-full"
                     style={{ backgroundColor: statusColor(a.status) }}
                   />
                   <span className="truncate text-[10px] uppercase tracking-wide text-muted-2">
-                    {a.scheduledPlatform ?? a.type.replace(/_/g, " ")}
+                    {a.scheduledPlatform ? platformLabel(a.scheduledPlatform) : a.type.replace(/_/g, " ")}
                   </span>
                 </div>
                 <span className="truncate text-[11px] font-medium text-foreground">{a.title}</span>
@@ -119,7 +134,8 @@ function Capsule({ capsule, onOpen }: { capsule: CampaignCapsule; onOpen: (id: s
                 <Icon name="ArrowRight" className={cn("h-3 w-3 shrink-0 text-neon/50")} />
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

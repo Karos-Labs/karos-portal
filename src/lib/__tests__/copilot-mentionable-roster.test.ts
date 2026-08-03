@@ -78,7 +78,12 @@ describe("the @mention roster combines the two lists without doubling anything",
     const { agents } = await mentionable();
 
     expect(agents).toEqual([
-      { id: "agent-x", displayName: "X agent", icon: "Bird", platform: null },
+      // AF-20: the platform comes off the agent itself, so an agent with no
+      // umbrella still wears its logo. It used to be the umbrella's stored
+      // string alone, i.e. null for most of the list this route widened to
+      // include — the copilot's whole point being that these ARE the client's
+      // agents whether or not anyone has finished a launch for them.
+      { id: "agent-x", displayName: "X agent", icon: "Bird", platform: "x" },
     ]);
   });
 
@@ -109,7 +114,43 @@ describe("the @mention roster combines the two lists without doubling anything",
     const { agents } = await mentionable();
 
     expect(agents).toEqual([
-      { id: "agent-x", displayName: "X agent", icon: "Bird", platform: null },
+      // AF-20: the platform comes off the agent itself, so an agent with no
+      // umbrella still wears its logo. It used to be the umbrella's stored
+      // string alone, i.e. null for most of the list this route widened to
+      // include — the copilot's whole point being that these ARE the client's
+      // agents whether or not anyone has finished a launch for them.
+      { id: "agent-x", displayName: "X agent", icon: "Bird", platform: "x" },
+    ]);
+  });
+
+  it("reads the agent KEY, which a renamed agent's name can no longer give", async () => {
+    // The precise rung. Nothing in "Acme voice" says LinkedIn; the key does,
+    // and the key never leaves the route — only the token it resolved to.
+    vi.mocked(getClientCustomAgents).mockResolvedValue([{ id: "agent-li", name: "Acme voice" }] as any);
+    vi.mocked(data.listCustomAgents).mockResolvedValue([
+      { id: "agent-li", icon: "Bot", key: "karos-linkedin-agent" },
+    ] as any);
+
+    const { agents } = await mentionable();
+
+    expect(agents[0].platform).toBe("linkedin");
+    expect(agents[0]).not.toHaveProperty("key");
+  });
+
+  it("sends null for an agent that targets no platform, rather than a nearest guess", async () => {
+    // Landing Builder keeps the stored lucide icon it has always had. A chip
+    // that wears the wrong logo is a worse answer than one that wears none.
+    vi.mocked(getClientCustomAgents).mockResolvedValue([
+      { id: "agent-lb", name: "Landing Builder" },
+    ] as any);
+    vi.mocked(data.listCustomAgents).mockResolvedValue([
+      { id: "agent-lb", icon: "LayoutTemplate", key: "karos-landing-builder" },
+    ] as any);
+
+    const { agents } = await mentionable();
+
+    expect(agents).toEqual([
+      { id: "agent-lb", displayName: "Landing Builder", icon: "LayoutTemplate", platform: null },
     ]);
   });
 

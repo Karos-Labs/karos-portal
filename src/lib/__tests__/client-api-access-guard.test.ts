@@ -176,7 +176,10 @@ describe("GET /api/clients/[id]/agents/mentionable", () => {
     const res = await call();
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
-      agents: [{ id: "a1", displayName: "X agent", icon: "Bot", platform: null }],
+      // `platform` is AF-20's mark, resolved off the agent itself rather than
+      // off an umbrella nobody has bound yet — the rule and its refusals live
+      // in copilot-mentionable-roster.test.ts. This suite is about the fence.
+      agents: [{ id: "a1", displayName: "X agent", icon: "Bot", platform: "x" }],
     });
   });
 

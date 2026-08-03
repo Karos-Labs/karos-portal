@@ -92,6 +92,32 @@ export function AgentMark({ identity, icon, className }: { identity: string; ico
 }
 
 /**
+ * The mark for one piece of CONTENT (AF-20): the logo of the platform it
+ * targets, so a chip says what post it is before anyone opens it.
+ *
+ * `platform` is resolved by lib/content-platform and arrives already decided -
+ * never re-derived here, and never from the fields it was read off. That
+ * resolver returns null when nothing recorded names a platform, and this falls
+ * back to the producing agent's own mark for exactly that case: a wrong logo
+ * claims, in one glyph and with no hedge, that the work is going somewhere it
+ * is not, which is worse than the generic icon it replaces.
+ */
+export function ContentPlatformMark({
+  platform,
+  identity,
+  icon,
+  className,
+}: {
+  platform?: SocialPlatform | null;
+  identity: string;
+  icon?: string;
+  className?: string;
+}) {
+  if (platform) return <SocialPlatformMark platform={platform} className={className} />;
+  return <AgentMark identity={identity} icon={icon} className={className} />;
+}
+
+/**
  * The agent avatar chip - the landing page hero treatment: the real mark in
  * light gray on a neutral dark rounded square. Agents spanning two platforms
  * (e.g. Instagram + TikTok social posts) stack both logos.

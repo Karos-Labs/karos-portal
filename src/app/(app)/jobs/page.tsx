@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { listJobs, listClients, listPlannedScheduledRuns, listScheduledRuns } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { identitiesByClient, runRowLabel, scheduleRowLabel } from "@/lib/agent-identity-map";
+import { platformForAgentIdentity, scheduleRowPlatform } from "@/lib/content-platform";
 import { describeCadence } from "@/lib/scheduled-runs";
 import { describeCadence as describeLegacyCadence, isValidTimeZone } from "@/lib/run-cadence";
 import { EmptyState, PageHeader } from "@/components/ui";
@@ -68,19 +69,27 @@ export default async function JobsPage() {
   const upcoming: UpcomingRunRow[] = [
     ...plannedRuns
       .filter((r) => r.status === "active" && nameById.has(r.clientId))
-      .map((r) => ({
-        id: r.id,
-        clientId: r.clientId,
-        clientName: nameById.get(r.clientId)!,
-        agentLabel: scheduleRowLabel(r, umbrellasByClient.get(r.clientId) ?? []),
-        nextRunAt: r.nextRunAt,
-        cadenceLabel: describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
-        // `=== false`, never `!r.billClientCredits`: an ABSENT flag is a row
-        // written before it existed, and the cron falls back to the actor test
-        // for those, so this panel does not know. Only a recorded intent gets
-        // to make the claim.
-        ...(r.billClientCredits === false ? { unbilled: true } : {}),
-      })),
+      .map((r) => {
+        const umbrellas = umbrellasByClient.get(r.clientId) ?? [];
+        // AF-20, resolved through the same module the calendar's own chips use
+        // so this panel and the Calendar it links to cannot disagree about
+        // where the same schedule's posts are going.
+        const platform = scheduleRowPlatform(r, umbrellas);
+        return {
+          id: r.id,
+          clientId: r.clientId,
+          clientName: nameById.get(r.clientId)!,
+          agentLabel: scheduleRowLabel(r, umbrellas),
+          ...(platform ? { platform } : {}),
+          nextRunAt: r.nextRunAt,
+          cadenceLabel: describeCadence({ ...r, timeZone: runZone(r.timeZone) }),
+          // `=== false`, never `!r.billClientCredits`: an ABSENT flag is a row
+          // written before it existed, and the cron falls back to the actor
+          // test for those, so this panel does not know. Only a recorded intent
+          // gets to make the claim.
+          ...(r.billClientCredits === false ? { unbilled: true } : {}),
+        };
+      }),
     ...legacyRuns
       .filter((r) => r.enabled && nameById.has(r.clientId))
       .map((r) => ({
@@ -88,6 +97,11 @@ export default async function JobsPage() {
         clientId: r.clientId,
         clientName: nameById.get(r.clientId)!,
         agentLabel: r.label,
+        // A legacy row has no umbrella and no agent key - its own label is the
+        // only identity it carries, so that is the one thing this can ask.
+        ...(platformForAgentIdentity(null, r.label)
+          ? { platform: platformForAgentIdentity(null, r.label)! }
+          : {}),
         nextRunAt: r.nextRunAt,
         cadenceLabel: describeLegacyCadence(r.cadence),
         // Unconditional, and it is not a policy choice here: /api/scheduler

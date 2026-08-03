@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { nextRunCountdown } from "@/lib/scheduled-runs";
 
 /** One projected future fire, from either scheduling system - see jobs/page.tsx. */
@@ -10,6 +11,13 @@ export interface UpcomingRunRow {
   clientName: string;
   /** The resolved display identity - never the stored/lab agent name (F147). */
   agentLabel: string;
+  /**
+   * The platform this schedule's content targets (AF-20), resolved by the page
+   * through lib/content-platform. Absent when nothing recorded names one, and
+   * the row then carries no mark at all rather than a stand-in glyph: this
+   * panel has never had a per-row icon, so there is nothing to fall back to.
+   */
+  platform?: SocialPlatform;
   nextRunAt: number;
   /** Already carries its own zone suffix (describeCadence/describeLegacyCadence). */
   cadenceLabel: string;
@@ -55,7 +63,10 @@ export function UpcomingRunsPanel({ runs, now }: { runs: UpcomingRunRow[]; now: 
         {runs.map((run) => (
           <li key={run.id} className="flex items-center justify-between gap-3 py-2 text-sm">
             <div className="min-w-0">
-              <p className="truncate">
+              <p className="flex items-center gap-1.5 truncate">
+                {run.platform && (
+                  <SocialPlatformMark platform={run.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                )}
                 {run.agentLabel} <span className="text-muted-2">· {run.clientName}</span>
               </p>
               <p className="text-xs text-muted-2">
