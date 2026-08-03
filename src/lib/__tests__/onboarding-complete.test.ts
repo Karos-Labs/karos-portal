@@ -55,19 +55,23 @@ describe("completeOnboarding — transactional wizard finish", () => {
     });
     store.set(key("clients", "c1"), {
       name: "Old Name Inc",
-      industry: "",
+      category: "",
       brandVoice: "",
     });
   });
   afterEach(() => vi.clearAllMocks());
 
   it("flips hasCompletedOnboarding and applies the workspace patch atomically", async () => {
-    await completeOnboarding("u1", "c1", { name: "Acme Corp", industry: "SaaS", brandVoice: "Bold and direct" });
+    // The wizard's "Industry / niche" box fills `category` — the ONE field the
+    // profile chip shows and every pipeline reads (CD-L). It used to write the
+    // legacy `industry`, so a client answered the question at signup and then
+    // found the chip in their own sidebar still empty.
+    await completeOnboarding("u1", "c1", { name: "Acme Corp", category: "SaaS", brandVoice: "Bold and direct" });
 
     const user = store.get(key("users", "u1"));
     const client = store.get(key("clients", "c1"));
     expect(user?.hasCompletedOnboarding).toBe(true);
-    expect(client).toMatchObject({ name: "Acme Corp", industry: "SaaS", brandVoice: "Bold and direct" });
+    expect(client).toMatchObject({ name: "Acme Corp", category: "SaaS", brandVoice: "Bold and direct" });
   });
 
   it("never touches the client doc when the user doc is missing", async () => {

@@ -39,7 +39,6 @@ const artifact: SimulationArtifact = {
 const ctx: SimulationContext = {
   clientId: "c1",
   clientName: "Acme",
-  industry: "saas",
   category: "AI workflow automation",
   toneOfVoice: "Confident and technical",
   targetMarket: "Mid-market RevOps and sales teams",

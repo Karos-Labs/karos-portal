@@ -454,9 +454,31 @@ describe("the Brand Profile sheet asks for three things", () => {
     expect(inputs, "more than one category editor in the panel").toHaveLength(1);
     expect(panelCode).toContain("setCategory(e.target.value)");
     expect(panelCode).toContain("{clientCategoryLabel(client.category)}");
-    // `industry` is a staff/ops field now: the copilot and the intel pipeline
-    // still read it, and the Clients page Edit dialog still sets it.
+    // The panel never asks for the legacy name at all. It does not have to: both
+    // shells mount it from a projection, and the projection resolves the
+    // fallback into `category` before anything crosses to the browser.
     expect(panelCode).not.toContain("industry");
-    expect(flat(code(GRID))).toContain(">Industry<");
+  });
+
+  it("makes the staff dialog edit THE SAME field, under the same name (CD-L)", () => {
+    // The last place the two names were still two editors. The Clients-page
+    // dialog said "Industry" and wrote `client.industry` while the client typed
+    // a category into the chip in their own sidebar — one fact in two fields,
+    // with two ceilings, and only the staff one reaching the copilot and the
+    // intel pipeline. Asked of the dialog's own source: the label, the field it
+    // sends, the prefill that keeps a legacy value visible, and the cap.
+    const grid = flat(code(GRID));
+    expect(grid, "the staff dialog still labels it Industry").not.toContain(">Industry<");
+    expect(grid).toContain(">Category<");
+    expect(grid).toContain("category: form.category.trim()");
+    expect(grid, "a legacy industry-only client would open an EMPTY box").toContain(
+      "category: clientCategoryValue(client) ?? \"\"",
+    );
+    expect(grid).toContain("maxLength={CLIENT_CATEGORY_MAX_LENGTH}");
+    // And the action behind it refuses the old key outright rather than mapping
+    // it, because it takes a whole Partial<Client> from a staff caller.
+    expect(flat(code("src/lib/actions/client-actions.ts"))).toContain(
+      "delete (patch as Partial<Client> & { industry?: string }).industry",
+    );
   });
 });

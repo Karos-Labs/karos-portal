@@ -176,7 +176,7 @@ export async function approveRegistrationAction(
       clientId = await createClient({
         name: newName,
         website: "",
-        industry: "",
+        category: "",
         contactEmail: existing.email,
         domains: [],
         description: "",

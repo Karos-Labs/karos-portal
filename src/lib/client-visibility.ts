@@ -1,4 +1,5 @@
 import type { AppUser, BrandingGuidelines, Client } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 
 /**
  * WHICH CLIENTS A USER MAY OPEN — the rule, once.
@@ -159,14 +160,19 @@ export function hasAiProcessingFailure(
  * and linkedinSeatLimit (entitlement config the rail never reads), createdBy.
  */
 export function toClientPortalView(c: Client): Client {
+  // THE FALLBACK IS RESOLVED HERE, so `industry` does not cross at all. Both
+  // names carried the same fact and both used to be shipped, while the panel
+  // painted only the second — so a client whose value predated the rename saw an
+  // empty chip in their own sidebar. The browser now receives one field, under
+  // the name the panel's pencil writes back to.
+  const category = clientCategoryValue(c);
   return {
     id: c.id,
     name: c.name,
     status: c.status,
     // Profile fields the rail's own panels render and let the client edit.
     ...(c.website ? { website: c.website } : {}),
-    ...(c.industry ? { industry: c.industry } : {}),
-    ...(c.category ? { category: c.category } : {}),
+    ...(category ? { category } : {}),
     ...(c.teamSize ? { teamSize: c.teamSize } : {}),
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.socialLinks ? { socialLinks: c.socialLinks } : {}),
@@ -246,9 +252,9 @@ export type StaffShellClientView = Pick<
   | "accentColor"
   | "brandingGuidelines"
   // Company profile: the narrow-width Company sheet mounts ClientProfilePanel,
-  // which renders AND edits this set (industry doubles as the copilot blurb).
+  // which renders AND edits this set. `industry` is NOT here: it and `category`
+  // are one field now, resolved to `category` by the projection below.
   | "website"
-  | "industry"
   | "category"
   | "teamSize"
   | "brief"
@@ -270,12 +276,14 @@ export type StaffShellClientView = Pick<
 >;
 
 export function toStaffShellView(c: Client): StaffShellClientView {
+  // Same resolution as the client's own view: this shell mounts the same panel,
+  // so it has to hand it the same one field.
+  const category = clientCategoryValue(c);
   return {
     id: c.id,
     name: c.name,
     ...(c.website ? { website: c.website } : {}),
-    ...(c.industry ? { industry: c.industry } : {}),
-    ...(c.category ? { category: c.category } : {}),
+    ...(category ? { category } : {}),
     ...(c.teamSize ? { teamSize: c.teamSize } : {}),
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.description ? { description: c.description } : {}),

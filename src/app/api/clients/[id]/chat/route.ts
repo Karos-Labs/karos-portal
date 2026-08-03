@@ -36,6 +36,7 @@ import {
 import { chargeClientModelCall } from "@/lib/client-model-charge";
 import type { ClientCredits } from "@/lib/types";
 import { buildCopilotSystemPrompt } from "@/lib/copilot-context";
+import { clientCategoryValue } from "@/lib/utils";
 import {
   brandingToolRefusal,
   copilotToolsFor,
@@ -687,7 +688,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const extractionPrompt = buildGmailExtractionPrompt(
         emails,
         client.name,
-        client.industry ?? "business",
+        clientCategoryValue(client) ?? "business",
       );
 
       const { object: extracted, usage: haikuUsage } = await generateObject({

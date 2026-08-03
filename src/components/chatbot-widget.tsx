@@ -788,7 +788,7 @@ interface Props {
   /** Whether this client has an active Google integration (shows Gmail chip). */
   hasGoogleIntegration?: boolean;
   /** Minimal client snapshot injected into the proactive welcome context. */
-  client?: Pick<Client, "name" | "website" | "industry" | "isAiProcessing">;
+  client?: Pick<Client, "name" | "website" | "isAiProcessing">;
   /** Latest intel report headline data for greeting context. */
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
   /** Render as an always-open panel filling its container (right rail) instead of a floating popup. */

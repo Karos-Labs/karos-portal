@@ -22,7 +22,8 @@ import { requireStaff, logGenerationFailure } from "./_shared";
 export async function createClientAction(input: {
   name: string;
   website?: string;
-  industry?: string;
+  /** The client's category. `industry` is its legacy spelling and is never written. */
+  category?: string;
   contactEmail?: string;
   domains?: string;
   description?: string;
@@ -35,7 +36,9 @@ export async function createClientAction(input: {
   const id = await createClient({
     name: input.name.trim(),
     website: input.website?.trim() || "",
-    industry: input.industry?.trim() || "",
+    // The same ceiling every other category editor is held to — a new client's
+    // category renders in the same chip as everybody else's on day one.
+    category: clampClientCategoryValue(input.category),
     contactEmail: input.contactEmail?.trim().toLowerCase() || "",
     domains: (input.domains ?? "")
       .split(",")
@@ -221,6 +224,15 @@ export async function updateClientAction(id: string, input: Partial<Client> & { 
   // The same ceiling the client's own form is held to. A category typed by staff
   // renders in the same chip, in the same rail, at the same width.
   if (patch.category !== undefined) patch.category = clampClientCategoryValue(patch.category);
+  // `industry` IS `category`, and this action no longer writes the old name
+  // (CD-L). The Edit dialog's box used to send it, which is how the same fact
+  // ended up in two fields with two ceilings and two editors — the client typed
+  // a category into their profile chip while staff typed an industry here, and
+  // the copilot and the intel pipeline read only the staff one. Stripped rather
+  // than mapped: this takes a whole `Partial<Client>`, so silently redirecting
+  // the key would let a stale caller overwrite a category it never named.
+  // Stored values stay put; `clientCategoryValue` is what still reads them.
+  delete (patch as Partial<Client> & { industry?: string }).industry;
   // Store just the client folder slug even if a full repo URL/path was pasted.
   if (patch.agentsRepoSlug !== undefined) patch.agentsRepoSlug = normalizeLabSlug(patch.agentsRepoSlug);
   // Immutable / security-sensitive fields — only dedicated actions may change these.

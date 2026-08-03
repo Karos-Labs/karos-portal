@@ -62,7 +62,7 @@ const input: SwarmInput = {
   rounds: 2,
   context: {
     clientName: "Acme",
-    industry: "saas",
+    category: "saas",
     gapSummary: "- linkedin: GAP",
     brandingSummary: "Tone: bold",
     benchmarkSummary: "No data",

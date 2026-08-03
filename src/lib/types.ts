@@ -70,8 +70,27 @@ export interface Client {
   id: string;
   name: string;
   website?: string;
+  /**
+   * LEGACY SPELLING OF `category`, and the reason it is still here.
+   *
+   * `industry` and `category` were the same fact under two names, with two
+   * editors: staff typed an industry into the Clients-page dialog while the
+   * client typed a category into their own profile chip, and the copilot and the
+   * intel pipeline read only the staff one. They are one field now and
+   * `category` is it.
+   *
+   * NEVER WRITTEN. No editor, action or pipeline sets this any more, and it is
+   * read in exactly one place — `clientCategoryValue` in lib/utils.ts, as the
+   * fallback for a document written before the rename. Kept on the type because
+   * stored documents still carry it; deleting it would delete those clients'
+   * only category until somebody retyped it.
+   */
   industry?: string;
-  /** Client-editable market category / vertical (self-reported). */
+  /**
+   * The client's market category / vertical, self-reported and client-editable.
+   * THE field — read through `clientCategoryValue`, written clamped to
+   * CLIENT_CATEGORY_MAX_LENGTH by both editors.
+   */
   category?: string;
   /** Client-editable team-size bucket, e.g. "1–10". */
   teamSize?: string;

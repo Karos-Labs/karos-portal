@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardTitle, Button, Input, Textarea, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { cn } from "@/lib/utils";
+import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
 import { updateClientAction } from "@/lib/actions";
 import type { Client } from "@/lib/types";
 
@@ -16,7 +16,10 @@ export function ClientEditor({ client }: { client: Client }) {
     name: client.name ?? "",
     contactEmail: client.contactEmail ?? "",
     website: client.website ?? "",
-    industry: client.industry ?? "",
+    // Same field, same prefill and same cap as the Clients-page dialog: this
+    // card writes through the same staff action, and the action stopped taking
+    // the legacy name.
+    category: clientCategoryValue(client) ?? "",
     domainsCsv: (client.domains ?? []).join(", "),
     description: client.description ?? "",
     brandVoice: client.brandVoice ?? "",
@@ -128,7 +131,7 @@ export function ClientEditor({ client }: { client: Client }) {
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Contact email" value={client.contactEmail} />
           <Field label="Website" value={client.website} />
-          <Field label="Industry" value={client.industry} />
+          <Field label="Category" value={clientCategoryValue(client) ?? undefined} />
           <Field label="Meeting domains" value={(client.domains ?? []).join(", ")} />
         </div>
         <Field label="About" value={client.description} multiline />
@@ -249,8 +252,12 @@ export function ClientEditor({ client }: { client: Client }) {
           <Input value={form.website} onChange={(e) => set("website", e.target.value)} />
         </div>
         <div>
-          <Label>Industry</Label>
-          <Input value={form.industry} onChange={(e) => set("industry", e.target.value)} />
+          <Label>Category</Label>
+          <Input
+            value={form.category}
+            onChange={(e) => set("category", e.target.value)}
+            maxLength={CLIENT_CATEGORY_MAX_LENGTH}
+          />
         </div>
         <div>
           <Label>Meeting domains (csv)</Label>

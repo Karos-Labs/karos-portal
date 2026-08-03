@@ -18,6 +18,7 @@ import { logger } from "@/services/logger";
 import { MODELS } from "@/lib/constants";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { chargeClientModelCall, refundOnce } from "@/lib/client-model-charge";
+import { clientCategoryValue } from "@/lib/utils";
 import type { Asset, ClientMarketingAnalytics } from "@/lib/types";
 
 export const maxDuration = 30;
@@ -203,7 +204,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       "produced so far and what stage it's in, (2) that once content publishes and gathers engagement, this panel will " +
       "start surfacing real performance and optimization moves. Keep the whole thing under 120 words.";
 
-    const pipelinePrompt = `Client: ${client.name}${client.industry ? ` (${client.industry})` : ""}
+    const pipelineCategory = clientCategoryValue(client);
+    const pipelinePrompt = `Client: ${client.name}${pipelineCategory ? ` (${pipelineCategory})` : ""}
 
 CONTENT PIPELINE DATA (measured; do not invent beyond this):
 ${JSON.stringify(activity, null, 2)}
@@ -263,7 +265,8 @@ Write the update now.`;
     "(2) what's winning and why, (3) the optimization choices the engine is making next (double down on winners, phase out losers). " +
     "Keep the whole thing under 160 words.";
 
-  const prompt = `Client: ${client.name}${client.industry ? ` (${client.industry})` : ""}
+  const category = clientCategoryValue(client);
+  const prompt = `Client: ${client.name}${category ? ` (${category})` : ""}
 
 PERFORMANCE DATA (measured; do not invent beyond this):
 ${JSON.stringify(digest, null, 2)}

@@ -391,11 +391,41 @@ describe("competitor fences", () => {
 describe("client profile is fill-only", () => {
   it("fills an empty field but never overwrites one a human set", () => {
     const plan = accept(
-      proposal({ client: { profile: { website: "https://acme.test", industry: "Fintech" } } }),
-      current({ client: { industry: "Payments" } }),
+      proposal({ client: { profile: { website: "https://acme.test", category: "Fintech" } } }),
+      current({ client: { category: "Payments" } }),
     );
     expect(plan.client.profile).toEqual([{ field: "website", from: undefined, to: "https://acme.test" }]);
-    expect(plan.client.skippedProfile[0]).toMatchObject({ field: "industry" });
+    expect(plan.client.skippedProfile[0]).toMatchObject({ field: "category" });
+  });
+
+  it("accepts the legacy `industry` key and fills `category` with it (CD-L)", () => {
+    // `industry` is `category`'s old spelling and is never STORED again, but a
+    // refresh payload is written by hand against the export's vocabulary and the
+    // export has been emitting the old key for as long as the field existed.
+    // Rejecting it would fail a payload for using the name it was taught, so it
+    // is mapped: the write lands on the field every reader now looks at.
+    const plan = accept(
+      proposal({ client: { profile: { industry: "Fintech" } } }),
+      current({ client: {} }),
+    );
+    expect(plan.client.profile).toEqual([{ field: "category", from: undefined, to: "Fintech" }]);
+
+    // Fill-only still means fill-only, whichever name asks — and a stored legacy
+    // `industry` is a value a human set, so it is not overwritten either.
+    const filled = accept(
+      proposal({ client: { profile: { industry: "Fintech" } } }),
+      current({ client: { category: "Payments" } }),
+    );
+    expect(filled.client.profile).toEqual([]);
+    expect(filled.client.skippedProfile[0]).toMatchObject({ field: "category" });
+
+    // The current name wins when a payload carries both, so the old spelling can
+    // never quietly overwrite the value the editors actually write.
+    const both = accept(
+      proposal({ client: { profile: { category: "Martech", industry: "Fintech" } } }),
+      current({ client: {} }),
+    );
+    expect(both.client.profile).toEqual([{ field: "category", from: undefined, to: "Martech" }]);
   });
 
   it("merges social links without displacing the ones already set", () => {

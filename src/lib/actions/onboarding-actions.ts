@@ -13,6 +13,7 @@ import {
   updateClient,
 } from "@/lib/data";
 import { adminAuth } from "@/lib/firebase/admin";
+import { clampClientCategoryValue } from "@/lib/utils";
 import { addEmployeeSeatAction } from "./seat-actions";
 
 /** Step 1 — persisted on "Next" (and before any LinkedIn OAuth redirect) so no
@@ -71,7 +72,12 @@ export async function completeOnboardingAction(input: {
   name: string;
   phone?: string;
   clientName: string;
-  industry?: string;
+  /**
+   * The wizard's "Industry / niche" box. It writes `category` — the ONE field
+   * behind the profile chip — and not the legacy `industry` it used to, so a
+   * client's very first answer lands where their own editor will find it.
+   */
+  category?: string;
   brandVoice?: string;
 }): Promise<void> {
   const session = await ownAccountSession();
@@ -93,9 +99,12 @@ export async function completeOnboardingAction(input: {
   if (!phone && user.phone) await clearUserPhone(user.uid);
   await adminAuth().updateUser(user.uid, { displayName: name }).catch(() => {});
 
+  // Clamped on the way in, like every other write to this field: the chip that
+  // will show it has one line, whichever form typed it.
+  const category = clampClientCategoryValue(input.category);
   await completeOnboarding(user.uid, user.clientId, {
     name: clientName,
-    industry: input.industry?.trim() || undefined,
+    category: category || undefined,
     brandVoice: input.brandVoice?.trim() || undefined,
   });
 

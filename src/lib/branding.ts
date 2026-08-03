@@ -11,6 +11,7 @@ import {
   upsertClientContextDoc,
 } from "@/lib/data";
 import type { BrandColor, BrandingGuidelines, Client } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
 import { logger, readWebSearchCount } from "@/services/logger";
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -513,7 +514,7 @@ const MAX_INTEL_LEN = 3_000;
 function buildBrandingPrompt(
   name: string,
   domain: string | null,
-  industry?: string,
+  category?: string,
   description?: string,
   siteIntelligence?: string | null,
   logoContext?: LogoContext,
@@ -529,7 +530,7 @@ function buildBrandingPrompt(
     `Company name: ${safeName}`,
   ];
   if (domain) lines.push(`Website: ${domain}`);
-  if (industry) lines.push(`Industry: ${industry}`);
+  if (category) lines.push(`Industry: ${category}`);
   if (safeDesc) lines.push(`Description: ${safeDesc}`);
 
   // Logo — brand signature color seed
@@ -707,7 +708,7 @@ export async function applyBrandingForClient(
   const promptText = buildBrandingPrompt(
     client.name,
     domain,
-    client.industry,
+    clientCategoryValue(client) ?? undefined,
     client.description,
     siteIntelligence,
     logoContext,

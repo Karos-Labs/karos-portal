@@ -6,6 +6,7 @@ import { Button, Input, Textarea, Label } from "@/components/ui";
 import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { createClientAction } from "@/lib/actions";
+import { CLIENT_CATEGORY_MAX_LENGTH } from "@/lib/utils";
 
 const LOGO_ACCEPT = "image/png,image/jpeg,image/svg+xml,.svg";
 const MAX_LOGO_BYTES = 4 * 1024 * 1024;
@@ -18,7 +19,7 @@ export function CreateClientButton() {
   const [form, setForm] = useState({
     name: "",
     website: "",
-    industry: "",
+    category: "",
     contactEmail: "",
     domains: "",
     description: "",
@@ -57,7 +58,7 @@ export function CreateClientButton() {
   }
 
   function reset() {
-    setForm({ name: "", website: "", industry: "", contactEmail: "", domains: "", description: "", brandVoice: "" });
+    setForm({ name: "", website: "", category: "", contactEmail: "", domains: "", description: "", brandVoice: "" });
     clearLogo();
     setError(null);
     setLogoError(null);
@@ -147,9 +148,16 @@ export function CreateClientButton() {
               <Label>Name *</Label>
               <Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Acme Co" />
             </div>
+            {/* The chip's field from the very first save, capped where the chip
+                is measured — a new client is not created into the legacy name. */}
             <div>
-              <Label>Industry</Label>
-              <Input value={form.industry} onChange={(e) => set("industry", e.target.value)} placeholder="SaaS, retail…" />
+              <Label>Category</Label>
+              <Input
+                value={form.category}
+                onChange={(e) => set("category", e.target.value)}
+                placeholder="SaaS, retail…"
+                maxLength={CLIENT_CATEGORY_MAX_LENGTH}
+              />
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
