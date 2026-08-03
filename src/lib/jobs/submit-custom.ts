@@ -426,6 +426,9 @@ export async function submitCustomAgentJob(
         ...(agent.stepModels && Object.keys(agent.stepModels).length > 0
           ? { step_models: agent.stepModels }
           : {}),
+        // Whole-run model override (optional): unlike step_models, takes
+        // effect unconditionally — no named subagent needed on the skill side.
+        ...(agent.model ? { model: agent.model } : {}),
       },
       callback_url: `${origin}/api/agent-service/webhook`,
       ...(contextFiles.length > 0 ? { context_files: contextFiles } : {}),

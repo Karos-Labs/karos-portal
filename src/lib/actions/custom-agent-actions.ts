@@ -405,6 +405,8 @@ export async function runCustomAgentAction(input: {
   clientId: string;
   prompt: string;
   contextItemIds?: string[];
+  /** "How many drafts?"-style batch-size controls (e.g. the X agent's 5/10/21). Clamped same as a scheduled fire. */
+  chargeMultiplier?: number;
 }): Promise<{ jobId?: string; error?: string }> {
   const user = await requireClientAccess(input.clientId);
   // §2 guard rail: an agent owned by a client-agent umbrella is not the

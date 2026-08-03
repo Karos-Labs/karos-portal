@@ -52,6 +52,15 @@ type AgentIdentity = { key: string; name: string };
 const DOCUMENTS_AND_IMAGES =
   ".pdf,.doc,.docx,.txt,.md,.csv,image/png,image/jpeg,image/webp,image/gif";
 
+/**
+ * A field key reserved to mean "how many outputs" rather than free-text brief
+ * content. Excluded from buildCustomAgentPrompt's prose (the caller reads it
+ * separately via batchSizeFrom and passes it as chargeMultiplier, which
+ * already prepends its own "Create exactly N distinct outputs" instruction —
+ * folding it into the prose too would just repeat the same fact twice).
+ */
+export const BATCH_SIZE_FIELD_KEY = "batch_size";
+
 const generalAttachments: AgentAttachmentProfile = {
   label: "Reference files",
   hint: "Add briefs, examples, brand material, or source data that should shape this run.",
@@ -328,13 +337,17 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     },
   },
   {
-    // Exact key on purpose: only e13 is intake-driven (setup gate + injected
-    // X agent data). Other imported X/Twitter-ish agents get the generic brief.
-    matches: (identity) => identity.startsWith("karos-x-agent "),
+    // Exact key on purpose: only e13/v2 are intake-driven (setup gate +
+    // injected X agent data). Other imported X/Twitter-ish agents get the
+    // generic brief. karos-x-agent-v2 does NOT start with "karos-x-agent "
+    // (the char after "agent" is "-", not a space) — matched explicitly
+    // rather than relaxing the prefix, so a future unrelated key like
+    // "karos-x-agent-analytics" can't accidentally pick up this profile.
+    matches: (identity) => identity.startsWith("karos-x-agent ") || identity.startsWith("karos-x-agent-v2 "),
     profile: {
       eyebrow: "X drafts",
       intro:
-        "Drafts a week of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data. This form only scopes the run. Draft-only; nothing posts without a human.",
+        "Drafts a batch of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data. This form only scopes the run. Draft-only; nothing posts without a human.",
       fields: [
         {
           key: "run_scope",
@@ -344,6 +357,17 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           options: [
             { value: "the company page and every seat", label: "Company page and every seat" },
             { value: "the company page only", label: "Company page only" },
+          ],
+        },
+        {
+          key: BATCH_SIZE_FIELD_KEY,
+          label: "How many drafts?",
+          type: "select",
+          defaultValue: "10",
+          options: [
+            { value: "5", label: "5 drafts" },
+            { value: "10", label: "10 drafts" },
+            { value: "21", label: "21 drafts" },
           ],
         },
         {
@@ -359,7 +383,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Focus this batch on one person's seat.",
         "React to what happened in the industry this week.",
       ],
-      deliverables: ["A week of post drafts across the avenues", "A linked source on every news, quote, and reply post"],
+      deliverables: ["A batch of post drafts across the avenues", "A linked source on every news, quote, and reply post"],
       estimate: "~15–25 min",
       attachments: {
         label: "Extra material for this run (optional)",
@@ -757,10 +781,16 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
 /**
  * The X agent (e13) runs on stored intake (the client's "X agent data" page),
  * so its launch flow gets a setup gate the other agents don't need. Client-safe
- * twin of the server-side isXAgent in agent-service/x-agent-context.ts.
+ * twin of the server-side isXAgent in agent-service/x-agent-context.ts. Covers
+ * v2 (karos-x-agent-v2) too — same intake, same gate.
  */
 export function isXAgentIdentity(key: string): boolean {
-  return key === "karos-x-agent";
+  return key === "karos-x-agent" || key === "karos-x-agent-v2";
+}
+
+/** Narrower than isXAgentIdentity — only true for the v2 rebuild. Client-safe twin of isXAgentV2. */
+export function isXAgentV2Identity(key: string): boolean {
+  return key === "karos-x-agent-v2";
 }
 
 /**
@@ -977,11 +1007,20 @@ export function initialAgentBrief(profile: AgentLaunchProfile): Record<string, s
   );
 }
 
+/** Extracts a positive integer batch size from brief field values, or undefined if absent/invalid. */
+export function batchSizeFrom(values: Record<string, string>): number | undefined {
+  const raw = values[BATCH_SIZE_FIELD_KEY];
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
 export function buildCustomAgentPrompt(
   profile: AgentLaunchProfile,
   values: Record<string, string>,
 ): string {
   return profile.fields
+    .filter((field) => field.key !== BATCH_SIZE_FIELD_KEY)
     .map((field) => ({ label: field.label, value: values[field.key]?.trim() }))
     .filter((entry): entry is { label: string; value: string } => Boolean(entry.value))
     .map((entry) => `${entry.label}\n${entry.value}`)

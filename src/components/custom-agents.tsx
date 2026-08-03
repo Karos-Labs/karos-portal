@@ -51,6 +51,7 @@ import { validateScheduleTiming } from "@/lib/scheduling";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
 import {
   agentKeyMatchesClientSlug,
+  batchSizeFrom,
   buildCustomAgentPrompt,
   initialAgentBrief,
   isLinkedInAgentIdentity,
@@ -1863,6 +1864,7 @@ export function RunCustomAgentModal({
         clientId: selectedClientId,
         prompt,
         contextItemIds: selectedFiles,
+        ...(batchSizeFrom(fields) ? { chargeMultiplier: batchSizeFrom(fields) } : {}),
       });
       if (result.error) {
         setError(result.error);

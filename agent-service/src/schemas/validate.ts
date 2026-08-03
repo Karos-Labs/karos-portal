@@ -36,6 +36,9 @@ const baseRequestSchema = {
           url: { type: "string", format: "uri", pattern: "^https://", maxLength: 2000 },
           description: { type: "string", maxLength: 1000 },
           content_type: { type: "string", maxLength: 200 },
+          // No "..", no leading "/", no backslashes — confines the write to
+          // clients/<slug>/ (see runner/src/context-files.ts's own re-check).
+          client_path: { type: "string", minLength: 1, maxLength: 300, pattern: "^(?!/)(?!.*\\.\\.)[\\w./-]+$" },
         },
       },
     },

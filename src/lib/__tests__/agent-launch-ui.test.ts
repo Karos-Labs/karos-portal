@@ -45,7 +45,7 @@ describe("custom agent launch profiles", () => {
     // rosters, takes) — the launch brief only scopes the run. It must never
     // ask for things the agent BUILDS (audience, themes, cadence) or already
     // stores (account handles).
-    expect(x.fields.map((field) => field.key)).toEqual(["run_scope", "request"]);
+    expect(x.fields.map((field) => field.key)).toEqual(["run_scope", "batch_size", "request"]);
     expect(x.fields.map((field) => field.key)).not.toEqual(
       expect.arrayContaining(["account", "audience", "themes", "cadence"]),
     );

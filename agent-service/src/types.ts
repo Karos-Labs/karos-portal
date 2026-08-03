@@ -8,6 +8,15 @@ export interface ContextFileRef {
   url: string;
   description?: string;
   content_type?: string;
+  /**
+   * Repo-relative destination under clients/<slug>/, e.g.
+   * "internal/x-agent/takes.json". When present, the runner writes the file
+   * there IN ADDITION to client_context/files/<name> — for a skill with a
+   * fixed-path contract (reads a specific file at a specific location every
+   * run, e.g. x-agent-v2's run-protocol) rather than a generic attached
+   * reference document. Absent ⇒ old behavior, client_context/files/ only.
+   */
+  client_path?: string;
 }
 
 export interface JobRequest {

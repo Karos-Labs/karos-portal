@@ -108,7 +108,7 @@ async function main(): Promise<void> {
     report.agentsRepoSha = workspace.agentsRepoSha;
 
     await writeClientContext({ repoDir: workspace.repoDir, brief: spec.brief });
-    const downloaded = await downloadContextFiles(workspace.repoDir, spec.contextFiles);
+    const downloaded = await downloadContextFiles(workspace.repoDir, workspace.clientSlug, spec.contextFiles);
     const linkedSkills = await buildSkillsShim({
       repoDir: workspace.repoDir,
       entrySkillDir: taskConfig.entrySkillDir,

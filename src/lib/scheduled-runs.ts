@@ -19,7 +19,7 @@
  */
 
 import { localYMD, isValidTimeZone, weekdayOf, zonedWallToUtc } from "@/lib/run-cadence";
-import { isRedditAgentIdentity } from "@/lib/custom-agent-launch";
+import { isRedditAgentIdentity, isXAgentV2Identity } from "@/lib/custom-agent-launch";
 import type { PlannedRunCadence } from "@/lib/types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -53,6 +53,14 @@ export const REDDIT_MAX_RUNS_PER_WEEK = 5;
 export const REDDIT_OUTPUTS_PER_RUN = 1;
 
 /**
+ * The X agent v2 rebuild's batch size is a run input under test at 5/10/21
+ * (docs/one-pagers/x-agent-v2-FRAMEWORK.md, Revision 2) — a coarser dial than
+ * the generic 5-per-run ceiling, which would otherwise silently clamp a
+ * client's "21 drafts" selection down to 5 with no visible warning why.
+ */
+export const X_V2_MAX_OUTPUTS_PER_RUN = 21;
+
+/**
  * The scheduling ceilings for one agent. Pure and shared so the dialog's
  * dropdowns and the server clamp cannot drift — the server one is the
  * load-bearing half, since hiding an option is not the same as refusing a
@@ -64,6 +72,9 @@ export function scheduleLimitsFor(agentKey: string): {
 } {
   if (isRedditAgentIdentity(agentKey)) {
     return { maxRunsPerWeek: REDDIT_MAX_RUNS_PER_WEEK, maxOutputsPerRun: REDDIT_OUTPUTS_PER_RUN };
+  }
+  if (isXAgentV2Identity(agentKey)) {
+    return { maxRunsPerWeek: MAX_RUNS_PER_WEEK, maxOutputsPerRun: X_V2_MAX_OUTPUTS_PER_RUN };
   }
   return { maxRunsPerWeek: MAX_RUNS_PER_WEEK, maxOutputsPerRun: MAX_OUTPUTS_PER_RUN };
 }

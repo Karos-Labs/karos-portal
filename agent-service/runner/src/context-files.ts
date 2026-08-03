@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -13,6 +13,7 @@ export interface DownloadedContextFile {
   name: string;
   description?: string;
   bytes: number;
+  clientPath?: string;
 }
 
 export function sanitizeFileName(name: string): string {
@@ -21,11 +22,31 @@ export function sanitizeFileName(name: string): string {
 }
 
 /**
+ * Resolves client_path to an absolute path guaranteed to stay under
+ * clients/<slug>/, re-checking what the schema (validate.ts) already
+ * constrains — the same belt-and-suspenders the artifact store's
+ * sanitizeRelPath applies, kept local since this module has no existing
+ * dependency on agent-service's server-side code.
+ */
+function resolveClientPath(repoDir: string, clientSlug: string, clientPath: string): string {
+  const base = path.resolve(repoDir, "clients", clientSlug);
+  const resolved = path.resolve(base, clientPath);
+  if (resolved !== base && !resolved.startsWith(base + path.sep)) {
+    throw new Error(`context file client_path escapes the client folder: ${clientPath}`);
+  }
+  return resolved;
+}
+
+/**
  * Downloads job input files into client_context/files/ before the agent
- * starts. Content is untrusted data; the prompt says so explicitly.
+ * starts. Content is untrusted data; the prompt says so explicitly. A file
+ * carrying client_path is ALSO written there — for a skill with a fixed-path
+ * contract (reads a specific file at a specific location every run) rather
+ * than a generic attached reference document.
  */
 export async function downloadContextFiles(
   repoDir: string,
+  clientSlug: string,
   files: ContextFileRef[],
 ): Promise<DownloadedContextFile[]> {
   const targetDir = path.join(repoDir, "client_context", "files");
@@ -57,9 +78,10 @@ export async function downloadContextFiles(
         controller.enqueue(chunk);
       },
     });
+    const primaryPath = path.join(targetDir, name);
     await pipeline(
       Readable.fromWeb(response.body.pipeThrough(counter) as import("node:stream/web").ReadableStream),
-      createWriteStream(path.join(targetDir, name)),
+      createWriteStream(primaryPath),
     );
     totalBytes += bytes;
     if (totalBytes > MAX_CONTEXT_TOTAL_BYTES) {
@@ -67,6 +89,12 @@ export async function downloadContextFiles(
     }
     const entry: DownloadedContextFile = { name, bytes };
     if (file.description) entry.description = file.description;
+    if (file.client_path) {
+      const dest = resolveClientPath(repoDir, clientSlug, file.client_path);
+      await mkdir(path.dirname(dest), { recursive: true });
+      await copyFile(primaryPath, dest);
+      entry.clientPath = file.client_path;
+    }
     results.push(entry);
   }
   return results;
@@ -75,6 +103,9 @@ export async function downloadContextFiles(
 export function contextFileList(files: DownloadedContextFile[]): string {
   if (files.length === 0) return "  (none supplied)";
   return files
-    .map((f) => `  - client_context/files/${f.name}${f.description ? ` — ${f.description}` : ""}`)
+    .map((f) => {
+      const location = f.clientPath ? `clients/<slug>/${f.clientPath}` : `client_context/files/${f.name}`;
+      return `  - ${location}${f.description ? ` — ${f.description}` : ""}`;
+    })
     .join("\n");
 }

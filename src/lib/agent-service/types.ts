@@ -10,6 +10,14 @@ export interface AgentServiceContextFile {
   url: string;
   description?: string;
   content_type?: string;
+  /**
+   * Repo-relative destination under clients/<slug>/, e.g.
+   * "internal/x-agent/takes.json". The runner materializes the file there IN
+   * ADDITION to client_context/files/<name> — for a skill with a fixed-path
+   * read contract (x-agent-v2's run-protocol) rather than a generic attached
+   * reference document. Mirrors agent-service's ContextFileRef.client_path.
+   */
+  client_path?: string;
 }
 
 export interface AgentServiceJobRequest {
