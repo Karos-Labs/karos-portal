@@ -46,6 +46,8 @@ const REPO = path.resolve(__dirname, "../..", "..");
 const source = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 
 const CALENDAR_BODY = "src/app/(app)/calendar/calendar-body.tsx";
+/** Where the four assembly steps live now — see the wiring block below. */
+const CLIENT_CALENDAR = "src/lib/client-calendar.ts";
 const CLEANUP_SCRIPT = "scripts/find-duplicate-assets.ts";
 
 function asset(overrides: Partial<CalendarDedupeAsset> = {}): CalendarDedupeAsset {
@@ -530,10 +532,20 @@ describe("the dedupe module stays reviewable", () => {
 describe("the calendar payload is deduped server-side", () => {
   const src = source(CALENDAR_BODY);
   const body = flat(src);
+  const projectionSrc = source(CLIENT_CALENDAR);
+  const projection = flat(projectionSrc);
 
   it("collapses duplicates where the payload is assembled, not at render", () => {
-    expect(body).toContain('import { dedupeCalendarAssets } from "@/lib/calendar-dedupe"');
-    expect(src.match(/dedupeCalendarAssets\(/g)).toHaveLength(1);
+    // THE FOUR STEPS MOVED (AF-19), and the rule did not. Building this payload
+    // — status filter, client redaction boundary, dedupe, classify — now lives
+    // in lib/client-calendar, because the daily digest has to read the same list
+    // and a second copy of the sequence in a cron is exactly what "one source of
+    // truth" rules out. Still ONE dedupe call, still on the assembly side, and
+    // the page takes its result instead of deriving one of its own.
+    expect(projection).toContain('import { dedupeCalendarAssets } from "@/lib/calendar-dedupe"');
+    expect(projectionSrc.match(/dedupeCalendarAssets\(/g)).toHaveLength(1);
+    expect(src, "the page must not grow a second dedupe").not.toContain("dedupeCalendarAssets");
+    expect(body).toContain('import { clientVisibleCalendarAssets } from "@/lib/client-calendar"');
   });
 
   it("hands the deduped list to every downstream reader, not just the posts map", () => {
@@ -542,17 +554,43 @@ describe("the calendar payload is deduped server-side", () => {
     // twice and the badge over-counted the days the calendar is filled through.
     // Pinned as an invariant rather than three call sites: nothing may read the
     // pre-dedupe list after the deduped one is derived from it.
-    expect(body).toContain("const assets = visibleAssets.filter((a) => survivorIds.has(a.id))");
-    expect(src.lastIndexOf("visibleAssets")).toBeLessThan(src.indexOf("const assetsByJob"));
+    expect(body).toContain("const assets = clientVisibleCalendarAssets(scopedAssets,");
+    expect(src.lastIndexOf("scopedAssets")).toBeLessThan(src.indexOf("const assetsByJob"));
     expect(body).toContain("computeRunway(assets,");
     expect(body).toContain("const posts: CalendarPost[] = assets .map(");
   });
 
-  it("groups on the pre-redaction assets, so a locked placeholder keeps its real path", () => {
+  it("groups on the pre-redaction assets, so a locked placeholder keeps its real path", async () => {
     // redactLockedAsset strips a locked post's meta to {locked}, taking the
-    // gcsPath the whole decision rests on with it.
-    expect(body).toContain("const rawById = new Map(scopedAssets.map((a) => [a.id, a]))");
-    expect(body).toContain("rawById.get(a.id) ?? a");
+    // gcsPath the whole decision rests on with it. ASKED OF THE FUNCTION rather
+    // than of its source now that it is one: two copies of the same GCS object
+    // on the same future day are one post, and a client reads them through the
+    // redaction, which is precisely the case where a source assertion could pass
+    // over a broken order.
+    const { clientVisibleCalendarAssets } = await import("@/lib/client-calendar");
+    const FUTURE = Date.now() + 7 * DAY;
+    const twin = (id: string): any => ({
+      id,
+      clientId: "c1",
+      type: "social_post",
+      title: "Podcast cut 3",
+      content: "body",
+      meta: { gcsPath: GCS_PATH },
+      status: "scheduled",
+      scheduledAt: FUTURE,
+      createdBy: "u1",
+      createdAt: 1_000,
+      updatedAt: 1_000,
+    });
+
+    const survivors = clientVisibleCalendarAssets([twin("a1"), twin("a2")], {
+      isClient: true,
+      now: Date.now(),
+    });
+
+    expect(survivors, "the redacted copies were grouped, so neither had a path").toHaveLength(1);
+    expect(survivors[0].locked, "the survivor must still be the redacted copy").toBe(true);
+    expect(survivors[0].meta).toEqual({ locked: true });
   });
 
   it("never tells a client how many copies were hidden", () => {

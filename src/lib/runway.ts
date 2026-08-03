@@ -19,13 +19,14 @@
  * the social target counts only days the platform actually posts on.
  */
 
-import type { Asset } from "@/lib/types";
+import type { Asset, ClientDailyPace } from "@/lib/types";
 import {
   chainFamilyFor,
   isReferenceDocAsset,
   startOfDayMs,
   type ChainFamily,
 } from "@/lib/post-chain";
+import { resolveDailyPace } from "@/lib/daily-pace";
 import { chainAllowsDay } from "@/lib/scheduling";
 
 /** Guaranteed rolling horizon: every active client stays filled this many days out. */
@@ -148,12 +149,14 @@ function isFutureCandidate(a: Asset, today: number): boolean {
  * @param connectedPlatforms Platform ids with a usable integration (e.g. ["instagram"]).
  * @param now                Reference "now" (epoch millis).
  * @param horizonDays        Defaults to RUNWAY_HORIZON_DAYS.
+ * @param pace               The client's stored daily pace. Absent ⇒ one a day.
  */
 export function computeRunway(
   assets: Asset[],
   connectedPlatforms: string[],
   now: number,
   horizonDays: number = RUNWAY_HORIZON_DAYS,
+  pace?: ClientDailyPace | null,
 ): RunwayReport {
   const today = startOfDayMs(now);
   const horizonThroughMs = (() => {
@@ -173,8 +176,22 @@ export function computeRunway(
   // Target upcoming posts per family within the window. Social fills every
   // postable day (the visible calendar); email/article run at a realistic
   // low cadence so they're never force-generated daily.
+  //
+  // SCALED BY THE POST LANE, and only by it. A client paced at two posts a day
+  // drains this family twice as fast, so a target of one-per-day would report
+  // full runway on a calendar that empties in half the horizon. `clipsPerDay`
+  // deliberately does NOT scale it: the top-up cron dispatches `social_post`
+  // managed runs, which produce written posts, and clips arrive from the podcast
+  // pipeline instead — firing more social runs would not fill a clip day.
+  //
+  // The mirror of that: `availableByFamily` still counts every future social
+  // asset, clips included, so a client with a clip backlog is measured as more
+  // covered than their post lane alone is. That under-fires rather than
+  // over-fires, which is the safe direction for a generator that spends money,
+  // and at the default pace of one a day none of this changes anything.
+  const postsPerDay = resolveDailyPace(pace).postsPerDay;
   const targetByFamily: Record<ChainFamily, number> = {
-    social: countPostableDays("social_post", undefined, now, horizonDays),
+    social: countPostableDays("social_post", undefined, now, horizonDays) * postsPerDay,
     email: 2,
     article: 1,
   };

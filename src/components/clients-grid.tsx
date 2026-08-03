@@ -8,6 +8,7 @@ import { Modal } from "@/components/modal";
 import { Icon } from "@/components/icon";
 import { updateClientAction, deleteClientAction } from "@/lib/actions";
 import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
+import { MAX_PER_DAY } from "@/lib/daily-pace";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { LOW_CREDIT_THRESHOLD } from "@/lib/constants";
 import type { Client } from "@/lib/types";
@@ -54,7 +55,16 @@ function EditClientModal({
     description: client.description ?? "",
     brandVoice: client.brandVoice ?? "",
     agentsRepoSlug: client.agentsRepoSlug ?? "",
+    timeZone: client.timeZone ?? "",
+    // BLANK IS A REAL VALUE HERE, and it is why these are not prefilled with 1.
+    // An empty pace box means "no pace set", which puts the client on the single
+    // item a day both planners have always done. Prefilling the default would
+    // make opening this dialog and pressing Save silently split the client's
+    // days into two lanes. See lib/daily-pace.
+    clipsPerDay: client.dailyPace?.clipsPerDay?.toString() ?? "",
+    postsPerDay: client.dailyPace?.postsPerDay?.toString() ?? "",
   });
+  const [dailyDigestEnabled, setDailyDigestEnabled] = useState(client.dailyDigestEnabled === true);
 
   // Logo - uploaded/removed immediately via the logo API route (client already exists).
   const [logoUrl, setLogoUrl] = useState(client.logoUrl ?? "");
@@ -126,6 +136,13 @@ function EditClientModal({
         description: form.description.trim(),
         brandVoice: form.brandVoice.trim(),
         agentsRepoSlug: form.agentsRepoSlug.trim().toLowerCase(),
+        timeZone: form.timeZone.trim(),
+        // Sent as typed. The action clamps and decides whether the pair means
+        // "no pace" (both blank ⇒ the field is cleared) — a browser is not where
+        // a stored ceiling gets validated.
+        clipsPerDay: form.clipsPerDay.trim(),
+        postsPerDay: form.postsPerDay.trim(),
+        dailyDigestEnabled,
       });
       onClose();
       router.refresh();
@@ -283,6 +300,75 @@ function EditClientModal({
             onChange={(e) => set("brandVoice", e.target.value)}
             placeholder="Tone, vocabulary, do's and don'ts. Agents use this to stay on-brand."
           />
+        </div>
+
+        {/* ── Daily pace + digest (AF-19) ──────────────────────────────────
+            Plain labels, and the helper text says what LEAVING THEM BLANK
+            does, because blank is the value that keeps a client exactly as
+            they are today. The two boxes are the ceilings both day planners
+            fill a calendar day to (lib/daily-pace). */}
+        <div className="rounded-[10px] border border-border bg-surface-2 p-3">
+          <p className="text-xs font-semibold">Daily pace</p>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Clips a day</Label>
+              <Input
+                type="number"
+                min={1}
+                max={MAX_PER_DAY}
+                value={form.clipsPerDay}
+                onChange={(e) => set("clipsPerDay", e.target.value)}
+                placeholder="1"
+              />
+            </div>
+            <div>
+              <Label>Posts a day</Label>
+              <Input
+                type="number"
+                min={1}
+                max={MAX_PER_DAY}
+                value={form.postsPerDay}
+                onChange={(e) => set("postsPerDay", e.target.value)}
+                placeholder="1"
+              />
+            </div>
+          </div>
+          <p className="mt-1.5 text-xs text-muted-2">
+            How much of one calendar day this client&apos;s content fills. Leave both blank
+            for one item a day, which is the default. Set them and a day holds that many
+            clips and that many posts.
+          </p>
+        </div>
+
+        <div className="rounded-[10px] border border-border bg-surface-2 p-3">
+          <label className="flex cursor-pointer items-start gap-2.5">
+            <input
+              type="checkbox"
+              checked={dailyDigestEnabled}
+              onChange={(e) => setDailyDigestEnabled(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--neon)]"
+            />
+            <span>
+              <span className="text-xs font-semibold">Daily email</span>
+              <span className="mt-1 block text-xs text-muted-2">
+                Sends this client one email each morning in their own timezone, listing
+                that day&apos;s clips and posts from their calendar. Off unless you switch
+                it on.
+              </span>
+            </span>
+          </label>
+          <div className="mt-3">
+            <Label>Timezone</Label>
+            <Input
+              value={form.timeZone}
+              onChange={(e) => set("timeZone", e.target.value)}
+              placeholder="e.g. America/Sao_Paulo"
+            />
+            <p className="mt-1 text-xs text-muted-2">
+              Decides which day the email covers and when it goes out. Blank uses the
+              server&apos;s timezone.
+            </p>
+          </div>
         </div>
         {error && <p className="text-xs text-danger">{error}</p>}
         <Button className="w-full" loading={loading} onClick={submit}>

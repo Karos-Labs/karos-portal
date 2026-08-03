@@ -132,7 +132,9 @@ export async function GET(req: NextRequest) {
         .filter((i) => i.platform !== "google" && integrationIsUsable(i))
         .map((i) => i.platform);
 
-      const runway = computeRunway(assets, connectedPlatforms, now);
+      // The client's pace goes in: a client whose calendar takes two posts a day
+      // needs twice the runway to reach the same horizon date.
+      const runway = computeRunway(assets, connectedPlatforms, now, undefined, client.dailyPace);
       const deficit: Partial<Record<ChainFamily, number>> = {};
       for (const f of runway.shortFamilies) deficit[f] = runway.deficitByFamily[f];
 

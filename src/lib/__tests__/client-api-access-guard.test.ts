@@ -617,6 +617,10 @@ describe("every API route that takes a client id asks the fence", () => {
     "clients/[id]/report": "fenced",
     "clients/[id]/simulate": "fenced",
     "credits/reconcile": "cron",
+    // AF-19. Iterates every client with the digest switched on and mails their
+    // own calendar day; the client ids come from the collection, never from the
+    // request, which is the shape this bucket exists for.
+    "daily-digest": "cron",
     "ingest/fireflies": "signed",
     // Filed "self" on the first pass and rejected by the mechanical check
     // below — it takes `?clientId=` and signs it into an OAuth state. Sixth

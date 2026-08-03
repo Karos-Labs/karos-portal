@@ -189,7 +189,7 @@ export function BulkUploadClips({ clientId, bucketName }: { clientId: string; bu
       const { scheduled } = await bulkScheduleClipsAction(clientId, startAtMs);
       setScheduleResult(
         scheduled > 0
-          ? `Scheduled ${scheduled} clip${scheduled === 1 ? "" : "s"}, one per day from ${scheduleDate}.`
+          ? `Scheduled ${scheduled} clip${scheduled === 1 ? "" : "s"} from ${scheduleDate}, at this client's clip pace.`
           : "No unscheduled bulk-uploaded clips to schedule.",
       );
       router.refresh();
@@ -311,7 +311,7 @@ export function BulkUploadClips({ clientId, bucketName }: { clientId: string; bu
 
           <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
             <label className="text-xs text-muted" htmlFor="bulk-schedule-start">
-              Auto-Schedule Bulk Batch (1/day) from
+              Auto-Schedule Bulk Batch from
             </label>
             <input
               id="bulk-schedule-start"

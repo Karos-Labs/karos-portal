@@ -1,12 +1,14 @@
 /**
- * The content chain — pure, deterministic one-post-per-day planning.
+ * The content chain — pure, deterministic per-day planning.
  *
  * Every schedulable asset carries a stable lexicographic `orderKey`
  * reconstructing internal lab generation order (`${runName}#${itemKey}`; run
- * names lead with YYYY-MM-DD), and `planClientChain` assigns exactly one asset
- * per server-local calendar day per client PER FAMILY (social / email /
- * article chains are independent, so one Instagram post and one newsletter may
- * share a day). The planner only ever proposes dates — it never touches
+ * names lead with YYYY-MM-DD), and `planClientChain` assigns assets to
+ * server-local calendar days per client PER FAMILY (social / email / article
+ * chains are independent, so one Instagram post and one newsletter may share a
+ * day). HOW MANY a day holds is the client's own pace (lib/daily-pace), which
+ * defaults to the one-per-day this planner has always done. The planner only
+ * ever proposes dates — it never touches
  * status, so the /api/publish cron (status IN [scheduled, approved] only) can
  * never pick up a chain-planned draft.
  *
@@ -16,9 +18,10 @@
  * millis.
  */
 
-import type { Asset, AssetType, ManagedTaskType } from "@/lib/types";
+import type { Asset, AssetType, ClientDailyPace, ManagedTaskType } from "@/lib/types";
 import { MANAGED_PRODUCTS, getManagedProduct } from "@/lib/agent-service/products";
 import { chainAllowsDay, startOfDayMs } from "@/lib/scheduling";
+import { createDayLedger, paceLaneFor, resolveDailyPace, type PaceLane } from "@/lib/daily-pace";
 
 /* ────────────────────────── day / slot math ────────────────────────── */
 
@@ -174,12 +177,14 @@ function hasChainProvenance(a: Pick<Asset, "meta" | "orderKey">): boolean {
  *     opts.skipIds; drafts only in "reflow", any status in "migrate". Sorted by
  *     deriveOrderKey (id tiebreak).
  *   OCCUPANCY: every non-candidate (pinned or provenance-excluded or skipped)
- *     with a date occupies startOfDayMs(scheduledAt ?? publishedAt) for its
- *     family.
+ *     with a date books startOfDayMs(scheduledAt ?? publishedAt) in ITS LANE
+ *     (clip / post, see lib/daily-pace) for its family.
  *
- * The day cursor walks from opts.startDayMs ?? today, skipping occupied days,
- * assigning chainSlotForDay(day) to each candidate in order. Assignments are
- * emitted ONLY when they change the asset (different scheduledAt, or stored
+ * A day cursor PER LANE walks from opts.startDayMs ?? today, skipping days that
+ * lane has already filled, assigning chainSlotForDay(day) to each candidate in
+ * order. With no pace configured the two lanes share one counter per day, so the
+ * pair of cursors reproduces the single one-per-day cursor exactly. Assignments
+ * are emitted ONLY when they change the asset (different scheduledAt, or stored
  * orderKey missing/different), so re-planning planned output is a no-op.
  */
 export function planClientChain(
@@ -196,6 +201,12 @@ export function planClientChain(
     skipIds?: string[];
     /** Restrict planning to these families (e.g. the migration's --family social). */
     families?: ChainFamily[];
+    /**
+     * The client's stored pace. Absent ⇒ one item a day, which is what this
+     * planner did before the field existed — so every caller that has no client
+     * record in hand (scripts, tests) keeps the old behaviour by saying nothing.
+     */
+    pace?: ClientDailyPace | null;
   },
 ): ChainAssignment[] {
   const mode = opts.mode ?? "reflow";
@@ -203,6 +214,7 @@ export function planClientChain(
   const today = startOfDayMs(opts.now);
   const skip = new Set(opts.skipIds ?? []);
   const familyFilter = opts.families ? new Set(opts.families) : null;
+  const pace = resolveDailyPace(opts.pace);
 
   const isPinned = (a: Asset): boolean => {
     if (a.status === "published" || a.publishedAt != null) return true;
@@ -247,24 +259,36 @@ export function planClientChain(
         return cmp !== 0 ? cmp : a.id.localeCompare(b.id);
       });
 
-    const occupied = new Set<number>();
+    const ledger = createDayLedger(pace);
     for (const a of familyAssets) {
       if (candidates.includes(a)) continue;
       const at = a.scheduledAt ?? a.publishedAt;
-      if (at != null) occupied.add(startOfDayMs(at));
+      if (at != null) ledger.book(paceLaneFor(a), startOfDayMs(at));
     }
 
-    let cursor = startDay;
+    // ONE CURSOR PER LANE. A single cursor cannot serve two ceilings: the moment
+    // a day holds two clips and one post, "the next free day" is a different
+    // date for each lane, and interleaving clips and posts through one pointer
+    // would push each kind past days its own lane still has room on. The two
+    // start together and only ever move forward.
+    const cursors: Record<PaceLane, number> = { clip: startDay, post: startDay };
     for (const a of candidates) {
-      // Skip days already booked in this family AND weekend days this asset's
-      // platform doesn't post on (chainAllowsDay) — a weekday-only platform
-      // rolls forward to the next weekday instead of landing on a dead weekend.
-      while (occupied.has(cursor) || !chainAllowsDay(a.type, a.scheduledPlatform, new Date(cursor).getDay())) {
+      const lane = paceLaneFor(a);
+      let cursor = cursors[lane];
+      // Skip days this lane has already filled in this family AND weekend days
+      // this asset's platform doesn't post on (chainAllowsDay) — a weekday-only
+      // platform rolls forward to the next weekday instead of landing on a dead
+      // weekend.
+      while (ledger.isFull(lane, cursor) || !chainAllowsDay(a.type, a.scheduledPlatform, new Date(cursor).getDay())) {
         cursor = nextDayStart(cursor);
       }
       const slot = chainSlotForDay(cursor);
-      occupied.add(cursor);
-      cursor = nextDayStart(cursor);
+      ledger.book(lane, cursor);
+      // The cursor STAYS on the day it just used rather than stepping past it:
+      // a day with room left for this lane is where the next one of these goes.
+      // At the default ceiling of 1 the loop above steps off it immediately, so
+      // this is the same walk as before.
+      cursors[lane] = cursor;
       const derived = deriveOrderKey(a);
       if (a.scheduledAt !== slot || a.orderKey !== derived) {
         assignments.push({ id: a.id, scheduledAt: slot, orderKey: derived });
