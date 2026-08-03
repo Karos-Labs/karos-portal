@@ -15,6 +15,11 @@ import {
   scheduleRowLabel,
   type ClientAgentIdentity,
 } from "@/lib/agent-identity-map";
+import {
+  assetRowPlatform,
+  runRowPlatform,
+  scheduleRowPlatform,
+} from "@/lib/content-platform";
 import { stripInlineMarkdown, toPlainSummary } from "@/lib/doc-render";
 import { isClientCalendarStatus, postKind } from "@/lib/calendar-kind";
 import { projectPastRuns } from "@/lib/calendar-past-runs";
@@ -325,6 +330,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       // reassuring line with no internal vocabulary ("cron", "Jobs page",
       // "stuck"); staff get the operational detail, same split this file
       // already applies to `lastError` via clientSafeRefusal below.
+      const schedulePlatform = scheduleRowPlatform(r, umbrellasFor(r.clientId));
       const stuck = r.nextRunAt < scheduleNow;
       const stuckLabel = stuck ? (isClient ? "Delayed" : "Stuck") : undefined;
       const stuckMessage = stuck
@@ -351,6 +357,13 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         productName: scheduleRowLabel(r, umbrellasFor(r.clientId)),
         productColor: r.agentColor,
         productIcon: r.agentIcon,
+        // AF-20: the platform this schedule's posts will target, shipped as a
+        // TOKEN. The umbrella row it was read from never crosses the boundary —
+        // same rule the stuck copy and the refusal text on this row already
+        // follow (redaction happens server-side, at the projection, never at
+        // render). Resolved once per ROW, not per occurrence: a weekday
+        // schedule projects five chips a week and they are all the same agent.
+        ...(schedulePlatform ? { platform: schedulePlatform } : {}),
         cadence: r.cadence,
         // Pace for a client, mechanics for staff. describeCadence prints "3×
         // weekly", which names RUNS - and on a schedule storing several outputs
@@ -446,6 +459,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     },
   ).map(({ job: j, deliveredAssets: views }) => {
     const agent = agentByName.get(j.agentName);
+    const runPlatform = runRowPlatform(j, umbrellasFor(j.clientId));
     return {
       id: j.id,
       kind: "past" as const,
@@ -460,6 +474,10 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       productName: runRowLabel(j, umbrellasFor(j.clientId)),
       productColor: agent?.color ?? "#FF6B2C",
       productIcon: agent?.icon ?? "Bot",
+      // AF-20, asked of the JOB alone for the same reason the label above is:
+      // this card IS the run, so feeding its deliverables in would let one
+      // asset's booked channel speak for a run that produced several.
+      ...(runPlatform ? { platform: runPlatform } : {}),
       jobStatus: j.status,
       // Counts the views above, so for a client it counts what they have been
       // given at this moment and not their locked upcoming slots. Read rule 2 in
@@ -476,10 +494,16 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   const runs = [...scheduledEntries, ...pastEntries];
 
   // ── Post publish events (auto-placed + manually scheduled + published) ──
-  // No identity call here on purpose: a CalendarPost carries a title, a day and
-  // a kind, and names no agent at all. F147's second name entered this surface
-  // through the RUN cards above, which is where the resolver belongs. Give a
-  // post an agent line later and it takes the same call.
+  // A CalendarPost still carries no agent LINE — no name, no blurb, nothing
+  // that would re-open the F147 double identity this surface was cleaned of.
+  //
+  // It does now take an identity CALL, which is the case that note anticipated
+  // ("give a post an agent line later and it takes the same call"), and it
+  // takes it for the platform rather than for a name: AF-20 says every calendar
+  // item shows where its content is going, and the umbrella is the rung that
+  // answers for a placeholder post with no booked channel yet. What crosses the
+  // boundary is one token — "instagram" — and the resolver's rungs are ordered
+  // so the asset's own booked channel outranks the agent that produced it.
   //
   // `assets` is already one document per post — see the dedupe above.
   const posts: CalendarPost[] = assets
@@ -487,6 +511,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       const kind = postKind(a);
       if (!kind) return null;
       const at = kind === "published" ? (a.publishedAt ?? a.scheduledAt!) : a.scheduledAt!;
+      const platform = assetRowPlatform(a, umbrellasFor(a.clientId));
       return {
         assetId: a.id,
         clientId: a.clientId,
@@ -494,6 +519,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         title: cleanTitle(a.title),
         at,
         kind,
+        ...(platform ? { platform } : {}),
         images: assetImages(a),
         // Same leak class as the run cards above - same treatment.
         textPreview: toPlainSummary(a.content, 160),
