@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { SocialPlatformMark } from "@/components/agent-identity";
+import { platformForAgentIdentity } from "@/lib/content-platform";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { NO_FORMATS_YET } from "@/lib/client-agent-format-copy";
 import { moveTemplateKey } from "@/lib/client-agent-runs";
@@ -405,19 +407,29 @@ const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  * "ready"/"coming" distinction, no asset link and no count: a pre-generated
  * post and a day-of run project into an identical chip, and that
  * indistinguishability is the churn guard, not a copy choice (§4.1).
+ *
+ * AF-20's mark is safe under that rule for one reason worth stating: it is
+ * resolved from the AGENT, so it is the same glyph on every chip in the strip.
+ * Reading it off a per-day asset would be the churn guard broken - days with a
+ * pre-generated post would render differently from day-of days, which is
+ * exactly the distinction the strip exists to withhold.
  */
 export function WeekStrip({
   week,
+  identity,
   clientId,
   onNote,
 }: {
   week: ClientAgentCardRow["week"];
+  /** The agent's `"<key> <name>"` string - the platform mark's one source here. */
+  identity?: string;
   clientId?: string;
   /** Present ⇒ days are pressable and open the note editor (detail page only). */
   onNote?: (day: ClientAgentCardRow["week"][number]) => void;
 }) {
   if (week.length === 0) return null;
   const interactive = Boolean(onNote && clientId);
+  const platform = identity ? platformForAgentIdentity(null, identity) : null;
   return (
     <div className="mt-4">
       <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
@@ -429,6 +441,9 @@ export function WeekStrip({
           const at = new Date(Date.UTC(y, mo - 1, d));
           const body = (
             <>
+              {platform && (
+                <SocialPlatformMark platform={platform} className="mr-1.5 inline h-3 w-3 align-[-0.1em] text-muted-2" />
+              )}
               <span className="text-muted-2">
                 {WEEKDAY[at.getUTCDay()]} {at.getUTCDate()}
               </span>

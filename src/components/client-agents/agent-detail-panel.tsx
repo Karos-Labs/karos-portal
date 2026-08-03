@@ -286,7 +286,12 @@ export function AgentDetailPanel({
               (§4.3). It stays intent-only: a note marker says the client wrote
               something, which they already know, and still reveals nothing
               about whether that day's post exists yet. */}
-          <WeekStrip week={agent.week} clientId={agent.clientId} onNote={setNoteDay} />
+          <WeekStrip
+            week={agent.week}
+            identity={agent.identity}
+            clientId={agent.clientId}
+            onNote={setNoteDay}
+          />
           {/* B2: the notes reach the people who apply them. The live CARD has
               always mounted this for staff; the detail page is where staff now
               read an agent, so without it the notes a client leaves had no
