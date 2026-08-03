@@ -133,3 +133,18 @@ step: tsc clean · 3433 tests · build exit 0 · lint 0 errors.
   badges) recommended keep.
 - Deploy note from the branch itself: run scripts/audit-schedule-billing-flags.ts
   READ-ONLY before this branch deploys.
+
+## CD-M — post-push directives (Albert, 2026-08-03)
+
+- **AF-19 Pitch by Deel daily pace + digest.** Two podcast clips per day
+  (instead of one) plus one post per day for Pitch by Deel; delivered as a
+  daily routine: an email every day from the hello@ address carrying the two
+  clips and the post, with the calendar. The email is DRIVEN by the live
+  portal calendar (one source of truth), so "sync" holds by construction.
+  Pace is per-client configuration, staff-editable, not a hardcode.
+- **AF-20 Platform icons everywhere.** Every calendar item — upcoming and
+  past — shows the icon of the PLATFORM the content targets (Instagram mark
+  for an Instagram post, TikTok mark for a clip, X/LinkedIn likewise), and
+  the copilot's @-agent tags show the same platform logo instead of the
+  generic glyph. One rule, all clients: "so that they understand what post
+  they're going to get." The AF-4 SocialPlatformMark set is the icon source.
