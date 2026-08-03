@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { stripPipelineMarkers } from "@/lib/doc-render";
 // Quoted from the pricing home, off the same constant the route charges from.
 import { insightsRefreshPrice } from "@/lib/credits";
+import { normalizeDashes } from "@/lib/text-utils";
 
 /**
  * AI Insights - the client-facing readout of the Self-Improving Marketing Loop.

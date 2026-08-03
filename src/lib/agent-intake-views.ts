@@ -249,9 +249,15 @@ export function toXIntakeView(
 ): XIntakeView | null {
   if (!intake && !profile) return null;
   return {
-    handle: profile?.handle ?? null,
-    ...(profile?.comeAcross ? { comeAcross: profile.comeAcross } : {}),
-    offLimits: profile?.offLimits ?? "",
+    // Profile doc first (x-agent-v2's home for these), the intake doc as the
+    // legacy fallback — production still holds pre-migration intake docs whose
+    // handle/off-limits never moved, and a view that ignored them would strip
+    // a client's own saved answers from every surface that renders this.
+    handle: profile?.handle ?? intake?.handle ?? null,
+    ...(profile?.comeAcross ?? intake?.comeAcross
+      ? { comeAcross: (profile?.comeAcross ?? intake?.comeAcross) as string }
+      : {}),
+    offLimits: profile?.offLimits ?? intake?.offLimits ?? "",
     roster: intake?.roster ?? [],
     ...(intake?.premium !== undefined ? { premium: intake.premium } : {}),
   };

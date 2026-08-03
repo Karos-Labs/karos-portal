@@ -6,6 +6,7 @@ import { Badge, Button, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { pickAgentSlotOptionAction } from "@/lib/actions/slot-option-actions";
 import { optionsLead, type ClientXOption } from "@/lib/x-options";
+import { normalizeDashes } from "@/lib/text-utils";
 
 /**
  * Today's three options, and the one gesture that turns one of them into a post

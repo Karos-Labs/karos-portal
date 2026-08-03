@@ -2513,7 +2513,7 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
           />
           <p className="mt-1 text-xs text-muted-2">
             `step name: model id`, one per line. Only takes effect for a skill whose steps are
-            named subagents matching these names — a no-op otherwise. Leave empty to run the whole
+            named subagents matching these names, and is a no-op otherwise. Leave empty to run the whole
             job on the task type&apos;s single default model, as today.
           </p>
         </div>

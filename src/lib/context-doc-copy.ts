@@ -39,6 +39,11 @@ export const CONTEXT_DOC_LABEL: Record<ContextDocType, string> = {
   "client-guidelines": "Client guidelines",
   "action-plan": "Action plan",
   "meeting-notes": "Meeting notes",
+  // x-agent-v2 profile-scope docs (handle / off-limits / come-across moved
+  // into clientContextDocs — see upsertAgentProfileScope).
+  "x-agent-profile": "X agent profile",
+  "linkedin-agent-profile": "LinkedIn agent profile",
+  "reddit-agent-profile": "Reddit agent profile",
 };
 
 /**

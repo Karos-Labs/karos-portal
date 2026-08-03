@@ -136,7 +136,9 @@ const SCHEDULE_ROW_CLIENT_KEYS = [
   "lastErrorAt",
 ];
 const SCHEDULE_ROW_STAFF_ONLY_KEYS = ["prompt"];
-const SUMMARY_KEYS = ["id", "key", "name", "clientBlurb", "icon", "color", "creditCost"];
+// `enabled` crossed into the summary with main's coming-soon roster: the run
+// dialog refuses a disabled agent client-side with the same word the card uses.
+const SUMMARY_KEYS = ["id", "key", "name", "clientBlurb", "icon", "color", "creditCost", "enabled"];
 /** One day of the "Coming up" strip. */
 const WEEK_ENTRY_KEYS = ["dateKey", "label", "slotId", "note", "canNote"];
 const WEEK_NOTE_KEYS = ["text", "authorName", "createdAt", "applied"];

@@ -101,7 +101,7 @@ export async function startTaskExecutionAction(
   if (blocker) {
     return {
       ok: false,
-      error: `Waiting on "${blocker}" to finish first - this campaign step runs after it.`,
+      error: `Waiting on "${blocker}" to finish first. This campaign step runs after it.`,
     };
   }
 

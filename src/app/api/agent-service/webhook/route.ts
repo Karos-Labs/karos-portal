@@ -407,6 +407,11 @@ export async function POST(req: NextRequest) {
   // first. Keyed by artifact name so we can restore slide order (slide-2
   // before slide-10) regardless of artifact arrival order.
   const imageEntries: { name: string; url: string }[] = [];
+  // Setup (launch) runs may emit one voice-profile--<seat-slug>.md per seat
+  // swept — captured off the same decoded bytes as primaryText, no second
+  // fetch (x-agent-v2). Launch runs only; launch deliverables stay staff-only
+  // regardless via launchDeliverable:true below.
+  const voiceProfileArtifacts: { seatSlug: string; content: string }[] = [];
   // What is LEFT of the pre-claim deadline, counted from the top of the handler.
   // Every network call below is bounded by this rather than by a fixed
   // per-artifact constant, and a non-positive value means the budget is spent:
@@ -419,11 +424,6 @@ export async function POST(req: NextRequest) {
   const deliveryNonce = randomUUID().slice(0, 8);
 
   if (payload.status === "done") {
-    // Setup (launch) runs may emit one voice-profile--<seat-slug>.md per seat
-    // swept — captured off the same decoded bytes as primaryText, no second
-    // fetch (x-agent-v2). Only meaningful on launch runs; launch deliverables
-    // stay staff-only regardless via launchDeliverable:true below.
-    const voiceProfileArtifacts: { seatSlug: string; content: string }[] = [];
 
     for (const artifact of payload.artifacts) {
       // The value checked IS the value passed, so AbortSignal.timeout can never

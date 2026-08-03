@@ -2,11 +2,13 @@ import "server-only";
 
 import {
   getAgentIntake,
+  getAgentProfileDocData,
   listAgentIntake,
   listClientSeats,
   listXNewsUpdates,
   listXTakes,
 } from "@/lib/data";
+import type { AgentProfileScopeFields } from "@/lib/data";
 import {
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
@@ -169,11 +171,14 @@ const REDDIT_MODE_LABEL: Record<"warming" | "established", string> = {
 function intakeAnswersFor(
   agent: AgentIntake["agent"],
   doc: AgentIntake | null,
+  xProfile: AgentProfileScopeFields | null,
 ): AgentInputAnswer[] {
-  if (!doc) return [];
+  if (!doc && !(agent === "x" && xProfile)) return [];
   switch (agent) {
     case "x":
-      return xAnswers(toXIntakeView(doc));
+      // Intake + profile scope together (x-agent-v2): the handle and
+      // off-limits moved to the profile doc; roster/premium stay on intake.
+      return xAnswers(toXIntakeView(doc, xProfile));
     case "linkedin":
       return liAnswers(toLiIntakeView(doc));
     case "reddit":
@@ -240,10 +245,12 @@ export function toAgentInputRows(args: {
   intake: AgentIntake[];
   news: XNewsUpdate[];
   takes: XTake[];
+  /** X only — the profile-scope doc that now carries handle/off-limits (x-agent-v2). */
+  xProfile?: AgentProfileScopeFields | null;
 }): AgentInputRow[] {
   const rows: AgentInputRow[] = [];
   const answersOf = (doc: AgentIntake | null): { answers?: AgentInputAnswer[] } => {
-    const saved = intakeAnswersFor(args.agent, doc);
+    const saved = intakeAnswersFor(args.agent, doc, args.xProfile ?? null);
     // ABSENT, not empty. A row with nothing saved stays the plain link to the
     // form it is missing; growing an empty disclosure on it would be a control
     // that opens onto nothing.
@@ -369,15 +376,23 @@ export async function readAgentInputDocs(
   const agent = intakeFamilyFor(agentKey);
   if (!agent) return null;
 
-  const [company, intake, seats, news, takes] = await Promise.all([
+  const [company, intake, seats, news, takes, xProfile] = await Promise.all([
     getAgentIntake(clientId, agent, null),
     agent === "reddit" ? Promise.resolve<AgentIntake[]>([]) : listAgentIntake(clientId, agent),
     agent === "reddit" ? Promise.resolve<ClientSeat[]>([]) : listClientSeats(clientId),
     agent === "reddit" ? Promise.resolve<XNewsUpdate[]>([]) : listXNewsUpdates(clientId),
     agent === "x" ? listXTakes(clientId) : Promise.resolve<XTake[]>([]),
+    // x-agent-v2 moved the company handle/off-limits/come-across into the
+    // profile-scope doc; the X view reads intake + profile together.
+    agent === "x" ? getAgentProfileDocData(clientId, "x") : Promise.resolve(null),
   ]);
 
-  return { agent, rows: toAgentInputRows({ agent, company, seats, intake, news, takes }) };
+  return {
+    agent,
+    // The COMPANY scope of the profile doc — per-seat scopes stay behind the
+    // intake surface, same as before.
+    rows: toAgentInputRows({ agent, company, seats, intake, news, takes, xProfile: xProfile?.company ?? null }),
+  };
 }
 
 /**

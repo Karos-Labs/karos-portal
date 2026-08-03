@@ -775,7 +775,7 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, 
                 className="mt-1 inline-flex items-center gap-1 text-xs text-neon hover:underline"
               >
                 <Icon name="Boxes" className="h-3 w-3" />
-                Part of a campaign - view run
+                Part of a campaign · view run
               </a>
             )}
           </div>

@@ -113,6 +113,7 @@ function gateMarkup(entry: {
         clientBlurb: "Drafts posts for your team to review.",
         icon: "Sparkles",
         color: "#A3E635",
+        enabled: true,
       }}
       clientId="c1"
       contextItems={[]}

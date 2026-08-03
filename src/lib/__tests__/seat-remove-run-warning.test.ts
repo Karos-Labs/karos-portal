@@ -19,6 +19,7 @@ const D = vi.hoisted(() => ({
   listXDraftFeedback: vi.fn(),
   listXNewsUpdates: vi.fn(),
   listXTakes: vi.fn(),
+  getAgentProfileDocData: vi.fn(),
 }));
 
 vi.mock("@/lib/data", () => D);
@@ -103,6 +104,7 @@ beforeEach(() => {
   D.listXDraftFeedback.mockResolvedValue([]);
   D.listXNewsUpdates.mockResolvedValue([]);
   D.listXTakes.mockResolvedValue([]);
+  D.getAgentProfileDocData.mockResolvedValue({ company: null, seats: {} });
 });
 
 describe.each(SURFACES)("$family — the in-flight warning the client is shown", (surface) => {
