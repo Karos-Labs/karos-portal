@@ -295,7 +295,7 @@ export async function buildXAgentIntakeView(
     listXTakes(clientId),
     listXDraftFeedback(clientId),
     opts.jobs ?? listJobs({ clientId }),
-    getCustomAgentByKey("karos-x-agent"),
+    getCustomAgentByKey("karos-x-agent-v2"),
     getAgentProfileDocData(clientId, "x"),
   ]);
 

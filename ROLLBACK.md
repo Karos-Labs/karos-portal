@@ -165,4 +165,42 @@ changes except where noted.
 | Lane-preference input (shift the default 3/3/2/1/1 mix) | No existing data model or UI anywhere in the portal — genuinely new, not an extension. Framework.md itself calls the default mix "a default, not a rule," so v2 works without it; it's a refinement, not a blocker. |
 | Review UI for v2's per-post output shape | v2 writes numbered `client/<NN>-post/{post.md,about.txt}` folders (multiple independent posts) instead of v1's single `DRAFTS.md` batch file that `x-drafts-review.tsx` parses. Needs either a webhook change to create one asset per surviving post, or a new parser — a real UI task, not done here. |
 | Per-identity file-path materialization (`client_path`) | Built the mechanism (V1) but did not use it for X v2's specific paths — v2's run-protocol.md expects per-run, per-identity file placement that the current `buildXAgentContextFiles` (whole-client, all-identities-at-once) doesn't cleanly map onto without a redesign. Relying instead on the existing, already-negotiated contract (items 1/3/4) that tells the lab team to read `client_context/files/x-portal-intake.md` etc. — confirm with them this still holds for v2 specifically. |
+
+## X agent v1 retirement + v2 promotion — 2026-08-03 (explicit operator instruction: "the old X agent is unneeded, remove this old agent - it shouldnt be on any piece of code and the db - deploy the v2 - this is the official version - do it on prep and production")
+
+v1 (`karos-x-agent`, `products/live/x-agent`) is fully removed from code and
+from BOTH Firestore databases (production `(default)` and `prep`). v2
+(`karos-x-agent-v2`) is promoted from `enabled: false` "unreviewed" to
+`enabled: true`, display copy dropped the "(unreviewed)"/"separate from
+production" framing, in both databases. **Flag for the record**: the
+karos-agents repo's own runtime manifest (`catalog/agent-runtime-manifest.json`)
+still marks both x-agent-v2 skills `status: "unreviewed"` as of this date —
+this promotion is a deliberate operator override of that upstream status, not
+a correction of it. The `source.status` field on the v2 doc is left as
+`"unreviewed"` on purpose, mirroring upstream honestly, while `enabled: true`
+reflects the portal-side decision.
+
+Pre-mutation snapshot of every doc touched (both databases: v1 doc, v2 doc,
+and the 7 client docs whose `customAgentIds` referenced v1) —
+`_backup/2026-08-03/x-agent-v1-removal-snapshot.json`.
+
+| # | What | Where | Undo |
+|---|---|---|---|
+| P1 | `isXAgent`/`isXAgentV2` — dropped the `karos-x-agent` (v1) branch, only `karos-x-agent-v2` recognized | `src/lib/agent-service/x-agent-context.ts` | restore `agentKey === "karos-x-agent" \|\| agentKey === "karos-x-agent-v2"` |
+| P2 | `isXAgentIdentity`/`isXAgentV2Identity` — same drop, client-safe twin | `src/lib/custom-agent-launch.ts` | same as P1 |
+| P3 | Launch-profile matcher — dropped `identity.startsWith("karos-x-agent ")`, only the v2 (`-v2 `) prefix matches | `src/lib/custom-agent-launch.ts` (X profile block) | restore the `\|\| identity.startsWith("karos-x-agent ")` clause |
+| P4 | `buildXAgentIntakeView`'s job-name lookup now reads the `karos-x-agent-v2` doc (was `karos-x-agent`, which no longer exists) | `src/lib/agent-intake-views.ts` | change the key back |
+| P5 | Keyed client-blurb fallback line retargeted from `startsWith("karos-x-agent ")` to `startsWith("karos-x-agent-v2 ")` | `src/lib/agent-blurbs.ts` | change the matcher back |
+| P6 | Backfill script's key regex retargeted to `/^karos-x-agent-v2$/` (was `/^karos-x-agent$/`) | `scripts/backfill-agent-blurbs.ts` | change the regex back |
+| P7 | Comment-only key references updated for accuracy (no behavior change) | `src/app/api/clients/[id]/agents/mentionable/route.ts`, `src/lib/custom-agent-launch.ts` (`perClientAgentSlug` doc comment) | cosmetic; no undo needed |
+| P8 | Test fixtures repointed from the now-nonexistent v1 key to v2, where the assertion exercises X-specific gating (`isXAgentIdentity`, `intakeFamilyFor`, launch-profile matching, `optionsMode`, `requireIntakeAgentAccess`, keyed blurb fallback) | `src/lib/__tests__/agent-intake-gate.test.ts`, `agent-detail-sections.test.ts`, `agent-launch-ui.test.ts`, `agent-blurbs.test.ts`, `client-agent-rows.test.ts`, `backfill-client-agents.test.ts`, `client-run-offer-destinations.test.ts` | revert each fixture's key string; full suite diffed clean against the pre-change baseline (same 61 pre-existing Windows-path-separator failures, zero new) |
+| P9 | One-time script that performed the Firestore mutation (idempotent-by-key, not safe to re-run against a database that no longer has a v1 doc — it will just no-op the delete/swap and re-upsert v2) | `scripts/promote-x-agent-v2.ts` (new) | n/a — a script, not a standing change |
+
+### Data changes (both databases: production `(default)` and prep `"prep"`)
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| P-D1 | Deleted v1 `customAgents` doc | production `customAgents/Qv6qtlZOObDVlSUXDzbb`; prep `customAgents/Qv6qtlZOObDVlSUXDzbb` (same id in both — prep was seeded from a production export) | recreate from `_backup/2026-08-03/x-agent-v1-removal-snapshot.json` (`<db>.v1`) |
+| P-D2 | `enabled: true` + display copy (name "X Agent", description/clientBlurb dropped "unreviewed"/"separate" framing) on v2 doc | production `customAgents/Ji7p4nLTzDcbcKgDhtee`; prep `customAgents/uPlQt5A02Hp3eGaJf7N0` (newly created — prep never had a v2 doc) | production: restore fields from snapshot's `(default).v2`; prep: delete the doc entirely (it did not exist before) |
+| P-D3 | Swapped v1's id for v2's id inside `customAgentIds` on the 7 clients that had v1 (Hanky Panky, XO Digital, Geektime, Sitti, Karos Labs, Pitch by Deel, Kindly Yours) — a judgment call: removing v1 without granting v2 would have silently taken the X agent away from every client that had it, which the "this is the official version" framing did not ask for | both databases, `clients/{CRqzRpcpuDRiMjjDoYCJ, E19TT5yiWxpvbetkhxGt, QwQFkfsCXQdwJIKjfeg9, T6VFmudahXAAaKUHx579, iZLc0mtwSFXNKE2KkC2d, jzgdl738dq7DclAdqky1, vj8pJxRGLtiN2YbBuPwR}` | restore each doc's `customAgentIds` array from the snapshot's `<db>.clients[]` |
 | R22 | `SCRAPECREATORS_API_KEY` secret + runner wiring, if Daniel provisions it | remove the secret reference from `cloudbuild.yaml` and the two config lines; the domain is already allowlisted |

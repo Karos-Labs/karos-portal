@@ -310,7 +310,7 @@ describe("toAgentInputRows", () => {
 
 describe("intakeFamilyFor", () => {
   it("places the three intake agents and nothing else", () => {
-    expect(intakeFamilyFor("karos-x-agent")).toBe("x");
+    expect(intakeFamilyFor("karos-x-agent-v2")).toBe("x");
     expect(intakeFamilyFor("karos-reddit-agent")).toBe("reddit");
     expect(intakeFamilyFor("karos-linkedin-company-geektime")).toBe("linkedin");
     // A clip maker runs on files, not on a form — it must get no inputs band

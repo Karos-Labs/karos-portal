@@ -337,13 +337,12 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     },
   },
   {
-    // Exact key on purpose: only e13/v2 are intake-driven (setup gate +
-    // injected X agent data). Other imported X/Twitter-ish agents get the
-    // generic brief. karos-x-agent-v2 does NOT start with "karos-x-agent "
-    // (the char after "agent" is "-", not a space) — matched explicitly
-    // rather than relaxing the prefix, so a future unrelated key like
-    // "karos-x-agent-analytics" can't accidentally pick up this profile.
-    matches: (identity) => identity.startsWith("karos-x-agent ") || identity.startsWith("karos-x-agent-v2 "),
+    // Exact key on purpose: only the X agent (v2) is intake-driven (setup
+    // gate + injected X agent data). Other imported X/Twitter-ish agents get
+    // the generic brief — matched explicitly rather than a loose prefix, so
+    // a future unrelated key like "karos-x-agent-analytics" can't
+    // accidentally pick up this profile.
+    matches: (identity) => identity.startsWith("karos-x-agent-v2 "),
     profile: {
       eyebrow: "X drafts",
       intro:
@@ -779,16 +778,17 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
 ];
 
 /**
- * The X agent (e13) runs on stored intake (the client's "X agent data" page),
- * so its launch flow gets a setup gate the other agents don't need. Client-safe
- * twin of the server-side isXAgent in agent-service/x-agent-context.ts. Covers
- * v2 (karos-x-agent-v2) too — same intake, same gate.
+ * The X agent (karos-x-agent-v2) runs on stored intake (the client's "X
+ * agent data" page), so its launch flow gets a setup gate the other agents
+ * don't need. Client-safe twin of the server-side isXAgent in
+ * agent-service/x-agent-context.ts. v1 (karos-x-agent) was retired
+ * 2026-08-03 — removed from code and the db, do not reintroduce.
  */
 export function isXAgentIdentity(key: string): boolean {
-  return key === "karos-x-agent" || key === "karos-x-agent-v2";
+  return key === "karos-x-agent-v2";
 }
 
-/** Narrower than isXAgentIdentity — only true for the v2 rebuild. Client-safe twin of isXAgentV2. */
+/** Alias of isXAgentIdentity now that v1 is gone. Client-safe twin of isXAgentV2. */
 export function isXAgentV2Identity(key: string): boolean {
   return key === "karos-x-agent-v2";
 }
@@ -951,7 +951,7 @@ const PER_CLIENT_AGENT_KEY_PREFIXES = ["karos-linkedin-company-"];
 /**
  * The lab-repo client slug a per-client agent instance is bound to, or null
  * when the key names no single client: every agent that is not an instance
- * (karos-x-agent, the LinkedIn master, reddit, tiktok, instagram,
+ * (karos-x-agent-v2, the LinkedIn master, reddit, tiktok, instagram,
  * branded-shorts, landing-builder…) plus a bare prefix with no slug after it.
  */
 export function perClientAgentSlug(key: string): string | null {

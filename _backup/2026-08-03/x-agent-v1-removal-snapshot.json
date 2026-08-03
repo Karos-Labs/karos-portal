@@ -1,0 +1,266 @@
+{
+  "(default)": {
+    "v1": {
+      "id": "Qv6qtlZOObDVlSUXDzbb",
+      "key": "karos-x-agent",
+      "name": "X Agent",
+      "icon": "Zap",
+      "color": "#A3E635",
+      "entrySkillDir": "products/live/x-agent",
+      "skillRoots": [],
+      "includeClientSkills": true,
+      "creditCost": null,
+      "source": {
+        "path": "products/live/x-agent",
+        "status": "ready",
+        "repoSha": "68ba5d4b795d5216a7dcbe51cd7b7262c8082153"
+      },
+      "createdBy": "7dhklKotGudLQgcyHHVrYKuKvEn2",
+      "createdAt": 1784290543686,
+      "description": "Drafts a week of on-voice X posts for this client: the company page and every seat, across build-in-public, knowledge, news-reaction, quote and reply lanes. Runs on the client's X agent data. Draft-only; nothing posts without a human.",
+      "instructions": "Run the X agent (products/live/x-agent/SKILL.md) as the PRODUCTION drafting\nengine for this client. Only fall back to the run-once setup flow if no client\nX foundation exists yet under clients/<slug>/skills/x-agent/.\n\nRead first, in this order:\n1. client_context/brief.md and every file in client_context/files/. The files\n   x-portal-intake.md, whats-new.json and takes--*.json are the portal's LIVE\n   client data and OVERRIDE any older copies inside the repo (clients/<slug>/\n   internal/x-agent/, config.json x block) on any disagreement. Files named\n   prior-batch-*.md are this client's previous portal batches: treat every\n   subject, source, quoted post, and phrasing in them as ALREADY USED — never\n   reuse any of it, in addition to the repo ledger.\n2. The client's onboarding profile (clients/<slug>/profile/) and their emitted\n   X sub-skills (clients/<slug>/skills/x-agent/) — prefer emitted sub-skills\n   for production drafting.\n\nWhat to produce (default run = A WEEK OF POSTS): on-voice DRAFTS across the\navenues for each account in the intake — the company page (build-in-public,\nknowledge/explainer, news-reaction, quote-comment, reply) and each seat (POV\nsingle, POV thread, news-reaction, quote-comment, reply). This is one week of\nposting for the client to pick favourites from; make every draft strong enough\nto be someone's pick. If the client request names one account or a subset of\navenues, produce exactly that subset. Pull live X signal with the engine's xAI\ntools when XAI_API_KEY is present; otherwise use WebSearch and record the\ndegradation in internal/RUN.md.\n\nCraft gates (each one is a hard auto-reject; fix before delivering):\n- A quote-comment or reply must ADD a position the original does not state.\n  Test each against: \"would the original author react 'that is what I just\n  said'?\" If yes, rewrite with a counter, a consequence, or an earned specific.\n- Reactive anchors must be fresh: nothing older than 7 days framed as breaking\n  or \"just happened\"; if an older item is genuinely the best anchor, date it\n  honestly in the post text.\n- Every reactive post cites a real, current source, linked in the first reply,\n  with the source's numbers attributed to the source.\n- Quote-comments: keep the post text at 250 characters or fewer — the quoted\n  link costs 23 characters of X's 280 budget, and the portal's pick flow\n  attaches it to the same post.\n- Post length: 280 characters is the default hard cap. LONG-FORM (past 280,\n  X Premium only) is allowed ONLY when the intake marks the account\n  \"X Premium: YES\", or intake says auto-detect AND your live read of the\n  account confirms Premium (checkmark) — and only where long-form fits the\n  account's own posting style or the client asked for it. At most one\n  long-form post per account per batch, in the knowledge/explainer or POV\n  lane, capped at 2,000 characters, structured like a tight blog post (hook\n  first, no filler). Everything else stays under 280. When intake says\n  \"X Premium: NO\", the 280 cap is absolute. This clause supersedes any\n  blanket 280 gate in the skill text for the posts it covers; mark such\n  drafts' char line past 280 honestly (the portal labels them long-form).\n- Banned anywhere in a post: leverage, synergize, holistic, supercharge,\n  unlock; em dashes, exclamation marks, hashtags, emoji, thread-boi framing.\n- Never make human control/approval the headline of a post; a light aside at\n  most.\n- Never claim machines cannot create, or that agents do the numbers while\n  humans do the creativity. The agents draft too. When touching the division\n  of labor use: agents carry the grunt AND augment the craft; a person owns\n  the judgment.\n- One idea per post AND per batch: before delivering, write each draft's core\n  idea in one line; if two drafts share one, rewrite the weaker draft.\n- A seat's thread carries that person's earned, sourced specifics (their real\n  numbers where they have them). Replies read like a person talking — short,\n  conversational — not a polished mini-essay.\n- Respect each account's off-limits from the intake. A seat with a pending\n  handle still drafts but cannot post or self-sample. Voice, pillars and\n  cadence are built from the profile and each account's learning log — never\n  ask the client for them.\n\nDeliverables under clients/<slug>/outputs/x-agent/<run-folder>/ with the\nclient/ vs internal/ split: client/DRAFTS.md and internal/RUN.md (method,\nlive signal, gate checks). DRAFTS.md must keep this exact structure — the\nportal renders it: \"# Account N · <name>\" headings (the company section's\nname must contain \"Company page\"; seat sections carry the person's name),\n\"## Avenue N · <lane>\"\nblocks, the post text as a \"> \" blockquote (threads: one blockquote per post\nwith **1/3**-style markers between), a `NNN chars` line after each post, and\n\"- **\" bullets for sources. In RUN.md, only claim a gate passed if you\nre-checked it after the final edit; quote the evidence or omit the claim.\nDraft-only: nothing posts, and no posting credential exists.",
+      "launchCreditCost": null,
+      "clientBlurb": null,
+      "enabled": true,
+      "updatedAt": 1785759145300
+    },
+    "v2": {
+      "id": "Ji7p4nLTzDcbcKgDhtee",
+      "key": "karos-x-agent-v2",
+      "name": "X Agent v2 (unreviewed)",
+      "description": "On-demand rebuild of the X drafting engine: any identity (company page or one seat) can run at any time for a batch of 5, 10, or 21 drafts. Resumable, and the paid research pull is shared across the whole batch instead of per-format. Separate from and does not replace the production X Agent. karos-agents manifest status: unreviewed — has not produced a batch yet.",
+      "clientBlurb": "Drafts a batch of X posts on demand, any time, spanning your build-in-public, knowledge, POV, news-reaction and quote lanes.",
+      "icon": "Zap",
+      "color": "#FDE047",
+      "entrySkillDir": "products/building/x-agent-v2",
+      "skillRoots": [],
+      "includeClientSkills": true,
+      "instructions": "Run the X agent v2 skill (products/building/x-agent-v2/SKILL.md) as the\non-demand drafting engine for this client. This is a SEPARATE, newer engine\nfrom the production \"X Agent\" (v1) — do not fall back to products/live/x-agent.\n\nBefore anything else, read products/building/x-agent-v2/references/run-protocol.md\nin full. It governs the run folder name, attempt numbering, and the numbered\ninternal/ handoff files that make this run resumable — follow it exactly,\nincluding its own run-folder naming convention (NOT the generic\n\"<date>-job-<id>\" folder name this platform's own preamble otherwise suggests;\nthe skill's own protocol takes precedence for this agent).\n\nA run belongs to ONE identity (the company page, or a single seat) and\nproduces N drafts, N supplied by the run request (5, 10, or 21 — read it from\nthe client's request text; default to 10 if not stated). The client's request\nalso states which identity to run for (\"company page\" / a seat's name) —\nif it names one, produce only for that one; if it says \"every seat\" or names\nnone, run once per identity in scope and produce N drafts for each.\n\nRead first, in this order:\n1. client_context/brief.md and every file in client_context/files/. The files\n   x-portal-intake.md, whats-new.json, and takes--*.json are the portal's LIVE\n   client data and OVERRIDE any older copies inside the repo on any\n   disagreement. Files named prior-batch-*.md are this client's previous\n   portal batches — treat every subject, source, quoted post, and phrasing in\n   them as ALREADY USED, in addition to the repo's own shared ledger\n   (clients/<slug>/skills/x-agent/x-ledger.json).\n2. The client's onboarding profile (clients/<slug>/profile/) and voice\n   profiles (clients/<slug>/skills/x-agent/voice/, or profile/executives/\n   <name>.md sections 8-9 for a person) — these are read-only references the\n   agent built, never asked of the client.\n\nThis skill requires the client to already be built (foundation, voice\nprofile, seeded topic catalog via the v2 setup run) — if\nclients/<slug>/skills/x-agent/X-FOUNDATION.md does not exist yet, stop and\nreport outcome blocked_intake naming that file, per the run protocol's own\nrule. Do not fall back to a generic voice.\n\nNo images anywhere, no caption files — an X post is text, and the post text\nIS the deliverable. Draft-only: nothing posts, and no posting credential\nexists. Follow every gate in the skill's own references\n(x-craft.md, lanes.md) — they are load-bearing, not optional, especially\nsection 4 of x-craft.md.",
+      "creditCost": null,
+      "launchCreditCost": null,
+      "model": "claude-sonnet-5",
+      "stepModels": null,
+      "enabled": false,
+      "source": {
+        "path": "products/building/x-agent-v2",
+        "status": "unreviewed"
+      },
+      "createdBy": "script:register-x-agent-v2",
+      "updatedAt": 1785786160808,
+      "createdAt": 1785786160808
+    },
+    "clients": [
+      {
+        "id": "CRqzRpcpuDRiMjjDoYCJ",
+        "name": "Hanky Panky",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "E19TT5yiWxpvbetkhxGt",
+        "name": "XO Digital",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "QwQFkfsCXQdwJIKjfeg9",
+        "name": "Geektime",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "T6VFmudahXAAaKUHx579",
+        "name": "Sitti",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "iZLc0mtwSFXNKE2KkC2d",
+        "name": "Karos Labs",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "jzgdl738dq7DclAdqky1",
+        "name": "Pitch by Deel",
+        "customAgentIds": [
+          "Qv6qtlZOObDVlSUXDzbb",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "EJVZENVXvWgIo9aoiheI",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "vj8pJxRGLtiN2YbBuPwR",
+        "name": "Kindly Yours",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      }
+    ]
+  },
+  "prep": {
+    "v1": {
+      "id": "Qv6qtlZOObDVlSUXDzbb",
+      "skillRoots": [],
+      "key": "karos-x-agent",
+      "name": "X Agent",
+      "icon": "Zap",
+      "color": "#A3E635",
+      "entrySkillDir": "products/live/x-agent",
+      "includeClientSkills": true,
+      "creditCost": null,
+      "source": {
+        "path": "products/live/x-agent",
+        "status": "ready",
+        "repoSha": "68ba5d4b795d5216a7dcbe51cd7b7262c8082153"
+      },
+      "createdBy": "7dhklKotGudLQgcyHHVrYKuKvEn2",
+      "createdAt": 1784290543686,
+      "description": "Drafts a week of on-voice X posts for this client: the company page and every seat, across build-in-public, knowledge, news-reaction, quote and reply lanes. Runs on the client's X agent data. Draft-only; nothing posts without a human.",
+      "instructions": "Run the X agent (products/live/x-agent/SKILL.md) as the PRODUCTION drafting\nengine for this client. Only fall back to the run-once setup flow if no client\nX foundation exists yet under clients/<slug>/skills/x-agent/.\n\nRead first, in this order:\n1. client_context/brief.md and every file in client_context/files/. The files\n   x-portal-intake.md, whats-new.json and takes--*.json are the portal's LIVE\n   client data and OVERRIDE any older copies inside the repo (clients/<slug>/\n   internal/x-agent/, config.json x block) on any disagreement. Files named\n   prior-batch-*.md are this client's previous portal batches: treat every\n   subject, source, quoted post, and phrasing in them as ALREADY USED — never\n   reuse any of it, in addition to the repo ledger.\n2. The client's onboarding profile (clients/<slug>/profile/) and their emitted\n   X sub-skills (clients/<slug>/skills/x-agent/) — prefer emitted sub-skills\n   for production drafting.\n\nWhat to produce (default run = A WEEK OF POSTS): on-voice DRAFTS across the\navenues for each account in the intake — the company page (build-in-public,\nknowledge/explainer, news-reaction, quote-comment, reply) and each seat (POV\nsingle, POV thread, news-reaction, quote-comment, reply). This is one week of\nposting for the client to pick favourites from; make every draft strong enough\nto be someone's pick. If the client request names one account or a subset of\navenues, produce exactly that subset. Pull live X signal with the engine's xAI\ntools when XAI_API_KEY is present; otherwise use WebSearch and record the\ndegradation in internal/RUN.md.\n\nCraft gates (each one is a hard auto-reject; fix before delivering):\n- A quote-comment or reply must ADD a position the original does not state.\n  Test each against: \"would the original author react 'that is what I just\n  said'?\" If yes, rewrite with a counter, a consequence, or an earned specific.\n- Reactive anchors must be fresh: nothing older than 7 days framed as breaking\n  or \"just happened\"; if an older item is genuinely the best anchor, date it\n  honestly in the post text.\n- Every reactive post cites a real, current source, linked in the first reply,\n  with the source's numbers attributed to the source.\n- Quote-comments: keep the post text at 250 characters or fewer — the quoted\n  link costs 23 characters of X's 280 budget, and the portal's pick flow\n  attaches it to the same post.\n- Post length: 280 characters is the default hard cap. LONG-FORM (past 280,\n  X Premium only) is allowed ONLY when the intake marks the account\n  \"X Premium: YES\", or intake says auto-detect AND your live read of the\n  account confirms Premium (checkmark) — and only where long-form fits the\n  account's own posting style or the client asked for it. At most one\n  long-form post per account per batch, in the knowledge/explainer or POV\n  lane, capped at 2,000 characters, structured like a tight blog post (hook\n  first, no filler). Everything else stays under 280. When intake says\n  \"X Premium: NO\", the 280 cap is absolute. This clause supersedes any\n  blanket 280 gate in the skill text for the posts it covers; mark such\n  drafts' char line past 280 honestly (the portal labels them long-form).\n- Banned anywhere in a post: leverage, synergize, holistic, supercharge,\n  unlock; em dashes, exclamation marks, hashtags, emoji, thread-boi framing.\n- Never make human control/approval the headline of a post; a light aside at\n  most.\n- Never claim machines cannot create, or that agents do the numbers while\n  humans do the creativity. The agents draft too. When touching the division\n  of labor use: agents carry the grunt AND augment the craft; a person owns\n  the judgment.\n- One idea per post AND per batch: before delivering, write each draft's core\n  idea in one line; if two drafts share one, rewrite the weaker draft.\n- A seat's thread carries that person's earned, sourced specifics (their real\n  numbers where they have them). Replies read like a person talking — short,\n  conversational — not a polished mini-essay.\n- Respect each account's off-limits from the intake. A seat with a pending\n  handle still drafts but cannot post or self-sample. Voice, pillars and\n  cadence are built from the profile and each account's learning log — never\n  ask the client for them.\n\nDeliverables under clients/<slug>/outputs/x-agent/<run-folder>/ with the\nclient/ vs internal/ split: client/DRAFTS.md and internal/RUN.md (method,\nlive signal, gate checks). DRAFTS.md must keep this exact structure — the\nportal renders it: \"# Account N · <name>\" headings (the company section's\nname must contain \"Company page\"; seat sections carry the person's name),\n\"## Avenue N · <lane>\"\nblocks, the post text as a \"> \" blockquote (threads: one blockquote per post\nwith **1/3**-style markers between), a `NNN chars` line after each post, and\n\"- **\" bullets for sources. In RUN.md, only claim a gate passed if you\nre-checked it after the final edit; quote the evidence or omit the claim.\nDraft-only: nothing posts, and no posting credential exists.",
+      "launchCreditCost": null,
+      "clientBlurb": null,
+      "enabled": false,
+      "updatedAt": 1785510287630
+    },
+    "v2": null,
+    "clients": [
+      {
+        "id": "CRqzRpcpuDRiMjjDoYCJ",
+        "name": "Hanky Panky",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "E19TT5yiWxpvbetkhxGt",
+        "name": "XO Digital",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "QwQFkfsCXQdwJIKjfeg9",
+        "name": "Geektime",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "T6VFmudahXAAaKUHx579",
+        "name": "Sitti",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "iZLc0mtwSFXNKE2KkC2d",
+        "name": "Karos Labs",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "jzgdl738dq7DclAdqky1",
+        "name": "Pitch by Deel",
+        "customAgentIds": [
+          "Qv6qtlZOObDVlSUXDzbb",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "EJVZENVXvWgIo9aoiheI",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      },
+      {
+        "id": "vj8pJxRGLtiN2YbBuPwR",
+        "name": "Kindly Yours",
+        "customAgentIds": [
+          "EJVZENVXvWgIo9aoiheI",
+          "JOhXFFV2rHZ9IyQNFLvA",
+          "Qv6qtlZOObDVlSUXDzbb",
+          "RVVdf4vHPFw1fnkDOn0X",
+          "ZjZe2DsCDCmayOPtt8Zo",
+          "pwUIj4jayaJ3S8yuUaQ7",
+          "wczZml1diYtXIL28Q4VT"
+        ]
+      }
+    ]
+  }
+}

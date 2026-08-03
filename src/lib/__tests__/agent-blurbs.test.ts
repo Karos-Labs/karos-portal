@@ -17,7 +17,7 @@ describe("clientAgentBlurb", () => {
   it("prefers curated copy over everything else", () => {
     expect(
       clientAgentBlurb({
-        key: "karos-x-agent",
+        key: "karos-x-agent-v2",
         name: "X Agent",
         clientBlurb: "  Your daily post on X.  ",
       }),
@@ -47,7 +47,7 @@ describe("clientAgentBlurb", () => {
   });
 
   it("gives the X agent and each LinkedIn shape its own line", () => {
-    const x = clientAgentBlurb({ key: "karos-x-agent", name: "X Agent" });
+    const x = clientAgentBlurb({ key: "karos-x-agent-v2", name: "X Agent" });
     const company = clientAgentBlurb({
       key: "karos-linkedin-company-acme",
       name: "LinkedIn Company Agent",

@@ -44,7 +44,7 @@ const { scheduleZonesByAgent, toClientAgentRows, toRunRows, toScheduleRows, toSu
 const A_WEEK = 7;
 
 /**
- * The keyed fallback line for `karos-x-agent`, spelled out for the same reason
+ * The keyed fallback line for `karos-x-agent-v2`, spelled out for the same reason
  * as the horizon above: imported and compared against itself it would pass
  * whatever the table says, including the manifest. This is the SECOND rung of
  * the CD-G2 chain, and the assertions below need to name it to be able to say
@@ -217,7 +217,7 @@ const VIEWER_UID = "uid_the_viewer";
 function agent(patch: Partial<CustomAgent> = {}): CustomAgent {
   return {
     id: "ca_x",
-    key: "karos-x-agent",
+    key: "karos-x-agent-v2",
     name: "Karos X Agent",
     description: S.manifestDescription,
     icon: "AtSign",
@@ -253,7 +253,7 @@ function umbrella(patch: Partial<ClientAgent> = {}): ClientAgent {
   return {
     id: "clientAgent_1",
     clientId: "c1",
-    agentKey: "karos-x-agent",
+    agentKey: "karos-x-agent-v2",
     customAgentId: "ca_x",
     displayName: "Your X agent",
     platform: "x",
@@ -581,7 +581,7 @@ describe("toRunRows — the run-history projection", () => {
       [
         {
           id: "clientAgent_1",
-          agentKey: "karos-x-agent",
+          agentKey: "karos-x-agent-v2",
           customAgentId: "ca_x",
           displayName: "Your X agent",
           platform: "x",
