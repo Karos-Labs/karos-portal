@@ -160,17 +160,19 @@ export function hasAiProcessingFailure(
  * and linkedinSeatLimit (entitlement config the rail never reads), createdBy.
  */
 export function toClientPortalView(c: Client): Client {
+  // THE FALLBACK IS RESOLVED HERE, so `industry` does not cross at all. Both
+  // names carried the same fact and both used to be shipped, while the panel
+  // painted only the second — so a client whose value predated the rename saw an
+  // empty chip in their own sidebar. The browser now receives one field, under
+  // the name the panel's pencil writes back to.
+  const category = clientCategoryValue(c);
   return {
     id: c.id,
     name: c.name,
     status: c.status,
     // Profile fields the rail's own panels render and let the client edit.
     ...(c.website ? { website: c.website } : {}),
-    // THE FALLBACK IS RESOLVED HERE, so `industry` does not cross at all. Both
-    // names carried the same fact and both used to be shipped; the browser now
-    // receives one field under the name it edits, and a document that only has
-    // the legacy spelling arrives as a category like any other.
-    ...(clientCategoryValue(c) ? { category: clientCategoryValue(c)! } : {}),
+    ...(category ? { category } : {}),
     ...(c.teamSize ? { teamSize: c.teamSize } : {}),
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.socialLinks ? { socialLinks: c.socialLinks } : {}),
@@ -274,13 +276,14 @@ export type StaffShellClientView = Pick<
 >;
 
 export function toStaffShellView(c: Client): StaffShellClientView {
+  // Same resolution as the client's own view: this shell mounts the same panel,
+  // so it has to hand it the same one field.
+  const category = clientCategoryValue(c);
   return {
     id: c.id,
     name: c.name,
     ...(c.website ? { website: c.website } : {}),
-    // Same resolution as the client's own view: one field, under the name the
-    // panel's pencil writes back to.
-    ...(clientCategoryValue(c) ? { category: clientCategoryValue(c)! } : {}),
+    ...(category ? { category } : {}),
     ...(c.teamSize ? { teamSize: c.teamSize } : {}),
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.description ? { description: c.description } : {}),

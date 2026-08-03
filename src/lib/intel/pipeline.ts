@@ -103,10 +103,14 @@ async function runResearchAgent(name: string, fn: () => Promise<string>): Promis
 }
 
 function clientContext(client: Client): string {
+  // The line stays labelled "Industry" because that is the word the research
+  // agents reason in; the VALUE is the one field the client can also see and
+  // edit. It used to read `client.industry`, which only staff could set.
+  const category = clientCategoryValue(client);
   const parts = [
     `Company: ${client.name}`,
     client.website ? `Website: ${client.website}` : "",
-    clientCategoryValue(client) ? `Industry: ${clientCategoryValue(client)}` : "",
+    category ? `Industry: ${category}` : "",
     client.description ? `Description: ${client.description}` : "",
   ];
 
