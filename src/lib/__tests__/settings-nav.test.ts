@@ -24,6 +24,7 @@ const REPO = path.resolve(__dirname, "../..", "..");
 const source = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 
 const RAIL = "src/components/client-rail.tsx";
+const SIDEBAR = "src/components/sidebar.tsx";
 const TABS = "src/components/settings-tabs.tsx";
 const SETTINGS_PAGE = "src/app/(app)/clients/[id]/settings/page.tsx";
 const ACCOUNT_PAGE = "src/app/(app)/settings/page.tsx";
@@ -216,7 +217,7 @@ describe("a long client description cannot break the no-scroll rail", () => {
   const flat = (t: string) => t.replace(/\s+/g, " ");
   const panel = source("src/components/client-profile-panel.tsx");
   const railSrc = source(RAIL);
-  const sidebarSrc = source("src/components/sidebar.tsx");
+  const sidebarSrc = source(SIDEBAR);
 
   it("clamps the description when the mount is height-constrained", () => {
     // `compact` existed and was documented, but was never passed — so every
@@ -225,16 +226,56 @@ describe("a long client description cannot break the no-scroll rail", () => {
     expect(flat(panel)).toContain('compact && "line-clamp-2"');
   });
 
-  it("passes compact at the no-scroll mount and not at the scrolling ones", () => {
-    const mounts = [...railSrc.matchAll(/<ClientProfilePanel[^/]*\/>/g)].map((m) => m[0]);
-    expect(mounts).toHaveLength(2);
-    // The desktop aside is height-constrained; the mobile Company sheet scrolls.
-    expect(mounts.filter((m) => m.includes("compact"))).toHaveLength(1);
-    // Staff's client-context mount is ALSO a mobile Company sheet — the same
-    // scrolling frame as the client's own — so it shows the same full text.
-    // Clamping only there was a one-word AF-3 parity break (audit, 6547959).
+  it("passes compact at the no-scroll mounts and not at the scrolling ones", () => {
+    // FOUR mounts now, two per shell. Until V3 the staff shell had only the
+    // one — its desktop rail carried a company chip instead of this panel — so
+    // "which mounts clamp?" had a single answer to give and the rule read as a
+    // property of the client's rail rather than of height-constrained mounts.
+    // Both desktop rails are the no-scroll layout the clamp was written for
+    // (CD-E3); both Company sheets scroll and keep the full text.
+    for (const [rel, src] of [
+      [RAIL, railSrc],
+      [SIDEBAR, sidebarSrc],
+    ] as const) {
+      const mounts = [...src.matchAll(/<ClientProfilePanel[\s\S]*?\/>/g)].map((m) => flat(m[0]));
+      expect(mounts, `${rel} mounts the panel on its rail and in its sheet`).toHaveLength(2);
+      expect(
+        mounts.filter((m) => /\bcompact\b/.test(m)),
+        `${rel} clamps the height-constrained mount and only that one`,
+      ).toHaveLength(1);
+    }
+    // Staff's client-context sheet is the SAME scrolling frame as the client's
+    // own, so it shows the same full text. Clamping only there was a one-word
+    // AF-3 parity break (audit, 6547959).
     expect(sidebarSrc).toContain("<ClientProfilePanel client={clientCtx.client} />");
     expect(sidebarSrc).not.toContain("<ClientProfilePanel client={clientCtx.client} compact />");
+  });
+
+  it("keeps the clamp on the text, not on the chips beside it", () => {
+    // The row that carries team size, category and the social handles is the
+    // other content-dependent block in this panel, and it used to answer the
+    // no-scroll contract by refusing to wrap — which cost it more height than
+    // wrapping ever did, because nothing shortened the category. A ceiling and
+    // a truncation, so a long category costs one line and not three.
+    expect(flat(panel)).toContain("flex flex-wrap items-center gap-1");
+    expect(flat(panel)).not.toContain("flex-nowrap overflow-hidden");
+    expect(flat(panel)).toContain('compact ? "max-w-[9rem]" : "max-w-[14rem]"');
+    expect(flat(panel)).toContain("title={client.category}");
+  });
+
+  it("draws every chip in the row at one size", () => {
+    // The tag glyph was h-4 with no shrink-0 in a nowrap row, so it collapsed
+    // to a few pixels beside a three-line label while the platform marks next
+    // to it stayed 14px. One geometry, one icon size, applied by name.
+    const chips = [...panel.matchAll(/className=\{?cn\(\s*CHIP/g)];
+    expect(chips.length).toBeGreaterThanOrEqual(3);
+    expect(flat(panel)).toContain(
+      'const CHIP_ICON = "h-3.5 w-3.5 shrink-0 text-muted-2"',
+    );
+    // No chip may re-declare its own padding or icon box.
+    const row = panel.slice(panel.indexOf("{hasMeta ?"), panel.indexOf("{/* Free text"));
+    expect(row).not.toContain("px-2.5 py-1");
+    expect(row).not.toContain("h-4 w-4");
   });
 
   it("still renders the description — clamped, not removed", () => {

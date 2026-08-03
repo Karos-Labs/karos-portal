@@ -300,6 +300,105 @@ describe("AF-3 · View-as-Client and the client's own view are the same view", (
       expect(source(rel)).not.toContain("icons:");
     }
   });
+
+  /* ── V3: the company panel, and the slot it sits in ─────────────────── */
+
+  const between = (src: string, from: string, to: string): string => {
+    const start = src.indexOf(from);
+    expect(start, `${from} not found`).toBeGreaterThan(-1);
+    const end = src.indexOf(to, start + from.length);
+    expect(end, `${to} not found after ${from}`).toBeGreaterThan(start);
+    return src.slice(start, end);
+  };
+  /** The client-context stack of a desktop rail, in render order. */
+  const desktopStack = (slice: string): string[] =>
+    [
+      ...slice.matchAll(
+        /<(ClientProfilePanel|ClientDocuments|CompetitorTrack|BrandColorsSection)\b/g,
+      ),
+    ].map((m) => m[1]!);
+  /** The rail's `md:block` aside — its mobile sheet mounts the same four again. */
+  const railDesktop = () => between(rail, "<aside", "</aside>");
+  const staffDesktop = () => between(sidebar, "const clientSections = activeClient ? (", ") : null;");
+
+  it("builds the same four sections, in the same order, on both desktop rails", () => {
+    // The staff rail used to open this stack with a company CHIP of its own —
+    // logo, name, ↗ and nothing else — where the client's rail mounts the whole
+    // ClientProfilePanel. So a staff member in client context could not see the
+    // client's bio or any of their social handles, which are the two things AF-4
+    // put on that rail. Same component in the same slot now.
+    const expected = [
+      "ClientProfilePanel",
+      "ClientDocuments",
+      "CompetitorTrack",
+      "BrandColorsSection",
+    ];
+    expect(desktopStack(railDesktop())).toEqual(expected);
+    expect(desktopStack(staffDesktop())).toEqual(expected);
+  });
+
+  it("clamps it in both no-scroll rails and hands only staff the extra button", () => {
+    // "The same, with the extra buttons." `compact` is the no-scroll contract's
+    // clamp (CD-E3) and both desktop rails are under it, so both pass it; the ↗
+    // to the client's own website is staff's, and rides in the panel's header
+    // rather than on a row of its own.
+    const mount = (slice: string) => {
+      const at = slice.indexOf("<ClientProfilePanel");
+      expect(at, "no ClientProfilePanel mount").toBeGreaterThan(-1);
+      return flat(slice.slice(at, slice.indexOf("/>", at) + 2));
+    };
+    for (const slice of [railDesktop(), staffDesktop()]) {
+      expect(mount(slice)).toMatch(/\bcompact\b/);
+    }
+    expect(mount(staffDesktop())).toContain("headerAction={clientSiteAction}");
+    expect(mount(railDesktop())).not.toContain("headerAction");
+    // And the extra button is a real destination, not a decoration.
+    expect(flat(sidebar)).toContain("const clientSiteAction = activeClient ? (");
+    expect(sidebar).toContain("Open client website");
+  });
+
+  /* ── V2: one section rhythm ─────────────────────────────────────────── */
+
+  it("spaces the sections identically in both desktop rails", () => {
+    // Tailwind v4 compiles space-y to a margin-BOTTOM, so the rail's old
+    // `mt-4` wrappers ADDED to it rather than replacing it: the two sections
+    // that owned a wrapper got 34px of air and the two that did not got 14 and
+    // 12, which is why Brand Colors read as glued to the last competitor row.
+    // One outer gap, one wrapper class, both shells.
+    expect(rail).toContain('className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-4 pb-0 pt-4"');
+    expect(sidebar).toContain('className="mt-1.5 space-y-1.5"');
+    for (const [rel, slice] of [
+      [RAIL, railDesktop()],
+      [SIDEBAR, staffDesktop()],
+    ] as const) {
+      expect(slice, rel).not.toContain("mt-4 border-t");
+      expect(
+        (slice.match(/className="border-t border-border pt-4"/g) ?? []).length,
+        `${rel} wraps both of its own sections the same way`,
+      ).toBe(2);
+    }
+  });
+
+  /* ── V4: the accent is rationed the same way in both ─────────────────── */
+
+  it("marks the active client-context tab exactly as the client's own rail does", () => {
+    // The one genuine colour divergence between the two views of these four
+    // tabs: the staff shell painted the active row `bg-neon-soft text-neon`
+    // while the client's rail paints it paper. Ember rations orange to a single
+    // CTA and a nav row is not it — so in client context this shell now says it
+    // in the client's own vocabulary, and keeps the agency highlight for the
+    // agency nav, which is the only nav a client never sees.
+    const railActive = rail.match(/active\s*\?\s*"([^"]+)"\s*:\s*"text-muted hover:bg-surface-2/);
+    expect(railActive?.[1]).toBe("bg-surface-2 text-foreground");
+    const staffActive = flat(sidebar).match(
+      /const activeRowClass = clientCtx \? "([^"]+)" : "([^"]+)"/,
+    );
+    expect(staffActive?.[1]).toBe(railActive?.[1]);
+    expect(staffActive?.[2]).toContain("bg-neon-soft");
+    expect(flat(sidebar)).toContain(
+      'const activeIconClass = clientCtx ? "text-foreground" : "text-neon";',
+    );
+  });
 });
 
 describe("#141 · one destination, one spelling", () => {
