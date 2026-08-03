@@ -4,11 +4,15 @@ import { useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
-import { cn } from "@/lib/utils";
+import {
+  CLIENT_CATEGORY_MAX_LENGTH,
+  clientCategoryLabel,
+  cn,
+} from "@/lib/utils";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { socialAccount, socialHandleValue } from "@/lib/social-handles";
-import { updateClientProfileAction } from "@/lib/actions";
+import { clientOwnerEmailAction, updateClientProfileAction } from "@/lib/actions";
 import type { Client, SocialLinks } from "@/lib/types";
 
 /**
@@ -20,6 +24,13 @@ import type { Client, SocialLinks } from "@/lib/types";
  * client document to the browser. Asking for `Client` here would have forced
  * one of them to widen again just to satisfy a signature — for fields this file
  * never reads.
+ *
+ * THREE FIELDS LEFT THIS LIST with the inputs that edited them (CD-L P1/P2):
+ * `brandVoice` (a document, not a field), `domains` (Fireflies routing, staff
+ * only now) and `industry` (the tag chip's own `category` is the one that
+ * stays). The projections still carry them for other readers; this panel no
+ * longer touches any of the three, and a contract that says otherwise is how
+ * the next person concludes it does.
  */
 export type ClientProfileFields = Pick<
   Client,
@@ -29,14 +40,11 @@ export type ClientProfileFields = Pick<
   | "accentColor"
   | "brandingGuidelines"
   | "website"
-  | "industry"
   | "category"
   | "teamSize"
   | "brief"
   | "description"
-  | "brandVoice"
   | "contactEmail"
-  | "domains"
   | "socialLinks"
 >;
 
@@ -125,6 +133,26 @@ function Pill({
 
 /* ── Brand Profile slide-in modal ─────────────────────────────────────── */
 
+/**
+ * THREE FIELDS, and the list is the whole point (CD-L P1).
+ *
+ * It carried six. Three of them were removed for a reason each, and none of the
+ * three underlying fields was deleted:
+ *
+ *  • BRAND VOICE is a DOCUMENT — the Brand Voice doc in the rail below this
+ *    panel, generated and versioned like the rest of them. An editable textarea
+ *    here was a second source of truth for it, and the one a client would reach
+ *    first. The field and the doc are untouched; this form simply no longer
+ *    writes to it.
+ *  • MEETING DOMAIN is Fireflies plumbing: a transcript whose attendees share
+ *    this domain auto-assigns to this client. That is an ops setting with a
+ *    security edge on it, not a brand fact, and it now lives in the staff Edit
+ *    dialog on the Clients page (clients-grid.tsx), which is where it was
+ *    already offered to staff.
+ *  • INDUSTRY left because the panel's tag chip is the same idea (CD-L P2), and
+ *    the chip's own field — `category` — is edited from the pencil beside this
+ *    button. Two inputs for one fact is what the ruling removed.
+ */
 function BrandProfileModal({
   client,
   onClose,
@@ -136,11 +164,8 @@ function BrandProfileModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
-    brandVoice: client.brandVoice ?? "",
     contactEmail: client.contactEmail ?? "",
     website: client.website ?? "",
-    industry: client.industry ?? "",
-    domainsCsv: (client.domains ?? []).join(", "),
     description: client.description ?? "",
   });
 
@@ -151,6 +176,30 @@ function BrandProfileModal({
     document.addEventListener("keydown", onKey);
     return () => { document.body.style.overflow = prev; document.removeEventListener("keydown", onKey); };
   }, [onClose]);
+
+  /**
+   * AN UNSET CONTACT EMAIL DEFAULTS TO THE ACCOUNT OWNER'S (CD-L P1).
+   *
+   * Every client account has a person behind it, and on a workspace nobody has
+   * filled this in for, that person's address is the answer. Resolved on the
+   * SERVER — the join is users→clientId, and the panel is a "use client"
+   * component, so the user collection must not cross to reach it. Asked only
+   * when the field is empty, and only when the modal is open.
+   *
+   * A DEFAULT, not a value: it prefills the input, and Save stores it
+   * explicitly. Nothing is written until somebody presses the button, so a
+   * client who deletes it and saves gets an empty field rather than the owner's
+   * address written back underneath them.
+   */
+  useEffect(() => {
+    if (client.contactEmail) return;
+    let live = true;
+    void clientOwnerEmailAction(client.id).then(({ email }) => {
+      if (!live || !email) return;
+      setForm((s) => (s.contactEmail ? s : { ...s, contactEmail: email }));
+    });
+    return () => { live = false; };
+  }, [client.id, client.contactEmail]);
 
   function set(k: keyof typeof form, v: string) {
     setForm((s) => ({ ...s, [k]: v }));
@@ -198,17 +247,6 @@ function BrandProfileModal({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-4">
-          <div>
-            <label className={labelCls}>Brand Voice</label>
-            <textarea
-              value={form.brandVoice}
-              onChange={(e) => set("brandVoice", e.target.value)}
-              placeholder="Tone, vocabulary, content rules…"
-              rows={4}
-              className={cn(inputCls, "resize-none")}
-            />
-          </div>
-
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Contact Email</label>
@@ -217,14 +255,6 @@ function BrandProfileModal({
             <div>
               <label className={labelCls}>Website</label>
               <input type="url" value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://…" className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>Industry</label>
-              <input value={form.industry} onChange={(e) => set("industry", e.target.value)} className={inputCls} />
-            </div>
-            <div>
-              <label className={labelCls}>Meeting Domain</label>
-              <input value={form.domainsCsv} onChange={(e) => set("domainsCsv", e.target.value)} placeholder="company.com" className={inputCls} />
             </div>
           </div>
 
@@ -278,23 +308,29 @@ function BrandProfileModal({
  * unbounded text and the desktop rail's no-scroll contract was decorative —
  * which is the wall of text the product owner hit in the client lens on the
  * 30 July call.
+ *
+ * It is also the ONLY prop left, which is the other half of this note now:
+ * NO `headerAction`, AND THAT IS THE RULING (CD-L P5).
+ *
+ * This prop existed for one caller: the staff client-context rail passed a ↗
+ * that opened the client's own website, "the extra button that is the whole
+ * difference between the two views of this panel". The product owner walked
+ * both views and ruled the difference out: "The rest of this page should be the
+ * exact same", with Schedule and Regenerate on the DOCUMENTS heading as the
+ * only staff extras anywhere in the rail.
+ *
+ * Staff lose nothing they cannot reach: the website is a field in the Brand
+ * Profile sheet this panel's own contact button opens, and the Competitor Track
+ * rows below keep their own ↗. Removing the PROP rather than the argument is
+ * deliberate — a slot that exists is a slot the next divergence arrives through,
+ * and with it gone the two mounts are the same expression.
  */
 export function ClientProfilePanel({
   client,
   compact = false,
-  headerAction,
 }: {
   client: ClientProfileFields;
   compact?: boolean;
-  /**
-   * An extra control for the header's button cluster, for the shell that has
-   * one. The staff client-context rail mounts this panel with the ↗ that opens
-   * the client's own website (CD-G4) — the "extra button" that is the whole
-   * difference between the two views of this panel. It sits with the edit
-   * controls and hides with them while the form is open, because a header that
-   * regrows a control mid-edit is the shift the cluster exists to avoid.
-   */
-  headerAction?: React.ReactNode;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -353,7 +389,14 @@ export function ClientProfilePanel({
           src={client.logoUrl || client.brandingGuidelines?.logoUrl}
           website={client.website}
           name={client.name}
-          accentColor={client.accentColor ?? "#2dff9e"}
+          /* The Ember accent, which is what every other brand tile in the app
+             falls back to (clients-grid, Competitor Track). This one still said
+             `#2dff9e` — the pre-Ember neon GREEN — so a client with no logo and
+             no resolvable favicon got a green tile in the rail and an orange one
+             in the clients grid, for the same account on the same screenful.
+             Both mounts of this panel read the same line, so this is the
+             fallback being wrong rather than the two views disagreeing. */
+          accentColor={client.accentColor ?? "#ff6b2c"}
           faviconSize={64}
           /* The ternary finally decides something: the height-constrained
              mounts give the mark 28px, and the scrolling sheet keeps 32. */
@@ -363,7 +406,6 @@ export function ClientProfilePanel({
         <span className="flex-1 truncate text-sm font-semibold text-foreground">{client.name}</span>
         {!editing && (
           <div className="flex items-center gap-1">
-            {headerAction}
             <button
               onClick={() => setBrandProfileOpen(true)}
               className="flex h-6 w-6 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
@@ -396,10 +438,13 @@ export function ClientProfilePanel({
               owner walked into on the Pitch by Deel account.
               Nowrap was there to stop a second row growing into the no-scroll
               contract (CD-E3) — but it was buying that with a row three lines
-              tall, which costs the contract more than wrapping ever did. The
-              category truncates instead, carrying its full text in `title`,
-              so the ordinary case is a single 22px row and the worst case is
-              two. */}
+              tall, which costs the contract more than wrapping ever did.
+              The chips are bounded at the SOURCE now (CD-L P3/P4): a category
+              is capped where it is typed, and an account addressed by an id
+              renders as its logo alone. Each chip is `shrink-0`, so a chip
+              that does not fit the line moves to the next one WHOLE rather
+              than being squeezed, and the ordinary case is a single 22px
+              row. */}
           <div className={cn("flex flex-wrap items-center gap-1", compact ? "mb-1" : "mb-2")}>
             {hasMeta ? (
               <>
@@ -410,15 +455,24 @@ export function ClientProfilePanel({
                   </span>
                 )}
                 {client.category && (
-                  /* The one chip whose text is free-form, so the one chip with
-                     a ceiling. Narrower where the rail is height-constrained,
-                     because that is where a wrap costs something. */
-                  <span
-                    title={client.category}
-                    className={cn(CHIP, "min-w-0", compact ? "max-w-[9rem]" : "max-w-[14rem]")}
-                  >
+                  /* THE CEILING IS ON THE FIELD NOW, not on this chip (CD-L P3).
+                     It used to be `max-w-[9rem]` here and `max-w-[14rem]` at
+                     the sheet, so the same category was cut at two different
+                     words in two different views and cut mid-word in both:
+                     "Global Startup Pitch Competition" read "Global Startup
+                     Pit…" on the client's own profile. A chip that shortens
+                     what it is showing is the wrong end of the problem, so the
+                     input caps the value at a length that provably fits one
+                     line at the narrower of the two mounts
+                     (CLIENT_CATEGORY_MAX_LENGTH states the measurement), and
+                     everything at or under that cap prints WHOLE — same text,
+                     same width, both mounts. `max-w-full` is the valve for the
+                     one case the cap cannot cover, a legacy or all-caps value
+                     wider than its own character count suggests, and it clips
+                     at the rail's edge instead of dragging in a scrollbar. */
+                  <span title={client.category} className={cn(CHIP, "max-w-full")}>
                     <Icon name="Tag" className={CHIP_ICON} />
-                    <span className="truncate">{client.category}</span>
+                    <span className="truncate">{clientCategoryLabel(client.category)}</span>
                   </span>
                 )}
               </>
@@ -447,20 +501,43 @@ export function ClientProfilePanel({
                   href={account.url}
                   target="_blank"
                   rel="noreferrer noopener"
-                  title={`Open ${account.handle} on ${PLATFORM_NAME[key]}`}
-                  aria-label={`Open ${account.handle} on ${PLATFORM_NAME[key]} in a new tab`}
+                  /* An id has no name to read out, so the LOGO carries the
+                     platform on its own (CD-L P4) — and then the accessible
+                     name has to say what the row is, since the mark is
+                     decorative and there is no text beside it. */
+                  title={
+                    account.logoOnly
+                      ? PLATFORM_NAME[key]
+                      : `Open ${account.handle} on ${PLATFORM_NAME[key]}`
+                  }
+                  aria-label={
+                    account.logoOnly
+                      ? `Open ${PLATFORM_NAME[key]} in a new tab`
+                      : `Open ${account.handle} on ${PLATFORM_NAME[key]} in a new tab`
+                  }
                   className={cn(
                     CHIP,
                     "max-w-full transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon",
                   )}
                 >
                   <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{account.handle}</span>
+                  {!account.logoOnly && <span className="truncate">{account.handle}</span>}
                 </a>
               ) : (
-                <span key={key} className={cn(CHIP, "max-w-full")}>
+                <span
+                  key={key}
+                  title={account.logoOnly ? PLATFORM_NAME[key] : undefined}
+                  /* `role="img"` or the label is not announced at all: the mark
+                     inside is aria-hidden (it is decorative everywhere else it
+                     is used), and an aria-label on a bare span has no element
+                     to name. The chip with text beside it needs neither. */
+                  {...(account.logoOnly
+                    ? { role: "img" as const, "aria-label": PLATFORM_NAME[key] }
+                    : {})}
+                  className={cn(CHIP, "max-w-full")}
+                >
                   <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">{account.handle}</span>
+                  {!account.logoOnly && <span className="truncate">{account.handle}</span>}
                 </span>
               ),
             )}
@@ -484,7 +561,12 @@ export function ClientProfilePanel({
           )}
         </>
       ) : (
-        /* ── Edit form (pill chips) ── */
+        /* ── Edit form (pill chips) ──
+           THE ONE PLACE THE CATEGORY IS EDITED (CD-L P2). The chip above renders
+           `client.category`; this input writes it. The Brand Profile sheet used
+           to offer an "Industry" box beside it, which read as a second editor
+           for the same fact, and it is gone — so the tag a client sees and the
+           field they change are one control apart, not two forms apart. */
         <div className="space-y-2">
           <div className="flex flex-wrap gap-1.5">
             <Pill icon="Users">
@@ -506,10 +588,19 @@ export function ClientProfilePanel({
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 placeholder="Category…"
+                /* The cap, where a person can feel it. The chip no longer cuts
+                   the text, so this is what keeps it to one line — and the
+                   helper below says why rather than letting the input just stop
+                   accepting characters. */
+                maxLength={CLIENT_CATEGORY_MAX_LENGTH}
+                aria-describedby="client-category-hint"
                 className={inputCls}
               />
             </Pill>
           </div>
+          <p id="client-category-hint" className="text-[11px] text-muted-2">
+            Keeps it short enough to fit your sidebar
+          </p>
 
           {/* The same mark the row will carry once saved, so the field a person
               is typing into is labelled by the logo rather than by a generic

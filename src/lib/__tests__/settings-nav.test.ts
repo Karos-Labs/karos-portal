@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { stripComments } from "./source-scan";
+import {
+  CLIENT_CATEGORY_MAX_LENGTH,
+  clampClientCategoryValue,
+  clientCategoryLabel,
+} from "@/lib/utils";
 
 /**
  * Navigation guards for the settings surfaces. All three of these were live
@@ -215,7 +220,8 @@ describe("the lab repo slug link points at a field that exists", () => {
 describe("a long client description cannot break the no-scroll rail", () => {
   /** Whitespace-normalised so a prettier rewrap cannot fail these. */
   const flat = (t: string) => t.replace(/\s+/g, " ");
-  const panel = source("src/components/client-profile-panel.tsx");
+  const PANEL = "src/components/client-profile-panel.tsx";
+  const panel = source(PANEL);
   const railSrc = source(RAIL);
   const sidebarSrc = source(SIDEBAR);
 
@@ -255,12 +261,76 @@ describe("a long client description cannot break the no-scroll rail", () => {
     // The row that carries team size, category and the social handles is the
     // other content-dependent block in this panel, and it used to answer the
     // no-scroll contract by refusing to wrap — which cost it more height than
-    // wrapping ever did, because nothing shortened the category. A ceiling and
-    // a truncation, so a long category costs one line and not three.
+    // wrapping ever did, because nothing shortened the category.
     expect(flat(panel)).toContain("flex flex-wrap items-center gap-1");
     expect(flat(panel)).not.toContain("flex-nowrap overflow-hidden");
-    expect(flat(panel)).toContain('compact ? "max-w-[9rem]" : "max-w-[14rem]"');
     expect(flat(panel)).toContain("title={client.category}");
+  });
+
+  it("caps the category at the FIELD, so no mount cuts it mid-word", () => {
+    // CD-L P3. The chip used to carry its own ceiling, and a different one per
+    // mount, so the same category was cut at two different words in the two
+    // views and cut mid-word in both ("Global Startup Pit…" on a client's own
+    // profile). A chip that shortens what it is showing is the wrong end of the
+    // problem: the value is capped where it is TYPED instead, at a length
+    // measured to fit one line at the narrower mount, and the chip prints it
+    // whole. Asked of the code, not the prose — this file explains at length
+    // what it stopped doing.
+    const panelCode = flat(code(PANEL));
+    expect(panelCode).not.toContain("max-w-[9rem]");
+    expect(panelCode).not.toContain("max-w-[14rem]");
+    // One ceiling, shared by the input, the save action and the render — asked
+    // by NAME, so the three cannot drift to different numbers.
+    expect(panelCode).toContain("maxLength={CLIENT_CATEGORY_MAX_LENGTH}");
+    expect(panelCode).toContain("clientCategoryLabel(client.category)");
+    expect(flat(code("src/lib/actions/client-actions.ts"))).toContain(
+      "patch.category = clampClientCategoryValue(input.category)",
+    );
+    // And the person typing is told why the input stops, rather than finding out.
+    expect(panelCode).toContain("Keeps it short enough to fit your sidebar");
+  });
+
+  it("picks a cap that provably fits one line at the narrower mount", () => {
+    // THE ARITHMETIC BEHIND THE NUMBER, so it can be re-derived rather than
+    // trusted. The narrower of the two mounts is the staff sidebar: `w-64`
+    // (256px) minus its 1px border, minus the body's `px-4`, minus the panel's
+    // own `px-1`, leaves 215px for a chip on its own line. The chip spends 38px
+    // of that on its 2px border, `px-2`, 14px mark and `gap-1.5`.
+    //
+    // The remaining 177px was measured in a browser at the app's own font
+    // (Hanken Grotesk, `text-xs` = 12px): the widest title-case category of 28
+    // characters renders at 176.7px and fits; at 29 it renders at 183.7px and
+    // does not. So 28 is the largest cap that holds, and the client rail's
+    // `w-72` has 32px more than the mount the number was measured at.
+    expect(sidebarSrc).toContain("hidden w-64 shrink-0");
+    expect(railSrc).toContain("hidden w-72 shrink-0");
+    expect(flat(code(PANEL))).toContain(
+      'const CHIP = "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-muted"',
+    );
+    expect(CLIENT_CATEGORY_MAX_LENGTH).toBe(28);
+  });
+
+  it("stores a hard ceiling and prints an ellipsis only for what predates it", () => {
+    // Storage keeps characters, not typography: the save path truncates and
+    // does NOT write an ellipsis into the client's own data.
+    const long = "Global Startup Pitch Competition"; // 32 chars, the real one
+    expect(clampClientCategoryValue(long)).toBe("Global Startup Pitch Competi");
+    expect(clampClientCategoryValue(long)).not.toContain("…");
+    expect(clampClientCategoryValue(long).length).toBeLessThanOrEqual(
+      CLIENT_CATEGORY_MAX_LENGTH,
+    );
+    // Anything within the cap is stored and printed WHOLE — that is the ruling.
+    for (const ok of ["Fintech", "Global Startup Competition", ""]) {
+      expect(clampClientCategoryValue(ok)).toBe(ok);
+      expect(clientCategoryLabel(ok)).toBe(ok);
+      expect(clientCategoryLabel(ok)).not.toContain("…");
+    }
+    // A value already in Firestore predates the cap, so the chip shortens it
+    // rather than wrapping. The ONLY case that shows an ellipsis mid-chip.
+    expect(clientCategoryLabel(long)).toBe("Global Startup Pitch Compet…");
+    expect(clientCategoryLabel(long).length).toBe(CLIENT_CATEGORY_MAX_LENGTH);
+    // And the whole of it stays reachable, which is what `title` is for.
+    expect(flat(code(PANEL))).toContain("title={client.category}");
   });
 
   it("draws every chip in the row at one size", () => {
@@ -283,5 +353,110 @@ describe("a long client description cannot break the no-scroll rail", () => {
     // own profile text is not a fix for it being long.
     expect(flat(panel)).toContain("{client.description || client.brief}");
     expect(flat(panel)).not.toContain("!compact && (client.description");
+  });
+});
+
+/* ── CD-L P1/P2: what the Brand Profile sheet is for ─────────────────────── */
+
+describe("the Brand Profile sheet asks for three things", () => {
+  const flat = (t: string) => t.replace(/\s+/g, " ");
+  const PANEL = "src/components/client-profile-panel.tsx";
+  const ACTIONS = "src/lib/actions/client-actions.ts";
+  const GRID = "src/components/clients-grid.tsx";
+  /** Just the modal, so a field the PANEL still edits cannot answer for it. */
+  const modal = (() => {
+    const src = code(PANEL);
+    const from = src.indexOf("function BrandProfileModal");
+    expect(from, "BrandProfileModal is gone").toBeGreaterThan(-1);
+    return flat(src.slice(from, src.indexOf("export function ClientProfilePanel", from)));
+  })();
+
+  it("offers Contact Email, Website and About, and nothing else", () => {
+    for (const label of ["Contact Email", "Website", "About"]) {
+      expect(modal, `the sheet no longer asks for ${label}`).toContain(`>${label}<`);
+    }
+    // The three that left, each for its own reason (see the component's note).
+    for (const gone of ["Brand Voice", "Industry", "Meeting Domain"]) {
+      expect(modal, `${gone} is still in the sheet`).not.toContain(`>${gone}<`);
+    }
+    // Exactly three inputs, so a fourth cannot be added without answering here.
+    expect((modal.match(/<label className=\{labelCls\}>/g) ?? [])).toHaveLength(3);
+  });
+
+  it("writes only those three, so the fields it dropped keep their stored values", () => {
+    // The form object IS the action payload (`updateClientProfileAction(client.id,
+    // form)`), so the state shape is the write contract. Brand Voice is a
+    // DOCUMENT and the sheet must not keep a second copy of it.
+    expect(modal).toContain(
+      "useState({ contactEmail: client.contactEmail ?? \"\", website: client.website ?? \"\", description: client.description ?? \"\", })",
+    );
+    for (const gone of ["brandVoice", "industry", "domainsCsv"]) {
+      expect(modal, `the sheet still writes ${gone}`).not.toContain(gone);
+    }
+  });
+
+  it("stops the ACTION accepting them too, not just the form", () => {
+    // A field a client-reachable action still takes is a field a crafted
+    // request still writes, whatever the form on screen offers — and
+    // `domainsCsv` decided which Fireflies transcripts auto-assign to a client,
+    // which is a routing control with somebody else's meetings behind it.
+    const actions = flat(code(ACTIONS));
+    const fn = actions.slice(
+      actions.indexOf("export async function updateClientProfileAction"),
+      actions.indexOf("export async function updateClientAction"),
+    );
+    expect(fn.length, "updateClientProfileAction is gone").toBeGreaterThan(100);
+    for (const gone of ["brandVoice", "industry", "domainsCsv"]) {
+      expect(fn, `updateClientProfileAction still accepts ${gone}`).not.toContain(gone);
+    }
+    // The three it does keep, plus the two the panel's own form sends.
+    for (const kept of ["contactEmail", "website", "description", "category", "socialLinks"]) {
+      expect(fn).toContain(kept);
+    }
+  });
+
+  it("moves the meeting domain to the staff dialog, with a line saying what it does", () => {
+    // It was already offered to staff there; what it lacked was the sentence
+    // that says why an ops person would touch it.
+    const grid = flat(code(GRID));
+    expect(grid).toContain("Meeting domains");
+    expect(grid).toContain("Meetings from this email domain auto-assign to this client");
+    // And it still writes through the staff-gated action.
+    expect(grid).toContain("domainsCsv: form.domains");
+  });
+
+  it("defaults an unset contact email to the account owner, resolved on the server", () => {
+    // The join is users→clientId, and this panel is a "use client" module — so
+    // the answer is fetched, not shipped: nothing about the user collection may
+    // cross into the RSC payload just to prefill an input.
+    const data = flat(code("src/lib/data.ts"));
+    expect(data).toContain("export async function getClientOwnerEmail(clientId: string)");
+    expect(data).toContain('.where("clientId", "==", clientId)');
+    expect(data).toContain('.where("role", "==", "CLIENT_USER")');
+    const actions = flat(code(ACTIONS));
+    expect(actions).toContain("export async function clientOwnerEmailAction(clientId: string)");
+    // Same fence as the write path: staff, or this client's own user.
+    expect(actions).toContain(
+      'if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) { return { email: "" }; }',
+    );
+    // Asked only when the field is empty, and it PREFILLS rather than saves.
+    expect(modal).toContain("if (client.contactEmail) return;");
+    expect(modal).toContain("void clientOwnerEmailAction(client.id)");
+  });
+
+  it("leaves ONE editor for the category, and it is the one the chip renders", () => {
+    // CD-L P2. The chip prints `client.category`; the pencil's inline form
+    // writes it. The sheet's "Industry" box read as a second editor for the same
+    // fact and is gone, so there is no longer a form in this panel that can
+    // change what the tag says without being the tag's own field.
+    const panelCode = flat(code(PANEL));
+    const inputs = [...panelCode.matchAll(/value=\{category\}/g)];
+    expect(inputs, "more than one category editor in the panel").toHaveLength(1);
+    expect(panelCode).toContain("setCategory(e.target.value)");
+    expect(panelCode).toContain("{clientCategoryLabel(client.category)}");
+    // `industry` is a staff/ops field now: the copilot and the intel pipeline
+    // still read it, and the Clients page Edit dialog still sets it.
+    expect(panelCode).not.toContain("industry");
+    expect(flat(code(GRID))).toContain(">Industry<");
   });
 });

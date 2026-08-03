@@ -295,6 +295,104 @@ describe("toStaffShellView", () => {
   });
 });
 
+/* ── CD-L P5: the two views of one client's company panel ────────────────── */
+
+/**
+ * THE AVATAR HAS TO RESOLVE THE SAME WAY IN BOTH SHELLS.
+ *
+ * ClientProfilePanel is one component mounted from two projections, and its
+ * BrandFavicon reads four fields to decide what to draw: the uploaded logo, the
+ * generated one nested in `brandingGuidelines`, the website whose favicon is the
+ * fallback, and the accent the initials chip is tinted with. The fallback chain
+ * is ordered, so ONE of those four missing on one side is enough to send that
+ * shell down a different branch and paint a different tile — which is what the
+ * product owner saw when he put the two views side by side.
+ *
+ * Neither projection is free to drop one quietly: both are built by
+ * construction, field by field, in two separate lists that nothing compares. So
+ * this compares them, on the same document, for exactly the fields the avatar
+ * reads.
+ */
+describe("the client's company panel resolves identically in both shells", () => {
+  const withBrand = makeClient({
+    logoUrl: "https://cdn.test/acme.png",
+    accentColor: "#7c3aed",
+    brandingGuidelines: { logoUrl: "https://cdn.test/generated.png", updatedAt: 9 },
+  });
+
+  it("gives the avatar the same four inputs from either projection", () => {
+    const client = toClientPortalView(withBrand);
+    const staff = toStaffShellView(withBrand);
+    // The BrandFavicon call's own arguments, in the panel's order.
+    const avatarInputs = (c: {
+      logoUrl?: string;
+      website?: string;
+      accentColor?: string;
+      brandingGuidelines?: { logoUrl?: string };
+    }) => [c.logoUrl, c.brandingGuidelines?.logoUrl, c.website, c.accentColor];
+    expect(avatarInputs(client)).toEqual(avatarInputs(staff));
+    // Non-vacuity: two matching rows of `undefined` would satisfy the line
+    // above while proving the opposite of what it claims.
+    expect(avatarInputs(client)).toEqual([
+      "https://cdn.test/acme.png",
+      "https://cdn.test/generated.png",
+      "https://acme.test",
+      "#7c3aed",
+    ]);
+  });
+
+  it("falls back to the Ember accent, not the pre-Ember green", () => {
+    // The one avatar difference that was NOT a projection difference: both
+    // mounts read this line, and it still named `#2dff9e` while every other
+    // brand tile in the app fell back to the orange. Same account, same
+    // screenful, two colours.
+    const panel = readFileSync(
+      join(process.cwd(), "src/components/client-profile-panel.tsx"),
+      "utf8",
+    );
+    expect(panel).toContain('accentColor={client.accentColor ?? "#ff6b2c"}');
+    expect(panel.replace(/\/\*[\s\S]*?\*\//g, "")).not.toContain("#2dff9e");
+  });
+
+  it("carries every field the panel renders, from either projection", () => {
+    // The whole contract, not just the avatar: `ClientProfileFields` is the
+    // panel's stated field list, and a projection that drops one of them shows
+    // that shell a panel with a hole in it. Listed here rather than imported
+    // because the panel is a "use client" module this run cannot load.
+    const panelFields = [
+      "id",
+      "name",
+      "logoUrl",
+      "accentColor",
+      "brandingGuidelines",
+      "website",
+      "category",
+      "teamSize",
+      "brief",
+      "description",
+      "contactEmail",
+      "socialLinks",
+    ] as const;
+    const full = makeClient({
+      logoUrl: "https://cdn.test/acme.png",
+      accentColor: "#7c3aed",
+      brandingGuidelines: { logoUrl: "https://cdn.test/generated.png", updatedAt: 9 },
+      category: "Fintech",
+      teamSize: "11–50",
+      brief: "b",
+      description: "d",
+      contactEmail: "hi@acme.test",
+      socialLinks: { instagram: "acme" },
+    });
+    const client = toClientPortalView(full) as unknown as Record<string, unknown>;
+    const staff = toStaffShellView(full) as Record<string, unknown>;
+    for (const f of panelFields) {
+      expect(client[f], `client portal view drops ${f}`).toBeDefined();
+      expect(staff[f], `staff shell view drops ${f}`).toBeDefined();
+    }
+  });
+});
+
 /**
  * The half that IS a type, and is checked by `npx tsc --noEmit` rather than by
  * reading text: what the staff shell's context can be asked for at all.
