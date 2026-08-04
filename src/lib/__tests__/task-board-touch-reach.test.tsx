@@ -40,6 +40,7 @@ vi.mock("@/lib/actions", () => ({
   approveTaskArtifactAction: vi.fn(),
   requestAdjustmentsAction: vi.fn(),
   publishIntegrationAction: vi.fn(),
+  setTaskDisabledAction: vi.fn(),
 }));
 
 /** Whatever the current test wants `?owner=`/`?task=` to be. */
@@ -88,6 +89,7 @@ function ticketMarkup(patch: Record<string, any> = {}): string {
   return renderToStaticMarkup(
     <TaskTicketModal
       task={makeTask(patch)}
+      currentUserRole={"CLIENT_USER" as any}
       onClose={() => {}}
       onStatusChange={() => {}}
       onLocalUpdate={() => {}}

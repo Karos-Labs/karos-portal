@@ -31,12 +31,17 @@ import {
 import { TaskTicketModal } from "@/components/task-ticket-modal";
 import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
 import { TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
+import {
+  taskIsDisabled,
+  TASK_PAUSED_MESSAGE,
+  TASK_AGENT_UNAVAILABLE_MESSAGE,
+} from "@/lib/task-disable-copy";
 import type { ClientTask, Role, TaskOwner, TaskSource, TaskStatus } from "@/lib/types";
 
 type BoardStatus = Exclude<TaskStatus, "archived">;
 type OwnerTab = "karos" | "client";
 type StatusFilter = "all" | BoardStatus;
-type BoardTask = ClientTask & { _clientName?: string };
+type BoardTask = ClientTask & { _clientName?: string; _agentDisabled?: boolean };
 
 /**
  * The board's columns: which states get a column, in which order, under which
@@ -275,6 +280,11 @@ function TaskCard({
    * blocks below can never both paint.
    */
   const noDeliverable = ranWithoutDeliverable(task);
+  const paused = taskIsDisabled(task);
+  // Only worth a warning while the task could otherwise still run - a
+  // completed card (the board never renders archived ones) has nothing left
+  // to be blocked from doing.
+  const agentUnavailable = !paused && task._agentDisabled && !isExecuting && task.status !== "completed";
   const owner = inferOwner(task);
   // Two-step confirm for this row's destructive control, the shape
   // scheduled-runs.tsx uses for a scheduled-run delete: the trash icon arms the
@@ -343,10 +353,26 @@ function TaskCard({
         </div>
       </div>
 
+      {/* An admin paused this task (task-disable-copy.ts) - a standing decision,
+          not a run outcome, so it takes visual priority over anything below. */}
+      {paused && (
+        <div className="mb-2 rounded-md border border-border-strong bg-surface-3 px-2 py-1.5">
+          <p className="text-[11px] font-medium text-muted">{TASK_PAUSED_MESSAGE}</p>
+        </div>
+      )}
+
+      {/* Proactive warning before a client's next drag wastes a claim and a
+          charge on a run execution-engine.ts will refund a moment later. */}
+      {agentUnavailable && (
+        <div className="mb-2 rounded-md border border-warning/35 bg-warning/10 px-2 py-1.5">
+          <p className="text-[11px] font-medium text-warning">{TASK_AGENT_UNAVAILABLE_MESSAGE}</p>
+        </div>
+      )}
+
       {/* A run that reported success and delivered nothing. Warning, not danger:
           it did not break, and the client has already had the credits back —
           what they need is the fact and the way to try again. */}
-      {noDeliverable && (
+      {noDeliverable && !paused && (
         <div
           className="mb-2 rounded-md border border-warning/35 bg-warning/10 px-2 py-1.5"
           onClick={(e) => e.stopPropagation()}
@@ -362,7 +388,7 @@ function TaskCard({
         </div>
       )}
 
-      {hasError && !isExecuting && (
+      {hasError && !isExecuting && !paused && (
         <div
           className="mb-2 rounded-md border border-danger/35 bg-danger/10 px-2 py-1.5"
           onClick={(e) => e.stopPropagation()}
@@ -500,8 +526,10 @@ function TaskCard({
           </button>
           {/* onMove is routed through the board's price gate, so this button
               (and the retry above) asks before a managed run charges. While the
-              price panel is up the button is gone — the panel is the control. */}
-          {task.status !== "in_progress" && !runPrompt && (
+              price panel is up the button is gone — the panel is the control.
+              Hidden entirely while paused: pressing it would only be refused
+              server-side (see task-disable-copy.ts). */}
+          {task.status !== "in_progress" && !runPrompt && !paused && (
             <button
               onClick={() => onMove("in_progress")}
               disabled={pricing}
@@ -556,7 +584,7 @@ function SortableTaskCard({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     data: { kind: "task-card", status: task.status },
-    disabled: taskIsExecuting(task),
+    disabled: taskIsExecuting(task) || taskIsDisabled(task),
   });
 
   const style = {
@@ -1218,6 +1246,7 @@ export function TasksBoard({
       {selectedTask && (
         <TaskTicketModal
           task={selectedTask}
+          currentUserRole={currentUserRole}
           onClose={() => setSelectedTaskId(null)}
           onStatusChange={(id, status, cid) => {
             if (status === "archived") return;

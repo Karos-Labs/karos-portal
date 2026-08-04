@@ -23,6 +23,7 @@ import {
 } from "@/lib/data";
 import { chargeClientModelCall } from "@/lib/client-model-charge";
 import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
+import { taskIsDisabled, TASK_PAUSED_MESSAGE } from "@/lib/task-disable-copy";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import type { AppUser, Asset, AssetType, ClientTask, ManagedTaskType } from "@/lib/types";
@@ -88,6 +89,10 @@ export async function startTaskExecutionAction(
   if (task.metadata?.executing === true) {
     return { ok: true }; // already running — don't double-trigger
   }
+
+  // An admin paused this task — refused before the umbrella check, the claim
+  // or the charge.
+  if (taskIsDisabled(task)) return { ok: false, error: TASK_PAUSED_MESSAGE };
 
   // §2 guard rail, keyed on the BILLED actor (D1). The board is a second door
   // into the same agent, and it must refuse on the same condition the agent's
@@ -306,6 +311,10 @@ export async function requestAdjustmentsAction(
 
   const trimmed = feedback.trim();
   if (!trimmed) return { ok: false, error: "Feedback cannot be empty" };
+
+  // An admin paused this task — a re-run is a run, so it refuses the same way
+  // a first run would.
+  if (taskIsDisabled(task)) return { ok: false, error: TASK_PAUSED_MESSAGE };
 
   // §2 guard rail, keyed on the BILLED actor (D1): a re-run is a run, and it
   // charges again — so it refuses on the same condition as a first run.

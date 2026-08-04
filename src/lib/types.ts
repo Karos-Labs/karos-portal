@@ -1497,6 +1497,11 @@ export interface ClientTask {
    * nothing. Never read on its own: `ranWithoutDeliverable` (task-outcome-copy.ts)
    * asks whether the task is still sitting in that state, because only task-sync
    * clears the flag while eight other writers move the state.
+   * `disabled` — an admin paused this task (most often because its linked
+   * custom agent was turned off); read through `taskIsDisabled`
+   * (task-disable-copy.ts), the one predicate every execution-trigger action
+   * refuses on. Set and cleared by exactly one action (`setTaskDisabledAction`),
+   * so unlike `noDeliverable` it is a standing decision, not a run outcome.
    */
   metadata?: Record<string, unknown>;
   /**

@@ -24,6 +24,7 @@ import { MANAGED_PRODUCTS, type ManagedProduct } from "@/lib/agent-service/produ
 import { CREDIT_COSTS, taskExecutionCost } from "@/lib/credits";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { resolveTaskCustomAgentId } from "@/lib/task-agent-link";
+import { taskIsDisabled } from "@/lib/task-disable-copy";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
@@ -471,6 +472,7 @@ export async function runAutopilotBatch(clientId: string): Promise<void> {
   const allTasks = await listClientTasks({ clientId, status: "pending", limit: 10 });
   const pendingKaros = allTasks
     .filter((t) => inferOwnerEngine(t) === "karos_managed")
+    .filter((t) => !taskIsDisabled(t))
     .slice(0, 5);
 
   if (pendingKaros.length === 0) return;

@@ -18,14 +18,18 @@ import {
 import { isBillableClientActor } from "@/lib/credits";
 import { chargeClientModelCall } from "@/lib/client-model-charge";
 import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
+import { taskIsDisabled } from "@/lib/task-disable-copy";
 import type { ClientTask } from "@/lib/types";
 
 /** The batch a "run pending tasks" click would execute: the same selection the
- *  runner uses (pending → karos_managed → first 5), shared so the price shown
- *  and the work started can never describe different task sets. */
+ *  runner uses (pending → karos_managed → not paused → first 5), shared so the
+ *  price shown and the work started can never describe different task sets. */
 async function pendingTasksBatch(clientId: string): Promise<ClientTask[]> {
   const pending = await listClientTasks({ clientId, status: "pending", limit: 10 });
-  return pending.filter((t) => inferOwnerEngine(t) === "karos_managed").slice(0, 5);
+  return pending
+    .filter((t) => inferOwnerEngine(t) === "karos_managed")
+    .filter((t) => !taskIsDisabled(t))
+    .slice(0, 5);
 }
 
 /**

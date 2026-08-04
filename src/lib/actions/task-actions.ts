@@ -21,6 +21,7 @@ import {
   releaseTaskClaim,
 } from "@/lib/data";
 import { findDuplicateReason } from "@/lib/task-dedup";
+import { taskIsDisabled, TASK_PAUSED_MESSAGE } from "@/lib/task-disable-copy";
 import {
   runTaskExecution,
   inferOwnerEngine,
@@ -96,6 +97,11 @@ export async function updateTaskStatusAction(
     status === "in_progress" && inferOwnerEngine(task) === "karos_managed";
 
   if (triggersExecution) {
+    // An admin paused this task (see task-disable-copy.ts) — refused before
+    // anything else, so a paused task never reaches the umbrella check, the
+    // claim or the charge either.
+    if (taskIsDisabled(task)) return { ok: false, error: TASK_PAUSED_MESSAGE };
+
     // §2 guard rail, keyed on the BILLED actor (D1). Dragging a card to In
     // Progress is the task board's run button: same agent, same charge, so the
     // same refusal while its umbrella is not live. Evaluated before the claim.
@@ -289,6 +295,39 @@ export async function deleteTaskAction(
   }
 
   await deleteClientTask(id);
+  revalidatePath("/tasks");
+  revalidatePath(`/clients/${clientId}`);
+  return { ok: true };
+}
+
+/**
+ * Admin-only: pause a task (or resume it), keyed to `metadata.disabled` and
+ * checked at every execution-trigger door (see task-disable-copy.ts). Written
+ * for the case a task's linked custom agent got turned off — left alone, the
+ * task just sits active until someone drags it and pays for a run
+ * execution-engine.ts refunds a moment later — but any admin may pause any
+ * task, and resuming is never tied to the agent's own state coming back; it is
+ * the admin's own call either way.
+ *
+ * Employees are refused, not just clients: `requireTaskAccess` alone would
+ * let staff generally through, and this is scoped narrower than the rest of
+ * the task actions on purpose.
+ */
+export async function setTaskDisabledAction(
+  id: string,
+  clientId: string,
+  disabled: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const access = await requireTaskAccess(id, clientId);
+  if (!access.ok) return { ok: false, error: access.error };
+  if (access.user.role !== "KAROS_ADMIN") return { ok: false, error: "Forbidden" };
+  const { task } = access;
+
+  await updateClientTask(id, {
+    metadata: { ...(task.metadata ?? {}), disabled },
+    updatedAt: Date.now(),
+  });
+
   revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };

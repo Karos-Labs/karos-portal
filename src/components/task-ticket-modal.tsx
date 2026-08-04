@@ -9,14 +9,20 @@ import { ManagedJobProgress } from "@/components/managed-job-progress";
 import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
 import { taskPriorityLabel, TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
 import {
+  taskIsDisabled,
+  TASK_PAUSED_MESSAGE,
+  TASK_AGENT_UNAVAILABLE_MESSAGE,
+} from "@/lib/task-disable-copy";
+import {
   getTaskCommentsAction,
   addTaskCommentAction,
   generateTaskPlanAction,
   approveTaskArtifactAction,
   requestAdjustmentsAction,
   publishIntegrationAction,
+  setTaskDisabledAction,
 } from "@/lib/actions";
-import type { ClientTask, TaskComment, TaskOwner, TaskStatus } from "@/lib/types";
+import type { ClientTask, Role, TaskComment, TaskOwner, TaskStatus } from "@/lib/types";
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
@@ -613,10 +619,12 @@ function CommentsSection({
 /* ── Main modal ──────────────────────────────────────────────────── */
 
 interface Props {
-  task: ClientTask & { _clientName?: string };
+  task: ClientTask & { _clientName?: string; _agentDisabled?: boolean };
+  /** Gates the Pause/Resume control below to KAROS_ADMIN — everyone else only reads the banner. */
+  currentUserRole: Role;
   onClose: () => void;
   onStatusChange: (id: string, status: TaskStatus, clientId: string) => void;
-  onLocalUpdate: (updated: ClientTask & { _clientName?: string }) => void;
+  onLocalUpdate: (updated: ClientTask & { _clientName?: string; _agentDisabled?: boolean }) => void;
   /**
    * Dismiss this task — the board's one delete path, which is what reaches
    * `deleteTaskAction` (and its authorization). REQUIRED, not optional: the
@@ -628,7 +636,66 @@ interface Props {
   onDelete: () => void;
 }
 
-export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, onDelete }: Props) {
+/**
+ * Admin-only Pause/Resume control for a task whose agent is unavailable (or
+ * one already paused) — the only door `setTaskDisabledAction` is reached
+ * through, so the same admin-only refusal the action itself gives is never
+ * the first thing an employee or client sees.
+ */
+function TaskPauseControl({
+  taskId,
+  clientId,
+  isPaused,
+  onToggled,
+}: {
+  taskId: string;
+  clientId: string;
+  isPaused: boolean;
+  onToggled: (disabled: boolean) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  function toggle() {
+    setError(null);
+    startTransition(async () => {
+      const res = await setTaskDisabledAction(taskId, clientId, !isPaused);
+      if (res.ok) onToggled(!isPaused);
+      else setError(res.error ?? "Could not update this task.");
+    });
+  }
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={toggle}
+        disabled={isPending}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50",
+          isPaused
+            ? "border-neon/30 bg-neon/10 text-neon hover:bg-neon/20"
+            : "border-border bg-surface-2 text-foreground hover:border-border-strong",
+        )}
+      >
+        <Icon
+          name={isPending ? "Loader" : isPaused ? "Play" : "Pause"}
+          className={cn("h-3 w-3", isPending && "animate-spin")}
+        />
+        {isPaused ? "Resume task" : "Pause task"}
+      </button>
+      {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
+    </div>
+  );
+}
+
+export function TaskTicketModal({
+  task,
+  currentUserRole,
+  onClose,
+  onStatusChange,
+  onLocalUpdate,
+  onDelete,
+}: Props) {
   const src = SOURCE_LABEL[task.source] ?? SOURCE_LABEL.manual;
   const prio = PRIORITY_COLOR[task.priority] ?? PRIORITY_COLOR.low;
   const initialPlan = (task.metadata?.aiPlan as string | undefined) ?? null;
@@ -649,6 +716,9 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, 
       : null;
   const isReviewPending = task.status === "review_pending";
   const isExecuting = taskIsExecuting(task);
+  const paused = taskIsDisabled(task);
+  const agentUnavailable = !paused && task._agentDisabled && !isExecuting && task.status !== "completed";
+  const isAdmin = currentUserRole === "KAROS_ADMIN";
   /**
    * The run reported success and handed the ticket nothing (task-sync's
    * `deliveredNothing`), and the task is still sitting where that left it.
@@ -791,6 +861,51 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, 
 
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5">
+
+          {/* An admin paused this task (task-disable-copy.ts) - a standing
+              decision, not a run outcome, so every role reads the same
+              sentence and only an admin also gets the control to undo it. */}
+          {paused && (
+            <div className="rounded-md border border-border-strong bg-surface-3 px-4 py-3">
+              <p className="text-sm font-medium text-muted">{TASK_PAUSED_MESSAGE}</p>
+              {isAdmin && (
+                <TaskPauseControl
+                  taskId={task.id}
+                  clientId={task.clientId}
+                  isPaused={true}
+                  onToggled={(next) =>
+                    onLocalUpdate({
+                      ...task,
+                      metadata: { ...(task.metadata ?? {}), disabled: next },
+                    })
+                  }
+                />
+              )}
+            </div>
+          )}
+
+          {/* Proactive warning before the client's next drag wastes a claim and
+              a charge on a run execution-engine.ts will refund a moment later.
+              An admin gets the Pause control right here instead of having to
+              go find the agent and come back. */}
+          {agentUnavailable && (
+            <div className="rounded-md border border-warning/35 bg-warning/10 px-4 py-3">
+              <p className="text-sm font-medium text-warning">{TASK_AGENT_UNAVAILABLE_MESSAGE}</p>
+              {isAdmin && (
+                <TaskPauseControl
+                  taskId={task.id}
+                  clientId={task.clientId}
+                  isPaused={false}
+                  onToggled={(next) =>
+                    onLocalUpdate({
+                      ...task,
+                      metadata: { ...(task.metadata ?? {}), disabled: next },
+                    })
+                  }
+                />
+              )}
+            </div>
+          )}
 
           {/* Executing state — a step progress bar (ManagedJobProgress, the same
               strip /jobs and the custom-agents run list use for a live run)

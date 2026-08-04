@@ -24,6 +24,7 @@ vi.mock("@/lib/actions", () => ({
   approveTaskArtifactAction: vi.fn(),
   requestAdjustmentsAction: vi.fn(),
   publishIntegrationAction: vi.fn(),
+  setTaskDisabledAction: vi.fn(),
 }));
 
 import { TaskTicketModal } from "@/components/task-ticket-modal";
@@ -58,6 +59,7 @@ function ticketMarkup(status: string, metadata: Record<string, unknown>): string
   return renderToStaticMarkup(
     <TaskTicketModal
       task={task}
+      currentUserRole={"CLIENT_USER" as any}
       onClose={() => {}}
       onStatusChange={() => {}}
       onLocalUpdate={() => {}}
