@@ -148,3 +148,15 @@ step: tsc clean · 3433 tests · build exit 0 · lint 0 errors.
   the copilot's @-agent tags show the same platform logo instead of the
   generic glyph. One rule, all clients: "so that they understand what post
   they're going to get." The AF-4 SocialPlatformMark set is the icon source.
+
+## CD-N — post-merge directive (Albert, 2026-08-04)
+
+- **AF-21 PbD caption hashtags.** Every UPCOMING Pitch by Deel caption carries
+  three relevant hashtags: "add three of the most relevant hashtags we can add
+  there for each of the captions." Done as `scripts/add-pbd-caption-hashtags.ts`
+  (dry-run/apply, idempotent, guest-first derivation, tested) and APPLIED to the
+  live database on 2026-08-04: 234 upcoming captions tagged, re-run plans zero
+  writes. Published/past captions untouched (the client's own posting history).
+  The feed sync never overwrites a non-empty caption, so the tags survive
+  future syncs. Residual: the routine's own caption.txt files (the daily email
+  body) do not carry the tags; portal is the tagged source.
