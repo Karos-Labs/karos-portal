@@ -235,6 +235,17 @@ export async function updateTeamMemberAction(uid: string, patch: Partial<AppUser
   revalidatePath("/team");
 }
 
+/** Remove an existing team member: the Firestore doc and the Firebase Auth account both go. */
+export async function deleteTeamMemberAction(uid: string) {
+  const admin = await requireAdmin();
+  if (uid === admin.uid) throw new Error("You can't delete your own account.");
+  const existing = await getUser(uid);
+  if (!existing) throw new Error("User not found");
+  await deleteUser(uid);
+  await adminAuth().deleteUser(uid).catch(() => {});
+  revalidatePath("/team");
+}
+
 /**
  * Toggle the isGroupAdmin flag on a client user.
  * Admins can toggle anyone; client group-admins can toggle others within their own group.

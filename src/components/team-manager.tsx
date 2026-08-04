@@ -28,6 +28,7 @@ function ClientKeyCopy({ clientKeyId }: { clientKeyId: string }) {
 import {
   createTeamMemberAction,
   updateTeamMemberAction,
+  deleteTeamMemberAction,
   toggleGroupAdminAction,
   updateSeatAssignmentAction,
   startImpersonationAction,
@@ -64,6 +65,9 @@ function UserRow({
   const [actionPending, startAction] = useTransition();
   const [impersonatePending, startImpersonate] = useTransition();
   const [seatPending, startSeat] = useTransition();
+  const [deletePending, startDelete] = useTransition();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name ?? "-";
   const isSelf = u.uid === currentUid;
   const isAdmin = currentUserRole === "KAROS_ADMIN";
@@ -74,6 +78,19 @@ function UserRow({
     startAction(async () => {
       await fn();
       onRefresh();
+    });
+  }
+
+  function confirmDeleteUser() {
+    setDeleteError(null);
+    startDelete(async () => {
+      try {
+        await deleteTeamMemberAction(u.uid);
+        setConfirmDelete(false);
+        onRefresh();
+      } catch (e) {
+        setDeleteError(e instanceof Error ? e.message : "Could not delete user");
+      }
     });
   }
 
@@ -231,9 +248,41 @@ function UserRow({
                 {impersonatePending ? "Loading..." : "Sign in as"}
               </Button>
             )}
+
+            {!isSelf && (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                title="Delete user"
+                className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-2 transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+              >
+                <Icon name="Trash2" className="h-3.5 w-3.5" />
+                Delete
+              </button>
+            )}
           </>
         )}
       </div>
+
+      {isAdmin && (
+        <Modal
+          open={confirmDelete}
+          onClose={() => (deletePending ? null : setConfirmDelete(false))}
+          title={`Delete ${u.name}?`}
+          description="This permanently removes their login and Firestore account. There is no undo."
+        >
+          <div className="space-y-3">
+            {deleteError && <p className="text-xs text-danger">{deleteError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setConfirmDelete(false)} disabled={deletePending}>
+                Cancel
+              </Button>
+              <Button size="sm" variant="danger" onClick={confirmDeleteUser} loading={deletePending}>
+                Delete user
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </li>
   );
 }
