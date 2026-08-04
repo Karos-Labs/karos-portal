@@ -147,7 +147,7 @@ function UserRow({
             className="h-8 w-40 text-xs"
             title="Which seat this login represents"
           >
-            <option value="">— shared login —</option>
+            <option value="">Shared login</option>
             {seats.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -467,7 +467,7 @@ export function TeamManager({
               <div>
                 <Label>Seat (optional)</Label>
                 <Select value={form.seatId} onChange={(e) => setForm((s) => ({ ...s, seatId: e.target.value }))}>
-                  <option value="">— shared login —</option>
+                  <option value="">Shared login</option>
                   {(seatsByClient[form.clientId] ?? []).map((s) => (
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))}
