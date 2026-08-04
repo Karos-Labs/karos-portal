@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { renderAssetBody } from "@/lib/doc-render";
+import { ManagedJobProgress } from "@/components/managed-job-progress";
 import { ranWithoutDeliverable } from "@/lib/task-outcome-copy";
 import { taskPriorityLabel, TASK_RUNNING_LABEL, taskIsExecuting, taskStatusLabel } from "@/lib/task-status-copy";
 import {
@@ -791,16 +792,23 @@ export function TaskTicketModal({ task, onClose, onStatusChange, onLocalUpdate, 
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5">
 
-          {/* Executing state */}
+          {/* Executing state — a step progress bar (ManagedJobProgress, the same
+              strip /jobs and the custom-agents run list use for a live run)
+              instead of a static "working on it" line, so a client watching
+              this ticket sees where the run actually stands. */}
           {isExecuting && (
-            <div className="flex items-center gap-3 rounded-md border border-neon/20 bg-neon/5 px-4 py-3">
-              <Icon name="Loader" className="h-5 w-5 animate-spin text-neon" />
-              <div>
-                <p className="text-sm font-medium text-neon">Karos AI is working on this task</p>
-                <p className="text-xs text-muted">
-                  The deliverable will appear here when generation is complete.
+            <div className="rounded-md border border-neon/20 bg-neon/5 p-4">
+              <div className="mb-3 flex items-center gap-3">
+                <Icon name="Loader" className="h-5 w-5 animate-spin text-neon" />
+                <p className="text-sm font-medium text-neon">
+                  {executingAgentName ? `${executingAgentName} is working on this task` : "Karos AI is working on this task"}
                 </p>
               </div>
+              <ManagedJobProgress status="running" className="mb-2 border-0 bg-transparent px-0 py-0" />
+              <p className="text-xs text-muted">
+                Started {relativeTime(task.updatedAt)} · the deliverable will appear here when generation is
+                complete.
+              </p>
             </div>
           )}
 
