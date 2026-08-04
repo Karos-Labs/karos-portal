@@ -2256,6 +2256,10 @@ const NOT_TEXT: readonly string[] = [
   "updateJob.events[].level",
   "updateJob.external.taskType",
   "updateJob.status",
+  // Same enum, same audience answer as createPlannedScheduledRun.status above —
+  // the cascade-pause on agent disable/unassignment (custom-agent-actions.ts) is
+  // the first UPDATE call site to plant a literal here.
+  "updatePlannedScheduledRun.status",
   "updateTranscript.assignment",
   "upsertAgentIntake.agent",
   "upsertClientContextDoc.docType",

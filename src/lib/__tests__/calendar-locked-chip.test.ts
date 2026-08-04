@@ -438,20 +438,28 @@ describe("a paused schedule always has a way back", () => {
   );
 
   it("renders the strip from a prop, not from component state", () => {
-    expect(src).toMatch(/<PausedScheduleStrip\s+schedules=\{pausedSchedules\}\s*\/>/);
+    // `canDelete` rides alongside `schedules` now (the staff-only permanent
+    // Stop control) — not anchored past it, so the strip stays keyed to data.
+    expect(src).toMatch(/<PausedScheduleStrip\s+schedules=\{pausedSchedules\}[\s\S]{0,60}\/>/);
     expect(src).toMatch(/pausedSchedules\??\s*:\s*readonly PausedScheduleView\[\]/);
   });
 
   it("is fed every paused schedule by the server, whatever its cadence", () => {
     // Keyed to the FILTER, so narrowing it back to one cadence fails here.
-    expect(body).toMatch(/scheduledRuns\s*\.filter\(\(r\) => r\.status === "paused"\)/);
+    // `isAgentLiveForClient` is allowed alongside it — that guard excludes a
+    // disabled/unassigned agent's row, not any particular cadence.
+    expect(body).toMatch(
+      /scheduledRuns\s*\.filter\(\(r\) => r\.status === "paused" && isAgentLiveForClient\(r\)\)/,
+    );
     expect(body).toMatch(/pausedSchedules=\{pausedSchedules\}/);
   });
 
   it("projects no days for a paused schedule", () => {
     // The grid must still exclude them: painting days a paused schedule will not
     // run is the same class of lie. The strip is identity only.
-    expect(body).toMatch(/scheduledEntries[\s\S]{0,120}filter\(\(r\) => r\.status === "active"\)/);
+    expect(body).toMatch(
+      /scheduledEntries[\s\S]{0,120}filter\(\(r\) => r\.status === "active" && isAgentLiveForClient\(r\)\)/,
+    );
   });
 
   it("promises no surface that cannot show every cadence", () => {

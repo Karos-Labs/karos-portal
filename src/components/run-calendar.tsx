@@ -652,7 +652,14 @@ export interface PausedScheduleView {
  * Identity and a cadence label, never occurrences. A paused schedule has no
  * upcoming days and must not appear to have any.
  */
-function PausedScheduleStrip({ schedules }: { schedules: readonly PausedScheduleView[] }) {
+function PausedScheduleStrip({
+  schedules,
+  canDelete,
+}: {
+  schedules: readonly PausedScheduleView[];
+  /** Staff only — same gate as the active-run card's "Delete schedule". */
+  canDelete: boolean;
+}) {
   if (schedules.length === 0) return null;
   return (
     <div className="rounded-[var(--radius)] border border-border bg-surface-2/30 px-4 py-3">
@@ -667,7 +674,7 @@ function PausedScheduleStrip({ schedules }: { schedules: readonly PausedSchedule
               {s.clientName ? ` · ${s.clientName}` : ""}
               {s.cadenceLabel ? ` · ${s.cadenceLabel}` : ""}
             </p>
-            <PausedScheduleResume id={s.id} />
+            <PausedScheduleResume id={s.id} canDelete={canDelete} />
           </li>
         ))}
       </ul>
@@ -675,15 +682,25 @@ function PausedScheduleStrip({ schedules }: { schedules: readonly PausedSchedule
   );
 }
 
-/** Resume for one strip row. Its own state, so one refusal cannot blank the others. */
-function PausedScheduleResume({ id }: { id: string }) {
+/**
+ * Resume (and, for staff, permanently stop) one strip row. Its own state, so
+ * one refusal cannot blank the others.
+ *
+ * Before this, a paused schedule's ONLY route anywhere was back to active —
+ * the active-run card's "Delete schedule" (canDelete below) disappears the
+ * moment a schedule pauses, since the calendar is built from active rows
+ * only, so a paused row that was meant to be retired for good had to be
+ * resumed first just to reach the control that could do it.
+ */
+function PausedScheduleResume({ id, canDelete }: { id: string; canDelete: boolean }) {
   const router = useRouter();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<null | "resume" | "delete">(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   async function resume() {
     if (busy) return;
-    setBusy(true);
+    setBusy("resume");
     setError(null);
     try {
       // The same action and the same gates the notice runs: a resume re-arms
@@ -692,20 +709,59 @@ function PausedScheduleResume({ id }: { id: string }) {
       const res = await setPlannedRunStatusAction(id, "active");
       if (res?.error) {
         setError(res.error);
-        setBusy(false);
+        setBusy(null);
         return;
       }
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't resume this schedule.");
-      setBusy(false);
+      setBusy(null);
     }
+  }
+
+  async function remove() {
+    if (busy) return;
+    setBusy("delete");
+    setError(null);
+    try {
+      const res = await deletePlannedRunAction(id);
+      if (res?.error) {
+        setError(res.error);
+        setConfirmingDelete(false);
+        setBusy(null);
+        return;
+      }
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't stop this schedule.");
+      setBusy(null);
+    }
+  }
+
+  if (confirmingDelete) {
+    return (
+      <span className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        {error && <span className="text-xs text-danger">{error}</span>}
+        <span className="text-xs text-danger">Stop it for good?</span>
+        <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)} disabled={busy != null}>
+          Keep it
+        </Button>
+        <Button size="sm" variant="danger" onClick={remove} loading={busy === "delete"}>
+          Yes, stop it
+        </Button>
+      </span>
+    );
   }
 
   return (
     <span className="flex shrink-0 items-center gap-2">
       {error && <span className="text-xs text-danger">{error}</span>}
-      <Button size="sm" variant="outline" onClick={resume} loading={busy}>
+      {canDelete && (
+        <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(true)} disabled={busy != null}>
+          Stop
+        </Button>
+      )}
+      <Button size="sm" variant="outline" onClick={resume} loading={busy === "resume"} disabled={busy != null}>
         Resume
       </Button>
     </span>
@@ -1240,7 +1296,7 @@ export function RunCalendar({
           rebuilt from `runs`, which no longer contains the schedule this is
           about. */}
       {pausedRun && <PausedRunNotice run={pausedRun} onDone={() => setPausedRun(null)} />}
-      <PausedScheduleStrip schedules={pausedSchedules} />
+      <PausedScheduleStrip schedules={pausedSchedules} canDelete={canSchedule} />
       <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface">
         {/* Header - wraps as a row before it wraps a control's label. Nothing
             here had a minimum width, so at laptop width the primary action

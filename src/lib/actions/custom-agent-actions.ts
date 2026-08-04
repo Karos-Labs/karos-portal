@@ -8,10 +8,13 @@ import {
   getCustomAgent,
   getCustomAgentByKey,
   listCustomAgents,
+  listPlannedScheduledRuns,
   removeCustomAgentFromClients,
   updateClient,
   updateCustomAgent,
+  updatePlannedScheduledRun,
 } from "@/lib/data";
+import type { PlannedScheduledRun } from "@/lib/types";
 import {
   containsLabJargon,
   defaultInstructionsFor,
@@ -229,6 +232,24 @@ export async function updateCustomAgentAction(
 }
 
 /**
+ * Pauses every still-`active` row in `runs` — called right after an agent is
+ * disabled or unassigned, neither of which ever touched
+ * `plannedScheduledRuns` before this. Left `active`, a stale row just keeps
+ * failing at the cron (submitCustomAgentJob already refuses a disabled/
+ * ungranted agent) while still printing as an upcoming run on the calendar.
+ * Paused rather than retired: re-enabling or re-granting the agent should
+ * leave a schedule staff can consciously resume, not one silently reactivated
+ * or one whose pace configuration was thrown away.
+ */
+async function pauseActiveSchedules(runs: PlannedScheduledRun[]): Promise<void> {
+  await Promise.all(
+    runs
+      .filter((r) => r.status === "active")
+      .map((r) => updatePlannedScheduledRun(r.id, { status: "paused", updatedAt: Date.now() })),
+  );
+}
+
+/**
  * Admin-only Live/Paused toggle for the Agents page — a fast one-click flip
  * that doesn't require opening the full editor. Pausing an agent blocks new
  * client runs immediately (submitCustomAgentJob already refuses a disabled
@@ -243,6 +264,12 @@ export async function setCustomAgentEnabledAction(
   const agent = await getCustomAgent(id);
   if (!agent) return { error: "Agent not found." };
   await updateCustomAgent(id, { enabled, updatedAt: Date.now() });
+  if (!enabled) {
+    // Cross-client — this agent's schedules aren't scoped to one client, so
+    // there's no clientId filter to narrow the read by.
+    const runs = await listPlannedScheduledRuns();
+    await pauseActiveSchedules(runs.filter((r) => r.customAgentId === id));
+  }
   revalidatePath("/agents");
   revalidatePath("/clients");
   return {};
@@ -387,7 +414,17 @@ export async function setClientCustomAgentsAction(
   // loaded, or a stale allowlist re-saved) instead of bricking the save.
   const agents = await listCustomAgents();
   const known = new Set(agents.map((a) => a.id));
-  await updateClient(clientId, { customAgentIds: agentIds.filter((id) => known.has(id)) });
+  const nextIds = agentIds.filter((id) => known.has(id));
+  await updateClient(clientId, { customAgentIds: nextIds });
+  // Ids this save just revoked — their schedules for THIS client stop being
+  // grantable the moment the allowlist no longer names them, same as a
+  // global disable.
+  const nextIdSet = new Set(nextIds);
+  const removedIds = new Set((client.customAgentIds ?? []).filter((id) => !nextIdSet.has(id)));
+  if (removedIds.size > 0) {
+    const runs = await listPlannedScheduledRuns({ clientId });
+    await pauseActiveSchedules(runs.filter((r) => removedIds.has(r.customAgentId)));
+  }
   revalidatePath(`/clients/${clientId}/settings`);
   revalidatePath(`/clients/${clientId}/agents`);
   return {};

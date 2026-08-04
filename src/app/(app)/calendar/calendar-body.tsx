@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  getClient,
   listAssets,
   listClients,
   listCustomAgents,
@@ -123,6 +124,12 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   let scopedClient: Client | undefined;
   let title = "Agent Calendar";
   const description = "What your agents will run, and everything they've already produced.";
+  // Every client a schedule row below might belong to — the one thing needed
+  // to tell whether that row's agent is still granted (isAgentLiveForClient).
+  // Populated per branch: the viewer's own client doc for a CLIENT_USER, the
+  // staff member's visible roster otherwise — the same set `idSet` is built
+  // from, so it always covers every row `inScope` lets through.
+  let clients: Client[] = [];
 
   if (isClient) {
     if (!user.clientId) {
@@ -141,9 +148,11 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     singleFilter = { clientId: user.clientId };
     single = true;
     title = "Calendar";
+    const ownClient = await getClient(user.clientId);
+    if (ownClient) clients = [ownClient];
   } else {
     const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
-    const clients = await listClients(employeeFilter);
+    clients = await listClients(employeeFilter);
     const names = new Map(clients.map((c) => [c.id, c.name]));
     nameOf = (id) => names.get(id);
     canSchedule = true;
@@ -211,6 +220,21 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // comes off the identity helper below, never off the stored name.
   const agentById = new Map(customAgents.map((a) => [a.id, a]));
   const agentByName = new Map(customAgents.map((a) => [a.name, a]));
+  const clientById = new Map(clients.map((c) => [c.id, c]));
+
+  // Whether a schedule row's agent is still one this client could fire today
+  // - disabling an agent (setCustomAgentEnabledAction) or revoking it from a
+  // client (setClientCustomAgentsAction) never touches the schedule row
+  // itself, so without this a stale row keeps reading as active/paused
+  // forever, and the calendar kept printing it (scheduled chips, or a
+  // "Paused schedules" entry) long after the agent it belongs to was turned
+  // off. Cosmetic-only lookups (agentById for name/icon/blurb) stay as they
+  // are - this is the one place agent identity also gates visibility.
+  const isAgentLiveForClient = (r: { customAgentId: string; clientId: string }): boolean => {
+    const agent = agentById.get(r.customAgentId);
+    const client = clientById.get(r.clientId);
+    return Boolean(agent?.enabled) && Boolean(client?.customAgentIds?.includes(r.customAgentId));
+  };
 
   // §7.3 identity (F147). The calendar is where Albert saw one stream named two
   // ways on the same day - a run row reading "Instagram Agent" stacked over a
@@ -268,7 +292,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
    * cadence label only; no occurrences.
    */
   const pausedSchedules = scheduledRuns
-    .filter((r) => r.status === "paused")
+    .filter((r) => r.status === "paused" && isAgentLiveForClient(r))
     .map((r) => ({
       id: r.id,
       productName: agentById.get(r.customAgentId)?.name ?? r.agentName,
@@ -281,7 +305,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     }));
 
   const scheduledEntries: CalendarRun[] = scheduledRuns
-    .filter((r) => r.status === "active")
+    .filter((r) => r.status === "active" && isAgentLiveForClient(r))
     .flatMap((r) => {
       const agent = agentById.get(r.customAgentId);
       // Client-visible calendar: the lab manifest never ships here either.

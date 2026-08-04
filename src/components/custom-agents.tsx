@@ -32,6 +32,7 @@ import {
 } from "@/lib/actions";
 import {
   configureClientAgentScheduleAction,
+  deletePlannedRunAction,
   setPlannedRunStatusAction,
 } from "@/lib/actions/planned-run-actions";
 import {
@@ -1413,6 +1414,7 @@ export function AgentScheduleModal({
     `${String(schedule?.hour ?? 9).padStart(2, "0")}:${String(schedule?.minute ?? 0).padStart(2, "0")}`,
   );
   const [error, setError] = useState<string | null>(null);
+  const [confirmingStop, setConfirmingStop] = useState(false);
   const costPerOutput = agentRunCost(agent);
   const weeklyCost = scheduledAgentWeeklyCost(costPerOutput, postsPerWeek, outputsPerRun);
   const insufficient = availableCredits !== undefined && availableCredits < costPerOutput * outputsPerRun;
@@ -1477,6 +1479,24 @@ export function AgentScheduleModal({
     });
   }
 
+  // Staff-only permanent stop, same primitive and confirm-then-act shape as the
+  // "Delete schedule" control on the calendar's active-run card (run-calendar.tsx)
+  // — this modal was the one surface that could set a pace or pause it, but never
+  // retire it, so a paused schedule had no route past "sits paused forever".
+  function stop() {
+    if (!schedule) return;
+    startTransition(async () => {
+      const result = await deletePlannedRunAction(schedule.id);
+      if (result.error) {
+        setError(result.error);
+        setConfirmingStop(false);
+        return;
+      }
+      router.refresh();
+      onClose();
+    });
+  }
+
   return (
     <Modal
       open
@@ -1488,34 +1508,59 @@ export function AgentScheduleModal({
           : "Choose the weekly production pace. New outputs are created as drafts and placed into your content workflow."
       }
       footer={
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            {schedule && (
-              <Button variant="ghost" onClick={togglePause} loading={pending}>
-                {schedule.status === "active" ? "Pause agent" : "Resume agent"}
+        confirmingStop ? (
+          <div className="flex w-full flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-danger">
+              Stop this schedule permanently? The agent won&apos;t run on this cadence again, and
+              it can&apos;t be undone. To stop it temporarily, pause it instead.
+            </p>
+            <div className="flex shrink-0 gap-2">
+              <Button variant="ghost" onClick={() => setConfirmingStop(false)} disabled={pending}>
+                Keep it
               </Button>
-            )}
+              <Button variant="danger" onClick={stop} loading={pending}>
+                Yes, stop it
+              </Button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
-            <Button
-              variant="accent"
-              onClick={save}
-              loading={pending}
-              // Setup missing ⇒ every fire this schedule writes would be
-              // refused, so the control that writes it is not left enabled.
-              disabled={insufficient || blockedBySetup}
-            >
-              {paceOnly
-                ? schedule
-                  ? "Save pace"
-                  : "Start posting"
-                : schedule
-                  ? "Update schedule"
-                  : "Start always-on agent"}
-            </Button>
+        ) : (
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-2">
+              {schedule && (
+                <Button variant="ghost" onClick={togglePause} loading={pending}>
+                  {schedule.status === "active" ? "Pause agent" : "Resume agent"}
+                </Button>
+              )}
+              {/* Staff only — a client's undo for a retired schedule is a staff
+                  member, same rule deletePlannedRunAction already enforces
+                  server-side (authorizeClient/requireStaff). */}
+              {!paceOnly && schedule && (
+                <Button variant="ghost" onClick={() => setConfirmingStop(true)} disabled={pending}>
+                  Stop schedule
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose} disabled={pending}>Cancel</Button>
+              <Button
+                variant="accent"
+                onClick={save}
+                loading={pending}
+                // Setup missing ⇒ every fire this schedule writes would be
+                // refused, so the control that writes it is not left enabled.
+                disabled={insufficient || blockedBySetup}
+              >
+                {paceOnly
+                  ? schedule
+                    ? "Save pace"
+                    : "Start posting"
+                  : schedule
+                    ? "Update schedule"
+                    : "Start always-on agent"}
+              </Button>
+            </div>
           </div>
-        </div>
+        )
       }
     >
       <div className="space-y-4">
