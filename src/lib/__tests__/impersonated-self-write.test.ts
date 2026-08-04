@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -406,7 +406,7 @@ describe("every function that writes to its own session's subject asks the share
 
   /** Every (file, function) in the two trees that writes to its own subject. */
   const selfWriters = ROOTS.flatMap(sourceFiles).flatMap((abs) => {
-    const rel = abs.slice(process.cwd().length + 1);
+    const rel = abs.slice(process.cwd().length + 1).split(sep).join("/");
     const src = stripComments(readFileSync(abs, "utf8"));
     return functionsIn(src)
       .filter((fn) => {

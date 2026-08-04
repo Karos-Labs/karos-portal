@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
@@ -161,6 +161,14 @@ const ROOT = process.cwd();
 const SRC = join(ROOT, "src");
 const src = (rel: string) => readFileSync(join(SRC, rel), "utf8");
 
+/**
+ * src-relative path with forward slashes, whatever the platform's separator.
+ * `join`/`readdirSync` return backslash-joined paths on Windows, and every
+ * comparison in this file is written against forward-slash literals — so an
+ * absolute path is normalised the instant it is made relative, here, once.
+ */
+const toRel = (abs: string): string => abs.slice(SRC.length + 1).split(sep).join("/");
+
 /** Source with comments removed — the status sweeps' helper, same reason. */
 const code = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
@@ -199,7 +207,7 @@ const lineOf = (sf: ts.SourceFile, pos: number) =>
   sf.getLineAndCharacterOfPosition(pos).line + 1;
 
 /** src-relative path of a parsed file — a chunk names the file it came FROM. */
-const relOf = (sf: ts.SourceFile) => sf.fileName.slice(SRC.length + 1);
+const relOf = (sf: ts.SourceFile) => toRel(sf.fileName);
 
 /**
  * A string this reader never sees, recognised by what it IS.
@@ -810,7 +818,7 @@ const CLIENT_REACHABLE_ACTIONS: ActionScan[] = (() => {
         x.forEachChild(visit);
       };
       visit(n.body);
-      out.push({ name: n.name.getText(sf), rel: abs.slice(SRC.length + 1), chunks });
+      out.push({ name: n.name.getText(sf), rel: toRel(abs), chunks });
     });
   }
   return out;
@@ -998,7 +1006,7 @@ const isRenderModule = (abs: string) =>
   abs.startsWith(join(SRC, "components")) ||
   (abs.startsWith(join(SRC, "app")) && /\.tsx$/.test(abs));
 
-const ALL_RENDER_ENTRIES = walk(join(SRC, "app")).filter((f) => RENDER_ENTRY.test(f));
+const ALL_RENDER_ENTRIES = walk(join(SRC, "app")).filter((f) => RENDER_ENTRY.test(toRel(f)));
 const CLIENT_ROUTE_ROOTS = ALL_RENDER_ENTRIES.filter((f) => !STAFF_ROUTE_GATE.test(readFileSync(f, "utf8")));
 
 /** The roots plus every component module they mount, transitively. */
@@ -1100,13 +1108,13 @@ describe("the pages and components a client's browser renders", () => {
     ).toBeLessThan(ALL_RENDER_ENTRIES.length);
     // The named ones, in both directions: the staff jobs console is out, and the
     // page every new client sees is in.
-    const rel = new Set(CLIENT_ROUTE_ROOTS.map((f) => f.slice(SRC.length + 1)));
+    const rel = new Set(CLIENT_ROUTE_ROOTS.map(toRel));
     expect(rel.has("app/(app)/jobs/page.tsx"), "a requireUser([KAROS_…]) page is in scope").toBe(false);
     expect(rel.has("app/signup/page.tsx")).toBe(true);
     expect(rel.has("app/(onboarding)/onboarding/page.tsx")).toBe(true);
     // And the component tree: the wizard step and the Reddit review surface both
     // carried offences, so both have to be reachable from a root.
-    const mods = new Set(CLIENT_RENDER_MODULES.map((f) => f.slice(SRC.length + 1)));
+    const mods = new Set(CLIENT_RENDER_MODULES.map(toRel));
     expect(mods.has("components/onboarding-socials-step.tsx")).toBe(true);
     expect(mods.has("components/reddit-drafts-review.tsx")).toBe(true);
     expect(mods.has("components/integrations-tab.tsx")).toBe(true);
@@ -1180,7 +1188,7 @@ const MARKED_CATALOGS: MarkedCatalog[] = (() => {
       const marked = members.filter((m) => AUDIENCE_MARKERS.some((k) => m.getFullText(sf).includes(k)));
       if (marked.length === 0) return;
       out.push({
-        rel: abs.slice(SRC.length + 1),
+        rel: toRel(abs),
         iface: n.name.getText(sf),
         unmarked: members
           .filter((m) => isTextTyped(m) && !AUDIENCE_MARKERS.some((k) => m.getFullText(sf).includes(k)))
@@ -1336,7 +1344,7 @@ describe('the "the cap stopped N of these" note', () => {
         visit(sf);
         return hit;
       })
-      .map((f) => f.slice(SRC.length + 1));
+      .map(toRel);
     expect(offenders, "call queueCapacitySkipNote instead of writing your own").toEqual([HOME]);
   }, 20_000);
 });
@@ -1404,7 +1412,7 @@ describe('the "this task left review" refusals', () => {
           code(readFileSync(f, "utf8")),
         ),
       )
-      .map((f) => f.slice(SRC.length + 1));
+      .map(toRel);
     expect(offenders).toEqual(["lib/actions/_shared.ts"]);
   });
 });
@@ -1653,7 +1661,7 @@ const PERSISTING_WRITERS: ReadonlyMap<string, WriterFact> = (() => {
           if (new RegExp(`\\b${seed}\\s*\\(\\s*(data|patch|fields|doc|entry|input)\\b`).test(body)) {
             out.set(n.name.getText(sf), {
               typeText: docParam(n, sf),
-              rel: abs.slice(SRC.length + 1),
+              rel: toRel(abs),
             });
           }
         }
@@ -2653,7 +2661,7 @@ describe("the client copy that travels through the database", () => {
         visit(sf);
         return hit;
       })
-      .map((f) => f.slice(SRC.length + 1));
+      .map(toRel);
     expect(offenders, "call researchReportReadyTitle() instead").toEqual([
       "lib/activity-titles.ts",
     ]);

@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   PUBLISHABLE_PLATFORMS,
@@ -87,6 +87,11 @@ describe("Reddit stays unpublishable", () => {
  */
 
 const SRC = resolve(__dirname, "../..");
+
+/** `relative(SRC, …)`, normalized to forward slashes so literals stay portable. */
+function relToSrc(file: string): string {
+  return relative(SRC, file).split(sep).join("/");
+}
 
 function tsFiles(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -455,13 +460,13 @@ function assetTypeSites(fn: "createAsset" | "updateAsset"): AssetTypeSite[] {
   const sites: AssetTypeSite[] = [];
   for (const file of tsFiles(SRC)) {
     // lib/data.ts DEFINES the writer; it does not choose a type.
-    if (relative(SRC, file) === "lib/data.ts") continue;
+    if (relToSrc(file) === "lib/data.ts") continue;
     const src = maskComments(readFileSync(file, "utf8"));
     const call = new RegExp(`\\b${fn}\\s*\\(`, "g");
     for (let m = call.exec(src); m; m = call.exec(src)) {
       for (const finding of typeArgument(src, m.index)) {
         sites.push({
-          file: relative(SRC, file),
+          file: relToSrc(file),
           kind: finding.kind,
           // A named type expression is resolved to its local `const`; a payload
           // never is — see typeArgument's note on why that asymmetry is the guard.
@@ -487,11 +492,11 @@ function assetTypeSites(fn: "createAsset" | "updateAsset"): AssetTypeSite[] {
 function writerCalls(fn: "createAsset" | "updateAsset"): string[] {
   const files: string[] = [];
   for (const file of tsFiles(SRC)) {
-    if (relative(SRC, file) === "lib/data.ts") continue;
+    if (relToSrc(file) === "lib/data.ts") continue;
     const src = maskComments(readFileSync(file, "utf8"));
     for (const match of src.matchAll(new RegExp(`\\b${fn}\\s*\\(`, "g"))) {
       void match;
-      files.push(relative(SRC, file));
+      files.push(relToSrc(file));
     }
   }
   return files;

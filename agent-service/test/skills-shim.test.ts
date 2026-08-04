@@ -88,7 +88,7 @@ describe("skills shim", () => {
     await makeSkill(root, "b/c/d");
     await makeSkill(root, "x/1/2/3/4/5/too-deep");
     const dirs = await collectSkillDirs(root);
-    const rels = dirs.map((d) => path.relative(root, d)).sort();
+    const rels = dirs.map((d) => path.relative(root, d).split(path.sep).join("/")).sort();
     expect(rels).toContain("a");
     expect(rels).toContain("b/c/d");
     expect(rels.find((r) => r.includes("too-deep"))).toBeUndefined();

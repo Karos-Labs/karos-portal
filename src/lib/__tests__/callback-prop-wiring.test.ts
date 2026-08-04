@@ -40,7 +40,7 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
       if (entry === "__tests__" || entry === "node_modules") continue;
       sourceFiles(p, out);
     } else if (entry.endsWith(".ts") || entry.endsWith(".tsx")) {
-      out.push(path.relative(REPO, p));
+      out.push(path.relative(REPO, p).split(path.sep).join("/"));
     }
   }
   return out;

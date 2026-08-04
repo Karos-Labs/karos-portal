@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as postChain from "@/lib/post-chain";
 import * as scheduling from "@/lib/scheduling";
@@ -83,7 +83,7 @@ function declarationCount(name: string): { count: number; files: string[] } {
     const hits = stripComments(readFileSync(file, "utf8")).match(re);
     if (hits) {
       count += hits.length;
-      files.push(relative(SRC, file));
+      files.push(relative(SRC, file).split(sep).join("/"));
     }
   }
   return { count, files };

@@ -183,7 +183,8 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
     if (entry === "__tests__" || entry === "node_modules") continue;
     const full = path.join(dir, entry);
     if (statSync(full).isDirectory()) sourceFiles(full, acc);
-    else if (entry.endsWith(".tsx")) acc.push(path.relative(REPO, full));
+    else if (entry.endsWith(".tsx"))
+      acc.push(path.relative(REPO, full).split(path.sep).join("/"));
   }
   return acc;
 }

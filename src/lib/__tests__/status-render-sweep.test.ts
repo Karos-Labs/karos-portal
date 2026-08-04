@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -72,6 +72,11 @@ import {
  */
 
 const SRC = join(process.cwd(), "src");
+
+/** `relative(SRC, …)`, normalized to forward slashes so literals stay portable. */
+function relToSrc(file: string): string {
+  return relative(SRC, file).split(sep).join("/");
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -213,7 +218,7 @@ function sweep(): { offenders: Offender[]; otherDomain: Offender[]; gated: Offen
     for (const m of src.matchAll(RAW_STATUS_RENDER)) {
       const expr = m[1]!;
       const at = m.index!;
-      const entry = { file: relative(SRC, file), line: src.slice(0, at).split("\n").length, expr };
+      const entry = { file: relToSrc(file), line: src.slice(0, at).split("\n").length, expr };
       if (!inSanctionedDomain(comparedLiterals(src, expr))) {
         otherDomain.push(entry);
         continue;
@@ -428,7 +433,7 @@ describe("an unrecognised run state has one answer", () => {
       const src = code(readFileSync(file, "utf8"));
       if (!src.includes("JOB_STATUS_META")) continue;
       if (/JOB_STATUS_META\s*\[[^\]]*\]\s*(?:\?\.\w+\s*)?\?\?/.test(src)) {
-        offenders.push(relative(SRC, file));
+        offenders.push(relToSrc(file));
       }
     }
     expect(
@@ -534,7 +539,7 @@ function runStateSpellers(): Array<{ file: string; words: string[] }> {
     if (file === join(SRC, "lib", "job-status-copy.ts")) continue;
     const src = code(readFileSync(file, "utf8"));
     const words = RUN_STATE_ONLY_WORDS.filter((w) => spellsWord(src, w));
-    if (words.length > 0) out.push({ file: relative(SRC, file), words });
+    if (words.length > 0) out.push({ file: relToSrc(file), words });
   }
   return out;
 }
@@ -776,7 +781,7 @@ describe("the calendar legend names no state twice", () => {
     const offenders = FILES.filter((f) => {
       const src = code(readFileSync(f, "utf8")).replace(/\s+/g, " ");
       return /key === "published" \? assetStatusLabel/.test(src);
-    }).map((f) => relative(SRC, f));
+    }).map((f) => relToSrc(f));
     expect(offenders, "the published override belongs to calendarFilterLabel").toEqual([]);
   });
 });
@@ -1026,7 +1031,7 @@ describe("the client dashboard's counter row", () => {
     for (const file of FILES) {
       const src = code(readFileSync(file, "utf8")).replace(/\s+/g, " ");
       for (const m of src.matchAll(/<ClientAnalyticsStats\b[\s\S]*?\/>/g)) {
-        mounts.push(`${relative(SRC, file)} → ${m[0]}`);
+        mounts.push(`${relToSrc(file)} → ${m[0]}`);
       }
     }
     expect(mounts.length, "no mount found — the sweep or the component name moved").toBeGreaterThan(

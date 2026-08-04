@@ -52,7 +52,8 @@ async function walk(dir: string, out: Map<string, { size: number; mtimeMs: numbe
       await walk(abs, out, base);
     } else if (entry.isFile()) {
       const info = await stat(abs);
-      out.set(path.relative(base, abs), { size: info.size, mtimeMs: info.mtimeMs });
+      const rel = path.relative(base, abs).split(path.sep).join("/");
+      out.set(rel, { size: info.size, mtimeMs: info.mtimeMs });
     }
   }
 }

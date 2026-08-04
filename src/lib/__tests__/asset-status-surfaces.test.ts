@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { postKindLabel } from "@/lib/calendar-kind";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -331,7 +331,7 @@ describe("the one test for 'is this stored string a hold'", () => {
     const offenders = walk(join(ROOT, "src"))
       .filter((f) => !f.includes("__tests__"))
       .filter((f) => code(readFileSync(f, "utf8")).includes("This post is waiting for"))
-      .map((f) => f.slice(join(ROOT, "src").length + 1));
+      .map((f) => f.slice(join(ROOT, "src").length + 1).split(sep).join("/"));
 
     expect(offenders, "ask isPublishHold instead of retyping the opener").toEqual([HOME]);
   });
@@ -409,7 +409,7 @@ describe("every surface that opens the detail modal", () => {
     const found = walk(join(ROOT, "src"))
       .filter((f) => !f.includes("__tests__"))
       .filter((f) => code(readFileSync(f, "utf8")).includes("<AssetDetailModal"))
-      .map((f) => f.slice(join(ROOT, "src").length + 1));
+      .map((f) => f.slice(join(ROOT, "src").length + 1).split(sep).join("/"));
 
     expect(found.sort()).toEqual([...MODAL_MOUNT_FILES].sort());
   });

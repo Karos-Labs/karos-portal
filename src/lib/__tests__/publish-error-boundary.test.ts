@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CLIENT_ASSET_STATUS_LABEL, publishHoldMessage } from "@/lib/asset-status-copy";
 import {
@@ -334,7 +334,7 @@ describe("a client-fired run refusal", () => {
     // repo-wide rather than per-file — and it is about the PROMISE, so a
     // reworded "we have been informed" cannot slip past it either.
     const offenders = sourceFiles(join(ROOT, "src"))
-      .map((file) => file.slice(ROOT.length + 1))
+      .map((file) => file.slice(ROOT.length + 1).split(sep).join("/"))
       .filter((rel) => NOTIFICATION_CLAIM.test(code(readFileSync(join(ROOT, rel), "utf8"))))
       .filter((rel) => !BACKED_CLAIM_SITES.has(rel));
 

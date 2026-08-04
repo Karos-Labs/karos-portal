@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { icons } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
@@ -45,6 +45,11 @@ import { isStringDelimiter, matchingBrace, skipStringLiteral, stripComments } fr
 
 const SRC = join(process.cwd(), "src");
 const HOME = join(SRC, "lib", "task-status-copy.ts");
+
+/** `relative(SRC, …)`, normalized to forward slashes so literals stay portable. */
+function relToSrc(file: string): string {
+  return relative(SRC, file).split(sep).join("/");
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -188,7 +193,7 @@ describe("'an agent is running' is asked of the flag", () => {
       (f) => f.startsWith(join(SRC, "components")) || f.startsWith(join(SRC, "app")),
     )
       .filter((f) => /\.executing\b/.test(code(f)))
-      .map((f) => relative(SRC, f));
+      .map((f) => relToSrc(f));
     expect(
       readers,
       "these read the executing flag at a render surface; ask taskIsExecuting",
@@ -361,7 +366,7 @@ describe("the task-status vocabulary is written once", () => {
       if (file === HOME) continue;
       for (const frame of taskStatusKeyedLiterals(code(file))) {
         if (isSecondVocabulary(frame)) {
-          offenders.push(`${relative(SRC, file)} → { ${[...frame.keys()].join(", ")} }`);
+          offenders.push(`${relToSrc(file)} → { ${[...frame.keys()].join(", ")} }`);
         }
       }
     }
@@ -523,7 +528,7 @@ describe("the surfaces that print a task state", () => {
     const HAND_TYPED_OPTION =
       /<option[^>]*\bvalue=\{?\s*["'`](?:pending|in_progress|review_pending|completed|archived)["'`]/;
     const offenders = FILES.filter((file) => HAND_TYPED_OPTION.test(flat(code(file)))).map((file) =>
-      relative(SRC, file),
+      relToSrc(file),
     );
     expect(offenders, "these hand-type a task status option; map the register").toEqual([]);
   });
@@ -551,7 +556,7 @@ describe("the surfaces that print a task state", () => {
     const offenders = FILES.filter((file) => {
       const src = code(file);
       return src.includes("Running Agent") || src.includes("AI Working");
-    }).map((file) => relative(SRC, file));
+    }).map((file) => relToSrc(file));
     expect(offenders, "a retired running wording is back").toEqual([]);
 
     // THE REMEDY THE DELETION COULD HAVE TAKEN WITH IT. Removing two wordings is
@@ -563,7 +568,7 @@ describe("the surfaces that print a task state", () => {
     const painted = FILES.filter((file) => {
       if (file === HOME) return false;
       return [...code(file).matchAll(/\bTASK_RUNNING_LABEL\b/g)].length >= 2;
-    }).map((file) => relative(SRC, file));
+    }).map((file) => relToSrc(file));
     expect(
       painted.sort(),
       "the running claim is painted nowhere; the deletion took the remedy with it",

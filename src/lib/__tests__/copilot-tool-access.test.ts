@@ -302,7 +302,7 @@ describe("gmail refusal is indistinguishable from no connection", () => {
     const offenders = walk(root)
       .filter((f) => !f.includes("__tests__"))
       .filter((f) => joinedLiterals(readFileSync(f, "utf8")).includes(opener))
-      .map((f) => f.slice(root.length + 1));
+      .map((f) => f.slice(root.length + 1).split(path.sep).join("/"));
     expect(offenders, "import GMAIL_UNAVAILABLE_MESSAGE instead of retyping it").toEqual([
       "lib/copilot-tool-access.ts",
     ]);

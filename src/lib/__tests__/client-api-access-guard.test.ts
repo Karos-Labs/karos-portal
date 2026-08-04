@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -663,7 +663,9 @@ describe("every API route that takes a client id asks the fence", () => {
   }
 
   const discovered = routeFiles(API_ROOT)
-    .map((f) => f.slice(API_ROOT.length + 1).replace(/\/route\.(ts|tsx|js|jsx)$/, ""))
+    .map((f) =>
+      f.slice(API_ROOT.length + 1).split(sep).join("/").replace(/\/route\.(ts|tsx|js|jsx)$/, ""),
+    )
     .sort();
 
   /** The handler file for a route, whichever of the four extensions it uses. */

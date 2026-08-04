@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import path, { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
@@ -87,7 +87,10 @@ describe("every surface under /clients/[id] that resolves an agent filters on th
   ];
 
   const surfaces = pageFiles(CLIENTS_DIR)
-    .map((abs) => ({ rel: abs.slice(SRC.length + 1), src: stripComments(readFileSync(abs, "utf8")) }))
+    .map((abs) => ({
+      rel: abs.slice(SRC.length + 1).split(path.sep).join("/"),
+      src: stripComments(readFileSync(abs, "utf8")),
+    }))
     .filter((f) => RESOLVES_AGENT.some((re) => re.test(f.src)));
 
   it("found the surfaces it is about to check", () => {

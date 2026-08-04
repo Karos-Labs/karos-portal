@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { NO_FORMATS_RUNNING, NO_FORMATS_YET } from "@/lib/client-agent-format-copy";
@@ -52,7 +52,7 @@ describe("the client's word for a template stream", () => {
     // green everywhere or red everywhere, and neither reads the rendered string.
     const offenders = FILES.filter((f) =>
       INTERNAL_NAME.test(stripComments(readFileSync(f, "utf8"))),
-    ).map((f) => relative(SRC, f));
+    ).map((f) => relative(SRC, f).split(sep).join("/"));
     expect(
       offenders,
       'these render the schema\'s name for a format; the client\'s word is "format"',
@@ -65,7 +65,7 @@ describe("the client's word for a template stream", () => {
     // list is empty the walk is broken, and if the stripped list above were green
     // for the same reason it would be worthless.
     const inProse = FILES.filter((f) => INTERNAL_NAME.test(readFileSync(f, "utf8"))).map((f) =>
-      relative(SRC, f),
+      relative(SRC, f).split(sep).join("/"),
     );
     expect(
       inProse.length,
@@ -86,7 +86,7 @@ describe("the empty-registry sentence", () => {
     // literal rather than for the absence of the first.
     const spellers = FILES.filter(
       (f) => f !== HOME && stripComments(readFileSync(f, "utf8")).includes(NO_FORMATS_YET),
-    ).map((f) => relative(SRC, f));
+    ).map((f) => relative(SRC, f).split(sep).join("/"));
     expect(spellers, "these re-type the sentence instead of importing it").toEqual([]);
 
     // Non-vacuity for that negative: the two surfaces really do reference the
@@ -94,7 +94,7 @@ describe("the empty-registry sentence", () => {
     const readers = FILES.filter((f) => {
       const src = stripComments(readFileSync(f, "utf8"));
       return src.includes("NO_FORMATS_YET") || src.includes("NO_FORMATS_RUNNING");
-    }).map((f) => relative(SRC, f));
+    }).map((f) => relative(SRC, f).split(sep).join("/"));
     expect(readers).toContain("components/client-agents/live-card.tsx");
     expect(readers).toContain("components/client-agents/launch-card.tsx");
   });

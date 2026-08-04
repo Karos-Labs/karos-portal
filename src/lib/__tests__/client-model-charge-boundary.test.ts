@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
@@ -370,7 +370,7 @@ function analyze(overrides: Map<string, string> = new Map()): Verdict[] {
         return !(s.target && s.target !== "MODEL" && charging.has(s.target));
       });
 
-      const rel = f.slice(SRC.length + 1);
+      const rel = f.slice(SRC.length + 1).split(sep).join("/");
       const via = (list: typeof sites) => list[0]?.name ?? "-";
       if (live.length === 0) verdicts.push({ file: rel, fn: name, via: via(sites), kind: "gated" });
       else if (unpaid.length === 0) verdicts.push({ file: rel, fn: name, via: via(live), kind: "charged" });

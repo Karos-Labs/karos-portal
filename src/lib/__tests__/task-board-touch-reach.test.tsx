@@ -238,7 +238,7 @@ function tsxFiles(dir: string, out: string[] = []): string[] {
       if (entry === "__tests__" || entry === "node_modules") continue;
       tsxFiles(p, out);
     } else if (entry.endsWith(".tsx")) {
-      out.push(path.relative(REPO, p));
+      out.push(path.relative(REPO, p).split(path.sep).join("/"));
     }
   }
   return out;
