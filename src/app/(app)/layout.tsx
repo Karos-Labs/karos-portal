@@ -27,7 +27,6 @@ import {
   type StaffShellClientView,
 } from "@/lib/client-visibility";
 import { integrationIsUsable } from "@/lib/integration-status";
-import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
 import { Sidebar } from "@/components/sidebar";
 import { ClientRail } from "@/components/client-rail";
@@ -199,20 +198,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               clientId={client.id}
               viewerUid={user.uid}
               clientName={client.name}
-              // Same predicate the correction price above uses, for the same
-              // reason: the copilot's Refresh Task Map chip charges on press, and
-              // an admin in "View as Client" reads CLIENT_USER here while paying
-              // nothing — so a role test would quote them a price they never pay.
-              viewerIsBilled={isBillableClientActor(user)}
               userName={user.name}
               hasGoogleIntegration={integrations.some(
                 (i) => i.platform === "google" && integrationIsUsable(i),
               )}
-              client={{
-                name: client.name,
-                website: client.website,
-                isAiProcessing: isAiProcessingLockActive(client),
-              }}
               report={
                 report ? { overallGrade: report.overallGrade, overallScore: report.overallScore } : null
               }

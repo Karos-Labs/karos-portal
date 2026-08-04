@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  * A CONFIRMATION IS ONLY AS GOOD AS THE NUMBER ON IT — asked of the RENDERED
  * MARKUP, not of the helper the component is supposed to call.
  *
- * Three client-pressed surfaces were metered in the same pass and only one of
+ * Two client-pressed surfaces were metered in the same pass and only one of
  * them said so. `client-model-metering.test.ts` proves each quote matches the
  * amount its route actually charged; that leaves one question this file answers
  * instead: does the control PAINT it. A component can import a price function
@@ -18,20 +18,14 @@ import { renderToStaticMarkup } from "react-dom/server";
  */
 
 vi.mock("server-only", () => ({}));
-// The widget's module graph reaches the server-action barrel; the chip strip
-// under test needs none of it.
-vi.mock("@/lib/actions", () => ({ ingestCustomUserTaskAction: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
 import { CREDIT_COSTS, creditsLabel } from "@/lib/credits";
-import { ActionChips } from "@/components/chatbot-widget";
+import { RefreshTaskMapButton } from "@/components/refresh-task-map-button";
 import { AiInsights } from "@/components/ai-insights";
 
-const noop = () => {};
-
-function chipsMarkup(viewerIsBilled: boolean): string {
-  return renderToStaticMarkup(
-    <ActionChips onRun={noop} onRefreshTaskMap={noop} viewerIsBilled={viewerIsBilled} />,
-  );
+function refreshButtonMarkup(viewerIsBilled: boolean): string {
+  return renderToStaticMarkup(<RefreshTaskMapButton clientId="c1" viewerIsBilled={viewerIsBilled} />);
 }
 
 function insightsMarkup(viewerIsBilled: boolean): string {
@@ -48,9 +42,9 @@ function textOf(markup: string): string {
     .replace(/\s+/g, " ");
 }
 
-describe("the copilot's Refresh Task Map chip announces its price", () => {
+describe("the Task Map's Refresh Task Map button announces its price", () => {
   it("paints the price a billable client will be charged", () => {
-    const text = textOf(chipsMarkup(true));
+    const text = textOf(refreshButtonMarkup(true));
     // GET /api/tasks/generate-swarm charges CREDIT_COSTS.taskExecution.
     expect(text).toContain(creditsLabel(CREDIT_COSTS.taskExecution));
   });
@@ -58,23 +52,13 @@ describe("the copilot's Refresh Task Map chip announces its price", () => {
   it("paints no price at all for a reader who is never charged", () => {
     // Staff, and an admin in "View as Client" — quoting them a price they do not
     // pay is the same class of defect in the other direction.
-    expect(textOf(chipsMarkup(false))).not.toMatch(/credit/i);
+    expect(textOf(refreshButtonMarkup(false))).not.toMatch(/credit/i);
   });
 
-  it("still renders the chip itself, so the price test is not vacuous", () => {
+  it("still renders the button itself, so the price test is not vacuous", () => {
     for (const billed of [true, false]) {
-      expect(textOf(chipsMarkup(billed))).toContain("Refresh Task Map");
+      expect(textOf(refreshButtonMarkup(billed))).toContain("Refresh Task Map");
     }
-  });
-
-  /**
-   * The other three chips send an ordinary chat turn, priced by the input bar's
-   * own message charge — pressing one does not commit a per-press cost, so a
-   * price on them would be a second, wrong number on the same strip.
-   */
-  it("prices only the chip that charges on press", () => {
-    const text = textOf(chipsMarkup(true));
-    expect(text.match(/Costs /g) ?? []).toHaveLength(1);
   });
 });
 
@@ -105,7 +89,7 @@ describe("the AI Insights Refresh announces its price", () => {
  */
 describe("the announced prices stay in client vocabulary", () => {
   it("never says token on either surface", () => {
-    expect(textOf(chipsMarkup(true))).not.toMatch(/token/i);
+    expect(textOf(refreshButtonMarkup(true))).not.toMatch(/token/i);
     expect(textOf(insightsMarkup(true))).not.toMatch(/token/i);
   });
 });

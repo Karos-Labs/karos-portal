@@ -18,7 +18,9 @@ import { clientSafeActor } from "@/lib/activity-actors";
 import { isRunMachineryTitle } from "@/lib/activity-titles";
 import { pastRunStatuses } from "@/lib/calendar-past-runs";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
-import type { AppUser, ClientTask } from "@/lib/types";
+import { isAiProcessingLockActive } from "@/lib/constants";
+import { isBillableClientActor } from "@/lib/credits";
+import type { AppUser, Client, ClientTask } from "@/lib/types";
 
 /**
  * Shared body for the Tasks route: a CLIENT_USER's own Progress view, staff
@@ -30,6 +32,10 @@ import type { AppUser, ClientTask } from "@/lib/types";
  */
 export async function TasksBody({ user, viewClientId }: { user: AppUser; viewClientId?: string }) {
   let scopedClientId: string | undefined;
+  // Set only on the staff branch below, which already fetches the client doc
+  // to validate viewClientId - reused so the Refresh Task Map button's lock
+  // state doesn't cost a second Firestore read for that path.
+  let scopedClient: Client | null = null;
   if (user.role === "CLIENT_USER") {
     // A client user with no linked client renders an empty state - redirecting
     // would loop (/dashboard → /assets → /tasks → …), and there is nothing
@@ -50,19 +56,23 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     scopedClientId = user.clientId;
   } else if (viewClientId) {
     const client = await getClient(viewClientId);
-    if (client) scopedClientId = client.id;
+    if (client) {
+      scopedClientId = client.id;
+      scopedClient = client;
+    }
   }
 
   // Archiving is handled at query level (listClientTasks hides tasks Done ≥7d)
   // plus a physical sweep in the /api/credits/reconcile cron - no page-load work.
   if (scopedClientId) {
-    const [tasks, activityLogs, jobs, report, rawAssets, umbrellas] = await Promise.all([
+    const [tasks, activityLogs, jobs, report, rawAssets, umbrellas, client] = await Promise.all([
       listClientTasks({ clientId: scopedClientId }),
       listClientActivityLogs(scopedClientId),
       listJobs({ clientId: scopedClientId }),
       getClientReport(scopedClientId),
       listAssets({ clientId: scopedClientId }),
       listClientAgents({ clientId: scopedClientId }),
+      scopedClient ? Promise.resolve(scopedClient) : getClient(scopedClientId),
     ]);
     // Archive tab data. A client's archive is POSTED work from the last ~30
     // days only (F149/A4) - filtered HERE, at the server boundary, so nothing
@@ -179,6 +189,8 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
           report={report}
           assets={assets}
           agentLabelByAssetId={agentLabelByAssetId}
+          isAiProcessing={client ? isAiProcessingLockActive(client) : false}
+          viewerIsBilled={isBillableClientActor(user)}
         />
       </div>
     );

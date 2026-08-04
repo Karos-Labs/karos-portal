@@ -2,7 +2,6 @@
 
 import { CopilotDock } from "@/components/copilot-dock";
 import { useActiveClient } from "@/lib/active-client-context";
-import { isAiProcessingLockActive } from "@/lib/constants";
 
 /**
  * Renders the docked AI Copilot right-rail (identical to the client portal
@@ -25,17 +24,7 @@ export function StaffCopilotDock({ userName, viewerUid }: { userName?: string; v
       clientId={client.id}
       viewerUid={viewerUid}
       clientName={client.name}
-      /* This dock only ever renders for a signed-in STAFF session — an admin in
-         "View as Client" is served the client shell's own dock instead. Staff
-         AI work is agency overhead and is never charged, so no price is quoted
-         on the Refresh Task Map chip here. Stated rather than defaulted. */
-      viewerIsBilled={false}
       userName={userName}
-      client={{
-        name: client.name,
-        website: client.website,
-        isAiProcessing: isAiProcessingLockActive(client),
-      }}
     />
   );
 }

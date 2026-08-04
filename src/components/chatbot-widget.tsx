@@ -6,11 +6,8 @@ import { Icon } from "@/components/icon";
 import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
-// Quoted from the pricing home, off the same constant the swarm route charges.
-import { taskMapRefreshPrice } from "@/lib/credits";
 import { renderSectionBody } from "@/lib/doc-render";
-import { StrategyWarRoom } from "@/components/strategy-war-room";
-import type { Client, ClientReport } from "@/lib/types";
+import type { ClientReport } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
@@ -86,15 +83,8 @@ interface ProactiveAction {
   icon: string;
   label: string;
   sublabel: string;
-  /**
-   * What one press of THIS chip costs the reader, when it costs them anything.
-   * Only Refresh Task Map charges per press; the other three send an ordinary
-   * chat turn, which is priced by the input bar's own message charge and not by
-   * the chip. Null for a reader who is not billed (staff, View as Client).
-   */
-  price?: string | null;
-  /** Chat message this chip sends. Omitted for chips handled by a dedicated UI. */
-  trigger?: string;
+  /** Chat message this chip sends. */
+  trigger: string;
   color: string;
   /**
    * Opts into Sonnet instead of the copilot's default Haiku model - this is a
@@ -105,25 +95,8 @@ interface ProactiveAction {
   deep?: boolean;
 }
 
-function buildProactiveActions(viewerIsBilled: boolean): ProactiveAction[] {
+function buildProactiveActions(): ProactiveAction[] {
   return [
-    {
-      // Handled by the Strategy War Room, not the chat path - so no trigger.
-      // The swarm reads the client's calendar gaps, brand guidance, past
-      // engagement and custom agents; it does NOT look at the web, the client's
-      // site or the inbox, so the label must not promise a market scan (QA F50).
-      id: "scan_inbox",
-      icon: "ListTodo",
-      label: "Refresh Task Map",
-      sublabel: "Rebuild your task map from calendar gaps and past performance",
-      // THE ANNOUNCE. Pressing this chip does not open a confirmation — the War
-      // Room mounts and the debate (six model calls) starts immediately, so the
-      // charge is committed by the press itself. The price therefore belongs on
-      // the chip, quoted from the constant /api/tasks/generate-swarm charges
-      // from, in the same voice Audience Simulation uses.
-      price: taskMapRefreshPrice(viewerIsBilled),
-      color: "#FF6B2C",
-    },
     {
       // The copilot has no web search and no page fetch - the only competitor
       // intelligence it holds is the tracked competitor list already stored on
@@ -158,12 +131,20 @@ function buildProactiveActions(viewerIsBilled: boolean): ProactiveAction[] {
       // The label says what the client ends up with. Same rename as the board
       // chip in tasks-board.tsx; neither surface branches by role, so there is
       // no staff naming to preserve here.
+      //
+      // The trigger names no specific product: it used to hardcode "social
+      // posts, newsletter, blog article, landing page", which is only the
+      // managed-product half of the roster and ignores whatever custom agents
+      // this account has been granted (agent-roster.ts unifies both into one
+      // catalog for exactly this reason). Naming the four here would re-narrow
+      // the model back to them regardless of what the system prompt's live
+      // AVAILABLE AGENTS registry actually lists for this client.
       id: "content_dispatch",
       icon: "Zap",
       label: "Content Plan",
       sublabel: "Propose this week's content plan as ready-to-run tasks",
       trigger:
-        "Propose which Karos managed products (social posts, newsletter, blog article, landing page) to plan for content creation this week, and suggest a concrete content plan I can turn into tasks.",
+        "Propose a content plan for this week using the AI agents actually available on this account, and suggest a concrete plan I can turn into tasks.",
       color: "#e5484d",
       deep: true,
     },
@@ -575,62 +556,38 @@ function TypingDots() {
 /* ── Action chips ────────────────────────────────────────────────────── */
 
 /**
- * The four AI actions. Extracted from the welcome column so the same list can
+ * The three AI actions. Extracted from the welcome column so the same list can
  * render in the strip above the input bar once a transcript exists (QA F88).
  *
- * Exported so the price on the Refresh Task Map chip can be asserted as RENDERED
- * MARKUP rather than as a string a component might or might not paint. It takes
- * no hooks and no router, so it renders standalone.
+ * The Refresh Task Map chip that used to live here moved to the Task Map itself
+ * (RefreshTaskMapButton, mounted from progress-view.tsx) - it acts on the task
+ * board, not the chat, and reads oddly homed in a general-purpose assistant.
  */
 export function ActionChips({
   onRun,
-  onRefreshTaskMap,
-  isAiProcessing,
-  viewerIsBilled,
 }: {
   /** Sends the action's chat trigger; `display` is what the transcript shows (QA F15). */
   onRun: (trigger: string, display: string, deep?: boolean) => void;
-  onRefreshTaskMap: () => void;
-  isAiProcessing?: boolean;
-  /** `isBillableClientActor()` for this session — decides whether a price is quoted. */
-  viewerIsBilled: boolean;
 }) {
   return (
-    // Two-by-two below lg so all four land above the fold in the mobile sheet;
+    // Two-by-two below lg so all three land above the fold in the mobile sheet;
     // one column in the desktop rail, which is only 380px wide (QA F94).
     <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-col">
-      {buildProactiveActions(viewerIsBilled).map((action) => {
-        const locked = action.id === "scan_inbox" && isAiProcessing;
+      {buildProactiveActions().map((action) => {
         return (
           <button
             key={action.id}
-            disabled={locked}
-            onClick={() =>
-              action.trigger ? onRun(action.trigger, action.label, action.deep) : onRefreshTaskMap()
-            }
-            title={locked ? "Karos Agents are already building your workspace strategy" : undefined}
-            className={cn(
-              "group flex flex-col items-start gap-2 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 lg:flex-row lg:items-center lg:gap-3",
-              locked
-                ? "cursor-not-allowed opacity-50"
-                : "hover:border-border-strong hover:bg-surface-3 active:scale-[0.98]",
-            )}
+            onClick={() => onRun(action.trigger, action.label, action.deep)}
+            className="group flex flex-col items-start gap-2 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 hover:border-border-strong hover:bg-surface-3 active:scale-[0.98] lg:flex-row lg:items-center lg:gap-3"
           >
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70 transition-all duration-150">
-              <Icon name={locked ? "Loader" : action.icon} className={cn("h-4 w-4", locked && "animate-spin")} />
+              <Icon name={action.icon} className="h-4 w-4" />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold text-foreground">{action.label}</p>
               {/* Two lines, not `truncate`: the longest sublabels clipped
                   mid-phrase on a single line (QA F88). */}
-              <p className="line-clamp-2 text-[11px] text-muted">
-                {locked ? "Locked. A workspace build is already running" : action.sublabel}
-              </p>
-              {/* Its own line rather than appended to the sublabel above, which
-                  is `line-clamp-2` and would drop the price on a narrow chip. */}
-              {action.price && !locked && (
-                <p className="mt-0.5 text-[10px] text-muted-2">Costs {action.price} a press</p>
-              )}
+              <p className="line-clamp-2 text-[11px] text-muted">{action.sublabel}</p>
             </div>
             <Icon
               name="ArrowRight"
@@ -650,24 +607,15 @@ function ProactiveWelcome({
   userName,
   hasGoogleIntegration,
   send,
-  onRefreshTaskMap,
-  isAiProcessing,
-  viewerIsBilled,
 }: {
   clientName: string;
   userName?: string;
   hasGoogleIntegration: boolean;
   send: (t: string, display?: string) => void;
-  /** Launches the multi-agent Strategy War Room instead of a single-shot chat scan. */
-  onRefreshTaskMap: () => void;
-  /** True while a background AI generation cycle is running - locks the Refresh Task Map chip. */
-  isAiProcessing?: boolean;
-  /** `isBillableClientActor()` for this session — decides whether a price is quoted. */
-  viewerIsBilled: boolean;
 }) {
-  // Kept on the prop chain (layout → dock → widget) but no longer decorates the
-  // Refresh Task Map chip: a Google connection changed the icon to a globe while
-  // nothing in the run ever looked outside the account (QA F50).
+  // Kept on the prop chain (layout → dock → widget) - a Google connection used
+  // to change an action chip's icon to a globe, but nothing in any remaining
+  // action ever looked outside the account (QA F50).
   void hasGoogleIntegration;
   const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
 
@@ -708,12 +656,7 @@ function ProactiveWelcome({
         <div className="h-px flex-1 bg-border" />
       </div>
 
-      <ActionChips
-        onRun={send}
-        onRefreshTaskMap={onRefreshTaskMap}
-        isAiProcessing={isAiProcessing}
-        viewerIsBilled={viewerIsBilled}
-      />
+      <ActionChips onRun={send} />
 
       {/* Quick text suggestions */}
       <div className="flex items-center gap-2 px-1">
@@ -788,23 +731,12 @@ interface Props {
    *  hand one user's conversation to the next (staff→client leaks internal text). */
   viewerUid: string;
   clientName: string;
-  /**
-   * `isBillableClientActor()` for this session, resolved on the server.
-   *
-   * REQUIRED, with no default: the Refresh Task Map chip commits a charge the
-   * moment it is pressed, and a mount site that forgot to answer would go back
-   * to charging in silence — the exact defect this prop exists to close. So the
-   * compiler asks every site rather than a default answering for it.
-   */
-  viewerIsBilled: boolean;
   /** When true the chat panel opens automatically on mount (CLIENT_USER login). */
   defaultOpen?: boolean;
   /** Display name of the currently logged-in user (for personalised greeting). */
   userName?: string;
   /** Whether this client has an active Google integration (shows Gmail chip). */
   hasGoogleIntegration?: boolean;
-  /** Minimal client snapshot injected into the proactive welcome context. */
-  client?: Pick<Client, "name" | "website" | "isAiProcessing">;
   /** Latest intel report headline data for greeting context. */
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
   /** Render as an always-open panel filling its container (right rail) instead of a floating popup. */
@@ -819,18 +751,15 @@ export function ChatbotWidget({
   clientId,
   viewerUid,
   clientName,
-  viewerIsBilled,
   defaultOpen = false,
   userName,
   hasGoogleIntegration = false,
-  client,
   docked = false,
   onCollapse,
   floatingPosition = "bottom-6 right-6",
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(defaultOpen);
-  const [warRoomOpen, setWarRoomOpen] = useState(false);
   // The AI actions strip above the input bar, once a transcript exists. Starts
   // collapsed so it never crowds the answers (QA F88).
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -841,7 +770,6 @@ export function ChatbotWidget({
 
   const onBrandingChange = useCallback(() => router.refresh(), [router]);
   const onTasksCreated = useCallback(() => router.refresh(), [router]);
-  const openWarRoom = useCallback(() => setWarRoomOpen(true), []);
 
   const {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
@@ -1074,9 +1002,6 @@ export function ChatbotWidget({
                 userName={userName}
                 hasGoogleIntegration={hasGoogleIntegration}
                 send={send}
-                onRefreshTaskMap={openWarRoom}
-                isAiProcessing={client?.isAiProcessing}
-                viewerIsBilled={viewerIsBilled}
               />
             ) : (
               <ChatEmptyState clientName={clientName} send={send} />
@@ -1145,12 +1070,7 @@ export function ChatbotWidget({
               </button>
               {actionsOpen && (
                 <div className="flex max-h-[45dvh] flex-col gap-3 overflow-y-auto border-t border-border px-3 py-3">
-                  <ActionChips
-                    onRun={send}
-                    onRefreshTaskMap={openWarRoom}
-                    isAiProcessing={client?.isAiProcessing}
-                    viewerIsBilled={viewerIsBilled}
-                  />
+                  <ActionChips onRun={send} />
                 </div>
               )}
             </div>
@@ -1279,14 +1199,6 @@ export function ChatbotWidget({
             </form>
           </div>
         </div>
-      )}
-
-      {warRoomOpen && (
-        <StrategyWarRoom
-          clientId={clientId}
-          onClose={() => setWarRoomOpen(false)}
-          onComplete={() => router.refresh()}
-        />
       )}
 
       <style>{`

@@ -5,7 +5,7 @@ import { ChatbotWidget } from "@/components/chatbot-widget";
 import { Icon } from "@/components/icon";
 import { MOBILE_TAB_BAR_OFFSET_CLASS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
-import type { Client, ClientReport } from "@/lib/types";
+import type { ClientReport } from "@/lib/types";
 
 /**
  * Rail + sheet open/closed state, remembered across reloads. In-app navigation
@@ -54,22 +54,8 @@ interface Props {
   /** Signed-in viewer - scopes the persisted copilot transcript. */
   viewerUid: string;
   clientName: string;
-  /**
-   * `isBillableClientActor()` for this session, resolved on the server and
-   * passed straight through to the widget, whose Refresh Task Map chip quotes a
-   * price off it. Required at both mount sites (the client shell's layout and
-   * StaffCopilotDock) rather than defaulted — see the widget's own note.
-   */
-  viewerIsBilled: boolean;
   userName?: string;
   hasGoogleIntegration?: boolean;
-  /**
-   * `industry` used to travel this whole chain — layout → dock → widget — and
-   * was read by nothing at the far end. It is `category`'s legacy spelling now
-   * (see Client.industry), and the copilot gets the category from the server's
-   * own context builder, not from a prop.
-   */
-  client?: Pick<Client, "name" | "website" | "isAiProcessing">;
   report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
   /** Host shell - sets the left offset of the pinned strip. Defaults to the client portal. */
   shell?: CopilotShell;
@@ -81,7 +67,7 @@ interface Props {
  * it, so nothing jumps or resizes. The chat stays mounted (state preserved) and
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
-export function CopilotDock({ clientId, viewerUid, clientName, viewerIsBilled, userName, hasGoogleIntegration, client, report, shell = "client" }: Props) {
+export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, report, shell = "client" }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   /** Blocks the write-back below until the restore pass has run. */
@@ -132,13 +118,15 @@ export function CopilotDock({ clientId, viewerUid, clientName, viewerIsBilled, u
    * half-typed message and the restored transcript both survive an accidental
    * dismissal (QA F88).
    *
-   * The Strategy War Room opens FROM the sheet but does not render inside it:
-   * it goes through Modal, which portals to document.body. Its DOM is therefore
-   * outside this ref, so every mousedown in the dialog - backdrop, "Keep
-   * running", the console - used to count as an outside click and close the
-   * sheet behind it. On a phone that made the copilot vanish the moment you
+   * The Strategy War Room used to open FROM this sheet (it has since moved to
+   * the Task Map's own Refresh Task Map button) but did not render inside it:
+   * it went through Modal, which portals to document.body. Its DOM was
+   * therefore outside this ref, so every mousedown in the dialog - backdrop,
+   * "Keep running", the console - used to count as an outside click and close
+   * the sheet behind it. On a phone that made the copilot vanish the moment you
    * touched the War Room. Overlays carry `data-overlay-root` for exactly this
-   * test (modal.tsx), so any portaled dialog counts as inside.
+   * test (modal.tsx), so any portaled dialog counts as inside - kept as the
+   * standing guard for whatever the sheet opens through Modal next.
    */
   useEffect(() => {
     if (!sheetOpen) return;
@@ -163,10 +151,8 @@ export function CopilotDock({ clientId, viewerUid, clientName, viewerIsBilled, u
     clientId,
     viewerUid,
     clientName,
-    viewerIsBilled,
     userName,
     hasGoogleIntegration,
-    client,
     report,
   };
 

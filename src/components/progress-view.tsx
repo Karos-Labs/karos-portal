@@ -12,6 +12,7 @@ import {
 } from "@/components/activity-timeline";
 import { ArchiveView } from "@/components/archive-view";
 import { QuickAddTaskBar } from "@/components/quick-add-task-bar";
+import { RefreshTaskMapButton } from "@/components/refresh-task-map-button";
 import type { Asset, ClientReport, ClientTask, Role, TaskOwner } from "@/lib/types";
 
 const VIEWS = ["board", "activity", "archive"] as const;
@@ -40,6 +41,8 @@ export function ProgressView({
   report,
   assets,
   agentLabelByAssetId,
+  isAiProcessing,
+  viewerIsBilled,
 }: {
   tasks: ClientTask[];
   currentUserRole: Role;
@@ -63,6 +66,10 @@ export function ProgressView({
    * managed-product label next to the umbrella's own name.
    */
   agentLabelByAssetId: Record<string, string>;
+  /** True while a background AI generation cycle is running - locks Refresh Task Map. */
+  isAiProcessing: boolean;
+  /** `isBillableClientActor()` for this session — decides whether Refresh Task Map quotes a price. */
+  viewerIsBilled: boolean;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -133,12 +140,18 @@ export function ProgressView({
 
       {view === "board" ? (
         <>
-          <div className="mb-4">
+          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start">
             <QuickAddTaskBar
               clientId={clientId}
+              className="flex-1"
               onAdded={(owner) =>
                 setRevealOwner((prev) => ({ owner, nonce: (prev?.nonce ?? 0) + 1 }))
               }
+            />
+            <RefreshTaskMapButton
+              clientId={clientId}
+              isAiProcessing={isAiProcessing}
+              viewerIsBilled={viewerIsBilled}
             />
           </div>
           <TasksBoard
