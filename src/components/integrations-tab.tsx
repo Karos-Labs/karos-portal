@@ -150,6 +150,7 @@ function ChannelSection({
   blurb,
   platforms,
   statusOf,
+  tagOf,
   renderCard,
   leadingCards,
 }: {
@@ -165,6 +166,13 @@ function ChannelSection({
    * genuinely "not set up" and safe to collapse.
    */
   statusOf: (p: PlatformConfig) => "live" | "needs-reconnect" | "absent";
+  /**
+   * Short status word for a collapsed row - "Coming soon" / "Pending
+   * verification" - so a client can tell a platform isn't connectable yet
+   * without clicking to expand it. Null when the platform is simply unset up
+   * but fully connectable right now.
+   */
+  tagOf?: (p: PlatformConfig) => string | null;
   renderCard: (p: PlatformConfig) => React.ReactNode;
   /** Always-full cards that belong to this section (the merged Google suite). */
   leadingCards?: React.ReactNode;
@@ -200,22 +208,30 @@ function ChannelSection({
             Add a channel
           </p>
           <ul className="divide-y divide-border">
-            {collapsed.map((p) => (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  onClick={() => setExpanded((prev) => [...prev, p.id])}
-                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-2/60"
-                >
-                  <PlatformMark id={p.id} className="h-4 w-4 shrink-0 text-muted-2" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-foreground">{p.name}</span>
-                    <span className="block truncate text-[11px] text-muted-2">{p.description}</span>
-                  </span>
-                  <Icon name="Plus" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-                </button>
-              </li>
-            ))}
+            {collapsed.map((p) => {
+              const tag = tagOf?.(p) ?? null;
+              return (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((prev) => [...prev, p.id])}
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-2/60"
+                  >
+                    <PlatformMark id={p.id} className="h-4 w-4 shrink-0 text-muted-2" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm text-foreground">{p.name}</span>
+                      <span className="block truncate text-[11px] text-muted-2">{p.description}</span>
+                    </span>
+                    {tag && (
+                      <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-2">
+                        {tag}
+                      </span>
+                    )}
+                    <Icon name="Plus" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
@@ -259,6 +275,13 @@ function PlatformCard({
   // The OAuth flow exists but the platform has not approved our developer
   // account yet, so a Connect click can only end in a failed popup. Say so.
   const pendingVerification = !isConnected && PENDING_VERIFICATION_PLATFORM_IDS.has(platform.id);
+  // Nothing to connect to yet on OUR side: the OAuth app credentials for this
+  // platform haven't been set (isOAuthEnabled reads the env vars live, so this
+  // flips the moment ops adds them - no redeploy-and-hope, no stale flag). A
+  // client pressing a live-looking Connect button here would only open a popup
+  // that fails, so the button is replaced with a disabled "Coming soon" state
+  // instead of shipping a control that cannot work.
+  const comingSoon = !isConnected && hasOAuthSupport && !isOAuthEnabled && !pendingVerification;
   // "Healthy" (fully connected, no reconnect needed) drives the subtle glow -
   // a reconnect-needed card should read as a warning, not a success state.
   const isHealthyConnected = isConnected && !integrationNeedsReconnect(integration!);
@@ -408,6 +431,11 @@ function PlatformCard({
                 <Icon name="Clock" className="h-3 w-3" />
                 Pending verification
               </Badge>
+            ) : comingSoon ? (
+              <Badge tone="neutral">
+                <Icon name="Clock" className="h-3 w-3" />
+                Coming soon
+              </Badge>
             ) : (
               <Badge tone="neutral">Not connected</Badge>
             )}
@@ -432,7 +460,7 @@ function PlatformCard({
         {/* OAuth connect - available to all users when this platform supports
             OAuth, EXCEPT while the platform still has to approve our developer
             account: that button can only open a popup that fails. */}
-        {!isConnected && hasOAuthSupport && !pendingVerification && (
+        {!isConnected && hasOAuthSupport && !pendingVerification && !comingSoon && (
           <BrandedConnectButton
             platform={platform}
             loading={isConnecting}
@@ -447,14 +475,24 @@ function PlatformCard({
           </p>
         )}
 
-        {/* The Connect button is shown to everyone regardless of server config,
-            so the "this will fail" hint has to be shown to everyone too - it
-            used to be admin-only, leaving clients and employees with a branded
-            button whose entire behaviour was a blank popup (QA F55). */}
-        {hasOAuthSupport && !isOAuthEnabled && (
-          <p className="text-[11px] text-warning/80">
+        {/* Disabled in place of a Connect button that could only fail - no
+            popup gets a chance to open. Same disabled-control treatment
+            everyone sees; only the line below it is role-aware. Removed the
+            moment isOAuthEnabled flips true (ops adding the platform's env
+            vars), no other change needed - see comingSoon above. */}
+        {comingSoon && (
+          <button
+            disabled
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-foreground/[0.03] px-4 py-2.5 text-sm font-semibold text-muted-2 opacity-70"
+          >
+            <Icon name="Clock" className="h-3.5 w-3.5" />
+            Coming soon
+          </button>
+        )}
+        {comingSoon && (
+          <p className="text-[11px] text-muted-2">
             {isAdmin
-              ? "OAuth env vars not set. The button above will fail until configured."
+              ? "OAuth env vars not set for this platform. Add them to enable Connect."
               : "This channel isn't connectable yet. Ask your Karos team to finish setting it up."}
           </p>
         )}
@@ -725,6 +763,9 @@ function GoogleUnifiedCard({
   const connectedCount = offered.filter((s) => byId.has(s.id)).length;
   const allConnected = connectedCount === offered.length;
   const anyConnected = connectedCount > 0;
+  // Same "nothing to connect to yet on our side" gate as the platform cards -
+  // Google shares one OAuth app across all four services, so it's one flag.
+  const comingSoon = !anyConnected && !isOAuthEnabled;
   const anyNeedsReconnect = offered.some((s) => {
     const i = byId.get(s.id);
     return i && integrationNeedsReconnect(i);
@@ -788,6 +829,11 @@ function GoogleUnifiedCard({
               <Badge tone="warning">
                 {connectedCount} / {offered.length} connected
               </Badge>
+            ) : comingSoon ? (
+              <Badge tone="neutral">
+                <Icon name="Clock" className="h-3 w-3" />
+                Coming soon
+              </Badge>
             ) : (
               <Badge tone="neutral">Not connected</Badge>
             )}
@@ -826,35 +872,47 @@ function GoogleUnifiedCard({
 
       {/* Action area */}
       <div className="px-4 pb-4 space-y-3">
-        {/* Official Google button treatment: white ground, multicolor G, dark label */}
-        <button
-          onClick={onOAuthConnect}
-          disabled={isConnecting}
-          className={cn(
-            "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] shadow-sm transition-all duration-200",
-            "hover:-translate-y-px hover:shadow-md hover:brightness-[0.97]",
-            "disabled:pointer-events-none disabled:opacity-60",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
-          )}
-        >
-          {isConnecting ? (
-            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-          ) : (
-            <GoogleLogo />
-          )}
-          {isConnecting ? "Connecting…" : anyConnected ? "Reconnect Google Suite" : "Connect Google Suite"}
-        </button>
+        {/* Official Google button treatment: white ground, multicolor G, dark label.
+            Replaced entirely by a disabled "Coming soon" control while the app's
+            own Google OAuth credentials aren't set - see comingSoon above. */}
+        {comingSoon ? (
+          <button
+            disabled
+            className="flex w-full items-center justify-center gap-2 rounded-md border border-border bg-foreground/[0.03] px-4 py-2.5 text-sm font-semibold text-muted-2 opacity-70"
+          >
+            <Icon name="Clock" className="h-3.5 w-3.5" />
+            Coming soon
+          </button>
+        ) : (
+          <button
+            onClick={onOAuthConnect}
+            disabled={isConnecting}
+            className={cn(
+              "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] shadow-sm transition-all duration-200",
+              "hover:-translate-y-px hover:shadow-md hover:brightness-[0.97]",
+              "disabled:pointer-events-none disabled:opacity-60",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
+            )}
+          >
+            {isConnecting ? (
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <GoogleLogo />
+            )}
+            {isConnecting ? "Connecting…" : anyConnected ? "Reconnect Google Suite" : "Connect Google Suite"}
+          </button>
+        )}
 
         {/* Same rule as the platform cards: everyone who can press the button
             gets told it can't work yet (QA F55) - only admins get the env-var
             detail. */}
-        {!isOAuthEnabled && (
-          <p className="text-[11px] text-warning/80">
+        {comingSoon && (
+          <p className="text-[11px] text-muted-2">
             {isAdmin
-              ? "OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). The button above will fail until configured."
+              ? "OAuth env vars not set (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET). Add them to enable Connect."
               : "Google Suite isn't connectable yet. Ask your Karos team to finish setting it up."}
           </p>
         )}
@@ -1048,6 +1106,16 @@ export function IntegrationsTab({
     return integrationIsUsable(integration) ? "live" : "needs-reconnect";
   }
 
+  /** Collapsed-row tag - same two gates the full card uses (see comingSoon
+      in PlatformCard), computed here without an integration to point at. */
+  function platformTag(platform: PlatformConfig): string | null {
+    if (PENDING_VERIFICATION_PLATFORM_IDS.has(platform.id)) return "Pending verification";
+    if (OAUTH_SUPPORTED_PLATFORM_IDS.has(platform.id) && !oauthEnabledPlatforms.includes(platform.id)) {
+      return "Coming soon";
+    }
+    return null;
+  }
+
   function renderPlatformCard(platform: PlatformConfig) {
     const integration = integrations.find((i) => i.platform === platform.id);
     return (
@@ -1114,6 +1182,7 @@ export function IntegrationsTab({
         blurb="Channels your agents post and schedule content to."
         platforms={publishingPlatforms}
         statusOf={platformStatus}
+        tagOf={platformTag}
         renderCard={renderPlatformCard}
       />
 
@@ -1127,6 +1196,7 @@ export function IntegrationsTab({
         blurb="Read-only sources agents pull performance data and content ideas from."
         platforms={analyticsStandalonePlatforms}
         statusOf={platformStatus}
+        tagOf={platformTag}
         renderCard={renderPlatformCard}
         leadingCards={
           // The merged Google suite is one card covering three services and has
