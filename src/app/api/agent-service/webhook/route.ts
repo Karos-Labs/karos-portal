@@ -12,11 +12,25 @@ import {
   getJobByExternalServiceId,
   isJobInFlight,
   listClientSeats,
+  listLiDirectionRequests,
+  markLiDirectionRequestCovered,
   updateJob,
+  upsertLiAgentState,
   upsertSeatVoiceProfile,
 } from "@/lib/data";
 import { isXAgent } from "@/lib/agent-service/x-agent-context";
-import { isLinkedInAgent } from "@/lib/agent-service/linkedin-agent-context";
+import {
+  isLinkedInAgent,
+  isLinkedInSetupV2,
+  isLinkedInV2Agent,
+} from "@/lib/agent-service/linkedin-agent-context";
+import {
+  LI_STATE_MAX_CHARS,
+  coveredDirectionRequests,
+  isLiCommitArtifact,
+  liStateDateFor,
+  liStateKindFor,
+} from "@/lib/agent-service/linkedin-state-capture";
 import { isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
 import {
   SIGNATURE_HEADER,
@@ -26,7 +40,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus } from "@/lib/types";
+import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -353,6 +367,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Is this a LinkedIn v2 run, whose internal state files have to be captured
+  // during the artifact phase? Resolved HERE, before the loop, because the loop
+  // is where the artifacts stream past and the customAgent read is one document.
+  // Best-effort: a failed read means state is not captured this delivery, which
+  // costs the next run its memory and must not cost this client their post.
+  let isLinkedInStateJob = false;
+  let isLinkedInSetupJob = false;
+  try {
+    const producing = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
+    isLinkedInStateJob = producing ? isLinkedInV2Agent(producing.key) : false;
+    isLinkedInSetupJob = producing ? isLinkedInSetupV2(producing.key) : false;
+  } catch {
+    isLinkedInStateJob = false;
+    isLinkedInSetupJob = false;
+  }
+
   // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
   // This used to run AFTER the claim, which is how a run lost its deliverables:
   // the claim wrote status "review" first, then a wall-clock kill or an instance
@@ -412,6 +442,25 @@ export async function POST(req: NextRequest) {
   // fetch (x-agent-v2). Launch runs only; launch deliverables stay staff-only
   // regardless via launchDeliverable:true below.
   const voiceProfileArtifacts: { seatSlug: string; content: string }[] = [];
+  // LinkedIn v2 durable state (ledger, topic catalog, agent memory, the
+  // manager's plan, the research cache, the foundation). These are INTERNAL
+  // artifacts — a client never reads a ledger — so they are fetched for their
+  // text only and never re-hosted, never attached to an asset. Without this the
+  // v2 skills' whole between-runs memory dies with the container; see
+  // lib/agent-service/linkedin-state-capture.ts.
+  const liStateArtifacts: {
+    kind: LiAgentState["kind"];
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
+  /**
+   * The writer's `12-commit.json`, if this run produced one. Read for exactly one
+   * field — which direction requests the run says it covered — so the portal can
+   * close those rows. Held as raw text and parsed after the claim: the pre-claim
+   * phase is a budget, not a place to do work whose result a lost race discards.
+   */
+  let liCommitJson: string | null = null;
   // What is LEFT of the pre-claim deadline, counted from the top of the handler.
   // Every network call below is bounded by this rather than by a fixed
   // per-artifact constant, and a non-positive value means the budget is spent:
@@ -464,7 +513,41 @@ export async function POST(req: NextRequest) {
         });
       };
 
-      if (!artifact.client_facing) {
+      // An internal artifact that is LinkedIn v2 state: fetched for its text and
+      // nothing else. It is not re-hosted, so it never gains a client-facing URL,
+      // never joins `rehosted`, and cannot become part of a deliverable — the
+      // only thing that leaves this branch is a string in `liStateArtifacts`.
+      const liPath = artifact.path ?? artifact.name;
+      const liStateKind = isLinkedInStateJob ? liStateKindFor(liPath) : null;
+      const liIsCommit = isLinkedInStateJob && isLiCommitArtifact(liPath);
+      if (!artifact.client_facing && (liStateKind || liIsCommit) && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, LI_STATE_MAX_CHARS);
+              if (text.trim() && liStateKind) {
+                liStateArtifacts.push({
+                  kind: liStateKind,
+                  content: text,
+                  contentDate: liStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+              if (text.trim() && liIsCommit) liCommitJson = text;
+            }
+          }
+        } catch {
+          // Best-effort by design, and NOT reported to the client. State that
+          // fails to capture costs the NEXT run its memory, which the events
+          // below record for staff — but the delivery in front of this client is
+          // a finished post either way, and failing it would throw that away.
+        }
+      } else if (!artifact.client_facing) {
         // Internal working file: never re-hosted, never on the asset, not a
         // failure. Its service URL on the job record is the intended state.
       } else if (!artifact.url) {
@@ -520,13 +603,21 @@ export async function POST(req: NextRequest) {
               if (TEXT_EXTENSIONS.includes(ext)) {
                 const content = bytes.toString("utf8");
                 // Setup-run per-seat voice profiles (x-agent-v2): captured off
-                // the same decoded bytes, launch runs only — same rule as the
+                // the same decoded bytes, setup runs only — same rule as the
                 // templates.json capture above.
+                //
+                // OR the LinkedIn v2 SETUP agent, which is the same kind of run
+                // reached a different way. `isLaunchRun` requires a clientAgents
+                // umbrella, and LinkedIn v2 deliberately has none: adding a
+                // person is a repeatable act, and that flow allows exactly one
+                // launch per umbrella (`already_live`). Keyed to the SETUP agent
+                // and never the writer — a drafting run must not be able to
+                // overwrite the voice it drafted with.
                 const voiceProfileMatch = artifact.name
                   .split("/")
                   .pop()
                   ?.match(/^voice-profile--(.+)\.md$/i);
-                if (isLaunchRun && voiceProfileMatch) {
+                if ((isLaunchRun || isLinkedInSetupJob) && voiceProfileMatch) {
                   voiceProfileArtifacts.push({ seatSlug: voiceProfileMatch[1], content });
                 }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
@@ -663,7 +754,7 @@ export async function POST(req: NextRequest) {
     // artifact convention. Best-effort AND after the claim: a save failure here
     // must not fail the whole delivery — the next launch run re-sweeps and
     // overwrites anyway.
-    if (isLaunchRun && voiceProfileArtifacts.length > 0) {
+    if ((isLaunchRun || isLinkedInSetupJob) && voiceProfileArtifacts.length > 0) {
       try {
         const customAgent = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
         const agentKey = customAgent?.key ?? "";
@@ -697,6 +788,62 @@ export async function POST(req: NextRequest) {
           level: "error",
           message: "Voice profile save failed - retries on the next launch run",
         });
+      }
+    }
+
+    // LinkedIn v2 durable state. After the claim and best-effort, like the sweep
+    // above: this is the NEXT run's memory, and losing it must not fail a delivery
+    // that already produced a post. It IS reported as an error event, because a
+    // run whose ledger did not persist will repeat itself and that is the only
+    // place anyone could find out why.
+    if (liStateArtifacts.length > 0) {
+      // Last write wins per kind, and the manifest's order is the run's own write
+      // order, so the newest copy of each file is the one that lands.
+      const byKind = new Map(liStateArtifacts.map((row) => [row.kind, row]));
+      for (const row of byKind.values()) {
+        try {
+          await upsertLiAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            content: row.content,
+            contentType: row.path.endsWith(".json")
+              ? "application/json"
+              : row.path.endsWith(".yaml") || row.path.endsWith(".yml")
+                ? "text/yaml"
+                : "text/markdown",
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] LinkedIn ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message: `LinkedIn ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
+    // Close the direction requests this run reported covering. Matched on the
+    // exact request text, because that is what the run was given and the only
+    // handle it has on a row — the portal never sends it a document id.
+    if (liCommitJson) {
+      try {
+        const covered = coveredDirectionRequests(liCommitJson);
+        if (covered.length > 0) {
+          const open = (await listLiDirectionRequests(job.clientId, { status: "open" })).filter(
+            (row) => covered.includes(row.request.trim()),
+          );
+          for (const row of open) {
+            await markLiDirectionRequestCovered(job.clientId, row.id, job.id);
+          }
+        }
+      } catch (e) {
+        // A row left open is re-offered next run, which is the harmless
+        // direction: the client asked for it and gets it again.
+        console.error("[webhook] LinkedIn direction-request close failed:", e);
       }
     }
 

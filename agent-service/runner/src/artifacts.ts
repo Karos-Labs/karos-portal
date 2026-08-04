@@ -33,6 +33,18 @@ export function outputRoots(clientSlug: string): string[] {
     `clients/${clientSlug}/outputs`,
     `clients/${clientSlug}/skills`,
     `clients/${clientSlug}/profile`,
+    // `internal/` holds two more pieces of durable state the same argument
+    // covers: the LinkedIn v2 manager's AGENT-MEMORY.md (which it is the sole
+    // author of, and which nothing wrote at all in v1) and the per-identity live
+    // sections. Everything under it is `client_facing: false` by
+    // `isClientFacing` below, so widening the WALK does not widen what a client
+    // can see — it only makes the files reachable at all.
+    `clients/${clientSlug}/internal`,
+    // The v2 writer's suggested posting order
+    // (`<agent>/calendar/CALENDAR-<YYYY-MM>.md`) lives directly under the client
+    // folder, outside all four roots above, so without this the one output that
+    // says WHEN each post should go out was collected from nowhere.
+    `clients/${clientSlug}/linkedin-agent`,
     "outputs",
   ];
 }

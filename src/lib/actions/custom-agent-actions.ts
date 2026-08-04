@@ -444,6 +444,13 @@ export async function runCustomAgentAction(input: {
   contextItemIds?: string[];
   /** "How many drafts?"-style batch-size controls (e.g. the X agent's 5/10/21). Clamped same as a scheduled fire. */
   chargeMultiplier?: number;
+  /**
+   * The brief's field values, for the few fields the server needs as data and
+   * not as prose — today the LinkedIn writer's "Post as". Untrusted: every
+   * reader validates against the client's own records. See
+   * SubmitCustomAgentInput.briefValues.
+   */
+  briefValues?: Record<string, string>;
 }): Promise<{ jobId?: string; error?: string }> {
   const user = await requireClientAccess(input.clientId);
   // §2 guard rail: an agent owned by a client-agent umbrella is not the

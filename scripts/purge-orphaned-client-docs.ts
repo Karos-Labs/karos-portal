@@ -62,6 +62,8 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "xTakes",
   "xDraftFeedback",
   "liDraftFeedback",
+  "liDirectionRequests",
+  "liAgentState",
   "redditDraftFeedback",
   "plannedScheduledRuns",
   "seatVoiceProfiles",

@@ -295,7 +295,7 @@ describe("toAgentInputRows", () => {
     expect(empty.find((r) => r.id === "takes")?.filled).toBe(false);
   });
 
-  it("gives LinkedIn the news drop but never the X takes box", () => {
+  it("gives LinkedIn the news drop and its own steering wheel, but never the X takes box", () => {
     const rows = toAgentInputRows({
       agent: "linkedin",
       company: null,
@@ -304,7 +304,57 @@ describe("toAgentInputRows", () => {
       news: [],
       takes: [{ id: "t1", clientId: "c1", seatId: "s", take: "x", date: "2026-07-25", createdBy: "u", createdAt: NOW }],
     });
-    expect(rows.map((r) => r.id)).toEqual(["company", "news"]);
+    // `direction` is LinkedIn v2's Section A0 ("what to cover next"), which is
+    // NOT the shared news drop and NOT X's takes box: the drop says what
+    // happened, a take is a person's opinion for X, and this says what the next
+    // LinkedIn post should be about.
+    expect(rows.map((r) => r.id)).toEqual(["company", "news", "direction"]);
+  });
+
+  it("gives X the takes box but never LinkedIn's steering wheel", () => {
+    const rows = toAgentInputRows({
+      agent: "x",
+      company: null,
+      seats: [],
+      intake: [],
+      news: [],
+      takes: [],
+      directionRequests: [
+        {
+          id: "d1",
+          clientId: "c1",
+          account: "company",
+          request: "talk about pricing",
+          date: "2026-08-04",
+          status: "open",
+          createdBy: "u",
+          createdAt: NOW,
+        },
+      ],
+    });
+    expect(rows.map((r) => r.id)).toEqual(["company", "news", "takes"]);
+  });
+
+  it("counts only OPEN direction requests as filled — a covered row is history", () => {
+    const row = (id: string, status: "open" | "covered") => ({
+      id,
+      clientId: "c1",
+      account: "company",
+      request: `r-${id}`,
+      date: "2026-08-04",
+      status,
+      createdBy: "u",
+      createdAt: NOW,
+    });
+    const base = { agent: "linkedin" as const, company: null, seats: [], intake: [], news: [], takes: [] };
+    const covered = toAgentInputRows({ ...base, directionRequests: [row("d1", "covered")] });
+    expect(covered.find((r) => r.id === "direction")?.filled).toBe(false);
+    expect(covered.find((r) => r.id === "direction")?.answers).toBeUndefined();
+    const open = toAgentInputRows({ ...base, directionRequests: [row("d2", "open")] });
+    expect(open.find((r) => r.id === "direction")?.filled).toBe(true);
+    expect(open.find((r) => r.id === "direction")?.answers).toEqual([
+      { label: "2026-08-04", value: "r-d2" },
+    ]);
   });
 });
 

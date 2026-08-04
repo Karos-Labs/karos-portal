@@ -2205,6 +2205,13 @@ const NOT_TEXT: readonly string[] = [
   "(data.ts raw write).kind",
   "(data.ts raw write).status",
   "addEmployeeSeat.status",
+  // "open" | "covered" — the state a direction request is in. The intake box
+  // sorts and groups on it and prints its own words ("Already covered"); the
+  // stored enum never reaches a screen.
+  "addLiDirectionRequest.status",
+  // A MIME type on a captured state file, chosen so the injection re-attaches
+  // the file with the shape the skill reads. Nothing renders it.
+  "upsertLiAgentState.contentType",
   "chargeClientCredits.operation",
   "claimTaskForExecution.(arg2)[]",
   "clearAgentIntakeFields.(arg1)[]", // field NAMES to clear, not values

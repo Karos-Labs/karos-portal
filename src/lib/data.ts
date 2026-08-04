@@ -46,6 +46,8 @@ import type {
   XNewsUpdate,
   XTake,
   XDraftFeedback,
+  LiAgentState,
+  LiDirectionRequest,
   LiDraftFeedback,
   RedditDraftFeedback,
 } from "@/lib/types";
@@ -129,6 +131,11 @@ const col = {
   xTakes: () => adminDb().collection("xTakes"),
   xDraftFeedback: () => adminDb().collection("xDraftFeedback"),
   liDraftFeedback: () => adminDb().collection("liDraftFeedback"),
+  // LinkedIn v2: the live section's "what to cover next" rows (Section A0), and
+  // the durable copies of the files the v2 skills assume outlive a run. See the
+  // LiDirectionRequest / LiAgentState comments in types.ts for why each exists.
+  liDirectionRequests: () => adminDb().collection("liDirectionRequests"),
+  liAgentState: () => adminDb().collection("liAgentState"),
   redditDraftFeedback: () => adminDb().collection("redditDraftFeedback"),
   // Per-seat AI-built voice profiles (agent-scoped: x/linkedin/reddit), one doc
   // per (clientId, agent, seatId). See upsertSeatVoiceProfile.
@@ -444,6 +451,8 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   // step — the type is Array<keyof typeof col>, so an omission here is not a
   // compile error and no test covers the contents.
   "liDraftFeedback",
+  "liDirectionRequests",
+  "liAgentState",
   "redditDraftFeedback",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
@@ -2845,6 +2854,106 @@ export async function listLiDraftFeedback(
   if (account) q = q.where("account", "==", account);
   const snap = await q.get();
   return snap.docs.map((d) => withId<LiDraftFeedback>(d)).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/* ───────── LinkedIn v2: direction requests (the live section's Section A0) ───────── */
+
+export async function addLiDirectionRequest(
+  data: Omit<LiDirectionRequest, "id">,
+): Promise<string> {
+  const ref = await col.liDirectionRequests().add(data);
+  return ref.id;
+}
+
+/** Newest first. `account` scopes to one identity ("company" or a seat id). */
+export async function listLiDirectionRequests(
+  clientId: string,
+  opts?: { account?: string; status?: LiDirectionRequest["status"] },
+): Promise<LiDirectionRequest[]> {
+  let q = col.liDirectionRequests().where("clientId", "==", clientId);
+  if (opts?.account) q = q.where("account", "==", opts.account);
+  if (opts?.status) q = q.where("status", "==", opts.status);
+  const snap = await q.get();
+  return snap.docs
+    .map((d) => withId<LiDirectionRequest>(d))
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * Flip a request to `covered`, naming the run that covered it. Scoped by
+ * clientId as well as id so a caller cannot flip another client's row by
+ * guessing a document id.
+ */
+export async function markLiDirectionRequestCovered(
+  clientId: string,
+  id: string,
+  jobId: string,
+): Promise<boolean> {
+  const doc = await col.liDirectionRequests().doc(id).get();
+  if (!doc.exists || doc.data()?.clientId !== clientId) return false;
+  await doc.ref.set(
+    { status: "covered", coveredByJobId: jobId, coveredAt: Date.now() },
+    { merge: true },
+  );
+  return true;
+}
+
+export async function deleteLiDirectionRequest(clientId: string, id: string): Promise<boolean> {
+  const doc = await col.liDirectionRequests().doc(id).get();
+  if (!doc.exists || doc.data()?.clientId !== clientId) return false;
+  await doc.ref.delete();
+  return true;
+}
+
+/* ───────── LinkedIn v2: the durable state the ephemeral workspace loses ───────── */
+
+export async function getLiAgentState(
+  clientId: string,
+  kind: LiAgentState["kind"],
+): Promise<LiAgentState | null> {
+  const snap = await col
+    .liAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<LiAgentState>(snap.docs[0]);
+}
+
+export async function listLiAgentState(clientId: string): Promise<LiAgentState[]> {
+  const snap = await col.liAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<LiAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file. Wholesale replacement, not a merge: each of
+ * these is a whole file the run rewrote (the ledger it appended to, the catalog
+ * it flipped a row in), so the delivered copy IS the new state — merging two
+ * versions of a JSON document at the field level would produce a file neither
+ * run wrote.
+ *
+ * `version` counts captures rather than gating them. A lost update here is
+ * recoverable (the next run re-delivers its own copy) and the alternative — a
+ * transactional compare-and-set on a payload up to CONTENT_CHAR_CAP — buys
+ * nothing, because two concurrent LinkedIn runs for one client are already
+ * refused upstream by the in-flight check.
+ */
+export async function upsertLiAgentState(
+  data: Omit<LiAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getLiAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .liAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .liAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
 }
 
 export async function addRedditDraftFeedback(

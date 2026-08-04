@@ -27,8 +27,11 @@ import {
 } from "@/lib/agent-intake-links";
 import { INTAKE_UPLOAD_FAILED, intakeSave } from "@/lib/intake-save";
 import {
+  addLiDirectionRequestAction,
   addLiDraftFeedbackAction,
   addLinkedInSeatAction,
+  deleteLiDirectionRequestAction,
+  runLinkedInSetupAction,
   saveLinkedInCompanyIntakeAction,
   saveLinkedInSeatIntakeAction,
   uploadLinkedInSeatCvAction,
@@ -52,6 +55,13 @@ export interface LiSeatView {
   name: string;
   slug: string;
   intake: LiIntakeView | null;
+  /**
+   * Has this person's voice been built (v2 seat setup)? Until it has, they are
+   * not a runnable identity: the agent refuses a seat run with no voice card
+   * rather than write on a personal profile in a borrowed voice, and both submit
+   * cores refuse it too. Absent on props built before seats were runnable.
+   */
+  voiceReady?: boolean;
 }
 
 export interface LiFeedbackRowView {
@@ -73,6 +83,295 @@ export interface LiRunRowView {
   status: JobStatus;
   createdAt: number;
   href?: string;
+}
+
+/**
+ * One "what should we cover next" row — the v2 live section's Section A0. The
+ * next run treats an open row for that identity as the brief for its batch.
+ */
+export interface LiDirectionRequestView {
+  id: string;
+  /** "company" or a seat id. */
+  account: string;
+  request: string;
+  /** YYYY-MM-DD */
+  date: string;
+  status: "open" | "covered";
+}
+
+/* ──────────────── "what should we cover next?" (Section A0) ─────────────── */
+
+/**
+ * The steering wheel. An open row for an identity is the brief for that
+ * identity's next post — the agent fills the slot with what was asked for first,
+ * then rounds out with its usual variety.
+ *
+ * Deliberately a SEPARATE box from "What happened this week", which is one
+ * shared input across every agent (SCRUM-51). This one is LinkedIn's, it is per
+ * person or page, and a run closes the row when it covers it. Folding them
+ * together would either leak LinkedIn steering into X batches or make the
+ * shared box carry a platform column it has no business having.
+ */
+function DirectionRequestsBox({
+  clientId,
+  seats,
+  rows,
+}: {
+  clientId: string;
+  seats: LiSeatView[];
+  rows: LiDirectionRequestView[];
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [request, setRequest] = useState("");
+  const [account, setAccount] = useState("company");
+
+  const nameFor = (acc: string) =>
+    acc === "company" ? "The company page" : (seats.find((s) => s.id === acc)?.name ?? "A former seat");
+
+  function add() {
+    setError(null);
+    start(async () => {
+      const result = await intakeSave(() =>
+        addLiDirectionRequestAction({ clientId, account, request }),
+      );
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setRequest("");
+      router.refresh();
+    });
+  }
+
+  function remove(id: string) {
+    setError(null);
+    start(async () => {
+      const result = await intakeSave(() => deleteLiDirectionRequestAction({ clientId, id }));
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  const open = rows.filter((r) => r.status === "open");
+  const covered = rows.filter((r) => r.status === "covered");
+
+  return (
+    <Card className="p-5">
+      <CardTitle>What should we cover next?</CardTitle>
+      <p className="mt-1 text-sm text-muted">
+        This is the steering wheel. Add a line any day: a subject you want covered, information to
+        work in, or just what you want next. The next post starts from what is open here. Leave it
+        empty and the agent picks the subject itself.
+      </p>
+      <div className="mt-4 space-y-3">
+        <Textarea
+          rows={2}
+          value={request}
+          onChange={(e) => setRequest(e.target.value)}
+          placeholder="We are launching the new dashboard on Tuesday, build up to it."
+        />
+        {seats.length > 0 ? (
+          <div>
+            <Label htmlFor="li-direction-account">Who should cover it</Label>
+            <Select
+              id="li-direction-account"
+              value={account}
+              onChange={(e) => setAccount(e.target.value)}
+            >
+              <option value="company">The company page</option>
+              {seats.map((seat) => (
+                <option key={seat.id} value={seat.id}>
+                  {seat.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        ) : null}
+        {fieldError(error)}
+        <Button onClick={add} disabled={pending} variant="subtle">
+          {pending ? "Adding…" : "Add it"}
+        </Button>
+      </div>
+      {open.length > 0 ? (
+        <ul className="mt-4 space-y-2 border-t border-border pt-4">
+          {open.map((r) => (
+            <li key={r.id} className="flex items-start justify-between gap-3 text-xs text-muted">
+              <span>
+                <span className="text-foreground">{r.date}</span> · {nameFor(r.account)} · {r.request}
+              </span>
+              <button
+                type="button"
+                onClick={() => remove(r.id)}
+                disabled={pending}
+                className="shrink-0 text-muted-2 underline hover:text-foreground disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {covered.length > 0 ? (
+        <div className="mt-4 border-t border-border pt-4">
+          <p className="text-xs text-muted-2">Already covered</p>
+          <ul className="mt-2 space-y-1">
+            {covered.map((r) => (
+              <li key={r.id} className="text-xs text-muted-2">
+                {r.date} · {nameFor(r.account)} · {r.request}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+/* ───────────────────────────── the setup band ──────────────────────────── */
+
+/**
+ * Whether this client's LinkedIn has been stood up, and the way to do it.
+ *
+ * Shown INSIDE the agent's data pane rather than as a separate page, for the
+ * same reason every other input here is: nothing may send a person out of the
+ * dialog to finish a step. Setup is a run — it derives the lanes, the voice and
+ * the first topics from the documents already on file and asks the client
+ * nothing — so this is a button and a status, not a form.
+ */
+function SetupBand({
+  clientId,
+  isSetUp,
+  companyOnFile,
+}: {
+  clientId: string;
+  isSetUp: boolean;
+  companyOnFile: boolean;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [fired, setFired] = useState(false);
+
+  function run() {
+    setError(null);
+    start(async () => {
+      const result = await intakeSave(() =>
+        runLinkedInSetupAction({ clientId, identity: "company" }),
+      );
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setFired(true);
+      router.refresh();
+    });
+  }
+
+  if (isSetUp) {
+    return (
+      <Card className="p-5">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle>LinkedIn is set up</CardTitle>
+          <Badge tone="success">Ready</Badge>
+        </div>
+        <p className="mt-1 text-sm text-muted">
+          The lanes, the voice and the topic list are in place. Every post run reads them, and your
+          answers below keep steering them.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between gap-3">
+        <CardTitle>Set up LinkedIn</CardTitle>
+        <Badge tone="warning">Not set up</Badge>
+      </div>
+      <p className="mt-1 text-sm text-muted">
+        One run stands up how this company posts on LinkedIn: which kinds of post it makes, the
+        recurring one it becomes known for, how it sounds, and the first list of subjects. It is all
+        worked out from the material you already gave us, and nothing posts.
+      </p>
+      {fired ? (
+        <p className="mt-3 text-sm text-muted">
+          Setup is running. This page updates itself when it finishes.
+        </p>
+      ) : (
+        <>
+          {!companyOnFile ? (
+            <p className="mt-3 text-xs text-muted-2">
+              Save the company page below first, so setup knows what is off the table.
+            </p>
+          ) : null}
+          {fieldError(error)}
+          <Button onClick={run} disabled={pending || !companyOnFile} className="mt-3">
+            {pending ? "Starting…" : "Set it up"}
+          </Button>
+        </>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * A seat's own setup, on the seat's card. Adding a person is a normal repeatable
+ * act, not a second launch, so it is its own run: it reads their real posts for
+ * voice where a profile URL is on file, and delivers their voice card.
+ *
+ * Until that has happened the person is not selectable in "Post as" — the agent
+ * refuses to write on a personal profile in a borrowed voice, so an option that
+ * pointed at them would only ever refuse.
+ */
+function SeatSetup({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [fired, setFired] = useState(false);
+
+  function run() {
+    setError(null);
+    start(async () => {
+      const result = await intakeSave(() => runLinkedInSetupAction({ clientId, identity: seat.id }));
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setFired(true);
+      router.refresh();
+    });
+  }
+
+  if (seat.voiceReady) {
+    return (
+      <p className="mt-3 border-t border-border pt-3 text-xs text-muted">
+        Their voice is built, so {seat.name.split(" ")[0]} can be chosen when you run the agent.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 border-t border-border pt-3">
+      <p className="text-xs text-muted">
+        {fired
+          ? `Building ${seat.name.split(" ")[0]}'s voice. This page updates itself when it finishes.`
+          : `${seat.name.split(" ")[0]} cannot be posted for yet. One run reads how they actually write and builds their voice. We never write on someone's profile in a borrowed voice.`}
+      </p>
+      {fired ? null : (
+        <>
+          {fieldError(error)}
+          <Button onClick={run} disabled={pending || !seat.intake} variant="subtle" className="mt-2">
+            {pending ? "Starting…" : "Build their voice"}
+          </Button>
+        </>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -426,6 +725,10 @@ function SeatCard({
       footer={
         <>
           <SeatCv clientId={clientId} seat={seat} />
+          {/* Also in the footer, and for the same reason: whether this person can
+              be posted for is the first thing anyone opening their card wants to
+              know, and it must not sit behind "Edit". */}
+          <SeatSetup clientId={clientId} seat={seat} />
           {/* In the footer so it renders in BOTH states: a seat added by
               mistake is one nobody has opened, and hiding the way back behind
               "Edit" is how it became permanent. */}
@@ -781,6 +1084,8 @@ export function LinkedInAgentIntake({
   company,
   seats,
   news,
+  directionRequests,
+  isSetUp,
   feedback,
   runs,
   runInFlight,
@@ -791,6 +1096,15 @@ export function LinkedInAgentIntake({
   company: LiIntakeView | null;
   seats: LiSeatView[];
   news: CompanyNewsRowView[];
+  /** Section A0 rows: open ones are the live brief, covered ones the record. */
+  directionRequests?: LiDirectionRequestView[];
+  /**
+   * Has v2 setup run for this client? Answered from the same foundation row the
+   * submit cores gate on, so the band and the server agree about what "set up"
+   * means. Absent on props built before setup existed — treated as set up, so an
+   * older caller never shows a client a step that is not theirs to take.
+   */
+  isSetUp?: boolean;
   feedback: LiFeedbackRowView[];
   runs: LiRunRowView[];
   /**
@@ -810,6 +1124,11 @@ export function LinkedInAgentIntake({
 }) {
   return (
     <div className="space-y-6">
+      <SetupBand
+        clientId={clientId}
+        isSetUp={isSetUp ?? true}
+        companyOnFile={company !== null}
+      />
       {/* The anchors the agent page's inputs band links each of its rows to
           (#85). Both sides derive them from the SAME row id through
           intakeAnchorId, so a row cannot end up pointing at a hash that
@@ -838,6 +1157,13 @@ export function LinkedInAgentIntake({
           on their own LinkedIn is separate. That is the employee seats list in your settings, and
           only it has a plan limit.
         </p>
+      </div>
+      <div id={intakeAnchorId("direction")} className="scroll-mt-24">
+        <DirectionRequestsBox
+          clientId={clientId}
+          seats={seats}
+          rows={directionRequests ?? []}
+        />
       </div>
       <div id={intakeAnchorId("news")} className="scroll-mt-24">
         <CompanyNewsBox clientId={clientId} rows={news} />

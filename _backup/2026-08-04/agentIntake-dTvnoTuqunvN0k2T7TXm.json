@@ -1,0 +1,17 @@
+{
+  "_collection": "agentIntake",
+  "_id": "dTvnoTuqunvN0k2T7TXm",
+  "clientId": "iZLc0mtwSFXNKE2KkC2d",
+  "agent": "linkedin",
+  "seatId": "1YPoOPD7xQqy7uoIxgEw",
+  "handle": "https://www.linkedin.com/in/daniel-herbert-195816376",
+  "role": "Product manager: oversees and designs the products Karos launches - ideas, competitor analysis, building, and easy integration into the platform.",
+  "focus": "Using Claude and the newest technologies; researching what is new to try; no-code building (\"vibe coding\") and what makes a good vibe coder; building the Karos v1 products for the MVP launch; systems that let products improve autonomously.",
+  "offLimits": "Do not foreground the music/nightlife identity (don.techno) unless Daniel confirms it. Pillar priority is still open - confirm before leaning hard into one.",
+  "fallbackKind": "about",
+  "fallbackText": "I should be known for numerous things, but I try and keep it concise. I'm Daniel, who loves to learn about different ways to use Claude and bring in the newest technologies, loves to research online and see what's new to try. I love being up to date with the latest technologies and love the fact that someone who has no coding experience can out-code and do so many things. I want to learn all the little details of what makes a good vibe coder. Right now I'm building the v1 products for Karos for the MVP launch. I'm excited to, in the future, build systems that enable our products to keep improving autonomously, learn the true depths and powers of automation, and provide them to businesses.",
+  "roster": [],
+  "createdBy": "seed:e10-hookup",
+  "createdAt": 1785018516172,
+  "updatedAt": 1785018516172
+}

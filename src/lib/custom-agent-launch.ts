@@ -61,6 +61,18 @@ const DOCUMENTS_AND_IMAGES =
  */
 export const BATCH_SIZE_FIELD_KEY = "batch_size";
 
+/**
+ * The LinkedIn v2 writer's brief-field key for which identity a run posts as.
+ *
+ * Duplicated from the server module's LI_IDENTITY_FIELD_KEY rather than imported,
+ * because that module is `server-only` and this one renders in the browser. The
+ * pair is asserted by src/lib/__tests__/linkedin-agent-v2.test.ts, so a rename on
+ * one side fails the suite instead of silently sending an identity the server
+ * cannot see (which would resolve to the company page and quietly draft the wrong
+ * thing).
+ */
+export const LINKEDIN_IDENTITY_FIELD_KEY = "li_identity";
+
 const generalAttachments: AgentAttachmentProfile = {
   label: "Reference files",
   hint: "Add briefs, examples, brand material, or source data that should shape this run.",
@@ -237,6 +249,140 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         label: "Creative inputs",
         hint: "Product photos, campaign briefs, visual references, and approved source material are especially useful.",
         accept: `${DOCUMENTS_AND_IMAGES},video/mp4,video/quicktime,.mp4,.mov`,
+      },
+    },
+  },
+  {
+    // The v2 writer. Exact key, and above every other LinkedIn matcher.
+    //
+    // ONE PRESS RUNS THE MANAGER THEN THE WRITER, which is why this brief says
+    // "checks what's worth saying" rather than only "drafts". Ben, 2026-08-04:
+    // "Run every run. If the pool is full, then just check that there is nothing
+    // more relevant or more up to date to talk about." Both skills live inside
+    // this agent's entry directory (the manager is a subfolder of it), so that is
+    // one job and one charge rather than a chain across two webhooks — see
+    // docs/linkedin-agent-portal.md for the instruction text that orders it.
+    matches: (identity) => identity.startsWith("karos-linkedin-writer-v2 "),
+    profile: {
+      eyebrow: "LinkedIn post",
+      intro:
+        "Checks what is worth saying right now, then drafts the next post from your LinkedIn agent data. Voice, topics and lanes are built from that data, so this form only scopes the run. Draft-only; a person always posts.",
+      fields: [
+        {
+          key: LINKEDIN_IDENTITY_FIELD_KEY,
+          label: "Post as",
+          type: "select",
+          defaultValue: "company",
+          // Replaced per client by withLinkedInIdentityOptions — a seat only
+          // becomes selectable once its own setup has built its voice.
+          options: [{ value: "company", label: "The company page" }],
+        },
+        {
+          key: BATCH_SIZE_FIELD_KEY,
+          label: "How many posts?",
+          type: "select",
+          defaultValue: "1",
+          options: [
+            { value: "1", label: "1 post" },
+            { value: "2", label: "2 posts" },
+            { value: "3", label: "3 posts" },
+          ],
+        },
+        {
+          key: "request",
+          label: "Anything to lean into this run?",
+          type: "textarea",
+          helper:
+            "Optional, and it wins over everything else this run. For a standing steer, use \"What should we cover next?\" in your LinkedIn agent data instead.",
+          placeholder: "A launch to build up to, a topic to hit.",
+        },
+      ],
+      quickStarts: [
+        "Build up to the launch we have coming.",
+        "Take an educational angle this time.",
+        "Turn the latest milestone into the post.",
+      ],
+      deliverables: [
+        "One post, ready to publish, with a linked source on every factual claim",
+        "A suggested day to post it",
+      ],
+      estimate: "~20–40 min",
+      attachments: {
+        label: "Extra material for this run (optional)",
+        hint: "One-off references for this post. The page URL, off-limits, seats and news live in your LinkedIn agent data, not here.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
+    // The v2 setup. Fired by "Set it up" on the agent card rather than typed
+    // into this dialog, but staff can open it here, so it gets an honest brief
+    // instead of the generic work order.
+    matches: (identity) => identity.startsWith("karos-linkedin-setup-v2 "),
+    profile: {
+      eyebrow: "LinkedIn setup",
+      intro:
+        "Stands up this client's LinkedIn system once: the lanes, the signature series, the voice, the first topics and the empty records the posting runs write to. It is all derived from their onboarding documents, so it asks the client nothing, and it posts nothing.",
+      fields: [
+        {
+          key: LINKEDIN_IDENTITY_FIELD_KEY,
+          label: "Set up",
+          type: "select",
+          defaultValue: "company",
+          options: [{ value: "company", label: "The company page" }],
+        },
+        {
+          key: "request",
+          label: "Anything the onboarding documents don't say?",
+          type: "textarea",
+          helper: "Optional. Setup derives the lanes, voice and topics from the documents on file.",
+          placeholder: "A regulator to account for, a subject that is off the table.",
+        },
+      ],
+      quickStarts: [],
+      deliverables: [
+        "This client's LinkedIn foundation: lanes, signature series, cadence and compliance",
+        "A seeded topic list, each row citing the document behind it",
+      ],
+      estimate: "~20–40 min",
+      attachments: {
+        label: "Extra material for setup (optional)",
+        hint: "Anything about how this client sells and speaks that is not already in their onboarding documents.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
+    // The v2 manager, staff-facing. A client's Run press already includes a
+    // manager pass; this is the standalone one — a bigger refill, or a look at
+    // what the last stretch of posts actually did.
+    matches: (identity) => identity.startsWith("karos-linkedin-manager-v2 "),
+    profile: {
+      eyebrow: "LinkedIn plan and topics",
+      intro:
+        "Audits what went out and what the client did with it, adjusts the lane mix, and refills the topic pool from one research pull. Never drafts and never posts.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything to steer this pass?",
+          type: "textarea",
+          helper: "Optional. It reads its own memory, the ledger and the outcomes either way.",
+          placeholder: "A lane that has gone quiet, a subject to retire.",
+        },
+      ],
+      quickStarts: [
+        "Refill the topic pool and say which lanes are running dry.",
+        "Audit the last stretch of posts and adjust the mix.",
+      ],
+      deliverables: [
+        "New topic rows, each with a source and a date",
+        "The standing plan every later post run reads, with a reason per change",
+      ],
+      estimate: "~15–30 min",
+      attachments: {
+        label: "Extra material for this pass (optional)",
+        hint: "Research, a competitor note, or anything that should shape what the client talks about next.",
+        accept: DOCUMENTS_AND_IMAGES,
       },
     },
   },
@@ -801,12 +947,68 @@ export function isXAgentV2Identity(key: string): boolean {
 export const X_SETUP_REQUIRED_PREFIX = "Set up the X agent data";
 
 /**
- * The LinkedIn agents (e10) run on stored intake the same way. Client-safe
- * twin of the server-side isLinkedInAgent in
- * agent-service/linkedin-agent-context.ts.
+ * The LinkedIn agents run on stored intake the same way. Client-safe twin of
+ * the server-side isLinkedInAgent in agent-service/linkedin-agent-context.ts —
+ * widen the two together or a card offers a brief the server has no data for.
+ *
+ * Covers the three v2 skills (setup / writer / manager) and the e10 generation
+ * that stays importable as the fallback.
  */
 export function isLinkedInAgentIdentity(key: string): boolean {
-  return key === "karos-linkedin-agent" || key.startsWith("karos-linkedin-company-");
+  return (
+    key === "karos-linkedin-writer-v2" ||
+    key === "karos-linkedin-setup-v2" ||
+    key === "karos-linkedin-manager-v2" ||
+    key === "karos-linkedin-agent" ||
+    key.startsWith("karos-linkedin-company-")
+  );
+}
+
+/** The identity token for a seat, as the run dialog sends it. */
+export function linkedInSeatIdentityToken(seatId: string): string {
+  return `seat:${seatId}`;
+}
+
+/**
+ * The v2 writer's "Post as" options for ONE client: the company page, plus every
+ * seat whose voice has been built.
+ *
+ * WHY A SEAT WITHOUT A VOICE IS ABSENT rather than present-and-disabled. The lab
+ * refuses a seat run with no voice card outright — "the run says so honestly
+ * instead of drafting in someone else's voice on a personal profile" — and both
+ * submit cores refuse it too. An option that always refuses is a control that
+ * lies; the way to make that person selectable is the seat's own setup, which is
+ * offered on the agent card next to their name.
+ *
+ * Pure, and returns the profile unchanged when it carries no identity field, so
+ * the caller can apply it without asking which agent it has.
+ */
+export function withLinkedInIdentityOptions(
+  profile: AgentLaunchProfile,
+  // `voiceReady` optional because the intake view's own field is: props built
+  // before seats were runnable carry none, and absent has to mean "not ready"
+  // rather than crash the dialog for every client on an older payload.
+  seats: ReadonlyArray<{ id: string; name: string; voiceReady?: boolean }>,
+): AgentLaunchProfile {
+  const ready = seats.filter((seat) => seat.voiceReady === true);
+  if (!profile.fields.some((field) => field.key === LINKEDIN_IDENTITY_FIELD_KEY)) return profile;
+  return {
+    ...profile,
+    fields: profile.fields.map((field) =>
+      field.key === LINKEDIN_IDENTITY_FIELD_KEY
+        ? {
+            ...field,
+            options: [
+              { value: "company", label: "The company page" },
+              ...ready.map((seat) => ({
+                value: linkedInSeatIdentityToken(seat.id),
+                label: seat.name,
+              })),
+            ],
+          }
+        : field,
+    ),
+  };
 }
 
 /** The e10 twin of X_SETUP_REQUIRED_PREFIX. */

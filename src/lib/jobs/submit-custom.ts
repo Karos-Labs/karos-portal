@@ -19,9 +19,16 @@ import {
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "@/lib/agent-service/x-agent-context";
 import {
+  LI_COMPANY_IDENTITY,
+  LI_IDENTITY_FIELD_KEY,
   buildLinkedInAgentContextFiles,
   hasLinkedInAgentIntake,
+  hasLinkedInV2Setup,
   isLinkedInAgent,
+  isLinkedInSetupV2,
+  isLinkedInV2Agent,
+  listLinkedInReadySeatIds,
+  resolveLiRunIdentity,
 } from "@/lib/agent-service/linkedin-agent-context";
 import {
   buildRedditAgentContextFiles,
@@ -97,6 +104,23 @@ export interface SubmitCustomAgentInput {
    * (`scheduleLimitsFor`), never to a flat number; see the clamp below.
    */
   chargeMultiplier?: number;
+  /**
+   * The run dialog's brief-field values, verbatim, for the few fields the SERVER
+   * needs as data rather than as prose.
+   *
+   * The prompt is already built from these fields, but it is built for the
+   * agent to read: `buildCustomAgentPrompt` joins labels and answers into
+   * sentences, so recovering "which identity" from it means parsing our own
+   * copy — which changes whenever someone edits a label. `chargeMultiplier` is
+   * the same need solved once already (`batchSizeFrom` lifts the batch-size
+   * field out of these values before the prompt is composed); this generalizes
+   * it rather than adding a second one-off.
+   *
+   * BROWSER-SUPPLIED AND UNTRUSTED. Every reader validates against the client's
+   * own records — see `resolveLiRunIdentity`, which falls back to the company
+   * page rather than trusting a seat id it cannot find on this client.
+   */
+  briefValues?: Record<string, string>;
   /**
    * EXPLICIT billing decision, overriding the actor test below.
    *
@@ -290,8 +314,38 @@ export async function submitCustomAgentJob(
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
+    // v2 adds two rungs above the injection, and both exist to refuse a run the
+    // AGENT would refuse anyway — one press earlier and without spending it.
+    //
+    // The lab is explicit that a writer run with no stood-up state reports
+    // `blocked_intake`, and that a seat with no voice card is blocked rather than
+    // drafted in a borrowed voice. Letting either through means a client presses
+    // Run, waits, pays, and reads an honest refusal — so the portal asks the same
+    // two questions first, in the words of the thing they can actually do.
+    const v2Identity = isLinkedInV2Agent(agent.key)
+      ? await resolveLiRunIdentity(input.clientId, input.briefValues?.[LI_IDENTITY_FIELD_KEY])
+      : LI_COMPANY_IDENTITY;
+    if (!isLinkedInSetupV2(agent.key) && isLinkedInV2Agent(agent.key)) {
+      if (!(await hasLinkedInV2Setup(input.clientId))) {
+        return {
+          error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the LinkedIn agent card, which stands up the lanes, the voice and the first topics. Nothing has run.`,
+        };
+      }
+      if (v2Identity.kind === "seat" && !(await listLinkedInReadySeatIds(input.clientId)).includes(v2Identity.seatId)) {
+        return {
+          error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} for this person first. Their seat has no voice profile yet, and we never draft on someone's personal profile in a borrowed voice. Use "Build their voice" on their card in the LinkedIn agent data. Nothing has run.`,
+        };
+      }
+    }
     try {
-      contextFiles.push(...(await buildLinkedInAgentContextFiles(input.clientId, agent.name)));
+      contextFiles.push(
+        ...(await buildLinkedInAgentContextFiles({
+          clientId: input.clientId,
+          agentKey: agent.key,
+          agentName: agent.name,
+          identity: v2Identity,
+        })),
+      );
     } catch (e) {
       return {
         error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,

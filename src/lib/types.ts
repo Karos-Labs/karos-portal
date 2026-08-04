@@ -1890,6 +1890,116 @@ export interface LiDraftFeedback {
   createdAt: number;
 }
 
+/**
+ * One "what should we cover next" row — the LinkedIn v2 live section's Section A0
+ * (`assets/company-updates-template.md`), which the lab calls "the steering
+ * wheel" and the writer treats as **the brief for its batch** (step 04's
+ * precedence: run note → direction requests → drops → catalog).
+ *
+ * WHY ITS OWN COLLECTION rather than another `type` on `xNewsUpdates`. The news
+ * box is SCRUM-51's ONE shared input, fanned into both the X and LinkedIn
+ * agents; a direction request is neither shared nor news. It says what to write
+ * ABOUT next, it is per-identity, and it has a lifecycle the news rows do not:
+ * a run that covers a request flips it to `covered` and stops reading it. Folding
+ * the two together would either leak LinkedIn steering into X batches or need a
+ * platform discriminator on every row of a collection that deliberately has
+ * none.
+ */
+export interface LiDirectionRequest {
+  id: string;
+  clientId: string;
+  /** Which identity this steers: "company" or a ClientSeat id. */
+  account: string;
+  /** The client's own words, as long or short as they like. */
+  request: string;
+  /** YYYY-MM-DD the row was added. */
+  date: string;
+  /**
+   * `open` until a run covers it. The writer's step 05 fills slots from open
+   * rows first; step 12 reports which it covered, and the webhook flips those.
+   * A covered row stays visible (it is the record of what was asked for) but is
+   * no longer injected as a brief.
+   */
+  status: "open" | "covered";
+  /** The run that covered it — set with `status: "covered"`. */
+  coveredByJobId?: string;
+  coveredAt?: number;
+  createdBy: string;
+  createdAt: number;
+}
+
+/**
+ * The LinkedIn v2 agent's DURABLE state — the files the lab contract assumes
+ * persist between runs, kept here because the runner workspace does not.
+ *
+ * THIS IS THE COLLECTION THAT MAKES V2 WORK AT ALL, so the reasoning is worth
+ * stating in full. The v2 product is built around files that outlive a run: the
+ * writer appends one ledger row per delivered post (the 60-day no-repeat spine),
+ * flips `used_by` on the topic-catalog row it consumed, and appends voice rules
+ * to the learning log; the manager is the sole author of `AGENT-MEMORY.md`, and
+ * its `05-plan.json` is the standing plan **every** writer run reads until a
+ * newer pass supersedes it. All of those live under `clients/<slug>/` in the lab
+ * repo — which, for a portal run, is a workspace that is created, baked from
+ * GitHub, and destroyed. Every one of those writes is discarded.
+ *
+ * The X agent (e13) solved the narrow case by re-injecting prior BATCHES, which
+ * covers anti-duplication and nothing else. That is not enough here: with the
+ * manager firing on every run (Ben, 2026-08-04), a discarded research cache means
+ * every press re-buys a pull the contract says is paid for once and reused
+ * same-day, and a discarded `05-plan.json` means the manager steers nothing.
+ *
+ * So each run's state artifacts are captured off the delivery (see the webhook)
+ * into one doc per (clientId, kind) and re-injected on the next run as the file
+ * the skill expects to find. One doc per kind, not per run: this is current
+ * state, and the run that produced it is recorded on the row.
+ */
+export interface LiAgentState {
+  id: string;
+  clientId: string;
+  /**
+   * Which of the contract's durable files this row holds:
+   *  - `ledger`         — `skills/_shared/linkedin-ledger.json`, the dedupe spine
+   *  - `topic-catalog`  — the forward pipeline with its `used_by` lists
+   *  - `agent-memory`   — `internal/linkedin-agent/AGENT-MEMORY.md` (manager only)
+   *  - `manager-plan`   — the manager's `05-plan.json`, read by every writer run
+   *  - `research-cache` — the manager's raw pull, for same-day reuse
+   *  - `foundation`     — `skills/_shared/LINKEDIN-FOUNDATION.md` from setup
+   *  - `voice-card-company` — the company identity's distilled voice card
+   *
+   * A SEAT's voice card is deliberately NOT here: it lives in
+   * `seatVoiceProfiles` (keyed by clientId + agent + seatId), which the delivery
+   * handler already captures for any agent family that emits
+   * `voice-profile--<slug>.md`. The company has no seat row to hang off, which
+   * is the only reason it needs a kind of its own.
+   */
+  kind:
+    | "ledger"
+    | "topic-catalog"
+    | "agent-memory"
+    | "manager-plan"
+    | "research-cache"
+    | "foundation"
+    | "voice-card-company";
+  /** The file's bytes as text (JSON, YAML or markdown per `kind`). */
+  content: string;
+  /** MIME type so the injection re-attaches it with the shape the skill reads. */
+  contentType: string;
+  /**
+   * YYYY-MM-DD the content was produced. `research-cache` is the one kind where
+   * this is load-bearing rather than informational: the manager's freshness rule
+   * is a date comparison against today, and a stale date is what authorizes a
+   * fresh (paid) pull.
+   */
+  contentDate: string;
+  /** The run whose delivery this was captured from. */
+  capturedFromJobId: string;
+  capturedAt: number;
+  /** Bumped on every capture, so a lost update is visible rather than silent. */
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /* ────────────── Client agents — the launch-vs-runs model (Phase 3) ──────────────
  *
  * Every content platform a client buys becomes ONE client agent ("Instagram

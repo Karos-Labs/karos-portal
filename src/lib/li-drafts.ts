@@ -25,10 +25,24 @@ export interface LiParsedDraft {
   chars?: string;
   /** Meta bullets (topic, sources, groundings), markdown bold stripped. */
   meta: string[];
-  /** File names from the "Media:" bullet — the artifacts to attach when posting. */
+  /**
+   * File names from the "Media:" bullet — the artifacts to attach when posting.
+   *
+   * v2 ships TEXT posts and sources no visual (lab decision, 2026-08-03), so this
+   * is normally empty. It stays because the one case that still fills it is real:
+   * an asset the CLIENT supplied through their own drop box ships with its post,
+   * and a URL cannot carry a file, so the card has to offer it for manual attach.
+   */
   mediaNames: string[];
   /** The recommended posting window from the "Post window:" bullet. */
   postWindow?: string;
+  /**
+   * The day the agent suggests this post goes out, from the "Suggested date:"
+   * bullet — v2's calendar step writes one post per day starting the day after
+   * the run. A SUGGESTION: the portal and the client own the actual release, and
+   * nothing here schedules anything.
+   */
+  suggestedDate?: string;
 }
 
 export interface LiParsedAccount {
@@ -131,6 +145,8 @@ export function parseLiDrafts(markdown: string): LiParsedBatch | null {
       }
       const window = meta.match(/^Post window:\s*(.+)$/i);
       if (window && !draft.postWindow) draft.postWindow = window[1].trim();
+      const suggested = meta.match(/^Suggested date:\s*(\d{4}-\d{2}-\d{2})/i);
+      if (suggested && !draft.suggestedDate) draft.suggestedDate = suggested[1];
       draft.meta.push(meta);
       continue;
     }

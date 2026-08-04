@@ -25,6 +25,7 @@ import {
   listClientSeats,
   listCustomAgents,
   listJobs,
+  listLiDirectionRequests,
   listLiDraftFeedback,
   listRedditDraftFeedback,
   listXDraftFeedback,
@@ -37,6 +38,10 @@ import {
   isRedditAgentIdentity,
   isXAgentIdentity,
 } from "@/lib/custom-agent-launch";
+import {
+  hasLinkedInV2Setup,
+  listLinkedInReadySeatIds,
+} from "@/lib/agent-service/linkedin-agent-context";
 import type { AgentProfileScopeFields } from "@/lib/data";
 import type {
   LinkedInAgentIntake,
@@ -348,21 +353,27 @@ export async function buildLinkedInAgentIntakeView(
   clientId: string,
   opts: { isStaff: boolean; pageUrlSuggestion?: string; jobs?: Job[] },
 ): Promise<LinkedInAgentIntakeProps> {
-  const [seats, companyIntake, allIntake, news, feedback, jobs] = await Promise.all([
-    listClientSeats(clientId),
-    getAgentIntake(clientId, "linkedin", null),
-    listAgentIntake(clientId, "linkedin"),
-    listXNewsUpdates(clientId),
-    listLiDraftFeedback(clientId),
-    opts.jobs ?? listJobs({ clientId }),
-  ]);
+  const [seats, companyIntake, allIntake, news, feedback, requests, readySeatIds, isSetUp, jobs] =
+    await Promise.all([
+      listClientSeats(clientId),
+      getAgentIntake(clientId, "linkedin", null),
+      listAgentIntake(clientId, "linkedin"),
+      listXNewsUpdates(clientId),
+      listLiDraftFeedback(clientId),
+      listLiDirectionRequests(clientId),
+      listLinkedInReadySeatIds(clientId),
+      hasLinkedInV2Setup(clientId),
+      opts.jobs ?? listJobs({ clientId }),
+    ]);
 
   const intakeBySeat = new Map(allIntake.filter((i) => i.seatId).map((i) => [i.seatId as string, i]));
+  const ready = new Set(readySeatIds);
   const seatViews: LiSeatView[] = seats.map((seat) => ({
     id: seat.id,
     name: seat.name,
     slug: seat.slug,
     intake: toLiIntakeView(intakeBySeat.get(seat.id) ?? null),
+    voiceReady: ready.has(seat.id),
   }));
 
   // The customAgents key is per client instance (karos-linkedin-company-<slug>),
@@ -389,6 +400,19 @@ export async function buildLinkedInAgentIntakeView(
       date: n.date,
       ...(n.type ? { type: n.type } : {}),
     })),
+    // Open rows first (they are the live brief), then the recent covered ones as
+    // the record of what was asked for. Capped like the feedback rail.
+    directionRequests: [
+      ...requests.filter((r) => r.status === "open"),
+      ...requests.filter((r) => r.status === "covered").slice(0, 8),
+    ].map((r) => ({
+      id: r.id,
+      account: r.account,
+      request: r.request,
+      date: r.date,
+      status: r.status,
+    })),
+    isSetUp,
     feedback: feedback.slice(0, 12).map((f) => ({
       id: f.id,
       account: f.account,

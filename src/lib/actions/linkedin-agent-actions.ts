@@ -17,14 +17,17 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  addLiDirectionRequest,
   addLiDraftFeedback,
   clearAgentIntakeFields,
   createAsset,
   createClientSeat,
+  deleteLiDirectionRequest,
   getAgentIntake,
   getAsset,
   getClient,
   getClientSeat,
+  getCustomAgentByKey,
   listClientSeats,
   listLiDraftFeedback,
   patchAgentIntake,
@@ -34,6 +37,13 @@ import { uploadBytes } from "@/lib/storage";
 import { resolveAccountTitleToSeat } from "@/lib/client-seats";
 import { laneLabel } from "@/lib/draft-lane-label";
 import { parseLiDrafts } from "@/lib/li-drafts";
+import {
+  LI_IDENTITY_FIELD_KEY,
+  LINKEDIN_SETUP_V2_KEY,
+} from "@/lib/agent-service/linkedin-agent-context";
+import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { clientSafeRunError } from "@/lib/custom-agent-launch";
+import { isBillableClientActor } from "@/lib/credits";
 import { requireClientAccess } from "./_shared";
 
 const MAX_TEXT = 2_000;
@@ -437,4 +447,164 @@ export async function addLiDraftFeedbackAction(input: {
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
   revalidatePath(`/clients/${input.clientId}/agents`);
   return assetId ? { assetId } : {};
+}
+
+/* ─────────── direction requests: "what should we cover next?" ─────────── */
+
+/**
+ * A standing steer for one identity — the v2 live section's Section A0, which
+ * the writer treats as the brief for its batch.
+ *
+ * Deliberately NOT the news box. A drop says what happened; this says what to
+ * write about, it is per identity, and a run that covers it closes it.
+ */
+export async function addLiDirectionRequestAction(input: {
+  clientId: string;
+  /** "company" or a seat id. */
+  account: string;
+  request: string;
+}): Promise<{ id?: string; error?: string }> {
+  const user = await requireClientAccess(input.clientId);
+  const request = input.request.trim();
+  if (!request) return { error: "Write what you want covered. A sentence is plenty." };
+  if (request.length > MAX_TEXT) {
+    return { error: "Please keep it under 2,000 characters." };
+  }
+  const account = input.account.trim() || "company";
+  if (account !== "company") {
+    const seat = await getClientSeat(account);
+    if (!seat || seat.clientId !== input.clientId) return { error: "That person was not found." };
+  }
+  const now = Date.now();
+  const id = await addLiDirectionRequest({
+    clientId: input.clientId,
+    account,
+    request,
+    date: new Date(now).toISOString().slice(0, 10),
+    status: "open",
+    createdBy: user.uid,
+    createdAt: now,
+  });
+  revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
+  return { id };
+}
+
+export async function deleteLiDirectionRequestAction(input: {
+  clientId: string;
+  id: string;
+}): Promise<{ error?: string }> {
+  await requireClientAccess(input.clientId);
+  if (!(await deleteLiDirectionRequest(input.clientId, input.id))) {
+    return { error: "That request was not found." };
+  }
+  revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+  revalidatePath(`/clients/${input.clientId}/agents`);
+  return {};
+}
+
+/* ────────────────────────── the setup run ────────────────────────── */
+
+/**
+ * The setup brief. Written here rather than composed from the launch profile
+ * because the identity has to be unambiguous in the prose as well as in
+ * `briefValues`: this is the run that decides a client's lanes and voice, and a
+ * run that misreads which identity it is standing up writes the wrong person's
+ * voice card into the shared file.
+ */
+function setupPrompt(args: { clientName: string; seatName?: string }): string {
+  if (args.seatName) {
+    return [
+      `Set up the LinkedIn seat for ${args.seatName} at ${args.clientName}.`,
+      "",
+      "This is a SEAT setup, not the company page — the company page is already stood",
+      "up and you must not rewrite its foundation, its lanes or its topic catalog.",
+      "",
+      "Build this person's voice card and their empty learning record, then add them",
+      "to the client's identities. Read their real LinkedIn posts for voice when their",
+      "profile URL is on file; fall back to their voice sample, and use their CV for",
+      "substance only, never for voice.",
+      "",
+      "Deliver the voice card as a client-facing artifact named",
+      `voice-profile--<their identity slug>.md — the portal stores it as this seat's`,
+      "voice card, and a seat with no voice card cannot be drafted for.",
+    ].join("\n");
+  }
+  return [
+    `Set up LinkedIn for ${args.clientName} (the company page).`,
+    "",
+    "Run the setup skill end to end: derive the settings from their onboarding",
+    "documents, distil the company voice card, pick the lanes and name the signature",
+    "series, write the foundation, seed the topic catalog, and stand up the empty",
+    "records the posting runs write to. Decide and record why — do not wait for a",
+    "sign-off and do not ask the client anything.",
+    "",
+    "Do not draft or deliver any posts in this run. This is the setup.",
+  ].join("\n");
+}
+
+/**
+ * Fire the v2 setup for a client — the company page, or one seat.
+ *
+ * WHY THIS IS ITS OWN ACTION rather than the client-agent launch flow. That flow
+ * (`submitClientAgentLaunchAction`) allows ONE launch per umbrella and refuses a
+ * second with "already live", which is right for an agent that is set up once and
+ * wrong for one where adding a person is a normal, repeatable act. It also fires
+ * the SAME agent doc with a different prompt, and v2's setup is a different skill
+ * in a different directory.
+ *
+ * Staff-and-client reachable, like the run dialog: a client adding their own
+ * colleague is the flow Ben asked for. Billing follows the same rule as any
+ * custom run — `isBillableClientActor` decides inside the submit core.
+ */
+export async function runLinkedInSetupAction(input: {
+  clientId: string;
+  /** "company", or a seat id to stand that person up. */
+  identity: string;
+}): Promise<{ jobId?: string; error?: string }> {
+  const user = await requireClientAccess(input.clientId);
+  const client = await getClient(input.clientId);
+  if (!client) return { error: "Client not found." };
+
+  const agent = await getCustomAgentByKey(LINKEDIN_SETUP_V2_KEY);
+  if (!agent || !agent.enabled) {
+    return { error: "The LinkedIn setup agent is not available. Your Karos team can enable it." };
+  }
+
+  const identity = input.identity.trim() || "company";
+  let seatName: string | undefined;
+  if (identity !== "company") {
+    const seat = await getClientSeat(identity);
+    if (!seat || seat.clientId !== input.clientId) return { error: "That person was not found." };
+    seatName = seat.name;
+    // A seat with no LinkedIn intake has no profile URL, no CV and no voice
+    // sample, so the run would have nothing to build a voice from and would
+    // produce a generic card that then blocks nothing. The form is the fix.
+    if (!(await getAgentIntake(input.clientId, "linkedin", identity))) {
+      return { error: `Fill in ${seat.name}'s LinkedIn details first. That is what their voice is built from.` };
+    }
+  }
+
+  const result = await submitCustomAgentJob(user, {
+    agentId: agent.id,
+    clientId: input.clientId,
+    prompt: setupPrompt({ clientName: client.name, seatName }),
+    runType: "launch",
+    briefValues: {
+      [LI_IDENTITY_FIELD_KEY]: identity === "company" ? "company" : `seat:${identity}`,
+    },
+  });
+
+  if (result.jobId && !result.error) {
+    revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
+    revalidatePath(`/clients/${input.clientId}/agents`);
+    revalidatePath("/jobs");
+    return result;
+  }
+  // Same rule as the run dialog: a billable client actor never reads the submit
+  // core's internal strings (service URLs, env var names).
+  if (result.error && isBillableClientActor(user)) {
+    return { error: clientSafeRunError(result.error) };
+  }
+  return result;
 }

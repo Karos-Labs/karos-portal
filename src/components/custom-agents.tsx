@@ -59,6 +59,7 @@ import {
   isXAgentIdentity,
   launchProfileFor,
   perClientAgentSlug,
+  withLinkedInIdentityOptions,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
@@ -1795,7 +1796,14 @@ export function RunCustomAgentModal({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [selectedClientId, setSelectedClientId] = useState(clientId ?? clients?.[0]?.id ?? "");
-  const profile = launchProfileFor(agent);
+  // "Post as" is the one field whose options are this client's own records
+  // rather than a fixed list, so the profile is specialized before anything
+  // renders or seeds from it. A no-op for every other agent: the helper returns
+  // the profile untouched when it carries no identity field.
+  const profile =
+    setup?.kind === "linkedin"
+      ? withLinkedInIdentityOptions(launchProfileFor(agent), setup.data.seats)
+      : launchProfileFor(agent);
   const [fields, setFields] = useState<Record<string, string>>(() => initialAgentBrief(profile));
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   // Has anyone put work into the brief that a stray click would throw away?
@@ -1910,6 +1918,11 @@ export function RunCustomAgentModal({
         prompt,
         contextItemIds: selectedFiles,
         ...(batchSizeFrom(fields) ? { chargeMultiplier: batchSizeFrom(fields) } : {}),
+        // The whole brief, for the fields the server reads as data rather than
+        // as prose (the LinkedIn writer's "Post as"). The prompt above is built
+        // for the agent to read; recovering an identity from it would mean
+        // parsing our own copy, which breaks the next time someone edits a label.
+        briefValues: fields,
       });
       if (result.error) {
         setError(result.error);

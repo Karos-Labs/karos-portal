@@ -5,6 +5,7 @@ import {
   getAgentProfileDocData,
   listAgentIntake,
   listClientSeats,
+  listLiDirectionRequests,
   listXNewsUpdates,
   listXTakes,
 } from "@/lib/data";
@@ -25,6 +26,7 @@ import type {
   ClientAgent,
   ClientAgentTemplate,
   ClientSeat,
+  LiDirectionRequest,
   XNewsUpdate,
   XTake,
 } from "@/lib/types";
@@ -245,6 +247,8 @@ export function toAgentInputRows(args: {
   intake: AgentIntake[];
   news: XNewsUpdate[];
   takes: XTake[];
+  /** LinkedIn only — the v2 "what to cover next" rows, newest first. */
+  directionRequests?: LiDirectionRequest[];
   /** X only — the profile-scope doc that now carries handle/off-limits (x-agent-v2). */
   xProfile?: AgentProfileScopeFields | null;
 }): AgentInputRow[] {
@@ -325,6 +329,33 @@ export function toAgentInputRows(args: {
     });
   }
 
+  // LinkedIn's own steering wheel (v2 Section A0). NOT the shared drop above and
+  // not listed for X: the news box says what happened, this says what to write
+  // about next, and only the LinkedIn agent reads it.
+  if (args.agent === "linkedin") {
+    const open = args.directionRequests?.filter((r) => r.status === "open") ?? [];
+    const latest = args.directionRequests?.[0] ?? null;
+    rows.push({
+      id: "direction",
+      label: "What to cover next",
+      detail:
+        open.length > 0
+          ? `${open.length} open request${open.length === 1 ? "" : "s"}`
+          : "Nothing asked for yet",
+      updatedAt: latest?.createdAt ?? null,
+      filled: open.length > 0,
+      icon: "Compass",
+      // Same rule as the news drop: the client's own lines, two fields, capped.
+      ...(open.length > 0
+        ? {
+            answers: open
+              .slice(0, INPUT_ANSWERS_SHOWN)
+              .map((row) => ({ label: row.date, value: row.request })),
+          }
+        : {}),
+    });
+  }
+
   if (args.agent === "x") {
     const latest = args.takes[0] ?? null;
     rows.push({
@@ -376,12 +407,15 @@ export async function readAgentInputDocs(
   const agent = intakeFamilyFor(agentKey);
   if (!agent) return null;
 
-  const [company, intake, seats, news, takes, xProfile] = await Promise.all([
+  const [company, intake, seats, news, takes, directionRequests, xProfile] = await Promise.all([
     getAgentIntake(clientId, agent, null),
     agent === "reddit" ? Promise.resolve<AgentIntake[]>([]) : listAgentIntake(clientId, agent),
     agent === "reddit" ? Promise.resolve<ClientSeat[]>([]) : listClientSeats(clientId),
     agent === "reddit" ? Promise.resolve<XNewsUpdate[]>([]) : listXNewsUpdates(clientId),
     agent === "x" ? listXTakes(clientId) : Promise.resolve<XTake[]>([]),
+    agent === "linkedin"
+      ? listLiDirectionRequests(clientId)
+      : Promise.resolve<LiDirectionRequest[]>([]),
     // x-agent-v2 moved the company handle/off-limits/come-across into the
     // profile-scope doc; the X view reads intake + profile together.
     agent === "x" ? getAgentProfileDocData(clientId, "x") : Promise.resolve(null),
@@ -391,7 +425,16 @@ export async function readAgentInputDocs(
     agent,
     // The COMPANY scope of the profile doc — per-seat scopes stay behind the
     // intake surface, same as before.
-    rows: toAgentInputRows({ agent, company, seats, intake, news, takes, xProfile: xProfile?.company ?? null }),
+    rows: toAgentInputRows({
+      agent,
+      company,
+      seats,
+      intake,
+      news,
+      takes,
+      directionRequests,
+      xProfile: xProfile?.company ?? null,
+    }),
   };
 }
 

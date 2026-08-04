@@ -256,12 +256,17 @@ describe("#85 — every row the band paints has somewhere to land", () => {
       takes: [
         { id: "t1", clientId: "c1", seatId: "seat-1", take: "Agents are the new SaaS", date: "2026-07-25", createdBy: "u", createdAt: NOW },
       ],
+      directionRequests: [
+        { id: "d1", clientId: "c1", account: "company", request: "Build up to the launch", date: "2026-08-04", status: "open", createdBy: "u", createdAt: NOW },
+      ],
     }).map((row) => row.id),
   }));
 
   it("reads a non-empty row set for each family", () => {
     // Non-vacuity: an empty row list would make the sweep below assert nothing.
-    expect(cases.map((c) => c.rows.length)).toEqual([4, 3, 1]);
+    // LinkedIn is 4 as of v2: company, the seat, the shared news drop, and its
+    // own "what to cover next" steering wheel.
+    expect(cases.map((c) => c.rows.length)).toEqual([4, 4, 1]);
   });
 
   for (const { family, rows } of cases) {
