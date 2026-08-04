@@ -46,10 +46,17 @@ const BATCH = [
   "",
   "> What I learned.",
   "",
+  "# Account 2 · Albert Kattan",
+  "",
+  "## Avenue 1 · Playbook",
+  "",
+  "> My own build-in-public post.",
+  "",
 ].join("\n");
 
 const REF_A = "Company page @getkaros · Avenue 1 · Playbook";
 const REF_B = "Company page @getkaros · Avenue 2 · Founder POV";
+const REF_SEAT = "Albert Kattan · Avenue 1 · Playbook";
 
 function slot(patch: Record<string, any> = {}): any {
   return {
@@ -87,6 +94,9 @@ beforeEach(() => {
   (slots.resolveUmbrellaSchedule as any).mockResolvedValue({ timeZone: "UTC" });
   (data.getAsset as any).mockResolvedValue({ id: "batch-1", clientId: "c1", content: BATCH });
   (data.createAsset as any).mockResolvedValue("new-asset");
+  (data.listClientSeats as any).mockResolvedValue([
+    { id: "seat-albert", clientId: "c1", name: "Albert Kattan", slug: "albert-kattan", createdBy: "u1", createdAt: 0, updatedAt: 0 },
+  ]);
   (xActions.addXDraftFeedbackAction as any).mockResolvedValue({});
   // The CAS claim succeeds by default; the concurrency case below flips it.
   (dataClientAgents.claimAgentSlotOptionPick as any).mockResolvedValue(true);
@@ -157,6 +167,35 @@ describe("pickAgentSlotOptionAction", () => {
       "ca1__2026-07-28",
       expect.objectContaining({ edited: true }),
     );
+  });
+
+  it("stamps personalSeatId when the chosen option is a seat's own account", async () => {
+    (dataClientAgents.getAgentSlot as any).mockResolvedValue(
+      slot({ optionRefs: [REF_A, REF_B, REF_SEAT] }),
+    );
+    const { pickAgentSlotOptionAction } = await import("@/lib/actions/slot-option-actions");
+
+    await pickAgentSlotOptionAction({
+      clientId: "c1",
+      slotId: "ca1__2026-07-28",
+      optionRef: REF_SEAT,
+    });
+
+    expect(data.createAsset).toHaveBeenCalledWith(
+      expect.objectContaining({ personalSeatId: "seat-albert" }),
+    );
+  });
+
+  it("leaves personalSeatId null for a company-account pick", async () => {
+    const { pickAgentSlotOptionAction } = await import("@/lib/actions/slot-option-actions");
+
+    await pickAgentSlotOptionAction({
+      clientId: "c1",
+      slotId: "ca1__2026-07-28",
+      optionRef: REF_A,
+    });
+
+    expect(data.createAsset).toHaveBeenCalledWith(expect.objectContaining({ personalSeatId: null }));
   });
 
   it("REFUSES a future day — its options existing is the churn tell", async () => {

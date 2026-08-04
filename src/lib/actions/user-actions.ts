@@ -9,6 +9,7 @@ import {
   deleteUser,
   createClient,
   clearUserPhone,
+  getClientSeat,
 } from "@/lib/data";
 import {
   getCurrentUser,
@@ -113,9 +114,18 @@ export async function createTeamMemberAction(input: {
   role: Role;
   clientId?: string;
   assignedClientIds?: string[];
+  /** CLIENT_USER only: which of that client's seats this login represents. */
+  seatId?: string | null;
 }) {
   await requireAdmin();
   const email = input.email.trim().toLowerCase();
+  const clientId = input.role === "CLIENT_USER" ? input.clientId ?? null : null;
+  if (input.role === "CLIENT_USER" && input.seatId) {
+    const seat = await getClientSeat(input.seatId);
+    if (!seat || seat.clientId !== clientId) {
+      throw new Error("That seat isn't in this client's roster.");
+    }
+  }
   const userRecord = await adminAuth().createUser({
     email,
     password: input.password,
@@ -130,8 +140,9 @@ export async function createTeamMemberAction(input: {
     email,
     name: input.name.trim(),
     role: input.role,
-    clientId: input.role === "CLIENT_USER" ? input.clientId ?? null : null,
+    clientId,
     assignedClientIds: input.role === "KAROS_EMPLOYEE" ? input.assignedClientIds ?? [] : [],
+    ...(input.role === "CLIENT_USER" ? { seatId: input.seatId ?? null } : {}),
     disabled: false,
     approvedAt: Date.now(),
     createdAt: Date.now(),
@@ -250,6 +261,47 @@ export async function toggleGroupAdminAction(uid: string, isGroupAdmin: boolean)
     throw new Error("Forbidden");
   }
 
+  revalidatePath("/team");
+}
+
+/**
+ * Link (or unlink) a client login to one of that client's seats — "this
+ * login IS this specific employee," the identity personal-content visibility
+ * checks against (see isPersonalAssetVisibleToViewer in lib/asset-visibility).
+ * Same dual permission as toggleGroupAdminAction above: an admin can set
+ * anyone's; a client group-admin can set it for others in their own group.
+ */
+export async function updateSeatAssignmentAction(uid: string, seatId: string | null) {
+  const user = await getCurrentUser();
+  if (!user || user.disabled) throw new Error("Unauthorized");
+
+  const target = await getUser(uid);
+  if (!target) throw new Error("User not found");
+  if (target.role !== "CLIENT_USER") throw new Error("Only client logins can be linked to a seat.");
+
+  // Permission decided BEFORE the seat-ownership check below, not after: that
+  // check's error names which client a seat belongs to, and asking it first
+  // would let any authenticated caller probe another tenant's seat roster
+  // through an action they have no permission to use at all.
+  if (user.role === "KAROS_ADMIN") {
+    // Admin may set anyone's.
+  } else if (user.role === "CLIENT_USER" && user.isGroupAdmin) {
+    if (target.clientId !== user.clientId) {
+      throw new Error("That person isn't in your workspace, so you can't change their seat.");
+    }
+    if (target.uid === user.uid) throw new Error("Cannot change your own seat link");
+  } else {
+    throw new Error("Forbidden");
+  }
+
+  if (seatId) {
+    const seat = await getClientSeat(seatId);
+    if (!seat || seat.clientId !== target.clientId) {
+      throw new Error("That seat isn't in this client's roster.");
+    }
+  }
+
+  await upsertUser({ ...target, seatId });
   revalidatePath("/team");
 }
 

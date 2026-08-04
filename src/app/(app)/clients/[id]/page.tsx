@@ -73,7 +73,10 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // minute would render as five "Upcoming post · 3 hours ago" rows - the batch
   // tell the churn rules exist to prevent (delta-lens bounce, 2026-07-28).
   const overviewAssets = isClientViewer
-    ? getClientLibraryAssets(assets, { forClient: true }).filter((a) => !a.locked)
+    ? getClientLibraryAssets(assets, {
+        forClient: true,
+        viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
+      }).filter((a) => !a.locked)
     : assets;
   const analyticsAssets = overviewAssets;
 

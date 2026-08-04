@@ -1,5 +1,6 @@
 import { getViewingContext } from "@/lib/auth";
-import { listUsers, listClients, listClientRequests } from "@/lib/data";
+import { listUsers, listClients, listClientRequests, listClientSeats } from "@/lib/data";
+import type { ClientSeat } from "@/lib/types";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { TeamManager } from "@/components/team-manager";
@@ -37,6 +38,13 @@ export default async function TeamPage() {
     // that client's workspace - is readable in the RSC payload.
     clients = allClients.filter((c) => c.id === user.clientId);
   }
+
+  // The roster the LinkedIn/X seat agents draft personal content for — one
+  // login can be linked to one of these, per client. Fetched per client
+  // rather than globally since ClientSeat has no cross-client listing.
+  const seatsByClient: Record<string, ClientSeat[]> = Object.fromEntries(
+    await Promise.all(clients.map(async (c) => [c.id, await listClientSeats(c.id)] as const)),
+  );
 
   return (
     <>
@@ -84,6 +92,7 @@ export default async function TeamPage() {
       <TeamManager
         users={users}
         clients={clients}
+        seatsByClient={seatsByClient}
         currentUid={user.uid}
         currentUserRole={user.role}
         currentClientId={user.clientId ?? undefined}

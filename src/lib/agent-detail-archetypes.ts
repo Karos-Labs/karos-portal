@@ -10,6 +10,7 @@ import {
   getClientArchiveAssets,
   isLaunchDeliverable,
   isTestRunAsset,
+  type AssetViewer,
 } from "@/lib/asset-visibility";
 import { isClientCalendarStatus, postKind } from "@/lib/calendar-kind";
 import { assetImages, assetVideos } from "@/lib/asset-images";
@@ -102,9 +103,10 @@ function viewerVisibleAssets(args: {
   assets: Asset[];
   viewerIsClient: boolean;
   now: number;
+  viewer?: AssetViewer;
 }): Asset[] {
   return args.viewerIsClient
-    ? getClientArchiveAssets(args.assets, { now: args.now })
+    ? getClientArchiveAssets(args.assets, { now: args.now, viewer: args.viewer })
     : args.assets;
 }
 
@@ -240,6 +242,7 @@ export function agentProducedAssets(args: {
   umbrellas: ClientAgentIdentity[];
   viewerIsClient: boolean;
   now: number;
+  viewer?: AssetViewer;
 }): Asset[] {
   const jobById = new Map(args.jobs.map((job) => [job.id, job]));
   const attribution = agentAttribution(args);

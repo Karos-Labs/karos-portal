@@ -12,6 +12,7 @@ import {
 import { resolveUmbrellaSchedule } from "@/lib/client-agent-slots";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { addXDraftFeedbackAction } from "@/lib/actions/x-agent-actions";
+import { resolveAccountTitleToSeat } from "@/lib/client-seats";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { notPickedReason, optionText, resolveOptions } from "@/lib/x-options";
 import { OPTIONS_TEMPLATE_KEY, dateKeyInZone } from "@/lib/client-agents";
@@ -106,6 +107,13 @@ export async function pickAgentSlotOptionAction(input: {
 
   const now = Date.now();
 
+  // Whose account this pick is for — "company" (general) or a seat id
+  // (personal). Resolved before the claim: it's a read-only lookup and the
+  // claim below is the one step that must not do extra work between its
+  // transaction and the asset write.
+  const seatOrCompany = await resolveAccountTitleToSeat(input.clientId, chosen.account);
+  const personalSeatId = seatOrCompany !== "company" ? seatOrCompany : null;
+
   // THE CLAIM (B6). The optionPick check above is a pre-flight courtesy that
   // gives a fast, friendly error; it is NOT the guard. Two tabs both read null
   // before either writes, and both would mint a post for the same day. The
@@ -145,6 +153,7 @@ export async function pickAgentSlotOptionAction(input: {
     channels: ["x"],
     templateKey: OPTIONS_TEMPLATE_KEY,
     templateName: "Daily post",
+    personalSeatId,
     meta: {
       clientAgentId: umbrella.id,
       slotId: slot.id,

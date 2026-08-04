@@ -281,6 +281,8 @@ export default async function ClientAgentDetailPage({
         jobs,
         viewerUid: user.uid,
         viewerIsStaff: isStaff,
+        viewerSeatId: user.seatId,
+        viewerIsGroupAdmin: user.isGroupAdmin,
         now,
       })
     : [];
@@ -307,6 +309,7 @@ export default async function ClientAgentDetailPage({
     umbrella,
     umbrellas,
     viewerIsClient,
+    viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
     now,
   });
 

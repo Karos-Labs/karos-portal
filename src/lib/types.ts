@@ -53,6 +53,14 @@ export interface AppUser {
   linkedInConnected?: boolean;
   /** The EmployeeSeat (within their own client's LinkedIn integration) this user owns. */
   primarySeatId?: string;
+  /**
+   * CLIENT_USER only: the ClientSeat (the roster the LinkedIn/X content
+   * agents draft personal content for) this specific login represents.
+   * Absent ⇒ a shared/company login — sees general content only, unless
+   * isGroupAdmin. Distinct from primarySeatId above (a different, unrelated
+   * seat concept — see ClientSeat's own doc comment).
+   */
+  seatId?: string | null;
 }
 
 /** Client-editable social handles / profile URLs. */
@@ -649,6 +657,14 @@ export interface Asset {
   templateKey?: string;
   /** Human chip label for templateKey (e.g. "By The Numbers", "Social posts"). Always paired with templateKey. */
   templateName?: string;
+  /**
+   * ClientSeat.id when this asset is personal content belonging to one
+   * employee's own account (LinkedIn/X seat agents) rather than the client's
+   * company account. Absent/null ⇒ general content, visible to every client
+   * login as before this field existed — see isPersonalAssetVisibleToViewer
+   * in lib/asset-visibility.ts, the one place this is enforced.
+   */
+  personalSeatId?: string | null;
   /**
    * Lexicographically sortable internal-generation-order key driving the
    * one-post-per-day content chain. Lab imports: `${runName}#${itemKey}`

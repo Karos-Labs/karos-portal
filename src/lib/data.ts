@@ -175,7 +175,7 @@ export async function getUserByEmail(email: string): Promise<AppUser | null> {
  */
 export async function getClientOwner(
   clientId: string,
-): Promise<{ email: string; name: string } | null> {
+): Promise<{ email: string; name: string; seatId?: string | null; isGroupAdmin?: boolean } | null> {
   if (!clientId) return null;
   const snap = await col
     .users()
@@ -191,7 +191,9 @@ export async function getClientOwner(
         (a.createdAt ?? 0) - (b.createdAt ?? 0),
     );
   const owner = seats[0];
-  return owner ? { email: owner.email, name: owner.name ?? "" } : null;
+  return owner
+    ? { email: owner.email, name: owner.name ?? "", seatId: owner.seatId, isGroupAdmin: owner.isGroupAdmin }
+    : null;
 }
 
 export async function getClientOwnerEmail(clientId: string): Promise<string> {

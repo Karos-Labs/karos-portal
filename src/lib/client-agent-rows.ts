@@ -1,6 +1,7 @@
 import "server-only";
 
-import { getAsset, listPlannedScheduledRuns } from "@/lib/data";
+import { getAsset, listClientSeats, listPlannedScheduledRuns } from "@/lib/data";
+import { matchAccountTitleToSeat } from "@/lib/client-seats";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
@@ -421,10 +422,25 @@ export async function toClientAgentRows(args: {
   jobs: Job[];
   viewerUid: string;
   viewerIsStaff: boolean;
+  /** This viewer's own seat, if their login is linked to one (see AppUser.seatId). */
+  viewerSeatId?: string | null;
+  /** A client's group admins keep full visibility across every seat, like staff. */
+  viewerIsGroupAdmin?: boolean;
   now: number;
 }): Promise<ClientAgentCardRow[]> {
   const scheduleByAgentId = new Map(args.scheduleRows.map((row) => [row.agentId, row]));
   const rows: ClientAgentCardRow[] = [];
+  // Fetched at most once per client, and only when a plain (non-staff,
+  // non-group-admin) client viewer could actually be handed someone else's
+  // personal option below — most page loads need it zero times.
+  const seatsByClientId = new Map<string, Awaited<ReturnType<typeof listClientSeats>>>();
+  const seatsFor = async (clientId: string) => {
+    const cached = seatsByClientId.get(clientId);
+    if (cached) return cached;
+    const seats = await listClientSeats(clientId);
+    seatsByClientId.set(clientId, seats);
+    return seats;
+  };
   for (const umbrella of args.umbrellas) {
     const agent = args.agentsById.get(umbrella.customAgentId);
     // The bound lab agent was deleted or disabled: the umbrella has nothing to
@@ -526,7 +542,18 @@ export async function toClientAgentRows(args: {
         } else if (todaySlot.assetId) {
           const batchAsset = await getAsset(todaySlot.assetId);
           const batch = batchAsset ? parseXDrafts(batchAsset.content ?? "") : null;
-          const options = batch ? resolveOptions(batch, todaySlot.optionRefs ?? []) : [];
+          let options = batch ? resolveOptions(batch, todaySlot.optionRefs ?? []) : [];
+          // A plain team login only picks from ITS OWN seat's options plus the
+          // shared company account — never a colleague's personal drafts. Staff
+          // and a client's own group admins keep the full pool, same as every
+          // other personal-content rule in this app.
+          if (options.length > 0 && !args.viewerIsStaff && !args.viewerIsGroupAdmin) {
+            const seats = await seatsFor(umbrella.clientId);
+            options = options.filter((option) => {
+              const seat = matchAccountTitleToSeat(seats, option.account);
+              return seat === "company" || seat === args.viewerSeatId;
+            });
+          }
           if (options.length > 0) {
             // The account heading is humanised HERE, not at render: the option
             // objects are serialized into the RSC payload, so "Albert Kattan

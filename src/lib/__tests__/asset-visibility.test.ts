@@ -8,6 +8,8 @@ import {
   getClientLibraryAssets,
   isAssetContentVisibleToClient,
   isInClientArchive,
+  isPersonalAssetVisibleToViewer,
+  type AssetViewer,
 } from "@/lib/asset-visibility";
 import type { Asset } from "@/lib/types";
 
@@ -43,6 +45,77 @@ describe("getClientLibraryAssets", () => {
     const visible = getClientLibraryAssets([older, newer]);
 
     expect(visible.map((asset) => asset.id)).toEqual(["newer", "older"]);
+  });
+});
+
+/**
+ * Personal seat content — Asset.personalSeatId restricted to its owning seat
+ * plus the client's group admins; staff see everything, unchanged. General
+ * content (no personalSeatId) is unaffected — the whole existing asset corpus
+ * behaves exactly as before this field existed.
+ */
+describe("isPersonalAssetVisibleToViewer", () => {
+  const staff: AssetViewer = { role: "KAROS_ADMIN" };
+  const owner: AssetViewer = { role: "CLIENT_USER", seatId: "seat-albert" };
+  const otherSeat: AssetViewer = { role: "CLIENT_USER", seatId: "seat-daniel" };
+  const noSeat: AssetViewer = { role: "CLIENT_USER" };
+  const groupAdmin: AssetViewer = { role: "CLIENT_USER", isGroupAdmin: true };
+
+  it("general content (no personalSeatId) is visible to every client viewer", () => {
+    const general = { personalSeatId: undefined };
+    for (const viewer of [staff, owner, otherSeat, noSeat, groupAdmin]) {
+      expect(isPersonalAssetVisibleToViewer(general, viewer)).toBe(true);
+    }
+  });
+
+  it("personal content is visible to its owning seat", () => {
+    const personal = { personalSeatId: "seat-albert" };
+    expect(isPersonalAssetVisibleToViewer(personal, owner)).toBe(true);
+  });
+
+  it("personal content is hidden from a different seat and from a seatless login", () => {
+    const personal = { personalSeatId: "seat-albert" };
+    expect(isPersonalAssetVisibleToViewer(personal, otherSeat)).toBe(false);
+    expect(isPersonalAssetVisibleToViewer(personal, noSeat)).toBe(false);
+  });
+
+  it("personal content is visible to the client's group admins", () => {
+    const personal = { personalSeatId: "seat-albert" };
+    expect(isPersonalAssetVisibleToViewer(personal, groupAdmin)).toBe(true);
+  });
+
+  it("staff see personal content regardless of seat", () => {
+    const personal = { personalSeatId: "seat-albert" };
+    expect(isPersonalAssetVisibleToViewer(personal, staff)).toBe(true);
+  });
+
+  it("getClientLibraryAssets drops a personal asset the viewer doesn't own", () => {
+    const mine = makeAsset({ id: "mine", status: "approved", personalSeatId: "seat-albert" });
+    const theirs = makeAsset({ id: "theirs", status: "approved", personalSeatId: "seat-daniel" });
+    const general = makeAsset({ id: "general", status: "approved" });
+    const visible = getClientLibraryAssets([mine, theirs, general], {
+      forClient: true,
+      viewer: owner,
+    });
+    expect(visible.map((a) => a.id).sort()).toEqual(["general", "mine"]);
+  });
+
+  it("getClientArchiveAssets drops a personal asset the viewer doesn't own", () => {
+    const now = 1_000_000_000_000;
+    const mine = makeAsset({
+      id: "mine",
+      status: "published",
+      publishedAt: now - 1000,
+      personalSeatId: "seat-albert",
+    });
+    const theirs = makeAsset({
+      id: "theirs",
+      status: "published",
+      publishedAt: now - 1000,
+      personalSeatId: "seat-daniel",
+    });
+    const visible = getClientArchiveAssets([mine, theirs], { now, viewer: owner });
+    expect(visible.map((a) => a.id)).toEqual(["mine"]);
   });
 });
 

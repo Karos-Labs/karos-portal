@@ -4,15 +4,17 @@ import type { ClientAgentCardRow } from "@/components/client-agents/types";
 
 vi.mock("server-only", () => ({}));
 
-const { getAssetMock, upcomingSlotsMock, listFeedbackMock } = vi.hoisted(() => ({
+const { getAssetMock, upcomingSlotsMock, listFeedbackMock, listClientSeatsMock } = vi.hoisted(() => ({
   getAssetMock: vi.fn(),
   upcomingSlotsMock: vi.fn(),
   listFeedbackMock: vi.fn(),
+  listClientSeatsMock: vi.fn(),
 }));
 
 vi.mock("@/lib/data", () => ({
   getAsset: getAssetMock,
   listPlannedScheduledRuns: vi.fn(),
+  listClientSeats: listClientSeatsMock,
 }));
 vi.mock("@/lib/data-client-agents", () => ({ listClientAgentFeedback: listFeedbackMock }));
 vi.mock("@/lib/client-agent-slots", () => ({ upcomingSlots: upcomingSlotsMock }));
@@ -194,6 +196,7 @@ beforeEach(() => {
   upcomingSlotsMock.mockResolvedValue([]);
   listFeedbackMock.mockResolvedValue([]);
   getAssetMock.mockResolvedValue(batchAsset());
+  listClientSeatsMock.mockResolvedValue([]);
 });
 
 describe("today's options — the account heading at the RSC boundary", () => {

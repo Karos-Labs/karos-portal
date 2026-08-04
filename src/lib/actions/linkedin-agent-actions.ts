@@ -19,15 +19,21 @@ import { revalidatePath } from "next/cache";
 import {
   addLiDraftFeedback,
   clearAgentIntakeFields,
+  createAsset,
   createClientSeat,
   getAgentIntake,
+  getAsset,
   getClient,
   getClientSeat,
   listClientSeats,
+  listLiDraftFeedback,
   patchAgentIntake,
   upsertAgentIntake,
 } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
+import { resolveAccountTitleToSeat } from "@/lib/client-seats";
+import { laneLabel } from "@/lib/draft-lane-label";
+import { parseLiDrafts } from "@/lib/li-drafts";
 import { requireClientAccess } from "./_shared";
 
 const MAX_TEXT = 2_000;
@@ -312,20 +318,11 @@ export async function addLiDraftFeedbackAction(input: {
   action: "posted" | "posted_with_edits" | "not_posted" | "note" | "edit_request";
   finalText?: string;
   reason?: string;
-}): Promise<{ error?: string }> {
+}): Promise<{ error?: string; assetId?: string }> {
   const user = await requireClientAccess(input.clientId);
   let account = input.account;
   if (!account && input.accountTitle) {
-    const title = input.accountTitle.toLowerCase();
-    if (title.includes("company page")) account = "company";
-    else {
-      // Longest name first so "Daniel Herbert" wins over a seat named "Dan"
-      // when both are substrings of the section title.
-      const seats = (await listClientSeats(input.clientId)).sort(
-        (a, b) => b.name.length - a.name.length,
-      );
-      account = seats.find((s) => title.includes(s.name.toLowerCase()))?.id ?? "company";
-    }
+    account = await resolveAccountTitleToSeat(input.clientId, input.accountTitle);
   }
   if (!account) return { error: "Account is required." };
   if (account !== "company" && account !== "program") {
@@ -350,6 +347,26 @@ export async function addLiDraftFeedbackAction(input: {
   if ((input.reason?.length ?? 0) > MAX_TEXT) {
     return { error: "Please keep the answer under 2,000 characters." };
   }
+  // A reload-and-reclick or a second tab must not mint a second published
+  // post for the same draft — LinkedIn has no CAS-guarded slot claim the way
+  // X's pickAgentSlotOptionAction does, so this is the best a log-only model
+  // can check: refuse a repeat "posted" for a draftRef this client already
+  // marked posted, before writing feedback OR materializing again. Not
+  // airtight against a true simultaneous double-submit (read-then-write, no
+  // transaction), but it closes the common case.
+  if (
+    (input.action === "posted" || input.action === "posted_with_edits") &&
+    input.draftRef
+  ) {
+    const priorFeedback = await listLiDraftFeedback(input.clientId, account);
+    const alreadyPosted = priorFeedback.some(
+      (f) =>
+        f.draftRef === input.draftRef &&
+        (f.action === "posted" || f.action === "posted_with_edits"),
+    );
+    if (alreadyPosted) return { error: "Already recorded as posted." };
+  }
+  const now = Date.now();
   await addLiDraftFeedback({
     clientId: input.clientId,
     account,
@@ -360,9 +377,64 @@ export async function addLiDraftFeedbackAction(input: {
     ...(input.finalText?.trim() ? { finalText: input.finalText.trim() } : {}),
     ...(input.reason?.trim() ? { reason: input.reason.trim() } : {}),
     createdBy: user.uid,
-    createdAt: Date.now(),
+    createdAt: now,
   });
+
+  // MATERIALIZATION — parity with X's pickAgentSlotOptionAction. A pick here
+  // IS the client's posting confirmation (there is no later "mark as posted"
+  // step for LinkedIn, unlike X), so the real Asset is created already
+  // published, in this same step — otherwise the calendar/dashboard would
+  // have nothing to show for it and nothing to gate personalSeatId on.
+  // Best-effort and never surfaced as an error: the feedback write above is
+  // the primary record and already succeeded, so a stale/unparseable batch
+  // must not turn into a client-facing failure on top of a post they
+  // already made.
+  let assetId: string | undefined;
+  if (
+    (input.action === "posted" || input.action === "posted_with_edits") &&
+    input.assetId &&
+    input.accountTitle &&
+    input.draftRef
+  ) {
+    try {
+      const batchAsset = await getAsset(input.assetId);
+      const batch = batchAsset ? parseLiDrafts(batchAsset.content ?? "") : null;
+      const acc = batch?.accounts.find((a) => a.title === input.accountTitle);
+      const draft = acc?.drafts.find((d) => `${acc.title} · ${d.lane}` === input.draftRef);
+      if (draft) {
+        const edited = input.action === "posted_with_edits";
+        const content = (edited ? (input.finalText as string) : draft.text)
+          .trim()
+          .slice(0, MAX_POST_TEXT);
+        if (content) {
+          assetId = await createAsset({
+            clientId: input.clientId,
+            type: "social_post",
+            title: `${laneLabel(draft.lane)} · ${input.accountTitle}`,
+            content,
+            status: "published",
+            publishMode: "manual",
+            scheduledAt: now,
+            publishedAt: now,
+            channels: ["linkedin"],
+            personalSeatId: account !== "company" && account !== "program" ? account : null,
+            meta: {
+              accountTitle: input.accountTitle,
+              pickedFromAssetId: input.assetId,
+              edited,
+            },
+            createdBy: user.uid,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+    } catch {
+      // See comment above — never surfaced.
+    }
+  }
+
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
   revalidatePath(`/clients/${input.clientId}/agents`);
-  return {};
+  return assetId ? { assetId } : {};
 }

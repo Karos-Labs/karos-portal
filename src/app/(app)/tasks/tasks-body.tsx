@@ -70,8 +70,12 @@ export async function TasksBody({ user, viewClientId }: { user: AppUser; viewCli
     // it as the standing guard for anything future-dated. Staff keep the full
     // library.
     const isClientViewer = user.role === "CLIENT_USER";
+    const viewer = { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin };
     const assets = isClientViewer
-      ? getClientLibraryAssets(getClientArchiveAssets(rawAssets), { forClient: true })
+      ? getClientLibraryAssets(getClientArchiveAssets(rawAssets, { viewer }), {
+          forClient: true,
+          viewer,
+        })
       : getClientLibraryAssets(rawAssets);
     // The activity timeline narrates these runs, and on failure prints the
     // stored error verbatim. Two things must not go

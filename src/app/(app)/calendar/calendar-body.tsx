@@ -199,8 +199,12 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // the runway badge read the same list, so a list still holding both copies
   // would print a deliverable twice and over-count the days filled through.
   const scopedAssets = inScope(assetsRaw);
-  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
-  const assets = clientVisibleCalendarAssets(scopedAssets, { isClient, now: Date.now() });
+  const assets = clientVisibleCalendarAssets(scopedAssets, {
+    isClient,
+    // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+    now: Date.now(),
+    viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
+  });
 
   // Agent lookups: by id for scheduled runs, by name for past jobs (jobs store
   // the agent's name, not its id). These stay JOIN keys - what a card PRINTS

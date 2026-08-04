@@ -29,7 +29,7 @@
  */
 
 import type { Asset } from "@/lib/types";
-import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import { getClientLibraryAssets, type AssetViewer } from "@/lib/asset-visibility";
 import { dedupeCalendarAssets } from "@/lib/calendar-dedupe";
 import { isClientCalendarStatus, postKind, type CalendarAssetKind } from "@/lib/calendar-kind";
 
@@ -42,13 +42,13 @@ import { isClientCalendarStatus, postKind, type CalendarAssetKind } from "@/lib/
  */
 export function clientVisibleCalendarAssets(
   scopedAssets: Asset[],
-  opts: { isClient: boolean; now: number },
+  opts: { isClient: boolean; now: number; viewer?: AssetViewer },
 ): Asset[] {
   const scoped = opts.isClient
     ? scopedAssets.filter((a) => isClientCalendarStatus(a.status))
     : scopedAssets;
   const visible = opts.isClient
-    ? getClientLibraryAssets(scoped, { forClient: true, now: opts.now })
+    ? getClientLibraryAssets(scoped, { forClient: true, now: opts.now, viewer: opts.viewer })
     : scoped;
 
   // Grouped on the UNREDACTED assets, then returned as the visible copies. A
@@ -79,7 +79,7 @@ export interface CalendarEntry {
  */
 export function clientCalendarEntries(
   scopedAssets: Asset[],
-  opts: { isClient: boolean; now: number },
+  opts: { isClient: boolean; now: number; viewer?: AssetViewer },
 ): CalendarEntry[] {
   return clientVisibleCalendarAssets(scopedAssets, opts)
     .map((asset): CalendarEntry | null => {

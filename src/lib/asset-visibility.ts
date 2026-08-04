@@ -1,6 +1,41 @@
-import type { Asset } from "@/lib/types";
+import type { Asset, Role } from "@/lib/types";
 import { clientSafePublishError } from "@/lib/custom-agent-launch";
 import { isAssetUnlockedForClient, templateForAsset } from "@/lib/post-chain";
+
+/**
+ * The subset of a viewer's identity personal-content gating needs — never the
+ * whole AppUser, so a caller can build one from getCurrentUser()/
+ * getViewingContext() without importing auth.ts's server-only surface into a
+ * client-safe module (this file has none of that today; keep it that way).
+ */
+export interface AssetViewer {
+  role: Role;
+  seatId?: string | null;
+  isGroupAdmin?: boolean;
+}
+
+/**
+ * May this viewer be handed THIS asset's content at all, before any of the
+ * churn-rule questions below even apply — personal content (Asset.personalSeatId
+ * set) is restricted to its owning seat and the client's admin group; staff see
+ * everything, unchanged. General content (the field absent) is unaffected by
+ * this predicate, which is what keeps every asset that existed before this
+ * field did behaving exactly as it always has.
+ *
+ * A full exclusion, not a redaction: unlike the lock rule below, "someone
+ * else's personal post exists on this day" is exactly the fact this feature
+ * hides, so a viewer who fails this never sees so much as a placeholder for
+ * the row — it simply is not there.
+ */
+export function isPersonalAssetVisibleToViewer(
+  a: Pick<Asset, "personalSeatId">,
+  viewer: AssetViewer,
+): boolean {
+  if (!a.personalSeatId) return true;
+  if (viewer.role !== "CLIENT_USER") return true;
+  if (viewer.isGroupAdmin) return true;
+  return viewer.seatId === a.personalSeatId;
+}
 
 /**
  * THE server boundary for a failed publish's reason.
@@ -39,7 +74,7 @@ function withClientSafePublishError(a: Asset): Asset {
  */
 export function getClientLibraryAssets(
   assets: Asset[],
-  opts?: { forClient?: boolean; now?: number },
+  opts?: { forClient?: boolean; now?: number; viewer?: AssetViewer },
 ): Asset[] {
   const sorted = [...assets].sort(
     (a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt),
@@ -48,6 +83,11 @@ export function getClientLibraryAssets(
   const now = opts.now ?? Date.now();
   return sorted
     .filter((a) => !isLaunchDeliverable(a) && !isTestRunAsset(a))
+    // Personal-content gate FIRST, and as a full drop rather than a redaction
+    // — see isPersonalAssetVisibleToViewer. `viewer` is optional only so
+    // existing callers that haven't been updated yet keep today's behavior;
+    // every client-facing caller should pass one.
+    .filter((a) => !opts.viewer || isPersonalAssetVisibleToViewer(a, opts.viewer))
     // `isAssetContentVisibleToClient` rather than the bare unlock test: after
     // the filter above the two are equivalent here, and asking the shared
     // predicate is what keeps a future tightening of it from applying
@@ -87,14 +127,19 @@ export function getClientLibraryAssets(
  * that have to be kept equal by hand.
  */
 export function isAssetContentVisibleToClient(
-  a: Pick<Asset, "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt">,
+  a: Pick<
+    Asset,
+    "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt" | "personalSeatId"
+  >,
   now: number,
+  viewer?: AssetViewer,
 ): boolean {
   if (isLaunchDeliverable(a)) return false;
   // Not covered by any status test: approveAssetAction has no test-run guard,
   // so a staff member approving one by mistake (the plain review queue shows no
   // TEST badge) flips its status without going through promoteTestAssetAction.
   if (isTestRunAsset(a)) return false;
+  if (viewer && !isPersonalAssetVisibleToViewer(a, viewer)) return false;
   return isAssetUnlockedForClient(a, now);
 }
 
@@ -148,10 +193,13 @@ export const CLIENT_ARCHIVE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
  * Ageing out is a VIEW filter — nothing is deleted, and staff surfaces keep the
  * full history.
  */
-export function getClientArchiveAssets(assets: Asset[], opts?: { now?: number }): Asset[] {
+export function getClientArchiveAssets(
+  assets: Asset[],
+  opts?: { now?: number; viewer?: AssetViewer },
+): Asset[] {
   const now = opts?.now ?? Date.now();
   return assets
-    .filter((a) => isInClientArchive(a, now))
+    .filter((a) => isInClientArchive(a, now, opts?.viewer))
     .sort((a, b) => clientDeliveryStamp(b) - clientDeliveryStamp(a))
     // The archive is the OTHER client asset projection — the agent detail page
     // feeds `agentProducedAssets` straight from here for a client viewer, and
@@ -190,13 +238,17 @@ export function clientDeliveryStamp(
  * asset behind it passes the same filter the archive itself applies.
  */
 export function isInClientArchive(
-  a: Pick<Asset, "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt">,
+  a: Pick<
+    Asset,
+    "meta" | "status" | "scheduledAt" | "publishedAt" | "updatedAt" | "createdAt" | "personalSeatId"
+  >,
   now: number,
+  viewer?: AssetViewer,
 ): boolean {
   // Rules 1 and 2 plus the launch/test-run exclusions are the same question the
   // library asks, so they are asked in the same place — the archive is a strict
   // subset of "content this client may be handed", not a parallel list.
-  if (!isAssetContentVisibleToClient(a, now)) return false;
+  if (!isAssetContentVisibleToClient(a, now, viewer)) return false;
   if (a.status === "draft") return false;
   if (a.status === "published") return clientDeliveryStamp(a) >= now - CLIENT_ARCHIVE_WINDOW_MS;
   return true;

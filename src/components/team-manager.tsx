@@ -29,14 +29,17 @@ import {
   createTeamMemberAction,
   updateTeamMemberAction,
   toggleGroupAdminAction,
+  updateSeatAssignmentAction,
   startImpersonationAction,
 } from "@/lib/actions";
 import { initials } from "@/lib/utils";
-import type { AppUser, Client, Role } from "@/lib/types";
+import type { AppUser, Client, ClientSeat, Role } from "@/lib/types";
 
 interface Props {
   users: AppUser[];
   clients: Client[];
+  /** That client's seat roster (the LinkedIn/X agents' per-person accounts), by clientId. */
+  seatsByClient: Record<string, ClientSeat[]>;
   currentUid: string;
   currentUserRole: Role;
   currentClientId?: string;
@@ -45,22 +48,27 @@ interface Props {
 function UserRow({
   u,
   clients,
+  seats,
   currentUid,
   currentUserRole,
   onRefresh,
 }: {
   u: AppUser;
   clients: Client[];
+  /** This user's own client's seat roster — empty for staff rows. */
+  seats: ClientSeat[];
   currentUid: string;
   currentUserRole: Role;
   onRefresh: () => void;
 }) {
   const [actionPending, startAction] = useTransition();
   const [impersonatePending, startImpersonate] = useTransition();
+  const [seatPending, startSeat] = useTransition();
   const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name ?? "-";
   const isSelf = u.uid === currentUid;
   const isAdmin = currentUserRole === "KAROS_ADMIN";
   const isGroupAdmin = currentUserRole === "CLIENT_USER";
+  const canEditSeat = u.role === "CLIENT_USER" && !isSelf && (isAdmin || isGroupAdmin);
 
   function act(fn: () => Promise<void>) {
     startAction(async () => {
@@ -98,6 +106,12 @@ function UserRow({
             {u.role === "KAROS_EMPLOYEE" && u.assignedClientIds?.length
               ? ` · ${u.assignedClientIds.length} client${u.assignedClientIds.length === 1 ? "" : "s"}`
               : ""}
+            {/* The seat this login represents - personal LinkedIn/X content is
+                restricted to its owning seat plus the client's group admins,
+                so this is the one line that says which employee this login IS. */}
+            {u.role === "CLIENT_USER" && u.seatId
+              ? ` · ${seats.find((s) => s.id === u.seatId)?.name ?? "seat"}`
+              : ""}
           </p>
         </div>
       </div>
@@ -116,6 +130,30 @@ function UserRow({
             <Icon name="ShieldCheck" className="h-3.5 w-3.5" />
             {u.isGroupAdmin ? "Group admin" : "Make admin"}
           </button>
+        )}
+
+        {/* Which seat this login represents — "— none —" is a shared/company
+            login, seeing general content only unless it's also a group admin. */}
+        {canEditSeat && seats.length > 0 && (
+          <Select
+            value={u.seatId ?? ""}
+            onChange={(e) =>
+              startSeat(async () => {
+                await updateSeatAssignmentAction(u.uid, e.target.value || null);
+                onRefresh();
+              })
+            }
+            disabled={seatPending}
+            className="h-8 w-40 text-xs"
+            title="Which seat this login represents"
+          >
+            <option value="">— shared login —</option>
+            {seats.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
         )}
 
         {/* Admin-only controls */}
@@ -206,6 +244,7 @@ function SectionCard({
   clientKeyId,
   users,
   clients,
+  seats,
   currentUid,
   currentUserRole,
   onRefresh,
@@ -215,6 +254,8 @@ function SectionCard({
   clientKeyId?: string;
   users: AppUser[];
   clients: Client[];
+  /** This section's client's seat roster — empty for the Staff section. */
+  seats: ClientSeat[];
   currentUid: string;
   currentUserRole: Role;
   onRefresh: () => void;
@@ -234,6 +275,7 @@ function SectionCard({
               key={u.uid}
               u={u}
               clients={clients}
+              seats={seats}
               currentUid={currentUid}
               currentUserRole={currentUserRole}
               onRefresh={onRefresh}
@@ -248,6 +290,7 @@ function SectionCard({
 export function TeamManager({
   users,
   clients,
+  seatsByClient,
   currentUid,
   currentUserRole,
   currentClientId,
@@ -263,6 +306,7 @@ export function TeamManager({
     role: Role;
     clientId: string;
     assigned: string[];
+    seatId: string;
   }>({
     name: "",
     email: "",
@@ -270,6 +314,7 @@ export function TeamManager({
     role: "KAROS_EMPLOYEE",
     clientId: clients[0]?.id ?? "",
     assigned: [],
+    seatId: "",
   });
 
   function refresh() {
@@ -290,9 +335,18 @@ export function TeamManager({
         role: form.role,
         clientId: form.role === "CLIENT_USER" ? form.clientId : undefined,
         assignedClientIds: form.role === "KAROS_EMPLOYEE" ? form.assigned : undefined,
+        seatId: form.role === "CLIENT_USER" ? form.seatId || null : undefined,
       });
       setOpen(false);
-      setForm({ name: "", email: "", password: "", role: "KAROS_EMPLOYEE", clientId: clients[0]?.id ?? "", assigned: [] });
+      setForm({
+        name: "",
+        email: "",
+        password: "",
+        role: "KAROS_EMPLOYEE",
+        clientId: clients[0]?.id ?? "",
+        assigned: [],
+        seatId: "",
+      });
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create user");
@@ -329,6 +383,7 @@ export function TeamManager({
             subtitle="Admins and employees"
             users={staff}
             clients={clients}
+            seats={[]}
             currentUid={currentUid}
             currentUserRole={currentUserRole}
             onRefresh={refresh}
@@ -342,6 +397,7 @@ export function TeamManager({
               clientKeyId={client.clientKeyId}
               users={groupUsers}
               clients={clients}
+              seats={seatsByClient[client.id] ?? []}
               currentUid={currentUid}
               currentUserRole={currentUserRole}
               onRefresh={refresh}
@@ -354,6 +410,7 @@ export function TeamManager({
               subtitle="Client users not yet linked to a client account"
               users={unassignedClients}
               clients={clients}
+              seats={[]}
               currentUid={currentUid}
               currentUserRole={currentUserRole}
               onRefresh={refresh}
@@ -394,12 +451,31 @@ export function TeamManager({
             {form.role === "CLIENT_USER" && (
               <div>
                 <Label>Belongs to client</Label>
-                <Select value={form.clientId} onChange={(e) => setForm((s) => ({ ...s, clientId: e.target.value }))}>
+                <Select
+                  value={form.clientId}
+                  onChange={(e) => setForm((s) => ({ ...s, clientId: e.target.value, seatId: "" }))}
+                >
                   {clients.length === 0 && <option value="">Create a client first</option>}
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </Select>
+              </div>
+            )}
+
+            {form.role === "CLIENT_USER" && (seatsByClient[form.clientId] ?? []).length > 0 && (
+              <div>
+                <Label>Seat (optional)</Label>
+                <Select value={form.seatId} onChange={(e) => setForm((s) => ({ ...s, seatId: e.target.value }))}>
+                  <option value="">— shared login —</option>
+                  {(seatsByClient[form.clientId] ?? []).map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </Select>
+                <p className="mt-1 text-[11px] text-muted-2">
+                  Link this login to one person&apos;s seat so their own personal content stays theirs.
+                  Leave unset for a shared/company login.
+                </p>
               </div>
             )}
 
@@ -457,6 +533,7 @@ export function TeamManager({
               key={u.uid}
               u={u}
               clients={clients}
+              seats={currentClientId ? (seatsByClient[currentClientId] ?? []) : []}
               currentUid={currentUid}
               currentUserRole={currentUserRole}
               onRefresh={refresh}

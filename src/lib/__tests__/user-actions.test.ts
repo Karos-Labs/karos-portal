@@ -83,6 +83,9 @@ function as(user: unknown) {
 
 const firebase = () => adminAuth() as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
+/** A client-1 seat, for the seat-linking tests below. */
+const SEAT_C1 = { id: "seat-1", clientId: "c1", name: "Albert Kattan", slug: "albert-kattan", createdBy: "u-admin", createdAt: 0, updatedAt: 0 };
+
 beforeEach(() => {
   vi.clearAllMocks();
   as(ADMIN);
@@ -90,6 +93,9 @@ beforeEach(() => {
   vi.mocked(data.upsertUser).mockResolvedValue(undefined as any);
   vi.mocked(data.deleteUser).mockResolvedValue(undefined as any);
   vi.mocked(data.createClient).mockResolvedValue("c-new" as any);
+  vi.mocked(data.getClientSeat).mockImplementation(async (id: string) =>
+    (id === SEAT_C1.id ? SEAT_C1 : null) as any,
+  );
 });
 
 describe("createTeamMemberAction — minting an account with a role", () => {
@@ -143,6 +149,35 @@ describe("createTeamMemberAction — minting an account with a role", () => {
       clientId: "c1",
       assignedClientIds: [],
     });
+  });
+
+  it("links a client login to one of that client's seats", async () => {
+    await userActions.createTeamMemberAction({
+      ...input,
+      role: "CLIENT_USER",
+      clientId: "c1",
+      seatId: "seat-1",
+    });
+
+    expect(vi.mocked(data.upsertUser).mock.calls[0]![0]).toMatchObject({
+      role: "CLIENT_USER",
+      clientId: "c1",
+      seatId: "seat-1",
+    });
+  });
+
+  it("refuses a seat that belongs to a different client, and mints nothing", async () => {
+    await expect(
+      userActions.createTeamMemberAction({
+        ...input,
+        role: "CLIENT_USER",
+        clientId: "c2",
+        seatId: "seat-1", // seat-1 belongs to c1, not c2
+      }),
+    ).rejects.toThrow();
+
+    expect(firebase().createUser).not.toHaveBeenCalled();
+    expect(data.upsertUser).not.toHaveBeenCalled();
   });
 });
 
@@ -349,6 +384,133 @@ describe("toggleGroupAdminAction — the one rung a non-admin may climb", () => 
     vi.mocked(data.getUser).mockResolvedValue(null as any);
 
     await expect(userActions.toggleGroupAdminAction("ghost", true)).rejects.toThrow("User not found");
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `updateSeatAssignmentAction` links a client login to the ClientSeat the
+ * LinkedIn/X agents draft personal content for — the identity
+ * isPersonalAssetVisibleToViewer checks. Same dual-permission ladder as
+ * toggleGroupAdminAction above (it is the other rung a non-admin may climb),
+ * plus the seat-ownership check that action doesn't need.
+ */
+describe("updateSeatAssignmentAction — linking a login to a seat", () => {
+  const PEER = { uid: "u-peer", name: "Pia Peer", email: "pia@acme.com", role: "CLIENT_USER", clientId: "c1" };
+  const OUTSIDER = { ...PEER, uid: "u-outsider", email: "o@other.com", clientId: "c2" };
+  const GROUP_ADMIN_C1 = { ...CLIENT_USER, uid: "u-lead", name: "Lee Lead", isGroupAdmin: true };
+
+  it("refuses a caller with no session", async () => {
+    as(null);
+    vi.mocked(data.getUser).mockResolvedValue(PEER as any);
+
+    await expect(userActions.updateSeatAssignmentAction("u-peer", "seat-1")).rejects.toThrow(
+      "Unauthorized",
+    );
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses an employee — this rung is admins and group admins only", async () => {
+    as(EMPLOYEE);
+    vi.mocked(data.getUser).mockResolvedValue(PEER as any);
+
+    await expect(userActions.updateSeatAssignmentAction("u-peer", "seat-1")).rejects.toThrow(
+      "Forbidden",
+    );
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses a client user who is not a group admin", async () => {
+    as(CLIENT_USER);
+    vi.mocked(data.getUser).mockResolvedValue(PEER as any);
+
+    await expect(userActions.updateSeatAssignmentAction("u-peer", "seat-1")).rejects.toThrow(
+      "Forbidden",
+    );
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses a group admin reaching into another workspace", async () => {
+    as(GROUP_ADMIN_C1);
+    vi.mocked(data.getUser).mockResolvedValue(OUTSIDER as any);
+
+    // null (unlinking) skips the seat-ownership check entirely, isolating the
+    // workspace-boundary rung this case is actually about.
+    await expect(userActions.updateSeatAssignmentAction("u-outsider", null)).rejects.toThrow(
+      /isn't in your workspace/,
+    );
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses a target that is not a client login", async () => {
+    vi.mocked(data.getUser).mockResolvedValue(EMPLOYEE as any);
+
+    await expect(userActions.updateSeatAssignmentAction("u-emp", "seat-1")).rejects.toThrow(
+      "Only client logins can be linked to a seat.",
+    );
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses a seat that isn't in the target's own client roster", async () => {
+    vi.mocked(data.getUser).mockResolvedValue(OUTSIDER as any); // clientId c2, seat-1 belongs to c1
+
+    await expect(userActions.updateSeatAssignmentAction("u-outsider", "seat-1")).rejects.toThrow(
+      "That seat isn't in this client's roster.",
+    );
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("refuses a group admin changing their own seat link", async () => {
+    as(GROUP_ADMIN_C1);
+    vi.mocked(data.getUser).mockResolvedValue(GROUP_ADMIN_C1 as any);
+
+    await expect(userActions.updateSeatAssignmentAction("u-lead", "seat-1")).rejects.toThrow();
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("never leaks another tenant's seat roster to a caller this action would refuse anyway", async () => {
+    // A plain client user (not a group admin, not staff) has no business
+    // calling this at all — permission must be decided before the seat check
+    // below ever runs, or the error message becomes a cross-tenant oracle.
+    as(CLIENT_USER); // clientId c1
+    vi.mocked(data.getUser).mockResolvedValue(OUTSIDER as any); // clientId c2
+
+    await expect(userActions.updateSeatAssignmentAction("u-outsider", "seat-1")).rejects.toThrow(
+      "Forbidden",
+    );
+    expect(data.getClientSeat).not.toHaveBeenCalled();
+    expect(data.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("lets a group admin link a colleague in their own workspace", async () => {
+    as(GROUP_ADMIN_C1);
+    vi.mocked(data.getUser).mockResolvedValue(PEER as any);
+
+    await userActions.updateSeatAssignmentAction("u-peer", "seat-1");
+
+    expect(vi.mocked(data.upsertUser).mock.calls[0]![0]).toMatchObject({
+      uid: "u-peer",
+      seatId: "seat-1",
+    });
+  });
+
+  it("lets an admin link anyone, and unlink with null", async () => {
+    vi.mocked(data.getUser).mockResolvedValue(PEER as any);
+
+    await userActions.updateSeatAssignmentAction("u-peer", null);
+
+    expect(vi.mocked(data.upsertUser).mock.calls[0]![0]).toMatchObject({
+      uid: "u-peer",
+      seatId: null,
+    });
+  });
+
+  it("refuses a target that does not exist", async () => {
+    vi.mocked(data.getUser).mockResolvedValue(null as any);
+
+    await expect(userActions.updateSeatAssignmentAction("ghost", "seat-1")).rejects.toThrow(
+      "User not found",
+    );
     expect(data.upsertUser).not.toHaveBeenCalled();
   });
 });

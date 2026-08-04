@@ -16,15 +16,17 @@ import type {
 
 vi.mock("server-only", () => ({}));
 
-const { getAssetMock, upcomingSlotsMock, listFeedbackMock } = vi.hoisted(() => ({
+const { getAssetMock, upcomingSlotsMock, listFeedbackMock, listClientSeatsMock } = vi.hoisted(() => ({
   getAssetMock: vi.fn(),
   upcomingSlotsMock: vi.fn(),
   listFeedbackMock: vi.fn(),
+  listClientSeatsMock: vi.fn(),
 }));
 
 vi.mock("@/lib/data", () => ({
   getAsset: getAssetMock,
   listPlannedScheduledRuns: vi.fn(),
+  listClientSeats: listClientSeatsMock,
 }));
 vi.mock("@/lib/data-client-agents", () => ({ listClientAgentFeedback: listFeedbackMock }));
 vi.mock("@/lib/client-agent-slots", () => ({ upcomingSlots: upcomingSlotsMock }));
@@ -420,6 +422,7 @@ beforeEach(() => {
   upcomingSlotsMock.mockResolvedValue([]);
   listFeedbackMock.mockResolvedValue([]);
   getAssetMock.mockResolvedValue(null);
+  listClientSeatsMock.mockResolvedValue([]);
 });
 
 /* ─────────────────────── the viewer-split helper ─────────────────────── */
@@ -862,6 +865,52 @@ describe("toClientAgentRows — the card projection", () => {
     // The closed question behind it: is tomorrow's batch even read?
     expect(getAssetMock).toHaveBeenCalledTimes(1);
     expect(getAssetMock).toHaveBeenCalledWith("asset_batch");
+  });
+
+  /* ───────────────── personal-seat filtering ───────────────── */
+
+  describe("today's options — filtered by the viewer's own seat", () => {
+    const MULTI_SEAT_BATCH = [
+      "# Account 1 · Company page @getkaros",
+      "## Avenue 1 · Playbook",
+      "> The company's own draft.",
+      "# Account 2 · Albert Kattan",
+      "## Avenue 1 · Playbook",
+      "> Albert's personal draft.",
+    ].join("\n");
+    const REFS = ["Company page @getkaros · Avenue 1 · Playbook", "Albert Kattan · Avenue 1 · Playbook"];
+    const SEATS = [
+      { id: "seat-albert", clientId: "c1", name: "Albert Kattan", slug: "albert-kattan", createdBy: "u1", createdAt: 0, updatedAt: 0 },
+    ];
+
+    beforeEach(() => {
+      upcomingSlotsMock.mockResolvedValue([
+        slot({ status: "generated", assetId: "asset_batch", optionRefs: REFS }),
+      ]);
+      getAssetMock.mockResolvedValue({ ...batchAsset(), content: MULTI_SEAT_BATCH });
+      listClientSeatsMock.mockResolvedValue(SEATS);
+    });
+
+    it("gives a plain team login only its own seat's option plus the company's", async () => {
+      const [row] = await toClientAgentRows(cardArgs({ viewerSeatId: "seat-albert" }));
+      expect(row.today?.options).toHaveLength(2);
+    });
+
+    it("gives a shared/company login (no seat) only the company's option", async () => {
+      const [row] = await toClientAgentRows(cardArgs({ viewerSeatId: undefined }));
+      expect(row.today?.options).toHaveLength(1);
+      expect(JSON.stringify(row.today)).not.toContain("Albert");
+    });
+
+    it("never drops another seat's option for staff", async () => {
+      const [row] = await toClientAgentRows(cardArgs({ viewerIsStaff: true }));
+      expect(row.today?.options).toHaveLength(2);
+    });
+
+    it("never drops another seat's option for a client's own group admin", async () => {
+      const [row] = await toClientAgentRows(cardArgs({ viewerSeatId: undefined, viewerIsGroupAdmin: true }));
+      expect(row.today?.options).toHaveLength(2);
+    });
   });
 
   it("a future day that already has content projects identically to an empty one", async () => {

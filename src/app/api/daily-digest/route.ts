@@ -97,24 +97,33 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
+      // Looked up before the entries below, not after: the mail goes to this
+      // ONE person, so their own seat/admin identity is what the personal-
+      // content gate has to check — a shared "isClient: true" projection would
+      // hand every seat's personal drafts to whichever owner happens to be on
+      // file, the same leak class the rest of this projection already guards.
+      const owner = await getClientOwner(client.id);
+      if (!owner) {
+        results.push({ ...base, status: "skipped", detail: "no active client seat to mail" });
+        continue;
+      }
+
       const assets = await listAssets({ clientId: client.id });
       // `isClient: true` even though no client is logged in: the AUDIENCE of this
       // mail is the client, so it takes the client projection. Passing the staff
       // one because the caller is a cron would hand a client's inbox the
       // unredacted set, which is the whole class of leak this reuse prevents.
-      const entries = clientCalendarEntries(assets, { isClient: true, now });
+      const entries = clientCalendarEntries(assets, {
+        isClient: true,
+        now,
+        viewer: { role: "CLIENT_USER", seatId: owner.seatId, isGroupAdmin: owner.isGroupAdmin },
+      });
       const today = calendarEntriesInWindow(entries, day.startMs, day.endMs);
       const content = digestContentFor(today);
 
       if (digestIsEmpty(content)) {
         // No marker: content that lands later today still gets its mail today.
         results.push({ ...base, status: "skipped", detail: "no items on the calendar for this local day" });
-        continue;
-      }
-
-      const owner = await getClientOwner(client.id);
-      if (!owner) {
-        results.push({ ...base, status: "skipped", detail: "no active client seat to mail" });
         continue;
       }
 
