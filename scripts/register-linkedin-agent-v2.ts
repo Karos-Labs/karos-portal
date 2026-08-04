@@ -25,6 +25,7 @@
  *
  * Run: NODE_PATH=./node_modules npx tsx --env-file=.env.local scripts/register-linkedin-agent-v2.ts [--apply]
  * Without --apply it prints what it would do and writes nothing.
+ * `FIRESTORE_DATABASE_ID=prep` targets the prep database instead of production.
  */
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
@@ -92,10 +93,15 @@ function instructionsFor(doc: string, heading: string): string {
 async function main() {
   const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY!);
   if (getApps().length === 0) initializeApp({ credential: cert(sa), projectId: sa.project_id });
-  const db = getFirestore();
+  // Same database selection the app uses (src/lib/firebase/admin.ts): prep runs
+  // its own isolated Firestore in the same project, so `FIRESTORE_DATABASE_ID=prep`
+  // registers the agents where a local dev server can safely enable them without
+  // touching production.
+  const databaseId = process.env.FIRESTORE_DATABASE_ID || "(default)";
+  const db = getFirestore(databaseId);
   const doc = readFileSync(DOC, "utf8");
 
-  console.log(`project: ${sa.project_id}`);
+  console.log(`project: ${sa.project_id} · database: ${databaseId}`);
   console.log(APPLY ? "MODE: apply\n" : "MODE: dry run (pass --apply to write)\n");
 
   for (const agent of AGENTS) {
