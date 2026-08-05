@@ -243,11 +243,11 @@ export default async function ClientAgentDetailPage({
   const summary = toSummary(agent);
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
   const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
-  // What ONE PRESS of "create" actually charges: the per-output base × the
-  // profile's pinned batch size (10 for the X agent, 1 for most). The gate,
-  // the block reason and the panel's button all quote THIS — gating on the
-  // base waved a client into a dialog whose Start run the server would refuse,
-  // and the button named a price ten times under the charge.
+  // What ONE PRESS of "create" actually charges: the per-output base × what a
+  // fresh dialog submits (visible batch defaults only — 1 for every agent
+  // today, so today runCost === cost). The gate, the block reason and the
+  // panel's button all quote THIS, so a future visible multi-output default
+  // cannot wave a client into a dialog whose Start run the server refuses.
   const runBatchSize = defaultRunBatchSize({ key: agent.key, name: agent.name });
   const runCost = cost * runBatchSize;
   const creditBlockReasons: Record<string, string> =

@@ -27,15 +27,16 @@ export interface AgentBriefField {
   max?: number;
   options?: Array<{ value: string; label: string }>;
   /**
-   * Rendered nowhere: the run dialog never paints this field, but its
-   * `defaultValue` still seeds the brief (initialAgentBrief), so everything
-   * downstream that reads the VALUE keeps working — batchSizeFrom still lifts
-   * it into the charge multiplier and the "Create exactly N distinct outputs"
-   * prompt prefix. This is how a profile pins a batch size without asking the
-   * client to choose one: the field stays in the profile (its key is part of
-   * the pinned field-key contract in agent-launch-ui.test.ts), only the
-   * question disappears. A hidden field must never be `required` — nothing
-   * can ever fill it in.
+   * Rendered nowhere: the run dialog never paints this field. Its
+   * `defaultValue` still seeds the brief (initialAgentBrief), but a hidden
+   * batch_size deliberately does NOT reach the charge multiplier or the
+   * "Create exactly N" prompt prefix — the dialog derives those from VISIBLE
+   * fields only (product ruling, 2026-08-05: the X run stays at its flat
+   * quoted per-run price; only a size the client can actually see may scale
+   * their bill). Hiding a field is a UI removal, never a silent price change.
+   * The field stays in the profile (its key is part of the pinned field-key
+   * contract in agent-launch-ui.test.ts), only the question disappears. A
+   * hidden field must never be `required` — nothing can ever fill it in.
    */
   hidden?: boolean;
 }
@@ -523,12 +524,14 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           type: "select",
           defaultValue: "10",
           // Hidden by request (client-lens pass, 2026-08): the size question
-          // was one more decision between the client and "Start run", and the
-          // default is what nearly everyone picked. The defaultValue still
-          // seeds the brief, so the charge multiplier and the "Create exactly
-          // 10 distinct outputs" prompt prefix are exactly what selecting 10
-          // produced before. Options kept for the day this becomes a staff
-          // control or gets unhidden.
+          // was one more decision between the client and "Start run". Hidden
+          // means INERT for pricing: no charge multiplier and no "Create
+          // exactly N" prefix reach the run (see the `hidden` doc on
+          // AgentBriefField) — the press charges the flat per-run price the
+          // button quotes, and the skill's own default batch (a week of
+          // posts, per the canonical instructions) governs what comes back.
+          // Options kept for the day this becomes a staff control or gets
+          // unhidden.
           hidden: true,
           options: [
             { value: "5", label: "5 drafts" },
@@ -549,10 +552,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Focus this batch on one person's seat.",
         "React to what happened in the industry this week.",
       ],
-      // "10" here and the hidden batch_size default above are the same fact —
-      // with the selector hidden this line is the only pre-press statement of
-      // what quantity the quoted price buys. Change them together.
-      deliverables: ["10 post drafts across the avenues", "A linked source on every news, quote, and reply post"],
+      deliverables: ["A batch of post drafts across the avenues", "A linked source on every news, quote, and reply post"],
       estimate: "~15–25 min",
       attachments: {
         label: "Extra material for this run (optional)",
@@ -1352,20 +1352,27 @@ export function batchSizeFrom(values: Record<string, string>): number | undefine
 }
 
 /**
- * The batch size ONE PRESS of the run dialog submits for this agent — the
- * profile's seeded batch_size default, or 1 for agents without one.
+ * The charge multiplier a FRESH, untouched run dialog submits for this agent —
+ * the default of its VISIBLE batch_size selector, or 1.
  *
- * Every surface that quotes a per-run price must multiply the per-output base
- * by THIS, because the charge does (submit-custom's multiplier). Quoting the
- * base alone is how the X agent's button said "15 credits" while the press
- * billed 150 — and with the size selector hidden, no client choice can make
- * the base price true. One derivation, shared by the run dialog footer, the
- * legacy panel's button, the page's credit gate, and the copilot's price list,
- * so a profile changing its default (or unhiding the field) moves every quote
- * at once.
+ * Visible fields only, by ruling (2026-08-05): a hidden batch_size is a UI
+ * removal, not a price change — the X agent's press charges the flat per-run
+ * price its button quotes, whatever the skill drafts. So this returns 1 for a
+ * profile whose selector is hidden, and the selector's default where a client
+ * can actually see and change it. Shared by every surface that quotes a
+ * default per-run price (dialog footer, credit gate, copilot price list and
+ * run tool, staff labels), so it can never disagree with what the same fresh
+ * dialog's submit sends.
  */
 export function defaultRunBatchSize(agent: AgentIdentity): number {
-  return batchSizeFrom(initialAgentBrief(launchProfileFor(agent))) ?? 1;
+  const profile = launchProfileFor(agent);
+  const seeded = initialAgentBrief(profile);
+  const visible = Object.fromEntries(
+    Object.entries(seeded).filter(
+      ([key]) => !profile.fields.find((field) => field.key === key)?.hidden,
+    ),
+  );
+  return batchSizeFrom(visible) ?? 1;
 }
 
 export function buildCustomAgentPrompt(

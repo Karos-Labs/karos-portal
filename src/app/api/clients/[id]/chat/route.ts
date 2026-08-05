@@ -330,10 +330,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `  - ${row.label}: ${clientPriceText(row, { withUnit: true })}` +
       (row.note ? ` (${row.note})` : ""),
   ).join("\n");
-  // × defaultRunBatchSize: "one run" of a batch agent (the X agent drafts 10
-  // per press) CHARGES base × batch, and this list is pinned by "Never invent
-  // credit figures beyond these" — a base-only figure here forces the copilot
-  // to quote a tenth of the only price the portal charges.
+  // × defaultRunBatchSize: what a fresh portal press CHARGES (visible batch
+  // selector defaults only — 1 for every agent today, so today this is the
+  // base). The list is pinned by "Never invent credit figures beyond these",
+  // so it must track the charge if a visible multi-output default ever lands.
   const agentPriceLines = customAgents
     .map(
       (a) =>
@@ -1167,11 +1167,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
           : "This client has no AI agents assigned yet.";
       }
-      // chargeMultiplier: the agent's pinned batch size, same as a portal
-      // press. Without it a chat-triggered X run billed base×1 and carried no
-      // batch instruction while the identical portal press billed base×10 —
-      // the same product at a tenth of its quoted price, sold by our own
-      // copilot beside a price list that says otherwise.
+      // chargeMultiplier: what a FRESH portal dialog would submit for this
+      // agent (visible selector defaults only — a hidden batch size never
+      // scales a bill, see defaultRunBatchSize). Today that is 1 for every
+      // agent, so this changes nothing; it exists so a future profile with a
+      // visible multi-output default cannot be sold cheaper through chat than
+      // through its own page.
       const chatBatchSize = defaultRunBatchSize({ key: match.key, name: match.name });
       const result = await runCustomAgentAction({
         agentId: match.id,

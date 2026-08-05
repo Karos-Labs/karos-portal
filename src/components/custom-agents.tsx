@@ -776,8 +776,8 @@ export function CustomAgentsHub({
                     invisible whether it was set or not. */}
                 <div className="min-w-0">
                   <p className="text-xs text-muted-2">
-                    {/* × the pinned batch size: what one client press CHARGES,
-                        not the per-output base (10× apart on the X agent). */}
+                    {/* × the fresh dialog's visible batch default (1 today for
+                        every agent): what one untouched client press charges. */}
                     {creditsLabel(
                       agentRunCost(agent) *
                         defaultRunBatchSize({ key: agent.key, name: agent.name }),
@@ -1993,6 +1993,16 @@ export function RunCustomAgentModal({
     visibleFields.find((field) => field.required) ??
     visibleFields[0] ??
     profile.fields[0];
+  // The values a batch size may be read from: VISIBLE fields only. A hidden
+  // batch_size is a UI removal, never a silent price change (see the field's
+  // doc in custom-agent-launch.ts) — so neither the footer's quote nor the
+  // submitted charge multiplier may see it. Derived from the same
+  // `visibleFields` the form paints, so the two cannot drift.
+  const visibleBriefValues = Object.fromEntries(
+    Object.entries(fields).filter(([key]) =>
+      visibleFields.some((field) => field.key === key),
+    ),
+  );
   // A server-side setup gate can still fire when this dialog's `ready` was
   // stale, so the message needs its own way back to the data.
   const setupErrorKind: IntakeKind | null = !error
@@ -2075,7 +2085,9 @@ export function RunCustomAgentModal({
         clientId: selectedClientId,
         prompt,
         contextItemIds: selectedFiles,
-        ...(batchSizeFrom(fields) ? { chargeMultiplier: batchSizeFrom(fields) } : {}),
+        ...(batchSizeFrom(visibleBriefValues)
+          ? { chargeMultiplier: batchSizeFrom(visibleBriefValues) }
+          : {}),
         // The whole brief, for the fields the server reads as data rather than
         // as prose (the LinkedIn writer's "Post as"). The prompt above is built
         // for the agent to read; recovering an identity from it would mean
@@ -2241,15 +2253,19 @@ export function RunCustomAgentModal({
                   <Icon name="Clock" className="mr-1 inline h-3 w-3" />
                   {profile.estimate}. You can leave this page; the run continues.
                   {viewerIsClient && (
-                    /* × the batch size, because the CHARGE is (submit-custom.ts
-                       multiplies runCost by the clamped multiplier). This line
-                       used to quote the per-output base alone, so a client
-                       starting a 21-draft X batch read "Costs 15 credits." and
-                       was charged 315 — and with the size selector now hidden
-                       for the X profile, the seeded default would have made
-                       that quiet understatement the only price ever shown. */
+                    /* × the VISIBLE batch size, because that is exactly what
+                       the submit above sends as the charge multiplier — a
+                       client picking 3 LinkedIn posts reads the tripled price
+                       here, and a hidden size (the X profile) multiplies
+                       nothing, so this quotes the flat per-run price. This
+                       line used to quote the per-output base regardless of
+                       the selector, understating a multi-output pick. */
                     <span className="ml-1">
-                      Costs {creditsLabel(agentRunCost(agent) * (batchSizeFrom(fields) ?? 1))}.
+                      Costs{" "}
+                      {creditsLabel(
+                        agentRunCost(agent) * (batchSizeFrom(visibleBriefValues) ?? 1),
+                      )}
+                      .
                     </span>
                   )}
                 </p>

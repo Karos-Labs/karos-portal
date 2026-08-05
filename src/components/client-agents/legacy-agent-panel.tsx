@@ -72,16 +72,17 @@ export function LegacyAgentPanel({
   clientId: string;
   agent: RunnableAgentSummary;
   /**
-   * The price of ONE PRESS — already multiplied by the agent's pinned batch
-   * size (defaultRunBatchSize), because that is what the press charges. Null
-   * for staff - quoting them a price they never pay would be a lie.
+   * The price of ONE PRESS — the base × defaultRunBatchSize (which is 1 for
+   * every agent today, so today this IS the per-run base). Null for staff -
+   * quoting them a price they never pay would be a lie.
    */
   cost: number | null;
   /**
-   * How many drafts one press produces (defaultRunBatchSize). Above 1 the
-   * copy stops calling the run "one post" — the X agent's press drafts a
-   * batch of ten, and a button reading "Create new post · 15 credits" over a
-   * 150-credit batch charge was two lies in one line.
+   * defaultRunBatchSize: the fresh dialog's VISIBLE batch default. Above 1
+   * the copy stops calling the run "one post" and prices the batch — kept so
+   * a future visible multi-output default cannot put a single-post sentence
+   * over a multi-output charge. 1 today for every agent, which renders the
+   * original single-post copy byte for byte.
    */
   batchSize?: number;
   /** Server-evaluated, already resolved to a paintable reason (F25/F131). */
