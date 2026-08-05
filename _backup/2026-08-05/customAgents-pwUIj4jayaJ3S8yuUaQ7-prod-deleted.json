@@ -1,0 +1,27 @@
+{
+  "_collection": "customAgents",
+  "_id": "pwUIj4jayaJ3S8yuUaQ7",
+  "_database": "(default)",
+  "key": "karos-reddit-agent",
+  "name": "Reddit Agent",
+  "icon": "Bot",
+  "color": "#FBBF24",
+  "entrySkillDir": "products/building/reddit-agent",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "instructions": "Run the \"karos-reddit-agent\" skill (products/building/reddit-agent/SKILL.md) end to end.\n\nWhat this agent does: Per-client Reddit Agent (client-facing name; same engine architecture as the X and LinkedIn Agents). Run once per client: it reverse-engineers the client's Reddit AUDIENCE (which subreddits the audience and the product/category live in, which questions recur, what gets upvoted vs removed), builds a VALUE-ANSWER VOICE PROFILE per managed account (the helpful expert the client posts as: earned claims, allowed product mentions, the authenticity posture), derives 2-3 ORGANIC Reddit answer FORMULAS from what actually wins in those subreddits, and then EMITS per-client generator sub-skills (one per formula) that draft genuinely-helpful answers on a schedule with full context of everything drafted before via a shared ledger. Reddit is a VALUE-ADD-ANSWER + GEO play, never a broadcast channel: structured, factual, citable answers rank in Google and get cited by AI answer engines (ChatGPT / Perplexity / Google AI), building the client's brand presence and mentions. Mirrors the Instagram (karos-instagram-agent) and X (karos-x-agent) engines: run-once master, parallel research, per-client sub-skills at status:draft, shared ledger continuity. NEVER auto-posts (Reddit ban risk is high): draft -> human approves -> human posts. Use when onboarding a Reddit client, \"set up reddit for {client}\", \"build the reddit engine for {company}\", \"answer questions on reddit for {client}\". Triggers: /reddit, /reddit {client}.\n\nFollow the client's brand voice and profile docs. Prefer the client's emitted sub-skills when they exist. Deliver production-ready output — no placeholders, no unfinished drafts.",
+  "creditCost": null,
+  "createdBy": "7dhklKotGudLQgcyHHVrYKuKvEn2",
+  "createdAt": 1784625130748,
+  "description": "Per-client Reddit Agent (client-facing name; same engine architecture as the X and LinkedIn Agents). Run once per client: it reverse-engineers the client's Reddit AUDIENCE (which subreddits the audience and the product/category live in, which questions recur, what gets upvoted vs removed), builds a VALUE-ANSWER VOICE PROFILE per managed account (the helpful expert the client posts as: earned claims, allowed product mentions, the authenticity posture), derives 2-3 ORGANIC Reddit answer FORMULAS from what actually wins in those subreddits, and then EMITS per-client generator sub-skills (one per",
+  "launchCreditCost": null,
+  "clientBlurb": null,
+  "enabled": false,
+  "source": {
+    "path": "products/building/reddit-agent",
+    "status": "blocked",
+    "repoSha": "203b6064b520a04085c54da98324fe92d894db54",
+    "blocked_reason": "dynamic egress + datacenter-IP block: Reddit blocks datacenter IPs for keyless reads (needs residential/authorized egress), AND the Reddit OAuth script app is unprovisioned (no REDDIT_* secrets exist yet; SCRAPECREATORS_API_KEY proxy alternative also unprovisioned). Finite unblock = residential egress + restrict research to the reddit.com/perplexity/openai/anthropic legs."
+  },
+  "updatedAt": 1785957237342
+}

@@ -205,3 +205,139 @@ one thing a client will notice immediately.
 - **Per-account seats.** The catalog's scope is `company | execs | both`, but the
   portal collects one account form for now. Widening it means per-seat
   `agentIntake` rows keyed by `seatId`, which the collection already supports.
+
+---
+
+# Reddit agent v2 — the portal surfaces
+
+v2 replaces the e15 agent above. Spec of record: the lab repo's
+`products/building/reddit-agent-v2/` plus `docs/one-pagers/reddit-agent-v2-DONE.md`.
+The v1 doc `karos-reddit-agent` is **deleted**, not archived (Ben, 2026-08-05).
+
+| Surface | Where |
+|---|---|
+| Agent registration | TWO `customAgents` docs: `karos-reddit-runner` → `products/building/reddit-agent-v2`, and `karos-reddit-setup` → `…/setup` carrying `parentKey: "karos-reddit-runner"`. **No `-v2` suffix on either key** — the manifest puts the generation in the path, and the guessed suffix matches nothing |
+| What is listed | ONE card. The setup is a STEP (`isSubAgent` reads its `parentKey`), so no roster offers it |
+| Stored data | `agentIntake` (agent="reddit"), `redditDraftFeedback` (now with `selectedApproach`), **`redditAgentState`** (the eight files v2 assumes outlive a run) |
+| Run-time injection | `reddit-agent-context.ts`: the account form, the per-subreddit verdicts the client's own outcomes earned, **`feedback.jsonl`** in the exact shape v2 reads, and every captured state file |
+| State capture | `reddit-state-capture.ts` + the delivery handler. The **dated rules audit** is the one that matters: lose it and the next run names a product where it is banned, and Reddit bans rarely reverse |
+| Deliverable | `client/<nn>-answer/{approach-1.md,approach-2.md,about.txt}`, flattened by the delivery handler into the versioned JSON envelope both the webhook and the reader import from `lib/reddit-drafts` |
+| Review | Two-approach toggle per thread; `selectedApproach` recorded on the two actions that took one |
+| Outcomes | Four, and three are not errors: `delivered` / `held` / `blocked_intake` / **`degraded`**. `degraded` means WE could not read Reddit and gets its own copy, never the held wording |
+| Posting | **None, ever.** No credential, no code path. `reddit` stays in `READ_ONLY_PLATFORM_IDS` |
+
+## Canonical instructions for the two `customAgents` docs
+
+### `karos-reddit-runner`
+
+```
+Draft this client's next Reddit replies. Run the runner skill at
+products/building/reddit-agent-v2/SKILL.md end to end — thirteen numbered
+resumable steps — with the portal overlay below.
+
+Read first, in this order:
+1. client_context/brief.md and every file in client_context/files/.
+   - reddit-portal-intake.md is the portal's LIVE client data and OVERRIDES any
+     older copy in the repo: which account to draft as, an honest read of its
+     karma and age, the subreddits that are permanently off-limits, and the
+     client's own disclosure wording.
+   - rules-audit.json is THE SAFETY FILE and the portal's copy is the live one.
+     One DATED row per subreddit: whether the product may be named, whether
+     AI-written comments are banned, the karma gate, the disclosure requirement.
+     A reading too old to trust must be RE-VERIFIED before you draft anything.
+     Acting on a stale verdict is what gets a client's account banned.
+   - reddit-ledger.json, question-pools.json, scan-config.json and foundation.md
+     are likewise the live copies. The baked repo's versions are stale.
+   - feedback.jsonl is the human's reaction to previous replies. Read
+     selected_approach for which of the two replies they took, final_text for
+     their edit VERBATIM (the diff against what we wrote is the voice lesson),
+     and reason_code for the closed-set skip reason.
+   - <account>--learning-log.md and <account>--agent-memory.md belong to THAT
+     account only. Never apply one account's earned voice rules to another.
+   - Files named prior-batch-*.md are previous portal deliveries: never answer
+     those threads again.
+2. The client's onboarding profile documents under clients/<slug>/profile/.
+
+The Run click names the account, how many threads to aim for (1 to 3) and an
+optional note. No account named means outcome `blocked_intake` — stop and say so
+rather than drafting replies nobody can post.
+
+TWO APPROACHES PER THREAD, always. Finding a thread costs ten to fifteen politely
+paced requests; a second reply to a thread already found costs one model call. The
+client picks, and which one they pick is the voice signal we learn from.
+
+The safety check happens at step 07, BEFORE a word is written: a subreddit the
+client was banned from is off-limits for EVERY account of that client (a second
+account posting there is ban evasion and escalates to the whole company); the
+account must clear the karma and age gate; a thread about the client only counts
+where identified vendor participation is permitted.
+
+Gates: assets/check-draft.mjs is mechanical and exits 0 pass / 1 content fail /
+2 OUR TOOLING BROKE — exit 2 is never recorded as a content verdict. It rejects
+with a reason and NEVER edits the draft; a failed draft returns to step 09 with
+the typed reasons, at most twice. Then the judgment gate: delete every product
+mention and is the reply still genuinely useful? Does every claim trace to
+something real? Does it fit this subreddit's culture?
+
+Deliverables under clients/<slug>/outputs/reddit-agent-v2/<run-folder>/ with the
+client/ vs internal/ split: per surviving thread, client/<nn>-answer/ holding
+approach-1.md, approach-2.md and about.txt. about.txt MUST carry the clickable
+thread link, and where they apply: "REWRITE REQUIRED: this subreddit bans
+AI-written comments" (not the softer "edit if you like"), a karma or age warning,
+and which approach you would pick.
+
+Record the outcome in internal/13-commit.json as one of `delivered`, `held`,
+`blocked_intake` or `degraded`, with the count of threads considered. The portal
+reads that field and shows the client a DIFFERENT message for each. `degraded`
+means the Reddit search did not come back — say so plainly rather than reporting
+it as nothing worth answering, because the portal must never tell a client their
+niche was thin when our own search failed.
+
+Deliver the updated rules-audit.json, reddit-ledger.json, question-pools.json and
+that account's learning-log.md and agent-memory.md at their contract paths. The
+portal captures them and hands them back next run; the runner workspace does not
+survive.
+
+DRAFT-ONLY, ALWAYS: a human posts every reply from their own account. There is no
+posting credential and no auto-post path, and there never will be.
+```
+
+### `karos-reddit-setup`
+
+```
+Set this client up on Reddit. Run the setup skill at
+products/building/reddit-agent-v2/setup/SKILL.md end to end — eight numbered
+resumable steps.
+
+Read first: client_context/brief.md and every file in client_context/files/.
+reddit-portal-intake.md is the portal's live client data and OVERRIDES any older
+copy: the account to draft as, its history, the subreddits that are off-limits,
+and the disclosure wording. Then the client's onboarding profile documents.
+
+Emit DATA, never agent code. One generic runner serves every client.
+
+Learn this client's corner of Reddit and write it down:
+  - the subreddits that matter, in three rings — about the client, about their
+    category, and where their buyers describe the problem without knowing the
+    category exists. The third ring is the most valuable and the least obvious.
+  - each of those subreddits' rules, with THE DATE READ AND WHERE: can the
+    product be named, must we say who we are, are AI-written comments banned,
+    does the account have enough history to post at all. These rules change, and
+    a stale reading is how accounts get banned, so the date is not optional.
+  - the questions that keep coming back, with real threads proving they repeat.
+  - what people already say about the client by name, and the spellings to watch.
+  - who we reply as: the account, an honest read of its standing, what it is
+    genuinely qualified to claim, and how it discloses the connection.
+
+Deliver to clients/<slug>/skills/reddit-agent-v2/: foundation.md,
+rules-audit.json, question-pools.json, scan-config.json, reddit-ledger.json, and
+per account voice-profile.md, facts-shelf.md, account.json, live-section.md,
+learning-log.md and agent-memory.md. The portal captures these and re-injects
+them on every later run.
+
+Finish by parsing every path the runner names in its own read table and dry-firing
+the scanner WITHOUT making a request. If anything is missing, report which file
+and say the client is not live yet. Never report success on a partial stand-up.
+
+Draft nothing and post nothing in this run.
+```

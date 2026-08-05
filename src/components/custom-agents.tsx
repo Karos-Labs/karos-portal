@@ -673,17 +673,18 @@ export function CustomAgentsHub({
     ...parents.map((entry) => ({ ...entry, orphan: false })),
     ...orphans.map((agent) => ({ agent, children: [] as CustomAgent[], orphan: true })),
   ];
-  // SUPERSEDED AGENTS ARE A THIRD CASE, and missing it is what put two LinkedIn
-  // agents on this page. `groupAgentsByParent` splits on parentKey alone, and a
-  // replaced agent has none — it was replaced, not absorbed — so e10 LinkedIn and
-  // v1 Reddit landed in `parents` and rendered as live products.
+  // SUPERSEDED AGENTS ARE DROPPED, not archived. `groupAgentsByParent` splits on
+  // parentKey alone and a replaced agent has none — it was replaced, not absorbed
+  // — so without this filter e10 LinkedIn and v1 Reddit rendered as live products
+  // beside the agents that replaced them.
   //
-  // Split rather than filtered, because this page is the LIBRARY: hiding a doc
-  // here would make its prompt permanently uneditable, which is worse than the
-  // clutter. A step keeps nesting under its parent in whichever section the parent
-  // is in, so a legacy agent's own steps travel with it.
+  // This page briefly kept them in a "legacy" section so their prompts stayed
+  // editable. That is no longer the rule (Ben, 2026-08-05): a superseded agent is
+  // deleted from Firestore outright, so there is nothing to keep reachable and a
+  // section for it would only ever be empty. The filter stays as the belt to that
+  // braces — a doc that survives a deletion, or a key added to the predicate
+  // before its cleanup runs, must not reappear on the hub.
   const activeEntries = libraryEntries.filter((e) => !isSupersededAgentKey(e.agent.key));
-  const legacyEntries = libraryEntries.filter((e) => isSupersededAgentKey(e.agent.key));
 
   return (
     <section className="mt-10">
@@ -914,29 +915,7 @@ export function CustomAgentsHub({
             </div>
             );
         };
-        return (
-          <>
-            <div className="grid gap-3 sm:grid-cols-2">{activeEntries.map(renderEntry)}</div>
-            {legacyEntries.length > 0 && (
-              <>
-                {/* SEGREGATED, NOT HIDDEN. These are agents a newer generation
-                    replaced: the e10 LinkedIn company page and the v1 Reddit
-                    agent. They keep their docs so a rollback has something to
-                    re-enable and so their prompts stay editable, but standing
-                    them beside the live roster read as "we ship two LinkedIn
-                    agents". Every roster a CLIENT sees drops them entirely
-                    (isUnlistedAgent); this page is the library, where an admin
-                    still needs to reach them. */}
-                <h3 className="mt-8 mb-1 text-sm font-medium text-muted">Legacy and superseded</h3>
-                <p className="mb-4 text-xs text-muted-2">
-                  Replaced by a newer generation. Kept so their prompts stay editable and a
-                  rollback has something to re-enable. Clients are never offered these.
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">{legacyEntries.map(renderEntry)}</div>
-              </>
-            )}
-          </>
-        );
+        return <div className="grid gap-3 sm:grid-cols-2">{activeEntries.map(renderEntry)}</div>;
         })()
       )}
 

@@ -446,20 +446,20 @@ describe("the instructions doc", () => {
   });
 });
 
-describe("the admin library segregates superseded agents rather than hiding them", () => {
+describe("the admin library drops superseded agents entirely", () => {
   const hub = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
 
-  it("splits the grid on isSupersededAgentKey, which parentKey cannot answer", () => {
-    // The bug this fixes: groupAgentsByParent splits on parentKey ALONE, and a
-    // replaced agent has none — it was replaced, not absorbed — so e10 LinkedIn
-    // and v1 Reddit landed in `parents` and rendered as live products beside the
-    // agent that replaced them.
+  it("renders only the active entries, with no archive section", () => {
+    // The rule changed (Ben, 2026-08-05): a superseded agent is DELETED from
+    // Firestore, not archived, so a "legacy" section would only ever be empty.
+    // The filter stays as the belt to that braces — a doc that survives a
+    // deletion, or a key added to the predicate before its cleanup runs, must not
+    // reappear on the hub.
     expect(hub).toContain("libraryEntries.filter((e) => !isSupersededAgentKey(e.agent.key))");
-    expect(hub).toContain("libraryEntries.filter((e) => isSupersededAgentKey(e.agent.key))");
-    // Both grids render through the SAME card, so a legacy agent keeps every
-    // control — the point of segregating rather than filtering on this page.
     expect(hub).toContain("{activeEntries.map(renderEntry)}");
-    expect(hub).toContain("{legacyEntries.map(renderEntry)}");
+    // Nothing renders them, and no second grid exists to.
+    expect(hub).not.toContain("legacyEntries");
+    expect(hub).not.toContain("Legacy and superseded");
   });
 
   it("still filters them OUT of the surfaces a client sees", () => {
