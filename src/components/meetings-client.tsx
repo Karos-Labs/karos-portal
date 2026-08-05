@@ -21,6 +21,7 @@ interface Props {
 
 type Tab = "active" | "archived";
 type Timeframe = "all" | "7d" | "30d" | "90d";
+type SortOrder = "desc" | "asc";
 
 const TIMEFRAME_LABELS: Record<Timeframe, string> = {
   all: "All time",
@@ -42,13 +43,16 @@ export function MeetingsClient({ transcripts, clients, currentUserRole, currentC
   const [tab, setTab] = useState<Tab>("active");
   const [timeframe, setTimeframe] = useState<Timeframe>("all");
   const [clientFilter, setClientFilter] = useState<string>("");
+  const [search, setSearch] = useState<string>("");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
 
   const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name;
 
   const filtered = useMemo(() => {
     // eslint-disable-next-line react-hooks/purity -- Date.now() intentional: filters based on current time relative to dep-driven timeframe
     const now = Date.now();
-    return transcripts.filter((t) => {
+    const query = search.trim().toLowerCase();
+    const rows = transcripts.filter((t) => {
       // Tab
       if (tab === "active" && t.archived) return false;
       if (tab === "archived" && !t.archived) return false;
@@ -67,9 +71,18 @@ export function MeetingsClient({ transcripts, clients, currentUserRole, currentC
       } else if (clientFilter) {
         if (t.clientId !== clientFilter) return false;
       }
+      // Content filter - words in title or summary
+      if (query && !t.title.toLowerCase().includes(query) && !(t.summary ?? "").toLowerCase().includes(query)) {
+        return false;
+      }
       return true;
     });
-  }, [transcripts, tab, timeframe, clientFilter, isStaff, currentClientId]);
+    return rows.sort((a, b) => {
+      const aDate = a.meetingDate ?? a.createdAt ?? 0;
+      const bDate = b.meetingDate ?? b.createdAt ?? 0;
+      return sortOrder === "desc" ? bDate - aDate : aDate - bDate;
+    });
+  }, [transcripts, tab, timeframe, clientFilter, search, sortOrder, isStaff, currentClientId]);
 
   const activeCount = transcripts.filter((t) => !t.archived).length;
   const archivedCount = transcripts.filter((t) => t.archived).length;
@@ -100,51 +113,75 @@ export function MeetingsClient({ transcripts, clients, currentUserRole, currentC
         ))}
       </div>
 
-      {/* Filters - staff only */}
-      {isStaff && (
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Timeframe */}
-          <div className="flex items-center gap-1.5">
-            <Icon name="CalendarDays" className="h-3.5 w-3.5 text-muted" />
-            <select
-              value={timeframe}
-              onChange={(e) => setTimeframe(e.target.value as Timeframe)}
-              className="h-8 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
-            >
-              {(Object.keys(TIMEFRAME_LABELS) as Timeframe[]).map((k) => (
-                <option key={k} value={k}>{TIMEFRAME_LABELS[k]}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Client filter */}
-          <div className="flex items-center gap-1.5">
-            <Icon name="Building2" className="h-3.5 w-3.5 text-muted" />
-            <select
-              value={clientFilter}
-              onChange={(e) => setClientFilter(e.target.value)}
-              className="h-8 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
-            >
-              <option value="">All</option>
-              <option value="__karos__">Karos Labs Internal</option>
-              <option value="__unassigned__">Unassigned</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Active filter chips */}
-          {(timeframe !== "all" || clientFilter) && (
-            <button
-              onClick={() => { setTimeframe("all"); setClientFilter(""); }}
-              className="flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs text-muted hover:border-neon/40 hover:text-foreground"
-            >
-              <Icon name="X" className="h-3 w-3" /> Clear filters
-            </button>
-          )}
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Content search - title or summary */}
+        <div className="flex items-center gap-1.5">
+          <Icon name="Search" className="h-3.5 w-3.5 text-muted" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search title or summary…"
+            className="h-8 w-52 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none placeholder:text-muted-2 focus:border-neon/50"
+          />
         </div>
-      )}
+
+        {/* Sort by time */}
+        <button
+          onClick={() => setSortOrder((s) => (s === "desc" ? "asc" : "desc"))}
+          title={sortOrder === "desc" ? "Newest first" : "Oldest first"}
+          className="flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-foreground hover:border-neon/40"
+        >
+          <Icon name={sortOrder === "desc" ? "ArrowDownWideNarrow" : "ArrowUpNarrowWide"} className="h-3.5 w-3.5 text-muted" />
+          {sortOrder === "desc" ? "Newest first" : "Oldest first"}
+        </button>
+
+        {isStaff && (
+          <>
+            {/* Timeframe */}
+            <div className="flex items-center gap-1.5">
+              <Icon name="CalendarDays" className="h-3.5 w-3.5 text-muted" />
+              <select
+                value={timeframe}
+                onChange={(e) => setTimeframe(e.target.value as Timeframe)}
+                className="h-8 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
+              >
+                {(Object.keys(TIMEFRAME_LABELS) as Timeframe[]).map((k) => (
+                  <option key={k} value={k}>{TIMEFRAME_LABELS[k]}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Client filter */}
+            <div className="flex items-center gap-1.5">
+              <Icon name="Building2" className="h-3.5 w-3.5 text-muted" />
+              <select
+                value={clientFilter}
+                onChange={(e) => setClientFilter(e.target.value)}
+                className="h-8 rounded-md border border-border bg-surface-2 px-2.5 text-xs text-foreground outline-none focus:border-neon/50"
+              >
+                <option value="">All</option>
+                <option value="__karos__">Karos Labs Internal</option>
+                <option value="__unassigned__">Unassigned</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          </>
+        )}
+
+        {/* Active filter chips */}
+        {(timeframe !== "all" || clientFilter || search) && (
+          <button
+            onClick={() => { setTimeframe("all"); setClientFilter(""); setSearch(""); }}
+            className="flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs text-muted hover:border-neon/40 hover:text-foreground"
+          >
+            <Icon name="X" className="h-3 w-3" /> Clear filters
+          </button>
+        )}
+      </div>
 
       {/* List */}
       {filtered.length === 0 ? (
