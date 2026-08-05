@@ -1,4 +1,8 @@
 import "server-only";
+import {
+  REDDIT_RUNNER_V2_KEY,
+  REDDIT_SETUP_V2_KEY,
+} from "@/lib/custom-agent-launch";
 
 /**
  * Reddit agent (e15) run-time context: serializes the portal-collected Reddit
@@ -30,12 +34,13 @@ import {
   getAsset,
   listCustomAgents,
   listJobs,
+  listRedditAgentState,
   listRedditDraftFeedback,
 } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import { subredditKey } from "@/lib/reddit-drafts";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
-import type { AgentIntake, RedditDraftFeedback } from "@/lib/types";
+import type { AgentIntake, RedditAgentState, RedditDraftFeedback } from "@/lib/types";
 
 /**
  * The imported lab-manifest key of the Reddit agent's customAgents doc. Shared
@@ -48,7 +53,22 @@ import type { AgentIntake, RedditDraftFeedback } from "@/lib/types";
  * instance is offered to every client instead of its own.
  */
 export function isRedditAgent(agentKey: string): boolean {
-  return agentKey === "karos-reddit-agent";
+  return (
+    agentKey === REDDIT_RUNNER_V2_KEY ||
+    agentKey === REDDIT_SETUP_V2_KEY ||
+    // v1, still fed and gated so the fallback keeps working; unlisted elsewhere.
+    agentKey === "karos-reddit-agent"
+  );
+}
+
+/** The v2 RUNNER specifically — the only Reddit agent that drafts. */
+export function isRedditRunnerV2(agentKey: string): boolean {
+  return agentKey === REDDIT_RUNNER_V2_KEY;
+}
+
+/** The v2 SETUP specifically. Emits data, never drafts. */
+export function isRedditSetupV2(agentKey: string): boolean {
+  return agentKey === REDDIT_SETUP_V2_KEY;
 }
 
 /**
@@ -263,15 +283,114 @@ async function priorBatchFiles(
  * when nothing is stored, so callers can append unconditionally. `agentName`
  * (the customAgents doc name) scopes the prior-batch lookup.
  */
+/* ───── the two things v2 asks the platform for (its DONE pack, section 5) ───── */
+
+/**
+ * The human's reaction, as the exact file v2 reads:
+ * `clients/<slug>/outputs/_ledger/feedback.jsonl`, one JSON object per line.
+ *
+ * The v2 DONE pack calls this "the single highest-value integration item, and the
+ * exact thing that never got built in v1" — without it the learning log stays
+ * empty and the agent cannot improve. The rows already exist in
+ * `redditDraftFeedback`; what was missing is this serialization.
+ *
+ * THREE FIELDS CARRY THE WEIGHT, and they are the three the spec names:
+ *  - `selected_approach` — which of the two replies they took. Finding a thread
+ *    costs ten to fifteen paced requests and writing the second reply costs one
+ *    model call, so the choice they had to make anyway is the cheapest voice
+ *    signal available.
+ *  - `final_text` — their edit, VERBATIM. Never summarized, never trimmed: the
+ *    diff between what we wrote and what they posted IS the lesson.
+ *  - `reason_code` — the closed set, so the per-subreddit promo rule stays
+ *    mechanical rather than a judgment call.
+ *
+ * JSONL and not JSON because the agent appends to it and reads it line by line;
+ * a single array would have to be rewritten whole by both sides.
+ */
+function feedbackJsonl(rows: readonly RedditDraftFeedback[]): string {
+  return rows
+    .map((r) =>
+      JSON.stringify({
+        recorded_at: new Date(r.createdAt).toISOString(),
+        account: r.account,
+        action: r.action,
+        ...(r.selectedApproach ? { selected_approach: r.selectedApproach } : {}),
+        ...(r.draftRef ? { draft_ref: r.draftRef } : {}),
+        ...(r.subreddit ? { subreddit: r.subreddit } : {}),
+        ...(r.threadUrl ? { thread_url: r.threadUrl } : {}),
+        ...(r.finalText ? { final_text: r.finalText } : {}),
+        ...(r.reasonCode ? { reason_code: r.reasonCode } : {}),
+        ...(r.reason ? { reason: r.reason } : {}),
+      }),
+    )
+    .join("\n");
+}
+
+/** How each `redditAgentState` kind is re-attached: the file the skill reads. */
+const STATE_FILES: Record<
+  RedditAgentState["kind"],
+  { name: string; contentType: string; description: string }
+> = {
+  "rules-audit": {
+    name: "rules-audit.json",
+    contentType: "application/json",
+    description:
+      "THE SAFETY FILE. One DATED row per subreddit: whether a product may be named there, whether AI-written comments are banned, the karma/age gate, the disclosure requirement, and where and WHEN we read it. This is the live copy — the baked repo's is stale. A reading too old to trust must be re-verified before anything is drafted; acting on a stale verdict is what gets a client's account banned, and Reddit bans rarely reverse.",
+  },
+  ledger: {
+    name: "reddit-ledger.json",
+    contentType: "application/json",
+    description:
+      "The continuity spine: every thread already answered and every question already covered, per account. Never answer a thread twice. Append your new rows and deliver the whole updated file back.",
+  },
+  "question-pools": {
+    name: "question-pools.json",
+    contentType: "application/json",
+    description:
+      "The recurring questions this client's buyers keep asking, with the threads that prove they repeat. The well this run draws from.",
+  },
+  "scan-config": {
+    name: "scan-config.json",
+    contentType: "application/json",
+    description:
+      "Both scan lanes: the subreddit roster for question threads, and the client's name variants for the mentions lane. Live copy.",
+  },
+  foundation: {
+    name: "foundation.md",
+    contentType: "text/markdown",
+    description:
+      "This client's Reddit source of truth from setup: where they show up, how rarely the product is mentioned, and the strategy a human approved.",
+  },
+  "agent-memory": {
+    name: "agent-memory.md",
+    contentType: "text/markdown",
+    description:
+      "This account's standing decisions, with dates and reasons. Append-only: a reversal is a new dated entry naming what it reverses. A decision here is not re-litigated without new evidence.",
+  },
+  "learning-log": {
+    name: "learning-log.md",
+    contentType: "text/markdown",
+    description:
+      "The voice rules this account has EARNED from the human's own edits. Every rule here is binding; a draft that violates one is a build failure.",
+  },
+  "research-cache": {
+    name: "research-cache.json",
+    contentType: "application/json",
+    description:
+      "The paced scan's results. Its date is in the payload: a SAME-DAY scan is reused and never re-paid, because a fresh scan costs ten to fifteen minutes of politely spaced Reddit requests. Only scan again if this is not from today.",
+  },
+};
+
 export async function buildRedditAgentContextFiles(
   clientId: string,
   agentName?: string,
 ): Promise<AgentServiceContextFile[]> {
-  const [intake, feedback] = await Promise.all([
+  const [intake, feedback, state] = await Promise.all([
     getAgentIntake(clientId, "reddit", null),
     listRedditDraftFeedback(clientId),
+    listRedditAgentState(clientId),
   ]);
-  if (!intake && feedback.length === 0) return [];
+  if (!intake && feedback.length === 0 && state.length === 0) return [];
 
   const files: AgentServiceContextFile[] = [];
   const runKey = randomUUID();
@@ -312,6 +431,38 @@ export async function buildRedditAgentContextFiles(
     description:
       "Portal-collected Reddit intake: the account we draft as, its history, the program mode, off-limits subreddits, disclosure wording, the per-subreddit verdicts this client's own outcomes have earned, and the learning log. Overrides any older reddit-agent files in the repo.",
   });
+
+  // The human's reaction, as the exact file v2 reads. Attached even when empty so
+  // the run finds the path rather than treating it as "no feedback mechanism".
+  files.push({
+    name: "feedback.jsonl",
+    url: await upload(
+      clientId,
+      runKey,
+      "feedback.jsonl",
+      feedbackJsonl(feedback),
+      "application/x-ndjson",
+    ),
+    content_type: "application/x-ndjson",
+    description:
+      "The human's reaction to previous replies, one JSON object per line — this IS clients/<slug>/outputs/_ledger/feedback.jsonl. Read `selected_approach` for which of the two replies they took, `final_text` for their edit verbatim (the diff against what we wrote is the voice lesson), and `reason_code` for the closed-set skip reason the per-subreddit promo rule aggregates on.",
+  });
+
+  // The durable state the ephemeral runner would otherwise lose. Per-account rows
+  // are attached with the account in the file name, because v2 runs ONE account
+  // per run and keeps a separate voice and memory for each — a bare
+  // `learning-log.md` from another account would steer this one's replies.
+  for (const row of state) {
+    const spec = STATE_FILES[row.kind];
+    if (!spec || !row.content.trim()) continue;
+    const name = row.account ? `${row.account}--${spec.name}` : spec.name;
+    files.push({
+      name,
+      url: await upload(clientId, runKey, name, row.content, spec.contentType),
+      content_type: spec.contentType,
+      description: `${spec.description}${row.account ? ` (account: ${row.account}.)` : ""} (Portal copy, captured ${row.contentDate} from run ${row.capturedFromJobId}, version ${row.version}.)`,
+    });
+  }
 
   return files;
 }

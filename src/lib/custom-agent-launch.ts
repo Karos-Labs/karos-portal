@@ -74,6 +74,19 @@ export const BATCH_SIZE_FIELD_KEY = "batch_size";
  */
 export const LINKEDIN_IDENTITY_FIELD_KEY = "li_identity";
 
+/**
+ * The v2 Reddit keys, exactly as the lab manifest spells them.
+ *
+ * NOTE THE ABSENCE OF A `-v2` SUFFIX. The natural guess is
+ * `karos-reddit-runner-v2` / `karos-reddit-setup-v2`; the manifest says
+ * `karos-reddit-runner` and `karos-reddit-setup`, with the GENERATION carried by
+ * the path (`products/building/reddit-agent-v2/`) rather than by the key. Getting
+ * this wrong means a key that matches nothing and an agent that is never gated,
+ * never fed and never hidden, so the literals live here once.
+ */
+export const REDDIT_RUNNER_V2_KEY = "karos-reddit-runner";
+export const REDDIT_SETUP_V2_KEY = "karos-reddit-setup";
+
 const generalAttachments: AgentAttachmentProfile = {
   label: "Reference files",
   hint: "Add briefs, examples, brand material, or source data that should shape this run.",
@@ -544,7 +557,9 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     // be fine today (no other agent mentions Reddit) but a match on words like
     // monitor, listen or research would hijack the reputation and intelligence
     // agents below, so the key is the safer test.
-    matches: (identity) => identity.startsWith("karos-reddit-agent "),
+    matches: (identity) =>
+      identity.startsWith(`${REDDIT_RUNNER_V2_KEY} `) ||
+      identity.startsWith("karos-reddit-agent "),
     profile: {
       eyebrow: "Reddit reply",
       intro:
@@ -1023,7 +1038,16 @@ export function isSupersededAgentKey(key: string | undefined | null): boolean {
   // matching doc has no key at all. An absent key is not superseded — it is
   // unknown, and unknown must not be hidden.
   if (!key) return false;
-  return key === "karos-linkedin-agent" || key.startsWith("karos-linkedin-company-");
+  return (
+    // the e10 LinkedIn generation
+    key === "karos-linkedin-agent" ||
+    key.startsWith("karos-linkedin-company-") ||
+    // the v1 Reddit agent, replaced by karos-reddit-runner. It keeps its doc so a
+    // rollback has something to re-enable, and it loses its card for the same
+    // reason e10 did: a disabled-but-granted agent renders as "Coming soon", so
+    // leaving it listed promises a client something that is not coming.
+    key === "karos-reddit-agent"
+  );
 }
 
 /**
@@ -1130,8 +1154,16 @@ export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
  * of the server-side isRedditAgent in agent-service/reddit-agent-context.ts.
  */
 export function isRedditAgentIdentity(key: string): boolean {
-  return key === "karos-reddit-agent";
+  return (
+    key === REDDIT_RUNNER_V2_KEY ||
+    key === REDDIT_SETUP_V2_KEY ||
+    // The v1 agent v2 replaces. Still in the FAMILY on purpose: a run of it must
+    // keep getting its intake attached and its setup gate applied. What it loses
+    // is its place on a roster — see isSupersededAgentKey.
+    key === "karos-reddit-agent"
+  );
 }
+
 
 /**
  * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string

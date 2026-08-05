@@ -16,6 +16,7 @@ import {
   markLiDirectionRequestCovered,
   updateJob,
   upsertLiAgentState,
+  upsertRedditAgentState,
   upsertSeatVoiceProfile,
 } from "@/lib/data";
 import { isXAgent } from "@/lib/agent-service/x-agent-context";
@@ -31,7 +32,17 @@ import {
   liStateDateFor,
   liStateKindFor,
 } from "@/lib/agent-service/linkedin-state-capture";
-import { isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
+import {
+  isRedditAgent,
+  isRedditRunnerV2,
+  isRedditSetupV2,
+} from "@/lib/agent-service/reddit-agent-context";
+import {
+  REDDIT_STATE_MAX_CHARS,
+  redditStateContentType,
+  redditStateDateFor,
+  redditStateKindFor,
+} from "@/lib/agent-service/reddit-state-capture";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -40,7 +51,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState } from "@/lib/types";
+import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, RedditAgentState } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -374,13 +385,21 @@ export async function POST(req: NextRequest) {
   // costs the next run its memory and must not cost this client their post.
   let isLinkedInStateJob = false;
   let isLinkedInSetupJob = false;
+  // Reddit v2's state matters more than most: the run's rules audit decides
+  // whether a product may be named in a subreddit, and losing it is how an
+  // account gets banned. Same one-document read as the LinkedIn resolution.
+  let isRedditStateJob = false;
   try {
     const producing = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
     isLinkedInStateJob = producing ? isLinkedInV2Agent(producing.key) : false;
     isLinkedInSetupJob = producing ? isLinkedInSetupV2(producing.key) : false;
+    isRedditStateJob = producing
+      ? isRedditRunnerV2(producing.key) || isRedditSetupV2(producing.key)
+      : false;
   } catch {
     isLinkedInStateJob = false;
     isLinkedInSetupJob = false;
+    isRedditStateJob = false;
   }
 
   // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
@@ -461,6 +480,15 @@ export async function POST(req: NextRequest) {
    * phase is a budget, not a place to do work whose result a lost race discards.
    */
   let liCommitJson: string | null = null;
+  // Reddit v2 durable state, same rules as the LinkedIn set: internal artifacts
+  // fetched for their TEXT only, never re-hosted, never attached to an asset.
+  const redditStateArtifacts: {
+    kind: RedditAgentState["kind"];
+    account: string | null;
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
   // What is LEFT of the pre-claim deadline, counted from the top of the handler.
   // Every network call below is bounded by this rather than by a fixed
   // per-artifact constant, and a non-positive value means the budget is spent:
@@ -520,7 +548,34 @@ export async function POST(req: NextRequest) {
       const liPath = artifact.path ?? artifact.name;
       const liStateKind = isLinkedInStateJob ? liStateKindFor(liPath) : null;
       const liIsCommit = isLinkedInStateJob && isLiCommitArtifact(liPath);
-      if (!artifact.client_facing && (liStateKind || liIsCommit) && artifact.url) {
+      const redditState = isRedditStateJob ? redditStateKindFor(liPath) : null;
+      if (!artifact.client_facing && redditState && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, REDDIT_STATE_MAX_CHARS);
+              if (text.trim()) {
+                redditStateArtifacts.push({
+                  kind: redditState.kind,
+                  account: redditState.account,
+                  content: text,
+                  contentDate: redditStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch {
+          // Best-effort, and NOT reported to the client: the delivery in front of
+          // them is a finished set of replies either way. The cost is the NEXT
+          // run's memory, which the events below record for staff.
+        }
+      } else if (!artifact.client_facing && (liStateKind || liIsCommit) && artifact.url) {
         try {
           const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
           if (budget > 0) {
@@ -821,6 +876,43 @@ export async function POST(req: NextRequest) {
             at: Date.now(),
             level: "error",
             message: `LinkedIn ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
+    // Reddit v2 durable state. After the claim and best-effort, like the sibling
+    // sweeps. Reported as an error event because a run whose RULES AUDIT did not
+    // persist is the one case where the next run is not merely forgetful but
+    // unsafe — it would hold no reading of what each subreddit allows.
+    if (redditStateArtifacts.length > 0) {
+      // Last write wins per (kind, account); the manifest's order is the run's own
+      // write order, so the newest copy of each file lands.
+      const byKey = new Map(
+        redditStateArtifacts.map((row) => [`${row.kind}::${row.account ?? ""}`, row]),
+      );
+      for (const row of byKey.values()) {
+        try {
+          await upsertRedditAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            account: row.account,
+            content: row.content,
+            contentType: redditStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] Reddit ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              `Reddit ${row.kind} did not persist` +
+              (row.kind === "rules-audit"
+                ? " - the next run has NO record of what each subreddit allows and must re-read them before drafting."
+                : " - the next run will not see this run's changes to it."),
           });
         }
       }
