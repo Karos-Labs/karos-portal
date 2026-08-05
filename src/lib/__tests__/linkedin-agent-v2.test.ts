@@ -5,9 +5,12 @@ import {
   LINKEDIN_IDENTITY_FIELD_KEY,
   BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
-  isUnlistedAgentIdentity,
+  isSubAgent,
+  isSupersededAgentKey,
+  isUnlistedAgent,
   isLinkedInAgentIdentity,
-  listableAgentKeys,
+  groupAgentsByParent,
+  listableAgents,
   launchProfileFor,
   linkedInSeatIdentityToken,
   perClientAgentSlug,
@@ -75,36 +78,69 @@ describe("the v2 agent keys", () => {
 });
 
 describe("the LinkedIn agent is ONE agent on the portal", () => {
-  it("unlists v2's own steps AND the e10 generation it replaced", () => {
-    // Two reasons, both shipped as bugs first. The machinery: running a lab skill
-    // needs a doc because the doc carries entrySkillDir, which is a runtime
-    // requirement and not a claim that the skill is a product — so registering
-    // setup and manager put three cards up for one agent. The fallback: a
-    // DISABLED agent that is still granted renders as "Coming soon", so keeping
-    // e10 "as the fallback" left a client looking at a LinkedIn agent and a
-    // LinkedIn company page promising to arrive. Nothing is coming; v2 replaced it.
-    for (const key of [SETUP, MANAGER, "karos-linkedin-agent", "karos-linkedin-company-karoslabs"]) {
-      expect(isUnlistedAgentIdentity(key), key).toBe(true);
+  it("decides a sub-agent STRUCTURALLY, from parentKey and not from its key", () => {
+    // The point of the field. The predicate it replaced was a list of literal
+    // LinkedIn keys, so the next agent that grew steps would have shipped the same
+    // leak and someone would have had to remember to edit a function. A key that
+    // LOOKS like a step but carries no parentKey is a product; a key that looks
+    // like nothing but carries one is a step.
+    expect(isSubAgent({ key: SETUP, parentKey: WRITER })).toBe(true);
+    expect(isSubAgent({ key: MANAGER, parentKey: WRITER })).toBe(true);
+    expect(isSubAgent({ key: SETUP })).toBe(false);
+    expect(isSubAgent({ key: SETUP, parentKey: null })).toBe(false);
+    // Whitespace is not a parent. A doc edited to "" or " " must read as
+    // top-level rather than as a step whose parent can never be found.
+    expect(isSubAgent({ key: SETUP, parentKey: "   " })).toBe(false);
+    expect(isSubAgent({ key: "anything-at-all", parentKey: "karos-x-agent-v2" })).toBe(true);
+  });
+
+  it("keeps the superseded e10 keys unlisted, WITHOUT calling them steps", () => {
+    // A separate question, deliberately not folded into parentKey: a superseded
+    // agent has no parent — nothing runs it as a step — so giving it one to hide
+    // it would be a lie in the data about what it is.
+    for (const key of ["karos-linkedin-agent", "karos-linkedin-company-karoslabs"]) {
+      expect(isSupersededAgentKey(key), key).toBe(true);
+      expect(isSubAgent({ key }), key).toBe(false);
+      expect(isUnlistedAgent({ key }), key).toBe(true);
     }
-    // The writer IS the agent, so it is never hidden.
-    expect(isUnlistedAgentIdentity(WRITER)).toBe(false);
-    for (const key of ["karos-x-agent-v2", "karos-reddit-agent", "karos-tiktok-agent"]) {
-      expect(isUnlistedAgentIdentity(key), key).toBe(false);
-    }
+    expect(isSupersededAgentKey(WRITER)).toBe(false);
+    expect(isUnlistedAgent({ key: WRITER })).toBe(false);
   });
 
   it("leaves exactly ONE LinkedIn agent listable out of the whole family", () => {
     const roster = [
-      { key: SETUP },
+      { key: SETUP, parentKey: WRITER },
       { key: WRITER },
-      { key: MANAGER },
+      { key: MANAGER, parentKey: WRITER },
       { key: "karos-linkedin-company-karoslabs" },
       { key: "karos-linkedin-agent" },
       { key: "karos-x-agent-v2" },
     ];
-    const listed = listableAgentKeys(roster).map((a) => a.key);
+    const listed = listableAgents(roster).map((a) => a.key);
     expect(listed).toEqual([WRITER, "karos-x-agent-v2"]);
     expect(listed.filter((k) => k.includes("linkedin"))).toHaveLength(1);
+  });
+
+  it("nests steps under their parent for the library, and never drops an orphan", () => {
+    const agents = [
+      { key: WRITER, name: "LinkedIn Agent" },
+      { key: MANAGER, name: "LinkedIn Manager", parentKey: WRITER },
+      { key: SETUP, name: "LinkedIn Setup", parentKey: WRITER },
+      { key: "karos-x-agent-v2", name: "X Agent" },
+      { key: "stray", name: "Stray Step", parentKey: "karos-typo-agent" },
+    ];
+    const { parents, orphans } = groupAgentsByParent(agents);
+    expect(parents.map((p) => p.agent.key)).toEqual([WRITER, "karos-x-agent-v2"]);
+    // Sorted by name, so the order does not depend on the read order.
+    expect(parents[0].children.map((c) => c.name)).toEqual([
+      "LinkedIn Manager",
+      "LinkedIn Setup",
+    ]);
+    expect(parents[1].children).toEqual([]);
+    // A step whose parentKey matches nothing is RETURNED, not swallowed: a
+    // dropped orphan is an agent nobody can find or fix, and a typo'd parentKey
+    // is the usual cause.
+    expect(orphans.map((o) => o.key)).toEqual(["stray"]);
   });
 
   it("keeps every unlisted key inside the FAMILY, so its runs are still gated and fed", () => {
@@ -126,14 +162,17 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
       "src/app/(app)/clients/[id]/agents/page.tsx",
       "src/app/(app)/dashboard/page.tsx",
       "src/app/api/clients/[id]/agents/mentionable/route.ts",
-      // The intake page's own agent resolution: the LinkedIn family has three
-      // docs and only one is the agent a person means.
+      // The intake page's own agent resolution: the LinkedIn family has four
+      // keys and only one is the agent a person means.
       "src/lib/agent-intake-views.ts",
+      // The client's "+ Add / Set up an agent for this client" dropdown, which is
+      // where a step leaked into a client-facing CHOICE rather than just a list.
+      "src/lib/client-agent-rows.ts",
     ];
     for (const file of SURFACES) {
       const src = readFileSync(join(process.cwd(), file), "utf8");
-      expect(src, `${file} lists agents without filtering the internal ones`).toContain(
-        "isUnlistedAgentIdentity",
+      expect(src, `${file} lists agents without filtering the sub-agents`).toContain(
+        "isUnlistedAgent",
       );
     }
   });

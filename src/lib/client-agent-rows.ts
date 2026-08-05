@@ -12,6 +12,7 @@ import {
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
+  isSubAgent,
 } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedules, weeklyFireDays } from "@/lib/agent-schedule-selection";
@@ -107,6 +108,20 @@ export function bindableAgents(args: {
     .filter(
       (agent) =>
         agent.enabled &&
+        // A STEP of another agent is not a thing to set up for a client. The
+        // LinkedIn setup and manager are fired by the LinkedIn agent's own
+        // surface, so offering them here would bind an umbrella to half an
+        // agent — and this dropdown is exactly where they leaked into a
+        // client-facing choice.
+        //
+        // STRUCTURAL ONLY (`isSubAgent`), deliberately not the wider
+        // `isUnlistedAgent`. Bindability and listing are different questions: a
+        // SUPERSEDED agent is hidden from rosters because it must not advertise
+        // itself to a client, but binding one is a staff act on an agent that
+        // still exists, and excluding it here broke the rule this dropdown is
+        // actually for — keeping a client's OWN per-client instance available
+        // (client-agent-projection-bind-offer.test.ts).
+        !isSubAgent(agent) &&
         agentKeyMatchesClientSlug(agent.key, args.clientSlug) &&
         !args.boundAgentIds.has(agent.id),
     )

@@ -63,6 +63,7 @@ import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
+  groupAgentsByParent,
 } from "@/lib/custom-agent-launch";
 import type { ContextItem, CustomAgent, JobRunType, JobStatus } from "@/lib/types";
 import { cn, formatDate, relativeTime } from "@/lib/utils";
@@ -530,6 +531,80 @@ function AgentLiveToggle({ agentId, enabled }: { agentId: string; enabled: boole
  * edit their instructions, and control which clients may fire them; anyone
  * on staff can run one for a client.
  */
+/**
+ * One sub-agent, as a row nested under its parent in the library.
+ *
+ * NESTED RATHER THAN HIDDEN, and that is the whole design decision. /agents is
+ * the LIBRARY, not a roster: it is where an admin edits an agent's instructions
+ * and toggles it live. Applying the client-side filter here would make the
+ * LinkedIn setup prompt permanently uneditable — a worse failure than the clutter
+ * it would tidy. So a step keeps every control it had and loses only its claim to
+ * be a product: no price lines (a step is not sold separately), no platform
+ * badges, no card of its own.
+ *
+ * Run is kept for staff. Firing a step by hand is exactly what an operator needs
+ * when a client's setup half-failed, and the submit core applies the same gates
+ * either way.
+ */
+function SubAgentRow({
+  agent,
+  isAdmin,
+  serviceConfigured,
+  runnableFor,
+  onEdit,
+  onRun,
+}: {
+  agent: CustomAgent;
+  isAdmin: boolean;
+  serviceConfigured: boolean;
+  runnableFor: number;
+  onEdit: () => void;
+  onRun: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 border-t border-border/60 py-2 pl-3">
+      <span className="text-muted-2" aria-hidden="true">
+        <Icon name="CornerDownRight" className="h-3.5 w-3.5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs text-foreground">{agent.name}</p>
+        <p className="truncate font-mono text-[10px] text-muted-2">{agent.entrySkillDir}</p>
+      </div>
+      {isAdmin ? (
+        <AgentLiveToggle agentId={agent.id} enabled={agent.enabled} />
+      ) : (
+        <Badge tone={agent.enabled ? "success" : "neutral"}>
+          {agent.enabled ? "Live" : "Paused"}
+        </Badge>
+      )}
+      {isAdmin && (
+        <Button size="sm" variant="ghost" onClick={onEdit}>
+          <Icon name="Pencil" className="h-3.5 w-3.5" />
+          <span className="sr-only">Edit {agent.name}</span>
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={!agent.enabled || !serviceConfigured || runnableFor === 0}
+        title={
+          !serviceConfigured
+            ? "Agent service is not configured"
+            : !agent.enabled
+              ? "Enable this step first"
+              : runnableFor === 0
+                ? "No client is available to run this step for."
+                : "Run this step on its own"
+        }
+        onClick={onRun}
+      >
+        <Icon name="Play" className="h-3.5 w-3.5" />
+        <span className="sr-only">Run {agent.name}</span>
+      </Button>
+    </div>
+  );
+}
+
 export function CustomAgentsHub({
   agents,
   clients,
@@ -554,6 +629,14 @@ export function CustomAgentsHub({
   const [editAgent, setEditAgent] = useState<CustomAgent | null>(null);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  // Parents carrying their own steps, then any orphan as its own card so a
+  // mistyped parentKey is visible instead of swallowed.
+  const { parents, orphans } = groupAgentsByParent(agents);
+  const libraryEntries = [
+    ...parents.map((entry) => ({ ...entry, orphan: false })),
+    ...orphans.map((agent) => ({ agent, children: [] as CustomAgent[], orphan: true })),
+  ];
 
   return (
     <section className="mt-10">
@@ -594,7 +677,7 @@ export function CustomAgentsHub({
         </div>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
-          {agents.map((agent) => {
+          {libraryEntries.map(({ agent, children, orphan }) => {
             // F38. The clients this agent can actually run for. An unbound agent
             // keeps the whole list; a per-client instance keeps its own client,
             // and keeps NONE when that client is absent from this staff member's
@@ -667,6 +750,11 @@ export function CustomAgentsHub({
                       Daniel's call (#167), and inventing one here would be the
                       F130 placeholder-pricing failure at the priciest SKU. */}
                   {launchCost === null && <Badge tone="warning">Setup not priced</Badge>}
+                  {/* A step whose parentKey names no agent in the library. Shown
+                      as a top-level card ON PURPOSE rather than dropped: a
+                      swallowed orphan is an agent nobody can find or fix, and
+                      the usual cause is a typo in the field. */}
+                  {orphan && <Badge tone="warning">Step with no parent</Badge>}
                   {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
                   {/* Repo-catalog flag — informational until an admin reviews and enables. */}
                   {!agent.enabled && agent.source?.status === "blocked" && (
@@ -729,6 +817,33 @@ export function CustomAgentsHub({
                   </Button>
                 </div>
               </div>
+              {/* The steps that belong to this agent. Structural, from each
+                  document's own parentKey — so an agent that grows a step later
+                  nests here with no change to this file. */}
+              {children.length > 0 && (
+                <div className="mt-4">
+                  <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">
+                    Steps of this agent
+                  </p>
+                  <div className="mt-1">
+                    {children.map((child) => (
+                      <SubAgentRow
+                        key={child.id}
+                        agent={child}
+                        isAdmin={isAdmin}
+                        serviceConfigured={serviceConfigured}
+                        runnableFor={
+                          clients.filter((c) =>
+                            agentKeyMatchesClientSlug(child.key, c.agentsRepoSlug),
+                          ).length
+                        }
+                        onEdit={() => setEditAgent(child)}
+                        onRun={() => setRunAgent(child)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             );
           })}

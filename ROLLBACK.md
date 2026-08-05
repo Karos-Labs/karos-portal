@@ -254,13 +254,18 @@ Pre-mutation snapshots of every doc this touches, taken before any change:
 | L24 | Setup-first copy ("We need to set this up first") and no identity choice until the stand-up run has happened | `src/components/linkedin-agent-intake.tsx` | restore "Set up LinkedIn" and render the picker unconditionally |
 | L21 | "Add a seat" fires that seat's setup on success, through the intake funnel, with its outcome deliberately unsurfaced (the seat saved; their card carries "Build their voice" as the retry) | `src/components/linkedin-agent-intake.tsx` (`AddSeatForm`) | remove the `runLinkedInSetupAction` call |
 
-Verified: `npx tsc --noEmit` clean, `npm run build` clean, full vitest **3,698
+| L25 | `CustomAgent.parentKey?: string \| null` — the agent a step belongs to, by KEY (the stable identity; a doc can be re-imported with a new id and the same key) | `src/lib/types.ts` | delete the field; the predicates below fall back to their legacy behaviour only if L26 is also reverted |
+| L26 | Replaced the hardcoded key list with three predicates: `isSubAgent(agent)` reads `parentKey` STRUCTURALLY, `isSupersededAgentKey(key)` keeps the e10 generation out (null-safe — the copilot roster can hand it a row with no key), `isUnlistedAgent(agent)` is the OR every roster calls. Plus `listableAgents` and `groupAgentsByParent` (which returns orphans rather than swallowing a typo'd parentKey) | `src/lib/custom-agent-launch.ts` | restore `isUnlistedAgentIdentity(key)` with its four literals and repoint the call sites |
+| L27 | The "+ Add / Set up an agent for this client" dropdown filters STRUCTURALLY only (`isSubAgent`, not `isUnlistedAgent`). Bindability and listing are different questions: a superseded agent must not advertise itself on a roster, but binding one is a staff act on an agent that still exists — using the wider predicate broke the rule that dropdown is actually for, keeping a client's OWN per-client instance available (`client-agent-projection-bind-offer.test.ts`) | `src/lib/client-agent-rows.ts` (`bindableAgents`) | remove the clause |
+| L28 | `/agents` library NESTS steps under the parent card instead of hiding them: a `SubAgentRow` with the live toggle, Edit and Run, no price lines and no platform badges. An orphan renders as a top-level card with a "Step with no parent" badge | `src/components/custom-agents.tsx` | delete `SubAgentRow`, the children block and `libraryEntries`; restore `agents.map(...)` |
+
+Verified: `npx tsc --noEmit` clean, `npm run build` clean, full vitest **3,700
 passed / 11 failed**. Those 11 are **all `Test timed out`**, all inside two AST-sweep
 files (`client-copy-boundary.test.ts`, `client-model-charge-boundary.test.ts`)
 that walk every file in `src`. Both pass in isolation. Measured against a
 `git worktree` of clean `origin/main` on the same machine at the same time: **main
 fails the same 11 tests in the same 2 files** — 3,666 passed / 11 failed there
-versus 3,698 passed / 11 failed here. Pre-existing fragility under parallel load:
+versus 3,700 passed / 11 failed here. Pre-existing fragility under parallel load:
 the suite runs in 44s idle and ~145s loaded, and these sweeps carry 5s and 20s
 per-test budgets. Not caused by this work, not fixed by it, and worth raising on
 its own — those budgets will flake on any busy CI box.
@@ -288,3 +293,9 @@ with none of its data attached, since main has no v2 injection. So no client's
 surface changes until three things happen in order: this branch merges (which IS
 the portal deploy), the agent service is redeployed (L9 lives in the runner
 image), and then an admin enables and grants them.
+
+### Data changes for the sub-agent grouping (both databases, 2026-08-05)
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| L-D5 | `parentKey: "karos-linkedin-writer-v2"` written onto the setup and manager docs in BOTH `(default)` and `prep`, by `scripts/set-agent-parent-keys.ts` (idempotent; refuses to name a parent absent from the same database, since a typo there is how an orphaned step gets created) | `customAgents` where key is `karos-linkedin-setup-v2` / `karos-linkedin-manager-v2` | set `parentKey` to `null` on the four docs. The field was previously absent, so there is no prior value to restore |

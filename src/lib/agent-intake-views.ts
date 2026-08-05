@@ -34,7 +34,7 @@ import {
 } from "@/lib/data";
 import {
   agentKeyMatchesClientSlug,
-  isUnlistedAgentIdentity,
+  isUnlistedAgent,
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
@@ -166,7 +166,7 @@ export async function requireIntakeAgentAccess(args: {
         // — a card nothing lists, whose page would then offer the data for an
         // agent the reader never chose. Null is not a refusal: `intakePageAction`
         // falls back to an honestly-labelled link to the roster.
-        !isUnlistedAgentIdentity(agent.key),
+        !isUnlistedAgent(agent),
     )?.id ?? null
   );
 }

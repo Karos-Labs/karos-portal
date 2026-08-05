@@ -349,6 +349,28 @@ export interface CustomAgent {
   color: string;
   /** Repo-relative entry skill directory, e.g. "products/live/instagram-agent". */
   entrySkillDir: string;
+  /**
+   * The `key` of the agent this one is a STEP OF, when it is not a product in
+   * its own right — e.g. `karos-linkedin-setup-v2` carries
+   * `parentKey: "karos-linkedin-writer-v2"`.
+   *
+   * WHY THIS FIELD EXISTS. Running a lab skill requires a `customAgents` doc,
+   * because the doc is what carries `entrySkillDir`. That is a runtime
+   * requirement and says nothing about whether the skill is something a person
+   * would choose — but every roster read it as one, so registering LinkedIn v2's
+   * setup and manager put three products on the agents page, in the client's
+   * "+ Add" dropdown, and in the copilot's @-mentions, for what is ONE agent.
+   *
+   * The relationship now lives in the data. `isSubAgent` evaluates this field, so
+   * the next agent that has steps needs no code change — which is the whole point
+   * of moving off the hardcoded key list that preceded it.
+   *
+   * Absent (the normal case) = a top-level agent. A parent is named by KEY rather
+   * than by document id because the key is the stable identity the lab manifest
+   * and every predicate already use; a doc can be deleted and re-imported with a
+   * new id and the same key.
+   */
+  parentKey?: string | null;
   /** Extra repo-relative skill roots linked into the run (vendor packs). */
   skillRoots: string[];
   /** Also link the client's emitted skills (clients/<slug>/skills/). */

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { isUnlistedAgentIdentity } from "@/lib/custom-agent-launch";
+import { isUnlistedAgent } from "@/lib/custom-agent-launch";
 import { listClients, listJobs, listActionItemsByAssignee, listUsers, listCustomAgents } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -34,11 +34,9 @@ export default async function DashboardPage() {
   const visibleClientIds = new Set(clients.map((c) => c.id));
   const jobs = allJobs.filter((j) => visibleClientIds.has(j.clientId));
   const managedJobs = jobs.filter((j) => j.agentId === AGENT_SERVICE_AGENT_ID);
-  // Another agent's machinery gets no tile either — the LinkedIn setup and
-  // manager are fired by the LinkedIn agent, not chosen from a list.
-  const enabledAgents = customAgents.filter(
-    (a) => a.enabled && !isUnlistedAgentIdentity(a.key),
-  );
+  // A step of another agent gets no tile either — the LinkedIn setup and manager
+  // are fired by the LinkedIn agent, not chosen from a list.
+  const enabledAgents = customAgents.filter((a) => a.enabled && !isUnlistedAgent(a));
   // Reassignment targets: active staff only.
   const staffUsers = allUsers.filter(
     (u) => !u.disabled && (u.role === "KAROS_ADMIN" || u.role === "KAROS_EMPLOYEE"),

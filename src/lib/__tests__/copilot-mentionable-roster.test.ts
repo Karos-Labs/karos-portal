@@ -143,7 +143,7 @@ describe("the @mention roster combines the two lists without doubling anything",
     expect(agents[0]).not.toHaveProperty("key");
   });
 
-  it("drops an agent that is another agent's machinery, or a superseded one", async () => {
+  it("drops a STEP of another agent, and a superseded one", async () => {
     // The copilot can ACT on a tag, so a taggable name has to be something a
     // person would ask for. "@LinkedIn Manager, draft me a post" would dispatch a
     // run that never drafts, and "@LinkedIn Company Page" a run of an agent v2
@@ -154,9 +154,12 @@ describe("the @mention roster combines the two lists without doubling anything",
       { id: "agent-e10", name: "LinkedIn Company Page" },
       { id: "agent-li", name: "LinkedIn Agent" },
     ] as any);
+    // parentKey is what makes the first two steps rather than products — the test
+    // is STRUCTURAL now, so a fixture carrying only the keys would (correctly) not
+    // be hidden. The e10 row has no parent and is dropped for the other reason.
     vi.mocked(data.listCustomAgents).mockResolvedValue([
-      { id: "agent-setup", icon: "Bot", key: "karos-linkedin-setup-v2" },
-      { id: "agent-mgr", icon: "Bot", key: "karos-linkedin-manager-v2" },
+      { id: "agent-setup", icon: "Bot", key: "karos-linkedin-setup-v2", parentKey: "karos-linkedin-writer-v2" },
+      { id: "agent-mgr", icon: "Bot", key: "karos-linkedin-manager-v2", parentKey: "karos-linkedin-writer-v2" },
       { id: "agent-e10", icon: "Bot", key: "karos-linkedin-company-acme" },
       { id: "agent-li", icon: "Bot", key: "karos-linkedin-writer-v2" },
     ] as any);

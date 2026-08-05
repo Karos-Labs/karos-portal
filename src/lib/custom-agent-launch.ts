@@ -11,6 +11,7 @@
 import { isPublishHold } from "@/lib/asset-status-copy";
 import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
+import type { CustomAgent } from "@/lib/types";
 
 export type AgentBriefFieldType = "text" | "textarea" | "number" | "select";
 
@@ -969,52 +970,114 @@ export function linkedInSeatIdentityToken(seatId: string): string {
   return `seat:${seatId}`;
 }
 
+/** The shape every predicate below needs: identity, and who it belongs to. */
+export type AgentListingFields = Pick<CustomAgent, "key"> & { parentKey?: string | null };
+
 /**
- * Agents that exist in `customAgents` but must never appear on a roster — to a
- * client OR to staff. **LinkedIn is ONE agent on this portal**, and this is the
- * one predicate that keeps it that way.
+ * Is this agent a STEP OF another agent rather than a product of its own?
  *
- * Two different reasons land here, and both were shipped as bugs first:
+ * STRUCTURAL, from `parentKey`. Running a lab skill requires a `customAgents`
+ * doc because the doc carries `entrySkillDir` — a runtime requirement that says
+ * nothing about whether a person would ever choose the thing. Every roster read
+ * it as a product anyway, so registering LinkedIn v2's setup and manager put
+ * three items in the client's "+ Add" dropdown, three cards on the agents page
+ * and three @-mentionable names in the copilot, for ONE agent.
  *
- * 1. **Another agent's machinery.** Running a lab skill needs a doc, because the
- *    doc carries `entrySkillDir` — a runtime requirement, not a claim that the
- *    skill is a product. Registering v2's setup and manager therefore put three
- *    cards up for what is one agent. The LinkedIn agent's first press runs setup;
- *    every press after runs the writer, which runs the manager pass itself before
- *    drafting (Ben, 2026-08-04: the manager is quiet and runs with the runner).
- *    Neither is a thing anyone picks off a list.
+ * This replaced a hardcoded list of keys, and the reason is worth keeping: that
+ * list only knew about LinkedIn, so the next agent with steps would have shipped
+ * the same leak and someone would have had to remember to edit a predicate. A
+ * field on the document cannot be forgotten.
  *
- * 2. **Superseded by v2.** The e10 generation stays importable as a fallback, and
- *    "fallback" was allowed to mean "still on the roster": because a disabled
- *    agent that is granted still renders (as "Coming soon"), a client saw a
- *    LinkedIn agent AND a LinkedIn company page sitting there promising to
- *    arrive. Nothing is coming — v2 replaced it. It keeps its doc so a rollback
- *    has something to re-enable, and it loses its card.
- *
- * WHAT THIS DOES NOT DO, for the machinery half: it does not un-grant, and it
- * must not. A client-fired run is refused by both submit cores unless the agent
- * is granted (`isCustomAgentGrantedToClient`), and the LinkedIn agent's own
- * surface fires setup on the client's behalf. The listing and the grant were
- * never the same question.
- *
- * NOT the same as `isLinkedInAgentIdentity`, which still answers TRUE for every
- * key here — the family predicate decides what gets GATED and FED, and a run of
- * the e10 fallback still needs its data. This one decides only what gets OFFERED.
+ * WHAT IT DOES NOT DO: it does not un-grant, and it must not. A client-fired run
+ * is refused by both submit cores unless the agent is granted
+ * (`isCustomAgentGrantedToClient`), and a parent's surface fires its steps on the
+ * client's behalf — the LinkedIn agent's first press runs its setup. Hiding and
+ * un-granting were never the same question.
  */
-export function isUnlistedAgentIdentity(key: string): boolean {
-  return (
-    // v2's own steps
-    key === "karos-linkedin-setup-v2" ||
-    key === "karos-linkedin-manager-v2" ||
-    // the e10 generation v2 replaced
-    key === "karos-linkedin-agent" ||
-    key.startsWith("karos-linkedin-company-")
-  );
+export function isSubAgent(agent: AgentListingFields): boolean {
+  return Boolean(agent.parentKey?.trim());
+}
+
+/**
+ * Keys of agents a newer generation REPLACED, kept out of every roster.
+ *
+ * A separate question from `isSubAgent`, and deliberately not folded into it: a
+ * superseded agent has no parent — nothing runs it as a step — so giving it a
+ * `parentKey` to hide it would be a lie in the data about what it is.
+ *
+ * Why it is still a hardcoded list: this is backward compatibility for documents
+ * that already exist, not a mechanism meant to grow. The e10 LinkedIn generation
+ * stays importable so a rollback has something to re-enable, and "fallback" was
+ * allowed to mean "still on the roster" — because a DISABLED agent that is still
+ * granted renders as "Coming soon", a client was left looking at a LinkedIn agent
+ * and a LinkedIn company page promising to arrive. Nothing is coming; v2 replaced
+ * it.
+ *
+ * NOT the same as `isLinkedInAgentIdentity`, which still answers TRUE for these —
+ * the family predicate decides what gets GATED and FED, and a run of the e10
+ * fallback still needs its data. This decides only what gets OFFERED.
+ */
+export function isSupersededAgentKey(key: string | undefined | null): boolean {
+  // Null-safe because callers hand us rows from more than one shape: the copilot
+  // roster joins a catalogue list against `customAgents` and a row with no
+  // matching doc has no key at all. An absent key is not superseded — it is
+  // unknown, and unknown must not be hidden.
+  if (!key) return false;
+  return key === "karos-linkedin-agent" || key.startsWith("karos-linkedin-company-");
+}
+
+/**
+ * The one question every roster asks: may a person be offered this agent?
+ *
+ * Both reasons an agent is unlistable, in one place, so a surface cannot pick up
+ * half the rule. Callers pass the AGENT, not its key, because the primary test is
+ * now a field on the document.
+ */
+export function isUnlistedAgent(agent: AgentListingFields): boolean {
+  return isSubAgent(agent) || isSupersededAgentKey(agent.key);
 }
 
 /** The roster filter: everything a person may legitimately be offered. */
-export function listableAgentKeys<T extends { key: string }>(agents: readonly T[]): T[] {
-  return agents.filter((agent) => !isUnlistedAgentIdentity(agent.key));
+export function listableAgents<T extends AgentListingFields>(agents: readonly T[]): T[] {
+  return agents.filter((agent) => !isUnlistedAgent(agent));
+}
+
+/**
+ * One parent with the steps that belong to it, for the admin library.
+ *
+ * Sub-agents are grouped under their parent rather than hidden, because /agents
+ * is the LIBRARY and not a roster: it is where an admin edits an agent's
+ * instructions and toggles it on. Hiding the setup step there would make its
+ * prompt permanently uneditable, which is a worse failure than the clutter.
+ *
+ * A sub-agent whose `parentKey` matches no agent in the list is returned as an
+ * ORPHAN rather than dropped. Silently swallowing it is how a typo'd parentKey
+ * becomes an agent nobody can find or fix — the orphan is visible, editable, and
+ * says what is wrong with it.
+ */
+export function groupAgentsByParent<T extends AgentListingFields & { name: string }>(
+  agents: readonly T[],
+): { parents: Array<{ agent: T; children: T[] }>; orphans: T[] } {
+  const parents = agents.filter((a) => !isSubAgent(a));
+  const children = agents.filter((a) => isSubAgent(a));
+  const byKey = new Map(parents.map((p) => [p.key, p]));
+  const grouped = new Map<string, T[]>();
+  const orphans: T[] = [];
+  for (const child of children) {
+    const parentKey = child.parentKey!.trim();
+    if (!byKey.has(parentKey)) {
+      orphans.push(child);
+      continue;
+    }
+    grouped.set(parentKey, [...(grouped.get(parentKey) ?? []), child]);
+  }
+  return {
+    parents: parents.map((agent) => ({
+      agent,
+      children: (grouped.get(agent.key) ?? []).sort((a, b) => a.name.localeCompare(b.name)),
+    })),
+    orphans,
+  };
 }
 
 /**

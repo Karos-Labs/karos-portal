@@ -17,7 +17,7 @@ import { BulkUploadClips } from "@/components/bulk-upload-clips";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import {
   agentKeyMatchesClientSlug,
-  isUnlistedAgentIdentity,
+  isUnlistedAgent,
 } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
@@ -110,9 +110,10 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const candidateAgents = allAgents.filter(
       (agent) =>
         agent.enabled &&
-        // Another agent's machinery is never its own card — the LinkedIn setup
-        // and manager are fired by the LinkedIn agent's own surface.
-        !isUnlistedAgentIdentity(agent.key) &&
+        // A step of another agent is never its own card — the LinkedIn setup and
+        // manager are fired by the LinkedIn agent's own surface. Structural, off
+        // the document's parentKey.
+        !isUnlistedAgent(agent) &&
         agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
     );
     // The same set answers two questions on this page: which agents a client
@@ -162,7 +163,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const disabledBound = allAgents.filter(
       (agent) =>
         !agent.enabled &&
-        !isUnlistedAgentIdentity(agent.key) &&
+        !isUnlistedAgent(agent) &&
         agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
     );
     const disabledDeliveredIds = agentsWithDeliveredWork({
@@ -355,7 +356,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     .filter(
       (a) =>
         a.enabled &&
-        !isUnlistedAgentIdentity(a.key) &&
+        !isUnlistedAgent(a) &&
         agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
     )
     .map(toSummary);
@@ -367,7 +368,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     .filter(
       (a) =>
         !a.enabled &&
-        !isUnlistedAgentIdentity(a.key) &&
+        !isUnlistedAgent(a) &&
         agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
     )
     .map(toSummary);
