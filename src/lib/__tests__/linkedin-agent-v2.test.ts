@@ -5,7 +5,9 @@ import {
   LINKEDIN_IDENTITY_FIELD_KEY,
   BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
+  isInternalAgentIdentity,
   isLinkedInAgentIdentity,
+  listableAgentKeys,
   launchProfileFor,
   linkedInSeatIdentityToken,
   perClientAgentSlug,
@@ -69,6 +71,69 @@ describe("the v2 agent keys", () => {
     // While the e10 instance stays bound to its own client.
     expect(perClientAgentSlug("karos-linkedin-company-karoslabs")).toBe("karoslabs");
     expect(agentKeyMatchesClientSlug("karos-linkedin-company-karoslabs", "hankypanky")).toBe(false);
+  });
+});
+
+describe("the LinkedIn agent is ONE agent on the portal", () => {
+  it("treats the setup and the manager as another agent's machinery", () => {
+    // Running a lab skill needs a customAgents doc, because that doc carries
+    // entrySkillDir. That is a runtime requirement and not a claim that the skill
+    // is a product — conflating the two put three cards on the agents page for
+    // what is one agent to a client.
+    expect(isInternalAgentIdentity(SETUP)).toBe(true);
+    expect(isInternalAgentIdentity(MANAGER)).toBe(true);
+    // The writer IS the agent, so it is never hidden.
+    expect(isInternalAgentIdentity(WRITER)).toBe(false);
+    for (const key of ["karos-x-agent-v2", "karos-reddit-agent", "karos-linkedin-company-karoslabs"]) {
+      expect(isInternalAgentIdentity(key), key).toBe(false);
+    }
+  });
+
+  it("leaves exactly one LinkedIn agent listable", () => {
+    const roster = [
+      { key: SETUP },
+      { key: WRITER },
+      { key: MANAGER },
+      { key: "karos-x-agent-v2" },
+    ];
+    expect(listableAgentKeys(roster).map((a) => a.key)).toEqual([WRITER, "karos-x-agent-v2"]);
+  });
+
+  it("is filtered on every surface that lists agents, staff included", () => {
+    // The manager is quiet BY CONSTRUCTION — the writer's instructions run its
+    // pass before drafting — so a card for it offers a run nobody would choose.
+    // Asked of the sources because these are server components and route
+    // handlers: a fifth roster added later has to opt in here or it ships the
+    // regression this test was written for.
+    const SURFACES = [
+      "src/app/(app)/clients/[id]/agents/page.tsx",
+      "src/app/(app)/dashboard/page.tsx",
+      "src/app/api/clients/[id]/agents/mentionable/route.ts",
+      // The intake page's own agent resolution: the LinkedIn family has three
+      // docs and only one is the agent a person means.
+      "src/lib/agent-intake-views.ts",
+    ];
+    for (const file of SURFACES) {
+      const src = readFileSync(join(process.cwd(), file), "utf8");
+      expect(src, `${file} lists agents without filtering the internal ones`).toContain(
+        "isInternalAgentIdentity",
+      );
+    }
+  });
+
+  it("does NOT hide them by un-granting, which would break the runs", () => {
+    // A client-fired run is refused unless the agent is granted
+    // (isCustomAgentGrantedToClient in the submit core), and the LinkedIn agent's
+    // own surface fires setup on the client's behalf. So the grant stays and the
+    // LISTING goes — the two were never the same question, and the enable script
+    // grants all three on purpose.
+    const script = readFileSync(
+      join(process.cwd(), "scripts/enable-linkedin-v2-prep.ts"),
+      "utf8",
+    );
+    for (const key of [SETUP, WRITER, MANAGER]) {
+      expect(script, `${key} is not granted by the enable script`).toContain(key);
+    }
   });
 });
 

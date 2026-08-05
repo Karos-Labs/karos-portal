@@ -430,7 +430,29 @@ function companyOnFile(intake: AgentIntakeContext | null): boolean {
  * from the rows it ships.
  */
 function intakeComplete(intake: AgentIntakeContext): boolean {
-  return intake.setup.ready && companyOnFile(intake);
+  return intake.setup.ready && companyOnFile(intake) && standUpDone(intake);
+}
+
+/**
+ * Has this agent's one-time STAND-UP run happened?
+ *
+ * A second question from "has the client filled the form in", and only LinkedIn
+ * has it: v2 derives the lanes, the voice and the first topics from a run, so a
+ * client whose form is saved still has nothing to draft from until that run has
+ * been. Both submit cores refuse a writer run before it, so the dialog has to
+ * open where the press that starts it lives — otherwise pressing Run reads as
+ * broken (a brief, a press, and a refusal) rather than as a step.
+ *
+ * TRUE for every other family, because they have no such run: the X and Reddit
+ * agents draft from their form directly, and answering "no" for them would park
+ * every client on a data pane they have already finished.
+ */
+function standUpDone(intake: AgentIntakeContext): boolean {
+  if (intake.kind !== "linkedin") return true;
+  // Absent means "a caller that predates the flag", which is treated as done for
+  // the same reason the component's own default is: never show a client a step
+  // that is not theirs to take.
+  return intake.setup.data.isSetUp !== false;
 }
 
 function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
@@ -812,7 +834,8 @@ export function StaffAgentControls({
   // A scheduled run fires unattended, so every fire would be refused while the
   // company page is missing. An EXISTING schedule stays open to manage -
   // pausing it must never be blocked.
-  const scheduleNeedsData = Boolean(intake) && !companyOnFile(intake) && !schedule;
+  const scheduleNeedsData =
+    Boolean(intake) && (!companyOnFile(intake) || !standUpDone(intake!)) && !schedule;
 
   function openRun(intakeFirst = false) {
     setRunIntakeFirst(intakeFirst);
@@ -965,7 +988,7 @@ export function StaffAgentControls({
           agent={agent}
           clientId={clientId}
           {...(schedule ? { schedule } : {})}
-          {...(intake && !companyOnFile(intake)
+          {...(intake && (!companyOnFile(intake) || !standUpDone(intake))
             ? {
                 setupNeeded: {
                   kind: intake.kind,
@@ -1818,7 +1841,12 @@ export function RunCustomAgentModal({
   // `ready` is satisfied by a shared seat, so an X run would otherwise skip
   // straight to the brief for a client who set LinkedIn up first. This only
   // chooses the pane - `ready` alone still decides what a run does.
-  const openOnData = Boolean(intake) && (!companyOnFile(intake) || initialPane === "data");
+  // …or when the agent's one-time stand-up run has not happened. Pressing Run on
+  // a LinkedIn agent that has never been set up would otherwise show a brief,
+  // take the press, and refuse — so the press lands on the step that unblocks it.
+  const openOnData =
+    Boolean(intake) &&
+    (!companyOnFile(intake) || !standUpDone(intake!) || initialPane === "data");
   const [pane, setPane] = useState<RunPane>(openOnData ? "data" : "run");
   // Did the data open because the run wanted it, rather than because someone
   // asked for it from the card? Held in state so it survives the props refresh

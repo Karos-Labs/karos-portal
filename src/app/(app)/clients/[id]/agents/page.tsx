@@ -15,7 +15,10 @@ import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { BulkUploadClips } from "@/components/bulk-upload-clips";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
-import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
+import {
+  agentKeyMatchesClientSlug,
+  isInternalAgentIdentity,
+} from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedules } from "@/lib/agent-schedule-selection";
@@ -105,7 +108,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // inherited delivered run are equally unable to move an instance off its
     // client — so it is applied before anything else can widen the list.
     const candidateAgents = allAgents.filter(
-      (agent) => agent.enabled && agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
+      (agent) =>
+        agent.enabled &&
+        // Another agent's machinery is never its own card — the LinkedIn setup
+        // and manager are fired by the LinkedIn agent's own surface.
+        !isInternalAgentIdentity(agent.key) &&
+        agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
     );
     // The same set answers two questions on this page: which agents a client
     // inherits by having been delivered to, and — through rosterStatus — which
@@ -152,7 +160,10 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // disabled set — `candidateAgents` filters on enabled, so the main
     // completedAgentIds cannot answer for these.
     const disabledBound = allAgents.filter(
-      (agent) => !agent.enabled && agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
+      (agent) =>
+        !agent.enabled &&
+        !isInternalAgentIdentity(agent.key) &&
+        agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
     );
     const disabledDeliveredIds = agentsWithDeliveredWork({
       assets,
@@ -341,14 +352,24 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // one client's lab folder, so offering it here would build a run both submit
   // cores refuse. A second unfiltered list was exactly how that regressed.
   const enabledAgents = customAgents
-    .filter((a) => a.enabled && agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug))
+    .filter(
+      (a) =>
+        a.enabled &&
+        !isInternalAgentIdentity(a.key) &&
+        agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
+    )
     .map(toSummary);
   // Paused agents stay ON the roster too (same reasoning as the client branch
   // above) rather than just disappearing from the operator's view the moment
   // they're toggled off - an admin needs to see it's actually there, paused,
   // not wonder if the toggle silently deleted it.
   const disabledStaffAgents = customAgents
-    .filter((a) => !a.enabled && agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug))
+    .filter(
+      (a) =>
+        !a.enabled &&
+        !isInternalAgentIdentity(a.key) &&
+        agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
+    )
     .map(toSummary);
 
   // (The jobPreviews block that used to live here fed <ManagedProducts />,

@@ -24,7 +24,7 @@ auto-posting, so a person posts every time.
 | Company form, seats (shared `clientSeats` — one person, one seat across agents), **"What should we cover next?"** (v2 Section A0), the shared what-happened-this-week box, the setup band, per-seat voice setup, per-draft feedback | `src/components/linkedin-agent-intake.tsx`, rendered inside the run dialog on `/clients/<id>/agents` — inline on a first run, then collapsed behind the "LinkedIn agent data" button — and by the `/clients/<id>/linkedin-agent` deep link, which no navigation points at. Both get their props from `buildLinkedInAgentIntakeView` in `src/lib/agent-intake-views.ts` — one mapping, two mounts |
 | Agent registration | THREE `customAgents` docs imported from the lab manifest: `karos-linkedin-writer-v2` → `products/building/linkedin-agent-v2`, `karos-linkedin-setup-v2` → `…/setup`, `karos-linkedin-manager-v2` → `…/manager` |
 | Per-client binding | **None, and that is the v2 design.** One generic writer and one generic manager serve every client (setup emits no per-client agent code — the v1 generation did, which is why a fix had to be hand-applied to every client's copy). The keys carry no `<slug>`, so `perClientAgentSlug` is null and `PER_CLIENT_AGENT_KEY_PREFIXES` does not apply to them. The e10 doc `karos-linkedin-company-karoslabs` keeps its prefix and stays disabled as the fallback |
-| What the client sees | ONE card. First press runs SETUP; after that, Run runs the writer. The manager has no card — it runs inside every writer press (below). "Add a seat" then "Build their voice" runs setup for that person |
+| What the client sees | **ONE card, and only one.** Pressing Run the first time opens the agent's data on its stand-up step; after that, Run runs the writer. "Add a seat" fires that person's setup as part of adding them. The setup and manager docs exist (a doc is what carries `entrySkillDir`) but are filtered off every roster by `isInternalAgentIdentity` — client rosters, the staff roster, the dashboard tiles, the copilot's @-mentions, and the intake page's own agent resolution. They stay GRANTED, because a client-fired run is refused unless the agent is granted; hiding and un-granting are different questions |
 | Run launcher | `/clients/<id>/agents`; exact-key profiles for all three v2 keys in `src/lib/custom-agent-launch.ts`, above the loose `/linkedin/` brief. "Post as" options are per client — `withLinkedInIdentityOptions` lists the company page plus every seat whose voice is built |
 | Stored data | Firestore: `clientSeats` (shared), `agentIntake` (agent="linkedin"), `xNewsUpdates` (the SHARED news drop — SCRUM-51), `liDraftFeedback`, **`liDirectionRequests`** (new), **`liAgentState`** (new — the durable state), `seatVoiceProfiles` (agent="linkedin") |
 | Run-time injection | `src/lib/agent-service/linkedin-agent-context.ts` on every LinkedIn run (**both** submit cores). Per skill: setup gets the answers, the writer gets everything, the manager gets the state it audits and no CVs |
@@ -40,7 +40,7 @@ never ask for them — ASK vs BUILD, `PORTAL-INPUT-CONTRACT` §1.
 
 ## Three decisions this portal made, and why they are not to be "corrected"
 
-**1. One press runs the manager, then the writer.** Ben, 2026-08-04: *"Run every
+**1. One press runs the manager, then the writer — the manager is quiet.** Ben, 2026-08-04: *"Run every
 run. If the pool is full, then just check that there is nothing more relevant or
 more up to date to talk about."* Both skills live inside the writer's entry
 directory (the manager is a subfolder of it), so this is ONE job, one charge and
@@ -52,6 +52,16 @@ bigger refill.
 
 Two honest costs: a press is slower (~20–40 min, reflected in the brief), and a
 death mid-manager costs the whole press.
+
+**There is no manager card, and no setup card.** A `customAgents` doc is a runtime
+requirement — it is what carries `entrySkillDir` — not a statement that the skill
+is a product, and conflating the two is exactly what put three LinkedIn cards on
+the agents page (Ben, 2026-08-05: *"The linkedin manager should not show up. Is it
+not supposed to be a quiet agent that runs with the repeating runner?"* — it is,
+and it was; the registration was the bug). `isInternalAgentIdentity` in
+`custom-agent-launch.ts` is the one predicate every roster reads, and a standalone
+staff manager card is gone too: it was an addition of this integration's own
+making, not something the product asked for.
 
 **2. ONE combined identity file, not one file per identity.** The lab pins
 `linkedin-voice-card-<id>.json` and `linkedin-learning-log-<id>.md` per identity

@@ -851,6 +851,19 @@ function AddSeatForm({ clientId }: { clientId: string }) {
         setError(result.error);
         return;
       }
+      // Adding the person IS asking for them to be set up, so their setup run
+      // starts here rather than waiting for a second press on their new card.
+      //
+      // Through the funnel like every other write on this surface (a lapsed
+      // session REJECTS rather than returning), but its outcome is deliberately
+      // NOT surfaced: the seat itself saved, and their own card carries "Build
+      // their voice" as the retry. Telling someone their colleague was not added
+      // — when they were — is a worse answer than the voice run needing one more
+      // press.
+      const seatId = "seatId" in result ? result.seatId : undefined;
+      if (seatId) {
+        await intakeSave(() => runLinkedInSetupAction({ clientId, identity: seatId }));
+      }
       setName("");
       setRole("");
       setProfileUrl("");

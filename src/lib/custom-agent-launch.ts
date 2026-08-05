@@ -970,6 +970,37 @@ export function linkedInSeatIdentityToken(seatId: string): string {
 }
 
 /**
+ * Agents that are ANOTHER agent's machinery, and never get a card of their own.
+ *
+ * Running a lab skill needs a `customAgents` doc, because that doc is what
+ * carries `entrySkillDir`. That is a runtime requirement, not a statement that
+ * the skill is a product — and the two got conflated: registering LinkedIn v2's
+ * setup and manager put three cards on the agents page for what is one agent to
+ * a client.
+ *
+ * The LinkedIn agent is ONE agent. Its first press runs setup; every press after
+ * that runs the writer, which runs the manager pass itself before drafting (Ben,
+ * 2026-08-04: the manager is quiet and runs with the runner). Neither of those
+ * two is a thing anyone chooses from a roster, so neither is listed on one — by
+ * clients OR by staff, because a standalone manager card was my own addition and
+ * not something the product asked for.
+ *
+ * WHAT THIS DOES NOT DO: it does not un-grant them, and it must not. A
+ * client-fired run is refused by both submit cores unless the agent is granted
+ * (`isCustomAgentGrantedToClient`), and the LinkedIn agent's own surface fires
+ * setup on the client's behalf. So the grant stays and the LISTING goes; the two
+ * were never the same question.
+ */
+export function isInternalAgentIdentity(key: string): boolean {
+  return key === "karos-linkedin-setup-v2" || key === "karos-linkedin-manager-v2";
+}
+
+/** The roster filter: everything a person may legitimately be offered. */
+export function listableAgentKeys<T extends { key: string }>(agents: readonly T[]): T[] {
+  return agents.filter((agent) => !isInternalAgentIdentity(agent.key));
+}
+
+/**
  * The v2 writer's "Post as" options for ONE client: the company page, plus every
  * seat whose voice has been built.
  *
