@@ -1,5 +1,5 @@
 import { getCurrentUser } from "@/lib/auth";
-import { isInternalAgentIdentity } from "@/lib/custom-agent-launch";
+import { isUnlistedAgentIdentity } from "@/lib/custom-agent-launch";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { getClient, listCustomAgents } from "@/lib/data";
 import { canViewClient } from "@/lib/client-visibility";
@@ -76,7 +76,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     // for. The LinkedIn setup and manager are the LinkedIn agent's own steps, so
     // "@LinkedIn Manager, draft me a post" would dispatch a run that never
     // drafts — the same reason a disabled agent is kept off this list.
-    .filter((agent) => !isInternalAgentIdentity(customAgentById.get(agent.id)?.key ?? agent.id))
+    .filter((agent) => !isUnlistedAgentIdentity(customAgentById.get(agent.id)?.key ?? agent.id))
     .map((agent) => {
     const umbrella = liveUmbrellaByCustomAgentId.get(agent.id);
     const custom = customAgentById.get(agent.id);

@@ -247,16 +247,23 @@ Pre-mutation snapshots of every doc this touches, taken before any change:
 | L17 | 24 new tests for the v2 contract (keys, binding, briefs, identity options, state capture, receipt parsing, the parser, the doc's load-bearing lines) | `src/lib/__tests__/linkedin-agent-v2.test.ts` (new file) | delete the file |
 | L18 | Existing tests repointed at the new contract, none deleted: the LinkedIn row set now includes `direction` (+2 new cases pinning that X does NOT get it and that a covered row is not "filled"); the intake-gate sweep accepts MORE than one refusal per kind while newly asserting every one of them opens with its prefix, ends "Nothing has run.", and that the scheduled core's set is a subset of the interactive core's; 3 data mocks added; 2 new persisted enum fields classified | `agent-detail-sections.test.ts`, `agent-intake-gate.test.ts`, `agent-intake-navigation.test.ts`, `agent-intake-feedback-rows.test.ts`, `seat-remove-run-warning.test.ts`, `client-copy-boundary.test.ts` | revert each file |
 
-| L19 | `isInternalAgentIdentity` / `listableAgentKeys`: the setup and manager docs are another agent's machinery and are filtered off EVERY roster — the client roster and its paused list, the staff roster and its paused list, the dashboard tiles, the copilot's @-mention list, and the intake page's family resolution. They stay ENABLED and GRANTED, because a client-fired run is refused unless granted; the listing and the grant are different questions | `src/lib/custom-agent-launch.ts`, `src/app/(app)/clients/[id]/agents/page.tsx` (4 filters), `src/app/(app)/dashboard/page.tsx`, `src/app/api/clients/[id]/agents/mentionable/route.ts`, `src/lib/agent-intake-views.ts` | remove the predicate and the six call sites. Reverting brings back three LinkedIn cards, which is the state this fixed |
+| L19 | `isUnlistedAgentIdentity` / `listableAgentKeys`: v2's setup and manager (another agent's machinery) AND the whole e10 generation (`karos-linkedin-agent`, `karos-linkedin-company-*`, superseded by v2 — a disabled-but-granted agent renders as "Coming soon", which left a client looking at two LinkedIn cards) are filtered off EVERY roster — the client roster and its paused list, the staff roster and its paused list, the dashboard tiles, the copilot's @-mention list, and the intake page's family resolution. They stay ENABLED and GRANTED, because a client-fired run is refused unless granted; the listing and the grant are different questions | `src/lib/custom-agent-launch.ts`, `src/app/(app)/clients/[id]/agents/page.tsx` (4 filters), `src/app/(app)/dashboard/page.tsx`, `src/app/api/clients/[id]/agents/mentionable/route.ts`, `src/lib/agent-intake-views.ts` | remove the predicate and the six call sites. Reverting brings back three LinkedIn cards, which is the state this fixed |
 | L20 | `standUpDone`: the run dialog opens on the agent's DATA when its one-time stand-up run has not happened, so pressing Run the first time lands on the step that unblocks it instead of showing a brief, taking the press and refusing. Also applied to the schedule gate and the schedule dialog's setup notice. TRUE for X and Reddit, which have no such run | `src/components/custom-agents.tsx` | remove the helper and the three uses; the server gate is unaffected |
+| L22 | `IdentityPicker`: the company form stays above, then a name strip picks one person, plus "Add someone". Replaces the stack of a company form and one card per seat, which read as several things to set up rather than one agent with a roster. Every seat keeps its `#intake-seat-<id>` anchor (in an `sr-only` block when the strip is not showing it) so #85's per-row links still land | `src/components/linkedin-agent-intake.tsx` | delete the component, restore the flat `seats.map(...)` + `AddSeatForm` |
+| L23 | The unlisted filter sits on the intake DESTINATION, not the intake GATE. On the gate it 404'd the client whose only LinkedIn agent is the superseded e10 instance — that rung is deliberately coarser because being coarse cannot refuse anyone. Caught by `client-run-offer-destinations.test.ts` #114 | `src/lib/agent-intake-views.ts` (`requireIntakeAgentAccess`) | move the predicate back into the family filter |
+| L24 | Setup-first copy ("We need to set this up first") and no identity choice until the stand-up run has happened | `src/components/linkedin-agent-intake.tsx` | restore "Set up LinkedIn" and render the picker unconditionally |
 | L21 | "Add a seat" fires that seat's setup on success, through the intake funnel, with its outcome deliberately unsurfaced (the seat saved; their card carries "Build their voice" as the retry) | `src/components/linkedin-agent-intake.tsx` (`AddSeatForm`) | remove the `runLinkedInSetupAction` call |
 
-Verified: `npx tsc --noEmit` clean, `npm run build` clean, full vitest **3,706
-passed / 1 failed**. That one failure (`client-copy-boundary.test.ts` → "is not
-re-spelled anywhere else in src") is a **pre-existing 20s timeout under
-full-suite load, reproduced on clean main with these changes stashed** — it
-passes in isolation (16.4s of a 20s budget). Not caused by this work and not
-fixed by it.
+Verified: `npx tsc --noEmit` clean, `npm run build` clean, full vitest **3,698
+passed / 11 failed**. Those 11 are **all `Test timed out`**, all inside two AST-sweep
+files (`client-copy-boundary.test.ts`, `client-model-charge-boundary.test.ts`)
+that walk every file in `src`. Both pass in isolation. Measured against a
+`git worktree` of clean `origin/main` on the same machine at the same time: **main
+fails the same 11 tests in the same 2 files** — 3,666 passed / 11 failed there
+versus 3,698 passed / 11 failed here. Pre-existing fragility under parallel load:
+the suite runs in 44s idle and ~145s loaded, and these sweeps carry 5s and 20s
+per-test budgets. Not caused by this work, not fixed by it, and worth raising on
+its own — those budgets will flake on any busy CI box.
 
 ### Data changes (production `karoscmo`, applied 2026-08-05)
 

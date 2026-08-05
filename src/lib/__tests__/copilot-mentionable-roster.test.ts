@@ -126,15 +126,44 @@ describe("the @mention roster combines the two lists without doubling anything",
   it("reads the agent KEY, which a renamed agent's name can no longer give", async () => {
     // The precise rung. Nothing in "Acme voice" says LinkedIn; the key does,
     // and the key never leaves the route — only the token it resolved to.
+    //
+    // The key is the v2 WRITER rather than the e10 master it used to be, for a
+    // reason that is the point of the test next to this one: the e10 keys are
+    // unlisted now, so this roster drops them and there would be no row left to
+    // assert on. The property under test is unchanged — an uninformative name, a
+    // key that answers, and no key on the wire.
     vi.mocked(getClientCustomAgents).mockResolvedValue([{ id: "agent-li", name: "Acme voice" }] as any);
     vi.mocked(data.listCustomAgents).mockResolvedValue([
-      { id: "agent-li", icon: "Bot", key: "karos-linkedin-agent" },
+      { id: "agent-li", icon: "Bot", key: "karos-linkedin-writer-v2" },
     ] as any);
 
     const { agents } = await mentionable();
 
     expect(agents[0].platform).toBe("linkedin");
     expect(agents[0]).not.toHaveProperty("key");
+  });
+
+  it("drops an agent that is another agent's machinery, or a superseded one", async () => {
+    // The copilot can ACT on a tag, so a taggable name has to be something a
+    // person would ask for. "@LinkedIn Manager, draft me a post" would dispatch a
+    // run that never drafts, and "@LinkedIn Company Page" a run of an agent v2
+    // replaced — the same reason a disabled agent is already kept off this list.
+    vi.mocked(getClientCustomAgents).mockResolvedValue([
+      { id: "agent-setup", name: "LinkedIn Setup" },
+      { id: "agent-mgr", name: "LinkedIn Manager" },
+      { id: "agent-e10", name: "LinkedIn Company Page" },
+      { id: "agent-li", name: "LinkedIn Agent" },
+    ] as any);
+    vi.mocked(data.listCustomAgents).mockResolvedValue([
+      { id: "agent-setup", icon: "Bot", key: "karos-linkedin-setup-v2" },
+      { id: "agent-mgr", icon: "Bot", key: "karos-linkedin-manager-v2" },
+      { id: "agent-e10", icon: "Bot", key: "karos-linkedin-company-acme" },
+      { id: "agent-li", icon: "Bot", key: "karos-linkedin-writer-v2" },
+    ] as any);
+
+    const { agents } = await mentionable();
+
+    expect(agents.map((a: { displayName: string }) => a.displayName)).toEqual(["LinkedIn Agent"]);
   });
 
   it("sends null for an agent that targets no platform, rather than a nearest guess", async () => {

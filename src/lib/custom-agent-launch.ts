@@ -970,34 +970,51 @@ export function linkedInSeatIdentityToken(seatId: string): string {
 }
 
 /**
- * Agents that are ANOTHER agent's machinery, and never get a card of their own.
+ * Agents that exist in `customAgents` but must never appear on a roster — to a
+ * client OR to staff. **LinkedIn is ONE agent on this portal**, and this is the
+ * one predicate that keeps it that way.
  *
- * Running a lab skill needs a `customAgents` doc, because that doc is what
- * carries `entrySkillDir`. That is a runtime requirement, not a statement that
- * the skill is a product — and the two got conflated: registering LinkedIn v2's
- * setup and manager put three cards on the agents page for what is one agent to
- * a client.
+ * Two different reasons land here, and both were shipped as bugs first:
  *
- * The LinkedIn agent is ONE agent. Its first press runs setup; every press after
- * that runs the writer, which runs the manager pass itself before drafting (Ben,
- * 2026-08-04: the manager is quiet and runs with the runner). Neither of those
- * two is a thing anyone chooses from a roster, so neither is listed on one — by
- * clients OR by staff, because a standalone manager card was my own addition and
- * not something the product asked for.
+ * 1. **Another agent's machinery.** Running a lab skill needs a doc, because the
+ *    doc carries `entrySkillDir` — a runtime requirement, not a claim that the
+ *    skill is a product. Registering v2's setup and manager therefore put three
+ *    cards up for what is one agent. The LinkedIn agent's first press runs setup;
+ *    every press after runs the writer, which runs the manager pass itself before
+ *    drafting (Ben, 2026-08-04: the manager is quiet and runs with the runner).
+ *    Neither is a thing anyone picks off a list.
  *
- * WHAT THIS DOES NOT DO: it does not un-grant them, and it must not. A
- * client-fired run is refused by both submit cores unless the agent is granted
- * (`isCustomAgentGrantedToClient`), and the LinkedIn agent's own surface fires
- * setup on the client's behalf. So the grant stays and the LISTING goes; the two
- * were never the same question.
+ * 2. **Superseded by v2.** The e10 generation stays importable as a fallback, and
+ *    "fallback" was allowed to mean "still on the roster": because a disabled
+ *    agent that is granted still renders (as "Coming soon"), a client saw a
+ *    LinkedIn agent AND a LinkedIn company page sitting there promising to
+ *    arrive. Nothing is coming — v2 replaced it. It keeps its doc so a rollback
+ *    has something to re-enable, and it loses its card.
+ *
+ * WHAT THIS DOES NOT DO, for the machinery half: it does not un-grant, and it
+ * must not. A client-fired run is refused by both submit cores unless the agent
+ * is granted (`isCustomAgentGrantedToClient`), and the LinkedIn agent's own
+ * surface fires setup on the client's behalf. The listing and the grant were
+ * never the same question.
+ *
+ * NOT the same as `isLinkedInAgentIdentity`, which still answers TRUE for every
+ * key here — the family predicate decides what gets GATED and FED, and a run of
+ * the e10 fallback still needs its data. This one decides only what gets OFFERED.
  */
-export function isInternalAgentIdentity(key: string): boolean {
-  return key === "karos-linkedin-setup-v2" || key === "karos-linkedin-manager-v2";
+export function isUnlistedAgentIdentity(key: string): boolean {
+  return (
+    // v2's own steps
+    key === "karos-linkedin-setup-v2" ||
+    key === "karos-linkedin-manager-v2" ||
+    // the e10 generation v2 replaced
+    key === "karos-linkedin-agent" ||
+    key.startsWith("karos-linkedin-company-")
+  );
 }
 
 /** The roster filter: everything a person may legitimately be offered. */
 export function listableAgentKeys<T extends { key: string }>(agents: readonly T[]): T[] {
-  return agents.filter((agent) => !isInternalAgentIdentity(agent.key));
+  return agents.filter((agent) => !isUnlistedAgentIdentity(agent.key));
 }
 
 /**

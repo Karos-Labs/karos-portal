@@ -5,7 +5,7 @@ import {
   LINKEDIN_IDENTITY_FIELD_KEY,
   BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
-  isInternalAgentIdentity,
+  isUnlistedAgentIdentity,
   isLinkedInAgentIdentity,
   listableAgentKeys,
   launchProfileFor,
@@ -75,28 +75,45 @@ describe("the v2 agent keys", () => {
 });
 
 describe("the LinkedIn agent is ONE agent on the portal", () => {
-  it("treats the setup and the manager as another agent's machinery", () => {
-    // Running a lab skill needs a customAgents doc, because that doc carries
-    // entrySkillDir. That is a runtime requirement and not a claim that the skill
-    // is a product — conflating the two put three cards on the agents page for
-    // what is one agent to a client.
-    expect(isInternalAgentIdentity(SETUP)).toBe(true);
-    expect(isInternalAgentIdentity(MANAGER)).toBe(true);
+  it("unlists v2's own steps AND the e10 generation it replaced", () => {
+    // Two reasons, both shipped as bugs first. The machinery: running a lab skill
+    // needs a doc because the doc carries entrySkillDir, which is a runtime
+    // requirement and not a claim that the skill is a product — so registering
+    // setup and manager put three cards up for one agent. The fallback: a
+    // DISABLED agent that is still granted renders as "Coming soon", so keeping
+    // e10 "as the fallback" left a client looking at a LinkedIn agent and a
+    // LinkedIn company page promising to arrive. Nothing is coming; v2 replaced it.
+    for (const key of [SETUP, MANAGER, "karos-linkedin-agent", "karos-linkedin-company-karoslabs"]) {
+      expect(isUnlistedAgentIdentity(key), key).toBe(true);
+    }
     // The writer IS the agent, so it is never hidden.
-    expect(isInternalAgentIdentity(WRITER)).toBe(false);
-    for (const key of ["karos-x-agent-v2", "karos-reddit-agent", "karos-linkedin-company-karoslabs"]) {
-      expect(isInternalAgentIdentity(key), key).toBe(false);
+    expect(isUnlistedAgentIdentity(WRITER)).toBe(false);
+    for (const key of ["karos-x-agent-v2", "karos-reddit-agent", "karos-tiktok-agent"]) {
+      expect(isUnlistedAgentIdentity(key), key).toBe(false);
     }
   });
 
-  it("leaves exactly one LinkedIn agent listable", () => {
+  it("leaves exactly ONE LinkedIn agent listable out of the whole family", () => {
     const roster = [
       { key: SETUP },
       { key: WRITER },
       { key: MANAGER },
+      { key: "karos-linkedin-company-karoslabs" },
+      { key: "karos-linkedin-agent" },
       { key: "karos-x-agent-v2" },
     ];
-    expect(listableAgentKeys(roster).map((a) => a.key)).toEqual([WRITER, "karos-x-agent-v2"]);
+    const listed = listableAgentKeys(roster).map((a) => a.key);
+    expect(listed).toEqual([WRITER, "karos-x-agent-v2"]);
+    expect(listed.filter((k) => k.includes("linkedin"))).toHaveLength(1);
+  });
+
+  it("keeps every unlisted key inside the FAMILY, so its runs are still gated and fed", () => {
+    // Unlisted is not the same as unknown. The family predicate decides what gets
+    // its intake attached and its setup gate applied; a key dropped from THAT
+    // would run with no data. Only the offering changes.
+    for (const key of [SETUP, MANAGER, "karos-linkedin-agent", "karos-linkedin-company-karoslabs"]) {
+      expect(isLinkedInAgentIdentity(key), key).toBe(true);
+    }
   });
 
   it("is filtered on every surface that lists agents, staff included", () => {
@@ -116,7 +133,7 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
     for (const file of SURFACES) {
       const src = readFileSync(join(process.cwd(), file), "utf8");
       expect(src, `${file} lists agents without filtering the internal ones`).toContain(
-        "isInternalAgentIdentity",
+        "isUnlistedAgentIdentity",
       );
     }
   });

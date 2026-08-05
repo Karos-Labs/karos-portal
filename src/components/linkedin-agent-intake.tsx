@@ -232,6 +232,133 @@ function DirectionRequestsBox({
   );
 }
 
+/* ─────────────────────── who the agent is posting as ───────────────────── */
+
+/**
+ * The identity chooser: the company page, or one person.
+ *
+ * WHY A CHOOSER AND NOT A LIST OF CARDS. This is ONE agent that posts as several
+ * identities, and the surface said otherwise — a stack of a company form plus a
+ * card per seat reads as several things to set up rather than one agent with a
+ * roster (Ben, 2026-08-05: "we should be able to choose whether you want to see
+ * the company seat or if you want to see a specific seat, but it should only show
+ * up as one agent"). Picking a name here shows that identity's own answers, and
+ * it is the same set the writer offers in "Post as" when it runs.
+ *
+ * The COMPANY PAGE is not in the strip. Its form is directly above this, always
+ * visible, because it is the floor every other identity stands on: the company
+ * context is read on every run including a seat's, and a seat cannot be set up
+ * before it. Putting it in the strip would imply you could swap it out.
+ *
+ * A seat that is not set up yet is still listed, unlike in "Post as" where it is
+ * absent. The two lists answer different questions: that one is "who can this run
+ * be for" (a name that could only refuse is a lie), this one is "who is on the
+ * roster" — and a person waiting on their voice is exactly who someone opens this
+ * to find.
+ */
+function IdentityPicker({
+  clientId,
+  seats,
+  runInFlight,
+}: {
+  clientId: string;
+  seats: LiSeatView[];
+  runInFlight: boolean;
+}) {
+  const [selected, setSelected] = useState<string | null>(seats[0]?.id ?? null);
+  const [adding, setAdding] = useState(false);
+  const seat = seats.find((s) => s.id === selected) ?? null;
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <CardTitle>Who else we post as</CardTitle>
+        {seats.length > 0 ? (
+          <Badge tone={seats.some((s) => s.voiceReady) ? "success" : "warning"}>
+            {seats.filter((s) => s.voiceReady).length} of {seats.length} ready
+          </Badge>
+        ) : null}
+      </div>
+      <p className="mt-1 text-sm text-muted">
+        The company page always posts. Add anyone whose own profile we should post from, and pick a
+        name to see or change their details. Each person is set up once, from how they actually write.
+      </p>
+
+      {seats.length > 0 ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {seats.map((s) => {
+            const active = s.id === selected && !adding;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => {
+                  setSelected(s.id);
+                  setAdding(false);
+                }}
+                aria-pressed={active}
+                className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                  active
+                    ? "border-neon/50 bg-neon/10 text-foreground"
+                    : "border-border text-muted hover:text-foreground"
+                }`}
+              >
+                {s.name}
+                {s.voiceReady ? "" : " · setting up"}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            aria-pressed={adding}
+            className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${
+              adding
+                ? "border-neon/50 bg-neon/10 text-foreground"
+                : "border-dashed border-border text-muted hover:text-foreground"
+            }`}
+          >
+            + Add someone
+          </button>
+        </div>
+      ) : null}
+
+      <div className="mt-4">
+        {adding || seats.length === 0 ? (
+          <AddSeatForm clientId={clientId} />
+        ) : seat ? (
+          <div id={intakeSeatAnchorId(seat.id)} className="scroll-mt-24">
+            <SeatCard clientId={clientId} seat={seat} runInFlight={runInFlight} />
+          </div>
+        ) : null}
+      </div>
+
+      {/* Every seat still carries its own anchor so the inputs band's per-row
+          link lands, even for a person the strip is not currently showing —
+          #85's rule is that a row the band paints always has somewhere to go,
+          and a collapsed picker would otherwise have quietly broken it. */}
+      <div className="sr-only">
+        {seats
+          .filter((s) => s.id !== selected)
+          .map((s) => (
+            <span key={s.id} id={intakeSeatAnchorId(s.id)} />
+          ))}
+      </div>
+
+      {/* #83: this page and the settings dialog both ask for "a LinkedIn seat",
+          read different collections, and neither can see the other's rows — so
+          each has to say which one it is showing. This is the drafting roster;
+          the settings one holds the sign-ins we publish and measure with, and it
+          is the one with a plan limit and a price. */}
+      <p className="mt-4 text-xs text-muted-2">
+        These seats are who the agent writes for. Signing someone in so we can publish and measure
+        on their own LinkedIn is separate. That is the employee seats list in your settings, and
+        only it has a plan limit.
+      </p>
+    </Card>
+  );
+}
+
 /* ───────────────────────────── the setup band ──────────────────────────── */
 
 /**
@@ -290,13 +417,14 @@ function SetupBand({
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between gap-3">
-        <CardTitle>Set up LinkedIn</CardTitle>
+        <CardTitle>We need to set this up first</CardTitle>
         <Badge tone="warning">Not set up</Badge>
       </div>
       <p className="mt-1 text-sm text-muted">
         One run stands up how this company posts on LinkedIn: which kinds of post it makes, the
         recurring one it becomes known for, how it sounds, and the first list of subjects. It is all
-        worked out from the material you already gave us, and nothing posts.
+        worked out from the material you already gave us, and nothing posts. After this, the agent is
+        active and every run drafts a post.
       </p>
       {fired ? (
         <p className="mt-3 text-sm text-muted">
@@ -1142,10 +1270,12 @@ export function LinkedInAgentIntake({
         isSetUp={isSetUp ?? true}
         companyOnFile={company !== null}
       />
-      {/* The anchors the agent page's inputs band links each of its rows to
-          (#85). Both sides derive them from the SAME row id through
-          intakeAnchorId, so a row cannot end up pointing at a hash that
-          matches nothing — which scrolls nowhere and raises nothing. */}
+      {/* ONE agent, split into steps, shown once. While the stand-up run has not
+          happened the setup above IS the agent, so everything a person could
+          choose between is deliberately absent: there is nothing to pick an
+          identity for yet, and offering the choice would be offering a run the
+          server refuses. The company form stays, because it is the one input
+          setup itself reads. */}
       <div id={intakeAnchorId("company")} className="scroll-mt-24">
         <CompanyForm
           clientId={clientId}
@@ -1153,24 +1283,14 @@ export function LinkedInAgentIntake({
           {...(pageUrlSuggestion ? { pageUrlSuggestion } : {})}
         />
       </div>
-      <div className="space-y-4">
-        {seats.map((seat) => (
-          <div key={seat.id} id={intakeSeatAnchorId(seat.id)} className="scroll-mt-24">
-            <SeatCard clientId={clientId} seat={seat} runInFlight={runInFlight} />
-          </div>
-        ))}
-        <AddSeatForm clientId={clientId} />
-        {/* #83: this page and the settings dialog both ask for "a LinkedIn
-            seat", read different collections, and neither can see the other's
-            rows — so each has to say which one it is showing. This is the
-            drafting roster; the settings one holds the sign-ins we publish and
-            measure with, and it is the one with a plan limit and a price. */}
+      {isSetUp === false ? (
         <p className="text-xs text-muted-2">
-          These seats are who the agent writes for. Signing someone in so we can publish and measure
-          on their own LinkedIn is separate. That is the employee seats list in your settings, and
-          only it has a plan limit.
+          People get added after setup. Once the company page is standing, you can add anyone whose
+          profile we should post from.
         </p>
-      </div>
+      ) : (
+        <IdentityPicker clientId={clientId} seats={seats} runInFlight={runInFlight} />
+      )}
       <div id={intakeAnchorId("direction")} className="scroll-mt-24">
         <DirectionRequestsBox
           clientId={clientId}

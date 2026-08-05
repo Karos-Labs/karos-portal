@@ -34,7 +34,7 @@ import {
 } from "@/lib/data";
 import {
   agentKeyMatchesClientSlug,
-  isInternalAgentIdentity,
+  isUnlistedAgentIdentity,
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
@@ -144,21 +144,31 @@ export async function requireIntakeAgentAccess(args: {
     granted.size === 0
       ? []
       : (await listCustomAgents()).filter(
-          (agent) =>
-            agent.enabled &&
-            granted.has(agent.id) &&
-            matchesFamily(agent.key) &&
-            // The LinkedIn family has three docs and only one of them is the
-            // agent a person means. Without this the header control could point
-            // at "LinkedIn Setup" — a card nothing lists, whose page would then
-            // offer the data for an agent the reader never chose.
-            !isInternalAgentIdentity(agent.key),
+          (agent) => agent.enabled && granted.has(agent.id) && matchesFamily(agent.key),
         );
   // Same refusal as the detail route, and the same two rungs: granted, or this
   // family has already worked for them. Staff reached this line through
   // requireVisibleClient, which is their gate.
+  //
+  // THE UNLISTED FILTER IS NOT ON THIS RUNG, and putting it here was a mistake
+  // worth naming: the gate is deliberately the coarser question ("do they have a
+  // LinkedIn agent at all"), because being coarse cannot 404 a legitimate client
+  // — and narrowing it 404'd exactly the client whose only LinkedIn agent is the
+  // superseded e10 instance. It belongs on the DESTINATION below, which is the
+  // rung that has to be precise.
   if (!args.isStaff && family.length === 0 && args.runs.length === 0) notFound();
-  return family.find((agent) => agentKeyMatchesClientSlug(agent.key, args.clientSlug))?.id ?? null;
+  return (
+    family.find(
+      (agent) =>
+        agentKeyMatchesClientSlug(agent.key, args.clientSlug) &&
+        // The LinkedIn family has four keys and only one is the agent a person
+        // means. Without this the header control could point at "LinkedIn Setup"
+        // — a card nothing lists, whose page would then offer the data for an
+        // agent the reader never chose. Null is not a refusal: `intakePageAction`
+        // falls back to an honestly-labelled link to the roster.
+        !isUnlistedAgentIdentity(agent.key),
+    )?.id ?? null
+  );
 }
 
 /**

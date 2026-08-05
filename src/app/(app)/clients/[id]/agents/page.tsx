@@ -17,7 +17,7 @@ import { BulkUploadClips } from "@/components/bulk-upload-clips";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import {
   agentKeyMatchesClientSlug,
-  isInternalAgentIdentity,
+  isUnlistedAgentIdentity,
 } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
@@ -112,7 +112,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
         agent.enabled &&
         // Another agent's machinery is never its own card — the LinkedIn setup
         // and manager are fired by the LinkedIn agent's own surface.
-        !isInternalAgentIdentity(agent.key) &&
+        !isUnlistedAgentIdentity(agent.key) &&
         agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
     );
     // The same set answers two questions on this page: which agents a client
@@ -162,7 +162,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     const disabledBound = allAgents.filter(
       (agent) =>
         !agent.enabled &&
-        !isInternalAgentIdentity(agent.key) &&
+        !isUnlistedAgentIdentity(agent.key) &&
         agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
     );
     const disabledDeliveredIds = agentsWithDeliveredWork({
@@ -355,7 +355,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     .filter(
       (a) =>
         a.enabled &&
-        !isInternalAgentIdentity(a.key) &&
+        !isUnlistedAgentIdentity(a.key) &&
         agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
     )
     .map(toSummary);
@@ -367,7 +367,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     .filter(
       (a) =>
         !a.enabled &&
-        !isInternalAgentIdentity(a.key) &&
+        !isUnlistedAgentIdentity(a.key) &&
         agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
     )
     .map(toSummary);

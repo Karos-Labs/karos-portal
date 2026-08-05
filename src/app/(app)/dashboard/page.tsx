@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { isInternalAgentIdentity } from "@/lib/custom-agent-launch";
+import { isUnlistedAgentIdentity } from "@/lib/custom-agent-launch";
 import { listClients, listJobs, listActionItemsByAssignee, listUsers, listCustomAgents } from "@/lib/data";
 import { Card, CardTitle, StatCard, Badge, EmptyState, Button, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -37,7 +37,7 @@ export default async function DashboardPage() {
   // Another agent's machinery gets no tile either — the LinkedIn setup and
   // manager are fired by the LinkedIn agent, not chosen from a list.
   const enabledAgents = customAgents.filter(
-    (a) => a.enabled && !isInternalAgentIdentity(a.key),
+    (a) => a.enabled && !isUnlistedAgentIdentity(a.key),
   );
   // Reassignment targets: active staff only.
   const staffUsers = allUsers.filter(
