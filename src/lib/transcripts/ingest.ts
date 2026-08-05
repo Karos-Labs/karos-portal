@@ -26,7 +26,11 @@ async function analyze(t: FirefliesTranscript, clientId: string | null) {
       schema: analysisSchema,
       system:
         "You are an analyst for a marketing agency. Summarise client meeting transcripts and extract action items and key topics that the agency should act on.",
-      prompt: `Meeting: ${t.title}\nParticipants: ${t.participants.join(", ")}\n\nTranscript:\n${t.text.slice(0, 18000)}`,
+      // 18k chars (~4.5k tokens) was cutting real meetings short - a longer call with
+      // the whole team routinely runs past that, dropping whatever was discussed (and
+      // whoever it was assigned to) after the cutoff. Sonnet's 200k-token context has
+      // ample room, so give it the whole transcript for anything up to ~2.5 hours of talk.
+      prompt: `Meeting: ${t.title}\nParticipants: ${t.participants.join(", ")}\n\nTranscript:\n${t.text.slice(0, 150_000)}`,
     });
     logger.logUsage({
       clientId, agentId: null, agentName: "Transcript Analysis",

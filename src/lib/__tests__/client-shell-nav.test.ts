@@ -209,7 +209,7 @@ describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
     // a client's route to their meetings: thin it out and the destination goes
     // with it.
     expect(settingsPage).toContain('{ id: "meetings", label: "Meetings"');
-    expect(flat(settingsPage)).toContain("href={`/transcripts/${t.id}`}");
+    expect(flat(settingsPage)).toContain("href={`/transcripts/${t.id}");
   });
 
   it("leads to a page that is genuinely built for a client", () => {

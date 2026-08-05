@@ -62,7 +62,7 @@ vi.mock("@/lib/agent-service/reddit-agent-context", async (importOriginal) => ({
   buildRedditAgentContextFiles: vi.fn().mockResolvedValue([]),
 }));
 
-process.env.NEXT_PUBLIC_APP_URL = "https://portal.test";
+process.env.APP_URL = "https://portal.test";
 
 const AGENT_ID = "ca-instagram";
 /** Bound to no client (no `-company-<slug>` suffix) and not an intake-gated agent. */

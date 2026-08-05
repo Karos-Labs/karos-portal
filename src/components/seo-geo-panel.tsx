@@ -15,9 +15,7 @@ import {
   healRecommendations,
   buildPresence,
   buildPromptViews,
-  buildRosterChips,
   buildRosterDrift,
-  buildRosterSanity,
   buildScoreViews,
   buildSnapshotTrust,
   capturedNothing,
@@ -525,10 +523,6 @@ export function SeoGeoPanel({
   // tracked list; this banner explains what changed since the capture.
   const drift = buildRosterDrift(insights, trackedCompetitors);
   const discovered = buildDiscoveredViews(insights, trackedCompetitors);
-  const rosterChips = buildRosterChips(insights, trackedCompetitors, clientWebsite);
-  // Staff-only roster verdict (CD-J1 directive 4); null when there is nothing to
-  // say - nobody tracked, or no measured answers to check a roster against.
-  const rosterSanity = buildRosterSanity(insights, trackedCompetitors);
   // What this snapshot's comparison numbers are actually measured over. A legacy
   // record's figures cover every question; the copy must say so rather than
   // relabel them "category" (CD-J1 bounce 2b).
@@ -794,45 +788,6 @@ export function SeoGeoPanel({
         </Disclosure>
       </Card>
       )}
-
-      <Card>
-        <CardTitle className="mb-1">Who we compare you against</CardTitle>
-        <p className="mb-3 text-xs text-muted-2">
-          The brands your visibility is measured against on every snapshot.
-        </p>
-        {/* CD-J1 directive 4 - STAFF ONLY. A roster of never-named brands makes
-            every comparison above honest and meaningless at once: bars at zero
-            against opponents who aren't in the race. The client cannot tell that
-            apart from "you're losing", so the team gets told instead. A suggestion,
-            never an action - the roster is an account decision and nothing here
-            mutates it. */}
-        {!isClientViewer && rosterSanity && (
-          <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
-            <p className="flex items-start gap-1.5 text-xs font-medium text-warning">
-              <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0" />
-              {rosterSanity.headline}
-            </p>
-            <p className="mt-1 text-[11px] text-muted">{rosterSanity.detail}</p>
-          </div>
-        )}
-        <div className="flex flex-wrap gap-1.5">
-          {rosterChips.map((chip, i) => (
-            <span
-              key={`${chip.name}-${i}`}
-              className={
-                chip.isClient
-                  ? "inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
-                  : "inline-flex items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
-              }
-            >
-              <BrandFavicon website={chip.url} name={chip.name} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
-              {chip.name}
-              {chip.isClient && <span>(you)</span>}
-              {chip.pending && <span className="text-muted-2">· next snapshot</span>}
-            </span>
-          ))}
-        </div>
-      </Card>
 
       {/* QA F19: this Card is NOT gated on there being citations. The client's own
           citation sentence used to be nested inside a `quotedInstead.length > 0`

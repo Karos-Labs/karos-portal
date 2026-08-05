@@ -216,6 +216,7 @@ function OwnerGroup({
             key={i}
             index={i}
             text={actionItems[i]}
+            ownerName={ownerName !== "Unassigned" ? ownerName : null}
             assignedUserId={assignedIds[i]}
             done={completed.has(i)}
             pendingToggle={pendingToggle.has(i)}
@@ -234,6 +235,7 @@ function OwnerGroup({
 function ActionItem({
   index,
   text,
+  ownerName,
   assignedUserId,
   done,
   pendingToggle,
@@ -245,6 +247,8 @@ function ActionItem({
 }: {
   index: number;
   text: string;
+  /** Participant this item was assigned to on the call - null when unassigned. */
+  ownerName: string | null;
   assignedUserId: string | null;
   done: boolean;
   pendingToggle: boolean;
@@ -285,6 +289,7 @@ function ActionItem({
           done && "line-through opacity-50",
         )}
       >
+        {ownerName && <span className="font-medium text-foreground">{ownerName}: </span>}
         {text}
       </span>
 

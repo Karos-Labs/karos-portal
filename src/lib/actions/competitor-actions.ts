@@ -16,6 +16,8 @@ import { competitorBrandKeys, parseCompetitorInput } from "@/lib/competitor-inpu
 import type { ClientCompetitor } from "@/lib/types";
 import { requireStaff, requireClientAccess, logActivity } from "./_shared";
 import { MODELS } from "@/lib/constants";
+import { CREDIT_COSTS } from "@/lib/credits";
+import { withClientModelCharge } from "@/lib/client-model-charge";
 import { logger } from "@/services/logger";
 
 import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
@@ -81,6 +83,51 @@ async function upsertManualCompetitor(
     ...(parsed.url ? { url: parsed.url } : {}),
     created: true,
   };
+}
+
+/**
+ * Best-effort website lookup for a manually-added competitor that has no URL —
+ * covers the client-facing add path, which (unlike the staff path below) never
+ * triggers full AI re-analysis. A single small model call so the row still
+ * gets its favicon and a clickable site automatically when the company is
+ * recognized; silently returns undefined otherwise (initials chip, no link).
+ * Client-billed like any other client-triggered model call — see the call
+ * site, which prices and refunds it through `withClientModelCharge`.
+ */
+async function resolveCompetitorWebsite(clientId: string, company: string): Promise<string | undefined> {
+  try {
+    const { generateObject } = await import("ai");
+    const { anthropic } = await import("@ai-sdk/anthropic");
+    const { z } = await import("zod");
+
+    const schema = z.object({
+      url: z.string().optional().describe(
+        "The company's primary website domain, e.g. 'example.com'. Omit if you don't " +
+        "recognize this company or it has no website — never guess.",
+      ),
+    });
+
+    const usageMeta = {
+      clientId, agentId: null, agentName: "Competitor URL Lookup",
+      modelName: MODELS.SONNET, operation: "competitor_url_lookup",
+    };
+    const { object, usage } = await generateObject({
+      model: anthropic(MODELS.SONNET),
+      schema,
+      system: "You identify company websites for a competitor-tracking UI. Return a bare domain only — no protocol, no path.",
+      prompt: `What is the primary website domain for the company "${company}"?`,
+      maxOutputTokens: 200,
+    });
+
+    logger.logUsage({
+      ...usageMeta,
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+    });
+
+    return object.url?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Core AI competitor analysis helper — not exported. */
@@ -272,12 +319,12 @@ export async function deleteCompetitorAction(id: string): Promise<void> {
  * it actually belongs to `clientId` (mirrors requireTaskAccess) so a CLIENT_USER
  * can't delete another client's competitor by pairing a foreign id with their own
  * clientId; the same error is thrown whether the id is missing or belongs to
- * someone else, so foreign ids aren't leaked. A non-staff client may only remove
- * their own manually-added ("manual") competitors — staff-curated/report-imported
- * rows carry analyst work (deepDive, keyStrengths, etc.) and are only removable via
- * the staff-only deleteCompetitorAction above. Removing a row is sufficient to
- * trigger the dashboard's backfill — the tracked-list view is recomputed from
- * whatever remains, so the next highest-priority auto-seeded rival fills the slot.
+ * someone else, so foreign ids aren't leaked. Any tracked row — manual or
+ * report/staff-seeded — is removable by the client, not just their own manual
+ * adds: it's their tracker. Removing a row is sufficient to trigger the
+ * dashboard's backfill — the tracked-list view is recomputed from whatever
+ * remains, so the next highest-priority auto-seeded rival fills the slot
+ * (report rows also regenerate on the next intel run regardless).
  */
 export async function removeCompetitorAction(clientId: string, id: string): Promise<void> {
   const user = await requireClientAccess(clientId);
@@ -285,9 +332,6 @@ export async function removeCompetitorAction(clientId: string, id: string): Prom
 
   const competitor = await getClientCompetitor(id);
   if (!competitor || competitor.clientId !== clientId) throw new Error("Competitor not found");
-  if (!isStaff && competitor.source !== "manual") {
-    throw new Error("Only staff can remove report-sourced competitors");
-  }
 
   await deleteClientCompetitor(id);
 
@@ -481,6 +525,33 @@ export async function addCompetitorByNameAction(
       });
     } catch {
       // Analysis failed; competitor is saved, profiles will populate on next report run
+    }
+  } else if (result.created && !result.url) {
+    // Client path skips full re-analysis (credits, latency) but still deserves
+    // the same automatic favicon + website every other row gets — priced and
+    // refunded like any other one-off AI tool the client presses in the
+    // portal (staff and View-as-Client sessions are never billed, per
+    // `withClientModelCharge`/`isBillableClientActor`).
+    const outcome = await withClientModelCharge(
+      {
+        user,
+        clientId,
+        amount: CREDIT_COSTS.taskAssist,
+        operation: "ai_tool",
+        reason: `Website lookup · ${company.slice(0, 60)}`,
+      },
+      async ({ refund }) => {
+        const found = await resolveCompetitorWebsite(clientId, company);
+        if (!found) {
+          await refund("Refund · no website found");
+          return undefined;
+        }
+        return found;
+      },
+    );
+    if (outcome.ok && outcome.result) {
+      await updateClientCompetitor(result.id, { url: outcome.result, updatedAt: Date.now() });
+      result.url = outcome.result;
     }
   }
 

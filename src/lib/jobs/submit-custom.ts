@@ -252,9 +252,9 @@ export async function submitCustomAgentJob(
     return { error: "This run's price is not set up correctly — your Karos team can fix it." };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
   if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
   }
   const origin = appUrl.replace(/\/$/, "");
 

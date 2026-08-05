@@ -287,7 +287,7 @@ the manual-only promotion.
   domain to the allow-list too.
 - **firestore.rules**: nothing to do — one shared Firestore, deploy rules once as today.
 - **Social OAuth "Connect" flows** (LinkedIn/Twitter/Google/etc.): each provider's app
-  console has its own redirect-URI allow-list, keyed by `NEXT_PUBLIC_APP_URL`. Only add
+  console has its own redirect-URI allow-list, keyed by `APP_URL`. Only add
   prep's callback URL there if you actually plan to exercise those connect flows from prep.
 
 ---

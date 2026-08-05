@@ -87,10 +87,10 @@ export async function submitManagedJob(
 
   // Prefer a dedicated runtime var (plain env vars are readable at runtime on
   // Cloud Run; NEXT_PUBLIC_* can get inlined at build) and don't overload the
-  // OAuth-facing NEXT_PUBLIC_APP_URL. Fall back to it for local/dev.
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  // OAuth-facing APP_URL. Fall back to it for local/dev.
+  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
   if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
   }
   const origin = appUrl.replace(/\/$/, "");
 
