@@ -1,5 +1,6 @@
 import "server-only";
 import { jobTitleForClient } from "@/lib/job-title";
+import { normalizeDashes } from "@/lib/text-utils";
 
 import {
   chargeClientCredits,
@@ -393,6 +394,22 @@ export async function submitCustomAgentJob(
     }
   }
 
+  // What this run was ASKED to do, as a title-sized label (Job.runLabel —
+  // staff-facing raw text, see the type's F132 note). From briefValues rather
+  // than the composed prompt — the prompt is built for the agent to read, and
+  // parsing a field back out of our own copy breaks the next time someone
+  // edits a label. "request" is the primary brief field on every launch
+  // profile that has one (generic, X, LinkedIn, Reddit). First line only,
+  // dashes normalized, capped title-short — truncated on CODE POINTS, because
+  // a .slice() cut can split an emoji's surrogate pair and ship a mangled
+  // character into a stored title.
+  const requestText = normalizeDashes(input.briefValues?.["request"] ?? "").trim();
+  const requestChars = [...(requestText.split("\n")[0]?.trim() ?? "")];
+  const runLabel =
+    requestChars.length > 64
+      ? `${requestChars.slice(0, 63).join("").trimEnd()}…`
+      : requestChars.join("");
+
   const now = Date.now();
   const jobId = await createJob({
     clientId: input.clientId,
@@ -401,6 +418,7 @@ export async function submitCustomAgentJob(
     ...(input.runType ? { runType: input.runType } : {}),
     ...(input.clientAgentId ? { clientAgentId: input.clientAgentId } : {}),
     ...(input.templateKey ? { templateKey: input.templateKey } : {}),
+    ...(runLabel ? { runLabel } : {}),
     agentName: agent.name,
     title: jobTitleForClient(agent.name, client.name),
     status: "queued",

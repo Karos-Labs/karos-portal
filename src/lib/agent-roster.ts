@@ -19,6 +19,14 @@ import type { AgentCatalogEntry } from "@/lib/ai/prompts/proactive-assistant";
 /** Client-safe summary of a custom agent — never exposes instructions/skill paths. */
 export interface ClientCustomAgentSummary {
   id: string;
+  /**
+   * The lab identity (e.g. "karos-x-agent-v2") — carried so price quotes can
+   * resolve the agent's launch profile (defaultRunBatchSize: a batch agent's
+   * "per run" price is base × its pinned batch size, and quoting the base
+   * alone understates the X agent by 10×). Not sensitive: client surfaces
+   * already render it inside AgentIdentity strings.
+   */
+  key: string;
   name: string;
   /**
    * The CURATED client line, never `CustomAgent.description`. That field is the
@@ -58,6 +66,7 @@ export async function getClientCustomAgents(clientId: string): Promise<ClientCus
     )
     .map((a) => ({
       id: a.id,
+      key: a.key,
       name: a.name,
       description: clientAgentBlurb({
         key: a.key,

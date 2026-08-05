@@ -396,6 +396,9 @@ const HARDCODED_VIEWER_MOUNTS = new Map([
 
 const MODAL_MOUNT_FILES = [
   "components/archive-view.tsx",
+  // The "What it has made for you" rows on the agent detail page — each row's
+  // View-output control opens the modal with the page's own viewer flag.
+  "components/client-agents/agent-archive-rows.tsx",
   "components/client-agents/clip-gallery.tsx",
   "components/client-agents/outputs-hub.tsx",
   "components/run-calendar.tsx",

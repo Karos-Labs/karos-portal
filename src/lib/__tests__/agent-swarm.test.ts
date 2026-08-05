@@ -347,7 +347,7 @@ describe("persistSwarmTasks — dedup + capacity", () => {
       { title: "Run bespoke brand video", description: "d", priority: "high", customAgentId: "ca_1", weight: 90 },
     ];
     await persistSwarmTasks("c1", "u1", drafts, [
-      { id: "ca_1", name: "Brand Video Agent", description: "Makes videos" },
+      { id: "ca_1", key: "brand-video-agent", name: "Brand Video Agent", description: "Makes videos" },
     ]);
     expect(createClientTaskMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -365,7 +365,7 @@ describe("persistSwarmTasks — dedup + capacity", () => {
     const drafts: SwarmTaskDraft[] = [
       { title: "Ghost agent task", description: "d", priority: "medium", customAgentId: "nope", productType: "blog_article", weight: 50 },
     ];
-    await persistSwarmTasks("c1", "u1", drafts, [{ id: "ca_1", name: "Real", description: "d" }]);
+    await persistSwarmTasks("c1", "u1", drafts, [{ id: "ca_1", key: "real", name: "Real", description: "d" }]);
     const arg = createClientTaskMock.mock.calls[0][0] as { metadata?: Record<string, unknown> };
     // Falls back to the managed productType path; no bogus customAgentId persisted.
     expect(arg.metadata?.customAgentId).toBeUndefined();
