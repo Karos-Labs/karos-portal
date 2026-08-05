@@ -25,7 +25,9 @@ import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
-import { LegacyAgentPanel } from "@/components/client-agents/legacy-agent-panel";
+import { LegacyAgentPanel, SchedulePaceCard } from "@/components/client-agents/legacy-agent-panel";
+import { AgentArchiveRows } from "@/components/client-agents/agent-archive-rows";
+import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { ClipGallery } from "@/components/client-agents/clip-gallery";
 import { DailyFinderPanel } from "@/components/client-agents/daily-finder-panel";
 import {
@@ -81,7 +83,6 @@ import {
   toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
-import { relativeTime } from "@/lib/utils";
 import type { Job } from "@/lib/types";
 
 /**
@@ -642,6 +643,18 @@ export default async function ClientAgentDetailPage({
       : []),
   ];
 
+  // The SAME condition the hero chain resolves to LegacyAgentPanel below —
+  // the shape whose pace-and-price summary now rides the status strip's aside
+  // slot instead of floating mid-column. Bound once so the strip's card and
+  // the panel cannot disagree about which shape this page is showing.
+  const legacyShape = !row && (schedule?.status === "active" || hasDelivered);
+
+  // Where "everything this agent has made" actually lives for THIS viewer.
+  // The old link sent both readers to /clients/<id>/assets, which redirects a
+  // CLIENT_USER to /tasks — the Workspace board, not the archive tab they were
+  // promised. clientArchiveLink is the four-call-site answer to exactly this.
+  const archive = clientArchiveLink({ clientId: id, isStaff });
+
   return (
     <>
       {/* AF-9: `running` already is "a run this viewer started is in flight", so
@@ -712,6 +725,20 @@ export default async function ClientAgentDetailPage({
             running={running}
             facts={statusFacts}
             {...(isStaff && status.staffNote ? { staffNote: status.staffNote } : {})}
+            {...(legacyShape
+              ? {
+                  aside: (
+                    <SchedulePaceCard
+                      clientId={id}
+                      agent={summary}
+                      cost={spendable !== undefined ? cost : null}
+                      schedule={schedule}
+                      viewerIsClient={viewerIsClient}
+                      {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+                    />
+                  ),
+                }
+              : {})}
           />
 
           {/* ── THE ARCHETYPE HERO (CD-I1) ──
@@ -801,12 +828,10 @@ export default async function ClientAgentDetailPage({
               // The banner above already made the outage statement; the gate's
               // own paragraph would repeat it 150px lower in different words.
               outageAnnounced={!agentServiceConfigured}
-              schedule={schedule}
               {...(setup ? { setup } : {})}
               contextItems={contextItems}
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
-              {...(spendable !== undefined ? { availableCredits: spendable } : {})}
               activeRun={
                 legacyRun
                   ? {
@@ -909,34 +934,33 @@ export default async function ClientAgentDetailPage({
                   : "Nothing else yet. Everything this agent has made is above."}
               </p>
             ) : (
-              <ul className="space-y-1.5">
-                {archiveRows.map((asset) => (
-                  <li
-                    key={asset.id}
-                    className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-xs text-foreground">
-                      {asset.title || "Untitled"}
-                    </span>
-                    {asset.templateName && <Badge tone="neutral">{asset.templateName}</Badge>}
-                    {/* The set above is already delivered-work-only for a
-                        client; the STAMP has to match. `createdAt` is the
-                        generation instant a whole batch shares, so eight rows
-                        under "What it has made for you" all read "3 hours ago"
-                        - the same batch tell the asset filter three screens up
-                        was added to close. Staff keep the generation time. */}
-                    <span className="shrink-0 text-[11px] text-muted-2">
-                      {relativeTime(deliverableStamp(asset, viewerIsClient))}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              /* Each row now carries its own way in — a neon-outline
+                 View-output control, opening the same detail modal the archive uses (the
+                 per-draft reader for agent batches). The rows used to be inert:
+                 title, stamp, and one small text link under the list, so
+                 reaching a specific deliverable meant leaving the page and
+                 finding it again in the Workspace.
+
+                 The STAMP is computed here, not in the component: the set is
+                 already delivered-work-only for a client, and the stamp has to
+                 match. `createdAt` is the generation instant a whole batch
+                 shares, so eight rows under "What it has made for you" would
+                 all read "3 hours ago" - the same batch tell the asset filter
+                 three screens up was added to close. Staff keep the
+                 generation time. */
+              <AgentArchiveRows
+                rows={archiveRows.map((asset) => ({
+                  asset,
+                  at: deliverableStamp(asset, viewerIsClient),
+                }))}
+                viewerIsClient={viewerIsClient}
+              />
             )}
             <Link
-              href={`/clients/${id}/assets`}
+              href={archive.href}
               className="mt-2 inline-flex items-center gap-1 text-xs text-neon hover:underline"
             >
-              Open your Workspace <Icon name="ArrowRight" className="h-3 w-3" />
+              Open {archive.label} <Icon name="ArrowRight" className="h-3 w-3" />
             </Link>
           </section>
         </div>
