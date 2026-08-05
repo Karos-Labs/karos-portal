@@ -259,7 +259,8 @@ export function CompetitorTrack({
                 ) : (
                   <div className="flex min-w-0 flex-1 items-center gap-2.5">{linkContent}</div>
                 )}
-                {(isStaff || c.source === "manual") && (
+                {/* Any tracked row is removable by staff and the client alike —
+                    it's their tracker, not just their own manual adds. */}
                 <button
                   type="button"
                   onClick={() => handleRemove(c)}
@@ -276,7 +277,6 @@ export function CompetitorTrack({
                     <Icon name="Trash2" className="h-3 w-3" />
                   )}
                 </button>
-                )}
               </li>
             );
           })}
