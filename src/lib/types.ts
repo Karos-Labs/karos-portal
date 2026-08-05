@@ -556,6 +556,19 @@ export interface Job {
   templateKey?: string | null;
   agentName: string;
   title: string;
+  /**
+   * A short human label for WHAT this run was asked to do — the first line of
+   * the brief's request field, captured at submit (submit-custom) and mirrored
+   * onto the deliverable as `meta.runLabel` by the webhook. STAFF-FACING RAW
+   * TEXT (F132: never echo free-text input as a client-facing label) — a
+   * surface that paints it must gate on the viewer; clients read produced-work
+   * titles instead. Stored rather than re-derived because the only other trace
+   * of the request is the composed prose prompt, and parsing our own copy back
+   * out of it breaks the next time someone edits a field label (the
+   * briefValues lesson, see SubmitCustomAgentInput.briefValues). Absent on
+   * older jobs and on runs whose brief had no request text.
+   */
+  runLabel?: string;
   status: JobStatus;
   input: Record<string, string>;
   /** Raw model output (text) for auditing. */

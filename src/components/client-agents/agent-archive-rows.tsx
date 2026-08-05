@@ -28,7 +28,14 @@ export function AgentArchiveRows({
   rows,
   viewerIsClient,
 }: {
-  rows: Array<{ asset: Asset; at: number }>;
+  /**
+   * Each row carries EITHER the page's resolved display title (viewer-gated,
+   * see the page's rowTitleFields) OR a `fallbackNoun` — the produced-work
+   * noun this component dates itself, client-side, so the day is in the
+   * viewer's timezone like the relative stamp beside it. The stored
+   * asset.title is never re-read here.
+   */
+  rows: Array<{ asset: Asset; at: number; title?: string; fallbackNoun?: string }>;
   viewerIsClient: boolean;
 }) {
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
@@ -37,13 +44,16 @@ export function AgentArchiveRows({
   return (
     <>
       <ul className="space-y-1.5">
-        {rows.map(({ asset, at }) => (
+        {rows.map(({ asset, at, title, fallbackNoun }) => (
           <li
             key={asset.id}
             className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"
           >
             <span className="min-w-0 flex-1 basis-40 truncate text-xs text-foreground">
-              {asset.title || "Untitled"}
+              {title ??
+                (fallbackNoun
+                  ? `${fallbackNoun} · ${new Date(at).toLocaleDateString([], { month: "short", day: "numeric" })}`
+                  : "Untitled")}
             </span>
             {asset.templateName && <Badge tone="neutral">{asset.templateName}</Badge>}
             <span className="shrink-0 text-[11px] text-muted-2">{relativeTime(at)}</span>

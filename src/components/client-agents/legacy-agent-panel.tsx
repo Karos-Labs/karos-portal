@@ -60,6 +60,7 @@ export function LegacyAgentPanel({
   clientId,
   agent,
   cost,
+  batchSize = 1,
   gate,
   setup,
   contextItems,
@@ -70,8 +71,19 @@ export function LegacyAgentPanel({
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
-  /** Null for staff - quoting them a price they never pay would be a lie. */
+  /**
+   * The price of ONE PRESS — already multiplied by the agent's pinned batch
+   * size (defaultRunBatchSize), because that is what the press charges. Null
+   * for staff - quoting them a price they never pay would be a lie.
+   */
   cost: number | null;
+  /**
+   * How many drafts one press produces (defaultRunBatchSize). Above 1 the
+   * copy stops calling the run "one post" — the X agent's press drafts a
+   * batch of ten, and a button reading "Create new post · 15 credits" over a
+   * 150-credit batch charge was two lies in one line.
+   */
+  batchSize?: number;
   /** Server-evaluated, already resolved to a paintable reason (F25/F131). */
   gate: LegacyRunGateResult;
   /**
@@ -129,11 +141,17 @@ export function LegacyAgentPanel({
               the row wraps the BUTTON to its own line instead, which is what
               flex-wrap is on this container for. */}
           <div className="min-w-0 basis-56 grow">
-            <p className="text-sm text-foreground">Create a new post</p>
+            <p className="text-sm text-foreground">
+              {batchSize > 1 ? "Create new drafts" : "Create a new post"}
+            </p>
             <p className="mt-0.5 text-xs text-muted-2">
               {gate.allowed
-                ? "Makes one post now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace."
-                : "Making a post now is not available yet."}
+                ? batchSize > 1
+                  ? `Drafts a batch of ${batchSize} posts for you to pick from. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace.`
+                  : "Makes one post now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace."
+                : batchSize > 1
+                  ? "Drafting a batch now is not available yet."
+                  : "Making a post now is not available yet."}
             </p>
           </div>
           <Button
@@ -142,7 +160,13 @@ export function LegacyAgentPanel({
             onClick={() => setRunning(true)}
           >
             <Icon name="Sparkles" className="h-4 w-4" />
-            {cost != null ? `Create new post · ${cost} credits` : "Create new post"}
+            {batchSize > 1
+              ? cost != null
+                ? `Create new drafts · ${cost} credits`
+                : "Create new drafts"
+              : cost != null
+                ? `Create new post · ${cost} credits`
+                : "Create new post"}
           </Button>
         </div>
         {!gate.allowed && gate.reason && !(outageAnnounced && gate.code === "service_down") && (

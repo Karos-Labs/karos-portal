@@ -50,6 +50,7 @@ import {
 import {
   agentInputsView,
   buildAgentSetupFacts,
+  intakeFamilyFor,
   readAgentInputDocs,
 } from "@/lib/agent-detail-sections";
 import {
@@ -64,6 +65,7 @@ import {
 } from "@/lib/agent-intake-views";
 import {
   agentKeyMatchesClientSlug,
+  defaultRunBatchSize,
   isLinkedInAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
@@ -241,9 +243,16 @@ export default async function ClientAgentDetailPage({
   const summary = toSummary(agent);
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
   const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+  // What ONE PRESS of "create" actually charges: the per-output base × the
+  // profile's pinned batch size (10 for the X agent, 1 for most). The gate,
+  // the block reason and the panel's button all quote THIS — gating on the
+  // base waved a client into a dialog whose Start run the server would refuse,
+  // and the button named a price ten times under the charge.
+  const runBatchSize = defaultRunBatchSize({ key: agent.key, name: agent.name });
+  const runCost = cost * runBatchSize;
   const creditBlockReasons: Record<string, string> =
-    spendable !== undefined && spendable < cost
-      ? { [agent.id]: creditBlockReason(credits, cost, now) }
+    spendable !== undefined && spendable < runCost
+      ? { [agent.id]: creditBlockReason(credits, runCost, now) }
       : {};
 
   // Ruling 7: the inline pane rides the setup state, keyed by agent. Staff get
@@ -507,7 +516,7 @@ export default async function ClientAgentDetailPage({
   const legacyGate = evaluateLegacyRunGate({
     serviceConfigured: agentServiceConfigured,
     setup,
-    cost,
+    cost: runCost,
     ...(spendable !== undefined ? { availableCredits: spendable } : {}),
     creditBlockReason: creditBlockReasons[agent.id] ?? null,
   });
@@ -654,6 +663,53 @@ export default async function ClientAgentDetailPage({
   // CLIENT_USER to /tasks — the Workspace board, not the archive tab they were
   // promised. clientArchiveLink is the four-call-site answer to exactly this.
   const archive = clientArchiveLink({ clientId: id, isStaff });
+
+  // ── Which platform this agent's page is ABOUT, for the connectors card ──
+  // An intake-driven agent (X/LinkedIn/Reddit) drafts for one platform, and
+  // its sidebar listing Google Analytics beside "Connected accounts" answered
+  // a question nobody on this page asked. Scoped to the agent's own family;
+  // an agent with no family (the generic/legacy shapes) keeps the full list,
+  // exactly as before. Display-only: connectedPlatformNames above still
+  // carries every platform, because publish targets are not page-scoped.
+  const family = intakeFamilyFor(agent.key);
+  const FAMILY_PLATFORMS: Record<NonNullable<typeof family>, string[]> = {
+    x: ["twitter"],
+    linkedin: ["linkedin", "linkedin_community"],
+    reddit: ["reddit"],
+  };
+  const familyPlatforms = family ? FAMILY_PLATFORMS[family] : null;
+  const scopedConnections = familyPlatforms
+    ? connections.filter((connection) => familyPlatforms.includes(connection.platform))
+    : connections;
+
+  // The row's display title, by VIEWER (F132: label rows by what was
+  // produced, never by what was typed — the typed brief stays staff-facing).
+  // Staff rows show `meta.runLabel` (what the run was asked to do) beside the
+  // base title; a client's batch rows, which were N identical copies of the
+  // agent's name, get the family's produced-work noun — the client component
+  // dates it with the row's own delivery stamp, in the VIEWER's timezone,
+  // because a server-formatted day can sit one day off beside the client-side
+  // relative stamp on the same row.
+  const FAMILY_BATCH_NOUN: Record<NonNullable<typeof family>, string> = {
+    x: "X draft batch",
+    linkedin: "LinkedIn draft batch",
+    reddit: "Reddit reply draft",
+  };
+  const rowTitleFields = (
+    asset: (typeof archiveRows)[number],
+  ): { title: string } | { fallbackNoun: string } => {
+    const stored = (asset.title ?? "").trim();
+    const generic =
+      !stored ||
+      stored === agent.name ||
+      (umbrella?.displayName ? stored === umbrella.displayName : false);
+    const runLabel = asset.meta?.runLabel;
+    if (isStaff && typeof runLabel === "string" && runLabel.trim()) {
+      return { title: `${stored || agent.name} · ${runLabel.trim()}` };
+    }
+    if (!generic || !family) return { title: stored || agent.name };
+    return { fallbackNoun: FAMILY_BATCH_NOUN[family] };
+  };
 
   return (
     <>
@@ -823,7 +879,8 @@ export default async function ClientAgentDetailPage({
             <LegacyAgentPanel
               clientId={id}
               agent={summary}
-              cost={spendable !== undefined ? cost : null}
+              cost={spendable !== undefined ? runCost : null}
+              batchSize={runBatchSize}
               gate={legacyGate}
               // The banner above already made the outage statement; the gate's
               // own paragraph would repeat it 150px lower in different words.
@@ -952,6 +1009,7 @@ export default async function ClientAgentDetailPage({
                 rows={archiveRows.map((asset) => ({
                   asset,
                   at: deliverableStamp(asset, viewerIsClient),
+                  ...rowTitleFields(asset),
                 }))}
                 viewerIsClient={viewerIsClient}
               />
@@ -1038,13 +1096,15 @@ export default async function ClientAgentDetailPage({
               than growing a second place to change them. */}
           <section>
             <SectionHeading title="Connected accounts" />
-            {connections.length === 0 ? (
+            {scopedConnections.length === 0 ? (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
-                No accounts connected yet. Posts are delivered to your Workspace for you to publish.
+                {familyPlatforms
+                  ? `No ${platformLabel(familyPlatforms[0])} account connected yet. Posts are delivered to your Workspace for you to publish.`
+                  : "No accounts connected yet. Posts are delivered to your Workspace for you to publish."}
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {connections.map((connection) => (
+                {scopedConnections.map((connection) => (
                   <li
                     key={connection.id}
                     className="flex items-center justify-between gap-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"

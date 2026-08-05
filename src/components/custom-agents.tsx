@@ -54,6 +54,7 @@ import {
   agentKeyMatchesClientSlug,
   batchSizeFrom,
   buildCustomAgentPrompt,
+  defaultRunBatchSize,
   initialAgentBrief,
   isLinkedInAgentIdentity,
   isXAgentIdentity,
@@ -775,7 +776,13 @@ export function CustomAgentsHub({
                     invisible whether it was set or not. */}
                 <div className="min-w-0">
                   <p className="text-xs text-muted-2">
-                    {creditsLabel(agentRunCost(agent))} per client run
+                    {/* × the pinned batch size: what one client press CHARGES,
+                        not the per-output base (10× apart on the X agent). */}
+                    {creditsLabel(
+                      agentRunCost(agent) *
+                        defaultRunBatchSize({ key: agent.key, name: agent.name }),
+                    )}{" "}
+                    per client run
                   </p>
                   {launchCost === null ? (
                     <p className="mt-0.5 text-xs text-warning">
@@ -1974,9 +1981,17 @@ export function RunCustomAgentModal({
   const dataPaneRef = useRef<HTMLDivElement>(null);
   const runPaneRef = useRef<HTMLDivElement>(null);
   const shownPane = useRef<RunPane>(pane);
+  // `visibleFields` everywhere a field is PAINTED or offered for typing; the
+  // full list keeps serving everything that reads VALUES (defaults seeded by
+  // initialAgentBrief, batchSizeFrom, the missing-required check). A hidden
+  // field must never be the primary field — quick-start chips write into the
+  // primary, and text landing in an invisible box is text the client cannot
+  // see or undo.
+  const visibleFields = profile.fields.filter((field) => !field.hidden);
   const primaryField =
-    profile.fields.find((field) => field.key === "request") ??
-    profile.fields.find((field) => field.required) ??
+    visibleFields.find((field) => field.key === "request") ??
+    visibleFields.find((field) => field.required) ??
+    visibleFields[0] ??
     profile.fields[0];
   // A server-side setup gate can still fire when this dialog's `ready` was
   // stale, so the message needs its own way back to the data.
@@ -2226,7 +2241,16 @@ export function RunCustomAgentModal({
                   <Icon name="Clock" className="mr-1 inline h-3 w-3" />
                   {profile.estimate}. You can leave this page; the run continues.
                   {viewerIsClient && (
-                    <span className="ml-1">Costs {creditsLabel(agentRunCost(agent))}.</span>
+                    /* × the batch size, because the CHARGE is (submit-custom.ts
+                       multiplies runCost by the clamped multiplier). This line
+                       used to quote the per-output base alone, so a client
+                       starting a 21-draft X batch read "Costs 15 credits." and
+                       was charged 315 — and with the size selector now hidden
+                       for the X profile, the seeded default would have made
+                       that quiet understatement the only price ever shown. */
+                    <span className="ml-1">
+                      Costs {creditsLabel(agentRunCost(agent) * (batchSizeFrom(fields) ?? 1))}.
+                    </span>
                   )}
                 </p>
                 <Button variant="accent" onClick={submit} loading={pending}>
@@ -2381,7 +2405,7 @@ export function RunCustomAgentModal({
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          {profile.fields.map((field) => {
+          {visibleFields.map((field) => {
             const id = `ca-${agent.id}-${field.key}`;
             const fullWidth = field.type === "textarea";
             return (
@@ -2986,7 +3010,9 @@ export function ClientAgentAccessCard({
               <AgentMark identity={`${agent.key} ${agent.name}`} icon={agent.icon} className="h-3.5 w-3.5" />
             </span>
             <span className="min-w-0 flex-1 truncate text-foreground">{agent.name}</span>
-            <span className="shrink-0 text-muted-2">{agentRunCost(agent)} cr/run</span>
+            <span className="shrink-0 text-muted-2">
+              {agentRunCost(agent) * defaultRunBatchSize({ key: agent.key, name: agent.name })} cr/run
+            </span>
             {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
           </label>
         ))}

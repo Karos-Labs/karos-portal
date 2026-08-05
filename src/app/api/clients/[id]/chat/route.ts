@@ -45,7 +45,11 @@ import {
   isStaffCopilotActor,
 } from "@/lib/copilot-tool-access";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
-import { clientSafeRunError, CLIENT_SAVE_REFUSAL_MESSAGE } from "@/lib/custom-agent-launch";
+import {
+  clientSafeRunError,
+  CLIENT_SAVE_REFUSAL_MESSAGE,
+  defaultRunBatchSize,
+} from "@/lib/custom-agent-launch";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import { isInClientArchive, isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
@@ -326,8 +330,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `  - ${row.label}: ${clientPriceText(row, { withUnit: true })}` +
       (row.note ? ` (${row.note})` : ""),
   ).join("\n");
+  // × defaultRunBatchSize: "one run" of a batch agent (the X agent drafts 10
+  // per press) CHARGES base × batch, and this list is pinned by "Never invent
+  // credit figures beyond these" — a base-only figure here forces the copilot
+  // to quote a tenth of the only price the portal charges.
   const agentPriceLines = customAgents
-    .map((a) => `  - ${a.name}: ${creditsLabel(a.creditCost ?? CREDIT_COSTS.customAgentRun)} per run`)
+    .map(
+      (a) =>
+        `  - ${a.name}: ${creditsLabel(
+          (a.creditCost ?? CREDIT_COSTS.customAgentRun) *
+            defaultRunBatchSize({ key: a.key, name: a.name }),
+        )} per run`,
+    )
     .join("\n");
   const creditsAppendix = credits
     ? `\n\n## Usage credits\n` +
@@ -1153,10 +1167,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
           : "This client has no AI agents assigned yet.";
       }
+      // chargeMultiplier: the agent's pinned batch size, same as a portal
+      // press. Without it a chat-triggered X run billed base×1 and carried no
+      // batch instruction while the identical portal press billed base×10 —
+      // the same product at a tenth of its quoted price, sold by our own
+      // copilot beside a price list that says otherwise.
+      const chatBatchSize = defaultRunBatchSize({ key: match.key, name: match.name });
       const result = await runCustomAgentAction({
         agentId: match.id,
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
+        ...(chatBatchSize > 1 ? { chargeMultiplier: chatBatchSize } : {}),
       });
       if (result.error) {
         // REUSED, not re-answered: `clientSafeRunError` is exactly this shape (a

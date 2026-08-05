@@ -875,6 +875,12 @@ export async function POST(req: NextRequest) {
       // Separator and strip share one definition (lib/job-title.ts) — this
       // looked for an em dash while every builder wrote a hyphen, so it never
       // fired for any run from any path.
+      // The title stays the produced-work base — NEVER the typed brief. F132's
+      // ruling ("never echo free-text input as a client-facing label") is why
+      // Job.runLabel rides in meta below instead of being baked in here: meta
+      // lets a staff surface show what was asked while every client surface
+      // keeps reading a produced-work title. It also keeps free text out of
+      // AgentMark's platform sniff, which reads titles.
       const assetTitle = assetTitleFromJobTitle(job.title, job.agentName);
       // Only real catalog products get a template chip; "custom" runs have no
       // managed product (getManagedProduct would fall back to the first one).
@@ -896,6 +902,9 @@ export async function POST(req: NextRequest) {
           meta: {
             taskType: payload.task_type,
             agentsRepoSha: payload.agents_repo_sha,
+            // What the run was ASKED to do (see Job.runLabel). Staff-facing
+            // data: surfaces that show it must gate on the viewer (F132).
+            ...(job.runLabel ? { runLabel: job.runLabel } : {}),
             // ONLY the artifacts now in our own storage — see the `rehosted`
             // note above. This was `artifacts.filter(clientFacing)`, which put
             // every un-re-hosted 7-day service URL onto the client's asset:
