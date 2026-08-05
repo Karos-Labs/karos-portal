@@ -214,9 +214,9 @@ export async function appendMeetingSignalToContextDoc(
  * Full ingestion: analyse the transcript, match client by company name (text-based, unambiguous),
  * and persist. Returns the created transcript id and the match.
  *
- * Duplicate guard: skips only when the same recording (externalId) or the same
- * title AND timestamp already exist — same-title recurring meetings at different
- * times are always ingested. Returns `duplicate: true` with the existing id.
+ * Duplicate guard: skips only when the same recording (externalId) already exists —
+ * same-title recurring meetings are always ingested as separate meetings, since only
+ * externalId identifies a specific recording. Returns `duplicate: true` with the existing id.
  *
  * Default assignment is "unassigned". Client is only set when exactly one client name is found
  * in the transcript title/text.

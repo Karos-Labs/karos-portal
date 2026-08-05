@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         skipped: true,
-        reason: "Duplicate — same recording or same title + timestamp already ingested",
+        reason: "Duplicate — same recording (externalId) already ingested",
         id: result.id,
       });
     }

@@ -60,8 +60,8 @@ export async function ingestManualTranscriptAction(input: {
 /**
  * Bulk-sync recent Fireflies transcripts. The @karoslabs.com invariant is applied inside
  * listFirefliesTranscripts — only agency-attended meetings are ever processed.
- * Deduplicates by externalId (same recording) or title + timestamp: same-title
- * meetings at different times (recurring "Weekly Sync" etc.) are always ingested.
+ * Deduplicates by externalId only (same recording): same-title meetings
+ * (recurring "Weekly Sync" etc.) are always ingested as separate meetings.
  */
 export async function syncFirefliesAction(): Promise<{ synced: number; skipped: number }> {
   await requireStaff();

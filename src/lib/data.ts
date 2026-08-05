@@ -1007,40 +1007,24 @@ export async function getTranscriptByExternalId(externalId: string): Promise<Tra
   return snap.empty ? null : withId<Transcript>(snap.docs[0]);
 }
 
-/** Normalize a meeting title for duplicate comparison (case/whitespace-insensitive). */
-export function normalizeMeetingTitle(title: string): string {
-  return title.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
 /**
  * Find an already-ingested transcript that is the SAME meeting as the given one.
  *
- * Duplicate rule: a meeting is a duplicate only when
- *   (a) the provider externalId matches — same Fireflies recording, always the
- *       same meeting; or
- *   (b) BOTH the normalized title AND the meeting timestamp match.
- * Title alone is never enough: recurring meetings ("Weekly Sync") share a title
- * but have different timestamps and must each be ingested.
+ * Duplicate rule: a meeting is a duplicate only when the provider externalId
+ * matches — same Fireflies recording, always the same meeting. Title (and even
+ * title + timestamp) is never enough on its own: recurring meetings ("Weekly
+ * Sync") share a title and can legitimately share a start time slot across
+ * weeks, so matching on title risked collapsing genuinely distinct meetings
+ * into one (QA report 2026-08-05). Each Fireflies recording has a unique id,
+ * so externalId alone is both necessary and sufficient.
  */
 export async function findDuplicateTranscript(input: {
   externalId?: string;
   title: string;
   meetingDate?: number;
 }): Promise<Transcript | null> {
-  if (input.externalId) {
-    const byExternalId = await getTranscriptByExternalId(input.externalId);
-    if (byExternalId) return byExternalId;
-  }
-  // Without a timestamp we cannot confirm it's the same occurrence — not a duplicate.
-  if (input.meetingDate == null) return null;
-
-  const snap = await col.transcripts().where("meetingDate", "==", input.meetingDate).get();
-  const wanted = normalizeMeetingTitle(input.title);
-  for (const doc of snap.docs) {
-    const t = withId<Transcript>(doc);
-    if (normalizeMeetingTitle(t.title) === wanted) return t;
-  }
-  return null;
+  if (!input.externalId) return null;
+  return getTranscriptByExternalId(input.externalId);
 }
 
 /* ---------------------- managed action items ----------------------- */
