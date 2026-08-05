@@ -39,6 +39,10 @@ import {
 } from "@/lib/agent-service/reddit-agent-context";
 import {
   REDDIT_STATE_MAX_CHARS,
+  type RedditClientFile,
+  buildRedditV2Envelope,
+  isRedditRunRecordArtifact,
+  redditOutcomeFrom,
   redditStateContentType,
   redditStateDateFor,
   redditStateKindFor,
@@ -482,6 +486,12 @@ export async function POST(req: NextRequest) {
   let liCommitJson: string | null = null;
   // Reddit v2 durable state, same rules as the LinkedIn set: internal artifacts
   // fetched for their TEXT only, never re-hosted, never attached to an asset.
+  // A Reddit v2 run's client-facing text files, kept so the folders can be
+  // flattened into the reader's envelope after the claim. The bytes are already
+  // decoded for primaryText, so this costs no extra fetch.
+  const redditClientFiles: RedditClientFile[] = [];
+  /** The run's own outcome record, for the four-outcome distinction. */
+  let redditRunRecord: string | null = null;
   const redditStateArtifacts: {
     kind: RedditAgentState["kind"];
     account: string | null;
@@ -549,7 +559,8 @@ export async function POST(req: NextRequest) {
       const liStateKind = isLinkedInStateJob ? liStateKindFor(liPath) : null;
       const liIsCommit = isLinkedInStateJob && isLiCommitArtifact(liPath);
       const redditState = isRedditStateJob ? redditStateKindFor(liPath) : null;
-      if (!artifact.client_facing && redditState && artifact.url) {
+      const redditIsRunRecord = isRedditStateJob && isRedditRunRecordArtifact(liPath);
+      if (!artifact.client_facing && (redditState || redditIsRunRecord) && artifact.url) {
         try {
           const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
           if (budget > 0) {
@@ -559,7 +570,8 @@ export async function POST(req: NextRequest) {
             });
             if (res.ok) {
               const text = (await res.text()).slice(0, REDDIT_STATE_MAX_CHARS);
-              if (text.trim()) {
+              if (text.trim() && redditIsRunRecord && !redditRunRecord) redditRunRecord = text;
+              if (text.trim() && redditState) {
                 redditStateArtifacts.push({
                   kind: redditState.kind,
                   account: redditState.account,
@@ -675,6 +687,13 @@ export async function POST(req: NextRequest) {
                 if ((isLaunchRun || isLinkedInSetupJob) && voiceProfileMatch) {
                   voiceProfileArtifacts.push({ seatSlug: voiceProfileMatch[1], content });
                 }
+                // A Reddit v2 run's per-thread folders, kept as (path, text)
+                // pairs so the envelope can be assembled after the claim: the
+                // reader is handed ONE string, and these folders are what has to
+                // become it.
+                if (isRedditStateJob) {
+                  redditClientFiles.push({ path: artifact.path ?? artifact.name, text: content });
+                }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
                 // agents (X, LinkedIn) — prefer it deterministically over the
                 // size race, so a long sibling text file (a video brief, an
@@ -740,10 +759,54 @@ export async function POST(req: NextRequest) {
   // primary text is legitimately empty (task-sync.ts, on `artifact: ""` being a
   // real renderable state), and so is a PDF-only run. What is not a delivery is a
   // run where nothing at all reached our storage.
+  // ── Reddit v2: the folders become the reader's one string ──
+  // v2 writes client/<nn>-answer/{approach-1.md,approach-2.md,about.txt}, and the
+  // reader is handed `asset.content` alone. So the folders are flattened here,
+  // where the file bytes already exist, into the versioned envelope both sides
+  // import from lib/reddit-drafts.
+  //
+  // The OUTCOME comes from the run's own record, never from counting files. An
+  // empty thread list means either "nothing was worth your account's name" (a
+  // correct run) or "we could not read Reddit" (our datacenter address is
+  // blocked), and telling a client the first when the second is true blames their
+  // niche for our outage. With no record to read, `delivered` is only claimed when
+  // threads actually arrived.
+  const redditEnvelope =
+    isRedditStateJob && (redditClientFiles.length > 0 || redditRunRecord)
+      ? (() => {
+          const record = redditRunRecord ? redditOutcomeFrom(redditRunRecord) : { outcome: null };
+          const built = buildRedditV2Envelope({
+            files: redditClientFiles,
+            outcome: record.outcome ?? "delivered",
+            ...(record.consideredCount !== undefined
+              ? { consideredCount: record.consideredCount }
+              : {}),
+            ...(record.outcomeNote ? { outcomeNote: record.outcomeNote } : {}),
+          });
+          if (!record.outcome && built.threads.length === 0) built.outcome = "held";
+          return built;
+        })()
+      : null;
+  if (redditEnvelope) {
+    events.push({
+      at: Date.now(),
+      level: redditEnvelope.outcome === "degraded" ? "error" : "info",
+      message:
+        redditEnvelope.outcome === "degraded"
+          ? "Reddit could not be read on this run (datacenter addresses are blocked), so nothing was judged. This is not 'no good threads'."
+          : `Reddit run outcome: ${redditEnvelope.outcome} - ${redditEnvelope.threads.length} thread(s) delivered.`,
+    });
+  }
+
   const deliveredCount = rehosted.length;
   // For the Task Map sync below: the run may have been dispatched by a board
   // task, whose ticket gets the deliverable for client preview.
-  const taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
+  const redditEnvelopeJson = redditEnvelope ? JSON.stringify(redditEnvelope) : null;
+  const taskArtifactContent = redditEnvelopeJson
+    ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : primaryText
+      ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
+      : "";
   const taskArtifactImage = orderedImageUrls[0] ?? null;
 
   // Last pre-claim guard: the re-host has eaten the budget this handler needed
@@ -984,7 +1047,14 @@ export async function POST(req: NextRequest) {
           agentId: "agent-service",
           type: assetType,
           title: assetTitle,
-          content: primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "",
+          // The Reddit v2 envelope wins over the size-picked primary text: the
+          // reader parses this exact string, and one of the run's own approach
+          // files would otherwise be chosen as "the deliverable" by length.
+          content: redditEnvelopeJson
+            ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+            : primaryText
+              ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
+              : "",
           meta: {
             taskType: payload.task_type,
             agentsRepoSha: payload.agents_repo_sha,

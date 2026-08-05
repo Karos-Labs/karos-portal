@@ -9,7 +9,7 @@ import { AudienceSimulation } from "@/components/audience-simulation";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
-import { parseRedditDrafts } from "@/lib/reddit-drafts";
+import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
@@ -161,7 +161,12 @@ export function AssetDetailModal({
   );
   const redditBatch = useMemo(
     () =>
-      !liBatch && content?.includes("# Reddit answer drafts") ? parseRedditDrafts(content) : null,
+      // v2 envelope or v1 markdown — parseRedditDrafts picks between them.
+      !liBatch &&
+      content &&
+      (isRedditV2Envelope(content) || content.includes("# Reddit answer drafts"))
+        ? parseRedditDrafts(content)
+        : null,
     [content, liBatch],
   );
   const xBatch = useMemo(
@@ -354,6 +359,9 @@ export function AssetDetailModal({
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
               assetId={asset.id}
               accounts={redditBatch.accounts}
+                  outcome={redditBatch.outcome}
+                  {...(redditBatch.consideredCount !== undefined ? { consideredCount: redditBatch.consideredCount } : {})}
+                  {...(redditBatch.outcomeNote ? { outcomeNote: redditBatch.outcomeNote } : {})}
             />
           </div>
         ) : xBatch ? (

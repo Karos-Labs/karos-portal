@@ -356,10 +356,26 @@ describe("the Reddit reader follows the shared render rules", () => {
   it("leaves the reply body and the disclosure exactly as written", () => {
     // These two are what the client POSTS, and Reddit renders markdown
     // natively — stripping them would change the comment that goes up.
-    expect(reader).toContain("{draft.text}");
+    // v2 renders the SELECTED approach (`activeText`, which falls back to
+    // draft.text for a v1 draft with one reply), so the pin is on that variable
+    // being printed bare. What matters is unchanged: no transform wraps it.
+    expect(reader).toContain("{activeText}");
+    expect(reader).toContain("const activeText = activeApproach?.text ?? draft.text;");
     expect(reader).toContain("{draft.disclosure}");
     expect(reader).not.toContain("stripInlineMarkdown(draft.text)");
     expect(reader).not.toContain("stripInlineMarkdown(draft.disclosure)");
+    // Nor dash-normalized, which is the same rule for a second reason. The
+    // clipboard hand-off copies the reply RAW, so normalizing the render alone
+    // would show a client "-" and paste "—" — a display that lies about what they
+    // are posting. And v2's robot checker rejects a draft for an em dash and never
+    // edits it, so cleaning one up here would hide a gate failure rather than fix
+    // the drafting. Our own prose about a draft IS normalized; the draft is not.
+    expect(reader).not.toContain("normalizeDashes(activeText)");
+    expect(reader).not.toContain("normalizeDashes(draft.text)");
+    expect(reader).not.toContain("normalizeDashes(draft.disclosure)");
+    expect(reader, "our own prose should be normalized").toContain(
+      "normalizeDashes(stripInlineMarkdown(draft.whySafe))",
+    );
   });
 
   it("humanizes the lab's lane vocabulary when it stands in as the title", () => {
