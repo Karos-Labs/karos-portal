@@ -445,3 +445,42 @@ describe("the instructions doc", () => {
     expect(doc).toContain("Do not source an image");
   });
 });
+
+describe("the admin library segregates superseded agents rather than hiding them", () => {
+  const hub = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+
+  it("splits the grid on isSupersededAgentKey, which parentKey cannot answer", () => {
+    // The bug this fixes: groupAgentsByParent splits on parentKey ALONE, and a
+    // replaced agent has none — it was replaced, not absorbed — so e10 LinkedIn
+    // and v1 Reddit landed in `parents` and rendered as live products beside the
+    // agent that replaced them.
+    expect(hub).toContain("libraryEntries.filter((e) => !isSupersededAgentKey(e.agent.key))");
+    expect(hub).toContain("libraryEntries.filter((e) => isSupersededAgentKey(e.agent.key))");
+    // Both grids render through the SAME card, so a legacy agent keeps every
+    // control — the point of segregating rather than filtering on this page.
+    expect(hub).toContain("{activeEntries.map(renderEntry)}");
+    expect(hub).toContain("{legacyEntries.map(renderEntry)}");
+  });
+
+  it("still filters them OUT of the surfaces a client sees", () => {
+    // The library is the one place they stay reachable. Every client-facing roster
+    // drops them, and that asymmetry is the design, not an oversight.
+    expect(isUnlistedAgent({ key: "karos-linkedin-company-karoslabs" })).toBe(true);
+    expect(isUnlistedAgent({ key: "karos-reddit-agent" })).toBe(true);
+  });
+
+  it("shows the manifest's REASON for a block, not just the word", () => {
+    // "blocked" is overloaded: an egress constraint on the Reddit agents, "in
+    // build, no pilot run yet" on the v2 skills. Neither is a broken build, which
+    // is what a bare danger-red "Blocked in repo" implied.
+    expect(hub).toContain("blockedLabel(agent.source.blocked_reason)");
+    expect(hub).toContain('<Badge tone="warning">');
+    // Asserted on the RENDERED text, not the file: the comment above the badge
+    // quotes the old label to explain what changed, and a whole-file match would
+    // be kept red by the explanation.
+    expect(hub).not.toContain(">Blocked in repo<");
+    // The full reason has to be reachable: the stored values run 374-731 chars, so
+    // the badge shows a lead and the title carries the rest.
+    expect(hub).toContain("title={agent.source.blocked_reason ??");
+  });
+});

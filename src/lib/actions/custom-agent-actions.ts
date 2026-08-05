@@ -389,6 +389,12 @@ export async function importCustomAgentsAction(
       source: {
         path: candidate.entrySkillDir,
         status: candidate.status,
+        // The candidate carries it camelCased (the scan maps the manifest's
+        // `blocked_reason` in custom-agent-import.ts); the stored field keeps the
+        // manifest's own spelling. Without this the UI can only say "blocked",
+        // which reads as a broken build when it usually means an egress
+        // constraint or an unrun pilot.
+        ...(candidate.blockedReason ? { blocked_reason: candidate.blockedReason } : {}),
         ...(repoSha ? { repoSha } : {}),
       },
       createdBy: user.uid,

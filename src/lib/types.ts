@@ -419,6 +419,24 @@ export interface CustomAgent {
     path: string;
     /** Runtime-manifest status at import time (ready / blocked / unreviewed). */
     status?: string;
+    /**
+     * WHY the manifest called it blocked, copied verbatim at import.
+     *
+     * `status: "blocked"` is overloaded and the word alone misleads. For the
+     * Reddit agents it means an ENVIRONMENTAL constraint — Reddit blocks
+     * datacenter egress, so a Cloud Run run reads nothing — and for the v2
+     * LinkedIn and Reddit skills it means "in build, no pilot run yet". Neither
+     * is a broken build, which is what a bare "Blocked in repo" badge implied to
+     * every operator who read it.
+     *
+     * SNAKE_CASE, deliberately, against this object's own camelCase (`repoSha`):
+     * it is the manifest's own field name and the name the integration prompts
+     * refer to. Worth one inconsistency to keep the two ends spelled the same.
+     *
+     * Long prose in practice — 374 to 731 characters on the agents that carry it —
+     * so any UI showing it must truncate and put the rest somewhere reachable.
+     */
+    blocked_reason?: string;
     repoSha?: string;
   } | null;
   createdBy: string;

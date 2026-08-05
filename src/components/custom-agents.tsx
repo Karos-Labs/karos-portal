@@ -64,6 +64,7 @@ import {
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   groupAgentsByParent,
+  isSupersededAgentKey,
 } from "@/lib/custom-agent-launch";
 import type { ContextItem, CustomAgent, JobRunType, JobStatus } from "@/lib/types";
 import { cn, formatDate, relativeTime } from "@/lib/utils";
@@ -532,6 +533,41 @@ function AgentLiveToggle({ agentId, enabled }: { agentId: string; enabled: boole
  * on staff can run one for a client.
  */
 /**
+ * One card on the library grid: a top-level agent, the steps nested under it, and
+ * whether it is an orphan whose parentKey resolves to nothing.
+ */
+interface LibraryEntry {
+  agent: CustomAgent;
+  children: CustomAgent[];
+  orphan: boolean;
+}
+
+/** How much of a blocked reason fits on a badge before it breaks the card. */
+const BLOCKED_LABEL_MAX = 44;
+
+/**
+ * A manifest `blocked_reason` as a badge label: the first clause, capped.
+ *
+ * The stored values are prose (374 to 731 characters on the agents that carry
+ * one), so this takes the lead sentence or clause — which in practice is the
+ * useful part ("Reddit blocks datacenter egress", "In build, no pilot run yet") —
+ * and the full text rides on the title attribute beside it.
+ *
+ * A missing reason says so rather than falling back to the bare word that caused
+ * the confusion: an agent the manifest called blocked WITHOUT saying why is a gap
+ * in the manifest, and naming it is more useful than hiding it.
+ */
+function blockedLabel(reason: string | undefined): string {
+  const text = reason?.trim();
+  if (!text) return "Blocked (unspecified)";
+  // First sentence or clause, whichever comes first — the values open with the
+  // headline and then explain at length.
+  const lead = text.split(/(?<=[.:;])\s|\s[-—]\s/)[0]?.trim() || text;
+  const clipped = lead.length > BLOCKED_LABEL_MAX ? `${lead.slice(0, BLOCKED_LABEL_MAX - 1).trimEnd()}…` : lead;
+  return clipped;
+}
+
+/**
  * One sub-agent, as a row nested under its parent in the library.
  *
  * NESTED RATHER THAN HIDDEN, and that is the whole design decision. /agents is
@@ -633,10 +669,21 @@ export function CustomAgentsHub({
   // Parents carrying their own steps, then any orphan as its own card so a
   // mistyped parentKey is visible instead of swallowed.
   const { parents, orphans } = groupAgentsByParent(agents);
-  const libraryEntries = [
+  const libraryEntries: LibraryEntry[] = [
     ...parents.map((entry) => ({ ...entry, orphan: false })),
     ...orphans.map((agent) => ({ agent, children: [] as CustomAgent[], orphan: true })),
   ];
+  // SUPERSEDED AGENTS ARE A THIRD CASE, and missing it is what put two LinkedIn
+  // agents on this page. `groupAgentsByParent` splits on parentKey alone, and a
+  // replaced agent has none — it was replaced, not absorbed — so e10 LinkedIn and
+  // v1 Reddit landed in `parents` and rendered as live products.
+  //
+  // Split rather than filtered, because this page is the LIBRARY: hiding a doc
+  // here would make its prompt permanently uneditable, which is worse than the
+  // clutter. A step keeps nesting under its parent in whichever section the parent
+  // is in, so a legacy agent's own steps travel with it.
+  const activeEntries = libraryEntries.filter((e) => !isSupersededAgentKey(e.agent.key));
+  const legacyEntries = libraryEntries.filter((e) => isSupersededAgentKey(e.agent.key));
 
   return (
     <section className="mt-10">
@@ -676,8 +723,11 @@ export function CustomAgentsHub({
           </p>
         </div>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {libraryEntries.map(({ agent, children, orphan }) => {
+        // ONE renderer, TWO grids. The card is the same either way — a legacy
+        // agent stays fully editable, which is the whole reason /agents does not
+        // simply hide it — so the only difference is which section it sits in.
+        (() => {
+        const renderEntry = ({ agent, children, orphan }: LibraryEntry) => {
             // F38. The clients this agent can actually run for. An unbound agent
             // keeps the whole list; a per-client instance keeps its own client,
             // and keeps NONE when that client is absent from this staff member's
@@ -756,9 +806,26 @@ export function CustomAgentsHub({
                       the usual cause is a typo in the field. */}
                   {orphan && <Badge tone="warning">Step with no parent</Badge>}
                   {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
-                  {/* Repo-catalog flag — informational until an admin reviews and enables. */}
-                  {!agent.enabled && agent.source?.status === "blocked" && (
-                    <Badge tone="danger">Blocked in repo</Badge>
+                  {/* WHAT THE MANIFEST ACTUALLY SAID, not just that it said
+                      something. `status: "blocked"` is overloaded: on the Reddit
+                      agents it means Reddit blocks datacenter egress, and on the
+                      v2 skills it means "in build, no pilot run yet". A bare
+                      "Blocked in repo" in danger red read as a broken build to
+                      every operator who saw it, which is why this is now the
+                      reason, in warning tone.
+
+                      Shown for an ENABLED agent too, unlike before: the manifest
+                      status is a live fact about the skill, and an operator who
+                      has switched a blocked agent on is exactly the person who
+                      needs to remember why it was blocked.
+
+                      Truncated, because the real values run 374 to 731 characters
+                      and a badge that long destroys the card. The whole reason is
+                      on the title attribute, which is the only place it fits. */}
+                  {agent.source?.status === "blocked" && (
+                    <span title={agent.source.blocked_reason ?? "No reason recorded in the manifest."}>
+                      <Badge tone="warning">{blockedLabel(agent.source.blocked_reason)}</Badge>
+                    </span>
                   )}
                 </div>
               </div>
@@ -846,8 +913,31 @@ export function CustomAgentsHub({
               )}
             </div>
             );
-          })}
-        </div>
+        };
+        return (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">{activeEntries.map(renderEntry)}</div>
+            {legacyEntries.length > 0 && (
+              <>
+                {/* SEGREGATED, NOT HIDDEN. These are agents a newer generation
+                    replaced: the e10 LinkedIn company page and the v1 Reddit
+                    agent. They keep their docs so a rollback has something to
+                    re-enable and so their prompts stay editable, but standing
+                    them beside the live roster read as "we ship two LinkedIn
+                    agents". Every roster a CLIENT sees drops them entirely
+                    (isUnlistedAgent); this page is the library, where an admin
+                    still needs to reach them. */}
+                <h3 className="mt-8 mb-1 text-sm font-medium text-muted">Legacy and superseded</h3>
+                <p className="mb-4 text-xs text-muted-2">
+                  Replaced by a newer generation. Kept so their prompts stay editable and a
+                  rollback has something to re-enable. Clients are never offered these.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">{legacyEntries.map(renderEntry)}</div>
+              </>
+            )}
+          </>
+        );
+        })()
       )}
 
       {runAgent && (
