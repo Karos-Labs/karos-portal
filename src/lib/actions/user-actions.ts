@@ -25,7 +25,7 @@ import { ownAccountSession, requireAdmin } from "./_shared";
 const SUPPORT_EMAIL = process.env.ADMIN_EMAIL ?? "hello@karoslabs.com";
 
 function signInUrl(): string {
-  const base = (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+  const base = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
   return `${base}/login`;
 }
 

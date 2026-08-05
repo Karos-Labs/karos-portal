@@ -12,9 +12,16 @@ import { deriveActionItemOwners } from "@/lib/transcripts/ingest";
 import { normalizeDashes } from "@/lib/text-utils";
 import type { AppUser } from "@/lib/types";
 
-export default async function TranscriptDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TranscriptDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string }>;
+}) {
   const user = await requireUser();
   const { id } = await params;
+  const { from } = await searchParams;
   const t = await getTranscript(id);
   if (!t) notFound();
   // Client guard: hidden meetings and meetings belonging to other clients are invisible
@@ -23,6 +30,18 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
   }
   const isStaff = user.role !== "CLIENT_USER";
   const isAdmin = user.role === "KAROS_ADMIN";
+
+  // Where "back" goes: the page that linked here, when it told us (`from`); a
+  // client's only route to this page is the Meetings tab on their own settings,
+  // so a client with no `from` falls back there rather than to /transcripts,
+  // which isn't in their nav at all.
+  const backHref =
+    from && from.startsWith("/")
+      ? from
+      : !isStaff && user.clientId
+        ? `/clients/${user.clientId}/settings?tab=meetings`
+        : "/transcripts";
+  const backLabel = backHref === "/transcripts" ? "All meetings" : "Back";
 
   const [clients, allUsers] = await Promise.all([
     isStaff ? listClients() : Promise.resolve([]),
@@ -55,8 +74,8 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
 
   return (
     <>
-      <Link href="/transcripts" className="mb-4 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground">
-        <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> All meetings
+      <Link href={backHref} className="mb-4 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground">
+        <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> {backLabel}
       </Link>
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">

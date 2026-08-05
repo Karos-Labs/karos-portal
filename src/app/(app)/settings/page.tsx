@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { adminAuth } from "@/lib/firebase/admin";
@@ -28,10 +29,10 @@ export const metadata = { title: "Settings · Karos CMO" };
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; returnTo?: string }>;
 }) {
   const user = await requireUser();
-  const { tab: initialTab } = await searchParams;
+  const { tab: initialTab, returnTo } = await searchParams;
 
   // A client whose client document resolves has their own settings page; carry
   // the tab so a deep link keeps naming the panel it named. A CLIENT_USER with
@@ -70,7 +71,20 @@ export default async function SettingsPage({
 
   return (
     <>
-      <PageHeader title="Settings" description="Your profile and how you sign in." />
+      <PageHeader
+        title="Settings"
+        description="Your profile and how you sign in."
+        action={
+          returnTo && returnTo.startsWith("/clients/") ? (
+            <Link
+              href={returnTo}
+              className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Back to client settings
+            </Link>
+          ) : undefined
+        }
+      />
       <SettingsTabs tabs={tabs} initialTab={initialTab} />
     </>
   );

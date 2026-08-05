@@ -227,7 +227,7 @@ export default async function ClientSettingsPage({
           {transcripts.slice(0, 12).map((t) => (
             <li key={t.id}>
               <Link
-                href={`/transcripts/${t.id}`}
+                href={`/transcripts/${t.id}?from=${encodeURIComponent(`/clients/${client.id}/settings?tab=meetings`)}`}
                 className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-surface-2/40"
               >
                 <div className="min-w-0">
@@ -319,6 +319,18 @@ export default async function ClientSettingsPage({
       <PageHeader
         title="Settings"
         description="Credits and usage, connected channels, automation, meetings, and teammates."
+        action={
+          isStaff ? (
+            <Link
+              href={`/settings?returnTo=${encodeURIComponent(
+                `/clients/${client.id}/settings${initialTab ? `?tab=${initialTab}` : ""}`,
+              )}`}
+              className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Your account settings
+            </Link>
+          ) : undefined
+        }
       />
 
       {/* CLIENT_USER already sees this via the (app) shell's own wrapper - only

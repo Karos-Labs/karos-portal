@@ -88,12 +88,14 @@ describe("account settings are TABS, not a page behind a button hop", () => {
     expect(page).toContain('label: "Account security"');
   });
 
-  it("offers no entry that navigates off the row", () => {
+  it("offers no entry that navigates a client off the row", () => {
     // The hop, in every form it had: the header action it started as, and the
-    // link entry it became.
+    // link entry it became. A staff-only cross-link to /settings (staff's own
+    // account, not a second page for the client's) is not this hop — it never
+    // renders for the CLIENT_USER the row belongs to — so it is gated behind
+    // `isStaff ?` rather than banned outright.
     const header = page.slice(page.indexOf("<PageHeader"), page.indexOf("<SettingsTabs"));
-    expect(header).not.toContain("Account settings");
-    expect(header).not.toContain("action=");
+    expect(flat(header)).toMatch(/action=\{\s*isStaff \?/);
     const pageCode = code(SETTINGS_PAGE);
     expect(pageCode).not.toContain('href: "/settings"');
     expect(pageCode).not.toContain('label: "Account settings"');

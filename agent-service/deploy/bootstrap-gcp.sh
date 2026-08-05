@@ -169,7 +169,7 @@ $(say "Done. Wire the platform (Cloud Run env) with:")
   AGENT_SERVICE_AUDIENCE  = https://<api-service-url>            # same URL — turns on IAM ID tokens
   AGENT_SERVICE_TOKEN     = (secret agent-service-tokens)        # --set-secrets
   AGENT_WEBHOOK_SECRET    = (secret agent-webhook-secret)        # --set-secrets, shared with the service
-  NEXT_PUBLIC_APP_URL     = https://<platform-url>               # webhook callback base
+  APP_URL                 = https://<platform-url>               # webhook callback base
 
 Deploy substitutions for cloudbuild.yaml:
   _REGION=$REGION _REPO=$REPO

@@ -105,9 +105,9 @@ export async function submitCustomAgentRun(args: {
     return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
   if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
   }
 
   // X agent (e13): attach the portal-collected intake, ongoing boxes, and

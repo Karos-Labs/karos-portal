@@ -164,7 +164,7 @@ describe("clientSafeRunError", () => {
     const safe = clientSafeRunError(raw);
     expect(safe).not.toContain("AGENT_SERVICE_URL");
     expect(safe).not.toBe(raw);
-    expect(clientSafeRunError("AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks.")).toBe(
+    expect(clientSafeRunError("AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks.")).toBe(
       safe,
     );
   });
