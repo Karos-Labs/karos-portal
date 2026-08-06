@@ -31,7 +31,7 @@ const STATUS_COLOR: Record<Asset["status"], string> = {
 };
 
 /** A status Firestore holds and the union doesn't still gets a bar, in slate. */
-const UNKNOWN_STATUS_COLOR = "#9c9ca3";
+const UNKNOWN_STATUS_COLOR = "var(--muted)";
 
 /**
  * The counter tiles, on their own so a caller can place them somewhere the rest

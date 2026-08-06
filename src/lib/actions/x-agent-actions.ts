@@ -17,6 +17,7 @@ import { revalidatePath } from "next/cache";
 import { generateText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS } from "@/lib/constants";
+import { logger, readWebSearchCount } from "@/services/logger";
 import {
   addXDraftFeedback,
   addXNewsUpdate,
@@ -346,14 +347,25 @@ export async function proposeXRosterAction(input: {
       // that promised a list of accounts; if they did not get one, they did not
       // get the thing they paid for — whether the model threw, returned
       // unparseable text, or returned too few usable handles.
+      const usageMeta = {
+        clientId: input.clientId, agentId: null, agentName: "X agent · account suggestions",
+        modelName: MODELS.SONNET, operation: "x_agent_roster_suggestions",
+      };
+      let usageLogged = false;
       try {
-        const { text } = await generateText({
+        const { text, usage, providerMetadata } = await generateText({
           model: anthropic(MODELS.SONNET),
           tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
           system:
             "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active, such as well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
           prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
         });
+        logger.logUsage({
+          ...usageMeta,
+          inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0,
+          webSearchCount: readWebSearchCount(providerMetadata),
+        });
+        usageLogged = true;
         const match = text.match(/\[[\s\S]*\]/);
         if (!match) {
           await refund("Refund · account suggestions came back empty");
@@ -372,7 +384,11 @@ export async function proposeXRosterAction(input: {
           return { error: "Proposal came back too thin. Try again or type accounts manually." };
         }
         return { handles };
-      } catch {
+      } catch (err) {
+        // Only the generateText call itself is an unlogged spend — a parse/
+        // validation failure after it already ran logUsage above and must not
+        // be double-counted as a second (failed) attempt.
+        if (!usageLogged) logger.logGenerationFailure(usageMeta, err);
         // This catch is why the refund is spelled here rather than left to the
         // wrapper: it swallows the throw to keep the client-safe sentence, so
         // the wrapper never sees a failure to pair a refund to.

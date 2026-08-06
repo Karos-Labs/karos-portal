@@ -250,7 +250,7 @@ function DraftCard({
                 placeholder="Your final version."
               />
               {finalText.trim().length > LINKEDIN_POST_CAP ? (
-                <p className="text-xs text-red-400">
+                <p className="text-xs text-danger">
                   {finalText.trim().length.toLocaleString()} characters. LinkedIn posts cap at
                   3,000. Trim it before posting.
                 </p>
@@ -351,7 +351,7 @@ function DraftCard({
               </p>
             </>
           )}
-          {error ? <p className="text-xs text-red-400">{error}</p> : null}
+          {error ? <p className="text-xs text-danger">{error}</p> : null}
         </div>
       ) : sent === "posted" || sent === "posted_with_edits" ? (
         <div className="mt-3 flex items-center gap-3">

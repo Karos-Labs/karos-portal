@@ -219,7 +219,7 @@ function ClientContextPicker({
                 filtered.map((client) => {
                   const isActive = activeClient?.client.id === client.id;
                   const logoUrl = client.logoUrl || client.brandingGuidelines?.logoUrl;
-                  const accentColor = client.accentColor ?? "#2dff9e";
+                  const accentColor = client.accentColor ?? "#ff6b2c";
                   return (
                     <button
                       key={client.id}
@@ -566,7 +566,7 @@ export function Sidebar({
             />
             <span className="flex-1">{item.label}</span>
             {badge !== null && (
-              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-neon px-1.5 text-[11px] font-semibold text-[#03110b]">
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-neon px-1.5 text-[11px] font-semibold text-accent-ink">
                 {badge}
               </span>
             )}

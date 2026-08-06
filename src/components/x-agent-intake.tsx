@@ -100,7 +100,7 @@ function RequiredMark() {
 }
 
 function fieldError(error: string | null) {
-  return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
+  return error ? <p className="mt-2 text-xs text-danger">{error}</p> : null;
 }
 
 const premiumValue = (p?: boolean) => (p === true ? "yes" : p === false ? "no" : "auto");

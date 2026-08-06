@@ -43,16 +43,14 @@ export default async function SettingsPage({
     if (href) redirect(href);
   }
 
-  // Fetch the Firebase Auth record to discover which sign-in providers are linked.
-  const firebaseUser = await adminAuth().getUser(user.uid);
+  // Fetch the Firebase Auth record (sign-in providers) and, for CLIENT_USER
+  // accounts, the company name — independent reads, run concurrently.
+  const [firebaseUser, client] = await Promise.all([
+    adminAuth().getUser(user.uid),
+    user.clientId ? getClient(user.clientId) : Promise.resolve(null),
+  ]);
   const providers = firebaseUser.providerData.map((p) => p.providerId);
-
-  // Resolve the company name for CLIENT_USER accounts.
-  let clientName: string | null = null;
-  if (user.clientId) {
-    const client = await getClient(user.clientId);
-    clientName = client?.name ?? null;
-  }
+  const clientName = client?.name ?? null;
 
   const tabs: SettingsTab[] = [
     {

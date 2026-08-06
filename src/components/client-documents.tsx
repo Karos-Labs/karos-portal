@@ -772,7 +772,7 @@ export function RegenerateModal({
           <button
             onClick={handleConfirm}
             disabled={running}
-            className="flex items-center gap-2 rounded-[10px] bg-neon px-4 py-2 text-sm font-semibold text-[#03110b] transition-opacity hover:opacity-90 disabled:opacity-60"
+            className="flex items-center gap-2 rounded-[10px] bg-neon px-4 py-2 text-sm font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             <Icon
               name="RefreshCw"
@@ -1001,7 +1001,7 @@ function ScheduleModal({
           <button
             onClick={handleSave}
             disabled={running}
-            className="flex items-center gap-2 rounded-[10px] bg-neon px-4 py-2 text-sm font-semibold text-[#03110b] transition-opacity hover:opacity-90 disabled:opacity-60"
+            className="flex items-center gap-2 rounded-[10px] bg-neon px-4 py-2 text-sm font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             <Icon name="CalendarClock" className={cn("h-3.5 w-3.5", running && "animate-pulse")} />
             {running ? "Saving…" : "Save Schedule"}

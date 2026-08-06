@@ -66,7 +66,7 @@ function ScorePill({ score, weight }: { score?: number; weight?: number }) {
     score >= 70
       ? "text-neon border-neon/30 bg-neon-soft"
       : score >= 50
-        ? "text-yellow-400 border-yellow-400/30 bg-yellow-400/10"
+        ? "text-warning border-warning/30 bg-warning/10"
         : "text-danger border-danger/30 bg-danger/10";
   return (
     <div className={cn("flex items-center gap-2 rounded-md border px-3 py-1.5", color)}>
