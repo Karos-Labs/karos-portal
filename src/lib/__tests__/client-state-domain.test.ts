@@ -29,26 +29,29 @@ import { join } from "node:path";
 /**
  * A CLIENT CONTROL MAY ONLY OFFER A STATE THEIR OWN DATA CAN BE IN.
  *
- * THREE SURFACES HAD THE SAME DEFECT and each was reported as its own finding,
- * which is how it survived two of them being fixed:
+ * THREE SURFACES ONCE HAD THE SAME DEFECT, reported separately (which is why two
+ * got fixed before the third did) and later PARTIALLY REVERSED on purpose:
  *
  *  • the Workspace archive's status filter offered "Draft", on a list whose
  *    server-side projection rejects drafts — a control that could only ever
- *    empty the page;
- *  • the calendar legend offered a client a "Draft" chip, dead for the same
- *    reason and worse than dead, because a Draft entry in a forward-looking
- *    legend states that drafted content is on this calendar (A3);
+ *    empty the page. STILL TRUE: the archive is unaffected by the reversal below.
+ *  • the calendar legend offered a client a "Draft" chip (A3), and
  *  • the Performance tab's chart drew a "Draft n" ROW and the "Deliverables"
- *    tile counted the same set, so the number of unapproved drafts their team
- *    was holding was readable off the dashboard (A4).
+ *    tile counted the same set (A4).
  *
- * ASKED OF THE PROJECTION, which is the whole point of this file. The obvious
- * test — "the archive filter must not offer draft" — is a list of states someone
- * typed, and it goes stale the moment a projection changes for any other reason.
- * Every assertion below computes the answer by RUNNING the projection the surface
- * renders from (`getClientArchiveAssets` over one asset per status;
- * `isClientCalendarStatus` for the calendar's half) and requires the control to
- * match it.
+ *  A3 and A4 were both DELIBERATELY REVERSED afterward: a client's calendar and
+ *  dashboard now show the same pending work staff see, drafts included — see
+ *  `isClientCalendarStatus`'s docstring in calendar-kind.ts for the decision. The
+ *  tests below assert the CURRENT rule for each surface, which is no longer one
+ *  shape for all three: `archive` still withholds "draft"; `performance` (the
+ *  calendar's dashboard-facing sibling) no longer does.
+ *
+ * ASKED OF THE PROJECTION, which is the whole point of this file — a change to
+ * either rule moves the control with it rather than going stale against a
+ * hand-typed list. Every assertion below computes the answer by RUNNING the
+ * projection the surface renders from (`getClientArchiveAssets` over one asset
+ * per status; `isClientCalendarStatus` for the calendar/dashboard half) and
+ * requires the control to match it.
  *
  * WHY IT IS NOT VACUOUS even though the source now derives its own answer. The
  * module derives from the per-asset PREDICATE (`isInClientArchive`); this file
@@ -124,15 +127,25 @@ describe("a client control offers only states their own data can hold", () => {
         `the ${surface} surface offers a client a state its projection rejects`,
       ).toEqual(admitted);
 
-      // NON-VACUITY, per surface: the client answer must be a PROPER, non-empty
-      // subset. All five would mean the derivation is a pass-through and the
-      // finding is back; none would mean the control is dead in the other
-      // direction.
+      // NON-VACUITY, per surface, but the two surfaces no longer share one shape.
+      // `archive` still must be a PROPER, non-empty subset — `isInClientArchive`
+      // still rejects a draft outright, and if it ever admitted everything that
+      // would itself be a regression worth catching. `performance` is, BY THE
+      // REVERSAL recorded on `isClientCalendarStatus`, now a deliberate
+      // pass-through: a client's dashboard shows every status staff see. Asserting
+      // the old "proper subset" shape on it would just re-fail the thing that was
+      // reversed on purpose.
       expect(admitted.length, `${surface} admits nothing`).toBeGreaterThan(0);
-      expect(
-        admitted.length,
-        `${surface} withholds nothing from a client — the derivation is a pass-through`,
-      ).toBeLessThan(ALL_ASSET_STATUSES.length);
+      if (surface === "archive") {
+        expect(
+          admitted.length,
+          `${surface} withholds nothing from a client — the derivation is a pass-through`,
+        ).toBeLessThan(ALL_ASSET_STATUSES.length);
+      } else {
+        expect(admitted, `${surface} no longer matches staff — check the reversal is intact`).toEqual(
+          ALL_ASSET_STATUSES,
+        );
+      }
 
       // The neighbouring case, which is what makes this a VIEWER rule rather than
       // a deletion: staff still get the whole union on the same surface.
@@ -140,18 +153,27 @@ describe("a client control offers only states their own data can hold", () => {
     }
   });
 
-  it("names draft as the state every registered surface withholds, so the fix is visible", () => {
-    // Pinned by name as well as derived. The derivation above would stay green if
-    // draft became client-visible everywhere AND the projections agreed — which
-    // is exactly the directive-A4 breach, silently consistent.
-    for (const surface of ALL_CLIENT_STATE_SURFACES) {
-      expect(offeredStatesFor(surface, true), `${surface} offers a client Draft`).not.toContain(
-        "draft",
-      );
-      expect(isClientStateFor(surface, "draft")).toBe(false);
-      // …and staff keep it, on every surface.
-      expect(offeredStatesFor(surface, false)).toContain("draft");
-    }
+  it("still withholds draft from the archive; the calendar/dashboard reversal does not touch it", () => {
+    // `archive` keeps the original A4-era rule — `isInClientArchive` never
+    // admitted a draft, and nothing about the calendar/dashboard reversal changes
+    // that predicate.
+    expect(offeredStatesFor("archive", true), "archive offers a client Draft").not.toContain(
+      "draft",
+    );
+    expect(isClientStateFor("archive", "draft")).toBe(false);
+    expect(offeredStatesFor("archive", false)).toContain("draft");
+  });
+
+  it("shows draft to a client on the dashboard, by the deliberate reversal — matching staff", () => {
+    // The opposite pin from the one this suite used to hold: `performance` USED
+    // to withhold "draft" (directive A4); the product decision behind
+    // `isClientCalendarStatus` reversed that, so a client's dashboard now shows
+    // exactly what staff see, draft included.
+    expect(offeredStatesFor("performance", true), "performance still hides Draft from a client").toContain(
+      "draft",
+    );
+    expect(isClientStateFor("performance", "draft")).toBe(true);
+    expect(offeredStatesFor("performance", true)).toEqual(offeredStatesFor("performance", false));
   });
 
   it("refuses a status the union has never heard of, rather than printing it", () => {
@@ -178,10 +200,10 @@ describe("a client control offers only states their own data can hold", () => {
   it("keeps the calendar legend's status chips answering the same question", () => {
     // The third surface, in its own key domain. A calendar filter key that is
     // also an asset status must be offered a client exactly when the calendar's
-    // own status projection admits it — which is what withholds "Draft" and keeps
-    // "Scheduled"/"Published". The keys that are NOT statuses (placeholder,
-    // failed, held, review) are chip kinds and run states, derived from postKind
-    // and the past-run table in calendar-kind.test.ts; this does not restate them.
+    // own status projection admits it. Post-reversal that admits every status,
+    // "Draft" included — the keys that are NOT statuses (placeholder, failed,
+    // held, review) are chip kinds and run states, derived from postKind and the
+    // past-run table in calendar-kind.test.ts; this does not restate them.
     const statusKeys = ALL_CALENDAR_FILTER_KEYS.filter((k) =>
       Object.hasOwn(CLIENT_ASSET_STATUS_LABEL, k),
     );
@@ -195,8 +217,10 @@ describe("a client control offers only states their own data can hold", () => {
       // Staff keep every chip.
       expect(calendarFilterKeyMatchable(key, false)).toBe(true);
     }
-    // Non-vacuity: at least one of them really is withheld.
-    expect(statusKeys.filter((k) => !calendarFilterKeyMatchable(k, true))).toEqual(["draft"]);
+    // Non-vacuity, the other direction now: the reversal means NONE of the status
+    // keys are withheld from a client any more — a client's calendar legend
+    // matches staff's, key for key.
+    expect(statusKeys.filter((k) => !calendarFilterKeyMatchable(k, true))).toEqual([]);
   });
 });
 
@@ -254,11 +278,10 @@ function performanceHtml(viewerIsClient: boolean): string {
 }
 
 describe("the Performance tab's content-by-status chart", () => {
-  it("draws a client no row for a state their own surfaces hide", () => {
+  it("draws a client every row now, draft included — the A4 reversal", () => {
     const html = performanceHtml(true);
 
     // Non-vacuity first: the chart rendered, with the rows a client DOES get.
-    // Every negative below is worthless over empty markup.
     expect(html, "the chart did not render").toContain("Content by status");
     for (const status of offeredStatesFor("performance", true)) {
       expect(html, `the client lost the ${status} row`).toContain(
@@ -266,20 +289,17 @@ describe("the Performance tab's content-by-status chart", () => {
       );
     }
 
-    // A4: no draft row, in either register's wording — the client word ("Draft")
-    // and the staff word ("Awaiting review"), because the bug would be just as
-    // real if the chart handed a client the other vocabulary.
-    expect(html, "the draft row reached a client").not.toContain(
-      CLIENT_ASSET_STATUS_LABEL.draft,
-    );
-    expect(html, "the draft row reached a client in staff wording").not.toContain(
+    // Reversed from the A4-era assertion: the client now gets the draft row too,
+    // in the client register's wording ("Draft") — never the staff word
+    // ("Awaiting review"), because this is still a client-facing render.
+    expect(html, "the client draft row is missing").toContain(CLIENT_ASSET_STATUS_LABEL.draft);
+    expect(html, "the client draft row leaked staff wording").not.toContain(
       STAFF_ASSET_STATUS_LABEL.draft,
     );
   });
 
   it("still draws staff every row, off the same fixture", () => {
-    // What makes the above a viewer rule rather than a deletion. Staff review
-    // drafts; a chart that hid them from the reviewer would be the opposite bug.
+    // Staff read the operator register regardless of the client-side reversal.
     const html = performanceHtml(false);
     expect(html).toContain(STAFF_ASSET_STATUS_LABEL.draft);
     for (const status of ALL_ASSET_STATUSES) {
@@ -300,23 +320,19 @@ describe("the Deliverables tile", () => {
     );
   }
 
-  it("counts a client only what their own surfaces can show", () => {
-    // THE OTHER HALF OF THE SAME RULE, and it has to be asserted separately
-    // because a chart whose legend drops Draft while the total still counts
-    // drafts has moved the disclosure from a label to a number. Five statuses in,
-    // four countable — so the tile must read 4, not 5.
+  it("counts a client the same total as staff now — the A4 reversal", () => {
+    // THE OTHER HALF OF THE SAME RULE: a chart whose legend shows Draft while the
+    // total does not count it would have moved the disclosure gap from a label to
+    // a number in the other direction. Five statuses in, five countable now — the
+    // reversal is a pass-through, not a partial one.
     const expected = offeredStatesFor("performance", true).length;
-    expect(expected, "the fixture no longer distinguishes the two counts").toBeLessThan(
+    expect(expected, "performance stopped matching staff — check the reversal is intact").toBe(
       ONE_OF_EACH.length,
     );
 
     const html = tiles(true);
     expect(html, "the row did not render").toContain("Deliverables");
     expect(html).toMatch(new RegExp(`>\\s*${expected}\\s*<`));
-    // And the count it used to print — every asset, drafts included — is gone.
-    expect(html, "the tile still counts the whole set").not.toMatch(
-      new RegExp(`>\\s*${ONE_OF_EACH.length}\\s*<`),
-    );
   });
 
   it("still counts staff the whole set", () => {

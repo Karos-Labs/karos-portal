@@ -89,10 +89,12 @@ export function ClientAnalyticsStats({
   viewerIsClient: boolean;
 }) {
   // THE FOUR TILES COUNT THIS CLIENT'S CONTENT, so they count only states this
-  // client's content can be in. "Deliverables" was `assets.length` over the
-  // dashboard's library projection, which keeps drafts by design — so the tile
-  // published a count of the unapproved work their team was holding, as the one
-  // number a client's dashboard opens with.
+  // client's content can be in per `client-state-domain`'s "performance" surface
+  // — which now admits every status a client's calendar does, drafts included
+  // (see `isClientCalendarStatus`'s docstring for the reversal). "Deliverables"
+  // is `assets.length` over the dashboard's library projection, which has always
+  // kept drafts by design ("pending work is reviewable"), so the tile's count
+  // and the library's own set now agree again.
   //
   // NARROWED HERE, not at the page that feeds it. `clients/[id]/page.tsx` builds
   // one asset set and hands it to two different components — this counter row,
@@ -165,12 +167,13 @@ export function ClientAnalytics({
   const staleChannels = integrations.filter((i) => integrationNeedsReconnect(i));
 
   // Content-by-status breakdown, over the states this client's content can
-  // actually be in. It used to be built straight off the incoming set, which for
-  // a client is the library projection — drafts included — so the chart drew a
-  // Draft row WITH ITS COUNT on the one tab that summarises everything, beside a
-  // Workspace and a calendar that both hide drafts on purpose (A4). Same helper
-  // as the tiles, so the bars and the totals above them cannot disagree about
-  // what counts; it also drops a status the union has never heard of, which
+  // actually be in per `client-state-domain`'s "performance" surface. That now
+  // agrees with the incoming set for a client too — the library projection keeps
+  // drafts, and so does the calendar and this chart, by the same reversed
+  // decision (see `isClientCalendarStatus`'s docstring). The Workspace archive is
+  // the one surface that still withholds "Draft" from a client. Same helper as
+  // the tiles, so the bars and the totals above them cannot disagree about what
+  // counts; it also drops a status the union has never heard of, which
   // `assetStatusLabel` would otherwise render as its raw stored value.
   const charted = assetsInClientState("performance", assets, viewerIsClient);
   const byStatus = new Map<string, number>();

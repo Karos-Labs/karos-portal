@@ -113,10 +113,18 @@ export async function GET(req: NextRequest) {
       // mail is the client, so it takes the client projection. Passing the staff
       // one because the caller is a cron would hand a client's inbox the
       // unredacted set, which is the whole class of leak this reuse prevents.
+      //
+      // `excludeDrafts: true` is THIS CALLER'S OWN OPT-IN, not the calendar's
+      // default: the in-app calendar and dashboard now show a client their own
+      // team's pending drafts (a reversed product decision — see
+      // `isClientCalendarStatus`'s docstring), but this cron pushes an unprompted
+      // email, and that reversal was never meant to extend to proactively mailing
+      // a client about work nobody approved yet.
       const entries = clientCalendarEntries(assets, {
         isClient: true,
         now,
         viewer: { role: "CLIENT_USER", seatId: owner.seatId, isGroupAdmin: owner.isGroupAdmin },
+        excludeDrafts: true,
       });
       const today = calendarEntriesInWindow(entries, day.startMs, day.endMs);
       const content = digestContentFor(today);

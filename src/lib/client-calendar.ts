@@ -1,29 +1,39 @@
 /**
  * WHAT IS ON A CLIENT'S CALENDAR — one projection, two readers.
  *
- * The calendar page built this inline: filter to the statuses a client's
- * calendar is made of, run the client redaction boundary, dedupe the documents
- * the bulk-upload replay hole minted, classify each survivor with `postKind`.
- * Four steps in four modules, in the order they have to run.
+ * The calendar page built this inline: pass everything through the client
+ * redaction boundary, dedupe the documents the bulk-upload replay hole minted,
+ * classify each survivor with `postKind`. Three steps in three modules, in the
+ * order they have to run.
  *
  * The daily digest (AF-19) has to say what a client's day holds, and the ruling
  * is that the mail is DRIVEN BY the calendar rather than kept in step with it.
- * A second copy of those four steps in the cron would be exactly the shape that
+ * A second copy of those steps in the cron would be exactly the shape that
  * ruling forbids: two answers to "what does this client see today", drifting the
  * first time one of them is tightened. So the sequence lives here and the
  * calendar page calls it, which is what makes "synced" true by construction
  * rather than by inspection.
  *
  * THE ORDER IS LOAD-BEARING, and each step's own module says why:
- *  1. `isClientCalendarStatus` — drafts are not on a client's calendar at all,
- *     and the classifier's "draft" branch would otherwise mint chips for them.
- *  2. `getClientLibraryAssets({forClient})` — THE server security boundary. A
+ *  1. `getClientLibraryAssets({forClient})` — THE server security boundary. A
  *     future-dated post becomes a whitelist-redacted placeholder before it can
- *     cross to a browser, or into an email.
- *  3. `dedupeCalendarAssets`, keyed on the RAW documents. The redacted copies
+ *     cross to a browser, or into an email. It also carries drafts through
+ *     ("pending work is reviewable"), and a client's calendar keeps them for the
+ *     same reason — see `isClientCalendarStatus`'s docstring for the reversal:
+ *     a client's calendar and dashboard now show the same pending work staff
+ *     see, so there is no longer a draft-exclusion step here by default.
+ *  2. `dedupeCalendarAssets`, keyed on the RAW documents. The redacted copies
  *     carry no `meta`, so the `gcsPath` the decision rests on is gone from them
  *     (see the note at the mapping below).
- *  4. `postKind` — null means "not a calendar entity", which is the last filter.
+ *  3. `postKind` — null means "not a calendar entity", which is the last filter.
+ *
+ * `opts.excludeDrafts` IS THE ONE NAMED EXCEPTION to the reversal above, for a
+ * caller that PUSHES rather than displays. The daily digest (AF-19) emails a
+ * client's inbox unprompted; the in-app calendar and dashboard are something a
+ * client chooses to open. The product decision to show a client their own team's
+ * pending drafts did not extend to proactively mailing them about it, so the
+ * digest cron opts into this flag and nothing else does — see its own call site
+ * in app/api/daily-digest/route.ts.
  *
  * CLIENT-SAFE: no firebase-admin, no data.ts. Timestamps are epoch millis.
  */
@@ -31,21 +41,25 @@
 import type { Asset } from "@/lib/types";
 import { getClientLibraryAssets, type AssetViewer } from "@/lib/asset-visibility";
 import { dedupeCalendarAssets } from "@/lib/calendar-dedupe";
-import { isClientCalendarStatus, postKind, type CalendarAssetKind } from "@/lib/calendar-kind";
+import { postKind, type CalendarAssetKind } from "@/lib/calendar-kind";
 
 /**
  * The assets a viewer's calendar is drawn from, projected and deduped.
  *
  * `isClient` false is the staff path and is a straight dedupe of what it was
  * given: staff read the calendar un-redacted and see internal drafts, exactly as
- * before this function existed.
+ * before this function existed. `isClient` true now sees the same drafts too —
+ * `getClientLibraryAssets` already carries drafts through for the client
+ * library, and the calendar no longer filters them out first — UNLESS the
+ * caller asks for `excludeDrafts` (the daily digest's own opt-in; see the module
+ * docstring above).
  */
 export function clientVisibleCalendarAssets(
   scopedAssets: Asset[],
-  opts: { isClient: boolean; now: number; viewer?: AssetViewer },
+  opts: { isClient: boolean; now: number; viewer?: AssetViewer; excludeDrafts?: boolean },
 ): Asset[] {
-  const scoped = opts.isClient
-    ? scopedAssets.filter((a) => isClientCalendarStatus(a.status))
+  const scoped = opts.excludeDrafts
+    ? scopedAssets.filter((a) => a.status !== "draft")
     : scopedAssets;
   const visible = opts.isClient
     ? getClientLibraryAssets(scoped, { forClient: true, now: opts.now, viewer: opts.viewer })
@@ -79,7 +93,7 @@ export interface CalendarEntry {
  */
 export function clientCalendarEntries(
   scopedAssets: Asset[],
-  opts: { isClient: boolean; now: number; viewer?: AssetViewer },
+  opts: { isClient: boolean; now: number; viewer?: AssetViewer; excludeDrafts?: boolean },
 ): CalendarEntry[] {
   return clientVisibleCalendarAssets(scopedAssets, opts)
     .map((asset): CalendarEntry | null => {
