@@ -496,20 +496,10 @@ export function NewsletterAgentIntake({
   return (
     <div className="space-y-6">
       <SetupBand clientId={clientId} isSetUp={isSetUp ?? true} detailsOnFile={company !== null} />
-      {/* The same anchor the other three surfaces carry for the agent page's
-          inputs band (#85), minted from the shared helper rather than spelled
-          by hand. Newsletter has no seats and no news drop, so "company" would
-          be the whole set.
-
-          NOTHING LINKS TO IT YET, and that is worth stating rather than
-          implying: `intakeFamilyFor` in agent-detail-sections.ts answers null
-          for this family, so the band does not render on a newsletter agent's
-          page at all. Wiring it needs `toAgentInputRows` to stop keying its
-          seat and news-drop guards on `agent !== "reddit"` — newsletter has
-          neither either — which is a change to shared projection logic and its
-          tests, not to this file. The anchor is here so that when the band does
-          arrive it lands somewhere, and because a stable deep link costs
-          nothing. */}
+      {/* The anchor the agent page's inputs band links its one row to (#85).
+          Newsletter has no seats and no news drop, so "company" is the whole
+          set — and it is derived from the same row id the band mints, not
+          spelled twice. */}
       <div id={intakeAnchorId("company")} className="scroll-mt-24">
         <DetailsForm clientId={clientId} intake={company} />
       </div>

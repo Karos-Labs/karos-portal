@@ -12,6 +12,7 @@ import {
 import type { AgentProfileScopeFields } from "@/lib/data";
 import {
   isLinkedInAgentIdentity,
+  isNewsletterAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
 } from "@/lib/custom-agent-launch";
@@ -48,7 +49,7 @@ import type {
  *
  *  1. `toAgentInputRows` builds by WHITELIST. An intake document carries
  *     `createdBy` (a uid), a private CV path and URL, and every other agent's
- *     fields — the three families share one collection. What crosses is a
+ *     fields — the four families share one collection. What crosses is a
  *     label, a handle, a count, two timestamps, and — since AF-7 — the client's
  *     own ANSWERS, taken from the very functions the intake page renders
  *     (toXIntakeView / toLiIntakeView / toRedditIntakeView), never from the
@@ -210,7 +211,7 @@ function redditAnswers(view: ReturnType<typeof toRedditIntakeView>): AgentInputA
   ];
 }
 
-/** The "What it runs on" section for one of the three intake-driven agents. */
+/** The "What it runs on" section for one of the four intake-driven agents. */
 export interface AgentInputsView {
   agent: AgentIntake["agent"];
   /** The existing full-page intake surface — the ONE place these are edited. */
@@ -231,8 +232,93 @@ export function intakeFamilyFor(agentKey: string): AgentIntake["agent"] | null {
   if (isXAgentIdentity(agentKey)) return "x";
   if (isLinkedInAgentIdentity(agentKey)) return "linkedin";
   if (isRedditAgentIdentity(agentKey)) return "reddit";
+  if (isNewsletterAgentIdentity(agentKey)) return "newsletter";
   return null;
 }
+
+/**
+ * What each intake family actually HAS — the one place this band decides which
+ * rows a family gets and what its company row is called.
+ *
+ * ── WHY A TABLE AND NOT THE CONDITIONS IT REPLACED ───────────────────────
+ *
+ * This logic used to be five `agent !== "reddit"` tests — two here and three in
+ * `readAgentInputDocs` — plus two `agent === "reddit"` ternaries for the company
+ * row's own label. A negative list answers "yes, this family has seats" for
+ * every family nobody has thought about yet, and the newsletter is exactly that
+ * family: it has no seats (an issue goes out from the business, never from a
+ * person) and no news drop (the seven-day scan FINDS what happened rather than
+ * being told), so all five guards were about to be wrong in the direction that
+ * INVENTS UI — a seat row per employee on a product with no seat model, and a
+ * "Company news drop" row for a drop this agent never reads.
+ *
+ * Keyed by the union, so a fifth family is a compile error here rather than a
+ * silent inheritance of whichever branch happened to be last. That is the same
+ * idiom, for the same reason, as `IDENTITY_BY_FAMILY` in agent-intake-views.ts.
+ *
+ * `takes` and `direction` were already positive tests (`=== "x"`,
+ * `=== "linkedin"`) and were never wrong; they move in so that all five answers
+ * about one family can be read on one line instead of found in five places.
+ */
+interface IntakeFamilyCapabilities {
+  /** Per-person seat rows, and the per-seat intake documents behind them. */
+  seats: boolean;
+  /** The shared company news drop (PORTAL-INPUT-CONTRACT §3). */
+  newsDrop: boolean;
+  /** X's takes box. */
+  takes: boolean;
+  /** LinkedIn v2's Section A0 steering wheel. */
+  direction: boolean;
+  /** x-agent-v2's profile-scope doc, which carries handle/off-limits/come-across. */
+  profileDoc: boolean;
+  /** What the company-scope row is called, in the reader's words. */
+  companyLabel: string;
+  /** lucide name for that row's mark. */
+  companyIcon: string;
+}
+
+const FAMILY_CAPABILITIES: Record<AgentIntake["agent"], IntakeFamilyCapabilities> = {
+  x: {
+    seats: true,
+    newsDrop: true,
+    takes: true,
+    direction: false,
+    profileDoc: true,
+    companyLabel: "Company profile",
+    companyIcon: "Building2",
+  },
+  linkedin: {
+    seats: true,
+    newsDrop: true,
+    takes: false,
+    direction: true,
+    profileDoc: false,
+    companyLabel: "Company profile",
+    companyIcon: "Building2",
+  },
+  reddit: {
+    seats: false,
+    newsDrop: false,
+    takes: false,
+    direction: false,
+    profileDoc: false,
+    companyLabel: "Your Reddit account",
+    companyIcon: "User",
+  },
+  newsletter: {
+    seats: false,
+    newsDrop: false,
+    takes: false,
+    direction: false,
+    profileDoc: false,
+    // NOT "Company profile", which is what the negative list would have given
+    // it. There is no profile here and no account: this row is the client's
+    // scheduling and compliance configuration, and calling it a profile would
+    // send a reader looking for an identity page that does not exist.
+    companyLabel: "Your newsletter details",
+    companyIcon: "Mail",
+  },
+};
 
 /**
  * Project the stored intake into dated rows.
@@ -259,30 +345,34 @@ export function toAgentInputRows(args: {
   xProfile?: AgentProfileScopeFields | null;
 }): AgentInputRow[] {
   const rows: AgentInputRow[] = [];
+  const can = FAMILY_CAPABILITIES[args.agent];
   const answersOf = (doc: AgentIntake | null): { answers?: AgentInputAnswer[] } => {
     const saved = intakeAnswersFor(args.agent, doc, args.xProfile ?? null);
     // ABSENT, not empty. A row with nothing saved stays the plain link to the
     // form it is missing; growing an empty disclosure on it would be a control
-    // that opens onto nothing.
+    // that opens onto nothing. This is also what lets the newsletter's company
+    // row degrade cleanly: `intakeAnswersFor` returns [] for that family, so the
+    // row is a bare dated link rather than an empty drawer.
     return saved.length > 0 ? { answers: saved } : {};
   };
 
   rows.push({
     id: "company",
-    label: args.agent === "reddit" ? "Your Reddit account" : "Company profile",
+    label: can.companyLabel,
     detail: args.company
       ? (args.company.handle ?? "Saved — no account name yet")
       : "Not filled in yet",
     updatedAt: args.company?.updatedAt ?? null,
     filled: Boolean(args.company),
-    icon: args.agent === "reddit" ? "User" : "Building2",
+    icon: can.companyIcon,
     ...answersOf(args.company),
   });
 
-  // Reddit runs on the company account alone — it has no seat model, and the
-  // e15 intake surface renders none. Inventing empty seat rows for it would
-  // promise a per-person product that does not exist.
-  if (args.agent !== "reddit") {
+  // Reddit runs on the company account alone and the newsletter goes out from
+  // the business, so neither has a seat model or an intake surface that renders
+  // one. Inventing empty seat rows for either would promise a per-person product
+  // that does not exist.
+  if (can.seats) {
     const intakeBySeat = new Map(
       args.intake.filter((doc) => doc.seatId).map((doc) => [doc.seatId as string, doc]),
     );
@@ -307,8 +397,9 @@ export function toAgentInputRows(args: {
   }
 
   // The shared drop (PORTAL-INPUT-CONTRACT §3): the client types an update once
-  // and both the X and LinkedIn agents read it, so it is listed on both.
-  if (args.agent !== "reddit") {
+  // and both the X and LinkedIn agents read it, so it is listed on both — and
+  // on neither of the two families that do not read it at all.
+  if (can.newsDrop) {
     const latest = args.news[0] ?? null;
     rows.push({
       id: "news",
@@ -338,7 +429,7 @@ export function toAgentInputRows(args: {
   // LinkedIn's own steering wheel (v2 Section A0). NOT the shared drop above and
   // not listed for X: the news box says what happened, this says what to write
   // about next, and only the LinkedIn agent reads it.
-  if (args.agent === "linkedin") {
+  if (can.direction) {
     const open = args.directionRequests?.filter((r) => r.status === "open") ?? [];
     const latest = args.directionRequests?.[0] ?? null;
     rows.push({
@@ -362,7 +453,7 @@ export function toAgentInputRows(args: {
     });
   }
 
-  if (args.agent === "x") {
+  if (can.takes) {
     const latest = args.takes[0] ?? null;
     rows.push({
       id: "takes",
@@ -412,19 +503,27 @@ export async function readAgentInputDocs(
 ): Promise<AgentInputDocs | null> {
   const agent = intakeFamilyFor(agentKey);
   if (!agent) return null;
+  // The SAME table the projection reads, so a family cannot be fetched one way
+  // and rendered another. These three used to be `agent !== "reddit"`, which
+  // would have read every seat and every news row for the newsletter and then
+  // handed them to a projection that drops both — wasted reads at best, and a
+  // standing invitation for the two halves to disagree.
+  const can = FAMILY_CAPABILITIES[agent];
 
   const [company, intake, seats, news, takes, directionRequests, xProfile] = await Promise.all([
     getAgentIntake(clientId, agent, null),
-    agent === "reddit" ? Promise.resolve<AgentIntake[]>([]) : listAgentIntake(clientId, agent),
-    agent === "reddit" ? Promise.resolve<ClientSeat[]>([]) : listClientSeats(clientId),
-    agent === "reddit" ? Promise.resolve<XNewsUpdate[]>([]) : listXNewsUpdates(clientId),
-    agent === "x" ? listXTakes(clientId) : Promise.resolve<XTake[]>([]),
-    agent === "linkedin"
+    // Per-seat intake documents: only meaningful where there are seat rows to
+    // hang them on.
+    can.seats ? listAgentIntake(clientId, agent) : Promise.resolve<AgentIntake[]>([]),
+    can.seats ? listClientSeats(clientId) : Promise.resolve<ClientSeat[]>([]),
+    can.newsDrop ? listXNewsUpdates(clientId) : Promise.resolve<XNewsUpdate[]>([]),
+    can.takes ? listXTakes(clientId) : Promise.resolve<XTake[]>([]),
+    can.direction
       ? listLiDirectionRequests(clientId)
       : Promise.resolve<LiDirectionRequest[]>([]),
     // x-agent-v2 moved the company handle/off-limits/come-across into the
     // profile-scope doc; the X view reads intake + profile together.
-    agent === "x" ? getAgentProfileDocData(clientId, "x") : Promise.resolve(null),
+    can.profileDoc ? getAgentProfileDocData(clientId, "x") : Promise.resolve(null),
   ]);
 
   return {

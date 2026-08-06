@@ -259,20 +259,76 @@ describe("toAgentInputRows", () => {
     expect(seat?.updatedAt).toBe(NOW - 3 * DAY);
   });
 
-  it("gives Reddit no seats and no news drop", () => {
-    // e15 has no seat model and its intake surface renders none. Empty seat
-    // rows would promise a per-person product that does not exist, and the
-    // shared news drop is consumed by X and LinkedIn only.
+  it("gives Reddit and the newsletter no seats and no news drop", () => {
+    // Neither has a seat model, and neither intake surface renders one: e15
+    // drafts as one account, and a newsletter issue goes out from the business
+    // rather than from a person. Empty seat rows would promise a per-person
+    // product that does not exist, and the shared news drop is consumed by X
+    // and LinkedIn only — the newsletter's seven-day scan FINDS what happened.
+    //
+    // FED THE ROWS THEY MUST IGNORE, which is the whole test: a seat and a news
+    // update are passed in, so a guard that let either family through would
+    // produce extra rows here rather than passing on an empty fixture. This is
+    // the case the old `agent !== "reddit"` negative list got wrong — it
+    // answered "yes, you have seats" for every family nobody had thought about.
+    const cases: Array<[AgentIntake["agent"], string]> = [
+      ["reddit", "Your Reddit account"],
+      ["newsletter", "Your newsletter details"],
+    ];
+    for (const [agent, label] of cases) {
+      const rows = toAgentInputRows({
+        agent,
+        company: makeIntake({ agent, handle: agent === "reddit" ? "u/karoslabs" : null }),
+        seats: [makeSeat()],
+        intake: [
+          makeIntake({ id: "intake-seat", agent, seatId: "seat-1", handle: "someone" }),
+        ],
+        news: [{ id: "n1", clientId: "c1", title: "Launch", date: "2026-07-01", createdBy: "u", createdAt: NOW }],
+        takes: [{ id: "t1", clientId: "c1", seatId: "s", take: "x", date: "2026-07-25", createdBy: "u", createdAt: NOW }],
+        directionRequests: [
+          {
+            id: "d1",
+            clientId: "c1",
+            account: "company",
+            request: "talk about pricing",
+            date: "2026-08-04",
+            status: "open",
+            createdBy: "u",
+            createdAt: NOW,
+          },
+        ],
+      });
+      expect(rows.map((r) => r.id), agent).toEqual(["company"]);
+      expect(rows[0].label, agent).toBe(label);
+    }
+  });
+
+  it("leaves the newsletter's company row a bare dated link, with no empty drawer", () => {
+    // `intakeAnswersFor` returns [] for this family on purpose: the newsletter's
+    // intake is scheduling and compliance configuration, not the per-account
+    // identity answers the other three show inline, and a half-filled drawer
+    // would imply this page is where a client reads their newsletter setup.
+    // `answersOf` drops an empty list rather than attaching one, so the row
+    // stays the plain link to the surface that IS the place to read it.
     const rows = toAgentInputRows({
-      agent: "reddit",
-      company: makeIntake({ agent: "reddit", handle: "u/karoslabs" }),
-      seats: [makeSeat()],
+      agent: "newsletter",
+      company: makeIntake({ agent: "newsletter", handle: null, updatedAt: NOW - 2 * DAY }),
+      seats: [],
       intake: [],
-      news: [{ id: "n1", clientId: "c1", title: "Launch", date: "2026-07-01", createdBy: "u", createdAt: NOW }],
+      news: [],
       takes: [],
     });
-    expect(rows.map((r) => r.id)).toEqual(["company"]);
-    expect(rows[0].label).toBe("Your Reddit account");
+    const company = rows.find((r) => r.id === "company");
+    expect(company?.answers).toBeUndefined();
+    expect(company?.filled).toBe(true);
+    expect(company?.updatedAt).toBe(NOW - 2 * DAY);
+    // No handle on this family, and the fallback copy has to say so without
+    // implying an account name is coming.
+    expect(company?.detail).toBe("Saved — no account name yet");
+    // Never "Company profile": there is no profile and no account here, and
+    // that label would send a reader looking for an identity page.
+    expect(company?.label).toBe("Your newsletter details");
+    expect(company?.icon).toBe("Mail");
   });
 
   it("dates the drops from their newest row, and says so when they are empty", () => {
@@ -359,13 +415,28 @@ describe("toAgentInputRows", () => {
 });
 
 describe("intakeFamilyFor", () => {
-  it("places the three intake agents and nothing else", () => {
+  it("places the four intake agents and nothing else", () => {
     expect(intakeFamilyFor("karos-x-agent-v2")).toBe("x");
     expect(intakeFamilyFor("karos-reddit-agent")).toBe("reddit");
     expect(intakeFamilyFor("karos-linkedin-company-geektime")).toBe("linkedin");
+    expect(intakeFamilyFor("karos-newsletter-writer-v2")).toBe("newsletter");
     // A clip maker runs on files, not on a form — it must get no inputs band
     // rather than an empty one implying it needs answers nobody has given.
     expect(intakeFamilyFor("branded-shorts")).toBeNull();
+  });
+
+  it("places only the newsletter WRITER, not its three steps", () => {
+    // Same rule the run gate and the roster use: the writer is the agent a
+    // person means, and setup / manager / compliance-lock are its steps. Giving
+    // a step its own inputs band would put a second "What it runs on" section on
+    // a card nothing lists, for data the reader never chose to open.
+    for (const step of [
+      "karos-newsletter-setup-v2",
+      "karos-newsletter-manager-v2",
+      "karos-compliance-lock-v2",
+    ]) {
+      expect(intakeFamilyFor(step), step).toBeNull();
+    }
   });
 });
 
