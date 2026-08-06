@@ -27,6 +27,7 @@ import {
   listJobs,
   listLiDirectionRequests,
   listLiDraftFeedback,
+  listNewsletterDraftFeedback,
   listRedditDraftFeedback,
   listXDraftFeedback,
   listXNewsUpdates,
@@ -44,7 +45,13 @@ import {
   hasLinkedInV2Setup,
   listLinkedInReadySeatIds,
 } from "@/lib/agent-service/linkedin-agent-context";
+import { hasNewsletterV2Setup } from "@/lib/agent-service/newsletter-agent-context";
 import type { AgentProfileScopeFields } from "@/lib/data";
+import type {
+  NewsletterAgentIntake,
+  NewsletterIntakeView,
+  NewsletterRunRowView,
+} from "@/components/newsletter-agent-intake";
 import type {
   LinkedInAgentIntake,
   LiIntakeView,
@@ -69,6 +76,7 @@ import type { AgentIntake, Job } from "@/lib/types";
 export type XAgentIntakeProps = ComponentProps<typeof XAgentIntake>;
 export type LinkedInAgentIntakeProps = ComponentProps<typeof LinkedInAgentIntake>;
 export type RedditAgentIntakeProps = ComponentProps<typeof RedditAgentIntake>;
+export type NewsletterAgentIntakeProps = ComponentProps<typeof NewsletterAgentIntake>;
 
 /**
  * Which key predicate answers for which intake family.
@@ -463,6 +471,69 @@ export function toRedditIntakeView(intake: AgentIntake | null): RedditIntakeView
       : {}),
     ...(intake.disclosurePosture ? { disclosurePosture: intake.disclosurePosture } : {}),
     ...(intake.mode ? { mode: intake.mode } : {}),
+  };
+}
+
+/**
+ * Strip an intake doc to the client-safe newsletter view.
+ *
+ * `preferredWeekday` is copied UNCONDITIONALLY, which every other field on every
+ * one of these projections is not. The others use a conditional spread so an
+ * absent answer stays absent; here absent and null are two different answers to
+ * the same question and the difference is load-bearing — null is "the client
+ * looked at this and has not chosen", which the framework requires be carried
+ * rather than resolved into a default. A conditional spread would erase exactly
+ * that distinction on its way to the browser.
+ */
+export function toNewsletterIntakeView(intake: AgentIntake | null): NewsletterIntakeView | null {
+  if (!intake) return null;
+  return {
+    preferredWeekday: intake.preferredWeekday ?? null,
+    ...(intake.espName ? { espName: intake.espName } : {}),
+    ...(intake.audienceNote ? { audienceNote: intake.audienceNote } : {}),
+    ...(intake.bannedPhrases?.length ? { bannedPhrases: intake.bannedPhrases } : {}),
+    ...(intake.openComplianceNote ? { openComplianceNote: intake.openComplianceNote } : {}),
+  };
+}
+
+export async function buildNewsletterAgentIntakeView(
+  clientId: string,
+  opts: { isStaff: boolean; jobs?: Job[] },
+): Promise<NewsletterAgentIntakeProps> {
+  const [companyIntake, feedback, isSetUp, jobs] = await Promise.all([
+    getAgentIntake(clientId, "newsletter", null),
+    listNewsletterDraftFeedback(clientId),
+    hasNewsletterV2Setup(clientId),
+    opts.jobs ?? listJobs({ clientId }),
+  ]);
+
+  // Matched on the agent NAME the way LinkedIn's and Reddit's are, so the four
+  // v2 skills all report into one history — a client asking "when did you last
+  // work on my newsletter" means the product, not one of its steps.
+  const newsletterJobs: Job[] = jobs
+    .filter(
+      (j) =>
+        j.agentId === "agent-service" &&
+        j.external?.taskType === "custom" &&
+        /newsletter/i.test(j.agentName),
+    )
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  const runs: NewsletterRunRowView[] = toRunRowViews(newsletterJobs, opts.isStaff);
+
+  return {
+    clientId,
+    company: toNewsletterIntakeView(companyIntake),
+    isSetUp,
+    feedback: feedback.slice(0, 12).map((f) => ({
+      id: f.id,
+      action: f.action,
+      ...(f.issueNumber ? { issueNumber: f.issueNumber } : {}),
+      ...(f.reasonCode ? { reasonCode: f.reasonCode } : {}),
+      createdAt: f.createdAt,
+    })),
+    runs,
+    isStaff: opts.isStaff,
   };
 }
 

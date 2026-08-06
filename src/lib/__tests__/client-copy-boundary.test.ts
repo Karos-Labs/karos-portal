@@ -2209,6 +2209,10 @@ const NOT_TEXT: readonly string[] = [
   // sorts and groups on it and prints its own words ("Already covered"); the
   // stored enum never reaches a screen.
   "addLiDirectionRequest.status",
+  // Always the literal "company" — newsletter has no seats, so the field exists
+  // only to keep the four feedback ledgers structurally identical. The intake
+  // box prints the ACTION and the issue number; it never reads this.
+  "addNewsletterDraftFeedback.account",
   // A MIME type on a captured state file, chosen so the injection re-attaches
   // the file with the shape the skill reads. Nothing renders it.
   "upsertLiAgentState.contentType",

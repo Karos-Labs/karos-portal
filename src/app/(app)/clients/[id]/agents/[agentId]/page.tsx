@@ -57,12 +57,14 @@ import {
 } from "@/components/client-agents/agent-sections";
 import {
   buildLinkedInAgentIntakeView,
+  buildNewsletterAgentIntakeView,
   buildRedditAgentIntakeView,
   buildXAgentIntakeView,
 } from "@/lib/agent-intake-views";
 import {
   agentKeyMatchesClientSlug,
   isLinkedInAgentIdentity,
+  isNewsletterAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
@@ -118,6 +120,14 @@ async function agentIntakePane(
   if (isRedditAgentIdentity(agent.key)) {
     return {
       reddit: await buildRedditAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
+  if (isNewsletterAgentIdentity(agent.key)) {
+    return {
+      newsletter: await buildNewsletterAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
       }),

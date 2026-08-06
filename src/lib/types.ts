@@ -2419,6 +2419,57 @@ export interface RedditDraftFeedback {
 }
 
 /**
+ * Newsletter per-issue feedback — the fourth family's own ledger, in its own
+ * collection for the same reason the other three have theirs: a per-platform
+ * learning log must never mix, and the newsletter's rows are the coarsest of
+ * the four.
+ *
+ * WHY THE ACTION SET IS SHORTER. X, LinkedIn and Reddit hand a human a draft to
+ * post from their own account, so their rows record a POSTING outcome
+ * ("posted", "posted_with_edits", "not_posted") and the reason a draft died.
+ * A newsletter issue is not posted from an account — it is sent from the
+ * client's own email platform, one issue at a time, and the run already knows
+ * it produced exactly one. So the useful signal is narrower and honest about
+ * it: they sent it, they sent it after editing it, they held it, or they are
+ * telling us something in prose.
+ *
+ * `issueNumber` is what makes a row joinable back to the deliverable. It is the
+ * number the run CLAIMED in the issue index, so it is also the key the index
+ * itself is written against — one string, two files, no lookup.
+ */
+export interface NewsletterDraftFeedback {
+  id: string;
+  clientId: string;
+  /**
+   * Always "company". Newsletter has no seats — an issue goes out from the
+   * business, never from a person — but the field is kept so the four ledgers
+   * stay structurally identical and one reader can serve all of them.
+   */
+  account: string;
+  jobId?: string;
+  assetId?: string;
+  /** The issue this row is about, as the run numbered it (e.g. "004"). */
+  issueNumber?: string;
+  /**
+   * "note" = free-form feedback, not tied to one issue.
+   * "edit_request" = asks for a change to this issue before it goes out.
+   */
+  action: "sent" | "sent_with_edits" | "not_sent" | "note" | "edit_request";
+  /** sent_with_edits: what the client actually sent, so the voice card can learn from it. */
+  finalText?: string;
+  /** not_sent / edit_request / note: the prose. */
+  reason?: string;
+  /**
+   * not_sent: the closed set the weekly manager acts on. Deliberately about the
+   * ISSUE rather than about a channel — there is no per-subreddit equivalent to
+   * aggregate on here, so the code names what was wrong with the writing.
+   */
+  reasonCode?: "off_topic" | "wrong_voice" | "compliance" | "too_long" | "timing" | "other";
+  createdBy: string;
+  createdAt: number;
+}
+
+/**
  * The newsletter agent's intake, as a client's browser may receive it — the same
  * shape and the same purpose as `LiIntakeView` and `RedditIntakeView`.
  *

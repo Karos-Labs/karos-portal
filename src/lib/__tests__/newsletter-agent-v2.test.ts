@@ -178,6 +178,60 @@ describe("the runner gets the credential the scan actually reads", () => {
   });
 });
 
+describe("the fourth intake family", () => {
+  const views = readFileSync(join(process.cwd(), "src/lib/agent-intake-views.ts"), "utf8");
+  const rows = readFileSync(join(process.cwd(), "src/lib/client-agent-rows.ts"), "utf8");
+  const hub = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
+
+  it("carries null through to the browser instead of resolving it to a day", () => {
+    // The one field on any of these four projections copied unconditionally.
+    // Absent means "never seen the form"; null means "looked at it and did not
+    // choose" — and the framework requires the second be carried, not defaulted.
+    // A conditional spread erases exactly that distinction at the RSC boundary.
+    expect(views).toContain("preferredWeekday: intake.preferredWeekday ?? null");
+    expect(views).not.toMatch(/preferredWeekday \? \{ preferredWeekday/);
+  });
+
+  it("answers `ready` with BOTH rungs, unlike the other three", () => {
+    // Elsewhere `ready` means "form saved" and the stand-up travels separately.
+    // Here the writer claims an issue number at step 01, so a run without an
+    // index is charged for and dies — and the submit core gates on both, so a
+    // one-rung answer here would offer a run the server refuses.
+    expect(rows).toContain("hasNewsletterAgentIntake(clientId)");
+    expect(rows).toContain("hasNewsletterV2Setup(clientId)");
+    expect(rows).toContain("ready: hasIntake && isSetUp");
+  });
+
+  it("has no implicit fallback left in the kind switch", () => {
+    // Both used to end in a bare Reddit return, so a fourth family would have
+    // been relabelled on the way through — and `intakeFor` is upstream of the
+    // title, the glyph, the copy AND the form, so all four would have agreed
+    // with each other and all been wrong.
+    for (const kind of ["x", "linkedin", "reddit", "newsletter"]) {
+      expect(hub, `intakeFor has no explicit ${kind} branch`).toContain(
+        `if (setup.kind === "${kind}")`,
+      );
+      expect(hub, `IntakeForm has no explicit ${kind} branch`).toContain(
+        `if (intake.kind === "${kind}")`,
+      );
+    }
+    // Every per-kind table answers for all four, or the Record type is a lie
+    // the way a trailing return was.
+    for (const table of ["INTAKE_LABEL", "INTAKE_ROUTE", "INTAKE_ASKS", "INTAKE_FIRST_STEP"]) {
+      const body = hub.slice(hub.indexOf(`const ${table}: Record<IntakeKind`));
+      expect(body.slice(0, body.indexOf("};")), table).toContain("newsletter:");
+    }
+  });
+
+  it("treats the newsletter's stand-up like LinkedIn's, not like Reddit's", () => {
+    expect(hub).toContain('if (intake.kind !== "linkedin" && intake.kind !== "newsletter") return true');
+    // And the refusal the submit core actually sends has a way back to the form,
+    // rather than the "contact us" row a missing prefix produces.
+    expect(hub).toContain("refusal.startsWith(NEWSLETTER_SETUP_REQUIRED_PREFIX)");
+    expect(hub).toContain("error.startsWith(NEWSLETTER_SETUP_REQUIRED_PREFIX)");
+  });
+});
+
 describe("the submit core", () => {
   const core = readFileSync(join(process.cwd(), "src/lib/jobs/submit-custom.ts"), "utf8");
 

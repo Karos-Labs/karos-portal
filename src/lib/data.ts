@@ -50,6 +50,7 @@ import type {
   LiDirectionRequest,
   LiDraftFeedback,
   NewsletterAgentState,
+  NewsletterDraftFeedback,
   RedditAgentState,
   RedditDraftFeedback,
 } from "@/lib/types";
@@ -143,6 +144,7 @@ const col = {
   // discard. See the RedditAgentState comment in types.ts for why the dated
   // rules audit makes this a safety mechanism and not just a cache.
   redditAgentState: () => adminDb().collection("redditAgentState"),
+  newsletterDraftFeedback: () => adminDb().collection("newsletterDraftFeedback"),
   // Newsletter v2's durable state. The issue index in here is the numbering
   // authority: lose it and a real subscriber list receives a second "Issue 004".
   newsletterAgentState: () => adminDb().collection("newsletterAgentState"),
@@ -464,6 +466,7 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "liAgentState",
   "redditDraftFeedback",
   "redditAgentState",
+  "newsletterDraftFeedback",
   "newsletterAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
@@ -2995,6 +2998,24 @@ export async function upsertNewsletterAgentState(
     .newsletterAgentState()
     .add({ ...data, version: 1, createdAt: now, updatedAt: now });
   return ref.id;
+}
+
+/* ───────── Newsletter v2: the per-issue feedback ledger ───────── */
+
+export async function addNewsletterDraftFeedback(
+  data: Omit<NewsletterDraftFeedback, "id">,
+): Promise<string> {
+  const ref = await col.newsletterDraftFeedback().add(data);
+  return ref.id;
+}
+
+export async function listNewsletterDraftFeedback(
+  clientId: string,
+): Promise<NewsletterDraftFeedback[]> {
+  const snap = await col.newsletterDraftFeedback().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<NewsletterDraftFeedback>(d))
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function addRedditDraftFeedback(

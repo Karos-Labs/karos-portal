@@ -13,6 +13,7 @@ import {
 } from "@/components/agent-identity";
 import { AgentInputFiles } from "@/components/agent-input-files";
 import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
+import { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 import { XAgentIntake } from "@/components/x-agent-intake";
 import { Modal } from "@/components/modal";
@@ -61,6 +62,7 @@ import {
   perClientAgentSlug,
   withLinkedInIdentityOptions,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  NEWSLETTER_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   groupAgentsByParent,
@@ -319,6 +321,7 @@ export type AgentSetupState = {
   | { kind: "x"; data: ComponentProps<typeof XAgentIntake> }
   | { kind: "linkedin"; data: ComponentProps<typeof LinkedInAgentIntake> }
   | { kind: "reddit"; data: ComponentProps<typeof RedditAgentIntake> }
+  | { kind: "newsletter"; data: ComponentProps<typeof NewsletterAgentIntake> }
 );
 
 function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
@@ -356,32 +359,48 @@ export interface RedditAgentSetup {
   data: ComponentProps<typeof RedditAgentIntake>;
 }
 
-type IntakeKind = "x" | "linkedin" | "reddit";
+/** The newsletter v2 twin of XAgentSetup. */
+export interface NewsletterAgentSetup {
+  ready: boolean;
+  data: ComponentProps<typeof NewsletterAgentIntake>;
+}
+
+type IntakeKind = "x" | "linkedin" | "reddit" | "newsletter";
 
 type AgentIntakeContext =
   | { kind: "x"; setup: XAgentSetup }
   | { kind: "linkedin"; setup: LinkedInAgentSetup }
-  | { kind: "reddit"; setup: RedditAgentSetup };
+  | { kind: "reddit"; setup: RedditAgentSetup }
+  | { kind: "newsletter"; setup: NewsletterAgentSetup };
 
-const INTAKE_LABEL: Record<IntakeKind, string> = { x: "X", linkedin: "LinkedIn", reddit: "Reddit" };
+const INTAKE_LABEL: Record<IntakeKind, string> = {
+  x: "X",
+  linkedin: "LinkedIn",
+  reddit: "Reddit",
+  newsletter: "Newsletter",
+};
 
 /** Route segment of the full agent data page, for callers with no inline payload. */
 const INTAKE_ROUTE: Record<IntakeKind, string> = {
   x: "x-agent",
   linkedin: "linkedin-agent",
   reddit: "reddit-agent",
+  newsletter: "newsletter-agent",
 };
 
 /**
  * What the agent drafts from, in the client's words - the run dialog says this
- * when the data is still missing. Per kind, because the three agents hold
+ * when the data is still missing. Per kind, because the four agents hold
  * genuinely different data: X and LinkedIn have a company page and seats,
- * Reddit has one account plus the subreddits it may answer in.
+ * Reddit has one account plus the subreddits it may answer in, and the
+ * newsletter has neither an account nor a person - only how the client wants
+ * their issue prepared.
  */
 const INTAKE_ASKS: Record<IntakeKind, string> = {
   x: "the company page, a seat for each person, and your ongoing drops",
   linkedin: "the company page, a seat for each person, and your ongoing drops",
   reddit: "the account we draft as, and how you want mentions handled",
+  newsletter: "the day you want your issue, and anything we must never print",
 };
 
 /** The first thing to do in the data pane, per kind. */
@@ -389,17 +408,30 @@ const INTAKE_FIRST_STEP: Record<IntakeKind, string> = {
   x: "Save the company page below to continue.",
   linkedin: "Save the company page below to continue.",
   reddit: "Save your Reddit account below to continue.",
+  // Two steps, and the band above the form owns the second. Naming only the
+  // save would leave a client who has already saved reading an instruction they
+  // have followed while the button beside it stays disabled.
+  newsletter: "Save your details below, then set the newsletter up, to continue.",
 };
 
 /**
  * Which intake surface governs this agent - read off the agent's own setup
  * state rather than re-derived from its key.
  *
- * Resolving it from the key meant every caller had to be handed all three
+ * Resolving it from the key meant every caller had to be handed all four
  * payloads and asked the identity question again, which is a second place for
  * "is this the LinkedIn agent" to drift from the server's answer. Now the page
  * says it once, per agent, and a state with no prefetched form yields null -
  * the href card serves that case.
+ *
+ * ONE EXPLICIT BRANCH PER KIND, and no trailing fallback. This used to end in a
+ * bare `return { kind: "reddit", … }`, so the moment a fourth family was added
+ * its state would have been relabelled Reddit on the way through - and the
+ * relabelling happens HERE, upstream of everything, so the dialog title, the
+ * glyph, the copy and the form itself would all have agreed with each other and
+ * all been wrong. Returning null for an unrecognized kind is the safe failure:
+ * the caller's href card serves it, which is exactly what a caller with no
+ * payload already gets.
  */
 function intakeFor(setup: AgentSetupState | null | undefined): AgentIntakeContext | null {
   if (!setup?.kind) return null;
@@ -407,12 +439,27 @@ function intakeFor(setup: AgentSetupState | null | undefined): AgentIntakeContex
   if (setup.kind === "linkedin") {
     return { kind: "linkedin", setup: { ready: setup.ready, data: setup.data } };
   }
-  return { kind: "reddit", setup: { ready: setup.ready, data: setup.data } };
+  if (setup.kind === "reddit") {
+    return { kind: "reddit", setup: { ready: setup.ready, data: setup.data } };
+  }
+  if (setup.kind === "newsletter") {
+    return { kind: "newsletter", setup: { ready: setup.ready, data: setup.data } };
+  }
+  return null;
 }
 
+/**
+ * The platform mark, per kind. Explicit for every family, same reasoning as
+ * `IntakeForm`: a trailing return would have drawn the Reddit mark on the
+ * newsletter's data button.
+ *
+ * The newsletter has no platform - it is email, sent from the client's own tool
+ * - so it takes an app icon rather than a brand mark.
+ */
 function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string }) {
   if (kind === "x") return <XLogo className={className} />;
   if (kind === "linkedin") return <LinkedInLogo className={className} />;
+  if (kind === "newsletter") return <Icon name="Mail" className={className} />;
   return <SocialPlatformMark platform="reddit" className={className} />;
 }
 
@@ -438,31 +485,41 @@ function intakeComplete(intake: AgentIntakeContext): boolean {
 /**
  * Has this agent's one-time STAND-UP run happened?
  *
- * A second question from "has the client filled the form in", and only LinkedIn
- * has it: v2 derives the lanes, the voice and the first topics from a run, so a
- * client whose form is saved still has nothing to draft from until that run has
- * been. Both submit cores refuse a writer run before it, so the dialog has to
- * open where the press that starts it lives — otherwise pressing Run reads as
- * broken (a brief, a press, and a refusal) rather than as a step.
+ * A second question from "has the client filled the form in", and TWO families
+ * have it. LinkedIn v2 derives the lanes, the voice and the first topics from a
+ * run; the newsletter derives its issue index, voice card, topic pool and
+ * watch-list the same way. In both cases a client whose form is saved still has
+ * nothing to draft from until that run has been, and both submit cores refuse a
+ * writer run before it — so the dialog has to open where the press that starts
+ * it lives, otherwise pressing Run reads as broken (a brief, a press, and a
+ * refusal) rather than as a step.
  *
- * TRUE for every other family, because they have no such run: the X and Reddit
- * agents draft from their form directly, and answering "no" for them would park
- * every client on a data pane they have already finished.
+ * The newsletter's is the sharper case: its writer CLAIMS an issue number in the
+ * index at step 01, so without one the run does not degrade, it dies — after the
+ * client has been charged for it.
+ *
+ * TRUE for X and Reddit, because they have no such run: both draft from their
+ * form directly, and answering "no" for them would park every client on a data
+ * pane they have already finished.
  */
 function standUpDone(intake: AgentIntakeContext): boolean {
-  if (intake.kind !== "linkedin") return true;
+  if (intake.kind !== "linkedin" && intake.kind !== "newsletter") return true;
   // Absent means "a caller that predates the flag", which is treated as done for
-  // the same reason the component's own default is: never show a client a step
+  // the same reason the components' own defaults are: never show a client a step
   // that is not theirs to take.
   return intake.setup.data.isSetUp !== false;
 }
 
 function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
-  // One explicit branch per kind on purpose: a trailing fallback would silently
-  // render another platform's form for a kind added later.
+  // One explicit branch per kind on purpose, with no trailing fallback: a bare
+  // final return renders another platform's form for the next kind someone adds,
+  // and it does it silently — the payloads are structurally similar enough that
+  // React would not complain.
   if (intake.kind === "x") return <XAgentIntake {...intake.setup.data} />;
   if (intake.kind === "linkedin") return <LinkedInAgentIntake {...intake.setup.data} />;
-  return <RedditAgentIntake {...intake.setup.data} />;
+  if (intake.kind === "reddit") return <RedditAgentIntake {...intake.setup.data} />;
+  if (intake.kind === "newsletter") return <NewsletterAgentIntake {...intake.setup.data} />;
+  return null;
 }
 
 /**
@@ -951,18 +1008,19 @@ export function CustomAgentsHub({
 /**
  * Does this refusal name a setup problem the reader can go and fix?
  *
- * All THREE intake prefixes, which is the point: the Reddit one was missing,
+ * All FOUR intake prefixes, which is the point: the Reddit one was missing once,
  * so a staff member whose Reddit schedule was refused for want of intake got
  * the "contact us" row - advice to email somebody about a form they were one
  * click from filling in - while the identical X and LinkedIn refusals offered
- * the link. The three agents are gated the same way by the submit cores, so
+ * the link. The four agents are gated the same way by the submit cores, so
  * they recover the same way here.
  */
 function refusalNamesSetup(refusal: string): boolean {
   return (
     refusal.startsWith(X_SETUP_REQUIRED_PREFIX) ||
     refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
-    refusal.startsWith(REDDIT_SETUP_REQUIRED_PREFIX)
+    refusal.startsWith(REDDIT_SETUP_REQUIRED_PREFIX) ||
+    refusal.startsWith(NEWSLETTER_SETUP_REQUIRED_PREFIX)
   );
 }
 
@@ -2057,7 +2115,9 @@ export function RunCustomAgentModal({
         ? "linkedin"
         : error.startsWith(REDDIT_SETUP_REQUIRED_PREFIX)
           ? "reddit"
-          : null;
+          : error.startsWith(NEWSLETTER_SETUP_REQUIRED_PREFIX)
+            ? "newsletter"
+            : null;
 
   // Both panes share the dialog's single scroll box, which also holds the title
   // and the sentence explaining the swap, so a switch has to go back to the top

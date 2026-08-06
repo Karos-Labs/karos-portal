@@ -7,9 +7,14 @@ import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
 import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
 import {
+  hasNewsletterAgentIntake,
+  hasNewsletterV2Setup,
+} from "@/lib/agent-service/newsletter-agent-context";
+import {
   agentKeyMatchesClientSlug,
   clientSafeRefusal,
   isLinkedInAgentIdentity,
+  isNewsletterAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
   isSubAgent,
@@ -28,6 +33,7 @@ import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { ComponentProps } from "react";
 import type { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
+import type { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import type { RedditAgentIntake } from "@/components/reddit-agent-intake";
 import type { XAgentIntake } from "@/components/x-agent-intake";
 import type { AgentSetupState, ClientAgentScheduleRow, CustomAgentRunRow, RunnableAgentSummary } from "@/components/custom-agents";
@@ -285,6 +291,7 @@ export interface AgentIntakePanes {
   x?: ComponentProps<typeof XAgentIntake>;
   linkedin?: ComponentProps<typeof LinkedInAgentIntake>;
   reddit?: ComponentProps<typeof RedditAgentIntake>;
+  newsletter?: ComponentProps<typeof NewsletterAgentIntake>;
 }
 
 export async function buildAgentSetup(
@@ -331,6 +338,37 @@ export async function buildAgentSetup(
           panes?.reddit
             ? { ready, href, label, clientLabel, kind: "reddit", data: panes.reddit }
             : { ready, href, label, clientLabel },
+        ];
+      }
+      if (isNewsletterAgentIdentity(agent.key)) {
+        // BOTH RUNGS, unlike the other three, and the difference is deliberate.
+        // Elsewhere `ready` asks only whether the form is saved, and the second
+        // question — has the one-time stand-up run happened — travels separately
+        // as the pane's own `isSetUp` flag. Here the writer CLAIMS an issue
+        // number in the index at its very first step, so a run started without
+        // one is charged for and dies immediately. The submit core gates on both
+        // (submitCustomAgentJob → hasNewsletterAgentIntake, then
+        // hasNewsletterV2Setup), so `ready` answers with both or it would offer
+        // a run the server refuses.
+        const [hasIntake, isSetUp] = await Promise.all([
+          hasNewsletterAgentIntake(clientId),
+          hasNewsletterV2Setup(clientId),
+        ]);
+        const href = `/clients/${clientId}/newsletter-agent`;
+        const label = "Newsletter agent data";
+        const clientLabel = "Your newsletter details";
+        return [
+          agent.id,
+          panes?.newsletter
+            ? {
+                ready: hasIntake && isSetUp,
+                href,
+                label,
+                clientLabel,
+                kind: "newsletter",
+                data: panes.newsletter,
+              }
+            : { ready: hasIntake && isSetUp, href, label, clientLabel },
         ];
       }
       return null;
