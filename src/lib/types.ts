@@ -404,6 +404,218 @@ export interface CustomAgent {
   updatedAt: number;
 }
 
+/* ------------------------- Dynamic Agent Studio -------------------------
+ *
+ * Spec-driven, no-code agent engine: an admin builds an agent in the Portal's
+ * Agent Studio (general settings + input schema + step pipeline), the
+ * definition persists as a declarative DynamicAgentSpec, and agent-service's
+ * generic execution engine (agent-service/runner/src/dynamic/) reads a job's
+ * frozen specSnapshot and runs its steps. Mirrored (structurally identical,
+ * not cross-imported) in agent-service's own local type file — see
+ * agent-service/src/dynamic-types.ts.
+ *
+ * This is ADDITIVE: the existing hardcoded agents (X / LinkedIn / Reddit,
+ * CustomAgent above) are untouched and keep running down their own path.
+ */
+
+/** Client intake field kinds the Agent Studio's input builder can produce. */
+export type DynamicAgentInputType = "text" | "textarea" | "file" | "image" | "select";
+
+/**
+ * One client-facing intake field, authored by an admin in the Studio's input
+ * schema builder and rendered by `dynamic-agent-intake-form.tsx`. `key` is the
+ * context-variable name AI-step prompts and code-step scripts read the
+ * client's answer under (see DynamicAgentJobPayload.inputs).
+ */
+export interface DynamicAgentInputDef {
+  key: string;
+  type: DynamicAgentInputType;
+  label: string;
+  helpText?: string;
+  required: boolean;
+  /**
+   * Ghost text inside the control, for `text` and `textarea` only.
+   *
+   * Restricted to those two because they are the only types where HTML has a
+   * placeholder at all: a `select` shows its own "Select…" option, and a file
+   * input's chrome is drawn by the browser. Distinct from `helpText`, which
+   * renders as persistent copy ABOVE the field and stays readable once the
+   * client has typed something — a placeholder disappears on first keystroke,
+   * so it may hold an example but never an instruction the client still needs.
+   */
+  placeholder?: string;
+  /** Required when type === "select" (the choices); forbidden for every other type. */
+  options?: string[];
+  /** file/image only: an <input accept> string, e.g. "image/png,image/jpeg". */
+  accept?: string;
+  /** file/image only: per-file cap in megabytes. */
+  maxSizeMb?: number;
+  /** Display / submit order — dense and 0-indexed after any reorder. */
+  order: number;
+}
+
+/**
+ * The UI and the spec store the alias only — never a raw model id. Resolved
+ * once, service-side, in agent-service/src/task-types.ts's
+ * AGENT_MODEL_ALIASES map. // DECISION: no raw model IDs are ever persisted
+ * in a DynamicAgentSpec.
+ */
+export type DynamicAgentModelAlias = "opus" | "sonnet" | "haiku";
+
+/**
+ * One pipeline step. A discriminated union on `type` so a `switch (step.type)`
+ * narrows to the right shape with no `any`.
+ *
+ * `dependsOn` exists from day one so the schema is DAG-ready, but
+ * // DECISION: v1 is sequential-only — `steps` is executed strictly in the
+ * order given, and the runner (agent-service/runner/src/dynamic/step-runner.ts)
+ * REJECTS any spec where any step's `dependsOn` is non-empty, with a plain
+ * English validation error. This keeps the Pipeline Builder and the Step
+ * Runner simple now without a schema migration when DAG execution lands.
+ */
+export type DynamicAgentStepDef =
+  | {
+      id: string;
+      type: "ai";
+      label: string;
+      model: DynamicAgentModelAlias;
+      /** Markdown prompt, composed with the serialized run context at execution time. */
+      prompt: string;
+      order: number;
+      dependsOn?: string[];
+    }
+  | {
+      id: string;
+      type: "code";
+      label: string;
+      language: "python" | "node";
+      /** Receives `context` as JSON on stdin; must write a JSON object to stdout. */
+      code: string;
+      /** Wall-clock cap in ms; default 30_000, hard cap 120_000. */
+      timeoutMs?: number;
+      order: number;
+      dependsOn?: string[];
+    };
+
+/**
+ * The declarative agent definition an admin builds in the Agent Studio.
+ * Persisted to the global (not client-scoped) `dynamicAgentSpecs` Firestore
+ * collection — see CLIENT_SCOPED_COLLECTIONS in lib/data.ts, which
+ * deliberately excludes it.
+ */
+export interface DynamicAgentSpec {
+  id: string;
+  name: string;
+  /**
+   * One-line pitch, for places that list agents side by side (the Studio's own
+   * list, a client-facing card) where the full `description` would not fit.
+   *
+   * Optional, and readers fall back to `description` when it is absent, so
+   * every spec written before this field existed still renders correctly.
+   */
+  summary?: string;
+  /** The full explanation, shown on the agent's own page. */
+  description: string;
+  category: string;
+  icon: string;
+  /** Integer >= 0. Charged once at job creation — see DynamicAgentJobPayload. */
+  creditsCost: number;
+  active: boolean;
+  /** Monotonic integer, bumped on every admin save. See specVersion below. */
+  version: number;
+  /** Empty/undefined = every client may run this agent. */
+  allowedClientIds?: string[];
+  inputSchema: DynamicAgentInputDef[];
+  steps: DynamicAgentStepDef[];
+  createdAt: number;
+  updatedAt: number;
+  createdBy: string;
+  /**
+   * The admin who saved the most recent version.
+   *
+   * ASSUMPTION, flagged: Phase 2 says every update "stamps `updatedAt` /
+   * `createdBy`". Taken literally that would overwrite `createdBy` with the
+   * editing admin's uid on every save, destroying the authorship the field
+   * name promises - so `createdBy` is preserved and the editor is recorded
+   * here instead. Absent on specs saved before this field existed.
+   */
+  updatedBy?: string;
+}
+
+/**
+ * A single answer collected by the dynamic client intake form. File/image
+ * inputs store the uploaded object's reference (id/url/name from the existing
+ * GCS-backed context upload — see AgentInputFiles / `/api/clients/[id]/context`),
+ * never the raw bytes, per Phase 4 of the Dynamic Agent Studio spec.
+ */
+export type DynamicAgentInputValue =
+  | string
+  | string[]
+  | { id: string; url: string; name: string }
+  | { id: string; url: string; name: string }[]
+  | null;
+
+/**
+ * The brief payload built by `submit-custom.ts` for a dynamic-agent run.
+ *
+ * // DECISION: `specSnapshot` is a deep clone of the resolved spec taken at
+ * job-creation time, plus `specVersion` (the snapshot's `version` at that
+ * moment). The runner executes ONLY this snapshot — never the live spec — so
+ * a running job can never observe a mid-flight admin edit.
+ */
+export interface DynamicAgentJobPayload {
+  specId: string;
+  specVersion: number;
+  specSnapshot: DynamicAgentSpec;
+  clientId: string;
+  inputs: Record<string, DynamicAgentInputValue>;
+  runType?: JobRunType;
+  /**
+   * Per-step model routing, keyed by step id, carrying the model ALIAS only.
+   * This is the brief's existing `step_models` field (the same one the
+   * hardcoded custom-agent path populates from CustomAgent.stepModels), reused
+   * rather than duplicated — the runner prefers it over the snapshot's own
+   * `step.model`. See resolveStepModel() in the dynamic step runner.
+   */
+  stepModels?: Record<string, string>;
+}
+
+/**
+ * One executed step of a dynamic run, as PERSISTED on the job.
+ *
+ * `error` here is a raw engine diagnostic (a model refusal, a script's own
+ * exception text) and has ZERO client-facing text readers — the step bar
+ * derives its wording from `status`, exactly the way CampaignStepProgress
+ * treats `metadata.executionError`. Do not print it on a client screen.
+ */
+export interface DynamicAgentRunStep {
+  stepId: string;
+  type: "ai" | "code";
+  label: string;
+  status: "done" | "failed";
+  durationMs: number;
+  /** Concrete model this step ran on — staff-facing audit of per-step routing. */
+  model?: string;
+  error?: string;
+}
+
+/**
+ * // DECISION: a failed step fails the job at that step, and `failedStepId`,
+ * `failedStepIndex` and the partial context are PERSISTED rather than only
+ * rendered into an error string. The runner produces this, the agent-service
+ * webhook carries it as `dynamic_run`, and the job detail page renders the step
+ * bar and the "incomplete" banner from it.
+ */
+export interface DynamicAgentRunReport {
+  specId: string;
+  specVersion: number;
+  steps: DynamicAgentRunStep[];
+  failedStepId?: string;
+  failedStepIndex?: number;
+  /** True when earlier steps produced output the client can still be shown. */
+  hasPartialOutput?: boolean;
+}
+
 /**
  * A recurring weekly cadence, local to `timezone`. Days are 0=Sun..6=Sat.
  * e.g. { daysOfWeek: [2,3,4], hour: 9, minute: 0, timezone: "America/Sao_Paulo" }
@@ -526,6 +738,10 @@ export interface Job {
   agentId: string;
   /** Exact custom-agent identity for repo-agent runs. Older jobs may only have agentName. */
   customAgentId?: string;
+  /** Set instead of customAgentId for a Dynamic Agent Studio run — see DynamicAgentSpec. */
+  dynamicAgentSpecId?: string;
+  /** Dynamic Agent Studio runs only — the persisted per-step report. */
+  dynamicRun?: DynamicAgentRunReport;
   /** See JobRunType. Absent on jobs written before run-type tracking existed. */
   runType?: JobRunType;
   /** The client-agent umbrella (clientAgents doc id) this run belongs to, when one exists. */

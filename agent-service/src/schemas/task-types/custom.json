@@ -2,7 +2,6 @@
   "$id": "brief/custom",
   "type": "object",
   "additionalProperties": false,
-  "required": ["entry_skill_dir", "instructions", "prompt"],
   "properties": {
     "agent_key": {
       "type": "string",
@@ -67,6 +66,120 @@
       "minLength": 1,
       "maxLength": 100,
       "description": "Optional whole-run model override, replacing the custom task type's default (claude-opus-4-8). Set this when a skill's own catalog entry recommends a cheaper tier — e.g. a linear, non-subagent skill where step_models has no delegation point to attach to."
+    },
+    "specSnapshot": {
+      "$ref": "#/$defs/dynamicAgentSpec",
+      "description": "Dynamic Agent Studio ONLY: the frozen DynamicAgentSpec snapshot taken at job-creation time. Presence of this property is the runner's whole routing signal — see isDynamicAgentBrief() in src/dynamic-types.ts and the early branch in runner/src/main.ts."
+    },
+    "spec_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Dynamic Agent Studio ONLY: specSnapshot.version at job-creation time (paired for an audit trail independent of the snapshot body)."
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Dynamic Agent Studio ONLY: the client's answers, keyed by DynamicAgentInputDef.key."
     }
+  },
+  "$defs": {
+    "dynamicAgentInputDef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "type", "label", "required", "order"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "maxLength": 100 },
+        "type": { "type": "string", "enum": ["text", "textarea", "file", "image", "select"] },
+        "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "helpText": { "type": "string", "maxLength": 500 },
+        "placeholder": { "type": "string", "maxLength": 120 },
+        "required": { "type": "boolean" },
+        "options": { "type": "array", "items": { "type": "string", "maxLength": 200 }, "maxItems": 40 },
+        "accept": { "type": "string", "maxLength": 300 },
+        "maxSizeMb": { "type": "number", "exclusiveMinimum": 0, "maximum": 200 },
+        "order": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "dynamicAgentStepDef": {
+      "type": "object",
+      "required": ["id", "type", "label", "order"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "type": { "type": "string", "enum": ["ai", "code"] },
+        "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "order": { "type": "integer", "minimum": 0 },
+        "dependsOn": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 0,
+          "description": "DECISION: sequential-only in v1 — a populated dependsOn is rejected."
+        }
+      },
+      "if": { "properties": { "type": { "const": "ai" } } },
+      "then": {
+        "required": ["model", "prompt"],
+        "properties": {
+          "model": { "type": "string", "enum": ["opus", "sonnet", "haiku"] },
+          "prompt": { "type": "string", "minLength": 1, "maxLength": 20000 }
+        }
+      },
+      "else": {
+        "required": ["language", "code"],
+        "properties": {
+          "language": { "type": "string", "enum": ["python", "node"] },
+          "code": { "type": "string", "minLength": 1, "maxLength": 20000 },
+          "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 120000 }
+        }
+      }
+    },
+    "dynamicAgentSpec": {
+      "type": "object",
+      "required": ["id", "name", "description", "category", "icon", "creditsCost", "active", "version", "inputSchema", "steps", "createdAt", "updatedAt", "createdBy"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "summary": { "type": "string", "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "maxLength": 60 },
+        "icon": { "type": "string", "maxLength": 60 },
+        "creditsCost": { "type": "integer", "minimum": 0 },
+        "active": { "type": "boolean" },
+        "version": { "type": "integer", "minimum": 1 },
+        "allowedClientIds": { "type": "array", "items": { "type": "string" } },
+        "inputSchema": {
+          "type": "array",
+          "maxItems": 40,
+          "items": { "$ref": "#/$defs/dynamicAgentInputDef" }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 40,
+          "items": { "$ref": "#/$defs/dynamicAgentStepDef" }
+        },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" },
+        "createdBy": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      }
+    }
+  },
+  "if": {
+    "type": "object",
+    "required": ["specSnapshot"]
+  },
+  "then": {
+    "required": ["specSnapshot", "spec_version"],
+    "not": { "anyOf": [{ "required": ["entry_skill_dir"] }, { "required": ["instructions"] }, { "required": ["prompt"] }] },
+    "properties": {
+      "step_models": {
+        "type": "object",
+        "maxProperties": 40,
+        "additionalProperties": { "type": "string", "enum": ["opus", "sonnet", "haiku"] },
+        "description": "Dynamic Agent Studio: per-step model routing in the SAME brief field the hardcoded custom-agent path uses, keyed by DynamicAgentStepDef.id. Restricted to the alias enum on this branch — a raw model id is never persisted or transmitted for a dynamic spec (the legacy branch keeps its free-form strings, since a hardcoded skill's step_models carries concrete ids)."
+      }
+    }
+  },
+  "else": {
+    "required": ["entry_skill_dir", "instructions", "prompt"]
   }
 }
