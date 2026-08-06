@@ -10,6 +10,7 @@ import { registerJobRoutes } from "./api/jobs.js";
 import { registerInternalRoutes } from "./api/internal.js";
 import { resolveTaskConfig } from "./task-types.js";
 import { validateJobRequest } from "./schemas/validate.js";
+import { isDynamicAgentBrief } from "./dynamic-types.js";
 
 export interface ServerDeps {
   config: ServiceConfig;
@@ -65,10 +66,21 @@ export function createJobRecord(deps: ServerDeps, body: unknown): { record: JobR
   const request = validation.request;
   // Resolves the per-job config now so malformed custom briefs (bad skill
   // paths) are rejected at submit time instead of failing inside the runner.
-  try {
-    resolveTaskConfig(request.task_type, request.brief);
-  } catch (err) {
-    return { errors: [`/brief ${err instanceof Error ? err.message : String(err)}`] };
+  //
+  // A Dynamic Agent Studio brief (specSnapshot present) carries no
+  // entry_skill_dir BY DESIGN — the generic engine runs the frozen snapshot's
+  // own steps, not a repo skill path — so resolveTaskConfig's hardcoded-skill
+  // validation (entry_skill_dir/skill_roots/instructions/prompt) does not
+  // apply and must be skipped. isDynamicAgentBrief() is the single routing
+  // predicate shared with custom.json's root if/then/else and the early
+  // branch in runner/src/main.ts; keep all three agreeing rather than
+  // re-deriving the check here.
+  if (request.task_type !== "custom" || !isDynamicAgentBrief(request.brief)) {
+    try {
+      resolveTaskConfig(request.task_type, request.brief);
+    } catch (err) {
+      return { errors: [`/brief ${err instanceof Error ? err.message : String(err)}`] };
+    }
   }
   const specBytes = estimatedSpecB64Bytes(deps, request);
   if (specBytes > MAX_JOB_SPEC_B64_BYTES) {

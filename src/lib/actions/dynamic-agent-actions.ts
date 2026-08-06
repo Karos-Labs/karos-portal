@@ -36,8 +36,14 @@ import { requireAdmin, requireClientAccess } from "./_shared";
  * `lib/dynamic-agent-validation.ts` (pure, unit-tested on its own) — this
  * file only adds the server-only pieces around them: auth, Firestore reads
  * and writes, cache invalidation.
+ *
+ * // NOTE: this file must not re-export the `DynamicAgentGeneralInput` type
+ * (even as a type-only export) — Next 16's "use server" action transform
+ * mis-registers type-only exports from action files as server action
+ * references, producing a `ReferenceError: ... is not defined` at runtime.
+ * Consumers should import the type directly from
+ * `@/lib/dynamic-agent-validation` instead.
  */
-export type { DynamicAgentGeneralInput };
 
 /* ─────────────────────────── admin CRUD ─────────────────────────── */
 
