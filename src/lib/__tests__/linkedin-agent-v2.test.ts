@@ -5,6 +5,7 @@ import {
   LINKEDIN_IDENTITY_FIELD_KEY,
   BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
+  defaultRunBatchSize,
   isSubAgent,
   isSupersededAgentKey,
   isUnlistedAgent,
@@ -208,6 +209,23 @@ describe("the writer's brief", () => {
     // raise it, not because a bigger default was wanted.
     const size = profile.fields.find((f) => f.key === BATCH_SIZE_FIELD_KEY);
     expect(size?.defaultValue).toBe("1");
+    // HIDDEN, by Daniel's ruling of 2026-08-06 ("you can only run one output at a
+    // time"), and the same treatment X's selector carries. While it was visible a
+    // client could raise it to 3, and the two surfaces then quoted different
+    // money: the band's button can only ever show the fresh dialog's default
+    // (defaultRunBatchSize filters hidden fields), while the dialog charged
+    // cost × the chosen size — so a client with 30 credits cleared every gate on
+    // 15 and then failed at submit on 45.
+    expect(size?.hidden, "the LinkedIn batch selector must stay hidden").toBe(true);
+    // A hidden field must never be required — nothing can ever fill it in.
+    expect(size?.required ?? false).toBe(false);
+  });
+
+  it("prices one press at one output, so the button and the dialog agree", () => {
+    // The number the band quotes is base × defaultRunBatchSize. Hidden means
+    // INERT for pricing, so this must be 1 — any other answer means a press
+    // charges a multiple of the price the button showed.
+    expect(defaultRunBatchSize({ key: "karos-linkedin-writer-v2", name: "LinkedIn Agent" })).toBe(1);
   });
 
   it("does not claim a native asset in its deliverables", () => {

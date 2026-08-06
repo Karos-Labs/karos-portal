@@ -9,6 +9,7 @@ import {
   umbrellaRunBlock,
   visibleTemplates,
 } from "@/lib/client-agent-runs";
+import { rosterStatus } from "@/lib/client-agents";
 import type { ClientAgentLaunchState, ClientAgentTemplate } from "@/lib/types";
 
 function template(
@@ -206,6 +207,28 @@ describe("evaluateTemplateRunGate", () => {
     expect(template.allowed === false && template.code).toBe(legacy.code);
     expect(template.allowed === false && template.reason).toBe(legacy.reason);
   });
+
+  it("matches evaluateLegacyRunGate's STAND-UP rung too, word for word", () => {
+    // The umbrella ladder is the less reachable of the two, and that is exactly
+    // how the intake rung came to be missing from it — the test above exists
+    // because of it. Same shape, same position, one shared string.
+    const stoodDown = { ready: true, standUpDone: false, clientLabel: "Your LinkedIn details", href: "/clients/c1/linkedin-agent" };
+    const template = evaluateTemplateRunGate({
+      ...base,
+      launchState: "live",
+      setup: stoodDown,
+      availableCredits: 0,
+    });
+    const legacy = evaluateLegacyRunGate({
+      serviceConfigured: true,
+      setup: stoodDown,
+      cost: base.cost,
+      availableCredits: 0,
+    });
+    expect(template.allowed === false && template.code).toBe("stand_up_required");
+    expect(template.allowed === false && template.code).toBe(legacy.code);
+    expect(template.allowed === false && template.reason).toBe(legacy.reason);
+  });
 });
 
 /* ───────────── no template to run at all (empty live registry) ──────────── */
@@ -392,5 +415,98 @@ describe("evaluateLegacyRunGate", () => {
   it("puts a missing intake ABOVE credits — do not sell a run that cannot happen", () => {
     const gate = evaluateLegacyRunGate({ ...base, setup: intake, availableCredits: 0 });
     expect(gate.code).toBe("setup_missing");
+  });
+
+  /* ── the LinkedIn v2 stand-up rung ── */
+
+  const li = { ready: true, clientLabel: "Your LinkedIn details", href: "/clients/c1/linkedin-agent" };
+
+  it("blocks a saved-but-never-stood-up agent, and points at the press that fixes it", () => {
+    // The state Karos Labs was actually in: company form saved, three seats,
+    // three news drops — and no `foundation` row, because the one-time stand-up
+    // run had never fired. `ready` says yes and the submit core says no, so
+    // without this rung the band offered a press that could only be refused.
+    const gate = evaluateLegacyRunGate({ ...base, setup: { ...li, standUpDone: false } });
+    expect(gate).toMatchObject({
+      allowed: false,
+      code: "stand_up_required",
+      href: li.href,
+      hrefLabel: "Set it up",
+    });
+    // Not phrased as missing answers — theirs are all in. It is a run that has
+    // not happened.
+    expect(gate.reason).not.toContain("missing");
+  });
+
+  it("does not fire for an agent that HAS been stood up", () => {
+    expect(evaluateLegacyRunGate({ ...base, setup: { ...li, standUpDone: true } })).toEqual({
+      allowed: true,
+    });
+  });
+
+  it("does not fire for a caller that predates the field", () => {
+    // Absent means "this family has no stand-up run" (X, Reddit) or "an older
+    // caller" — either way it must not invent a refusal.
+    expect(evaluateLegacyRunGate({ ...base, setup: li })).toEqual({ allowed: true });
+  });
+
+  it("puts stand-up ABOVE credits, and BELOW a missing intake", () => {
+    // A client who cannot run at all must not first be told to buy credits.
+    expect(
+      evaluateLegacyRunGate({
+        ...base,
+        setup: { ...li, standUpDone: false },
+        availableCredits: 0,
+      }).code,
+    ).toBe("stand_up_required");
+    // And a form that was never saved outranks it: the stand-up run reads that
+    // form, so asking for the run first would be the wrong instruction.
+    expect(
+      evaluateLegacyRunGate({
+        ...base,
+        setup: { ...li, ready: false, standUpDone: false },
+      }).code,
+    ).toBe("setup_missing");
+  });
+});
+
+/* ─────────── the badge over the button: "Not set up yet" vs "Runs on request" ─────────── */
+
+describe("rosterStatus tells the truth about an agent that has never been asked", () => {
+  const base = { launchState: null, scheduleActive: false } as const;
+
+  it("says Runs on request once it CAN run, not only once it HAS run", () => {
+    // The bug this pins: the label used to key on delivered work alone, so a
+    // fully stood-up agent that nobody had asked for anything yet read "Not set
+    // up yet" — directly above a working Run button. Invisible on X (it has
+    // delivered twice) and waiting for the first LinkedIn client the moment
+    // their stand-up run finished.
+    expect(rosterStatus({ ...base, hasDelivered: false, readyToRun: true })).toEqual({
+      tone: "idle",
+      label: "Runs on request",
+    });
+  });
+
+  it("still says Not set up yet while either readiness question is unanswered", () => {
+    // True for LinkedIn today: the forms are saved but the stand-up run has not
+    // happened, so the phrase is accurate — and the band beneath it is what
+    // explains which step is missing.
+    expect(rosterStatus({ ...base, hasDelivered: false, readyToRun: false })).toEqual({
+      tone: "idle",
+      label: "Not set up yet",
+    });
+  });
+
+  it("does not guess for an agent that runs on no intake at all", () => {
+    // Absent means "cannot answer", which must fall back to the delivered-work
+    // rule rather than to optimism.
+    expect(rosterStatus({ ...base, hasDelivered: false })).toEqual({
+      tone: "idle",
+      label: "Not set up yet",
+    });
+    expect(rosterStatus({ ...base, hasDelivered: true })).toEqual({
+      tone: "idle",
+      label: "Runs on request",
+    });
   });
 });

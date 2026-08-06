@@ -746,6 +746,17 @@ export function rosterStatus(input: {
    */
   hasDelivered?: boolean;
   /**
+   * True when this agent COULD be run right now — both readiness questions
+   * answered yes (its intake is saved AND, where the family has one, its one-time
+   * stand-up run has happened). Resolved by the caller from the same
+   * `AgentSetupState` the run gate reads, so the word on the badge and the state
+   * of the button beneath it come off one answer.
+   *
+   * Optional, and absent means "do not know": a caller that cannot answer it gets
+   * the old delivered-work-only behaviour rather than a guess.
+   */
+  readyToRun?: boolean;
+  /**
    * True when this agent's most recent run WITH A VERDICT failed. Resolved by
    * the callers through `lastRunFailedAgentIds` — the ordering rule lives there,
    * not here, so no surface holds an opinion of its own about what "failed last"
@@ -824,6 +835,7 @@ function rosterStatusCore(input: {
   scheduleRefusalAt?: number | null;
   scheduleActive?: boolean;
   hasDelivered?: boolean;
+  readyToRun?: boolean;
   lastRunFailed?: boolean;
   viewerIsStaff?: boolean;
   now?: number;
@@ -854,7 +866,19 @@ function rosterStatusCore(input: {
     // a roster promising "Ready to start" that opens onto "Not set up yet" is
     // a card that lied about the page behind it.
     if (input.scheduleActive) return { tone: "live", label: "Live" };
-    return input.hasDelivered
+    // "Runs on request" is about CAPABILITY, and delivered work is only one way
+    // to prove it. This used to be `hasDelivered` alone, so an agent that was
+    // fully stood up and had simply never been asked for anything read "Not set
+    // up yet" — the one state where that phrase is actively wrong, because the
+    // reader has finished setting it up and the page underneath is offering them
+    // a Run button. It was invisible on X (delivered twice) and was going to
+    // greet the first LinkedIn client the moment their stand-up run finished.
+    //
+    // `readyToRun` is the second proof, and it is deliberately the CONJUNCTION of
+    // both readiness questions (intake saved AND stood up) resolved by the caller
+    // from the same AgentSetupState the run gate reads. An agent still waiting on
+    // either one keeps "Not set up yet", because for it the phrase is true.
+    return input.hasDelivered || input.readyToRun
       ? { tone: "idle", label: "Runs on request" }
       : { tone: "idle", label: "Not set up yet" };
   }
