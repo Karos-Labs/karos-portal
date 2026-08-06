@@ -53,6 +53,10 @@ const INTAKE_FAMILY_PRESENT: Record<AgentIntake["agent"], true> = {
   // anyway because the sweep's job is to leave no orphan behind, and "there are
   // none" is cheaper to prove by looking than to assume.
   newsletter: true,
+  // Same as newsletter: the blog writes for the company, and its only scope
+  // choice (company vs an executive byline) is a config field, not a seat. Listed
+  // for the same reason — proving there are none beats assuming it.
+  blog: true,
 };
 const INTAKE_FAMILIES = Object.keys(INTAKE_FAMILY_PRESENT) as Array<AgentIntake["agent"]>;
 

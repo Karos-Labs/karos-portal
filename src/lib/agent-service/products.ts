@@ -104,37 +104,6 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     },
   },
   {
-    taskType: "blog_article",
-    name: "Blog article",
-    tagline: "SEO-aware article with keyword research built in",
-    description:
-      "Runs the blog agent: scans the search landscape for the topic, then writes a sourced article in the client's voice. Markdown plus rendered HTML.",
-    icon: "PenLine",
-    color: "#34D399",
-    deliverables: ["Article (.md + .html)", "Meta/caption files", "Keyword & SERP research (internal)"],
-    estimate: "~10–15 min",
-    briefFields: [
-      { key: "topic", label: "Topic", type: "text", required: true, placeholder: "What should the article cover?" },
-      { key: "target_keyword", label: "Target keyword", type: "text", placeholder: "optional" },
-      {
-        key: "length",
-        label: "Length",
-        type: "select",
-        defaultValue: "standard",
-        options: [
-          { value: "standard", label: "Standard" },
-          { value: "short", label: "Short" },
-          { value: "long", label: "Long" },
-        ],
-      },
-      ],
-    inputFiles: {
-      label: "Article sources",
-      hint: "Attach research, interview notes, approved claims, or internal material the article should cite or link to.",
-      accept: ".pdf,.doc,.docx,.txt,.md,.csv,image/png,image/jpeg,image/webp",
-    },
-  },
-  {
     taskType: "landing_page",
     name: "Landing page",
     tagline: "A complete page, built on the client's brand kit",

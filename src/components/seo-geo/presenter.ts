@@ -1519,15 +1519,25 @@ const QUALIFIER_DEFAULT = "Under review by the Karos team";
  * repo. Naming an agent a client doesn't have is the exact defect F7 reports.
  */
 const REC_PRODUCTS: Record<string, ManagedTaskType> = {
-  // Content-shaped checks → the blog_article product.
-  "GEO-02": "blog_article",
-  "GEO-03": "blog_article",
-  "GEO-09": "blog_article",
-  "GEO-20": "blog_article",
-  "GEO-22": "blog_article",
-  "BOTH-13": "blog_article",
-  "BOTH-16": "blog_article",
-  // Page-level title / description work → the landing_page product.
+  // THE SEVEN CONTENT-SHAPED CHECKS LEFT THIS MAP 2026-08-06, when the blog
+  // stopped being a managed product: GEO-02, GEO-03, GEO-09, GEO-20, GEO-22,
+  // BOTH-13 and BOTH-16 all pointed at `blog_article`.
+  //
+  // They were NOT re-pointed at the v2 blog agent, and this file's own doctrine
+  // is the reason. The paragraph above refuses to name the LinkedIn and Reddit
+  // agents here because they are per-client CUSTOM agents, this panel never
+  // receives `client.customAgentIds`, and "naming an agent a client doesn't have
+  // is the exact defect F7 reports". The blog is now exactly that kind of agent,
+  // so mapping it here would reintroduce the defect this map was cleaned up to
+  // remove — for seven ids at once.
+  //
+  // What those seven gaps lose is one clause: the sentence reads "<fix route>"
+  // instead of "<fix route> Produced by the Blog article managed product." The
+  // gap, its severity, its rank and its fix route are unchanged. Re-adding the
+  // clause honestly needs this panel to be handed the client's grants, which is
+  // a prop change through seo-geo-panel.tsx, not an edit here.
+  //
+  // Page-level title / description work → the landing_page product, still managed.
   "SEO-02": "landing_page",
   "SEO-06": "landing_page",
 };

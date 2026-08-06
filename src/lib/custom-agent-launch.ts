@@ -102,6 +102,17 @@ export const COMPLIANCE_LOCK_V2_KEY = "karos-compliance-lock-v2";
 export const REDDIT_RUNNER_V2_KEY = "karos-reddit-runner";
 export const REDDIT_SETUP_V2_KEY = "karos-reddit-setup";
 
+/**
+ * The blog v2 keys. THREE skills, not four: there is no blog compliance lock —
+ * the blog reuses the newsletter's `karos-compliance-lock-v2`, and the framework
+ * re-decides its behaviour so it stops hand-editing blog posts and flags
+ * "re-render needed" instead (the site tree is derived now, so a hand edit would
+ * be silently overwritten by the next press).
+ */
+export const BLOG_WRITER_V2_KEY = "karos-blog-writer-v2";
+export const BLOG_SETUP_V2_KEY = "karos-blog-setup-v2";
+export const BLOG_MANAGER_V2_KEY = "karos-blog-manager-v2";
+
 const generalAttachments: AgentAttachmentProfile = {
   label: "Reference files",
   hint: "Add briefs, examples, brand material, or source data that should shape this run.",
@@ -1185,6 +1196,23 @@ export function isNewsletterAgentIdentity(key: string): boolean {
   return key === NEWSLETTER_WRITER_V2_KEY;
 }
 
+/**
+ * The blog agent. EXACTLY the writer, the same rule as the newsletter's.
+ *
+ * This predicate decides who gets the blog INTAKE surface and the blog setup
+ * gate. The setup skill must answer FALSE: it is the job that produces the post
+ * index the gate asks for, so a setup run that gated on its own output could
+ * never run at all.
+ *
+ * Note there is a loose `/blog|article/` launch profile further up this file that
+ * predates v2 and would otherwise capture the writer with a generic brief asking
+ * for a topic — an input v2 takes from the newsletter's handoff and must never
+ * collect from a person. The exact-key v2 profile is placed above it.
+ */
+export function isBlogAgentIdentity(key: string): boolean {
+  return key === BLOG_WRITER_V2_KEY;
+}
+
 export function isRedditAgentIdentity(key: string): boolean {
   return (
     key === REDDIT_RUNNER_V2_KEY ||
@@ -1205,6 +1233,9 @@ export function isRedditAgentIdentity(key: string): boolean {
  */
 export const NEWSLETTER_SETUP_REQUIRED_PREFIX = "Set up the newsletter agent";
 
+/** The blog twin. Same literal-constant rule as its four siblings. */
+export const BLOG_SETUP_REQUIRED_PREFIX = "Set up the blog agent";
+
 /**
  * What one newsletter issue costs a billable client.
  *
@@ -1218,7 +1249,7 @@ export const NEWSLETTER_SETUP_REQUIRED_PREFIX = "Set up the newsletter agent";
  *
  * The re-export keeps every existing importer unchanged.
  */
-export { NEWSLETTER_RUN_CREDITS } from "@/lib/credits";
+export { NEWSLETTER_RUN_CREDITS, BLOG_RUN_CREDITS } from "@/lib/credits";
 
 /**
  * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string

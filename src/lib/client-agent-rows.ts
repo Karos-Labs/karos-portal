@@ -10,9 +10,11 @@ import {
   hasNewsletterAgentIntake,
   hasNewsletterV2Setup,
 } from "@/lib/agent-service/newsletter-agent-context";
+import { hasBlogAgentIntake, hasBlogV2Setup } from "@/lib/agent-service/blog-agent-context";
 import {
   agentKeyMatchesClientSlug,
   clientSafeRefusal,
+  isBlogAgentIdentity,
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
@@ -32,6 +34,7 @@ import { refLaneLabel } from "@/lib/draft-lane-label";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { ComponentProps } from "react";
+import type { BlogAgentIntake } from "@/components/blog-agent-intake";
 import type { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 import type { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import type { RedditAgentIntake } from "@/components/reddit-agent-intake";
@@ -292,6 +295,7 @@ export interface AgentIntakePanes {
   linkedin?: ComponentProps<typeof LinkedInAgentIntake>;
   reddit?: ComponentProps<typeof RedditAgentIntake>;
   newsletter?: ComponentProps<typeof NewsletterAgentIntake>;
+  blog?: ComponentProps<typeof BlogAgentIntake>;
 }
 
 export async function buildAgentSetup(
@@ -368,6 +372,25 @@ export async function buildAgentSetup(
                 kind: "newsletter",
                 data: panes.newsletter,
               }
+            : { ready: hasIntake && isSetUp, href, label, clientLabel },
+        ];
+      }
+      if (isBlogAgentIdentity(agent.key)) {
+        // BOTH RUNGS, like the newsletter and for the same reason: the writer
+        // claims a post number in the index at step 01, so a run without one is
+        // charged for and dies. The submit core gates on both, so a one-rung
+        // answer here would offer a run the server refuses.
+        const [hasIntake, isSetUp] = await Promise.all([
+          hasBlogAgentIntake(clientId),
+          hasBlogV2Setup(clientId),
+        ]);
+        const href = `/clients/${clientId}/blog-agent`;
+        const label = "Blog agent data";
+        const clientLabel = "Your blog details";
+        return [
+          agent.id,
+          panes?.blog
+            ? { ready: hasIntake && isSetUp, href, label, clientLabel, kind: "blog", data: panes.blog }
             : { ready: hasIntake && isSetUp, href, label, clientLabel },
         ];
       }

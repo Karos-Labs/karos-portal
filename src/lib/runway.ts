@@ -88,24 +88,29 @@ const ALL_FAMILIES: ChainFamily[] = ["social", "email", "article"];
 /**
  * Managed product that refills each family (used by the top-up cron).
  *
- * PARTIAL SINCE 2026-08-06, and `email` is the hole. The newsletter is no longer
- * a managed product, so there is nothing here for the cron to dispatch — and the
- * v2 replacement cannot simply be swapped in: it is a CUSTOM agent, granted per
- * client, gated on a saved intake AND on a setup run having produced an issue
- * index, priced per agent, and reached through a different submit core
- * (`submitCustomAgentJob`, not `submitManagedJob`). An autopilot that fired it
- * would be refused for every client who has not been set up, and would be
- * claiming issue numbers in a real mailing list's index unattended.
+ * PARTIAL SINCE 2026-08-06, and TWO of the three families are now holes: `email`
+ * and `article`. The blog joined the newsletter on the custom path the same day,
+ * for the same reasons — and `article` was never auto-fired anyway, because
+ * blog_article required a real `topic` no cron could supply.
  *
- * So the email family still MEASURES — a client short on email runway is still
- * reported as short — and simply never auto-fires. The runway route reports it
- * under the same "needs manual input" reason `article` already uses, which is
- * the honest description: preparing an issue now needs a human to press Run on
- * the newsletter agent.
+ * NEITHER REPLACEMENT CAN BE SWAPPED IN HERE. Both are CUSTOM agents: granted
+ * per client, gated on a saved intake AND on a setup run having produced their
+ * numbering authority, priced per agent, and reached through a different submit
+ * core (`submitCustomAgentJob`, not `submitManagedJob`). An autopilot firing
+ * either would be refused for every client who has not been set up — and for the
+ * newsletter it would be claiming issue numbers in a real mailing list's index
+ * unattended, while for the blog it would be claiming post numbers and subjects.
+ *
+ * So both families still MEASURE — a client short on email or article runway is
+ * still reported as short — and simply never auto-fire. The route reports them
+ * under the same "needs manual input" reason, which is the honest description:
+ * both now need a human to press Run on the agent.
+ *
+ * SOCIAL IS THE ONLY MANAGED FAMILY LEFT. If it moves too, this map and the
+ * autopilot around it should be retired rather than left as a one-entry record.
  */
-export const FAMILY_PRODUCT: Partial<Record<ChainFamily, "social_post" | "blog_article">> = {
+export const FAMILY_PRODUCT: Partial<Record<ChainFamily, "social_post">> = {
   social: "social_post",
-  article: "blog_article",
 };
 
 export type RunwayProduct = NonNullable<(typeof FAMILY_PRODUCT)[ChainFamily]>;

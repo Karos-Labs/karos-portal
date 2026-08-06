@@ -8,7 +8,7 @@ function record(overrides: Partial<JobRecord> = {}): JobRecord {
     id: "job-1",
     status: "running",
     request: {
-      task_type: "blog_article",
+      task_type: "social_post",
       client_id: "client-1",
       brief: { topic: "t" },
       callback_url: "https://cb.example.com/hook",

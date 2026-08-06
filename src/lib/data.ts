@@ -49,8 +49,10 @@ import type {
   LiAgentState,
   LiDirectionRequest,
   LiDraftFeedback,
+  BlogAgentState,
   NewsletterAgentState,
   NewsletterDraftFeedback,
+  NewsletterLedgerEntry,
   RedditAgentState,
   RedditDraftFeedback,
 } from "@/lib/types";
@@ -148,6 +150,14 @@ const col = {
   // Newsletter v2's durable state. The issue index in here is the numbering
   // authority: lose it and a real subscriber list receives a second "Issue 004".
   newsletterAgentState: () => adminDb().collection("newsletterAgentState"),
+  // ONE ROW PER ISSUE, unlike the state collection above — the blog walks a
+  // window of the six most recent shipped issues, so overwriting the previous
+  // issue's handoff would make that window one deep.
+  newsletterLedger: () => adminDb().collection("newsletterLedger"),
+  // Blog v2's durable state. The post index in here is its numbering authority
+  // and the clusters file is the subject-claim register that stops two runs
+  // writing the same article.
+  blogAgentState: () => adminDb().collection("blogAgentState"),
   // Per-seat AI-built voice profiles (agent-scoped: x/linkedin/reddit), one doc
   // per (clientId, agent, seatId). See upsertSeatVoiceProfile.
   seatVoiceProfiles: () => adminDb().collection("seatVoiceProfiles"),
@@ -468,6 +478,8 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "redditAgentState",
   "newsletterDraftFeedback",
   "newsletterAgentState",
+  "newsletterLedger",
+  "blogAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];
@@ -2997,6 +3009,94 @@ export async function upsertNewsletterAgentState(
   const ref = await col
     .newsletterAgentState()
     .add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───── Newsletter v2: the per-issue research the BLOG agent reads ───── */
+
+export async function getNewsletterLedgerEntry(
+  clientId: string,
+  issueNumber: string,
+  kind: NewsletterLedgerEntry["kind"],
+): Promise<NewsletterLedgerEntry | null> {
+  const snap = await col
+    .newsletterLedger()
+    .where("clientId", "==", clientId)
+    .where("issueNumber", "==", issueNumber)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<NewsletterLedgerEntry>(snap.docs[0]);
+}
+
+/** Every captured ledger row for this client, newest issue first. */
+export async function listNewsletterLedger(
+  clientId: string,
+): Promise<NewsletterLedgerEntry[]> {
+  const snap = await col.newsletterLedger().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<NewsletterLedgerEntry>(d))
+    // Numeric, not lexicographic: "010" must sort above "009", and the blog
+    // takes the SIX HIGHEST issues — a string sort would hand it the wrong six
+    // the moment a client passes issue 100.
+    .sort((a, b) => Number(b.issueNumber) - Number(a.issueNumber));
+}
+
+export async function upsertNewsletterLedgerEntry(
+  data: Omit<NewsletterLedgerEntry, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getNewsletterLedgerEntry(data.clientId, data.issueNumber, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .newsletterLedger()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col.newsletterLedger().add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───────── Blog v2: the durable state the ephemeral runner loses ───────── */
+
+export async function getBlogAgentState(
+  clientId: string,
+  kind: BlogAgentState["kind"],
+): Promise<BlogAgentState | null> {
+  const snap = await col
+    .blogAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<BlogAgentState>(snap.docs[0]);
+}
+
+export async function listBlogAgentState(clientId: string): Promise<BlogAgentState[]> {
+  const snap = await col.blogAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<BlogAgentState>(d));
+}
+
+/**
+ * Create-or-replace one blog state file. Wholesale, not a field merge: each is a
+ * whole file the run rewrote, and merging two versions of the post index at field
+ * level could produce a claim row neither run wrote — on the one file that decides
+ * whether two runs write the same article.
+ */
+export async function upsertBlogAgentState(
+  data: Omit<BlogAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getBlogAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .blogAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col.blogAgentState().add({ ...data, version: 1, createdAt: now, updatedAt: now });
   return ref.id;
 }
 

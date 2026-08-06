@@ -222,15 +222,13 @@ export function evaluateSeatAddition(args: {
  * (research + generation, ~$0.50–2), not one model call — text-only products
  * sit at 2× the baseline, media-heavy generation higher still.
  *
- * THE NEWSLETTER IS NOT IN THIS TABLE ANY MORE, and its price did not disappear
+ * NEITHER THE NEWSLETTER NOR THE BLOG IS IN THIS TABLE ANY MORE, and its price did not disappear
  * with it: it sat at 10, the work per issue did not change when the product
- * moved to the v2 custom agent, and it is now `NEWSLETTER_RUN_CREDITS` below.
- * Re-adding a row here would give one product two prices, and they would drift
- * the first time either moved.
+ * moved to the v2 custom agent, and they are now `NEWSLETTER_RUN_CREDITS` and
+ * `BLOG_RUN_CREDITS` below. Re-adding a row here would give one product two
+ * prices, and they would drift the first time either moved.
  */
 export const TASK_EXECUTION_COSTS: Record<Exclude<ManagedTaskType, "custom">, number> = {
-  /** Text + research (markdown/HTML article). */
-  blog_article: 10,
   /** Research + per-post VISUAL generation — media-heavy. */
   social_post: 15,
   /** Heaviest: full page build with brand kit + static build (~15–30 min). */
@@ -254,6 +252,25 @@ export const TASK_EXECUTION_COSTS: Record<Exclude<ManagedTaskType, "custom">, nu
  * could not do from there, since that module already imports this one.
  */
 export const NEWSLETTER_RUN_CREDITS = 10;
+
+/**
+ * What one blog article costs a billable client, on the v2 custom-agent path.
+ *
+ * THE PRICE THE MANAGED PRODUCT CHARGED, kept deliberately equal, for the reason
+ * `NEWSLETTER_RUN_CREDITS` above states: the work per article did not change when
+ * the product moved off `TASK_EXECUTION_COSTS`, so a client's bill must not
+ * either, and without an explicit default the submit core would fall to the
+ * generic custom-agent rate.
+ *
+ * ARGUABLY LOW NOW, and worth saying rather than quietly carrying: v2's writer
+ * pays for real deep research at step 06 on top of the draft, which the managed
+ * product did not do — the framework is explicit that "the blog pays for going
+ * deep on one thing it found", against Ben's assumption that its research was
+ * nearly free. Holding the price is the right default for a migration (a client's
+ * bill must not move because we refactored), but this is the number to revisit
+ * after a live month, not one to treat as settled.
+ */
+export const BLOG_RUN_CREDITS = 10;
 
 /**
  * Resolve what one task execution costs given the product that will actually
@@ -334,7 +351,9 @@ export const CLIENT_PRICE_ROWS: readonly ClientPriceRow[] = [
     from: true,
     note: "each agent shows its own price",
   },
-  { label: "Blog article", credits: TASK_EXECUTION_COSTS.blog_article },
+  // Same treatment as the newsletter row below: still named and still 10 to the
+  // client, though it is no longer a managed product.
+  { label: "Blog article", credits: BLOG_RUN_CREDITS },
   // Still named and still 10, though it is no longer a managed product. Dropping
   // the row would have left the newsletter quoted only by the generic "Agent
   // run … from" line above — a client who buys one issue a week would have lost

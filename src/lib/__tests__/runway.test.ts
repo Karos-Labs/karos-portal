@@ -115,11 +115,12 @@ describe("runway constants", () => {
     // unattended fire would be refused for most clients and would claim issue
     // numbers in a real mailing list's index with nobody watching. Email
     // deficits are still measured and reported; they are never auto-filled.
-    expect(FAMILY_PRODUCT).toEqual({
-      social: "social_post",
-      article: "blog_article",
-    });
+    // TWO holes now. The blog joined the newsletter on the custom path, and
+    // `article` was never auto-fired anyway — blog_article required a real
+    // `topic` no cron could supply. Both families still MEASURE; neither fills.
+    expect(FAMILY_PRODUCT).toEqual({ social: "social_post" });
     expect(FAMILY_PRODUCT.email).toBeUndefined();
+    expect(FAMILY_PRODUCT.article).toBeUndefined();
   });
 
   it("ships a deploy cap that can actually fill the horizon", () => {

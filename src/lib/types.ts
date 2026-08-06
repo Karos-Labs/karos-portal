@@ -316,7 +316,7 @@ export interface JobRunEvent {
 }
 
 /** Task types the external agent service (agent-service/) can run. */
-export type ManagedTaskType = "social_post" | "blog_article" | "landing_page" | "custom";
+export type ManagedTaskType = "social_post" | "landing_page" | "custom";
 
 /**
  * The newsletter's managed task type, RETIRED 2026-08-06 when the product moved
@@ -340,7 +340,21 @@ export type ManagedTaskType = "social_post" | "blog_article" | "landing_page" | 
  * `ManagedTaskType` above, so the only way to reach it is to be reading history.
  */
 export const RETIRED_NEWSLETTER_TASK_TYPE = "newsletter_issue" as const;
-export type RetiredTaskType = typeof RETIRED_NEWSLETTER_TASK_TYPE;
+
+/**
+ * The blog's managed task type, RETIRED 2026-08-06 alongside the newsletter's,
+ * when the product moved to the v2 custom agent (`karos-blog-writer-v2`).
+ *
+ * Same reasoning as the newsletter's constant above, and the archive is larger:
+ * this string is on every v1 article a client has, and one of them is the
+ * endorsed 1,718-word post the v2 rebuild takes as its quality base. Deleting the
+ * spelling would not delete the data.
+ */
+export const RETIRED_BLOG_TASK_TYPE = "blog_article" as const;
+
+export type RetiredTaskType =
+  | typeof RETIRED_NEWSLETTER_TASK_TYPE
+  | typeof RETIRED_BLOG_TASK_TYPE;
 
 /**
  * Anything that may appear as a task type on a STORED row or an INBOUND webhook
@@ -1785,7 +1799,7 @@ export interface AgentIntake {
   id: string;
   clientId: string;
   /** Agent family. Widen the union as more agents get intake. */
-  agent: "x" | "linkedin" | "reddit" | "newsletter";
+  agent: "x" | "linkedin" | "reddit" | "newsletter" | "blog";
   /** null = company-page intake; otherwise the ClientSeat id. */
   seatId: string | null;
   /**
@@ -1880,6 +1894,24 @@ export interface AgentIntake {
    * Rides every issue as a visible review flag until they do.
    */
   openComplianceNote?: string;
+  /**
+   * Blog only — domains whose pages count as the client's own for outbound
+   * linking. The writer links out only to a target that exists, so this is what
+   * makes "their own site" a checkable set rather than a guess.
+   */
+  internalDomains?: string[];
+  /**
+   * Blog only — a correction to the voice setup derived from their material.
+   * Setup builds the voice card; this is the client's chance to say it is wrong.
+   */
+  toneNote?: string;
+  /** Blog only — subjects never to write about, on top of the house rules. */
+  bannedTopics?: string[];
+  /**
+   * Blog only — the CMS they publish on. Data for a future direct-publish
+   * upgrade, and never a gate: we prepare the article, they publish it.
+   */
+  cmsName?: string;
   /**
    * Reddit only — the disclosure posture the client is comfortable with, in
    * their own words. Used verbatim as the disclosure line on any draft that
@@ -2509,6 +2541,139 @@ export interface NewsletterDraftFeedback {
   reasonCode?: "off_topic" | "wrong_voice" | "compliance" | "too_long" | "timing" | "other";
   createdBy: string;
   createdAt: number;
+}
+
+/**
+ * ONE newsletter ISSUE's published research, kept because the blog agent reads it.
+ *
+ * ── WHY THIS IS A SECOND COLLECTION AND NOT A NEWSLETTER STATE KIND ───────
+ *
+ * `NewsletterAgentState` is ONE doc per (clientId, kind): the current issue
+ * index, the current topic pool, the current voice card. These rows are the
+ * opposite shape — one set PER ISSUE, and every past issue stays readable,
+ * because the blog walks a WINDOW of the six most recent shipped issues and
+ * picks a subject from any of them. Folding them into the state collection
+ * would mean issue 004's handoff overwriting issue 003's, and the window would
+ * be one issue deep for ever.
+ *
+ * ── WHY THE PORTAL HAS TO HOLD THEM AT ALL ────────────────────────────────
+ *
+ * The blog v2 framework's step 04 reads these at fixed paths inside the lab
+ * workspace. That workspace is destroyed with the runner, so by the time the
+ * blog runs they are gone — and unlike the newsletter's own state, the blog
+ * cannot regenerate them: they are a record of what the NEWSLETTER found and
+ * said, and re-deriving them would be re-doing another product's paid research.
+ *
+ * The blog treats the items file as the handoff and is explicit that it must not
+ * reach into the newsletter's `internal/` trail for it, so this is the whole
+ * supported channel between the two products.
+ *
+ * One doc per (clientId, issueNumber, kind).
+ */
+export interface NewsletterLedgerEntry {
+  id: string;
+  clientId: string;
+  /** The issue as the newsletter numbered it, e.g. "004". The join key. */
+  issueNumber: string;
+  /**
+   * Which of the three published artifacts this row holds:
+   *  - `issue-items`    — `outputs/_ledger/newsletter-issues/<date>-issue-<NNN>-items.json`.
+   *                       THE HANDOFF: the issue's `theme` plus `items[]`, each with
+   *                       `topic_id`, `heading`, `role` (lead|brief), `depth`
+   *                       (developed|mentioned) and its own `sources[]`. `depth`
+   *                       is what decides the blog's pick — `mentioned` is the
+   *                       depth the newsletter deliberately left unspent.
+   *  - `scan-log`       — `outputs/_ledger/seven-day-scan/<date>-issue-<NNN>.json`.
+   *                       The week's fuller research. Used ONLY to add material to
+   *                       a subject the newsletter already covered, never to
+   *                       introduce a new one.
+   *  - `issue-markdown` — `client/01-issue-<NNN>/issue-<NNN>.md`, the CLIENT-FACING
+   *                       markdown. What the newsletter actually said, in its own
+   *                       words, when the blog needs them.
+   */
+  kind: "issue-items" | "scan-log" | "issue-markdown";
+  content: string;
+  contentType: string;
+  /** YYYY-MM-DD the issue was produced — part of the paths above. */
+  contentDate: string;
+  capturedFromJobId: string;
+  capturedAt: number;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * The blog agent's DURABLE state — the fourth instance of the ephemeral-workspace
+ * problem, and the one with the most claims to protect.
+ *
+ * A writer run claims THREE things and all three live here or in the index: the
+ * post number at step 01, the subject at step 05, and the slug at step 10. The
+ * framework is explicit about why the subject claim exists at all: without it two
+ * runs can each take a different post number and then write THE SAME ARTICLE —
+ * "the number claim protects identity; the subject claim protects content".
+ *
+ * WHAT IS DELIBERATELY NOT A KIND HERE, and both omissions are the same rule:
+ *
+ *  - THE BRAND FILE, at `clients/<slug>/skills/newsletter-agent/<slug>.json`.
+ *    Shared with v1, the newsletter and the compliance lock, read live by all of
+ *    them, and the blog's setup completes it ADDITIVELY. A second copy would have
+ *    no owner.
+ *  - CONTENT-FOUNDATION.md, at `clients/<slug>/skills/_shared/`. Already captured
+ *    as a `NewsletterAgentState` kind — it is one file with one writer, and the
+ *    blog's context builder re-injects the newsletter's captured copy rather than
+ *    storing a second one that could drift.
+ */
+export interface BlogAgentState {
+  id: string;
+  clientId: string;
+  /**
+   *  - `post-index`   — the numbering authority, the dedup memory AND the pending-link
+   *                     register. The blog's twin of the newsletter's issue index, and
+   *                     dangerous in the same way: lose it and a run re-claims a number
+   *                     that already published.
+   *  - `clusters`     — the claim register (keyed by `subject_key`) plus the cluster map.
+   *                     A map and a register, never a queue: the writer takes its
+   *                     subjects from the newsletter, not from here.
+   *  - `voice-card`   — the style target, built once at setup.
+   *  - `v1-posts`     — the one-time list of pre-v2 posts under `outputs/blog-agent/`,
+   *                     so the site rebuild keeps them instead of deleting a client's
+   *                     existing articles.
+   *  - `next-request` — the client's requested subject, before the portal owned one.
+   *                     Now written BY the portal from the run brief.
+   */
+  kind: "post-index" | "clusters" | "voice-card" | "v1-posts" | "next-request";
+  content: string;
+  contentType: string;
+  contentDate: string;
+  capturedFromJobId: string;
+  capturedAt: number;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * The blog agent's intake, as a client's browser may receive it.
+ *
+ * The FIELDS live on `AgentIntake` (all five families share one collection);
+ * this is the whitelist that decides which cross the RSC boundary.
+ *
+ * ASK vs BUILD, as everywhere: the pillars, the cluster map, the voice card and
+ * the compliance patterns are BUILT by setup from the client's own documents and
+ * are absent here on purpose. What is asked is what setup cannot derive.
+ */
+export interface BlogAgentIntake {
+  /** Domains whose pages the agent may link out to as the client's own. */
+  internalDomains?: string[];
+  /** A correction to the voice setup derived, in the client's words. */
+  toneNote?: string;
+  /** Who the articles are for. */
+  audienceNote?: string;
+  /** Subjects never to write about, on top of the house rules. */
+  bannedTopics?: string[];
+  /** Where they publish. Recorded for a future direct-publish; never a gate. */
+  cmsName?: string;
 }
 
 /**

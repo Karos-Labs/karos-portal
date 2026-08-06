@@ -283,6 +283,7 @@ describe("#86 — every intake write goes through the funnel", () => {
     // Non-vacuity. An empty glob would make every assertion below pass by
     // asking nothing, which is the quietest way for this guard to die.
     expect(surfaces).toEqual([
+      "src/components/blog-agent-intake.tsx",
       "src/components/linkedin-agent-intake.tsx",
       "src/components/newsletter-agent-intake.tsx",
       "src/components/reddit-agent-intake.tsx",
@@ -354,6 +355,7 @@ describe("#86 — every intake write goes through the funnel", () => {
     // cluster still has the number of funnelled surfaces it had.
     const users = files.filter((rel) => /\bintakeSave\b/.test(stripComments(read(rel))));
     expect(users).toEqual([
+      "src/components/blog-agent-intake.tsx",
       "src/components/client-seat-remove.tsx",
       "src/components/company-news-box.tsx",
       "src/components/linkedin-agent-intake.tsx",

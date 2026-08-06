@@ -5,7 +5,7 @@ import { KAROS_MCP_ALLOWED_TOOLS, karosMcpServers } from "../runner/src/mcp.js";
 function spec(): JobSpec {
   return {
     jobId: "job-1",
-    taskType: "blog_article",
+    taskType: "social_post",
     clientId: "client-1",
     brief: {},
     contextFiles: [],

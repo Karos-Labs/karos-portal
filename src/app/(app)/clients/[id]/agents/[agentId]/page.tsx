@@ -56,6 +56,7 @@ import {
   AgentStatusStrip,
 } from "@/components/client-agents/agent-sections";
 import {
+  buildBlogAgentIntakeView,
   buildLinkedInAgentIntakeView,
   buildNewsletterAgentIntakeView,
   buildRedditAgentIntakeView,
@@ -63,6 +64,7 @@ import {
 } from "@/lib/agent-intake-views";
 import {
   agentKeyMatchesClientSlug,
+  isBlogAgentIdentity,
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
@@ -128,6 +130,14 @@ async function agentIntakePane(
   if (isNewsletterAgentIdentity(agent.key)) {
     return {
       newsletter: await buildNewsletterAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
+  if (isBlogAgentIdentity(agent.key)) {
+    return {
+      blog: await buildBlogAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
       }),

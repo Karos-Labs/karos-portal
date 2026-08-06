@@ -36,6 +36,7 @@ import {
 import {
   agentKeyMatchesClientSlug,
   isUnlistedAgent,
+  isBlogAgentIdentity,
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
@@ -46,7 +47,9 @@ import {
   listLinkedInReadySeatIds,
 } from "@/lib/agent-service/linkedin-agent-context";
 import { hasNewsletterV2Setup } from "@/lib/agent-service/newsletter-agent-context";
+import { hasBlogV2Setup } from "@/lib/agent-service/blog-agent-context";
 import type { AgentProfileScopeFields } from "@/lib/data";
+import type { BlogAgentIntake, BlogIntakeView } from "@/components/blog-agent-intake";
 import type {
   NewsletterAgentIntake,
   NewsletterIntakeView,
@@ -77,6 +80,7 @@ export type XAgentIntakeProps = ComponentProps<typeof XAgentIntake>;
 export type LinkedInAgentIntakeProps = ComponentProps<typeof LinkedInAgentIntake>;
 export type RedditAgentIntakeProps = ComponentProps<typeof RedditAgentIntake>;
 export type NewsletterAgentIntakeProps = ComponentProps<typeof NewsletterAgentIntake>;
+export type BlogAgentIntakeProps = ComponentProps<typeof BlogAgentIntake>;
 
 /**
  * Which key predicate answers for which intake family.
@@ -90,6 +94,7 @@ const IDENTITY_BY_FAMILY: Record<AgentIntake["agent"], (key: string) => boolean>
   linkedin: isLinkedInAgentIdentity,
   reddit: isRedditAgentIdentity,
   newsletter: isNewsletterAgentIdentity,
+  blog: isBlogAgentIdentity,
 };
 
 /**
@@ -533,6 +538,54 @@ export async function buildNewsletterAgentIntakeView(
       createdAt: f.createdAt,
     })),
     runs,
+    isStaff: opts.isStaff,
+  };
+}
+
+/**
+ * Strip an intake doc to the client-safe blog view. All five fields are the
+ * client's own answers, so all five cross; the type exists so a field added to
+ * `AgentIntake` for another family cannot reach a browser by riding the shared
+ * document.
+ */
+export function toBlogIntakeView(intake: AgentIntake | null): BlogIntakeView | null {
+  if (!intake) return null;
+  return {
+    ...(intake.internalDomains?.length ? { internalDomains: intake.internalDomains } : {}),
+    ...(intake.toneNote ? { toneNote: intake.toneNote } : {}),
+    ...(intake.audienceNote ? { audienceNote: intake.audienceNote } : {}),
+    ...(intake.bannedTopics?.length ? { bannedTopics: intake.bannedTopics } : {}),
+    ...(intake.cmsName ? { cmsName: intake.cmsName } : {}),
+  };
+}
+
+export async function buildBlogAgentIntakeView(
+  clientId: string,
+  opts: { isStaff: boolean; jobs?: Job[] },
+): Promise<BlogAgentIntakeProps> {
+  const [companyIntake, isSetUp, jobs] = await Promise.all([
+    getAgentIntake(clientId, "blog", null),
+    hasBlogV2Setup(clientId),
+    opts.jobs ?? listJobs({ clientId }),
+  ]);
+
+  // Matched on the agent NAME the way its three siblings are, so all three blog
+  // skills report into one history — a client asking "when did you last work on
+  // my blog" means the product, not one of its steps.
+  const blogJobs: Job[] = jobs
+    .filter(
+      (j) =>
+        j.agentId === "agent-service" &&
+        j.external?.taskType === "custom" &&
+        /blog/i.test(j.agentName),
+    )
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  return {
+    clientId,
+    company: toBlogIntakeView(companyIntake),
+    isSetUp,
+    runs: toRunRowViews(blogJobs, opts.isStaff),
     isStaff: opts.isStaff,
   };
 }

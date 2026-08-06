@@ -47,7 +47,7 @@ import {
 import type { ClientTask } from "@/lib/types";
 
 const SAMPLE_TASKS: SwarmTaskDraft[] = [
-  { title: "Publish LinkedIn thought-leadership article on Trend X", description: "d1", priority: "high", productType: "blog_article", platform: "linkedin", weight: 80 },
+  { title: "Publish LinkedIn thought-leadership article on Trend X", description: "d1", priority: "high", productType: "landing_page", platform: "linkedin", weight: 80 },
   { title: "Produce TikTok short on customer win", description: "d2", priority: "medium", productType: "social_post", platform: "tiktok", weight: 60 },
   { title: "Draft monthly newsletter issue", description: "d3", priority: "low", productType: "landing_page", weight: 40 },
 ];
@@ -363,12 +363,12 @@ describe("persistSwarmTasks — dedup + capacity", () => {
 
   it("ignores a hallucinated customAgentId not granted to the client", async () => {
     const drafts: SwarmTaskDraft[] = [
-      { title: "Ghost agent task", description: "d", priority: "medium", customAgentId: "nope", productType: "blog_article", weight: 50 },
+      { title: "Ghost agent task", description: "d", priority: "medium", customAgentId: "nope", productType: "landing_page", weight: 50 },
     ];
     await persistSwarmTasks("c1", "u1", drafts, [{ id: "ca_1", name: "Real", description: "d" }]);
     const arg = createClientTaskMock.mock.calls[0][0] as { metadata?: Record<string, unknown> };
     // Falls back to the managed productType path; no bogus customAgentId persisted.
     expect(arg.metadata?.customAgentId).toBeUndefined();
-    expect(arg.metadata?.productType).toBe("blog_article");
+    expect(arg.metadata?.productType).toBe("landing_page");
   });
 });

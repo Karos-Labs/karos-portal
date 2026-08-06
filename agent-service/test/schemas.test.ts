@@ -3,7 +3,7 @@ import { validateJobRequest } from "../src/schemas/validate.js";
 
 function baseRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    task_type: "blog_article",
+    task_type: "social_post",
     client_id: "client-123",
     brief: { topic: "Why tokenized fixed income is growing" },
     callback_url: "https://platform.example.com/api/agent-service/webhook",
@@ -27,6 +27,17 @@ describe("job request validation", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects the RETIRED blog_article type", () => {
+    // Removed 2026-08-06 with the newsletter's, when the blog became a custom
+    // agent. Same distinction as below: this string was valid and real jobs
+    // carry it, and the portal still ACCEPTS it inbound so a straggler can
+    // report. What must no longer be possible is STARTING one.
+    const result = validateJobRequest(
+      baseRequest({ task_type: "blog_article", brief: { topic: "Anything" } }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects the RETIRED newsletter_issue type", () => {
     // Removed 2026-08-06 when the newsletter became a custom agent. It is a
     // separate assertion from "unknown type" above because it is a different
@@ -40,9 +51,14 @@ describe("job request validation", () => {
   });
 
   it("rejects a brief that misses required fields", () => {
-    const result = validateJobRequest(baseRequest({ brief: {} }));
+    // Asked of `landing_page`, which is now the only remaining task type with a
+    // REQUIRED brief field. The base request used to be `blog_article`, whose
+    // `topic` was required — when that type was retired the base moved to
+    // `social_post`, which requires nothing, and this assertion would have
+    // passed an empty brief and proved nothing.
+    const result = validateJobRequest(baseRequest({ task_type: "landing_page", brief: {} }));
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.join(" ")).toContain("topic");
+    if (!result.ok) expect(result.errors.join(" ")).toContain("page_goal");
   });
 
   it("rejects unknown brief fields", () => {

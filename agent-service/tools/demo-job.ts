@@ -1,15 +1,10 @@
 const API_URL = process.env.AGENT_SERVICE_URL ?? "http://localhost:8080";
 const TOKEN = process.env.AGENT_SERVICE_TOKEN ?? "dev-token";
 const CALLBACK_URL = process.env.DEMO_CALLBACK_URL ?? "http://mock-webhook:9009/webhook";
-const TASK_TYPE = process.env.DEMO_TASK_TYPE ?? "blog_article";
+const TASK_TYPE = process.env.DEMO_TASK_TYPE ?? "social_post";
 const CLIENT_SLUG = process.env.DEMO_CLIENT_SLUG;
 
 const briefs: Record<string, Record<string, unknown>> = {
-  blog_article: {
-    topic: "Three practical AI workflows small marketing teams can adopt this quarter",
-    length: "short",
-    notes: "Demo run from `make demo-job`. Keep research light.",
-  },
   social_post: { count: 1, topic: "behind the scenes of a product photoshoot", platform: "instagram" },
   landing_page: { page_goal: "Collect waitlist signups for a demo product" },
 };
@@ -19,7 +14,7 @@ async function main(): Promise<void> {
     task_type: TASK_TYPE,
     client_id: "demo-client",
     ...(CLIENT_SLUG ? { client_slug: CLIENT_SLUG } : {}),
-    brief: briefs[TASK_TYPE] ?? briefs.blog_article,
+    brief: briefs[TASK_TYPE] ?? briefs.social_post,
     callback_url: CALLBACK_URL,
     metadata: { demo: "true" },
   };

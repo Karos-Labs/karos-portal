@@ -18,7 +18,7 @@
  * millis.
  */
 
-import { RETIRED_NEWSLETTER_TASK_TYPE } from "@/lib/types";
+import { RETIRED_BLOG_TASK_TYPE, RETIRED_NEWSLETTER_TASK_TYPE } from "@/lib/types";
 import type { Asset, AssetType, ClientDailyPace, ManagedTaskType } from "@/lib/types";
 import { MANAGED_PRODUCTS, getManagedProduct } from "@/lib/agent-service/products";
 import { chainAllowsDay, startOfDayMs } from "@/lib/scheduling";
@@ -539,15 +539,12 @@ export function productForAsset(a: Pick<Asset, "meta" | "type">): ManagedTaskTyp
   const folder = metaString(a, "agentFolder")?.toLowerCase();
   if (folder) {
     if (folder.includes("instagram") || folder.includes("social")) return "social_post";
-    if (folder.includes("blog") || folder.includes("article")) return "blog_article";
     if (folder.includes("landing")) return "landing_page";
   }
   switch (a.type) {
     case "instagram_post":
     case "social_post":
       return "social_post";
-    case "article":
-      return "blog_article";
     default:
       return null;
   }
@@ -589,5 +586,6 @@ export function agentLabelForAsset(a: Pick<Asset, "agentId" | "meta" | "type">):
 function retiredProductLabel(a: Pick<Asset, "meta" | "type">): string | null {
   const taskType = metaString(a, "taskType");
   if (taskType === RETIRED_NEWSLETTER_TASK_TYPE || a.type === "email") return "Newsletter issue";
+  if (taskType === RETIRED_BLOG_TASK_TYPE || a.type === "article") return "Blog article";
   return null;
 }

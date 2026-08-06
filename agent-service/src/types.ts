@@ -3,7 +3,10 @@
 // runner. The platform mirror of this tuple is MANAGED_PRODUCTS + the
 // ManagedTaskType union, and agent-registry-sync.test.ts fails CI if the two
 // ever disagree.
-export const TASK_TYPES = ["social_post", "blog_article", "landing_page", "custom"] as const;
+// "blog_article" was removed 2026-08-06 alongside "newsletter_issue": the blog
+// is now a custom agent (karos-blog-writer-v2) and runs through the generic
+// "custom" runner.
+export const TASK_TYPES = ["social_post", "landing_page", "custom"] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "dead_letter";

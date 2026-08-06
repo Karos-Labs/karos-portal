@@ -503,11 +503,14 @@ describe("executing-product line (QA F7)", () => {
       ],
       "client-9",
     );
+    // Only SEO-02 still names a product. The three content ids lost their clause
+    // when the blog became a per-client custom agent — see the unmapped-content
+    // test below — and keep the route sentence on its own.
     expect(views.map((v) => v.fixRoute)).toEqual([
-      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
-      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
+      "Karos drafts this fix for your approval.",
+      "Karos drafts this fix for your approval.",
       "Karos drafts this fix for your approval. Produced by the Landing page managed product.",
-      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
+      "Karos drafts this fix for your approval.",
     ]);
   });
 
@@ -586,11 +589,14 @@ describe("executing-product line (QA F7)", () => {
   });
 
   it("keeps the route sentence alongside the product instead of replacing it", () => {
-    const [view] = buildGapViews([gap({ id: "GEO-20", delivery: "agent-direct" })], "c");
+    // Asked of SEO-02, one of the two ids still mapped to a managed product.
+    // GEO-20 used to serve here; it lost its product clause with the blog, so it
+    // can no longer prove the two halves coexist.
+    const [view] = buildGapViews([gap({ id: "SEO-02", delivery: "agent-direct" })], "c");
     // QA F4: no apply path exists (both producers hardcode artifactRef: null), so
     // this route promises a draft-for-approval, never an automatic fix.
     expect(view.fixRoute).toContain("Karos drafts this fix for your approval.");
-    expect(view.fixRoute).toContain("Blog article managed product");
+    expect(view.fixRoute).toContain("Landing page managed product");
   });
 
   it("never promises an automatic fix on any delivery route (QA F4)", () => {
@@ -630,15 +636,29 @@ describe("executing-product line (QA F7)", () => {
 
   it("falls back to the rec-id map when the productRef id is unknown", () => {
     const g = gap({
-      id: "GEO-20",
+      id: "SEO-06",
       delivery: "existing-product",
       productRef: { id: "mystery_product", folder: "x", status: "live" },
     });
-    expect(productLabelFor(g)).toBe("Blog article");
+    expect(productLabelFor(g)).toBe("Landing page");
+  });
+
+  it("names NO product on the content checks the blog used to own", () => {
+    // GEO-02/03/09/20/22 and BOTH-13/16 pointed at `blog_article` until the blog
+    // became a per-client custom agent. They are deliberately unmapped rather
+    // than re-pointed: this panel never receives the client's grants, so naming
+    // that agent here would promise a client an agent they may not have — the F7
+    // defect the rest of this map was cleaned up to remove.
+    for (const id of ["GEO-02", "GEO-03", "GEO-09", "GEO-20", "GEO-22", "BOTH-13", "BOTH-16"]) {
+      expect(productLabelFor(gap({ id, delivery: "existing-product" })), id).toBeNull();
+      expect(PRODUCT_MAPPED_IDS, id).not.toContain(id);
+    }
+    // Non-vacuity: the map still works for what is still managed.
+    expect(productLabelFor(gap({ id: "SEO-02", delivery: "existing-product" }))).toBe("Landing page");
   });
 
   it("strips engine suffixes from rec ids before the lookup", () => {
-    expect(productLabelFor(gap({ id: "GEO-20:chatgpt" }))).toBe("Blog article");
+    expect(productLabelFor(gap({ id: "SEO-02:chatgpt" }))).toBe("Landing page");
   });
 });
 

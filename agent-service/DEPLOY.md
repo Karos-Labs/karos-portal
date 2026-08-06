@@ -191,10 +191,9 @@ Only `active` clients still `pending`/`running` their initial onboarding are
 skipped — a past `onboardingStatus: "failed"` (the intel/context-doc research
 quality gate) does NOT block a client, matching every other generation entry
 point (agent-swarm, submitManagedJob), which never check it. Only the `social`
-family auto-fires (no required brief); `article` deficits are reported but left
-to the Task Map / manual flow (a blog needs a real topic), and `email` joined
-them on 2026-08-06 when the newsletter became a per-client custom agent behind
-an intake gate and a setup gate — an unattended fire would be refused for most
+family auto-fires (no required brief). `email` and `article` are both reported
+and never auto-filled: on 2026-08-06 the newsletter and the blog each became a
+per-client custom agent behind an intake gate and a setup gate — an unattended fire would be refused for most
 clients and would claim issue numbers in a real mailing list unwatched.
 
 `intel-report-schedule` drives the admin-configurable recurring Intel Report +

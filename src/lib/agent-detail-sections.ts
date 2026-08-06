@@ -11,6 +11,7 @@ import {
 } from "@/lib/data";
 import type { AgentProfileScopeFields } from "@/lib/data";
 import {
+  isBlogAgentIdentity,
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
@@ -190,6 +191,12 @@ function intakeAnswersFor(
       // three families show here, and a half-filled band would imply this page
       // is where a client reads their newsletter setup. Their own surface is.
       return [];
+    case "blog":
+      // Same call as newsletter, same reason. The blog's intake is linking
+      // domains, a tone correction and banned subjects — configuration, not the
+      // per-account identity answers the first two families show inline. Its own
+      // surface is where a client reads it.
+      return [];
     case "reddit":
       return redditAnswers(toRedditIntakeView(doc));
   }
@@ -233,6 +240,7 @@ export function intakeFamilyFor(agentKey: string): AgentIntake["agent"] | null {
   if (isLinkedInAgentIdentity(agentKey)) return "linkedin";
   if (isRedditAgentIdentity(agentKey)) return "reddit";
   if (isNewsletterAgentIdentity(agentKey)) return "newsletter";
+  if (isBlogAgentIdentity(agentKey)) return "blog";
   return null;
 }
 
@@ -304,6 +312,22 @@ const FAMILY_CAPABILITIES: Record<AgentIntake["agent"], IntakeFamilyCapabilities
     profileDoc: false,
     companyLabel: "Your Reddit account",
     companyIcon: "User",
+  },
+  blog: {
+    // No seats: the blog writes for the company, and its scope choice (company
+    // page vs an executive's byline) is a setup config field, not a seat row.
+    seats: false,
+    // No news drop either — and for a sharper reason than the other two that
+    // lack one. The blog does not merely ignore the drop: it takes its subjects
+    // from the NEWSLETTER's published handoff, and its framework forbids
+    // introducing a subject the newsletter did not cover. A "company news drop"
+    // row here would offer a client an input channel this agent cannot read.
+    newsDrop: false,
+    takes: false,
+    direction: false,
+    profileDoc: false,
+    companyLabel: "Your blog details",
+    companyIcon: "PenLine",
   },
   newsletter: {
     seats: false,

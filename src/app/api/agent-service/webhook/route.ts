@@ -16,7 +16,9 @@ import {
   markLiDirectionRequestCovered,
   updateJob,
   upsertLiAgentState,
+  upsertBlogAgentState,
   upsertNewsletterAgentState,
+  upsertNewsletterLedgerEntry,
   upsertRedditAgentState,
   upsertSeatVoiceProfile,
 } from "@/lib/data";
@@ -39,6 +41,16 @@ import {
   isRedditSetupV2,
 } from "@/lib/agent-service/reddit-agent-context";
 import { isNewsletterAgent } from "@/lib/agent-service/newsletter-agent-context";
+import { isBlogAgent } from "@/lib/agent-service/blog-agent-context";
+import {
+  BLOG_STATE_MAX_CHARS,
+  type BlogClientFile,
+  blogEnvelopeHasContent,
+  blogStateContentType,
+  blogStateDateFor,
+  blogStateKindFor,
+  buildBlogEnvelope,
+} from "@/lib/agent-service/blog-state-capture";
 import {
   NEWSLETTER_STATE_MAX_CHARS,
   type NewsletterClientFile,
@@ -46,7 +58,10 @@ import {
   newsletterEnvelopeHasContent,
   newsletterStateContentType,
   newsletterStateDateFor,
+  newsletterIssueNumberFrom,
+  newsletterLedgerKindFor,
   newsletterStateKindFor,
+  NEWSLETTER_LEDGER_MAX_CHARS,
 } from "@/lib/agent-service/newsletter-state-capture";
 import {
   REDDIT_STATE_MAX_CHARS,
@@ -66,7 +81,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, NewsletterAgentState, RedditAgentState } from "@/lib/types";
+import type { BlogAgentState, ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, NewsletterAgentState, NewsletterLedgerEntry, RedditAgentState } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -423,6 +438,11 @@ export async function POST(req: NextRequest) {
   // Newsletter v2: the issue index in this run is the numbering authority, so a
   // lost capture means the next run re-mints a number a subscriber already saw.
   let isNewsletterStateJob = false;
+  // Blog v2: three claims per run (post number, subject, slug) and the client's
+  // whole standing site is rebuilt from completed runs, so a lost capture is how
+  // two presses write the same article — or how the rebuild deletes posts it can
+  // no longer see a run for.
+  let isBlogStateJob = false;
   try {
     const producing = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
     isLinkedInStateJob = producing ? isLinkedInV2Agent(producing.key) : false;
@@ -431,11 +451,13 @@ export async function POST(req: NextRequest) {
       ? isRedditRunnerV2(producing.key) || isRedditSetupV2(producing.key)
       : false;
     isNewsletterStateJob = producing ? isNewsletterAgent(producing.key) : false;
+    isBlogStateJob = producing ? isBlogAgent(producing.key) : false;
   } catch {
     isLinkedInStateJob = false;
     isLinkedInSetupJob = false;
     isRedditStateJob = false;
     isNewsletterStateJob = false;
+    isBlogStateJob = false;
   }
 
   // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
@@ -525,6 +547,30 @@ export async function POST(req: NextRequest) {
   /** The run's own outcome record, for the four-outcome distinction. */
   let redditRunRecord: string | null = null;
   const newsletterClientFiles: NewsletterClientFile[] = [];
+  /** A blog v2 run's client-facing five, flattened into the envelope after the claim. */
+  const blogClientFiles: BlogClientFile[] = [];
+  /** Blog v2 durable state, same rules as its three siblings. */
+  const blogStateArtifacts: {
+    kind: BlogAgentState["kind"];
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
+  /**
+   * The newsletter's PER-ISSUE published research, captured for the BLOG.
+   *
+   * The only cross-product capture in this handler: every other buffer here holds
+   * something the producing agent will read back itself. These rows are read by a
+   * DIFFERENT agent, and the newsletter run that produces them has no idea the
+   * blog exists.
+   */
+  const newsletterLedgerArtifacts: {
+    kind: "issue-items" | "scan-log";
+    issueNumber: string;
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
   const newsletterStateArtifacts: {
     kind: NewsletterAgentState["kind"];
     content: string;
@@ -622,6 +668,65 @@ export async function POST(req: NextRequest) {
           // Best-effort and not reported to the client: the issue in front of
           // them is finished either way. The cost is the NEXT run's memory, and
           // the events below record that for staff.
+        }
+      }
+      // The two LEDGER files a newsletter run publishes FOR THE BLOG. Fetched on
+      // the newsletter's delivery because that is the only moment they exist:
+      // the run folder is destroyed with the runner, and unlike the newsletter's
+      // own state the blog cannot regenerate them — they record what another
+      // product's paid research found. Internal, so fetched for their text only
+      // and never re-hosted.
+      const ledgerKind = isNewsletterStateJob ? newsletterLedgerKindFor(liPath) : null;
+      const ledgerIssue = ledgerKind ? newsletterIssueNumberFrom(liPath) : null;
+      if (!artifact.client_facing && ledgerKind && ledgerIssue && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, NEWSLETTER_LEDGER_MAX_CHARS);
+              if (text.trim()) {
+                newsletterLedgerArtifacts.push({
+                  kind: ledgerKind,
+                  issueNumber: ledgerIssue,
+                  content: text,
+                  contentDate: newsletterStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch {
+          // Best-effort. The issue in front of the client is finished either way;
+          // the cost is the BLOG's next run, and the events below record it.
+        }
+      }
+      const blogState = isBlogStateJob ? blogStateKindFor(liPath) : null;
+      if (!artifact.client_facing && blogState && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, BLOG_STATE_MAX_CHARS);
+              if (text.trim()) {
+                blogStateArtifacts.push({
+                  kind: blogState,
+                  content: text,
+                  contentDate: blogStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch {
+          // Best-effort, same as its three siblings.
         }
       }
       const redditState = isRedditStateJob ? redditStateKindFor(liPath) : null;
@@ -770,6 +875,14 @@ export async function POST(req: NextRequest) {
                     text: content,
                   });
                 }
+                // A blog v2 run's five client files — the standalone page, the
+                // CMS fragment, the markdown, about.txt and publish-notes.txt.
+                // Same reason as the newsletter's four: the reader is handed ONE
+                // string, and a size race would give them the page instead of the
+                // fragment they actually paste.
+                if (isBlogStateJob) {
+                  blogClientFiles.push({ path: artifact.path ?? artifact.name, text: content });
+                }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
                 // agents (X, LinkedIn) — prefer it deterministically over the
                 // size race, so a long sibling text file (a video brief, an
@@ -883,12 +996,19 @@ export async function POST(req: NextRequest) {
       ? JSON.stringify(newsletterEnvelope)
       : null;
 
+  // ── Blog v2: the D40+D56 five become the reader's one string ──
+  const blogEnvelope = isBlogStateJob ? buildBlogEnvelope(blogClientFiles) : null;
+  const blogEnvelopeJson =
+    blogEnvelope && blogEnvelopeHasContent(blogEnvelope) ? JSON.stringify(blogEnvelope) : null;
+
   const deliveredCount = rehosted.length;
   // For the Task Map sync below: the run may have been dispatched by a board
   // task, whose ticket gets the deliverable for client preview.
   const redditEnvelopeJson = redditEnvelope ? JSON.stringify(redditEnvelope) : null;
   const taskArtifactContent = newsletterEnvelopeJson
     ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : blogEnvelopeJson
+    ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : redditEnvelopeJson
     ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : primaryText
@@ -1063,6 +1183,97 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // The newsletter's PER-ISSUE research, for the blog. One row per (issue,
+    // kind) so a client's whole shipped history stays readable — the blog walks a
+    // window of the six most recent issues, and overwriting the previous issue's
+    // handoff would make that window one deep.
+    //
+    // The issue MARKDOWN comes from the envelope rather than from a second fetch:
+    // it is client-facing, so its bytes are already decoded above. Taking it from
+    // the envelope also guarantees the blog reads exactly the text the client
+    // was given, which is the framework's own rule — never the internal trail.
+    if (newsletterLedgerArtifacts.length > 0 || (isNewsletterStateJob && newsletterEnvelope)) {
+      const rows: Array<{
+        kind: NewsletterLedgerEntry["kind"];
+        issueNumber: string;
+        content: string;
+        contentDate: string;
+        contentType: string;
+      }> = newsletterLedgerArtifacts.map((row) => ({
+        kind: row.kind,
+        issueNumber: row.issueNumber,
+        content: row.content,
+        contentDate: row.contentDate,
+        contentType: "application/json",
+      }));
+      const issueNumber = newsletterEnvelope?.issueNumber;
+      if (issueNumber && newsletterEnvelope?.text?.trim()) {
+        rows.push({
+          kind: "issue-markdown",
+          issueNumber,
+          content: newsletterEnvelope.text.slice(0, NEWSLETTER_LEDGER_MAX_CHARS),
+          contentDate: new Date(now).toISOString().slice(0, 10),
+          contentType: "text/markdown",
+        });
+      }
+      for (const row of rows) {
+        try {
+          await upsertNewsletterLedgerEntry({
+            clientId: job.clientId,
+            issueNumber: row.issueNumber,
+            kind: row.kind,
+            content: row.content,
+            contentType: row.contentType,
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] newsletter ledger ${row.kind} save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              `Issue ${row.issueNumber}'s ${row.kind} did not persist. The BLOG agent reads this to pick` +
+              " a subject, so that issue will not appear as a candidate for it. The newsletter itself is unaffected.",
+          });
+        }
+      }
+    }
+
+    // Blog v2 durable state. Reported as an error because the POST INDEX and the
+    // CLUSTERS file carry this run's three claims: without them two presses can
+    // take different post numbers and then write the same article, which is the
+    // failure the subject claim exists to prevent.
+    if (blogStateArtifacts.length > 0) {
+      const byKind = new Map(blogStateArtifacts.map((row) => [row.kind, row]));
+      for (const row of byKind.values()) {
+        try {
+          await upsertBlogAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            content: row.content,
+            contentType: blogStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] blog ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              row.kind === "post-index"
+                ? "The blog POST INDEX did not persist. The next run may claim a post number that has already published, and every pending internal link on it is lost - check the index before running again."
+                : row.kind === "clusters"
+                  ? "The blog CLUSTERS file did not persist. It holds this run's subject claim, so a second run could pick the same subject and write the same article."
+                  : `Blog ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
     // Reddit v2 durable state. After the claim and best-effort, like the sibling
     // sweeps. Reported as an error event because a run whose RULES AUDIT did not
     // persist is the one case where the next run is not merely forgetful but
@@ -1173,8 +1384,15 @@ export async function POST(req: NextRequest) {
           // Reddit's does: the largest text file here is one of the two HTML
           // renders, and picking it would call half the deliverable the whole of
           // it and lose the other three files.
+          // The blog envelope wins for the same reason both of those do, and its
+          // size race is the worst of the three: `<slug>.html` and
+          // `<slug>-body.html` are near-identical in length, so which one a
+          // client received as "the article" would have come down to how much
+          // page chrome the template happened to add.
           content: newsletterEnvelopeJson
             ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+            : blogEnvelopeJson
+            ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
             : redditEnvelopeJson
             ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
             : primaryText

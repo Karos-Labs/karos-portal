@@ -42,10 +42,19 @@ import {
   isNewsletterAgent,
   isNewsletterSetupV2,
 } from "@/lib/agent-service/newsletter-agent-context";
+import {
+  buildBlogAgentContextFiles,
+  hasBlogAgentIntake,
+  hasBlogV2Setup,
+  isBlogAgent,
+  isBlogSetupV2,
+} from "@/lib/agent-service/blog-agent-context";
 import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
 import { getClientAgentByKey } from "@/lib/data-client-agents";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  BLOG_RUN_CREDITS,
+  BLOG_SETUP_REQUIRED_PREFIX,
   NEWSLETTER_RUN_CREDITS,
   NEWSLETTER_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
@@ -411,6 +420,26 @@ export async function submitCustomAgentJob(
     }
   }
 
+  if (isBlogAgent(agent.key)) {
+    if (!(await hasBlogAgentIntake(input.clientId))) {
+      return {
+        error: `${BLOG_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your own domains and your off-limits subjects before it can write. Nothing has run.`,
+      };
+    }
+    if (!isBlogSetupV2(agent.key) && !(await hasBlogV2Setup(input.clientId))) {
+      return {
+        error: `${BLOG_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the blog agent card, which builds the voice, the cluster map and the post numbering. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildBlogAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's blog data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
   // Client-agent feedback (§5): every run of a LIVE umbrella carries the
   // client's standing direction — global first, then per-template. Launch runs
   // are excluded by construction: a setup run is what CREATES the templates, so
@@ -477,10 +506,14 @@ export async function submitCustomAgentJob(
   //
   // Still overridable by an admin: an explicit `agent.creditCost` on the doc wins,
   // so pricing stays where pricing is set. This only replaces the NULL default.
-  const newsletterDefault = isNewsletterAgent(agent.key) ? NEWSLETTER_RUN_CREDITS : null;
+  const carriedDefault = isNewsletterAgent(agent.key)
+    ? NEWSLETTER_RUN_CREDITS
+    : isBlogAgent(agent.key)
+      ? BLOG_RUN_CREDITS
+      : null;
   const runCost = input.charge
     ? input.charge.amount
-    : (agent.creditCost ?? newsletterDefault ?? CREDIT_COSTS.customAgentRun) * multiplier;
+    : (agent.creditCost ?? carriedDefault ?? CREDIT_COSTS.customAgentRun) * multiplier;
   if (input.bill ?? isBillableClientActor(user)) {
     try {
       await chargeClientCredits({

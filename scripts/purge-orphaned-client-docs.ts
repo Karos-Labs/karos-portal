@@ -68,6 +68,8 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "redditAgentState",
   "newsletterDraftFeedback",
   "newsletterAgentState",
+  "newsletterLedger",
+  "blogAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];

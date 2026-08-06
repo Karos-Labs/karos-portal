@@ -8,7 +8,7 @@ import type { WebhookPayload } from "../../src/types.js";
  * one per task type. Each run spends real Anthropic tokens and takes many
  * minutes, so everything is gated behind AGENT_E2E=1 (CI skips by default).
  *
- *   AGENT_E2E=1 AGENT_E2E_TASKS=blog_article npm run test:e2e
+ *   AGENT_E2E=1 AGENT_E2E_TASKS=social_post npm run test:e2e
  *
  * AGENT_E2E_TASKS: comma-separated subset (default: all four task types).
  * DEMO_CLIENT_SLUG: optionally run against a real lab client folder.
@@ -20,7 +20,6 @@ const SECRET = process.env.AGENT_WEBHOOK_SECRET ?? "dev-webhook-secret";
 const JOB_TIMEOUT_MS = 35 * 60 * 1000;
 
 const ALL_BRIEFS: Record<string, Record<string, unknown>> = {
-  blog_article: { topic: "A short test article about seasonal marketing", length: "short" },
   social_post: { count: 1, topic: "a friendly behind-the-scenes moment", platform: "instagram" },
   landing_page: { page_goal: "Collect signups for a test waitlist" },
 };

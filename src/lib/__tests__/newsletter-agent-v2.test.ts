@@ -239,7 +239,11 @@ describe("the fourth intake family", () => {
   });
 
   it("treats the newsletter's stand-up like LinkedIn's, not like Reddit's", () => {
-    expect(hub).toContain('if (intake.kind !== "linkedin" && intake.kind !== "newsletter") return true');
+    // Three families have a stand-up now; the blog joined them. Asserted as the
+    // MEMBERSHIP rather than the exact expression, so adding a sixth family does
+    // not fail this on formatting.
+    expect(hub).toMatch(/intake\.kind !== "linkedin"[\s\S]{0,120}intake\.kind !== "newsletter"/);
+    expect(hub).toContain('intake.kind !== "blog"');
     // And the refusal the submit core actually sends has a way back to the form,
     // rather than the "contact us" row a missing prefix produces.
     expect(hub).toContain("refusal.startsWith(NEWSLETTER_SETUP_REQUIRED_PREFIX)");
@@ -264,6 +268,8 @@ describe("the submit core", () => {
     expect(core).toContain("buildNewsletterAgentContextFiles(input.clientId, agent.name)");
     expect(core).toContain("NEWSLETTER_RUN_CREDITS");
     // An admin's explicit price still wins; this only replaces the null default.
-    expect(core).toContain("agent.creditCost ?? newsletterDefault ?? CREDIT_COSTS.customAgentRun");
+    // Renamed to `carriedDefault` when the blog gained the same treatment — one
+    // branch per family that carried its managed price across.
+    expect(core).toContain("agent.creditCost ?? carriedDefault ?? CREDIT_COSTS.customAgentRun");
   });
 });

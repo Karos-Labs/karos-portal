@@ -38,7 +38,6 @@ type CatalogTaskType = Exclude<ManagedTaskType, "custom">;
  */
 const MANAGED_TASK_LABELS: Record<CatalogTaskType, string> = {
   social_post: "Social posts (IG/TikTok)",
-  blog_article: "Blog article",
   landing_page: "Landing page",
 };
 
@@ -46,7 +45,6 @@ const MANAGED_TASK_LABELS: Record<CatalogTaskType, string> = {
 // invalid briefs never mint a job doc (the service would 422 them anyway).
 const REQUIRED_BRIEF_FIELDS: Record<CatalogTaskType, string[]> = {
   social_post: [],
-  blog_article: ["topic"],
   landing_page: ["page_goal"],
 };
 

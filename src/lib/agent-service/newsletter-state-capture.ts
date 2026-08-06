@@ -52,6 +52,59 @@ export function newsletterStateDateFor(artifactPath: string, fallbackMs: number)
 /** How many bytes of one state file we keep. Past any real one. */
 export const NEWSLETTER_STATE_MAX_CHARS = 400_000;
 
+/* ────────── the per-issue ledger the BLOG agent reads ────────── */
+
+import type { NewsletterLedgerEntry } from "@/lib/types";
+
+/**
+ * The two ledger files a newsletter run publishes for the blog, matched by the
+ * directory they live in rather than by their base name.
+ *
+ * BY DIRECTORY, and that is not a stylistic choice. Both file names carry the
+ * issue number — `2026-08-11-issue-004-items.json` — so there is no fixed base
+ * name to key on, and a pattern that assumed three digits or a particular date
+ * format would silently drop a real handoff. The DIRECTORY is the contract:
+ * `outputs/_ledger/newsletter-issues/` and `outputs/_ledger/seven-day-scan/`.
+ *
+ * The third kind, `issue-markdown`, is not matched here: it is client-facing, so
+ * it arrives through the deliverable path and is already in hand by the time the
+ * envelope is assembled.
+ */
+export function newsletterLedgerKindFor(
+  artifactPath: string,
+): Extract<NewsletterLedgerEntry["kind"], "issue-items" | "scan-log"> | null {
+  const path = artifactPath.split("\\").join("/").toLowerCase();
+  if (!path.includes("/_ledger/")) return null;
+  if (!path.endsWith(".json")) return null;
+  if (path.includes("/_ledger/newsletter-issues/")) return "issue-items";
+  if (path.includes("/_ledger/seven-day-scan/")) return "scan-log";
+  return null;
+}
+
+/**
+ * The issue number a ledger path names, or null.
+ *
+ * ZERO-PADDING IS PRESERVED EXACTLY as the newsletter wrote it, because this is
+ * the join key between three rows and the issue index, and "004" and "4" are
+ * different keys. Nothing here normalises it; `listNewsletterLedger` sorts
+ * numerically so the padding never has to be right for ordering to be.
+ */
+export function newsletterIssueNumberFrom(artifactPath: string): string | null {
+  const match = artifactPath.split("\\").join("/").toLowerCase().match(/issue-(\d+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * How much of one ledger row we keep.
+ *
+ * Larger than a state file, and deliberately: a seven-day scan log is a week of
+ * research across a client's whole niche, and it is the one artifact here that
+ * cannot be regenerated — re-running the newsletter would produce a DIFFERENT
+ * week, not this one. Truncating it silently would hand the blog a scan that
+ * looks complete and is not.
+ */
+export const NEWSLETTER_LEDGER_MAX_CHARS = 1_000_000;
+
 /* ─────────────────── the deliverable envelope the reader reads ───────────── */
 
 export const NEWSLETTER_ENVELOPE_KIND = "newsletter-issue-v2" as const;

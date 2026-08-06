@@ -85,7 +85,6 @@ const TASK_ENGINE_ACTOR: AppUser = {
 
 /** Keyword heuristics for tasks created before productType linking existed. */
 const PRODUCT_KEYWORDS: Array<{ taskType: ManagedTaskType; pattern: RegExp }> = [
-  { taskType: "blog_article", pattern: /\bblog\b|\barticle\b|\bseo\b/i },
   { taskType: "landing_page", pattern: /landing\s*page/i },
   { taskType: "social_post", pattern: /instagram|tiktok|social\s*(media\s*)?post|\bcarousel\b|\breel\b/i },
 ];
@@ -175,8 +174,6 @@ function buildTaskBrief(
         topic: `${topic}${revision}`,
       };
     }
-    case "blog_article":
-      return { topic: `${topic}${revision}` };
     case "landing_page":
       return { page_goal: `${task.title}${revision}`, offer: task.description ?? "" };
     default:

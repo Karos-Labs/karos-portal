@@ -802,7 +802,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .enum(["karos_managed", "client_managed"])
               .describe("karos_managed = Karos AI/staff executes; client_managed = client must do it"),
             productType: z
-              .enum(["social_post", "blog_article", "landing_page"])
+              .enum(["social_post", "landing_page"])
               .optional()
               .describe(
                 "The MANAGED product (executing agent) for this task. Set for karos_managed content a managed product produces; omit when using agentId, for staff deliverables, and for client_managed tasks",

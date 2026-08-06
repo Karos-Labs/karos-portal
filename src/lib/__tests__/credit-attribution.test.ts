@@ -8,6 +8,8 @@ import {
   CREDIT_COSTS,
   CREDIT_OPERATION_LABEL,
   TASK_EXECUTION_COSTS,
+  NEWSLETTER_RUN_CREDITS,
+  BLOG_RUN_CREDITS,
   clientPriceText,
 } from "@/lib/credits";
 import { REDDIT_OUTPUTS_PER_RUN, MAX_OUTPUTS_PER_RUN } from "@/lib/scheduled-runs";
@@ -317,6 +319,12 @@ describe("the client-billable price list", () => {
     const constants = new Set<number>([
       ...Object.values(CREDIT_COSTS),
       ...Object.values(TASK_EXECUTION_COSTS),
+      // The two products that left TASK_EXECUTION_COSTS for the custom-agent
+      // path and CARRIED their price rather than dropping it. Still quoted on
+      // the card by name, and still read off a constant — which is the rule this
+      // test enforces, not "the constant lives in one particular object".
+      NEWSLETTER_RUN_CREDITS,
+      BLOG_RUN_CREDITS,
     ]);
     // Non-vacuity: an empty list would satisfy the loop below silently.
     expect(CLIENT_PRICE_ROWS.length).toBeGreaterThanOrEqual(10);
@@ -344,6 +352,12 @@ describe("the client-billable price list", () => {
     expect(rates.length).toBeGreaterThanOrEqual(7); // non-vacuity
     for (const [name, rate] of Object.entries(CREDIT_COSTS)) {
       expect(quoted.has(rate), `CREDIT_COSTS.${name} = ${rate} is quoted on no row`).toBe(true);
+    }
+    for (const [name, rate] of Object.entries({
+      NEWSLETTER_RUN_CREDITS,
+      BLOG_RUN_CREDITS,
+    })) {
+      expect(quoted.has(rate), `${name} = ${rate} is quoted on no row`).toBe(true);
     }
     for (const [name, rate] of Object.entries(TASK_EXECUTION_COSTS)) {
       expect(quoted.has(rate), `TASK_EXECUTION_COSTS.${name} = ${rate} is quoted on no row`).toBe(
