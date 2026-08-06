@@ -108,11 +108,18 @@ describe("computeRunway — deficit & coverage", () => {
 describe("runway constants", () => {
   it("exposes a 14-day horizon and the family→product map the cron dispatches", () => {
     expect(RUNWAY_HORIZON_DAYS).toBe(14);
+    // EMAIL HAS NO ENTRY, and that is the assertion rather than an omission.
+    // The newsletter is no longer a managed product, and its v2 replacement
+    // cannot be dropped in: it is a per-client custom agent behind an intake
+    // gate and a setup gate, reached through a different submit core. An
+    // unattended fire would be refused for most clients and would claim issue
+    // numbers in a real mailing list's index with nobody watching. Email
+    // deficits are still measured and reported; they are never auto-filled.
     expect(FAMILY_PRODUCT).toEqual({
       social: "social_post",
-      email: "newsletter_issue",
       article: "blog_article",
     });
+    expect(FAMILY_PRODUCT.email).toBeUndefined();
   });
 
   it("ships a deploy cap that can actually fill the horizon", () => {

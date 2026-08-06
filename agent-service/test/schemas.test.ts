@@ -18,15 +18,24 @@ describe("job request validation", () => {
       validateJobRequest(baseRequest({ task_type: "social_post", brief: { count: 3, topic: "spring menu" } })).ok,
     ).toBe(true);
     expect(
-      validateJobRequest(baseRequest({ task_type: "newsletter_issue", brief: { issue_theme: "May recap" } })).ok,
-    ).toBe(true);
-    expect(
       validateJobRequest(baseRequest({ task_type: "landing_page", brief: { page_goal: "Book demo calls" } })).ok,
     ).toBe(true);
   });
 
   it("rejects unknown task types", () => {
     const result = validateJobRequest(baseRequest({ task_type: "seo_audit" }));
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects the RETIRED newsletter_issue type", () => {
+    // Removed 2026-08-06 when the newsletter became a custom agent. It is a
+    // separate assertion from "unknown type" above because it is a different
+    // claim: this string was valid, real jobs carry it, and the portal still
+    // ACCEPTS it inbound so a straggler can report its status. What must no
+    // longer be possible is STARTING one.
+    const result = validateJobRequest(
+      baseRequest({ task_type: "newsletter_issue", brief: { issue_theme: "May recap" } }),
+    );
     expect(result.ok).toBe(false);
   });
 

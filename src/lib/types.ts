@@ -316,7 +316,43 @@ export interface JobRunEvent {
 }
 
 /** Task types the external agent service (agent-service/) can run. */
-export type ManagedTaskType = "social_post" | "newsletter_issue" | "blog_article" | "landing_page" | "custom";
+export type ManagedTaskType = "social_post" | "blog_article" | "landing_page" | "custom";
+
+/**
+ * The newsletter's managed task type, RETIRED 2026-08-06 when the product moved
+ * to the v2 custom agent (`karos-newsletter-writer-v2`).
+ *
+ * It is a constant rather than a deleted string because the string did not stop
+ * existing when the product did. It is written into three kinds of row this app
+ * does not own the history of:
+ *
+ *   - `assets.meta.taskType` on every v1 issue in a client's archive
+ *   - `jobs.external.taskType` on every v1 run
+ *   - `clientTasks.metadata.productType` / `.completionTrigger` on board rows
+ *
+ * and it can still arrive over the wire from a v1 job that was already queued
+ * when the service was cut. Deleting the spelling would not delete the data; it
+ * would only mean each of those readers re-typed the literal, and the cleanup
+ * script matched a string nobody could grep for.
+ *
+ * NEW WORK MUST NOT USE IT. Nothing dispatches it: it is absent from
+ * `MANAGED_PRODUCTS`, from the service's own `TASK_TYPES`, and from
+ * `ManagedTaskType` above, so the only way to reach it is to be reading history.
+ */
+export const RETIRED_NEWSLETTER_TASK_TYPE = "newsletter_issue" as const;
+export type RetiredTaskType = typeof RETIRED_NEWSLETTER_TASK_TYPE;
+
+/**
+ * Anything that may appear as a task type on a STORED row or an INBOUND webhook
+ * — the live set plus what has been retired but not erased.
+ *
+ * Use this wherever the value is being READ (a webhook payload, an asset's meta,
+ * a job's external record). Use `ManagedTaskType` wherever one is being CHOSEN.
+ * The two differing is the whole point: a straggling v1 job must still be able
+ * to report its status and land its deliverable, and nothing must be able to
+ * start a new one.
+ */
+export type WireTaskType = ManagedTaskType | RetiredTaskType;
 
 /**
  * A platform-defined agent: a stored system prompt bound to an entry skill in
@@ -532,7 +568,13 @@ export interface ExternalJobArtifact {
 /** Provenance + results of a job executed by the external agent service. */
 export interface ExternalJobInfo {
   serviceJobId: string;
-  taskType: ManagedTaskType;
+  /**
+   * `WireTaskType`, not `ManagedTaskType`: this is a RECORD of what ran, and
+   * every v1 newsletter job in the database carries the retired type here. It is
+   * also what `runway`'s in-flight check and `resolveContentIdentity` read, so
+   * narrowing it would make historical rows unreadable rather than unwritable.
+   */
+  taskType: WireTaskType;
   /** karos-agents commit the job ran against. */
   agentsRepoSha?: string;
   model?: string;

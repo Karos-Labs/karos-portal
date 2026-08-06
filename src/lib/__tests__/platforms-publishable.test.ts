@@ -14,7 +14,7 @@ import {
 } from "@/lib/agent-service/deliverable-asset-type";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { recommendedScheduleFields } from "@/lib/scheduling";
-import type { AssetType, ManagedTaskType } from "@/lib/types";
+import type { AssetType, WireTaskType } from "@/lib/types";
 import { isStringDelimiter, matchingBrace, skipStringLiteral } from "./source-scan";
 
 /**
@@ -707,7 +707,10 @@ describe("#49 — every path that types an asset is fenced or literal", () => {
 
 describe("#49 — the draft-only fence", () => {
   const TYPES = Object.keys(PUBLISHABLE_PLATFORMS) as AssetType[];
-  const TASK_TYPES: ManagedTaskType[] = [
+  // WireTaskType, not ManagedTaskType: the fence has to hold on the DELIVERY
+  // path, and that path still receives the retired newsletter type from a v1 job
+  // that was queued when the service was cut.
+  const TASK_TYPES: WireTaskType[] = [
     "social_post",
     "newsletter_issue",
     "blog_article",
@@ -764,6 +767,8 @@ describe("#49 — the draft-only fence", () => {
       }),
     ).toBe("social_post");
     expect(deliverableAssetType({ taskType: "blog_article" })).toBe("article");
+    // A draining v1 issue still lands as an email, not as a slot-less note. It
+    // is the one run nobody can re-fire, because the product no longer exists.
     expect(deliverableAssetType({ taskType: "newsletter_issue" })).toBe("email");
     // An unknown or hostile hint falls back to the task type's own default.
     expect(deliverableAssetType({ taskType: "custom", hint: "video_masterpiece" })).toBe("note");

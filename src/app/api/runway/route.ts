@@ -56,12 +56,21 @@ export const maxDuration = 300;
 
 
 /**
- * Families the autopilot may auto-dispatch. social_post and newsletter_issue
- * take no required brief fields, so a runway top-up needs no human input.
- * blog_article requires a real `topic` — left to the Task Map / manual flow —
- * so its deficit is reported but never auto-fired.
+ * Families the autopilot may auto-dispatch. social_post takes no required brief
+ * fields, so a runway top-up needs no human input. blog_article requires a real
+ * `topic` — left to the Task Map / manual flow — so its deficit is reported but
+ * never auto-fired.
+ *
+ * EMAIL LEFT THIS LIST 2026-08-06, with the managed newsletter product. Its
+ * replacement is a per-client custom agent behind an intake gate and a setup
+ * gate, reached through a different submit core; an unattended fire would be
+ * refused for most clients and would claim issue numbers in a real mailing
+ * list's index with nobody watching. Email deficits are still MEASURED and still
+ * reported — under the same "needs manual input" reason `article` carries — so a
+ * client running short still shows up; a human presses Run on the newsletter
+ * agent. See FAMILY_PRODUCT in lib/runway.ts.
  */
-const AUTOGEN_FAMILIES: ChainFamily[] = ["social", "email"];
+const AUTOGEN_FAMILIES: ChainFamily[] = ["social"];
 
 // System actor: makes every dispatch free agency overhead, like a staff run.
 // The name is a STAFF-facing codename — submitManagedJob logs it as the
@@ -149,18 +158,26 @@ export async function GET(req: NextRequest) {
           .filter((j) => j.agentId === "agent-service" && isJobInFlight(j.status) && j.external?.taskType)
           .map((j) => j.external!.taskType),
       );
+      // `FAMILY_PRODUCT` is partial now (email has no managed product), so the
+      // families are resolved to real products here rather than indexed twice
+      // below — an undefined slipping through would dispatch `taskType:
+      // undefined` and 422 at the service.
       const candidates = runway.shortFamilies
         .filter((f) => AUTOGEN_FAMILIES.includes(f))
-        .filter((f) => !inFlightProducts.has(FAMILY_PRODUCT[f]));
+        .flatMap((f) => {
+          const product = FAMILY_PRODUCT[f];
+          return product && !inFlightProducts.has(product) ? [{ family: f, product }] : [];
+        });
 
       // Explain every short family this run does NOT dispatch for, so a
       // deficit alongside "skipped" never reads as unexplained inaction: a
       // family the autopilot never auto-fires (blog_article — needs a real
       // topic) vs. one already generating from a prior run (idempotency).
       const notAutoFired = runway.shortFamilies.filter((f) => !AUTOGEN_FAMILIES.includes(f));
-      const alreadyInFlight = runway.shortFamilies.filter(
-        (f) => AUTOGEN_FAMILIES.includes(f) && inFlightProducts.has(FAMILY_PRODUCT[f]),
-      );
+      const alreadyInFlight = runway.shortFamilies.filter((f) => {
+        const product = FAMILY_PRODUCT[f];
+        return AUTOGEN_FAMILIES.includes(f) && product !== undefined && inFlightProducts.has(product);
+      });
       const skipReasons = [
         ...notAutoFired.map((f) => `${f}: needs manual input, not auto-generated`),
         ...alreadyInFlight.map((f) => `${f}: already generating (job in flight)`),
@@ -171,8 +188,7 @@ export async function GET(req: NextRequest) {
       // the short families in the order computeRunway reports them, so a client
       // short on both does not spend the whole cap on the first.
       let remaining = maxJobsPerClient;
-      for (const family of candidates) {
-        const product = FAMILY_PRODUCT[family];
+      for (const { family, product } of candidates) {
         const wanted = dispatchesFor(runway.deficitByFamily[family] ?? 0, remaining);
         for (let i = 0; i < wanted; i++) {
           remaining--;

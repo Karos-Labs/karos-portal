@@ -70,6 +70,10 @@ function metaString(meta: Record<string, unknown> | undefined, key: string): str
  */
 const FAMILY_BY_TASK_TYPE: Record<string, ChainFamily> = {
   social_post: "social",
+  // RETIRED product, kept for HISTORY. Every v1 newsletter job carries this in
+  // `external.taskType`, and this map is what the /jobs list, the calendar's
+  // past-run cards and the run history resolve a family from. Keyed by `string`
+  // for exactly this reason — see RETIRED_NEWSLETTER_TASK_TYPE in types.ts.
   newsletter_issue: "email",
   blog_article: "article",
 };

@@ -139,6 +139,9 @@ export async function startTaskExecutionAction(
 /** Asset library bucket for each managed product (mirrors the webhook's map). */
 const PRODUCT_ASSET_TYPE: Record<string, AssetType> = {
   social_post: "social_post",
+  // RETIRED product, kept for HISTORY: a stranded v1 task that a staff member
+  // approves by hand still has to land its issue as an `email`, not as the
+  // slot-less `note` an unrecognised type falls back to.
   newsletter_issue: "email",
   blog_article: "article",
   landing_page: "note",

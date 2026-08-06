@@ -22,7 +22,6 @@ const JOB_TIMEOUT_MS = 35 * 60 * 1000;
 const ALL_BRIEFS: Record<string, Record<string, unknown>> = {
   blog_article: { topic: "A short test article about seasonal marketing", length: "short" },
   social_post: { count: 1, topic: "a friendly behind-the-scenes moment", platform: "instagram" },
-  newsletter_issue: { issue_theme: "E2E test digest", notes: "Keep it minimal." },
   landing_page: { page_goal: "Collect signups for a test waitlist" },
 };
 const TASKS = (process.env.AGENT_E2E_TASKS ?? Object.keys(ALL_BRIEFS).join(","))

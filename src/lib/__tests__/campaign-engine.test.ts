@@ -9,6 +9,7 @@ const {
   createClientTaskMock,
   updateCampaignMock,
   getTaskBoardCapacityMock,
+  listCustomAgentsMock,
 } = vi.hoisted(() => ({
   generateObjectMock: vi.fn(),
   logUsageMock: vi.fn(),
@@ -18,6 +19,7 @@ const {
   createClientTaskMock: vi.fn(),
   updateCampaignMock: vi.fn(),
   getTaskBoardCapacityMock: vi.fn(),
+  listCustomAgentsMock: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -32,8 +34,10 @@ vi.mock("@/lib/data", () => ({
   createClientTask: createClientTaskMock,
   updateCampaign: updateCampaignMock,
   getTaskBoardCapacity: getTaskBoardCapacityMock,
+  listCustomAgents: listCustomAgentsMock,
 }));
 
+import { NEWSLETTER_WRITER_V2_KEY } from "@/lib/custom-agent-launch";
 import {
   buildCampaignTaskDrafts,
   generateCampaignBundle,
@@ -53,15 +57,22 @@ const blueprint: CampaignBlueprint = {
 };
 
 describe("buildCampaignTaskDrafts (pure)", () => {
-  it("orders anchor → newsletter → socials with the right productTypes", () => {
+  it("orders anchor → newsletter → socials with the right executors", () => {
     const drafts = buildCampaignTaskDrafts(blueprint);
     expect(drafts.map((d) => d.role)).toEqual(["anchor", "distribution", "social", "social"]);
+    // The distribution vehicle is still a newsletter and is no longer a managed
+    // product: it routes to the v2 writer through the CUSTOM path, named by key
+    // because the agent's document id is per-environment and per-grant.
     expect(drafts.map((d) => d.productType)).toEqual([
       "blog_article",
-      "newsletter_issue",
+      "custom",
       "social_post",
       "social_post",
     ]);
+    expect(drafts[1].customAgentKey).toBe(NEWSLETTER_WRITER_V2_KEY);
+    // Only that one piece carries a key — a managed piece with one would be two
+    // executors on one task.
+    expect(drafts.filter((d) => d.customAgentKey).length).toBe(1);
   });
 
   it("wires dependencies: anchor has none, newsletter + socials depend on the anchor", () => {
@@ -90,6 +101,9 @@ describe("generateCampaignBundle", () => {
     createClientTaskMock.mockImplementation(() => Promise.resolve(`t${++n}`));
     updateCampaignMock.mockResolvedValue(undefined);
     getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 0, tasks: [] });
+    listCustomAgentsMock.mockResolvedValue([
+      { id: "nl-agent-id", key: NEWSLETTER_WRITER_V2_KEY, name: "Newsletter agent", enabled: true },
+    ]);
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -116,11 +130,23 @@ describe("generateCampaignBundle", () => {
       dependsOnTaskIds: [],
       metadata: expect.objectContaining({ productType: "blog_article", campaignRole: "anchor" }),
     });
-    // Newsletter + socials depend on the anchor's real id (t1).
+    // Newsletter + socials depend on the anchor's real id (t1). The newsletter
+    // resolves its KEY to this environment's agent document.
     expect(createClientTaskMock.mock.calls[1][0]).toMatchObject({
       dependsOnTaskIds: ["t1"],
-      metadata: expect.objectContaining({ productType: "newsletter_issue" }),
+      metadata: expect.objectContaining({
+        customAgentId: "nl-agent-id",
+        customAgentName: "Newsletter agent",
+      }),
     });
+    // AND NO product_run TRIGGER, which is the whole reason this migration
+    // exists. A custom run delivers `task_type: "custom"`, so the webhook mints
+    // `product_run:custom`; a trigger naming anything else could never match and
+    // the task would sit pending for ever — exactly how the v1 newsletter tasks
+    // became stranded.
+    const newsletterMeta = createClientTaskMock.mock.calls[1][0].metadata;
+    expect(newsletterMeta.completionTrigger).toBeUndefined();
+    expect(newsletterMeta.productType).toBeUndefined();
     expect(createClientTaskMock.mock.calls[2][0]).toMatchObject({
       dependsOnTaskIds: ["t1"],
       metadata: expect.objectContaining({ productType: "social_post", platform: "linkedin" }),
@@ -132,6 +158,39 @@ describe("generateCampaignBundle", () => {
     );
     expect(result).toMatchObject({ campaignId: "camp1", taskIds: ["t1", "t2", "t3", "t4"], targetWeek: "2026-W28" });
     expect(logUsageMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "campaign_generation" }));
+  });
+
+  it("still writes the newsletter piece when its agent is missing or disabled", async () => {
+    // A campaign whose distribution agent is not registered in this environment,
+    // or is registered and turned off. The piece is real editorial work and the
+    // bundle is a dependency graph — dropping it silently would leave a hole
+    // nobody can see, with the anchor pointing at nothing downstream.
+    //
+    // It lands UNASSIGNED, which is a state the board already renders and a
+    // staff member can fix, rather than carrying a customAgentId that resolves
+    // to nothing on every read.
+    for (const roster of [[], [{ id: "nl", key: NEWSLETTER_WRITER_V2_KEY, name: "NL", enabled: false }]]) {
+      vi.clearAllMocks();
+      getClientMock.mockResolvedValue({ id: "c1", name: "Acme", industry: "saas" });
+      listAssetsMock.mockResolvedValue([]);
+      generateObjectMock.mockResolvedValue({ object: blueprint, usage: { inputTokens: 1, outputTokens: 1 } });
+      createCampaignMock.mockResolvedValue("camp1");
+      let n = 0;
+      createClientTaskMock.mockImplementation(() => Promise.resolve(`t${++n}`));
+      updateCampaignMock.mockResolvedValue(undefined);
+      getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 0, tasks: [] });
+      listCustomAgentsMock.mockResolvedValue(roster);
+
+      await generateCampaignBundle(input);
+      expect(createClientTaskMock).toHaveBeenCalledTimes(4);
+      const meta = createClientTaskMock.mock.calls[1][0].metadata;
+      expect(meta.campaignRole).toBe("distribution");
+      expect(meta.customAgentId).toBeUndefined();
+      // And never a managed productType as a consolation executor — that is the
+      // dead product this migration removed.
+      expect(meta.productType).toBeUndefined();
+      expect(meta.completionTrigger).toBeUndefined();
+    }
   });
 
   it("keeps generation fresh: repetitive recent output injects entropy-guard constraints", async () => {

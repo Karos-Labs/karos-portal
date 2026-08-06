@@ -104,33 +104,6 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     },
   },
   {
-    taskType: "newsletter_issue",
-    name: "Newsletter issue",
-    tagline: "One branded issue, researched and rendered",
-    description:
-      "Runs the newsletter agent: fresh industry research, drafts a compliant issue in the client's voice, and renders the HTML in dark + light variants ready for any ESP.",
-    icon: "Mail",
-    color: "#60A5FA",
-    deliverables: ["Issue copy", "Rendered HTML (dark + light)", "Research notes (internal)"],
-    estimate: "~10–15 min",
-    briefFields: [
-      { key: "issue_theme", label: "Issue theme", type: "text", placeholder: "e.g. monthly product roundup" },
-      {
-        key: "must_include",
-        label: "Must include",
-        type: "textarea",
-        placeholder: "One item per line: announcements, links, dates…",
-        helper: "Anything the issue must cover.",
-        valueKind: "stringList",
-      },
-    ],
-    inputFiles: {
-      label: "Newsletter sources",
-      hint: "Attach a past issue for voice, source documents for facts, and any approved hero images.",
-      accept: ".pdf,.doc,.docx,.txt,.md,image/png,image/jpeg,image/webp",
-    },
-  },
-  {
     taskType: "blog_article",
     name: "Blog article",
     tagline: "SEO-aware article with keyword research built in",

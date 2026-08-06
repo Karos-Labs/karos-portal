@@ -11,7 +11,6 @@ const briefs: Record<string, Record<string, unknown>> = {
     notes: "Demo run from `make demo-job`. Keep research light.",
   },
   social_post: { count: 1, topic: "behind the scenes of a product photoshoot", platform: "instagram" },
-  newsletter_issue: { issue_theme: "Monthly demo digest", notes: "Demo run; keep it short." },
   landing_page: { page_goal: "Collect waitlist signups for a demo product" },
 };
 

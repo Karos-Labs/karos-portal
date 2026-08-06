@@ -2,9 +2,10 @@
  * Omnichannel Campaign engine.
  *
  * When a high-weight trend or event warrants more than a single post, this turns
- * it into a cohesive, dependent bundle across MANAGED_PRODUCTS: a core authority
- * anchor (a blog article), a distribution vehicle (a newsletter summarizing it),
- * and matching social pieces — with explicit relational dependencies (the
+ * it into a cohesive, dependent bundle: a core authority anchor (a blog
+ * article, a managed product), a distribution vehicle (a newsletter summarizing
+ * it, now the v2 CUSTOM agent rather than a managed product), and matching
+ * social pieces — with explicit relational dependencies (the
  * newsletter and socials depend on the anchor). It runs the Creative Entropy
  * Guard first so a repetitive theme is pushed toward a fresh angle before any
  * tasks are written.
@@ -25,9 +26,11 @@ import {
   listAssets,
   createCampaign,
   createClientTask,
+  listCustomAgents,
   updateCampaign,
   getTaskBoardCapacity,
 } from "@/lib/data";
+import { NEWSLETTER_WRITER_V2_KEY } from "@/lib/custom-agent-launch";
 import { taskWeekKey, findDuplicateReason } from "@/lib/task-dedup";
 import { freshnessGuard } from "@/lib/entropy-guard";
 import type { ClientTask, TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
@@ -65,11 +68,33 @@ export type CampaignBlueprint = z.infer<typeof campaignBlueprintSchema>;
 
 export type CampaignRole = "anchor" | "distribution" | "social";
 
+/**
+ * One piece of the bundle, and the executor it is destined for.
+ *
+ * TWO EXECUTOR SHAPES SINCE THE NEWSLETTER MOVED, because the two paths differ
+ * at the point of persistence rather than just in name. A managed product is a
+ * fixed string every client shares. A custom agent is a Firestore DOCUMENT whose
+ * id differs per environment (prep and production hold different ids) and which
+ * a client may not even be granted — so the KEY is carried here and resolved to
+ * an id when the task is written, exactly as the swarm planner already does for
+ * the custom agents it assigns. A draft holding an id could not be built without
+ * a Firestore read, and this half of the module is pure on purpose.
+ */
 export interface CampaignTaskDraft {
   role: CampaignRole;
   title: string;
   description: string;
-  productType: "blog_article" | "newsletter_issue" | "social_post";
+  /**
+   * The managed product for this piece, or `"custom"` when a custom agent runs
+   * it — in which case `customAgentKey` names which one.
+   */
+  productType: "blog_article" | "social_post" | "custom";
+  /**
+   * The lab skill key of the custom agent that executes this piece. Set only
+   * when `productType` is `"custom"`; resolved to that client's granted agent
+   * document at persist time.
+   */
+  customAgentKey?: string;
   platform?: string;
   weight: number;
   /** Roles this piece depends on — resolved to real task ids at persist time. */
@@ -96,11 +121,15 @@ export function buildCampaignTaskDrafts(blueprint: CampaignBlueprint): CampaignT
     weight: blueprint.anchor.weight,
     dependsOnRoles: [],
   };
+  // The distribution vehicle is still a newsletter; it is no longer a managed
+  // product. It routes to the v2 writer by KEY — the id is per-environment and
+  // per-grant, so it is resolved when the task is written, not here.
   const newsletter: CampaignTaskDraft = {
     role: "distribution",
     title: blueprint.newsletter.title,
     description: blueprint.newsletter.description,
-    productType: "newsletter_issue",
+    productType: "custom",
+    customAgentKey: NEWSLETTER_WRITER_V2_KEY,
     weight: blueprint.newsletter.weight,
     dependsOnRoles: ["anchor"],
   };
@@ -310,6 +339,13 @@ export async function generateCampaignBundle(
     updatedAt: now,
   });
 
+  // Custom-agent executors, resolved once for the whole bundle. Read here rather
+  // than in `buildCampaignTaskDrafts` so that function stays pure and testable
+  // without a Firestore double.
+  const customByKey = new Map(
+    (await listCustomAgents()).filter((a) => a.enabled).map((a) => [a.key, a]),
+  );
+
   // Persist the anchor first so dependents can reference its real id.
   const roleToId: Partial<Record<CampaignRole, string>> = {};
   const orderedTaskIds: string[] = [];
@@ -318,12 +354,34 @@ export async function generateCampaignBundle(
       .map((r) => roleToId[r])
       .filter((id): id is string => !!id);
     const metadata: Record<string, unknown> = {
-      productType: draft.productType,
-      completionTrigger: `product_run:${draft.productType}`,
       campaignRole: draft.role,
       // Denormalized so the producing asset can carry the capsule label without a join.
       campaignTitle: blueprint.title,
     };
+    // The two executor shapes, and the reason they are written differently.
+    //
+    // A managed product gets a `product_run:` completion trigger because the
+    // webhook mints exactly that string from the delivered `task_type`. A CUSTOM
+    // run delivers `task_type: "custom"`, so a trigger built from a custom
+    // agent's key could never match and the task would sit pending for ever —
+    // which is precisely how the v1 newsletter tasks this migration cleans up
+    // became stranded. So a custom piece gets NO trigger, exactly as the swarm
+    // planner already does ("no product_run trigger — that flow is separate").
+    if (draft.productType === "custom") {
+      const agent = draft.customAgentKey ? customByKey.get(draft.customAgentKey) : undefined;
+      // A campaign whose distribution agent is not registered or not enabled
+      // still gets its task: the piece is real editorial work and dropping it
+      // silently would leave a bundle with a hole nobody can see. It lands
+      // unassigned, which is a state the board already renders — a staff member
+      // picks an executor — rather than one pointing at an agent that is not there.
+      if (agent) {
+        metadata.customAgentId = agent.id;
+        metadata.customAgentName = agent.name;
+      }
+    } else {
+      metadata.productType = draft.productType;
+      metadata.completionTrigger = `product_run:${draft.productType}`;
+    }
     if (draft.platform) metadata.platform = draft.platform;
 
     const taskId = await createClientTask({

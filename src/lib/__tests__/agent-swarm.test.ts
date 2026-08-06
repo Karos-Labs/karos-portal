@@ -49,7 +49,7 @@ import type { ClientTask } from "@/lib/types";
 const SAMPLE_TASKS: SwarmTaskDraft[] = [
   { title: "Publish LinkedIn thought-leadership article on Trend X", description: "d1", priority: "high", productType: "blog_article", platform: "linkedin", weight: 80 },
   { title: "Produce TikTok short on customer win", description: "d2", priority: "medium", productType: "social_post", platform: "tiktok", weight: 60 },
-  { title: "Draft monthly newsletter issue", description: "d3", priority: "low", productType: "newsletter_issue", weight: 40 },
+  { title: "Draft monthly newsletter issue", description: "d3", priority: "low", productType: "landing_page", weight: 40 },
 ];
 
 function turn(tasks: SwarmTaskDraft[], message = "my move") {

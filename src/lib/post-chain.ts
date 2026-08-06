@@ -18,6 +18,7 @@
  * millis.
  */
 
+import { RETIRED_NEWSLETTER_TASK_TYPE } from "@/lib/types";
 import type { Asset, AssetType, ClientDailyPace, ManagedTaskType } from "@/lib/types";
 import { MANAGED_PRODUCTS, getManagedProduct } from "@/lib/agent-service/products";
 import { chainAllowsDay, startOfDayMs } from "@/lib/scheduling";
@@ -508,9 +509,29 @@ export function isReferenceDocAsset(
 /* ─────────────────────────── agent labels ──────────────────────────── */
 
 /**
- * Which managed product family produced an asset. Asset-based (lab-imported
+ * Which LIVE managed product family produced an asset. Asset-based (lab-imported
  * content has no job yet still counts): meta.taskType → lab agent-folder
  * keywords → asset type. Table kept local so this file stays client-safe.
+ *
+ * ── EMAIL NOW ANSWERS NULL, ON PURPOSE ────────────────────────────────────
+ *
+ * Every rung that used to reach `newsletter_issue` is gone with the product:
+ * `MANAGED_TASK_TYPES` no longer contains it, the newsletter/email folder
+ * keyword is removed, and an `email` asset falls through to null.
+ *
+ * NULL RATHER THAN A NEAREST MATCH, because the only consumer is
+ * `agentLabelForAsset` and it feeds the answer to `getManagedProduct`, which
+ * FALLS BACK TO `MANAGED_PRODUCTS[0]` for anything it does not recognise. Had
+ * this kept returning the retired type, every archived v1 newsletter would have
+ * been relabelled "Social posts (IG/TikTok)" — a confident wrong answer about a
+ * client's own delivered work, which is worse than no answer.
+ *
+ * The label is not lost for the assets that matter. `agentLabelForAsset` reads
+ * `meta.agentFolder` FIRST, and both lab-imported v1 issues and every v2
+ * delivery carry it ("newsletter-agent-v2" → "Newsletter agent v2"). What loses
+ * its label is a v1 issue created by the webhook with no folder recorded; those
+ * keep their asset type, their content and their date, and simply show no agent
+ * name.
  */
 export function productForAsset(a: Pick<Asset, "meta" | "type">): ManagedTaskType | null {
   const taskType = metaString(a, "taskType");
@@ -518,7 +539,6 @@ export function productForAsset(a: Pick<Asset, "meta" | "type">): ManagedTaskTyp
   const folder = metaString(a, "agentFolder")?.toLowerCase();
   if (folder) {
     if (folder.includes("instagram") || folder.includes("social")) return "social_post";
-    if (folder.includes("newsletter") || folder.includes("email")) return "newsletter_issue";
     if (folder.includes("blog") || folder.includes("article")) return "blog_article";
     if (folder.includes("landing")) return "landing_page";
   }
@@ -526,8 +546,6 @@ export function productForAsset(a: Pick<Asset, "meta" | "type">): ManagedTaskTyp
     case "instagram_post":
     case "social_post":
       return "social_post";
-    case "email":
-      return "newsletter_issue";
     case "article":
       return "blog_article";
     default:
@@ -548,5 +566,28 @@ export function agentLabelForAsset(a: Pick<Asset, "agentId" | "meta" | "type">):
   }
   const product = productForAsset(a);
   if (product) return getManagedProduct(product).name;
+  return retiredProductLabel(a);
+}
+
+/**
+ * The name a RETIRED product's deliverables still print.
+ *
+ * `productForAsset` deliberately answers null for these — it names live products,
+ * and its answer is fed to `getManagedProduct`, which falls back to
+ * `MANAGED_PRODUCTS[0]` and would have relabelled every archived newsletter
+ * "Social posts (IG/TikTok)". But null here means NO label, and the label is
+ * client-facing: it is "who drafted this" on an issue that really was drafted by
+ * the newsletter agent and really did go out.
+ *
+ * So the live path stays clean and history keeps its name, from a table that
+ * cannot leak into dispatch — nothing reads this to decide what to RUN.
+ *
+ * Reached only after `agentFolder` misses, which covers most of the archive: a
+ * lab-imported v1 issue and every v2 delivery carry a folder. What lands here is
+ * a v1 issue the webhook created with no folder recorded.
+ */
+function retiredProductLabel(a: Pick<Asset, "meta" | "type">): string | null {
+  const taskType = metaString(a, "taskType");
+  if (taskType === RETIRED_NEWSLETTER_TASK_TYPE || a.type === "email") return "Newsletter issue";
   return null;
 }

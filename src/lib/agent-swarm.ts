@@ -37,7 +37,11 @@ import { clientCategoryValue } from "@/lib/utils";
 /* ── Constants ───────────────────────────────────────────────────────── */
 
 const PLATFORMS = ["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"] as const;
-const PRODUCT_TYPES = ["social_post", "newsletter_issue", "blog_article", "landing_page"] as const;
+// The MANAGED products a swarm task may name. The newsletter left this list
+// 2026-08-06 with the managed product itself: it is now a custom agent, so the
+// model assigns it the way it assigns any other custom agent — by id, from the
+// AVAILABLE CUSTOM AGENTS list, which is per client and per grant.
+const PRODUCT_TYPES = ["social_post", "blog_article", "landing_page"] as const;
 
 /** Structural debate rounds (each round = one turn per persona). */
 export const DEFAULT_ROUNDS = 2;
@@ -86,7 +90,7 @@ export interface SwarmPersona {
 const TURN_DISCIPLINE = `
 You are one voice in a three-agent strategy debate producing a marketing Task Map. On your turn you receive the current DRAFT task array and must return the FULL revised array plus a short, punchy console-style MESSAGE (first person) describing what you changed and why — as if speaking in a war-room terminal.
 Rules:
-- Every task is karos_managed content the Karos AI agents execute. A content task normally carries a productType from: social_post, newsletter_issue, blog_article, landing_page.
+- Every task is karos_managed content the Karos AI agents execute. A content task normally carries a productType from: social_post, blog_article, landing_page.
 - When an AVAILABLE CUSTOM AGENTS list is provided and one fits the task better, assign it by setting customAgentId to that agent's exact id INSTEAD of a productType — never set both on the same task. Only use ids from that list; never invent one.
 - Set platform to the target channel when relevant. Set weight (0-100) by how critical the underlying gap is (90+ = urgent, 75-89 = high, 50-74 = standard, <50 = optional); priority must agree (>=75 high, 40-74 medium, <40 low).
 - Keep tasks hyper-specific to THIS client. No generic filler. Never exceed 20 tasks in the array; the panel will trim to the best ${MAX_CONSENSUS_TASKS}.

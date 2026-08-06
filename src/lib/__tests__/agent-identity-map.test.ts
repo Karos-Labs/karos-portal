@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
-import type { Asset, Job, ManagedTaskType } from "@/lib/types";
+import type { Asset, Job, WireTaskType } from "@/lib/types";
 
 const instagramUmbrella: ClientAgentIdentity = {
   id: "client-1__instagram-agent",
@@ -30,7 +30,7 @@ function job(
 }
 
 /** A managed catalog run, exactly as submit-managed.ts mints it. */
-function managedJob(taskType: ManagedTaskType, agentName: string) {
+function managedJob(taskType: WireTaskType, agentName: string) {
   return job({ agentName, external: { serviceJobId: "svc-1", taskType } });
 }
 
@@ -85,6 +85,11 @@ describe("resolveContentIdentity", () => {
   });
 
   it("leaves a managed run alone when no live umbrella owns its family", () => {
+    // The RETIRED newsletter type, asked of a STORED job — which is the only way
+    // it can arrive now. Every v1 newsletter run in the database carries it in
+    // `external.taskType`, and this resolver is what the /jobs list, the
+    // calendar's past-run cards and the run history print from. Narrowing it out
+    // of the identity map would blank the label on a client's own history.
     expect(
       resolveContentIdentity({ job: managedJob("newsletter_issue", "Newsletter issue") }, agents),
     ).toEqual({ label: "Newsletter issue" });

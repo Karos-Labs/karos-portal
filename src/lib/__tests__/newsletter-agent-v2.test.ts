@@ -47,16 +47,31 @@ describe("the newsletter v2 keys", () => {
     expect(isUnlistedAgent({ key: NEWSLETTER_WRITER_V2_KEY })).toBe(false);
   });
 
-  it("carries the managed product's price rather than re-deriving one", () => {
+  it("kept the managed product's price after the managed product was deleted", () => {
     // The work per issue did not change when the product moved off the managed
     // path, so a client's bill must not either. Without an explicit default it
-    // would fall to the generic custom-agent rate the moment newsletter_issue is
-    // deleted — a silent repricing nobody decided.
+    // falls to the generic custom-agent rate — a silent repricing nobody decided.
+    //
+    // THIS ASSERTION USED TO READ THE MANAGED ROW OUT OF credits.ts, as the
+    // source the figure was carried FROM. That row is gone: `newsletter_issue`
+    // left `TASK_EXECUTION_COSTS` when the product was deprecated, and this
+    // constant IS the price now. It moved INTO credits.ts with the other prices
+    // (custom-agent-launch re-exports it) so the client-facing rate card can
+    // quote it, which it could not do the other way round — that module already
+    // imports credits, so the arrow only goes one way.
     expect(NEWSLETTER_RUN_CREDITS).toBe(10);
     const credits = readFileSync(join(process.cwd(), "src/lib/credits.ts"), "utf8");
-    expect(credits, "the managed price this is carried FROM has moved").toContain(
-      "newsletter_issue: 10",
+    expect(credits, "the price no longer lives with the other prices").toContain(
+      "export const NEWSLETTER_RUN_CREDITS = 10",
     );
+    // And the deleted managed row has not crept back. Two prices for one product
+    // is the drift this whole arrangement exists to prevent.
+    expect(credits, "the retired managed price is back in TASK_EXECUTION_COSTS").not.toMatch(
+      /^\s*newsletter_issue: \d+,/m,
+    );
+    // Still quoted to the client by name, at the same number, rather than
+    // disappearing into the generic "Agent run … from" line.
+    expect(credits).toContain('{ label: "Newsletter issue", credits: NEWSLETTER_RUN_CREDITS }');
   });
 });
 

@@ -150,6 +150,22 @@ const webhookPayloadSchema = z.object({
   event: z.literal("job.completed"),
   job_id: z.string().min(1),
   status: z.enum(["done", "failed", "cancelled", "dead_letter"]),
+  /**
+   * INBOUND, so this is deliberately WIDER than what the platform can start.
+   *
+   * `newsletter_issue` is retired — it is gone from `ManagedTaskType`, from
+   * `MANAGED_PRODUCTS` and from the service's own `TASK_TYPES`, so nothing can
+   * dispatch one any more. It stays HERE because a v1 job already queued when
+   * the service was cut still has to be able to report back: this schema runs
+   * before anything else, so a rejected enum means a 400, no claim, no asset, no
+   * refund on a failure, and the service retrying a delivery that can never
+   * succeed. The run is finished either way; the only question is whether the
+   * client gets the issue they paid for.
+   *
+   * The type mirror is `WireTaskType` (lib/types.ts). Remove this member only
+   * once no v1 job can possibly still be in flight — which is a date, not a
+   * deploy.
+   */
   task_type: z.enum(["social_post", "newsletter_issue", "blog_article", "landing_page", "custom"]),
   client_id: z.string().min(1),
   metadata: z.record(z.string(), z.string()).optional(),

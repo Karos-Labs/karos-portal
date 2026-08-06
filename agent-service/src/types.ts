@@ -1,4 +1,9 @@
-export const TASK_TYPES = ["social_post", "newsletter_issue", "blog_article", "landing_page", "custom"] as const;
+// "newsletter_issue" was removed 2026-08-06: the newsletter is now a custom
+// agent (karos-newsletter-writer-v2) and runs through the generic "custom"
+// runner. The platform mirror of this tuple is MANAGED_PRODUCTS + the
+// ManagedTaskType union, and agent-registry-sync.test.ts fails CI if the two
+// ever disagree.
+export const TASK_TYPES = ["social_post", "blog_article", "landing_page", "custom"] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled" | "dead_letter";

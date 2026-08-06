@@ -2,7 +2,6 @@ import { Ajv, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { TASK_TYPES, type JobRequest, type TaskType } from "../types.js";
 import socialPost from "./task-types/social_post.json" with { type: "json" };
-import newsletterIssue from "./task-types/newsletter_issue.json" with { type: "json" };
 import blogArticle from "./task-types/blog_article.json" with { type: "json" };
 import landingPage from "./task-types/landing_page.json" with { type: "json" };
 import custom from "./task-types/custom.json" with { type: "json" };
@@ -52,7 +51,6 @@ const baseRequestSchema = {
 
 const briefSchemas: Record<TaskType, object> = {
   social_post: socialPost,
-  newsletter_issue: newsletterIssue,
   blog_article: blogArticle,
   landing_page: landingPage,
   custom,

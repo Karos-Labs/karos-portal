@@ -36,6 +36,9 @@
 const PRODUCT_BLURBS: Record<string, string> = {
   social_post:
     "Keep your social channels busy with posts built around what your audience is already reacting to.",
+  // RETIRED product, kept for HISTORY: this map is keyed by `string`, and every
+  // v1 newsletter job in the database still carries the type. Removing the row
+  // would blank the blurb on a client's own past runs, not prevent a new one.
   newsletter_issue:
     "Send a newsletter your list actually opens, written from the work you have done since the last one.",
   blog_article:

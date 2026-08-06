@@ -185,35 +185,6 @@ ${briefAsBullets(spec.brief)}
 Run the "karos-instagram-agent" skill (products/live/instagram-agent/SKILL.md). If this client already has emitted generator sub-skills under clients/${ctx.clientSlug}/skills/instagram-agent/, use those generators for production instead of re-running full setup; only fall back to the master skill's setup flow when no client system exists yet. Produce the requested number of posts, each with its deliverable image/copy plus caption.txt and about.txt on the client/ side.`,
   },
 
-  newsletter_issue: {
-    entrySkill: "karos-newsletter-agent",
-    entrySkillDir: "products/live/newsletter-agent",
-    skillRoots: ["skills/vendors/last30days"],
-    includeClientSkills: true,
-    allowedTools: [
-      ...READ_TOOLS,
-      ...WRITE_TOOLS,
-      ...RESEARCH_TOOLS,
-      ...GIT_LOCAL,
-      ...FS_BASH,
-      "Bash(node:*)",
-      "Bash(python3:*)",
-    ],
-    disallowedTools: COMMON_DISALLOWED,
-    timeoutMs: 15 * 60 * 1000,
-    maxTurns: 250,
-    maxBudgetUsd: 30,
-    model: AGENT_MODEL,
-    effort: "medium",
-    egressGroups: ["core", "research", "fonts"],
-    buildPrompt: (spec, ctx) => `${commonPreamble(spec, ctx)}
-
-TASK: produce one newsletter issue for ${ctx.clientSlug}.
-${briefAsBullets(spec.brief)}
-
-Run the "karos-newsletter-agent" skill (products/live/newsletter-agent/SKILL.md). Ignore any legacy pg_cron/Supabase wiring in the skill text (adapter rule). Deliver the rendered HTML (dark + light) and the issue copy on the client/ side, with research notes on the internal/ side.`,
-  },
-
   blog_article: {
     entrySkill: "karos-blog-agent",
     entrySkillDir: "products/live/blog-agent",

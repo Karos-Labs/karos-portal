@@ -1208,13 +1208,17 @@ export const NEWSLETTER_SETUP_REQUIRED_PREFIX = "Set up the newsletter agent";
 /**
  * What one newsletter issue costs a billable client.
  *
- * CARRIED from the managed product's `TASK_EXECUTION_COSTS.newsletter_issue`, not
- * re-derived. The work per issue is unchanged by the move to the custom-agent
- * path, so a client's bill must not move either — and without an explicit default
- * the price would silently drop to the generic custom-agent rate the moment the
- * managed task type is deleted.
+ * RE-EXPORTED, not declared here. It was declared in this module while the
+ * managed price still existed, as the value CARRIED across from
+ * `TASK_EXECUTION_COSTS.newsletter_issue` so a client's bill would not move when
+ * the product did. Now that the managed row is gone this constant IS the price,
+ * and a price belongs in credits.ts with every other one — not least so the
+ * client-facing rate card can quote it, which it cannot do from here
+ * (custom-agent-launch already imports credits, so the arrow only goes one way).
+ *
+ * The re-export keeps every existing importer unchanged.
  */
-export const NEWSLETTER_RUN_CREDITS = 10;
+export { NEWSLETTER_RUN_CREDITS } from "@/lib/credits";
 
 /**
  * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string

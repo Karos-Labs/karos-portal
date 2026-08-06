@@ -221,17 +221,39 @@ export function evaluateSeatAddition(args: {
  * Scaled to real compute: a product run is a full sandboxed agent session
  * (research + generation, ~$0.50–2), not one model call — text-only products
  * sit at 2× the baseline, media-heavy generation higher still.
+ *
+ * THE NEWSLETTER IS NOT IN THIS TABLE ANY MORE, and its price did not disappear
+ * with it: it sat at 10, the work per issue did not change when the product
+ * moved to the v2 custom agent, and it is now `NEWSLETTER_RUN_CREDITS` below.
+ * Re-adding a row here would give one product two prices, and they would drift
+ * the first time either moved.
  */
 export const TASK_EXECUTION_COSTS: Record<Exclude<ManagedTaskType, "custom">, number> = {
   /** Text + research (markdown/HTML article). */
   blog_article: 10,
-  /** Text + research + HTML render (dark/light variants). */
-  newsletter_issue: 10,
   /** Research + per-post VISUAL generation — media-heavy. */
   social_post: 15,
   /** Heaviest: full page build with brand kit + static build (~15–30 min). */
   landing_page: 20,
 } as const;
+
+/**
+ * What one newsletter issue costs a billable client, on the v2 custom-agent path.
+ *
+ * THE PRICE THE MANAGED PRODUCT CHARGED, kept deliberately equal. The work per
+ * issue did not change when the product moved off `TASK_EXECUTION_COSTS`, so a
+ * client's bill must not either — and without an explicit default the submit
+ * core would fall to the generic `CREDIT_COSTS.customAgentRun` rate, which is a
+ * repricing nobody decided. `submitCustomAgentJob` applies it as the carried
+ * default for the newsletter family; an admin's per-agent `creditCost` still
+ * wins over it.
+ *
+ * It lives here rather than beside the other newsletter constants in
+ * custom-agent-launch.ts (which re-exports it) because a price belongs with the
+ * prices, and because the rate card below has to be able to quote it — which it
+ * could not do from there, since that module already imports this one.
+ */
+export const NEWSLETTER_RUN_CREDITS = 10;
 
 /**
  * Resolve what one task execution costs given the product that will actually
@@ -313,7 +335,11 @@ export const CLIENT_PRICE_ROWS: readonly ClientPriceRow[] = [
     note: "each agent shows its own price",
   },
   { label: "Blog article", credits: TASK_EXECUTION_COSTS.blog_article },
-  { label: "Newsletter issue", credits: TASK_EXECUTION_COSTS.newsletter_issue },
+  // Still named and still 10, though it is no longer a managed product. Dropping
+  // the row would have left the newsletter quoted only by the generic "Agent
+  // run … from" line above — a client who buys one issue a week would have lost
+  // the one place its price is stated outright, for an internal refactor.
+  { label: "Newsletter issue", credits: NEWSLETTER_RUN_CREDITS },
   { label: "Social posts", credits: TASK_EXECUTION_COSTS.social_post },
   { label: "Landing page", credits: TASK_EXECUTION_COSTS.landing_page },
   { label: "Other task execution", credits: CREDIT_COSTS.taskExecution },
