@@ -48,6 +48,11 @@ const INTAKE_FAMILY_PRESENT: Record<AgentIntake["agent"], true> = {
   x: true,
   linkedin: true,
   reddit: true,
+  // Newsletter has no per-seat concept — an issue goes out from the company,
+  // never from a person — so this family never HAS a seat row. It is listed
+  // anyway because the sweep's job is to leave no orphan behind, and "there are
+  // none" is cheaper to prove by looking than to assume.
+  newsletter: true,
 };
 const INTAKE_FAMILIES = Object.keys(INTAKE_FAMILY_PRESENT) as Array<AgentIntake["agent"]>;
 

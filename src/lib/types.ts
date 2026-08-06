@@ -1706,7 +1706,7 @@ export interface CreditLedgerEntry {
 export interface SeatVoiceProfile {
   id: string;
   clientId: string;
-  agent: "x" | "linkedin" | "reddit";
+  agent: "x" | "linkedin" | "reddit" | "newsletter";
   seatId: string;
   /** Markdown content, built by the agent. */
   content: string;
@@ -1743,7 +1743,7 @@ export interface AgentIntake {
   id: string;
   clientId: string;
   /** Agent family. Widen the union as more agents get intake. */
-  agent: "x" | "linkedin" | "reddit";
+  agent: "x" | "linkedin" | "reddit" | "newsletter";
   /** null = company-page intake; otherwise the ClientSeat id. */
   seatId: string | null;
   /**
@@ -2389,6 +2389,109 @@ export interface RedditDraftFeedback {
   selectedApproach?: "approach-1" | "approach-2";
   createdBy: string;
   createdAt: number;
+}
+
+/**
+ * The newsletter agent's client intake — the ASK half of ASK vs BUILD.
+ *
+ * Everything editorial is BUILT by the v2 setup skill from the onboarding
+ * documents: the pillars, the voice card, the topic pool, the scan topics. This
+ * collects only what setup cannot derive and the framework names as asked rather
+ * than derived.
+ *
+ * Stored on `agentIntake` with `agent: "newsletter"` and `seatId: null`, like the
+ * other families' company rows. Newsletter has no per-seat concept — an issue
+ * goes out from the company, never from a person — so a seat row would be
+ * meaningless here.
+ */
+export interface NewsletterAgentIntake {
+  /**
+   * The weekday the client wants their issue, 0=Sun..6=Sat, or null for "no day
+   * chosen yet".
+   *
+   * NULL IS A REAL ANSWER, not a missing one. The setup framework is explicit
+   * that three existing files all assert Tuesday and that this contradicts the
+   * standing decision that the weekday is the client's; "no day chosen" is
+   * recorded as exactly that so nothing downstream projects a Tuesday the client
+   * never agreed to.
+   */
+  preferredWeekday?: number | null;
+  /**
+   * Which email platform they send from. Data for a future direct-connect, and
+   * NEVER a gate: the product prepares, the client sends, and we do not assume
+   * which of the many platforms they use.
+   */
+  espName?: string;
+  /** Who the issue is written for, in the client's words, when the docs are thin. */
+  audienceNote?: string;
+  /**
+   * Phrases this client may never print, beyond the house rules. Feeds the
+   * compliance sweep and the hard code gate, which refuses the whole issue rather
+   * than editing it.
+   */
+  bannedPhrases?: string[];
+  /**
+   * A standing legal or regulatory question the client has not answered yet.
+   * Rides every issue as a visible review flag until they do — the framework's
+   * live example is a footer conflict between two regulator rulings.
+   */
+  openComplianceNote?: string;
+}
+
+/**
+ * The newsletter agent's DURABLE state — the data files v2 assumes outlive a run.
+ *
+ * The third instance of the same problem `LiAgentState` and `RedditAgentState`
+ * solve, and the one where losing state is most immediately visible to a
+ * subscriber. The v2 writer CLAIMS an issue number in the index at step 01 and
+ * flips it to shipped at step 11; the topic pool records what has been written
+ * about; the voice card is built once at setup precisely so it is not re-derived
+ * every week. The runner clones the lab repo fresh and is destroyed, so every one
+ * of those writes is discarded.
+ *
+ * WHY THE ISSUE INDEX IS THE DANGEROUS ONE. Lose the LinkedIn ledger and a
+ * subject repeats. Lose the Reddit rules audit and an account is banned. Lose
+ * this and the next run claims a number that already went out, so real
+ * subscribers receive a second "Issue 004" — the exact defect v1 had, where the
+ * numbering counted a folder that never existed and all three real issues were
+ * numbered by hand.
+ *
+ * One doc per (clientId, kind); the run that produced it is recorded on the row.
+ */
+export interface NewsletterAgentState {
+  id: string;
+  clientId: string;
+  /**
+   * Which of the contract's durable files this row holds, at the paths
+   * `clients/<slug>/skills/newsletter-agent-v2/` uses:
+   *  - `issue-index`        — the numbering authority AND the dedup memory
+   *  - `topic-pool`         — the editorial runway, >=30 unused, >=8 lead-worthy
+   *  - `voice-card`         — the style target, built once at setup
+   *  - `scan-topics`        — the niche watch-list the weekly research searches
+   *  - `content-foundation` — the editorial brain: pillars, voice rules, compliance
+   *
+   * The BRAND FILE is deliberately not a kind here. It is shared with the blog
+   * agent and v1, which read it live at its own path, and the setup framework is
+   * explicit that setup is its single writer of record and never renames or
+   * removes a field. Mirroring it into portal state would create a second copy
+   * with no owner.
+   */
+  kind:
+    | "issue-index"
+    | "topic-pool"
+    | "voice-card"
+    | "scan-topics"
+    | "content-foundation";
+  /** The file's bytes as text (JSON or markdown per `kind`). */
+  content: string;
+  contentType: string;
+  /** YYYY-MM-DD the content was produced. */
+  contentDate: string;
+  capturedFromJobId: string;
+  capturedAt: number;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /**

@@ -36,6 +36,7 @@ import {
   agentKeyMatchesClientSlug,
   isUnlistedAgent,
   isLinkedInAgentIdentity,
+  isNewsletterAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
 } from "@/lib/custom-agent-launch";
@@ -80,6 +81,7 @@ const IDENTITY_BY_FAMILY: Record<AgentIntake["agent"], (key: string) => boolean>
   x: isXAgentIdentity,
   linkedin: isLinkedInAgentIdentity,
   reddit: isRedditAgentIdentity,
+  newsletter: isNewsletterAgentIdentity,
 };
 
 /**

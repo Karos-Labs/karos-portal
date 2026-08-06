@@ -49,6 +49,7 @@ import type {
   LiAgentState,
   LiDirectionRequest,
   LiDraftFeedback,
+  NewsletterAgentState,
   RedditAgentState,
   RedditDraftFeedback,
 } from "@/lib/types";
@@ -142,6 +143,9 @@ const col = {
   // discard. See the RedditAgentState comment in types.ts for why the dated
   // rules audit makes this a safety mechanism and not just a cache.
   redditAgentState: () => adminDb().collection("redditAgentState"),
+  // Newsletter v2's durable state. The issue index in here is the numbering
+  // authority: lose it and a real subscriber list receives a second "Issue 004".
+  newsletterAgentState: () => adminDb().collection("newsletterAgentState"),
   // Per-seat AI-built voice profiles (agent-scoped: x/linkedin/reddit), one doc
   // per (clientId, agent, seatId). See upsertSeatVoiceProfile.
   seatVoiceProfiles: () => adminDb().collection("seatVoiceProfiles"),
@@ -460,6 +464,7 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "liAgentState",
   "redditDraftFeedback",
   "redditAgentState",
+  "newsletterAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];
@@ -2942,6 +2947,52 @@ export async function upsertLiAgentState(
   }
   const ref = await col
     .liAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───────── Newsletter v2: the durable state the ephemeral runner loses ───────── */
+
+export async function getNewsletterAgentState(
+  clientId: string,
+  kind: NewsletterAgentState["kind"],
+): Promise<NewsletterAgentState | null> {
+  const snap = await col
+    .newsletterAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<NewsletterAgentState>(snap.docs[0]);
+}
+
+export async function listNewsletterAgentState(
+  clientId: string,
+): Promise<NewsletterAgentState[]> {
+  const snap = await col.newsletterAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<NewsletterAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file. Wholesale, not a field merge: each is a whole
+ * file the run rewrote, and merging two versions of the issue index at field
+ * level could produce a claim row neither run wrote — on the one file where being
+ * wrong sends a duplicate issue number to a real mailing list.
+ */
+export async function upsertNewsletterAgentState(
+  data: Omit<NewsletterAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getNewsletterAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .newsletterAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .newsletterAgentState()
     .add({ ...data, version: 1, createdAt: now, updatedAt: now });
   return ref.id;
 }

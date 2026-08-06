@@ -84,6 +84,21 @@ export const LINKEDIN_IDENTITY_FIELD_KEY = "li_identity";
  * this wrong means a key that matches nothing and an agent that is never gated,
  * never fed and never hidden, so the literals live here once.
  */
+/**
+ * The newsletter v2 keys. FOUR skills — one more than any previous product,
+ * because the compliance lock is its own registered skill rather than a step
+ * inside the writer.
+ *
+ * These DO carry a `-v2` suffix, unlike the Reddit pair. That is the manifest's
+ * own inconsistency, not a choice available here: the keys are whatever
+ * `catalog/agent-runtime-manifest.json` says, and guessing wrong means a key that
+ * matches nothing and an agent that is never gated, fed or hidden.
+ */
+export const NEWSLETTER_WRITER_V2_KEY = "karos-newsletter-writer-v2";
+export const NEWSLETTER_SETUP_V2_KEY = "karos-newsletter-setup-v2";
+export const NEWSLETTER_MANAGER_V2_KEY = "karos-newsletter-manager-v2";
+export const COMPLIANCE_LOCK_V2_KEY = "karos-compliance-lock-v2";
+
 export const REDDIT_RUNNER_V2_KEY = "karos-reddit-runner";
 export const REDDIT_SETUP_V2_KEY = "karos-reddit-setup";
 
@@ -1153,6 +1168,23 @@ export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
  * The Reddit agent (e15) runs on stored intake the same way. Client-safe twin
  * of the server-side isRedditAgent in agent-service/reddit-agent-context.ts.
  */
+/**
+ * The newsletter agent. EXACTLY the writer, and that is the whole rule.
+ *
+ * The other three skills are steps of it and are hidden structurally by
+ * `parentKey`, so they must not answer true here: this predicate decides which
+ * agent gets the newsletter INTAKE attached and the newsletter setup gate
+ * applied, and a setup run that gated on its own output could never run.
+ *
+ * Note there is a loose `/newsletter/` launch profile further up this file that
+ * predates v2. It would capture the writer and hand it a generic brief asking for
+ * an issue theme and a reader — inputs v2 BUILDS from the topic pool and the
+ * voice card and must never collect. The exact-key v2 profile is placed above it.
+ */
+export function isNewsletterAgentIdentity(key: string): boolean {
+  return key === NEWSLETTER_WRITER_V2_KEY;
+}
+
 export function isRedditAgentIdentity(key: string): boolean {
   return (
     key === REDDIT_RUNNER_V2_KEY ||

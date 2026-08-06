@@ -183,6 +183,12 @@ function intakeAnswersFor(
       return xAnswers(toXIntakeView(doc, xProfile));
     case "linkedin":
       return liAnswers(toLiIntakeView(doc));
+    case "newsletter":
+      // No inline answers band for newsletter. Its intake is scheduling and
+      // compliance configuration, not the per-account identity answers the other
+      // three families show here, and a half-filled band would imply this page
+      // is where a client reads their newsletter setup. Their own surface is.
+      return [];
     case "reddit":
       return redditAnswers(toRedditIntakeView(doc));
   }
