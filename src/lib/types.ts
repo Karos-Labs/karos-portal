@@ -1812,6 +1812,33 @@ export interface AgentIntake {
    */
   offLimitsSubreddits?: string[];
   /**
+   * Newsletter only — the weekday the client wants their issue, 0=Sun..6=Sat.
+   *
+   * NULL IS A REAL ANSWER, not a missing one, and the distinction is load-bearing:
+   * the framework records that three existing files all assert Tuesday and that
+   * this contradicts the standing decision that the weekday belongs to the
+   * client. Absent or null must print as "not chosen", never as a default day.
+   */
+  preferredWeekday?: number | null;
+  /**
+   * Newsletter only — the email platform they send from. Data for a future
+   * direct-connect, and never a gate: we prepare the issue, the client sends it.
+   */
+  espName?: string;
+  /** Newsletter only — who the issue is for, in the client's words. */
+  audienceNote?: string;
+  /**
+   * Newsletter only — phrases this client may never print, on top of the house
+   * rules. Feeds the step-08 sweep and the step-09 code gate, which refuses the
+   * whole issue rather than editing it.
+   */
+  bannedPhrases?: string[];
+  /**
+   * Newsletter only — a standing legal question the client has not answered.
+   * Rides every issue as a visible review flag until they do.
+   */
+  openComplianceNote?: string;
+  /**
    * Reddit only — the disclosure posture the client is comfortable with, in
    * their own words. Used verbatim as the disclosure line on any draft that
    * carries a product mention.
@@ -2392,49 +2419,25 @@ export interface RedditDraftFeedback {
 }
 
 /**
- * The newsletter agent's client intake — the ASK half of ASK vs BUILD.
+ * The newsletter agent's intake, as a client's browser may receive it — the same
+ * shape and the same purpose as `LiIntakeView` and `RedditIntakeView`.
  *
- * Everything editorial is BUILT by the v2 setup skill from the onboarding
- * documents: the pillars, the voice card, the topic pool, the scan topics. This
- * collects only what setup cannot derive and the framework names as asked rather
- * than derived.
+ * The FIELDS themselves live on `AgentIntake` above, because all four families
+ * share one collection; this is the whitelist that decides which of them cross
+ * the RSC boundary. Newsletter's are all client-supplied configuration, so all
+ * five cross — but the type exists so that a field added to `AgentIntake` for
+ * some other purpose cannot reach a browser just by being on the document.
  *
- * Stored on `agentIntake` with `agent: "newsletter"` and `seatId: null`, like the
- * other families' company rows. Newsletter has no per-seat concept — an issue
- * goes out from the company, never from a person — so a seat row would be
- * meaningless here.
+ * ASK vs BUILD: everything editorial (pillars, voice card, topic pool, scan
+ * topics) is BUILT by setup from the onboarding documents and is deliberately
+ * absent here. It must never be asked of the client.
  */
 export interface NewsletterAgentIntake {
-  /**
-   * The weekday the client wants their issue, 0=Sun..6=Sat, or null for "no day
-   * chosen yet".
-   *
-   * NULL IS A REAL ANSWER, not a missing one. The setup framework is explicit
-   * that three existing files all assert Tuesday and that this contradicts the
-   * standing decision that the weekday is the client's; "no day chosen" is
-   * recorded as exactly that so nothing downstream projects a Tuesday the client
-   * never agreed to.
-   */
+  /** 0=Sun..6=Sat, or null for "no day chosen yet" — a real answer, not a gap. */
   preferredWeekday?: number | null;
-  /**
-   * Which email platform they send from. Data for a future direct-connect, and
-   * NEVER a gate: the product prepares, the client sends, and we do not assume
-   * which of the many platforms they use.
-   */
   espName?: string;
-  /** Who the issue is written for, in the client's words, when the docs are thin. */
   audienceNote?: string;
-  /**
-   * Phrases this client may never print, beyond the house rules. Feeds the
-   * compliance sweep and the hard code gate, which refuses the whole issue rather
-   * than editing it.
-   */
   bannedPhrases?: string[];
-  /**
-   * A standing legal or regulatory question the client has not answered yet.
-   * Rides every issue as a visible review flag until they do — the framework's
-   * live example is a footer conflict between two regulator rulings.
-   */
   openComplianceNote?: string;
 }
 

@@ -16,6 +16,7 @@ import {
   markLiDirectionRequestCovered,
   updateJob,
   upsertLiAgentState,
+  upsertNewsletterAgentState,
   upsertRedditAgentState,
   upsertSeatVoiceProfile,
 } from "@/lib/data";
@@ -37,6 +38,16 @@ import {
   isRedditRunnerV2,
   isRedditSetupV2,
 } from "@/lib/agent-service/reddit-agent-context";
+import { isNewsletterAgent } from "@/lib/agent-service/newsletter-agent-context";
+import {
+  NEWSLETTER_STATE_MAX_CHARS,
+  type NewsletterClientFile,
+  buildNewsletterEnvelope,
+  newsletterEnvelopeHasContent,
+  newsletterStateContentType,
+  newsletterStateDateFor,
+  newsletterStateKindFor,
+} from "@/lib/agent-service/newsletter-state-capture";
 import {
   REDDIT_STATE_MAX_CHARS,
   type RedditClientFile,
@@ -55,7 +66,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, RedditAgentState } from "@/lib/types";
+import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, NewsletterAgentState, RedditAgentState } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -393,6 +404,9 @@ export async function POST(req: NextRequest) {
   // whether a product may be named in a subreddit, and losing it is how an
   // account gets banned. Same one-document read as the LinkedIn resolution.
   let isRedditStateJob = false;
+  // Newsletter v2: the issue index in this run is the numbering authority, so a
+  // lost capture means the next run re-mints a number a subscriber already saw.
+  let isNewsletterStateJob = false;
   try {
     const producing = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
     isLinkedInStateJob = producing ? isLinkedInV2Agent(producing.key) : false;
@@ -400,10 +414,12 @@ export async function POST(req: NextRequest) {
     isRedditStateJob = producing
       ? isRedditRunnerV2(producing.key) || isRedditSetupV2(producing.key)
       : false;
+    isNewsletterStateJob = producing ? isNewsletterAgent(producing.key) : false;
   } catch {
     isLinkedInStateJob = false;
     isLinkedInSetupJob = false;
     isRedditStateJob = false;
+    isNewsletterStateJob = false;
   }
 
   // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
@@ -492,6 +508,13 @@ export async function POST(req: NextRequest) {
   const redditClientFiles: RedditClientFile[] = [];
   /** The run's own outcome record, for the four-outcome distinction. */
   let redditRunRecord: string | null = null;
+  const newsletterClientFiles: NewsletterClientFile[] = [];
+  const newsletterStateArtifacts: {
+    kind: NewsletterAgentState["kind"];
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
   const redditStateArtifacts: {
     kind: RedditAgentState["kind"];
     account: string | null;
@@ -558,6 +581,33 @@ export async function POST(req: NextRequest) {
       const liPath = artifact.path ?? artifact.name;
       const liStateKind = isLinkedInStateJob ? liStateKindFor(liPath) : null;
       const liIsCommit = isLinkedInStateJob && isLiCommitArtifact(liPath);
+      const newsletterState = isNewsletterStateJob ? newsletterStateKindFor(liPath) : null;
+      if (!artifact.client_facing && newsletterState && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, NEWSLETTER_STATE_MAX_CHARS);
+              if (text.trim()) {
+                newsletterStateArtifacts.push({
+                  kind: newsletterState,
+                  content: text,
+                  contentDate: newsletterStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch {
+          // Best-effort and not reported to the client: the issue in front of
+          // them is finished either way. The cost is the NEXT run's memory, and
+          // the events below record that for staff.
+        }
+      }
       const redditState = isRedditStateJob ? redditStateKindFor(liPath) : null;
       const redditIsRunRecord = isRedditStateJob && isRedditRunRecordArtifact(liPath);
       if (!artifact.client_facing && (redditState || redditIsRunRecord) && artifact.url) {
@@ -694,6 +744,16 @@ export async function POST(req: NextRequest) {
                 if (isRedditStateJob) {
                   redditClientFiles.push({ path: artifact.path ?? artifact.name, text: content });
                 }
+                // The newsletter's D7 four. Collected as (path, text) pairs so the
+                // envelope can be assembled after the claim: the two themes are
+                // built by one command so they never disagree, which only holds
+                // if they reach the reader together.
+                if (isNewsletterStateJob) {
+                  newsletterClientFiles.push({
+                    path: artifact.path ?? artifact.name,
+                    text: content,
+                  });
+                }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
                 // agents (X, LinkedIn) — prefer it deterministically over the
                 // size race, so a long sibling text file (a video brief, an
@@ -798,11 +858,22 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ── Newsletter v2: the D7 four become the reader's one string ──
+  const newsletterEnvelope = isNewsletterStateJob
+    ? buildNewsletterEnvelope(newsletterClientFiles)
+    : null;
+  const newsletterEnvelopeJson =
+    newsletterEnvelope && newsletterEnvelopeHasContent(newsletterEnvelope)
+      ? JSON.stringify(newsletterEnvelope)
+      : null;
+
   const deliveredCount = rehosted.length;
   // For the Task Map sync below: the run may have been dispatched by a board
   // task, whose ticket gets the deliverable for client preview.
   const redditEnvelopeJson = redditEnvelope ? JSON.stringify(redditEnvelope) : null;
-  const taskArtifactContent = redditEnvelopeJson
+  const taskArtifactContent = newsletterEnvelopeJson
+    ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : redditEnvelopeJson
     ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : primaryText
       ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
@@ -944,6 +1015,38 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Newsletter v2 durable state. After the claim and best-effort, like its two
+    // siblings. The ISSUE INDEX is called out in its own error line because its
+    // failure mode is not forgetfulness: without it the next run claims a number
+    // that already shipped, and a real subscriber list receives a second copy of
+    // the same issue.
+    if (newsletterStateArtifacts.length > 0) {
+      const byKind = new Map(newsletterStateArtifacts.map((row) => [row.kind, row]));
+      for (const row of byKind.values()) {
+        try {
+          await upsertNewsletterAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            content: row.content,
+            contentType: newsletterStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] newsletter ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              row.kind === "issue-index"
+                ? "The newsletter ISSUE INDEX did not persist. The next run may claim an issue number that has already been sent - check the index before running again."
+                : `Newsletter ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
     // Reddit v2 durable state. After the claim and best-effort, like the sibling
     // sweeps. Reported as an error event because a run whose RULES AUDIT did not
     // persist is the one case where the next run is not merely forgetful but
@@ -1050,7 +1153,13 @@ export async function POST(req: NextRequest) {
           // The Reddit v2 envelope wins over the size-picked primary text: the
           // reader parses this exact string, and one of the run's own approach
           // files would otherwise be chosen as "the deliverable" by length.
-          content: redditEnvelopeJson
+          // The newsletter envelope wins over the size race for the same reason
+          // Reddit's does: the largest text file here is one of the two HTML
+          // renders, and picking it would call half the deliverable the whole of
+          // it and lose the other three files.
+          content: newsletterEnvelopeJson
+            ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+            : redditEnvelopeJson
             ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
             : primaryText
               ? primaryText.content.slice(0, CONTENT_CHAR_CAP)

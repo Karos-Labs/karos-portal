@@ -1198,6 +1198,25 @@ export function isRedditAgentIdentity(key: string): boolean {
 
 
 /**
+ * The newsletter twin of X_SETUP_REQUIRED_PREFIX. Same literal-constant rule as
+ * its three siblings below: agent-intake-gate.test.ts regex-matches these out of
+ * the submit cores' source, so folding them into a helper makes that matcher find
+ * nothing and throw.
+ */
+export const NEWSLETTER_SETUP_REQUIRED_PREFIX = "Set up the newsletter agent";
+
+/**
+ * What one newsletter issue costs a billable client.
+ *
+ * CARRIED from the managed product's `TASK_EXECUTION_COSTS.newsletter_issue`, not
+ * re-derived. The work per issue is unchanged by the move to the custom-agent
+ * path, so a client's bill must not move either — and without an explicit default
+ * the price would silently drop to the generic custom-agent rate the moment the
+ * managed task type is deleted.
+ */
+export const NEWSLETTER_RUN_CREDITS = 10;
+
+/**
  * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string
  * constants: agent-intake-gate.test.ts regex-matches them out of the submit
  * cores' source, so folding them into a shared helper makes that matcher find

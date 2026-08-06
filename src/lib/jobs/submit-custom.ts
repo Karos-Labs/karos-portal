@@ -35,10 +35,19 @@ import {
   hasRedditAgentIntake,
   isRedditAgent,
 } from "@/lib/agent-service/reddit-agent-context";
+import {
+  buildNewsletterAgentContextFiles,
+  hasNewsletterAgentIntake,
+  hasNewsletterV2Setup,
+  isNewsletterAgent,
+  isNewsletterSetupV2,
+} from "@/lib/agent-service/newsletter-agent-context";
 import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
 import { getClientAgentByKey } from "@/lib/data-client-agents";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  NEWSLETTER_RUN_CREDITS,
+  NEWSLETTER_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   agentKeyMatchesClientSlug,
@@ -372,6 +381,36 @@ export async function submitCustomAgentJob(
     }
   }
 
+  // Newsletter agents (v2): the same contract — the client's stored intake plus
+  // the five data files the writer and manager read (see
+  // newsletter-agent-context.ts). Hard-gated the same way.
+  //
+  // TWO RUNGS, and the second is not the same question as the first. The intake
+  // gate asks "has the client filled the form"; the setup gate asks "does this
+  // client have an issue index", which is what the writer CLAIMS a number in at
+  // its very first step. A client with a saved form and no index would be charged
+  // for a run that dies immediately, and the setup skill is exempt because it is
+  // the job that creates the index.
+  if (isNewsletterAgent(agent.key)) {
+    if (!(await hasNewsletterAgentIntake(input.clientId))) {
+      return {
+        error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your send day and your compliance limits before it can write an issue. Nothing has run.`,
+      };
+    }
+    if (!isNewsletterSetupV2(agent.key) && !(await hasNewsletterV2Setup(input.clientId))) {
+      return {
+        error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the newsletter agent card, which builds the voice, the topic list and the issue numbering. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildNewsletterAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's newsletter data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
   // Client-agent feedback (§5): every run of a LIVE umbrella carries the
   // client's standing direction — global first, then per-template. Launch runs
   // are excluded by construction: a setup run is what CREATES the templates, so
@@ -430,9 +469,18 @@ export async function submitCustomAgentJob(
   // cap un-clamped on disk, nothing re-validates a row on read, and the cron
   // bills chargeMultiplier = outputsPerRun on every fire. A flat ceiling of 5
   // would wave those through at five times the product.
+  // The newsletter's price is CARRIED, not re-derived. It was 10 credits as a
+  // managed product and the work per issue did not change when the product moved
+  // to the custom-agent path, so a client's bill must not move either. Without
+  // this it would silently fall back to the generic custom-agent rate the moment
+  // the managed task type is removed.
+  //
+  // Still overridable by an admin: an explicit `agent.creditCost` on the doc wins,
+  // so pricing stays where pricing is set. This only replaces the NULL default.
+  const newsletterDefault = isNewsletterAgent(agent.key) ? NEWSLETTER_RUN_CREDITS : null;
   const runCost = input.charge
     ? input.charge.amount
-    : (agent.creditCost ?? CREDIT_COSTS.customAgentRun) * multiplier;
+    : (agent.creditCost ?? newsletterDefault ?? CREDIT_COSTS.customAgentRun) * multiplier;
   if (input.bill ?? isBillableClientActor(user)) {
     try {
       await chargeClientCredits({

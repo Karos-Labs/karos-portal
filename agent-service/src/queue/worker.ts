@@ -59,6 +59,16 @@ export function buildJobSpec(config: ServiceConfig, record: JobRecord): JobSpec 
 export function buildRunnerEnv(config: ServiceConfig, spec?: JobSpec): Record<string, string> {
   const env: Record<string, string> = {};
   if (config.anthropicApiKey) env.ANTHROPIC_API_KEY = config.anthropicApiKey;
+  // CLAUDE_API_KEY is the SAME credential under the name some lab skills read.
+  // The newsletter v2 scan does exactly that (assets/engine/lib/seven-day-scan.mjs
+  // reads process.env.CLAUDE_API_KEY for its Haiku ranking call) and DEGRADES
+  // SILENTLY without it, falling back to a relevance heuristic — so the failure
+  // mode is a quietly worse issue, not an error anyone would see.
+  //
+  // Aliased rather than given its own secret: it is the same Anthropic key, and a
+  // second secret holding the same value is two things to rotate and one to
+  // forget. Nothing new to provision, so this needs no deploy dependency.
+  if (config.anthropicApiKey) env.CLAUDE_API_KEY = config.anthropicApiKey;
   // Live X reads (api.x.ai is already on the research egress group); absent =
   // the X agent's reactive lanes degrade to WebSearch, everything else unaffected.
   if (config.xaiApiKey) env.XAI_API_KEY = config.xaiApiKey;

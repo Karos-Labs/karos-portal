@@ -64,6 +64,8 @@ function sdkEnv(): Record<string, string> {
     "TERM",
     "NODE_USE_ENV_PROXY",
     "ANTHROPIC_API_KEY",
+    // The same key under the name the newsletter scan reads. See buildRunnerEnv.
+    "CLAUDE_API_KEY",
     "XAI_API_KEY",
     "APIFY_TOKEN",
     "HTTP_PROXY",
