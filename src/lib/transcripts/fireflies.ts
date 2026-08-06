@@ -54,6 +54,23 @@ const TRANSCRIPT_QUERY = `
 `;
 
 /**
+ * Does `name` (a diarized speaker_name) refer to the same person as `email`?
+ * Matches on first name ("albert@..." ~ "Albert Kattan") or on initials, which
+ * covers short internal aliases ("dh@..." ~ "Daniel Herbert"). Deliberately
+ * loose - the cost of a false merge (a duplicate participant entry) is far
+ * lower than the cost we're fixing (a distinct guest silently missing).
+ */
+function emailLocalPartMatchesName(email: string, name: string): boolean {
+  const local = email.split("@")[0]?.toLowerCase();
+  if (!local) return false;
+  const words = name.trim().toLowerCase().split(/[\s._-]+/).filter(Boolean);
+  if (!words.length) return false;
+  if (words[0] === local) return true;
+  const initials = words.map((w) => w[0]).join("");
+  return initials.length > 1 && initials === local;
+}
+
+/**
  * List recent Fireflies transcripts (header-only, no sentences).
  * Applies the @karoslabs.com invariant; transcripts with no agency participant are dropped.
  * Call fetchFirefliesTranscript(externalId) to get the full text for a specific record.
@@ -146,14 +163,8 @@ export async function fetchFirefliesTranscript(id: string): Promise<FirefliesTra
     .map((a) => a?.email || a?.displayName)
     .filter((v): v is string => !!v);
 
-  // Names already represented by an attendee's email - an attendee record with
-  // BOTH fields is the same person Fireflies' diarization will later also
-  // surface by name, so exclude that name from sentenceSpeakers below to avoid
-  // double-counting "albert@karoslabs.com" and "Albert Kattan" as two people.
-  const namesCoveredByEmail = new Set(
-    attendees
-      .filter((a) => a?.email && a?.displayName)
-      .map((a) => a!.displayName!.trim().toLowerCase()),
+  const knownEmails: string[] = [...(t.participants ?? []), ...attendeeIdentifiers].filter(
+    (v): v is string => typeof v === "string" && v.includes("@"),
   );
 
   // Diarization assigns every sentence a speaker_name independent of calendar/
@@ -166,12 +177,17 @@ export async function fetchFirefliesTranscript(id: string): Promise<FirefliesTra
         new Set(
           (t.sentences as Array<{ speaker_name?: string }>)
             .map((s) => s?.speaker_name?.trim())
-            .filter(
-              (name): name is string =>
-                !!name && !/^speaker\s*\d+$/i.test(name) && !namesCoveredByEmail.has(name.toLowerCase()),
-            ),
+            .filter((name): name is string => !!name && !/^speaker\s*\d+$/i.test(name)),
         ),
       )
+        // Fireflies' attendee records never carry both email and displayName
+        // together (each attendee has one field or the other) - there's no
+        // linking field back to the email for a named speaker. Correlate by
+        // matching the speaker's first name, or initials for short internal
+        // aliases like "dh@karoslabs.com" (Daniel Herbert), against the local
+        // part of an email already collected. Without this, the same person
+        // shows up twice: once as "albert@karoslabs.com", once as "Albert Kattan".
+        .filter((name) => !knownEmails.some((email) => emailLocalPartMatchesName(email, name)))
     : [];
 
   const participants: string[] = Array.from(
