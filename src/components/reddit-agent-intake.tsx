@@ -67,7 +67,7 @@ export interface RedditRunRowView {
 }
 
 function fieldError(error: string | null) {
-  return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
+  return error ? <p className="mt-2 text-xs text-danger">{error}</p> : null;
 }
 
 const MODE_SUMMARY: Record<string, string> = {

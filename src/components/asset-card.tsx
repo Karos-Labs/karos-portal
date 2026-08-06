@@ -25,6 +25,7 @@ import {
 import { PUBLISHABLE_PLATFORMS, PLATFORM_LABELS, PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
 import { MarkPostedRow } from "@/components/mark-posted-row";
+import { PostManagementRow } from "@/components/post-management-row";
 import { AgentMark, SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { parseXDrafts } from "@/lib/x-drafts";
@@ -1066,6 +1067,8 @@ export function AssetCard({
               )}
               {/* Renders itself, or nothing — see the note beside canPublishNow. */}
               <MarkPostedRow asset={asset} variant="button" />
+              {/* Renders itself, or nothing — only for an already-published post. */}
+              <PostManagementRow asset={asset} canManage={!!canApprove} variant="button" />
 
               {canApprove && asset.status === "draft" && !approving && (
                 <div className="flex items-center gap-2">

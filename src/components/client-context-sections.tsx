@@ -179,7 +179,7 @@ export function CompetitorTrack({
             <button
               onClick={handleAdd}
               disabled={adding}
-              className="flex h-7 items-center gap-1 rounded-[6px] bg-neon px-2 text-xs font-semibold text-[#03110b] transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="flex h-7 items-center gap-1 rounded-[6px] bg-neon px-2 text-xs font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {adding ? (
                 <Icon name="Loader" className="h-3 w-3 animate-spin" />

@@ -21,6 +21,7 @@ import {
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
 import { MarkPostedRow } from "@/components/mark-posted-row";
+import { PostManagementRow } from "@/components/post-management-row";
 import { publishAssetNowAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
@@ -442,6 +443,7 @@ export function AssetDetailModal({
           connectedPlatforms={connectedPlatforms ?? []}
         />
         <MarkPostedRow asset={asset} />
+        <PostManagementRow asset={asset} canManage={canPublish} />
       </div>
       )}
     </Modal>

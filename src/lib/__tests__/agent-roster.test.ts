@@ -118,7 +118,7 @@ describe("buildAgentCatalog", () => {
   });
 
   it("appends custom agents tagged kind=custom after the managed products", () => {
-    const custom: ClientCustomAgentSummary[] = [{ id: "ca_1", name: "Video Agent", description: "d" }];
+    const custom: ClientCustomAgentSummary[] = [{ id: "ca_1", key: "video-agent", name: "Video Agent", description: "d" }];
     const catalog = buildAgentCatalog(custom);
     expect(catalog).toHaveLength(MANAGED_PRODUCTS.length + 1);
     const last = catalog.at(-1)!;

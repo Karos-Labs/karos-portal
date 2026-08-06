@@ -1001,6 +1001,42 @@ export async function clearAssetSchedule(id: string): Promise<void> {
   });
 }
 
+/**
+ * Revert a published asset to draft — clearAssetSchedule's counterpart, one
+ * status further back. Clears everything the publish left behind (the
+ * platform post id, the publish timestamp, the schedule that drove it) so the
+ * asset re-enters the pipeline exactly like a fresh draft rather than a
+ * published one wearing a draft label. Purely an internal record: no platform
+ * exposes a way to un-post through our integrations (integrations/publishers.ts
+ * has no delete call for any of them), so this never touches the live post.
+ */
+export async function clearAssetPublish(id: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.assets().doc(id).update({
+    status: "draft",
+    scheduledAt: FieldValue.delete(),
+    scheduledPlatform: FieldValue.delete(),
+    publishMode: FieldValue.delete(),
+    publishedAt: FieldValue.delete(),
+    platformPostId: FieldValue.delete(),
+    publishError: FieldValue.delete(),
+    publishClaimedAt: FieldValue.delete(),
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Permanently remove an asset record. Karos otherwise never hard-deletes one —
+ * ageing out of the client archive is a VIEW filter, not a delete (see
+ * asset-visibility.ts) — so this is the one exception, for a post someone
+ * genuinely wants gone from the workspace. Removes only Karos's own record:
+ * no platform integration exposes a way to remove the live post itself, so
+ * deleting here never reaches back to what's already posted on LinkedIn/X/etc.
+ */
+export async function deleteAsset(id: string): Promise<void> {
+  await col.assets().doc(id).delete();
+}
+
 /* --------------------------- transcripts --------------------------- */
 
 export async function listTranscripts(opts?: {

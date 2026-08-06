@@ -392,7 +392,7 @@ function DraftCard({
                 placeholder="Your final version. The wording you will actually post."
               />
               {overCap ? (
-                <p className="text-xs text-red-400">
+                <p className="text-xs text-danger">
                   {finalText.trim().length.toLocaleString()} characters. Reddit comments cap at{" "}
                   {REDDIT_COMMENT_CAP.toLocaleString()}. Trim it before posting.
                 </p>
@@ -488,7 +488,7 @@ function DraftCard({
               </p>
             </>
           )}
-          {error ? <p className="text-xs text-red-400">{error}</p> : null}
+          {error ? <p className="text-xs text-danger">{error}</p> : null}
         </div>
       ) : sent === "posted" || sent === "posted_with_edits" ? (
         <div className="mt-3 space-y-2">
@@ -516,7 +516,7 @@ function DraftCard({
               {pending ? "Sending…" : "It was removed or downvoted"}
             </Button>
           )}
-          {error ? <p className="text-xs text-red-400">{error}</p> : null}
+          {error ? <p className="text-xs text-danger">{error}</p> : null}
         </div>
       ) : sent === "edit_request" ? (
         <p className="mt-3 text-[11px] text-muted-2">

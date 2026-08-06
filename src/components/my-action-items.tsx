@@ -305,7 +305,7 @@ function ActionItemRow({
         </button>
       </div>
 
-      {error && <p className="mt-1.5 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
 
       {expanded && (
         <div className="mt-3 space-y-4 rounded-lg border border-border bg-surface-2/40 p-3">
@@ -349,8 +349,8 @@ function ActionItemRow({
           <div>
             <p className="mb-2 text-xs font-semibold text-foreground">History</p>
             <ul className="space-y-1.5">
-              {[...item.history].sort((a, b) => a.at - b.at).map((h, i) => (
-                <li key={i} className="flex items-start gap-2 text-xs text-muted">
+              {[...item.history].sort((a, b) => a.at - b.at).map((h) => (
+                <li key={h.at} className="flex items-start gap-2 text-xs text-muted">
                   <span
                     className={cn(
                       "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",

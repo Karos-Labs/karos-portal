@@ -25,7 +25,9 @@ import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
-import { LegacyAgentPanel } from "@/components/client-agents/legacy-agent-panel";
+import { LegacyAgentPanel, SchedulePaceCard } from "@/components/client-agents/legacy-agent-panel";
+import { AgentArchiveRows } from "@/components/client-agents/agent-archive-rows";
+import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { ClipGallery } from "@/components/client-agents/clip-gallery";
 import { DailyFinderPanel } from "@/components/client-agents/daily-finder-panel";
 import {
@@ -48,6 +50,7 @@ import {
 import {
   agentInputsView,
   buildAgentSetupFacts,
+  intakeFamilyFor,
   readAgentInputDocs,
 } from "@/lib/agent-detail-sections";
 import {
@@ -64,6 +67,7 @@ import {
 } from "@/lib/agent-intake-views";
 import {
   agentKeyMatchesClientSlug,
+  defaultRunBatchSize,
   isBlogAgentIdentity,
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
@@ -85,7 +89,6 @@ import {
   toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
-import { relativeTime } from "@/lib/utils";
 import type { Job } from "@/lib/types";
 
 /**
@@ -260,9 +263,16 @@ export default async function ClientAgentDetailPage({
   const summary = toSummary(agent);
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
   const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+  // What ONE PRESS of "create" actually charges: the per-output base × what a
+  // fresh dialog submits (visible batch defaults only — 1 for every agent
+  // today, so today runCost === cost). The gate, the block reason and the
+  // panel's button all quote THIS, so a future visible multi-output default
+  // cannot wave a client into a dialog whose Start run the server refuses.
+  const runBatchSize = defaultRunBatchSize({ key: agent.key, name: agent.name });
+  const runCost = cost * runBatchSize;
   const creditBlockReasons: Record<string, string> =
-    spendable !== undefined && spendable < cost
-      ? { [agent.id]: creditBlockReason(credits, cost, now) }
+    spendable !== undefined && spendable < runCost
+      ? { [agent.id]: creditBlockReason(credits, runCost, now) }
       : {};
 
   // Ruling 7: the inline pane rides the setup state, keyed by agent. Staff get
@@ -526,7 +536,7 @@ export default async function ClientAgentDetailPage({
   const legacyGate = evaluateLegacyRunGate({
     serviceConfigured: agentServiceConfigured,
     setup,
-    cost,
+    cost: runCost,
     ...(spendable !== undefined ? { availableCredits: spendable } : {}),
     creditBlockReason: creditBlockReasons[agent.id] ?? null,
   });
@@ -662,6 +672,79 @@ export default async function ClientAgentDetailPage({
       : []),
   ];
 
+  // The SAME condition the hero chain resolves to LegacyAgentPanel below —
+  // the shape whose pace-and-price summary now rides the status strip's aside
+  // slot instead of floating mid-column. Bound once so the strip's card and
+  // the panel cannot disagree about which shape this page is showing.
+  const legacyShape = !row && (schedule?.status === "active" || hasDelivered);
+
+  // Where "everything this agent has made" actually lives for THIS viewer.
+  // The old link sent both readers to /clients/<id>/assets, which redirects a
+  // CLIENT_USER to /tasks — the Workspace board, not the archive tab they were
+  // promised. clientArchiveLink is the four-call-site answer to exactly this.
+  const archive = clientArchiveLink({ clientId: id, isStaff });
+
+  // ── Which platform this agent's page is ABOUT, for the connectors card ──
+  // An intake-driven agent (X/LinkedIn/Reddit) drafts for one platform, and
+  // its sidebar listing Google Analytics beside "Connected accounts" answered
+  // a question nobody on this page asked. Scoped to the agent's own family;
+  // an agent with no family (the generic/legacy shapes) keeps the full list,
+  // exactly as before. Display-only: connectedPlatformNames above still
+  // carries every platform, because publish targets are not page-scoped.
+  const family = intakeFamilyFor(agent.key);
+  const FAMILY_PLATFORMS: Record<NonNullable<typeof family>, string[]> = {
+    x: ["twitter"],
+    linkedin: ["linkedin", "linkedin_community"],
+    reddit: ["reddit"],
+    // The newsletter and the blog have NO platform connection, and an empty
+    // list is the honest answer rather than an omission. Neither product holds
+    // a credential: an issue is sent from the client's own email platform and
+    // an article is published on their own CMS, both by them. So the connectors
+    // card shows none — which is different from the generic/legacy shapes
+    // below, where a null family deliberately keeps the FULL list.
+    newsletter: [],
+    blog: [],
+  };
+  const familyPlatforms = family ? FAMILY_PLATFORMS[family] : null;
+  const scopedConnections = familyPlatforms
+    ? connections.filter((connection) => familyPlatforms.includes(connection.platform))
+    : connections;
+
+  // The row's display title, by VIEWER (F132: label rows by what was
+  // produced, never by what was typed — the typed brief stays staff-facing).
+  // Staff rows show `meta.runLabel` (what the run was asked to do) beside the
+  // base title; a client's batch rows, which were N identical copies of the
+  // agent's name, get the family's produced-work noun — the client component
+  // dates it with the row's own delivery stamp, in the VIEWER's timezone,
+  // because a server-formatted day can sit one day off beside the client-side
+  // relative stamp on the same row.
+  const FAMILY_BATCH_NOUN: Record<NonNullable<typeof family>, string> = {
+    x: "X draft batch",
+    linkedin: "LinkedIn draft batch",
+    reddit: "Reddit reply draft",
+    // SINGULAR for both, and not for tidiness: one run of either product
+    // prepares exactly ONE thing. "Batch" would tell a client their week
+    // arrived in a lump, which is the A3/A4 rule the other three nouns are
+    // carefully worded around.
+    newsletter: "Newsletter issue",
+    blog: "Blog article",
+  };
+  const rowTitleFields = (
+    asset: (typeof archiveRows)[number],
+  ): { title: string } | { fallbackNoun: string } => {
+    const stored = (asset.title ?? "").trim();
+    const generic =
+      !stored ||
+      stored === agent.name ||
+      (umbrella?.displayName ? stored === umbrella.displayName : false);
+    const runLabel = asset.meta?.runLabel;
+    if (isStaff && typeof runLabel === "string" && runLabel.trim()) {
+      return { title: `${stored || agent.name} · ${runLabel.trim()}` };
+    }
+    if (!generic || !family) return { title: stored || agent.name };
+    return { fallbackNoun: FAMILY_BATCH_NOUN[family] };
+  };
+
   return (
     <>
       {/* AF-9: `running` already is "a run this viewer started is in flight", so
@@ -732,6 +815,20 @@ export default async function ClientAgentDetailPage({
             running={running}
             facts={statusFacts}
             {...(isStaff && status.staffNote ? { staffNote: status.staffNote } : {})}
+            {...(legacyShape
+              ? {
+                  aside: (
+                    <SchedulePaceCard
+                      clientId={id}
+                      agent={summary}
+                      cost={spendable !== undefined ? cost : null}
+                      schedule={schedule}
+                      viewerIsClient={viewerIsClient}
+                      {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+                    />
+                  ),
+                }
+              : {})}
           />
 
           {/* ── THE ARCHETYPE HERO (CD-I1) ──
@@ -816,17 +913,16 @@ export default async function ClientAgentDetailPage({
             <LegacyAgentPanel
               clientId={id}
               agent={summary}
-              cost={spendable !== undefined ? cost : null}
+              cost={spendable !== undefined ? runCost : null}
+              batchSize={runBatchSize}
               gate={legacyGate}
               // The banner above already made the outage statement; the gate's
               // own paragraph would repeat it 150px lower in different words.
               outageAnnounced={!agentServiceConfigured}
-              schedule={schedule}
               {...(setup ? { setup } : {})}
               contextItems={contextItems}
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
-              {...(spendable !== undefined ? { availableCredits: spendable } : {})}
               activeRun={
                 legacyRun
                   ? {
@@ -929,34 +1025,34 @@ export default async function ClientAgentDetailPage({
                   : "Nothing else yet. Everything this agent has made is above."}
               </p>
             ) : (
-              <ul className="space-y-1.5">
-                {archiveRows.map((asset) => (
-                  <li
-                    key={asset.id}
-                    className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-xs text-foreground">
-                      {asset.title || "Untitled"}
-                    </span>
-                    {asset.templateName && <Badge tone="neutral">{asset.templateName}</Badge>}
-                    {/* The set above is already delivered-work-only for a
-                        client; the STAMP has to match. `createdAt` is the
-                        generation instant a whole batch shares, so eight rows
-                        under "What it has made for you" all read "3 hours ago"
-                        - the same batch tell the asset filter three screens up
-                        was added to close. Staff keep the generation time. */}
-                    <span className="shrink-0 text-[11px] text-muted-2">
-                      {relativeTime(deliverableStamp(asset, viewerIsClient))}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              /* Each row now carries its own way in — a neon-outline
+                 View-output control, opening the same detail modal the archive uses (the
+                 per-draft reader for agent batches). The rows used to be inert:
+                 title, stamp, and one small text link under the list, so
+                 reaching a specific deliverable meant leaving the page and
+                 finding it again in the Workspace.
+
+                 The STAMP is computed here, not in the component: the set is
+                 already delivered-work-only for a client, and the stamp has to
+                 match. `createdAt` is the generation instant a whole batch
+                 shares, so eight rows under "What it has made for you" would
+                 all read "3 hours ago" - the same batch tell the asset filter
+                 three screens up was added to close. Staff keep the
+                 generation time. */
+              <AgentArchiveRows
+                rows={archiveRows.map((asset) => ({
+                  asset,
+                  at: deliverableStamp(asset, viewerIsClient),
+                  ...rowTitleFields(asset),
+                }))}
+                viewerIsClient={viewerIsClient}
+              />
             )}
             <Link
-              href={`/clients/${id}/assets`}
+              href={archive.href}
               className="mt-2 inline-flex items-center gap-1 text-xs text-neon hover:underline"
             >
-              Open your Workspace <Icon name="ArrowRight" className="h-3 w-3" />
+              Open {archive.label} <Icon name="ArrowRight" className="h-3 w-3" />
             </Link>
           </section>
         </div>
@@ -1034,13 +1130,15 @@ export default async function ClientAgentDetailPage({
               than growing a second place to change them. */}
           <section>
             <SectionHeading title="Connected accounts" />
-            {connections.length === 0 ? (
+            {scopedConnections.length === 0 ? (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
-                No accounts connected yet. Posts are delivered to your Workspace for you to publish.
+                {familyPlatforms
+                  ? `No ${platformLabel(familyPlatforms[0])} account connected yet. Posts are delivered to your Workspace for you to publish.`
+                  : "No accounts connected yet. Posts are delivered to your Workspace for you to publish."}
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {connections.map((connection) => (
+                {scopedConnections.map((connection) => (
                   <li
                     key={connection.id}
                     className="flex items-center justify-between gap-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"

@@ -25,7 +25,7 @@ export function BrandFavicon({
   src,
   website,
   name,
-  accentColor = "#2dff9e",
+  accentColor = "#ff6b2c",
   faviconSize = 32,
   className,
   imgClassName,

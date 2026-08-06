@@ -183,13 +183,16 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
     // own surface fires setup on the client's behalf. So the grant stays and the
     // LISTING goes — the two were never the same question, and the enable script
     // grants all three on purpose.
-    const script = readFileSync(
-      join(process.cwd(), "scripts/enable-linkedin-v2-prep.ts"),
-      "utf8",
-    );
+    // enable-linkedin-v2-prep.ts became enable-v2-agents-prep.ts when the third
+    // and fourth families needed the identical three writes. The claim is
+    // unchanged and so is what proves it: the script that grants must name all
+    // three keys, steps included.
+    const script = readFileSync(join(process.cwd(), "scripts/enable-v2-agents-prep.ts"), "utf8");
     for (const key of [SETUP, WRITER, MANAGER]) {
       expect(script, `${key} is not granted by the enable script`).toContain(key);
     }
+    // And it still grants what it enables — the whole point of the assertion.
+    expect(script).toContain("customAgentIds: [...granted, ...missing]");
   });
 });
 

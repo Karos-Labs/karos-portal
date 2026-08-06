@@ -37,6 +37,7 @@ vi.mock("@ai-sdk/anthropic", () => ({
 }));
 vi.mock("@/services/logger", () => ({
   logger: { logUsage: vi.fn(), logGenerationFailure: vi.fn() },
+  readWebSearchCount: () => 0,
 }));
 
 import { generateText } from "ai";

@@ -31,7 +31,9 @@ import type { LegacyRunGateResult } from "@/lib/client-agent-runs";
  * the standard priced custom-agent run - the same dialog, launch profile and
  * charge path the generic card uses, not a second implementation. "Adjust pace"
  * is the same paceOnly schedule modal the live card uses, and it is offered
- * because the schedule is exactly what this shape DOES have.
+ * because the schedule is exactly what this shape DOES have - it lives in
+ * SchedulePaceCard below, which the page seats in the status strip's aside
+ * slot rather than in this panel's own column.
  *
  * IT ALSO GETS THE RUN BACK (F31). Pressing "Create a new post" here used to
  * produce no visible change whatsoever: the panel showed no run row and no
@@ -58,23 +60,33 @@ export function LegacyAgentPanel({
   clientId,
   agent,
   cost,
+  batchSize = 1,
   gate,
-  schedule,
   setup,
   contextItems,
   viewerIsClient,
   viewer,
-  availableCredits,
   activeRun,
   outageAnnounced,
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
-  /** Null for staff - quoting them a price they never pay would be a lie. */
+  /**
+   * The price of ONE PRESS — the base × defaultRunBatchSize (which is 1 for
+   * every agent today, so today this IS the per-run base). Null for staff -
+   * quoting them a price they never pay would be a lie.
+   */
   cost: number | null;
+  /**
+   * defaultRunBatchSize: the fresh dialog's VISIBLE batch default. Above 1
+   * the copy stops calling the run "one post" and prices the batch — kept so
+   * a future visible multi-output default cannot put a single-post sentence
+   * over a multi-output charge. 1 today for every agent, which renders the
+   * original single-post copy byte for byte.
+   */
+  batchSize?: number;
   /** Server-evaluated, already resolved to a paintable reason (F25/F131). */
   gate: LegacyRunGateResult;
-  schedule: ClientAgentScheduleRow | null;
   /**
    * This agent's run that has not landed yet (F31). Resolved server-side from
    * the client's own jobs, and deliberately just an id and a phase - the strip
@@ -96,10 +108,8 @@ export function LegacyAgentPanel({
   contextItems: ContextItem[];
   viewerIsClient: boolean;
   viewer?: { name: string; email: string };
-  availableCredits?: number;
 }) {
   const [running, setRunning] = useState(false);
-  const [scheduling, setScheduling] = useState(false);
 
   return (
     <div className="space-y-6">
@@ -132,11 +142,17 @@ export function LegacyAgentPanel({
               the row wraps the BUTTON to its own line instead, which is what
               flex-wrap is on this container for. */}
           <div className="min-w-0 basis-56 grow">
-            <p className="text-sm text-foreground">Create a new post</p>
+            <p className="text-sm text-foreground">
+              {batchSize > 1 ? "Create new drafts" : "Create a new post"}
+            </p>
             <p className="mt-0.5 text-xs text-muted-2">
               {gate.allowed
-                ? "Makes one post now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace."
-                : "Making a post now is not available yet."}
+                ? batchSize > 1
+                  ? `Drafts a batch of ${batchSize} posts for you to pick from. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace.`
+                  : "Makes one post now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace."
+                : batchSize > 1
+                  ? "Drafting a batch now is not available yet."
+                  : "Making a post now is not available yet."}
             </p>
           </div>
           <Button
@@ -145,7 +161,13 @@ export function LegacyAgentPanel({
             onClick={() => setRunning(true)}
           >
             <Icon name="Sparkles" className="h-4 w-4" />
-            {cost != null ? `Create new post · ${cost} credits` : "Create new post"}
+            {batchSize > 1
+              ? cost != null
+                ? `Create new drafts · ${cost} credits`
+                : "Create new drafts"
+              : cost != null
+                ? `Create new post · ${cost} credits`
+                : "Create new post"}
           </Button>
         </div>
         {!gate.allowed && gate.reason && !(outageAnnounced && gate.code === "service_down") && (
@@ -165,29 +187,6 @@ export function LegacyAgentPanel({
         )}
       </section>
 
-      <section>
-        <div className="mb-2.5">
-          <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-            How often it posts
-          </h2>
-          <p className="mt-1 text-xs text-muted-2">
-            {schedule
-              ? "This agent is already posting for you on a schedule. Change how often whenever you like."
-              : "This agent has no schedule yet. Your Karos team sets one up."}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {schedule && (
-            <Button variant="subtle" onClick={() => setScheduling(true)}>
-              <Icon name="SlidersHorizontal" className="h-4 w-4" /> Adjust pace
-            </Button>
-          )}
-          <p className="text-xs text-muted-2">
-            {cost != null ? `${cost} credits per post` : "Staff runs are free"}
-          </p>
-        </div>
-      </section>
-
       {running && (
         <RunCustomAgentModal
           agent={agent}
@@ -203,6 +202,63 @@ export function LegacyAgentPanel({
           onClose={() => setRunning(false)}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * The legacy shape's pace-and-price summary, seated in the status strip's
+ * aside slot by the agent detail page (the strip's `aside` prop).
+ *
+ * It replaces the "How often it posts" section this panel used to render
+ * mid-column — an unstyled heading, a sentence and a floating credits line,
+ * living two screens away from the status banner that answers the same
+ * question ("how does this agent run?"). The copy is unchanged; only where it
+ * sits and how it is framed moved. "Adjust pace" keeps the same paceOnly
+ * schedule modal — clients get how many posts a week, never how they are
+ * batched (D3 / A3-A4).
+ */
+export function SchedulePaceCard({
+  clientId,
+  agent,
+  cost,
+  schedule,
+  viewerIsClient,
+  availableCredits,
+}: {
+  clientId: string;
+  agent: RunnableAgentSummary;
+  /** Null for staff - quoting them a price they never pay would be a lie. */
+  cost: number | null;
+  schedule: ClientAgentScheduleRow | null;
+  viewerIsClient: boolean;
+  availableCredits?: number;
+}) {
+  const [scheduling, setScheduling] = useState(false);
+  return (
+    // Opaque bg-surface, not /70: the card sits on the strip's TINTED
+    // backgrounds, and in light mode a translucent fill dragged muted-2's
+    // 12px copy just under the 4.5:1 floor QA F119 re-established for it
+    // (~4.46:1). Opaque surface keeps the documented ~4.7:1.
+    <div className="rounded-md border border-border/70 bg-surface px-3 py-2.5">
+      <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+        How often it posts
+      </h2>
+      <p className="mt-1 text-xs text-muted-2">
+        {schedule
+          ? "This agent is already posting for you on a schedule. Change how often whenever you like."
+          : "This agent has no schedule yet. Your Karos team sets one up."}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {schedule && (
+          <Button size="sm" variant="subtle" onClick={() => setScheduling(true)}>
+            <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" /> Adjust pace
+          </Button>
+        )}
+        <p className="text-xs text-muted-2">
+          {cost != null ? `${cost} credits per post` : "Staff runs are free"}
+        </p>
+      </div>
       {scheduling && schedule && (
         <AgentScheduleModal
           agent={agent}

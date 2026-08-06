@@ -319,11 +319,26 @@ export async function buildSimulationPersonas(
   artifact: SimulationArtifact,
   ctx: SimulationContext,
 ): Promise<SyntheticPersona[]> {
-  const { object } = await generateObject({
-    model: anthropic(MODELS.HAIKU),
-    schema: personaPlanSchema,
-    prompt: buildPersonaPlannerPrompt(artifact, ctx),
-  });
+  const usageMeta = {
+    clientId: ctx.clientId, agentId: null, agentName: "Simulation: persona planner",
+    modelName: MODELS.HAIKU, operation: "audience_simulation",
+  };
+  let object: z.infer<typeof personaPlanSchema>;
+  try {
+    const result = await generateObject({
+      model: anthropic(MODELS.HAIKU),
+      schema: personaPlanSchema,
+      prompt: buildPersonaPlannerPrompt(artifact, ctx),
+    });
+    object = result.object;
+    logger.logUsage({
+      ...usageMeta,
+      inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0,
+    });
+  } catch (err) {
+    logger.logGenerationFailure(usageMeta, err);
+    throw err;
+  }
   return object.personas.map((p, i) => ({
     id: normalizePersonaId(p.id, p.name, i),
     name: p.name.trim(),

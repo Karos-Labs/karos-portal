@@ -291,7 +291,7 @@ function DraftCard({
               </p>
             </>
           )}
-          {error ? <p className="text-xs text-red-400">{error}</p> : null}
+          {error ? <p className="text-xs text-danger">{error}</p> : null}
         </div>
       ) : sent !== "not_posted" ? (
         <div className="mt-3 flex items-center gap-3">

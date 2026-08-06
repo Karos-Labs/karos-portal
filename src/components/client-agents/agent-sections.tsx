@@ -50,6 +50,7 @@ export function AgentStatusStrip({
   running,
   facts,
   staffNote,
+  aside,
 }: {
   /** From `rosterStatus` - never re-derived. The real union, so a tone typo
       is a type error rather than a silent fall-through to idle grey. */
@@ -71,6 +72,15 @@ export function AgentStatusStrip({
    */
   running: boolean;
   facts: AgentSetupFact[];
+  /**
+   * An optional secondary card the page seats INSIDE the strip, on the right —
+   * the legacy shape's pace-and-price summary (schedule state, credits per
+   * post). It used to float mid-column as its own unstyled section; status,
+   * pace and price are all "how this agent runs" facts, so they share the
+   * banner. A ReactNode rather than data because what goes here is the page's
+   * call — this strip stays a dumb frame and re-derives nothing.
+   */
+  aside?: React.ReactNode;
 }) {
   const live = status.tone === "live";
   const tone =
@@ -100,36 +110,45 @@ export function AgentStatusStrip({
 
   return (
     <section className={`animate-fade-up rounded-[var(--radius)] border px-4 py-3 ${tone}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span
-          className={`h-2 w-2 rounded-full ${dot} ${live ? "animate-pulse-ring" : ""}`}
-          aria-hidden="true"
-        />
-        <span className={`font-mono text-[11px] uppercase tracking-[0.12em] ${text}`}>
-          {/* "working now" rides `running` alone: a legacy agent can have a run
-              in flight while its status reads "Not set up yet", and a spinner
-              beside a label that denies any work is a contradiction. */}
-          {running ? `${status.label} · working now` : status.label}
-        </span>
-        {running && (
-          <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-2">
-            <Icon name="LoaderCircle" className="h-3 w-3 animate-spin-slow" aria-hidden="true" />
-            This takes 10–20 minutes
-          </span>
-        )}
+      {/* Same wrap idiom as the "Create a new post" band (basis + grow, no
+          viewport breakpoints — CD-H7a): the status block keeps a readable
+          preferred width, the aside card sits to its right, and in a narrow
+          column the CARD wraps to its own full row instead of squeezing. */}
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+        <div className="min-w-0 basis-72 grow-[3]">
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`h-2 w-2 rounded-full ${dot} ${live ? "animate-pulse-ring" : ""}`}
+              aria-hidden="true"
+            />
+            <span className={`font-mono text-[11px] uppercase tracking-[0.12em] ${text}`}>
+              {/* "working now" rides `running` alone: a legacy agent can have a run
+                  in flight while its status reads "Not set up yet", and a spinner
+                  beside a label that denies any work is a contradiction. */}
+              {running ? `${status.label} · working now` : status.label}
+            </span>
+            {running && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-2">
+                <Icon name="LoaderCircle" className="h-3 w-3 animate-spin-slow" aria-hidden="true" />
+                This takes 10–20 minutes
+              </span>
+            )}
+          </div>
+          {facts.length > 0 && (
+            <dl className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+              {facts.map((fact) => (
+                <div key={fact.label} className="flex items-center gap-1.5">
+                  <dt className="text-[11px] text-muted-2">{fact.label}</dt>
+                  <dd className="text-[11px] text-foreground">
+                    {fact.at !== undefined ? relativeTime(fact.at) : fact.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
+        {aside && <div className="min-w-0 basis-56 grow">{aside}</div>}
       </div>
-      {facts.length > 0 && (
-        <dl className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-          {facts.map((fact) => (
-            <div key={fact.label} className="flex items-center gap-1.5">
-              <dt className="text-[11px] text-muted-2">{fact.label}</dt>
-              <dd className="text-[11px] text-foreground">
-                {fact.at !== undefined ? relativeTime(fact.at) : fact.value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      )}
       {/* The operational truth beside the client-facing word (AF-5). It sits
           UNDER the strip's own line rather than replacing it: the badge is what
           the client sees and staff need to know that, so the fix is a second
