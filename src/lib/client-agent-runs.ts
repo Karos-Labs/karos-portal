@@ -70,7 +70,25 @@ export type TemplateRunBlockCode =
   | UmbrellaRunBlockCode
   | "template_paused"
   | "setup_missing"
+  | "stand_up_required"
   | "credits_short";
+
+/**
+ * Why a stood-down agent cannot be run, in the client's words — shared by BOTH
+ * ladders so they cannot drift, exactly as the intake refusal is.
+ *
+ * LINKEDIN-ONLY BY CONSTRUCTION, and the sentence says LinkedIn out loud. The
+ * flag it fires on (`standUpDone`) is family-agnostic, but only LinkedIn v2 has a
+ * stand-up run and only its resolver can answer `false`; every other family is
+ * hardcoded true. If a second family ever grows one, this string has to move onto
+ * the setup state beside `clientLabel` rather than be generalised into something
+ * that names no platform and therefore tells the reader nothing.
+ *
+ * Deliberately NOT phrased as missing answers. The client's form is saved — this
+ * is a run nobody has fired, and blaming them for it is the wrong instruction.
+ */
+const STAND_UP_REQUIRED_REASON =
+  "This agent has not been set up for you yet. One run works out how you post on LinkedIn — the kinds of post, how it sounds, and the first subjects — and nothing posts.";
 
 export interface TemplateRunGateInput {
   launchState: ClientAgentLaunchState;
@@ -79,9 +97,12 @@ export interface TemplateRunGateInput {
   /**
    * This agent's intake, when it has one (X / LinkedIn). Same shape and same
    * resolved value evaluateLegacyRunGate takes — see the rung below for why a
-   * live umbrella still needs it.
+   * live umbrella still needs it — INCLUDING `standUpDone`, which both gates read
+   * for the same reason: the field is already present at every call site (both
+   * hand over a whole AgentSetupState), so declaring it here is what stops it
+   * being silently dropped by one of the two ladders.
    */
-  setup?: { ready: boolean; clientLabel: string; href: string } | null;
+  setup?: { ready: boolean; standUpDone?: boolean; clientLabel: string; href: string } | null;
   /**
    * What one run of this agent costs. Per-agent flat price (Q6): templates
    * inherit the agent's `creditCost`, there is no per-template pricing.
@@ -146,6 +167,21 @@ export function evaluateTemplateRunGate(input: TemplateRunGateInput): TemplateRu
       // refusal on the same agent, and a client who meets one on the roster and
       // the other on the detail page must not read two different explanations.
       reason: `${input.setup.clientLabel} are missing — this agent needs them before it can make a post.`,
+    };
+  }
+
+  // The stand-up rung, in the same ladder position and with the same words as the
+  // legacy gate's — for the same reason the intake rung above is shared. The
+  // umbrella path is the LESS reachable of the two (a live umbrella implies a
+  // delivered launch run, which the cores refuse before the foundation row
+  // exists), but "less reachable" is how the intake rung came to be missing from
+  // this gate in the first place, and the comment above already records what that
+  // cost on one screen.
+  if (input.setup && input.setup.standUpDone === false) {
+    return {
+      allowed: false,
+      code: "stand_up_required",
+      reason: STAND_UP_REQUIRED_REASON,
     };
   }
 
@@ -291,7 +327,11 @@ export function visibleTemplates(agent: Pick<ClientAgent, "templates">): ClientA
 
 /* ───────────── the legacy (no-umbrella, live-schedule) run gate ──────────── */
 
-export type LegacyRunBlockCode = "service_down" | "setup_missing" | "credits_short";
+export type LegacyRunBlockCode =
+  | "service_down"
+  | "setup_missing"
+  | "stand_up_required"
+  | "credits_short";
 
 export interface LegacyRunGateResult {
   allowed: boolean;
@@ -319,8 +359,16 @@ export interface LegacyRunGateResult {
  */
 export function evaluateLegacyRunGate(input: {
   serviceConfigured: boolean;
-  /** This agent's intake, when it has one. */
-  setup?: { ready: boolean; clientLabel: string; href: string } | null;
+  /**
+   * This agent's intake, when it has one.
+   *
+   * `standUpDone` is the SECOND readiness question (see AgentSetupState): the
+   * form being saved is not the same as the agent having been stood up, and only
+   * LinkedIn v2 has the distinction. Optional so a caller predating the field
+   * behaves exactly as before — absent is treated as done, which is the
+   * pre-existing behaviour rather than a new refusal.
+   */
+  setup?: { ready: boolean; standUpDone?: boolean; clientLabel: string; href: string } | null;
   cost: number;
   /** Undefined ⇒ the actor is not billable (staff): credits cannot block them. */
   availableCredits?: number;
@@ -342,6 +390,23 @@ export function evaluateLegacyRunGate(input: {
       reason: `${input.setup.clientLabel} are missing — this agent needs them before it can make a post.`,
       href: input.setup.href,
       hrefLabel: input.setup.clientLabel,
+    };
+  }
+  // The stand-up rung, above credits for the same reason intake is: do not sell a
+  // run that cannot happen. `hasLinkedInV2Setup` was owned only by the two submit
+  // cores, so this gate answered "yes" to a press they refuse — and the refusal
+  // costs nothing but still reads as broken (a brief, a press, a wait, a no).
+  //
+  // The destination is the intake page, where the working "Set it up" button
+  // already lives and is client-reachable, rather than a second press invented
+  // here.
+  if (input.setup && input.setup.standUpDone === false) {
+    return {
+      allowed: false,
+      code: "stand_up_required",
+      reason: STAND_UP_REQUIRED_REASON,
+      href: input.setup.href,
+      hrefLabel: "Set it up",
     };
   }
   if (input.availableCredits !== undefined && input.availableCredits < input.cost) {

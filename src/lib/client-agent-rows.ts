@@ -4,7 +4,12 @@ import { getAsset, listClientSeats, listPlannedScheduledRuns } from "@/lib/data"
 import { matchAccountTitleToSeat } from "@/lib/client-seats";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
-import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
+import {
+  hasLinkedInAgentIntake,
+  hasLinkedInV2Setup,
+  isLinkedInSetupV2,
+  isLinkedInV2Agent,
+} from "@/lib/agent-service/linkedin-agent-context";
 import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
 import {
   hasNewsletterAgentIntake,
@@ -310,23 +315,41 @@ export async function buildAgentSetup(
         const href = `/clients/${clientId}/x-agent`;
         const label = "X agent data";
         const clientLabel = "Your X details";
+        // No stand-up run exists for X — it drafts from its form directly.
         return [
           agent.id,
           panes?.x
-            ? { ready, href, label, clientLabel, kind: "x", data: panes.x }
-            : { ready, href, label, clientLabel },
+            ? { ready, standUpDone: true, href, label, clientLabel, kind: "x", data: panes.x }
+            : { ready, standUpDone: true, href, label, clientLabel },
         ];
       }
       if (isLinkedInAgentIdentity(agent.key)) {
-        const ready = await hasLinkedInAgentIntake(clientId, agent.key);
+        // TWO questions, not one. `ready` is "is the form saved"; `standUpDone` is
+        // "has the one-time stand-up run happened". Both submit cores refuse a v2
+        // writer run on the second (submit-custom.ts's hasLinkedInV2Setup rung),
+        // so a surface that knows only the first offers a press the server turns
+        // away — the F131 shape this whole object exists to prevent.
+        //
+        // Keyed to the V2 predicate, matching the core: the e10 generation has no
+        // stand-up run, so requiring one of them would block runs the server
+        // would accept.
+        const [ready, standUpDone] = await Promise.all([
+          hasLinkedInAgentIntake(clientId, agent.key),
+          // The SETUP skill is exempt — it is the run that creates the foundation
+          // row, so demanding one of it would refuse the only run that can ever
+          // satisfy the rung. Both cores carry the same exemption.
+          isLinkedInV2Agent(agent.key) && !isLinkedInSetupV2(agent.key)
+            ? hasLinkedInV2Setup(clientId)
+            : Promise.resolve(true),
+        ]);
         const href = `/clients/${clientId}/linkedin-agent`;
         const label = "LinkedIn agent data";
         const clientLabel = "Your LinkedIn details";
         return [
           agent.id,
           panes?.linkedin
-            ? { ready, href, label, clientLabel, kind: "linkedin", data: panes.linkedin }
-            : { ready, href, label, clientLabel },
+            ? { ready, standUpDone, href, label, clientLabel, kind: "linkedin", data: panes.linkedin }
+            : { ready, standUpDone, href, label, clientLabel },
         ];
       }
       if (isRedditAgentIdentity(agent.key)) {
@@ -337,11 +360,12 @@ export async function buildAgentSetup(
         const href = `/clients/${clientId}/reddit-agent`;
         const label = "Reddit agent data";
         const clientLabel = "Your Reddit details";
+        // No stand-up run exists for Reddit either.
         return [
           agent.id,
           panes?.reddit
-            ? { ready, href, label, clientLabel, kind: "reddit", data: panes.reddit }
-            : { ready, href, label, clientLabel },
+            ? { ready, standUpDone: true, href, label, clientLabel, kind: "reddit", data: panes.reddit }
+            : { ready, standUpDone: true, href, label, clientLabel },
         ];
       }
       if (isNewsletterAgentIdentity(agent.key)) {
@@ -363,16 +387,24 @@ export async function buildAgentSetup(
         const clientLabel = "Your newsletter details";
         return [
           agent.id,
+          // `standUpDone: true` even though this family HAS a stand-up run, and
+          // that is not a lie — it is what the field means. It marks an
+          // OUTSTANDING stand-up step for the run gate to refuse on, and here
+          // there can never be one: `ready` above already folds `isSetUp` in, so
+          // the intake rung has refused first. Reporting the raw flag instead
+          // would fire the stand-up rung a second time, in LinkedIn's words, at a
+          // newsletter client. See the field's doc on AgentSetupState.
           panes?.newsletter
             ? {
                 ready: hasIntake && isSetUp,
+                standUpDone: true,
                 href,
                 label,
                 clientLabel,
                 kind: "newsletter",
                 data: panes.newsletter,
               }
-            : { ready: hasIntake && isSetUp, href, label, clientLabel },
+            : { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel },
         ];
       }
       if (isBlogAgentIdentity(agent.key)) {
@@ -389,9 +421,11 @@ export async function buildAgentSetup(
         const clientLabel = "Your blog details";
         return [
           agent.id,
+          // Same as the newsletter above: `ready` already folds `isSetUp` in, so
+          // there is no outstanding stand-up step for the second rung to find.
           panes?.blog
-            ? { ready: hasIntake && isSetUp, href, label, clientLabel, kind: "blog", data: panes.blog }
-            : { ready: hasIntake && isSetUp, href, label, clientLabel },
+            ? { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel, kind: "blog", data: panes.blog }
+            : { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel },
         ];
       }
       return null;

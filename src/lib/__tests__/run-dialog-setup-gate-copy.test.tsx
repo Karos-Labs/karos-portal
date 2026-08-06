@@ -77,6 +77,7 @@ const AGENTS = [
     agent: { id: "a-x", key: "karos-x-agent", name: "X Agent" },
     setup: {
       ready: false,
+      standUpDone: true,
       href: "/clients/c1/x-agent",
       label: "X agent data",
       clientLabel: "Your X details",
@@ -86,6 +87,7 @@ const AGENTS = [
     agent: { id: "a-li", key: "karos-linkedin-agent", name: "LinkedIn Agent" },
     setup: {
       ready: false,
+      standUpDone: true,
       href: "/clients/c1/linkedin-agent",
       label: "LinkedIn agent data",
       clientLabel: "Your LinkedIn details",
@@ -95,6 +97,7 @@ const AGENTS = [
     agent: { id: "a-rd", key: "karos-reddit-agent", name: "Reddit Agent" },
     setup: {
       ready: false,
+      standUpDone: true,
       href: "/clients/c1/reddit-agent",
       label: "Reddit agent data",
       clientLabel: "Your Reddit details",

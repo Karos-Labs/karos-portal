@@ -229,7 +229,21 @@ export interface AgentInputsView {
    * carry the operator vocabulary the route and the staff run dialog use.
    */
   label: string;
-  /** True when the submit core would accept a run on what is stored. */
+  /**
+   * True when this agent's INTAKE DOCUMENTS are saved — the question this band
+   * asks and the only one it can answer, since every row it paints is a document.
+   *
+   * NOT "the submit core would accept a run", which is what this said until the
+   * stand-up rung arrived. LinkedIn v2 also needs a one-time setup RUN
+   * (`AgentSetupState.standUpDone`), so a client can be `ready: true` here and
+   * still be refused by both cores — which is why the badge above says "Ready to
+   * run" on a page whose run control is correctly disabled.
+   *
+   * That gap is deliberate for now rather than papered over: the honest third
+   * state is "Needs setup" with its own destination, and reusing this band's
+   * "Needs your answers" would blame the client for a run nobody has offered them.
+   * Threading `standUpDone` in here is a follow-up awaiting that copy decision.
+   */
   ready: boolean;
   rows: AgentInputRow[];
 }
