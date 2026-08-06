@@ -2250,6 +2250,14 @@ const NOT_TEXT: readonly string[] = [
   "logActivity.type", // drives the timeline's icon/label config, never printed raw
   "logActivity.metadata.runType", // metadata is dropped at the RSC boundary entirely
   "logActivity.metadata.taskType",
+  // Same non-client-facing metadata bucket as taskType/runType above. Only
+  // newly visible to this walk because submitDynamicAgentJob's call site
+  // (submit-custom.ts) spells it `agentKey: \`dynamic:${spec.id}\`` — a
+  // template literal with a literal "dynamic:" fragment — where the
+  // pre-existing hardcoded-agent call site spells the same field as a bare
+  // identifier (`agentKey: agent.key`) with no literal text for the walk to
+  // find; the field itself is not new.
+  "logActivity.metadata.agentKey",
   "logFeedback.agentId",
   "logFeedback.creatorRole",
   "logFeedback.scope",

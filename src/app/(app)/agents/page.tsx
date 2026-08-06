@@ -54,6 +54,23 @@ export default async function AgentsPage() {
         )}
       </Card>
 
+      {user.role === "KAROS_ADMIN" ? (
+        <Card>
+          <CardTitle className="mb-1">Agent Studio</CardTitle>
+          <p className="mb-3 text-xs text-muted">
+            Build spec-driven agents visually — no deploy required. Runs on the generic execution engine, side by
+            side with the agents above.
+          </p>
+          <Link
+            href="/admin/agents/builder"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs text-foreground transition-colors hover:border-border-strong hover:bg-surface-3"
+          >
+            <Icon name="Sparkles" className="h-3 w-3 text-muted" />
+            Open Agent Studio
+          </Link>
+        </Card>
+      ) : null}
+
       <CustomAgentsHub
         agents={customAgents}
         // The lab slug rides along so the hub can tell which agents may run for

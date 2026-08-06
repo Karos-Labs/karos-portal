@@ -9,6 +9,7 @@ import {
   getClient,
   getContextItem,
   getCustomAgent,
+  getDynamicAgentSpec,
   listJobs,
   updateJob,
 } from "@/lib/data";
@@ -78,7 +79,15 @@ import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { logActivity } from "@/lib/actions/_shared";
 import { customRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
-import type { AppUser, Client, CreditOperation, CustomAgent, JobRunType } from "@/lib/types";
+import type {
+  AppUser,
+  Client,
+  CreditOperation,
+  CustomAgent,
+  DynamicAgentInputValue,
+  DynamicAgentJobPayload,
+  JobRunType,
+} from "@/lib/types";
 
 /**
  * Shared core for firing a repo-imported custom agent. Called by BOTH the web
@@ -686,6 +695,227 @@ export async function submitCustomAgentJob(
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: { jobId, taskType: "custom", agentKey: agent.key },
+  });
+  return { jobId };
+}
+
+/* ─────────────────── Dynamic Agent Studio submission (Phase 6) ───────────────────
+ *
+ * A SEPARATE, smaller submission core from submitCustomAgentJob above —
+ * deliberately not folded into it. A dynamic agent has no repo skill, no
+ * X/LinkedIn/Reddit intake wiring, and no launch-vs-run split; forcing it
+ * through the same function would mean threading a `specSnapshot` branch
+ * through every one of those unrelated concerns. Both cores still end at the
+ * SAME `submitAgentServiceJob` call and the SAME `custom` task type — see
+ * agent-service/runner/src/main.ts's specSnapshot branch, which is the one
+ * place execution actually forks.
+ */
+
+export interface SubmitDynamicAgentInput {
+  specId: string;
+  clientId: string;
+  inputs: Record<string, DynamicAgentInputValue>;
+  runType?: JobRunType;
+}
+
+/**
+ * Every key the client submitted must be declared on the snapshot's
+ * inputSchema, and every required field on the schema must have a non-empty
+ * answer — Phase 6's Portal-side guard, checked against the FROZEN snapshot
+ * that is about to ship, not the live spec (which may have changed since the
+ * client loaded the form).
+ */
+function validateDynamicInputs(
+  inputSchema: DynamicAgentJobPayload["specSnapshot"]["inputSchema"],
+  inputs: Record<string, DynamicAgentInputValue>,
+): string | null {
+  const schemaKeys = new Set(inputSchema.map((f) => f.key));
+  for (const key of Object.keys(inputs)) {
+    if (!schemaKeys.has(key)) return `"${key}" is not a field on this agent.`;
+  }
+  for (const field of inputSchema) {
+    const value = inputs[field.key];
+    const isEmpty = value == null || value === "" || (Array.isArray(value) && value.length === 0);
+    if (field.required && isEmpty) return `"${field.label}" is required.`;
+  }
+  return null;
+}
+
+export async function submitDynamicAgentJob(
+  user: AppUser,
+  input: SubmitDynamicAgentInput,
+): Promise<{ jobId?: string; error?: string }> {
+  if (!isAgentServiceConfigured()) {
+    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
+  }
+
+  const spec = await getDynamicAgentSpec(input.specId);
+  if (!spec || !spec.active) return { error: "Agent not found." };
+  const client = await getClient(input.clientId);
+  if (!client) return { error: "Client not found." };
+
+  // DECISION: per-agent client access control is `allowedClientIds`, enforced
+  // HERE in the job-creation path. Empty/undefined = every client may run it.
+  // Enforced here (job creation), not only in whatever surface links to this
+  // agent — the same "check it where the write happens" rule
+  // isCustomAgentGrantedToClient exists for above.
+  const allowed = spec.allowedClientIds ?? [];
+  if (user.role === "CLIENT_USER" && allowed.length > 0 && !allowed.includes(input.clientId)) {
+    return { error: "Agent not found." };
+  }
+
+  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) {
+    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+  }
+  const origin = appUrl.replace(/\/$/, "");
+
+  // DECISION: specSnapshot is a deep clone taken right here, at job-creation
+  // time — never the live spec at execution time. structuredClone (Node 18+)
+  // is a real deep clone, not a shallow spread, so a later admin edit to
+  // `spec` in Firestore cannot reach back into a job already in flight.
+  const specSnapshot = structuredClone(spec);
+  const specVersion = specSnapshot.version;
+
+  const inputError = validateDynamicInputs(specSnapshot.inputSchema, input.inputs);
+  if (inputError) return { error: inputError };
+
+  // Per-step model routing, expressed in the brief's existing `step_models`
+  // shape (stepId → alias). Built from the SNAPSHOT, so it is frozen with
+  // everything else. Aliases only — a raw model id never leaves the Portal.
+  const dynamicStepModels: Record<string, string> = {};
+  for (const step of specSnapshot.steps) {
+    if (step.type === "ai") dynamicStepModels[step.id] = step.model;
+  }
+
+  const now = Date.now();
+  const jobId = await createJob({
+    clientId: input.clientId,
+    agentId: "agent-service",
+    dynamicAgentSpecId: spec.id,
+    ...(input.runType ? { runType: input.runType } : {}),
+    agentName: spec.name,
+    title: jobTitleForClient(spec.name, client.name),
+    status: "queued",
+    input: { agent: spec.name },
+    assetIds: [],
+    events: [{ at: now, level: "info", message: "Submitted to agent service" }],
+    createdBy: user.uid,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // DECISION: fixed credit price, taken from the SNAPSHOT and charged ONCE at
+  // job creation. Token-based variable pricing is out of scope. A worker-side
+  // retry re-runs the runner without re-entering this path, so a retried run
+  // never re-charges - the same "already paid for" shape resumeCampaignAction
+  // relies on in campaign-run-actions.ts.
+  // Never re-charged on retry/resume — a resumed dynamic-agent run reuses this
+  // same jobId, and chargeClientCredits/refundJobCharge below are keyed off
+  // jobId exactly like submitCustomAgentJob's charge above, so the same
+  // resumable-campaign behavior (resumeCampaignAction never re-dispatches an
+  // already-charged step) applies here with no extra code.
+  if (isBillableClientActor(user)) {
+    try {
+      await chargeClientCredits({
+        clientId: input.clientId,
+        amount: specSnapshot.creditsCost,
+        operation: "custom_agent_run" satisfies CreditOperation,
+        reason: `Agent run · ${spec.name}`.slice(0, 120),
+        agentId: spec.id,
+        jobId,
+        actorUid: user.uid,
+        actorName: user.name,
+      });
+    } catch (e) {
+      await deleteJob(jobId);
+      if (e instanceof CreditError) return { error: e.message };
+      throw e;
+    }
+  }
+
+  const jobToken = mintJobToken({ clientId: input.clientId, jobId });
+
+  const dynamicPayload: DynamicAgentJobPayload = {
+    specId: spec.id,
+    specVersion,
+    specSnapshot,
+    clientId: input.clientId,
+    inputs: input.inputs,
+    ...(input.runType ? { runType: input.runType } : {}),
+  };
+
+  let submittedServiceJobId: string | undefined;
+  try {
+    const submitted = await submitAgentServiceJob({
+      task_type: "custom",
+      client_id: input.clientId,
+      ...(client.agentsRepoSlug ? { client_slug: client.agentsRepoSlug } : {}),
+      brief: {
+        agent_key: `dynamic:${spec.id}`,
+        label: spec.name,
+        // The generic execution engine's whole routing signal — see
+        // isDynamicAgentBrief() in agent-service/src/dynamic-types.ts and the
+        // early branch in runner/src/main.ts. Every other "custom" brief field
+        // (entry_skill_dir, instructions, prompt) is absent on this path.
+        specSnapshot: dynamicPayload.specSnapshot,
+        spec_version: dynamicPayload.specVersion,
+        inputs: dynamicPayload.inputs,
+        // Per-step model routing rides the brief's EXISTING step_models field
+        // (the same one the hardcoded custom-agent path above populates from
+        // CustomAgent.stepModels) rather than a second parallel mechanism —
+        // keyed here by step id, carrying the ALIAS only. The runner resolves
+        // it through AGENT_MODEL_ALIASES and prefers it over the snapshot's own
+        // step.model; see resolveStepModel() in the dynamic step runner.
+        ...(Object.keys(dynamicStepModels).length > 0 ? { step_models: dynamicStepModels } : {}),
+      },
+      callback_url: `${origin}/api/agent-service/webhook`,
+      metadata: {
+        platform_job_id: jobId,
+        karos_agent_key: `dynamic:${spec.id}`.slice(0, 120),
+        ...(jobToken ? { karos_job_token: jobToken, karos_mcp_url: `${origin}/api/mcp` } : {}),
+        ...(input.runType ? { karos_run_type: input.runType } : {}),
+      },
+    });
+    submittedServiceJobId = submitted.job_id;
+    await updateJob(jobId, {
+      external: { serviceJobId: submitted.job_id, taskType: "custom" },
+      updatedAt: Date.now(),
+    });
+  } catch (e) {
+    if (submittedServiceJobId) {
+      try {
+        await cancelAgentServiceJob(submittedServiceJobId);
+      } catch {
+        // best effort — the webhook receiver's metadata fallback still matches
+      }
+    }
+    const message = e instanceof Error ? e.message : "Agent service submission failed";
+    try {
+      await refundJobCharge(jobId, `Auto-refund · submission failed · ${spec.name}`.slice(0, 120));
+    } catch {
+      return { jobId, error: message };
+    }
+    await updateJob(jobId, {
+      status: "failed",
+      error: message,
+      events: [
+        { at: now, level: "info", message: "Submitted to agent service" },
+        { at: Date.now(), level: "error", message },
+      ],
+      updatedAt: Date.now(),
+    });
+    return { jobId, error: message };
+  }
+
+  void logActivity({
+    clientId: input.clientId,
+    timestamp: Date.now(),
+    type: "CAMPAIGN_CREATED",
+    title: customRunStartedTitle(spec.name),
+    actor: user.name,
+    actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
+    metadata: { jobId, taskType: "custom", agentKey: `dynamic:${spec.id}` },
   });
   return { jobId };
 }

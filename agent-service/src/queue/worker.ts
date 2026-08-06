@@ -128,6 +128,10 @@ export function buildWebhookPayload(record: JobRecord): WebhookPayload {
   if (record.model) payload.model = record.model;
   if (record.error) payload.error = record.error;
   if (record.transcriptUrl) payload.transcript_url = record.transcriptUrl;
+  // Dynamic Agent Studio only: forward the runner's structured per-step report
+  // so the Portal can persist failedStepId / failedStepIndex / the trace
+  // instead of parsing them back out of `error`.
+  if (record.runnerReport?.dynamicRun) payload.dynamic_run = record.runnerReport.dynamicRun;
   return payload;
 }
 

@@ -31,6 +31,7 @@ import type {
   CreditLedgerEntry,
   CreditOperation,
   CustomAgent,
+  DynamicAgentSpec,
   Job,
   JiraConfig,
   JobStatus,
@@ -117,6 +118,9 @@ const col = {
   actionItems: () => adminDb().collection("actionItems"),
   // Platform-defined agents runnable via the agent service's "custom" task type.
   customAgents: () => adminDb().collection("customAgents"),
+  // Agent Studio's declarative dynamic-agent definitions. Global/admin-owned —
+  // deliberately NOT in CLIENT_SCOPED_COLLECTIONS (see the CRUD block below).
+  dynamicAgentSpecs: () => adminDb().collection("dynamicAgentSpecs"),
   // Recurring generator runs fired on a cadence by /api/scheduler.
   scheduledRuns: () => adminDb().collection("scheduledRuns"),
   // SEO & GEO insights: one doc per client (doc ID = clientId), written by the onboarding pipeline.
@@ -2491,6 +2495,43 @@ export async function removeCustomAgentFromClients(agentId: string): Promise<voi
       return doc.ref.update({ customAgentIds: ids });
     }),
   );
+}
+
+/* ─────────────────────── Dynamic Agent Specs ───────────────────────
+ *
+ * Agent Studio's declarative agent definitions (see DynamicAgentSpec in
+ * lib/types.ts). Global / admin-owned — one spec applies across every
+ * client, gated per-client by `allowedClientIds` — so this collection is
+ * intentionally NOT in CLIENT_SCOPED_COLLECTIONS below: a client delete must
+ * not cascade-delete a spec other clients still run.
+ */
+
+export async function listDynamicAgentSpecs(): Promise<DynamicAgentSpec[]> {
+  const snap = await col.dynamicAgentSpecs().get();
+  return snap.docs
+    .map((d) => withId<DynamicAgentSpec>(d))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function getDynamicAgentSpec(id: string): Promise<DynamicAgentSpec | null> {
+  const doc = await col.dynamicAgentSpecs().doc(id).get();
+  return doc.exists ? withId<DynamicAgentSpec>(doc) : null;
+}
+
+export async function createDynamicAgentSpec(data: Omit<DynamicAgentSpec, "id">): Promise<string> {
+  const ref = await col.dynamicAgentSpecs().add(data);
+  return ref.id;
+}
+
+export async function updateDynamicAgentSpec(
+  id: string,
+  data: Partial<Omit<DynamicAgentSpec, "id">>,
+): Promise<void> {
+  await col.dynamicAgentSpecs().doc(id).update(data);
+}
+
+export async function deleteDynamicAgentSpec(id: string): Promise<void> {
+  await col.dynamicAgentSpecs().doc(id).delete();
 }
 
 /* ─────────────────────── Scheduled Runs ─────────────────────────── */

@@ -1,4 +1,5 @@
 import type { JobSpec, TaskType } from "./types.js";
+import type { DynamicAgentModelAlias } from "./dynamic-types.js";
 
 export interface TaskTypeConfig {
   /** SKILL.md frontmatter name of the entry skill */
@@ -55,6 +56,19 @@ export interface PromptContext {
 // Agents run on Opus 4.8 for output quality parity with local Claude Code runs.
 // This is the exact model id, not the "opus" alias, so the tier is pinned.
 const AGENT_MODEL = "claude-opus-4-8";
+
+/**
+ * Dynamic Agent Studio — resolves a DynamicAgentModelAlias (the only thing a
+ * spec is ever allowed to persist, see dynamic-types.ts) to a concrete model
+ * id. The ONE place a spec's alias becomes a real model: nothing else in the
+ * dynamic runner or the Portal may hardcode a raw id.
+ */
+export const AGENT_MODEL_ALIASES: Record<DynamicAgentModelAlias, string> = {
+  opus: "claude-opus-4-8",
+  sonnet: "claude-sonnet-4-6",
+  // Dated id, matching the Portal's own HAIKU constant (lib/constants.ts).
+  haiku: "claude-haiku-4-5-20251001",
+};
 
 const READ_TOOLS = ["Read", "Glob", "Grep"];
 const WRITE_TOOLS = ["Write", "Edit", "TodoWrite"];

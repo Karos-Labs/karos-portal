@@ -1,7 +1,9 @@
-import { query, type AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { decodeJobSpec } from "../../src/exec/executor.js";
 import { resolveTaskConfig } from "../../src/task-types.js";
 import type { RunnerCompleteBody } from "../../src/types.js";
+import { isDynamicAgentBrief, type DynamicAgentJobPayload } from "../../src/dynamic-types.js";
+import { runDynamicJob } from "./dynamic/run-dynamic-job.js";
 import { ServiceCallback } from "./callback.js";
 import { prepareWorkspace, writeClientContext } from "./workspace.js";
 import { buildSkillsShim } from "./skills-shim.js";
@@ -11,77 +13,9 @@ import { extractUsage, isResultMessage, TranscriptStreamer } from "./transcript.
 import { KAROS_MCP_ALLOWED_TOOLS, karosMcpServers } from "./mcp.js";
 import { isTransientError, isTransientResultError } from "./error-classification.js";
 import { restoreCheckpoint, saveCheckpoint } from "./checkpoint.js";
+import { buildStepAgentDefinitions, sdkEnv } from "./sdk-options.js";
 
 const SELF_TIMEOUT_BUFFER_MS = 45_000;
-
-/**
- * Turns a task config's `stepModels` (from brief.step_models, see
- * resolveTaskConfig) into the SDK's `options.agents` shape — one
- * AgentDefinition per named step. `description`/`prompt` are required by
- * AgentDefinition but are inert placeholders here: this call exists purely to
- * carry a model override for a subagent name the skill's own steps must
- * already delegate to via the Task tool for it to have any effect (see
- * docs/one-pagers/x-agent-v2-integration-contract.md). Reusable verbatim once
- * other agents adopt the same named-subagent-step convention.
- *
- * Every generated definition also gets `effort: "low"` — anything reached
- * through this mechanism is, by construction, a named research/data-gathering
- * fan-out step (never the main creative thread, which keeps its own effort
- * from the task config), so a lighter reasoning budget costs nothing the
- * skill's own synthesis of already-fetched data actually needs.
- */
-function buildStepAgentDefinitions(
-  stepModels: Record<string, string> | undefined,
-): Record<string, AgentDefinition> | undefined {
-  if (!stepModels || Object.keys(stepModels).length === 0) return undefined;
-  return Object.fromEntries(
-    Object.entries(stepModels).map(([step, model]) => [
-      step,
-      {
-        description: `Step "${step}" (model routed via CustomAgent.stepModels)`,
-        prompt: `You are the "${step}" step of this run. Follow the skill's own instructions for this step.`,
-        model,
-        effort: "low",
-      } satisfies AgentDefinition,
-    ]),
-  );
-}
-
-/**
- * Environment for the SDK subprocess (and therefore every Bash child the
- * agent spawns). Explicit allowlist: JOB_SPEC_B64 (runner token) must never
- * reach the sandbox, and nothing beyond what tools legitimately need does.
- * ANTHROPIC_API_KEY has to be present for the CLI itself — proxy-side key
- * injection is the follow-up that removes it from the sandbox entirely.
- * APIFY_TOKEN is optional (skills that read it degrade gracefully when unset);
- * it reaches os.environ for Python skills only because it is allowlisted here.
- */
-function sdkEnv(): Record<string, string> {
-  const KEEP = [
-    "PATH",
-    "HOME",
-    "LANG",
-    "TERM",
-    "NODE_USE_ENV_PROXY",
-    "ANTHROPIC_API_KEY",
-    // The same key under the name the newsletter scan reads. See buildRunnerEnv.
-    "CLAUDE_API_KEY",
-    "XAI_API_KEY",
-    "APIFY_TOKEN",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "NO_PROXY",
-    "no_proxy",
-  ];
-  const env: Record<string, string> = {};
-  for (const key of KEEP) {
-    const value = process.env[key];
-    if (value !== undefined) env[key] = value;
-  }
-  return env;
-}
 
 async function main(): Promise<void> {
   const specB64 = process.env.JOB_SPEC_B64;
@@ -89,6 +23,45 @@ async function main(): Promise<void> {
   delete process.env.JOB_SPEC_B64;
   const spec = decodeJobSpec(specB64);
   const callback = new ServiceCallback(spec);
+
+  // Dynamic Agent Studio's WHOLE routing signal (Phase 7): a brief carrying a
+  // frozen `specSnapshot` takes the generic execution engine instead of the
+  // hardcoded per-task-type path below. Deliberately the very first branch in
+  // main() — this IS the backward-compatibility seam. Any brief without
+  // `specSnapshot` (every hardcoded X/LinkedIn/Reddit/social_post/etc. run)
+  // never reaches this condition and falls straight through to the unchanged
+  // path beneath it.
+  if (isDynamicAgentBrief(spec.brief)) {
+    let report: RunnerCompleteBody = { outcome: "failed", error: "dynamic runner did not finish", transient: true };
+    try {
+      report = await runDynamicJob(
+        spec,
+        {
+          specId: String(spec.brief.specId ?? spec.brief.specSnapshot.id),
+          specVersion: Number(spec.brief.spec_version ?? spec.brief.specSnapshot.version),
+          specSnapshot: spec.brief.specSnapshot,
+          clientId: spec.clientId,
+          inputs: (spec.brief.inputs as DynamicAgentJobPayload["inputs"]) ?? {},
+          // The brief's existing step_models field, reused for per-step model
+          // routing on the dynamic path (stepId -> alias). custom.json pins it
+          // to the alias enum on this branch.
+          ...(spec.brief.step_models
+            ? { stepModels: spec.brief.step_models as Record<string, string> }
+            : {}),
+        },
+        callback,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      console.error("dynamic runner failed:", message);
+      report = { outcome: "failed", error: message.slice(0, 20000), transient: isTransientError(err) };
+    } finally {
+      await callback.complete(report);
+    }
+    process.exit(report.outcome === "done" ? 0 : 1);
+    return;
+  }
+
   const taskConfig = resolveTaskConfig(spec.taskType, spec.brief);
 
   let report: RunnerCompleteBody = { outcome: "failed", error: "runner did not finish", transient: true };
