@@ -32,7 +32,7 @@ import { parseXDrafts } from "@/lib/x-drafts";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
-import { parseRedditDrafts } from "@/lib/reddit-drafts";
+import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { relativeTime, cn } from "@/lib/utils";
 import { normalizeDashes } from "@/lib/text-utils";
@@ -454,7 +454,12 @@ export function AssetCard({
   );
   const redditBatch = useMemo(
     () =>
-      !liBatch && asset.content?.includes("# Reddit answer drafts")
+      // Two shapes now: the v2 JSON envelope the delivery handler assembles from
+      // the run's per-thread folders, and the v1 markdown still sitting in
+      // clients' archives. Both go through parseRedditDrafts, which picks.
+      !liBatch &&
+      asset.content &&
+      (isRedditV2Envelope(asset.content) || asset.content.includes("# Reddit answer drafts"))
         ? parseRedditDrafts(asset.content)
         : null,
     [asset.content, liBatch],
@@ -731,6 +736,9 @@ export function AssetCard({
                   {...(asset.jobId ? { jobId: asset.jobId } : {})}
                   assetId={asset.id}
                   accounts={redditBatch.accounts}
+                  outcome={redditBatch.outcome}
+                  {...(redditBatch.consideredCount !== undefined ? { consideredCount: redditBatch.consideredCount } : {})}
+                  {...(redditBatch.outcomeNote ? { outcomeNote: redditBatch.outcomeNote } : {})}
                 />
               </div>
             ) : (

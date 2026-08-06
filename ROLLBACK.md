@@ -215,9 +215,12 @@ setup, writer, manager). Read `docs/linkedin-agent-portal.md` before undoing any
 of it — three of these changes are portal-imposed decisions with reasons, not
 mechanical adaptations.
 
-**The e10 doc is not deleted.** `karos-linkedin-company-karoslabs`
-(`JOhXFFV2rHZ9IyQNFLvA`) stays in `customAgents`, disabled, as the fallback. It
-was already `enabled: false` before this work, so there is no state to restore.
+**SUPERSEDED 2026-08-05: the e10 doc is now DELETED.** It was kept disabled "as
+the fallback" while this section was written; the rule changed (Ben) and both
+replaced agents were removed from `customAgents` in BOTH databases by
+`scripts/cleanup-legacy-agents.ts` — see L-D6 at the end of this section. Any
+sentence below promising an e10 fallback describes the earlier plan, not the
+current state: there is no doc left to re-enable, only the JSON snapshot.
 
 Pre-mutation snapshots of every doc this touches, taken before any change:
 `_backup/2026-08-04/` — the e10 customAgents doc, the 4 `agentIntake` rows
@@ -299,3 +302,19 @@ image), and then an admin enables and grants them.
 | # | What | Doc(s) | Undo |
 |---|---|---|---|
 | L-D5 | `parentKey: "karos-linkedin-writer-v2"` written onto the setup and manager docs in BOTH `(default)` and `prep`, by `scripts/set-agent-parent-keys.ts` (idempotent; refuses to name a parent absent from the same database, since a typo there is how an orphaned step gets created) | `customAgents` where key is `karos-linkedin-setup-v2` / `karos-linkedin-manager-v2` | set `parentKey` to `null` on the four docs. The field was previously absent, so there is no prior value to restore |
+
+### Superseded-agent deletion (both databases, 2026-08-05)
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| L-D6 | DELETED the two agents a newer generation replaced, from `(default)` AND `prep`: `karos-linkedin-company-karoslabs` (`JOhXFFV2rHZ9IyQNFLvA`) and `karos-reddit-agent` (`pwUIj4jayaJ3S8yuUaQ7`). Also dropped the now-dangling ids from all 7 clients' `customAgentIds` in each database | `customAgents/*`, `clients/*.customAgentIds` | re-create each doc from `_backup/2026-08-05/customAgents-<id>-prod-deleted.json` (the id is in the file name) and re-add the ids to the grant arrays. **Firestore has no undelete** |
+| L-D7 | Registered the Reddit v2 pair in both databases: `karos-reddit-runner` and `karos-reddit-setup` (with `parentKey: "karos-reddit-runner"`, so no roster offers it). Both `enabled: false`, matching the import rule for an upstream-blocked skill | `customAgents/*` | delete the two docs |
+| L-D8 | Backfilled `source.blocked_reason` onto 5 docs in each database from the lab manifest, so the library badge says WHY a skill is blocked | `customAgents/*` | remove the field; it is additive and nothing else reads it |
+
+**One snapshot was lost and it is worth recording.** The first run of
+`cleanup-legacy-agents.ts` named its backups by document id alone — and prep and
+production hold the SAME ids, because prep was seeded from a production export —
+so the production write clobbered the prep one. Only the production copies
+survive (`-prod-deleted.json`). The two were near-identical and prep is a test
+database, so nothing irreplaceable went, but the script now puts the database in
+the filename: a backup one run can overwrite is not a backup.

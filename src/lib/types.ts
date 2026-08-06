@@ -419,6 +419,24 @@ export interface CustomAgent {
     path: string;
     /** Runtime-manifest status at import time (ready / blocked / unreviewed). */
     status?: string;
+    /**
+     * WHY the manifest called it blocked, copied verbatim at import.
+     *
+     * `status: "blocked"` is overloaded and the word alone misleads. For the
+     * Reddit agents it means an ENVIRONMENTAL constraint — Reddit blocks
+     * datacenter egress, so a Cloud Run run reads nothing — and for the v2
+     * LinkedIn and Reddit skills it means "in build, no pilot run yet". Neither
+     * is a broken build, which is what a bare "Blocked in repo" badge implied to
+     * every operator who read it.
+     *
+     * SNAKE_CASE, deliberately, against this object's own camelCase (`repoSha`):
+     * it is the manifest's own field name and the name the integration prompts
+     * refer to. Worth one inconsistency to keep the two ends spelled the same.
+     *
+     * Long prose in practice — 374 to 731 characters on the agents that carry it —
+     * so any UI showing it must truncate and put the rest somewhere reachable.
+     */
+    blocked_reason?: string;
     repoSha?: string;
   } | null;
   createdBy: string;
@@ -556,6 +574,19 @@ export interface Job {
   templateKey?: string | null;
   agentName: string;
   title: string;
+  /**
+   * A short human label for WHAT this run was asked to do — the first line of
+   * the brief's request field, captured at submit (submit-custom) and mirrored
+   * onto the deliverable as `meta.runLabel` by the webhook. STAFF-FACING RAW
+   * TEXT (F132: never echo free-text input as a client-facing label) — a
+   * surface that paints it must gate on the viewer; clients read produced-work
+   * titles instead. Stored rather than re-derived because the only other trace
+   * of the request is the composed prose prompt, and parsing our own copy back
+   * out of it breaks the next time someone edits a field label (the
+   * briefValues lesson, see SubmitCustomAgentInput.briefValues). Absent on
+   * older jobs and on runs whose brief had no request text.
+   */
+  runLabel?: string;
   status: JobStatus;
   input: Record<string, string>;
   /** Raw model output (text) for auditing. */
@@ -2355,6 +2386,92 @@ export interface RedditDraftFeedback {
   subreddit?: string;
   /** The thread the draft answered, for the audit trail. */
   threadUrl?: string;
+  /**
+   * WHICH of the two replies v2 wrote for this thread the human actually took.
+   *
+   * The highest-value signal this collection carries, and the reason v2 drafts
+   * two at all. Finding a thread costs ten to fifteen paced Reddit requests;
+   * writing a second reply to a thread already found costs one model call. So
+   * the run offers two approaches, and the choice the client had to make anyway
+   * teaches their voice faster than anything we could ask them for.
+   *
+   * Positional, matching the run's own ids (`approach-1` is `a<nn>-v1`), so the
+   * value joins to the deliverable without a lookup. Absent on a `note` row, on
+   * a skip that rejected the whole thread, and on every v1 row.
+   */
+  selectedApproach?: "approach-1" | "approach-2";
   createdBy: string;
   createdAt: number;
+}
+
+/**
+ * The Reddit agent's DURABLE state — the files v2 assumes outlive a run, kept
+ * here because the runner's workspace does not.
+ *
+ * Same problem `LiAgentState` solves for LinkedIn, and one degree more serious.
+ * The v2 run appends to a ledger of every thread already answered, a rejection
+ * blocklist with reasons, a per-account learning log and agent memory, and a
+ * **dated** rules audit — one row per subreddit recording whether a product may
+ * be named there, whether AI-written text is banned, and what karma the account
+ * needs. The runner clones the lab repo fresh for every run and the container is
+ * destroyed, so every one of those writes is discarded.
+ *
+ * WHY THE STAKES ARE HIGHER THAN LINKEDIN'S. A lost LinkedIn ledger means a
+ * repeated subject. A lost Reddit rules audit means the next run re-reads
+ * nothing, believes a stale verdict, and posts a product mention into a
+ * subreddit that bans them — which gets a client's account banned, and Reddit
+ * bans rarely reverse. The audit's DATE is the load-bearing part: the run holds
+ * a reading it cannot trust and re-verifies, but only if it receives the date.
+ *
+ * One doc per (clientId, kind): this is current state, and the run that produced
+ * it is recorded on the row.
+ */
+export interface RedditAgentState {
+  id: string;
+  clientId: string;
+  /**
+   * Which of the contract's durable files this row holds, at the paths
+   * `clients/<slug>/skills/reddit-agent-v2/` uses:
+   *  - `rules-audit`     — `rules-audit.json`, one DATED row per subreddit
+   *  - `ledger`          — `reddit-ledger.json`, what has been answered
+   *  - `question-pools`  — the recurring questions the run draws from
+   *  - `scan-config`     — both scan lanes, including the name variants
+   *  - `foundation`      — the client's Reddit source of truth
+   *  - `agent-memory`    — per-account standing decisions
+   *  - `learning-log`    — per-account voice rules earned from edits
+   *  - `research-cache`  — the paced scan's results, reusable same-day
+   *
+   * `account` scopes the per-account kinds; it is null for the client-wide ones.
+   */
+  kind:
+    | "rules-audit"
+    | "ledger"
+    | "question-pools"
+    | "scan-config"
+    | "foundation"
+    | "agent-memory"
+    | "learning-log"
+    | "research-cache";
+  /**
+   * The Reddit account this row belongs to (the handle, without `u/`), or null
+   * for a client-wide file. v2 runs ONE account per run and keeps a separate
+   * voice, memory and learning log per account, so a per-account row keyed only
+   * by client would let one account's learned voice steer another's replies.
+   */
+  account: string | null;
+  /** The file's bytes as text (JSON or markdown per `kind`). */
+  content: string;
+  contentType: string;
+  /**
+   * YYYY-MM-DD the content was produced. Load-bearing for two kinds:
+   * `research-cache` (a same-day scan is reused rather than re-paying ten to
+   * fifteen minutes of paced requests) and `rules-audit` (a reading too old to
+   * trust must be re-verified before anything is drafted).
+   */
+  contentDate: string;
+  capturedFromJobId: string;
+  capturedAt: number;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
 }

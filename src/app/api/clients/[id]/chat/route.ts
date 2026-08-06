@@ -45,7 +45,11 @@ import {
   isStaffCopilotActor,
 } from "@/lib/copilot-tool-access";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
-import { clientSafeRunError, CLIENT_SAVE_REFUSAL_MESSAGE } from "@/lib/custom-agent-launch";
+import {
+  clientSafeRunError,
+  CLIENT_SAVE_REFUSAL_MESSAGE,
+  defaultRunBatchSize,
+} from "@/lib/custom-agent-launch";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import { isInClientArchive, isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
@@ -326,8 +330,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `  - ${row.label}: ${clientPriceText(row, { withUnit: true })}` +
       (row.note ? ` (${row.note})` : ""),
   ).join("\n");
+  // × defaultRunBatchSize: what a fresh portal press CHARGES (visible batch
+  // selector defaults only — 1 for every agent today, so today this is the
+  // base). The list is pinned by "Never invent credit figures beyond these",
+  // so it must track the charge if a visible multi-output default ever lands.
   const agentPriceLines = customAgents
-    .map((a) => `  - ${a.name}: ${creditsLabel(a.creditCost ?? CREDIT_COSTS.customAgentRun)} per run`)
+    .map(
+      (a) =>
+        `  - ${a.name}: ${creditsLabel(
+          (a.creditCost ?? CREDIT_COSTS.customAgentRun) *
+            defaultRunBatchSize({ key: a.key, name: a.name }),
+        )} per run`,
+    )
     .join("\n");
   const creditsAppendix = credits
     ? `\n\n## Usage credits\n` +
@@ -1153,10 +1167,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
           : "This client has no AI agents assigned yet.";
       }
+      // chargeMultiplier: what a FRESH portal dialog would submit for this
+      // agent (visible selector defaults only — a hidden batch size never
+      // scales a bill, see defaultRunBatchSize). Today that is 1 for every
+      // agent, so this changes nothing; it exists so a future profile with a
+      // visible multi-output default cannot be sold cheaper through chat than
+      // through its own page.
+      const chatBatchSize = defaultRunBatchSize({ key: match.key, name: match.name });
       const result = await runCustomAgentAction({
         agentId: match.id,
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
+        ...(chatBatchSize > 1 ? { chargeMultiplier: chatBatchSize } : {}),
       });
       if (result.error) {
         // REUSED, not re-answered: `clientSafeRunError` is exactly this shape (a

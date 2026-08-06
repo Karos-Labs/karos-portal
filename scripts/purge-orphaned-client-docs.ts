@@ -65,6 +65,7 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "liDirectionRequests",
   "liAgentState",
   "redditDraftFeedback",
+  "redditAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];

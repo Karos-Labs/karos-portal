@@ -16,6 +16,7 @@ import {
   markLiDirectionRequestCovered,
   updateJob,
   upsertLiAgentState,
+  upsertRedditAgentState,
   upsertSeatVoiceProfile,
 } from "@/lib/data";
 import { isXAgent } from "@/lib/agent-service/x-agent-context";
@@ -31,7 +32,21 @@ import {
   liStateDateFor,
   liStateKindFor,
 } from "@/lib/agent-service/linkedin-state-capture";
-import { isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
+import {
+  isRedditAgent,
+  isRedditRunnerV2,
+  isRedditSetupV2,
+} from "@/lib/agent-service/reddit-agent-context";
+import {
+  REDDIT_STATE_MAX_CHARS,
+  type RedditClientFile,
+  buildRedditV2Envelope,
+  isRedditRunRecordArtifact,
+  redditOutcomeFrom,
+  redditStateContentType,
+  redditStateDateFor,
+  redditStateKindFor,
+} from "@/lib/agent-service/reddit-state-capture";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -40,7 +55,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState } from "@/lib/types";
+import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, RedditAgentState } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -374,13 +389,21 @@ export async function POST(req: NextRequest) {
   // costs the next run its memory and must not cost this client their post.
   let isLinkedInStateJob = false;
   let isLinkedInSetupJob = false;
+  // Reddit v2's state matters more than most: the run's rules audit decides
+  // whether a product may be named in a subreddit, and losing it is how an
+  // account gets banned. Same one-document read as the LinkedIn resolution.
+  let isRedditStateJob = false;
   try {
     const producing = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
     isLinkedInStateJob = producing ? isLinkedInV2Agent(producing.key) : false;
     isLinkedInSetupJob = producing ? isLinkedInSetupV2(producing.key) : false;
+    isRedditStateJob = producing
+      ? isRedditRunnerV2(producing.key) || isRedditSetupV2(producing.key)
+      : false;
   } catch {
     isLinkedInStateJob = false;
     isLinkedInSetupJob = false;
+    isRedditStateJob = false;
   }
 
   // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
@@ -461,6 +484,21 @@ export async function POST(req: NextRequest) {
    * phase is a budget, not a place to do work whose result a lost race discards.
    */
   let liCommitJson: string | null = null;
+  // Reddit v2 durable state, same rules as the LinkedIn set: internal artifacts
+  // fetched for their TEXT only, never re-hosted, never attached to an asset.
+  // A Reddit v2 run's client-facing text files, kept so the folders can be
+  // flattened into the reader's envelope after the claim. The bytes are already
+  // decoded for primaryText, so this costs no extra fetch.
+  const redditClientFiles: RedditClientFile[] = [];
+  /** The run's own outcome record, for the four-outcome distinction. */
+  let redditRunRecord: string | null = null;
+  const redditStateArtifacts: {
+    kind: RedditAgentState["kind"];
+    account: string | null;
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
   // What is LEFT of the pre-claim deadline, counted from the top of the handler.
   // Every network call below is bounded by this rather than by a fixed
   // per-artifact constant, and a non-positive value means the budget is spent:
@@ -520,7 +558,36 @@ export async function POST(req: NextRequest) {
       const liPath = artifact.path ?? artifact.name;
       const liStateKind = isLinkedInStateJob ? liStateKindFor(liPath) : null;
       const liIsCommit = isLinkedInStateJob && isLiCommitArtifact(liPath);
-      if (!artifact.client_facing && (liStateKind || liIsCommit) && artifact.url) {
+      const redditState = isRedditStateJob ? redditStateKindFor(liPath) : null;
+      const redditIsRunRecord = isRedditStateJob && isRedditRunRecordArtifact(liPath);
+      if (!artifact.client_facing && (redditState || redditIsRunRecord) && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, REDDIT_STATE_MAX_CHARS);
+              if (text.trim() && redditIsRunRecord && !redditRunRecord) redditRunRecord = text;
+              if (text.trim() && redditState) {
+                redditStateArtifacts.push({
+                  kind: redditState.kind,
+                  account: redditState.account,
+                  content: text,
+                  contentDate: redditStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch {
+          // Best-effort, and NOT reported to the client: the delivery in front of
+          // them is a finished set of replies either way. The cost is the NEXT
+          // run's memory, which the events below record for staff.
+        }
+      } else if (!artifact.client_facing && (liStateKind || liIsCommit) && artifact.url) {
         try {
           const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
           if (budget > 0) {
@@ -620,6 +687,13 @@ export async function POST(req: NextRequest) {
                 if ((isLaunchRun || isLinkedInSetupJob) && voiceProfileMatch) {
                   voiceProfileArtifacts.push({ seatSlug: voiceProfileMatch[1], content });
                 }
+                // A Reddit v2 run's per-thread folders, kept as (path, text)
+                // pairs so the envelope can be assembled after the claim: the
+                // reader is handed ONE string, and these folders are what has to
+                // become it.
+                if (isRedditStateJob) {
+                  redditClientFiles.push({ path: artifact.path ?? artifact.name, text: content });
+                }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
                 // agents (X, LinkedIn) — prefer it deterministically over the
                 // size race, so a long sibling text file (a video brief, an
@@ -685,10 +759,54 @@ export async function POST(req: NextRequest) {
   // primary text is legitimately empty (task-sync.ts, on `artifact: ""` being a
   // real renderable state), and so is a PDF-only run. What is not a delivery is a
   // run where nothing at all reached our storage.
+  // ── Reddit v2: the folders become the reader's one string ──
+  // v2 writes client/<nn>-answer/{approach-1.md,approach-2.md,about.txt}, and the
+  // reader is handed `asset.content` alone. So the folders are flattened here,
+  // where the file bytes already exist, into the versioned envelope both sides
+  // import from lib/reddit-drafts.
+  //
+  // The OUTCOME comes from the run's own record, never from counting files. An
+  // empty thread list means either "nothing was worth your account's name" (a
+  // correct run) or "we could not read Reddit" (our datacenter address is
+  // blocked), and telling a client the first when the second is true blames their
+  // niche for our outage. With no record to read, `delivered` is only claimed when
+  // threads actually arrived.
+  const redditEnvelope =
+    isRedditStateJob && (redditClientFiles.length > 0 || redditRunRecord)
+      ? (() => {
+          const record = redditRunRecord ? redditOutcomeFrom(redditRunRecord) : { outcome: null };
+          const built = buildRedditV2Envelope({
+            files: redditClientFiles,
+            outcome: record.outcome ?? "delivered",
+            ...(record.consideredCount !== undefined
+              ? { consideredCount: record.consideredCount }
+              : {}),
+            ...(record.outcomeNote ? { outcomeNote: record.outcomeNote } : {}),
+          });
+          if (!record.outcome && built.threads.length === 0) built.outcome = "held";
+          return built;
+        })()
+      : null;
+  if (redditEnvelope) {
+    events.push({
+      at: Date.now(),
+      level: redditEnvelope.outcome === "degraded" ? "error" : "info",
+      message:
+        redditEnvelope.outcome === "degraded"
+          ? "Reddit could not be read on this run (datacenter addresses are blocked), so nothing was judged. This is not 'no good threads'."
+          : `Reddit run outcome: ${redditEnvelope.outcome} - ${redditEnvelope.threads.length} thread(s) delivered.`,
+    });
+  }
+
   const deliveredCount = rehosted.length;
   // For the Task Map sync below: the run may have been dispatched by a board
   // task, whose ticket gets the deliverable for client preview.
-  const taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
+  const redditEnvelopeJson = redditEnvelope ? JSON.stringify(redditEnvelope) : null;
+  const taskArtifactContent = redditEnvelopeJson
+    ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : primaryText
+      ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
+      : "";
   const taskArtifactImage = orderedImageUrls[0] ?? null;
 
   // Last pre-claim guard: the re-host has eaten the budget this handler needed
@@ -826,6 +944,43 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Reddit v2 durable state. After the claim and best-effort, like the sibling
+    // sweeps. Reported as an error event because a run whose RULES AUDIT did not
+    // persist is the one case where the next run is not merely forgetful but
+    // unsafe — it would hold no reading of what each subreddit allows.
+    if (redditStateArtifacts.length > 0) {
+      // Last write wins per (kind, account); the manifest's order is the run's own
+      // write order, so the newest copy of each file lands.
+      const byKey = new Map(
+        redditStateArtifacts.map((row) => [`${row.kind}::${row.account ?? ""}`, row]),
+      );
+      for (const row of byKey.values()) {
+        try {
+          await upsertRedditAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            account: row.account,
+            content: row.content,
+            contentType: redditStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] Reddit ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              `Reddit ${row.kind} did not persist` +
+              (row.kind === "rules-audit"
+                ? " - the next run has NO record of what each subreddit allows and must re-read them before drafting."
+                : " - the next run will not see this run's changes to it."),
+          });
+        }
+      }
+    }
+
     // Close the direction requests this run reported covering. Matched on the
     // exact request text, because that is what the run was given and the only
     // handle it has on a row — the portal never sends it a document id.
@@ -875,6 +1030,12 @@ export async function POST(req: NextRequest) {
       // Separator and strip share one definition (lib/job-title.ts) — this
       // looked for an em dash while every builder wrote a hyphen, so it never
       // fired for any run from any path.
+      // The title stays the produced-work base — NEVER the typed brief. F132's
+      // ruling ("never echo free-text input as a client-facing label") is why
+      // Job.runLabel rides in meta below instead of being baked in here: meta
+      // lets a staff surface show what was asked while every client surface
+      // keeps reading a produced-work title. It also keeps free text out of
+      // AgentMark's platform sniff, which reads titles.
       const assetTitle = assetTitleFromJobTitle(job.title, job.agentName);
       // Only real catalog products get a template chip; "custom" runs have no
       // managed product (getManagedProduct would fall back to the first one).
@@ -892,10 +1053,20 @@ export async function POST(req: NextRequest) {
           agentId: "agent-service",
           type: assetType,
           title: assetTitle,
-          content: primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "",
+          // The Reddit v2 envelope wins over the size-picked primary text: the
+          // reader parses this exact string, and one of the run's own approach
+          // files would otherwise be chosen as "the deliverable" by length.
+          content: redditEnvelopeJson
+            ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+            : primaryText
+              ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
+              : "",
           meta: {
             taskType: payload.task_type,
             agentsRepoSha: payload.agents_repo_sha,
+            // What the run was ASKED to do (see Job.runLabel). Staff-facing
+            // data: surfaces that show it must gate on the viewer (F132).
+            ...(job.runLabel ? { runLabel: job.runLabel } : {}),
             // ONLY the artifacts now in our own storage — see the `rehosted`
             // note above. This was `artifacts.filter(clientFacing)`, which put
             // every un-re-hosted 7-day service URL onto the client's asset:

@@ -1,6 +1,6 @@
 /**
- * One-time registration of the LinkedIn Agent v2 skills as `customAgents` docs,
- * with the canonical instructions from `docs/linkedin-agent-portal.md`.
+ * One-time registration of the v2 agent skills as `customAgents` docs,
+ * with the canonical instructions from each product's own portal doc.
  *
  * WHY A SCRIPT rather than the admin "Import agents" flow: that flow needs
  * `AGENTS_REPO_GITHUB_TOKEN` to scan the lab repo over the GitHub API. This
@@ -32,7 +32,8 @@ import { getFirestore } from "firebase-admin/firestore";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const APPLY = process.argv.includes("--apply");
-const DOC = "docs/linkedin-agent-portal.md";
+const LINKEDIN_DOC = "docs/linkedin-agent-portal.md";
+const REDDIT_DOC = "docs/reddit-agent-portal.md";
 const BACKUP_DIR = "_backup/2026-08-05";
 
 /** The three v2 skills, as `catalog/agent-runtime-manifest.json` describes them. */
@@ -42,6 +43,8 @@ const AGENTS = [
     name: "LinkedIn Setup",
     entrySkillDir: "products/building/linkedin-agent-v2/setup",
     heading: "### `karos-linkedin-setup-v2`",
+    doc: LINKEDIN_DOC,
+    parentKey: "karos-linkedin-writer-v2",
     description:
       "LinkedIn Agent v2, the run-once client setup. Stands up everything the writer and manager read: the distilled voice card, this client's LinkedIn foundation (lanes, mix, cadence, compliance block), the seeded topic catalog, the empty continuity spine, the learning record, the client's updates drop box and the manager's memory file. Eleven numbered resumable steps. Emits NO agent code — one generic writer and manager serve every client.",
   },
@@ -50,6 +53,8 @@ const AGENTS = [
     name: "LinkedIn Agent",
     entrySkillDir: "products/building/linkedin-agent-v2",
     heading: "### `karos-linkedin-writer-v2`",
+    doc: LINKEDIN_DOC,
+    parentKey: null,
     description:
       "LinkedIn Agent v2, the writer. Runs on demand: each run belongs to exactly ONE identity (the company page, or a single seat) and produces that identity's post draft — one per run by default — as twelve numbered resumable steps. In this portal one press runs the manager pass first, then the writer. Draft-first: it never publishes.",
   },
@@ -58,8 +63,32 @@ const AGENTS = [
     name: "LinkedIn Manager",
     entrySkillDir: "products/building/linkedin-agent-v2/manager",
     heading: "### `karos-linkedin-manager-v2`",
+    doc: LINKEDIN_DOC,
+    parentKey: "karos-linkedin-writer-v2",
     description:
       "LinkedIn Agent v2, the manager. Audits what shipped and what each identity did with it, adjusts the lane mix within bounds, and refills the topic catalog from ONE research pull cached per client and reused same-day. The only skill in the product that touches the network. It never drafts and never publishes.",
+  },
+  {
+    key: "karos-reddit-runner",
+    name: "Reddit Agent",
+    entrySkillDir: "products/building/reddit-agent-v2",
+    heading: "### `karos-reddit-runner`",
+    doc: REDDIT_DOC,
+    parentKey: null,
+    description:
+      "Reddit Agent v2, the runner. On demand, ONE Reddit account per run: finds live threads worth replying to, checks each subreddit's rules before writing a word, drafts TWO ways to answer each thread in that account's voice, and passes both through a mechanical anti-slop gate plus a judgment gate. Thirteen numbered resumable steps. Comments only, never original posts. NEVER publishes: no post-to-Reddit code path exists.",
+  },
+  {
+    key: "karos-reddit-setup",
+    name: "Reddit Setup",
+    entrySkillDir: "products/building/reddit-agent-v2/setup",
+    heading: "### `karos-reddit-setup`",
+    doc: REDDIT_DOC,
+    // A STEP of the runner, so it never appears on a roster of its own — the
+    // structural rule, not a hardcoded key list.
+    parentKey: "karos-reddit-runner",
+    description:
+      "Reddit Agent v2, the run-once client setup. Learns the client's corner of Reddit: which subreddits their buyers actually talk in, what each one's rules are (can the product be named, is AI-written text banned, does the account have enough history to post), and which questions keep coming back. Writes the account's voice, the claims it can back with proof, and the strategy. Emits data, never code.",
   },
 ] as const;
 
@@ -73,9 +102,10 @@ const APPEARANCE = { icon: "Bot", color: "#FBBF24" };
  * control is the text in Firestore. A drift between the two is the failure this
  * avoids: the doc is what a reviewer reads and the doc is what gets applied.
  */
-function instructionsFor(doc: string, heading: string): string {
+function instructionsFor(docPath: string, heading: string): string {
+  const doc = readFileSync(docPath, "utf8");
   const at = doc.indexOf(heading);
-  if (at === -1) throw new Error(`No section "${heading}" in ${DOC}`);
+  if (at === -1) throw new Error(`No section "${heading}" in ${docPath}`);
   const open = doc.indexOf("```", at);
   const close = doc.indexOf("```", open + 3);
   if (open === -1 || close === -1) throw new Error(`No fenced block under "${heading}"`);
@@ -99,13 +129,12 @@ async function main() {
   // touching production.
   const databaseId = process.env.FIRESTORE_DATABASE_ID || "(default)";
   const db = getFirestore(databaseId);
-  const doc = readFileSync(DOC, "utf8");
 
   console.log(`project: ${sa.project_id} · database: ${databaseId}`);
   console.log(APPLY ? "MODE: apply\n" : "MODE: dry run (pass --apply to write)\n");
 
   for (const agent of AGENTS) {
-    const instructions = instructionsFor(doc, agent.heading);
+    const instructions = instructionsFor(agent.doc, agent.heading);
     const existing = await db
       .collection("customAgents")
       .where("key", "==", agent.key)
@@ -144,6 +173,9 @@ async function main() {
       skillRoots: [] as string[],
       includeClientSkills: true,
       instructions,
+      // A step of another agent is hidden from every roster by isSubAgent reading
+      // this field — structural, so no predicate needs editing per agent.
+      ...("parentKey" in agent && agent.parentKey ? { parentKey: agent.parentKey } : {}),
       creditCost: null,
       // Upstream says "blocked" (in build, no pilot run yet), and the import rule
       // is that a blocked skill lands DISABLED so nobody fires it by accident.

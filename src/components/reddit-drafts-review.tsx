@@ -32,10 +32,12 @@ import { addRedditDraftFeedbackAction } from "@/lib/actions/reddit-agent-actions
 import {
   REDDIT_COMMENT_CAP,
   type RedditParsedAccount,
+  type RedditParsedBatch,
   type RedditParsedDraft,
 } from "@/lib/reddit-drafts";
 import { laneLabel } from "@/lib/draft-lane-label";
 import { stripInlineMarkdown } from "@/lib/doc-render";
+import { normalizeDashes } from "@/lib/text-utils";
 import { splitMetaLinks } from "@/lib/draft-meta";
 
 type SentState = "posted" | "posted_with_edits" | "not_posted" | "edit_request";
@@ -108,6 +110,18 @@ function DraftCard({
   const [reason, setReason] = useState("");
   const [reasonCode, setReasonCode] = useState(NOT_POSTED_REASONS[0].value);
   const [removedReported, setRemovedReported] = useState(false);
+  /**
+   * Which of v2's two replies is showing. Defaults to the one the run would pick
+   * when `about.txt` says, otherwise the first — never a random one, because the
+   * default is what most clients will take and it should be our best guess.
+   */
+  const approaches = draft.approaches ?? [];
+  const [approachId, setApproachId] = useState<"approach-1" | "approach-2">(
+    approaches[0]?.id ?? "approach-1",
+  );
+  const activeApproach = approaches.find((a) => a.id === approachId) ?? approaches[0];
+  /** The reply currently on screen: v2's selected approach, or v1's single text. */
+  const activeText = activeApproach?.text ?? draft.text;
 
   const draftRef = `${accountTitle} · ${draft.formula}`;
 
@@ -118,7 +132,7 @@ function DraftCard({
     // carries the reply, since a thread URL cannot prefill a comment box. A
     // retry after a failed feedback write must NOT open a second tab.
     if (action !== "not_posted" && action !== "edit_request" && !handedOff) {
-      const text = textUsed ?? draft.text;
+      const text = textUsed ?? activeText;
       setHandedOff(true);
       if (navigator.clipboard) {
         try {
@@ -141,6 +155,14 @@ function DraftCard({
         ...(draft.subreddit ? { subreddit: draft.subreddit } : {}),
         ...(draft.threadUrl ? { threadUrl: draft.threadUrl } : {}),
         ...(action === "posted_with_edits" ? { finalText: textUsed ?? finalText } : {}),
+        // WHICH of the two replies they took. Recorded on the two actions where
+        // they actually took one; a skip rejected the thread, not an approach, and
+        // a change request has not been posted at all. This is the signal v2
+        // drafts two replies FOR — the choice they had to make anyway teaches
+        // their voice faster than anything we could ask them.
+        ...(approaches.length > 1 && (action === "posted" || action === "posted_with_edits")
+          ? { selectedApproach: approachId }
+          : {}),
         ...(action === "not_posted" ? { reasonCode } : {}),
         ...(action === "not_posted" || action === "edit_request" ? { reason } : {}),
       });
@@ -245,14 +267,80 @@ function DraftCard({
           disclosure below are not, because those are what the client posts
           and Reddit renders markdown natively. */}
       {draft.whyThread ? (
-        <p className="mt-2 text-xs text-muted">Why this thread: {stripInlineMarkdown(draft.whyThread)}</p>
+        <p className="mt-2 text-xs text-muted">Why this thread: {normalizeDashes(stripInlineMarkdown(draft.whyThread))}</p>
       ) : null}
       {draft.laneNote ? (
-        <p className="mt-1 text-xs text-muted">{stripInlineMarkdown(draft.laneNote)}</p>
+        <p className="mt-1 text-xs text-muted">{normalizeDashes(stripInlineMarkdown(draft.laneNote))}</p>
+      ) : null}
+
+      {/* v2 writes TWO replies per thread. The toggle is the product feature, not
+          a convenience: finding the thread costs ten to fifteen paced Reddit
+          requests and the second draft costs one model call, so the choice is
+          nearly free — and which one they keep taking is the fastest voice signal
+          we can collect, because they had to choose something anyway. Absent on a
+          v1 draft, which has one reply. */}
+      {approaches.length > 1 ? (
+        <div className="mt-3 flex items-center gap-1" role="group" aria-label="Reply approach">
+          {approaches.map((a, i) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => setApproachId(a.id)}
+              aria-pressed={a.id === approachId}
+              className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                a.id === approachId
+                  ? "border-neon/50 bg-neon/10 text-foreground"
+                  : "border-border text-muted hover:text-foreground"
+              }`}
+            >
+              Approach {i + 1}
+              {draft.recommendedApproach === a.id ? " · we would pick this" : ""}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {/* REWRITE REQUIRED, stated as a demand. Some subreddits ban AI-written
+          comments outright and two of the reference client's six ban permanently,
+          so "edit if you like" would be the wrong strength: the consequence of
+          ignoring this is the account, not the comment. */}
+      {draft.rewriteRequired ? (
+        <div className="mt-3 rounded-md border border-danger/40 bg-danger/10 px-3 py-2">
+          <p className="text-xs font-medium text-danger">
+            Rewrite this in your own words before posting.
+          </p>
+          <p className="mt-0.5 text-[11px] text-foreground">
+            This subreddit bans AI-written comments. Posting it as written risks the account.
+          </p>
+        </div>
+      ) : null}
+      {draft.karmaWarning ? (
+        <div className="mt-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
+          <p className="text-[11px] text-warning">
+            Account standing: {normalizeDashes(stripInlineMarkdown(draft.karmaWarning))}
+          </p>
+        </div>
       ) : null}
 
       <div className="mt-3 rounded-md border border-border bg-background p-4">
-        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{draft.text}</p>
+        {/* THE REPLY BODY IS NOT NORMALIZED, and that is deliberate.
+            normalizeDashes is applied to our own prose about a draft (below), never
+            to the draft itself, for two reasons that both bite.
+
+            First, this text is what the client PASTES: the clipboard hand-off
+            copies `activeText` raw, so normalizing only the render would show them
+            "-" and paste "—" — a display that lies about what they are posting,
+            which is worse than either choice on its own.
+
+            Second, v2's robot checker REJECTS a draft for an em dash and, in the
+            lab's words, "never edits the draft". Cleaning one up here would hide a
+            gate failure instead of surfacing it, and the drafting instructions
+            would never learn they need fixing. Reddit renders markdown natively,
+            so the comment that goes up must be byte-for-byte what we showed.
+            Pinned by reddit-drafts.test.ts. */}
+        <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">
+          {activeText}
+        </p>
       </div>
 
       {draft.disclosure ? (
@@ -265,7 +353,7 @@ function DraftCard({
       {draft.whySafe ? (
         <p className="mt-2 text-xs text-muted">
           <Icon name="Check" className="mr-1 inline h-3 w-3 text-success" />
-          Safe here: {stripInlineMarkdown(draft.whySafe)}
+          Safe here: {normalizeDashes(stripInlineMarkdown(draft.whySafe))}
         </p>
       ) : null}
 
@@ -379,7 +467,7 @@ function DraftCard({
                   size="sm"
                   variant="subtle"
                   onClick={() => {
-                    setFinalText(draft.text);
+                    setFinalText(activeText);
                     setMode("editing");
                   }}
                 >
@@ -451,20 +539,71 @@ export function RedditDraftsBatch({
   jobId,
   assetId,
   accounts,
+  outcome,
+  consideredCount,
+  outcomeNote,
 }: {
   clientId: string;
   jobId?: string;
   assetId: string;
   accounts: RedditParsedAccount[];
+  /** v2's run outcome. Absent on a v1 batch, which has no such record. */
+  outcome?: RedditParsedBatch["outcome"];
+  /** Threads the run looked at and passed over, so a thin batch explains itself. */
+  consideredCount?: number;
+  /** Why the run held or degraded, in the client's own language. */
+  outcomeNote?: string;
 }) {
   const totalDrafts = accounts.reduce((n, a) => n + a.drafts.length, 0);
   return (
     <div className="space-y-5">
-      <p className="text-sm text-muted">
-        {totalDrafts === 1 ? "The next reply, ready to review." : "Replies to review."} Each one answers a
-        real thread. Posting copies the reply and opens the thread so you can paste it; edit freely, or say
-        why you skipped it. Every choice sharpens the next run.
-      </p>
+      {/* THE DISTINCTION THIS BLOCK EXISTS FOR. Reddit blocks datacenter
+          addresses, so a run from cloud infrastructure reads nothing at all — and
+          reporting that as "nothing was good enough" would tell a client their
+          niche was thin when the truth is our search never came back. Blaming a
+          client's market for our outage is the one failure the four-outcome
+          contract is written to prevent, so `degraded` gets its own words and
+          never borrows the held copy. */}
+      {outcome === "degraded" ? (
+        <div className="rounded-md border border-danger/40 bg-danger/10 px-4 py-3">
+          <p className="text-sm font-medium text-danger">We could not read Reddit.</p>
+          <p className="mt-1 text-xs text-foreground">
+            The search did not come back this time, so nothing was judged. This is on us, not on your
+            subreddits. Your Karos team can see it and nothing was posted.
+          </p>
+          {outcomeNote ? (
+            <p className="mt-1 text-[11px] text-muted">{normalizeDashes(stripInlineMarkdown(outcomeNote))}</p>
+          ) : null}
+        </div>
+      ) : outcome === "blocked_intake" ? (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-4 py-3">
+          <p className="text-sm font-medium text-warning">We need your Reddit account first.</p>
+          <p className="mt-1 text-xs text-foreground">
+            {outcomeNote
+              ? normalizeDashes(stripInlineMarkdown(outcomeNote))
+              : "Nominate the account we should reply as in your Reddit agent data, and this runs from then on."}
+          </p>
+        </div>
+      ) : outcome === "held" && totalDrafts === 0 ? (
+        <div className="rounded-md border border-border bg-surface-2 px-4 py-3">
+          <p className="text-sm font-medium text-foreground">Nothing worth replying to this time.</p>
+          <p className="mt-1 text-xs text-muted">
+            {outcomeNote
+              ? normalizeDashes(stripInlineMarkdown(outcomeNote))
+              : "We read the threads and none of them earned your account's name. On Reddit a weak reply costs credibility, so we would rather send you nothing."}
+          </p>
+        </div>
+      ) : null}
+      {totalDrafts > 0 ? (
+        <p className="text-sm text-muted">
+          {totalDrafts === 1 ? "The next reply, ready to review." : "Replies to review."} Each one answers a
+          real thread. Posting copies the reply and opens the thread so you can paste it; edit freely, or say
+          why you skipped it. Every choice sharpens the next run.
+          {consideredCount && consideredCount > totalDrafts
+            ? ` We looked at ${consideredCount} threads in total; the rest were not worth your account's name.`
+            : ""}
+        </p>
+      ) : null}
       {accounts.map((acc) => (
         <section key={acc.title} className="overflow-hidden rounded-xl border border-border-strong">
           <header className="flex items-center gap-3 border-b border-border bg-surface-3 px-4 py-3">
@@ -490,7 +629,7 @@ export function RedditDraftsBatch({
             ) : null}
           </header>
           {acc.note ? (
-            <p className="px-4 pt-3 text-xs text-muted">{stripInlineMarkdown(acc.note)}</p>
+            <p className="px-4 pt-3 text-xs text-muted">{normalizeDashes(stripInlineMarkdown(acc.note))}</p>
           ) : null}
           <div className="space-y-3 p-4">
             {acc.drafts.map((draft) => (

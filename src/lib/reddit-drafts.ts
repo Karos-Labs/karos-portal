@@ -140,6 +140,33 @@ export interface RedditParsedDraft {
   whyThread?: string;
   /** The disclosure line to include, when the draft carries a mention. */
   disclosure?: string;
+  /**
+   * v2 only — the TWO ways the run wrote this reply, in positional order
+   * (`approach-1` is the run's `a<nn>-v1`).
+   *
+   * The reason v2 drafts two at all is economic: finding a thread costs ten to
+   * fifteen politely paced Reddit requests, while writing a second reply to a
+   * thread already found costs one model call. So the second is nearly free, and
+   * WHICH ONE THE CLIENT KEEPS PICKING is the cheapest voice signal available —
+   * they had to choose something anyway.
+   *
+   * Absent on every v1 draft, where `text` is the only reply. When present,
+   * `text` holds the first approach so the existing render path still works.
+   */
+  approaches?: Array<{ id: "approach-1" | "approach-2"; text: string }>;
+  /**
+   * v2 only — this subreddit BANS AI-written comments, so the reply must be
+   * rewritten in the client's own words before it goes anywhere.
+   *
+   * Rendered as a demand, not a suggestion. In the reference client's roster
+   * three of six subreddits ban it and two of those ban permanently, and the
+   * consequence of ignoring it is the account, not the comment.
+   */
+  rewriteRequired?: boolean;
+  /** v2 only — the account is at or below the karma/age this subreddit requires. */
+  karmaWarning?: string;
+  /** v2 only — which approach the run would pick, when `about.txt` says so. */
+  recommendedApproach?: "approach-1" | "approach-2";
   /** The "why this is safe here" note. */
   whySafe?: string;
   /** The gate results line. */
@@ -165,6 +192,137 @@ export interface RedditParsedAccount {
 
 export interface RedditParsedBatch {
   accounts: RedditParsedAccount[];
+  /**
+   * v2 only — how the run ended. Four outcomes, and three of them are NOT errors:
+   *
+   *  - `delivered`      replies passed every gate and are here
+   *  - `held`           nothing was worth this account's name. A correct outcome:
+   *                     on Reddit a weak reply costs credibility and sometimes the
+   *                     account, so silence is the better product
+   *  - `blocked_intake` the client has not nominated a Reddit account yet
+   *  - `degraded`       WE could not read Reddit
+   *
+   * The last one is the reason this field exists at all. Reddit blocks datacenter
+   * addresses, so a run from normal cloud infrastructure reads nothing — and
+   * showing that as `held` would tell a client their niche had no good threads
+   * when the truth is our search never came back. Blaming a client's market for
+   * our outage is the specific failure this distinction prevents.
+   */
+  outcome?: "delivered" | "held" | "blocked_intake" | "degraded";
+  /** v2 only — threads the run looked at and passed over, so a thin batch explains itself. */
+  consideredCount?: number;
+  /** v2 only — why the run held or degraded, in the client's language. */
+  outcomeNote?: string;
+}
+
+/* ─────────────────── the v2 delivery envelope (one contract) ─────────────────── */
+
+/**
+ * What the webhook stores as `asset.content` for a Reddit v2 delivery.
+ *
+ * WHY AN ENVELOPE AND NOT MARKDOWN. v2 does not write one document. It writes a
+ * folder per thread — `client/<nn>-answer/{approach-1.md,approach-2.md,about.txt}`
+ * — and the reader is handed a single string (`parseRedditDrafts(asset.content)`),
+ * with `asset.meta.artifacts` carrying file names and URLs but no contents. So
+ * something has to flatten the folders, and the only place holding the file bytes
+ * is the delivery handler, which already fetched them to pick its primary text.
+ *
+ * JSON rather than a synthesized markdown document, because a round-trip through
+ * prose is where structure goes to die: two approaches per thread, a boolean
+ * rewrite demand and an outcome enum would each need a marker to write and a
+ * regex to read, and every one of those is a place for the two sides to drift.
+ *
+ * THE TYPE IS DEFINED HERE, in the module the READER imports, and the webhook
+ * imports it from here too. One declaration, so a field the writer adds is a
+ * field the reader compiles against.
+ */
+export const REDDIT_V2_ENVELOPE_KIND = "reddit-drafts-v2" as const;
+
+export interface RedditV2Thread {
+  /** The run's own folder name, e.g. "01-answer" — the join key to the artifacts. */
+  folder: string;
+  threadTitle?: string;
+  threadUrl?: string;
+  subreddit?: string;
+  verdict?: "value-only" | "mention-ok";
+  verdictNote?: string;
+  posted?: string;
+  whyThread?: string;
+  whySafe?: string;
+  disclosure?: string;
+  rewriteRequired?: boolean;
+  karmaWarning?: string;
+  /** Which approach the run would pick, when `about.txt` says. */
+  recommended?: "approach-1" | "approach-2";
+  approaches: Array<{ id: "approach-1" | "approach-2"; text: string }>;
+}
+
+export interface RedditV2Envelope {
+  kind: typeof REDDIT_V2_ENVELOPE_KIND;
+  outcome: "delivered" | "held" | "blocked_intake" | "degraded";
+  /** The account this run drafted as, e.g. "u/acme-dev". */
+  account?: string;
+  mode?: "warming" | "established";
+  consideredCount?: number;
+  outcomeNote?: string;
+  threads: RedditV2Thread[];
+}
+
+/** Is this asset content a v2 envelope? Cheap enough to run before parsing. */
+export function isRedditV2Envelope(content: string): boolean {
+  const head = content.trimStart().slice(0, 200);
+  return head.startsWith("{") && head.includes(REDDIT_V2_ENVELOPE_KIND);
+}
+
+/**
+ * The envelope as the reader's batch shape.
+ *
+ * Maps onto the SAME `RedditParsedBatch` the v1 markdown parser produces, so the
+ * review component has one shape to render and the v2 work is additive rather
+ * than a second component. `text` carries the first approach so every existing
+ * render path keeps working; `approaches` is what the toggle reads.
+ */
+function envelopeToBatch(env: RedditV2Envelope): RedditParsedBatch | null {
+  const drafts: RedditParsedDraft[] = env.threads.map((t, i) => {
+    const approaches = (t.approaches ?? []).filter((a) => a.text?.trim());
+    return {
+      formula: `Thread ${i + 1}${t.subreddit ? ` · ${t.subreddit}` : ""}`,
+      text: approaches[0]?.text ?? "",
+      ...(approaches.length > 0 ? { approaches } : {}),
+      ...(t.threadTitle ? { threadTitle: t.threadTitle } : {}),
+      ...(t.threadUrl ? { threadUrl: t.threadUrl } : {}),
+      ...(t.subreddit ? { subreddit: t.subreddit } : {}),
+      ...(t.verdict ? { verdict: t.verdict } : {}),
+      ...(t.verdictNote ? { verdictNote: t.verdictNote } : {}),
+      ...(t.posted ? { posted: t.posted } : {}),
+      ...(t.whyThread ? { whyThread: t.whyThread } : {}),
+      ...(t.whySafe ? { whySafe: t.whySafe } : {}),
+      ...(t.disclosure ? { disclosure: t.disclosure } : {}),
+      ...(t.rewriteRequired ? { rewriteRequired: true } : {}),
+      ...(t.karmaWarning ? { karmaWarning: t.karmaWarning } : {}),
+      ...(t.recommended ? { recommendedApproach: t.recommended } : {}),
+      meta: [],
+    };
+  });
+  // An envelope with no drafts is still worth returning when it EXPLAINS itself:
+  // "we could not read Reddit" and "nothing was worth your account's name" are
+  // both things the client needs to see, and returning null here would collapse
+  // them into plain text with no distinction between them.
+  const hasSomethingToSay = drafts.some((d) => d.text.trim()) || env.outcome !== "delivered";
+  if (!hasSomethingToSay) return null;
+  return {
+    accounts: [
+      {
+        title: env.account ?? "Your Reddit account",
+        ...(env.account ? { handle: env.account } : {}),
+        ...(env.mode ? { mode: env.mode } : {}),
+        drafts: drafts.filter((d) => d.text.trim()),
+      },
+    ],
+    outcome: env.outcome,
+    ...(env.consideredCount !== undefined ? { consideredCount: env.consideredCount } : {}),
+    ...(env.outcomeNote ? { outcomeNote: env.outcomeNote } : {}),
+  };
 }
 
 const stripBold = (s: string) => s.replace(/\*\*/g, "");
@@ -286,7 +444,35 @@ function applyMetaBullet(draft: RedditParsedDraft, label: string, value: string)
   }
 }
 
-export function parseRedditDrafts(markdown: string): RedditParsedBatch | null {
+export function parseRedditDrafts(content: string): RedditParsedBatch | null {
+  // v2 first: a JSON envelope assembled by the delivery handler from the run's
+  // per-thread folders.
+  if (isRedditV2Envelope(content)) {
+    try {
+      const parsed = JSON.parse(content) as RedditV2Envelope;
+      if (parsed?.kind !== REDDIT_V2_ENVELOPE_KIND || !Array.isArray(parsed.threads)) return null;
+      return envelopeToBatch(parsed);
+    } catch {
+      // Malformed envelope: fall through to the markdown path, then to plain
+      // text. A parse error must not blank a deliverable the client can still
+      // read as text.
+    }
+  }
+  return parseRedditDraftsMarkdown(content);
+}
+
+/**
+ * The v1 markdown parser, KEPT rather than replaced.
+ *
+ * The spec said to abandon the DRAFTS.md expectation, and for new deliveries it
+ * is abandoned — nothing writes that shape any more. But assets already in a
+ * client's archive still hold it, and a reader that only understands the new
+ * envelope would render every one of them as plain text: the pick/skip actions
+ * gone, the thread links gone, on work a client may still be part-way through.
+ * Deleting the old path is a migration nobody asked for; keeping it costs one
+ * function.
+ */
+export function parseRedditDraftsMarkdown(markdown: string): RedditParsedBatch | null {
   if (!/^# Reddit answer drafts/m.test(markdown)) return null;
   const lines = markdown.split("\n");
   const accounts: RedditParsedAccount[] = [];

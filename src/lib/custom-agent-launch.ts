@@ -26,6 +26,19 @@ export interface AgentBriefField {
   min?: number;
   max?: number;
   options?: Array<{ value: string; label: string }>;
+  /**
+   * Rendered nowhere: the run dialog never paints this field. Its
+   * `defaultValue` still seeds the brief (initialAgentBrief), but a hidden
+   * batch_size deliberately does NOT reach the charge multiplier or the
+   * "Create exactly N" prompt prefix — the dialog derives those from VISIBLE
+   * fields only (product ruling, 2026-08-05: the X run stays at its flat
+   * quoted per-run price; only a size the client can actually see may scale
+   * their bill). Hiding a field is a UI removal, never a silent price change.
+   * The field stays in the profile (its key is part of the pinned field-key
+   * contract in agent-launch-ui.test.ts), only the question disappears. A
+   * hidden field must never be `required` — nothing can ever fill it in.
+   */
+  hidden?: boolean;
 }
 
 export interface AgentAttachmentProfile {
@@ -73,6 +86,19 @@ export const BATCH_SIZE_FIELD_KEY = "batch_size";
  * thing).
  */
 export const LINKEDIN_IDENTITY_FIELD_KEY = "li_identity";
+
+/**
+ * The v2 Reddit keys, exactly as the lab manifest spells them.
+ *
+ * NOTE THE ABSENCE OF A `-v2` SUFFIX. The natural guess is
+ * `karos-reddit-runner-v2` / `karos-reddit-setup-v2`; the manifest says
+ * `karos-reddit-runner` and `karos-reddit-setup`, with the GENERATION carried by
+ * the path (`products/building/reddit-agent-v2/`) rather than by the key. Getting
+ * this wrong means a key that matches nothing and an agent that is never gated,
+ * never fed and never hidden, so the literals live here once.
+ */
+export const REDDIT_RUNNER_V2_KEY = "karos-reddit-runner";
+export const REDDIT_SETUP_V2_KEY = "karos-reddit-setup";
 
 const generalAttachments: AgentAttachmentProfile = {
   label: "Reference files",
@@ -510,6 +536,16 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           label: "How many drafts?",
           type: "select",
           defaultValue: "10",
+          // Hidden by request (client-lens pass, 2026-08): the size question
+          // was one more decision between the client and "Start run". Hidden
+          // means INERT for pricing: no charge multiplier and no "Create
+          // exactly N" prefix reach the run (see the `hidden` doc on
+          // AgentBriefField) — the press charges the flat per-run price the
+          // button quotes, and the skill's own default batch (a week of
+          // posts, per the canonical instructions) governs what comes back.
+          // Options kept for the day this becomes a staff control or gets
+          // unhidden.
+          hidden: true,
           options: [
             { value: "5", label: "5 drafts" },
             { value: "10", label: "10 drafts" },
@@ -544,7 +580,9 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     // be fine today (no other agent mentions Reddit) but a match on words like
     // monitor, listen or research would hijack the reputation and intelligence
     // agents below, so the key is the safer test.
-    matches: (identity) => identity.startsWith("karos-reddit-agent "),
+    matches: (identity) =>
+      identity.startsWith(`${REDDIT_RUNNER_V2_KEY} `) ||
+      identity.startsWith("karos-reddit-agent "),
     profile: {
       eyebrow: "Reddit reply",
       intro:
@@ -1023,7 +1061,16 @@ export function isSupersededAgentKey(key: string | undefined | null): boolean {
   // matching doc has no key at all. An absent key is not superseded — it is
   // unknown, and unknown must not be hidden.
   if (!key) return false;
-  return key === "karos-linkedin-agent" || key.startsWith("karos-linkedin-company-");
+  return (
+    // the e10 LinkedIn generation
+    key === "karos-linkedin-agent" ||
+    key.startsWith("karos-linkedin-company-") ||
+    // the v1 Reddit agent, replaced by karos-reddit-runner. It keeps its doc so a
+    // rollback has something to re-enable, and it loses its card for the same
+    // reason e10 did: a disabled-but-granted agent renders as "Coming soon", so
+    // leaving it listed promises a client something that is not coming.
+    key === "karos-reddit-agent"
+  );
 }
 
 /**
@@ -1130,8 +1177,16 @@ export const LINKEDIN_SETUP_REQUIRED_PREFIX = "Set up the LinkedIn agent data";
  * of the server-side isRedditAgent in agent-service/reddit-agent-context.ts.
  */
 export function isRedditAgentIdentity(key: string): boolean {
-  return key === "karos-reddit-agent";
+  return (
+    key === REDDIT_RUNNER_V2_KEY ||
+    key === REDDIT_SETUP_V2_KEY ||
+    // The v1 agent v2 replaces. Still in the FAMILY on purpose: a run of it must
+    // keep getting its intake attached and its setup gate applied. What it loses
+    // is its place on a roster — see isSupersededAgentKey.
+    key === "karos-reddit-agent"
+  );
 }
+
 
 /**
  * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string
@@ -1326,6 +1381,30 @@ export function batchSizeFrom(values: Record<string, string>): number | undefine
   if (!raw) return undefined;
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * The charge multiplier a FRESH, untouched run dialog submits for this agent —
+ * the default of its VISIBLE batch_size selector, or 1.
+ *
+ * Visible fields only, by ruling (2026-08-05): a hidden batch_size is a UI
+ * removal, not a price change — the X agent's press charges the flat per-run
+ * price its button quotes, whatever the skill drafts. So this returns 1 for a
+ * profile whose selector is hidden, and the selector's default where a client
+ * can actually see and change it. Shared by every surface that quotes a
+ * default per-run price (dialog footer, credit gate, copilot price list and
+ * run tool, staff labels), so it can never disagree with what the same fresh
+ * dialog's submit sends.
+ */
+export function defaultRunBatchSize(agent: AgentIdentity): number {
+  const profile = launchProfileFor(agent);
+  const seeded = initialAgentBrief(profile);
+  const visible = Object.fromEntries(
+    Object.entries(seeded).filter(
+      ([key]) => !profile.fields.find((field) => field.key === key)?.hidden,
+    ),
+  );
+  return batchSizeFrom(visible) ?? 1;
 }
 
 export function buildCustomAgentPrompt(

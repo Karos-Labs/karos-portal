@@ -49,6 +49,7 @@ import type {
   LiAgentState,
   LiDirectionRequest,
   LiDraftFeedback,
+  RedditAgentState,
   RedditDraftFeedback,
 } from "@/lib/types";
 import {
@@ -137,6 +138,10 @@ const col = {
   liDirectionRequests: () => adminDb().collection("liDirectionRequests"),
   liAgentState: () => adminDb().collection("liAgentState"),
   redditDraftFeedback: () => adminDb().collection("redditDraftFeedback"),
+  // Reddit v2's durable state — the files the ephemeral runner would otherwise
+  // discard. See the RedditAgentState comment in types.ts for why the dated
+  // rules audit makes this a safety mechanism and not just a cache.
+  redditAgentState: () => adminDb().collection("redditAgentState"),
   // Per-seat AI-built voice profiles (agent-scoped: x/linkedin/reddit), one doc
   // per (clientId, agent, seatId). See upsertSeatVoiceProfile.
   seatVoiceProfiles: () => adminDb().collection("seatVoiceProfiles"),
@@ -454,6 +459,7 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "liDirectionRequests",
   "liAgentState",
   "redditDraftFeedback",
+  "redditAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];
@@ -2993,4 +2999,57 @@ export async function listRedditDraftFeedback(
   return snap.docs
     .map((d) => withId<RedditDraftFeedback>(d))
     .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/* ───────── Reddit v2: the durable state the ephemeral runner loses ───────── */
+
+/**
+ * One state file. `account` is part of the identity, not a filter: v2 keeps a
+ * separate memory and learning log per Reddit account, so a per-account kind
+ * read without it would hand one account's learned voice to another's replies.
+ */
+export async function getRedditAgentState(
+  clientId: string,
+  kind: RedditAgentState["kind"],
+  account: string | null = null,
+): Promise<RedditAgentState | null> {
+  const snap = await col
+    .redditAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .where("account", "==", account)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<RedditAgentState>(snap.docs[0]);
+}
+
+export async function listRedditAgentState(clientId: string): Promise<RedditAgentState[]> {
+  const snap = await col.redditAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<RedditAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file. Wholesale replacement, not a field merge:
+ * each of these is a whole file the run rewrote (the ledger it appended to, the
+ * audit row it re-verified), so the delivered copy IS the new state. Merging two
+ * versions of a JSON document field by field would produce a file neither run
+ * wrote — and for the rules audit that file decides whether a product may be
+ * named in a subreddit.
+ */
+export async function upsertRedditAgentState(
+  data: Omit<RedditAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getRedditAgentState(data.clientId, data.kind, data.account);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .redditAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .redditAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
 }
