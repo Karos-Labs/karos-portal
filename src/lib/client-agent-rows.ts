@@ -449,16 +449,23 @@ export async function buildAgentSetup(
         const clientLabel = "Your review details";
         return [
           agent.id,
+          // `standUpDone: true`, the newsletter and blog idiom rather than
+          // LinkedIn's: `ready` above already folds `isSetUp` in, so the intake
+          // rung refuses first and there can never be an OUTSTANDING stand-up
+          // step for the run gate to catch. Reporting the raw flag would fire
+          // that rung a second time and tell a reputation client about LinkedIn.
+          // See the field's doc on AgentSetupState.
           panes?.reputation
             ? {
                 ready: hasIntake && isSetUp,
+                standUpDone: true,
                 href,
                 label,
                 clientLabel,
                 kind: "reputation",
                 data: panes.reputation,
               }
-            : { ready: hasIntake && isSetUp, href, label, clientLabel },
+            : { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel },
         ];
       }
       return null;
