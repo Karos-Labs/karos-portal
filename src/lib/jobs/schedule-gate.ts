@@ -16,7 +16,13 @@ import "server-only";
  */
 
 import { hasXAgentIntake, isXAgent } from "@/lib/agent-service/x-agent-context";
-import { hasLinkedInAgentIntake, isLinkedInAgent } from "@/lib/agent-service/linkedin-agent-context";
+import {
+  hasLinkedInAgentIntake,
+  hasLinkedInV2Setup,
+  isLinkedInAgent,
+  isLinkedInSetupV2,
+  isLinkedInV2Agent,
+} from "@/lib/agent-service/linkedin-agent-context";
 import { hasRedditAgentIntake, isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
@@ -52,6 +58,28 @@ export async function unfireableScheduleReason(
   // seat-only workspace able to schedule the master (ruling 6).
   if (isLinkedInAgent(agent.key) && !(await hasLinkedInAgentIntake(client.id, agent.key))) {
     return `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. The schedule stays off until then.`;
+  }
+  // The v2 STAND-UP rung, which this gate was missing while both cores enforced
+  // it (submit-custom.ts and run-custom-agent.ts refuse on hasLinkedInV2Setup).
+  // That is exactly the invisible schedule this module exists to prevent: the
+  // row passed the gate, the card read as live, and every single fire was turned
+  // away before a job row existed — no failed status, no charge, nothing to see.
+  //
+  // V2 keys only, matching the cores: the e10 generation has no stand-up run.
+  //
+  // AND THE SETUP SKILL IS EXEMPT, which is the whole point of it — it is the run
+  // that CREATES the foundation row. Both cores carry this exemption
+  // (submit-custom.ts's `!isLinkedInSetupV2(agent.key) &&` and
+  // run-custom-agent.ts's `&& !isLinkedInSetupV2(agent.key)`); without it this
+  // gate is stricter than the thing it mirrors and refuses the only run that can
+  // ever satisfy it — so a paused setup schedule could never be resumed, and a
+  // new one could only be created once it was no longer needed.
+  if (
+    isLinkedInV2Agent(agent.key) &&
+    !isLinkedInSetupV2(agent.key) &&
+    !(await hasLinkedInV2Setup(client.id))
+  ) {
+    return `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the LinkedIn agent card, which stands up the lanes, the voice and the first topics. The schedule stays off until then.`;
   }
   if (isRedditAgent(agent.key) && !(await hasRedditAgentIntake(client.id))) {
     return `${REDDIT_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the account form there. The schedule stays off until then.`;

@@ -22,7 +22,8 @@ import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { PostManagementRow } from "@/components/post-management-row";
-import { publishAssetNowAction } from "@/lib/actions/asset-actions";
+import { ApprovePanel } from "@/components/approve-panel";
+import { approveAssetAction, publishAssetNowAction, unscheduleAssetAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
 import {
@@ -430,6 +431,9 @@ export function AssetDetailModal({
           </div>
         )}
 
+        <ApproveRow asset={asset} canApprove={canPublish} connectedPlatforms={connectedPlatforms ?? []} />
+        <UnscheduleRow asset={asset} canApprove={canPublish} />
+
         {/* Unconditional on eligibility - a viewer with no Publish Now button (a
             client, or staff with no compatible connected platform) is exactly
             who most needs to see WHY a scheduled post never went out; the
@@ -511,6 +515,128 @@ function AssetContentBody({ content }: { content: string }) {
       className="break-words [&_code]:break-all [&_table]:min-w-0"
       dangerouslySetInnerHTML={{ __html: renderAssetBody(content) }}
     />
+  );
+}
+
+/**
+ * Approve a draft, from the calendar - the same two-step flow the staff Assets
+ * list offers (asset-card.tsx): a non-schedulable draft (a note) approves
+ * straight through, everything else opens the shared ApprovePanel to pick a
+ * publishing tier and a calendar slot. Before this the calendar could only
+ * ever DISPLAY a draft that had already been approved elsewhere - opening a
+ * draft here offered no way to move it forward at all.
+ *
+ * Staff only, same gate as PublishNowRow: `approveAssetAction` is
+ * `requireStaff()`, so a client-facing button could only ever error.
+ */
+function ApproveRow({
+  asset,
+  canApprove,
+  connectedPlatforms,
+}: {
+  asset: Asset;
+  canApprove: boolean;
+  connectedPlatforms: string[];
+}) {
+  const router = useRouter();
+  const [approving, setApproving] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!canApprove || asset.status !== "draft") return null;
+
+  // Notes have no scheduling dimension - same rule asset-card.tsx applies.
+  const calendarEligible = asset.type !== "note";
+
+  async function handleSimpleApprove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await approveAssetAction(asset.id);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Approval failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      {approving ? (
+        <ApprovePanel
+          asset={asset}
+          connectedPlatforms={connectedPlatforms}
+          onDone={() => setApproving(false)}
+        />
+      ) : (
+        <>
+          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+            Ready to approve?
+          </p>
+          <button
+            type="button"
+            onClick={() => (calendarEligible ? setApproving(true) : handleSimpleApprove())}
+            disabled={busy}
+            className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
+          >
+            <Icon name="Check" className="h-3.5 w-3.5" />
+            {busy ? "Approving…" : "Approve"}
+          </button>
+          <p className="mt-1.5 text-[11px] text-muted-2">
+            {calendarEligible
+              ? "Pick a publishing tier and a slot, then it lands on the content calendar."
+              : "Approves this draft."}
+          </p>
+          {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Revert an approved or scheduled post back to draft, from the calendar - the
+ * same Unschedule the staff Assets list offers (asset-card.tsx). Staff only,
+ * same gate as PublishNowRow.
+ */
+function UnscheduleRow({ asset, canApprove }: { asset: Asset; canApprove: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!canApprove || (asset.status !== "approved" && asset.status !== "scheduled")) return null;
+
+  async function unschedule() {
+    setBusy(true);
+    setError(null);
+    try {
+      await unscheduleAssetAction(asset.id);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't unschedule this asset");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+        Change of plans?
+      </p>
+      <button
+        type="button"
+        onClick={unschedule}
+        disabled={busy}
+        className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
+      >
+        <Icon name="RotateCcw" className="h-3.5 w-3.5" />
+        {busy ? "Working…" : "Unschedule"}
+      </button>
+      <p className="mt-1.5 text-[11px] text-muted-2">Pulls it off the calendar and reverts it to draft.</p>
+      {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
+    </div>
   );
 }
 

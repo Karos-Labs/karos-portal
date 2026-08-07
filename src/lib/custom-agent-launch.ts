@@ -346,6 +346,22 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           label: "How many posts?",
           type: "select",
           defaultValue: "1",
+          // ONE POST PER PRESS — Daniel's ruling, 2026-08-06, and the same
+          // treatment X's selector already carries. It was VISIBLE and a client
+          // could raise it to 3, which made the band's button and the dialog
+          // disagree about money: the button can only ever quote the fresh
+          // dialog's default (defaultRunBatchSize filters hidden fields, so 1 ×
+          // 15), while the dialog charged `cost × the chosen size` — so a client
+          // with 30 credits passed every gate on 15 and then died on a 45-credit
+          // submit. Hidden means INERT for pricing: no multiplier and no "Create
+          // exactly N" prefix reach the run, so a press charges the flat 15 the
+          // button shows.
+          //
+          // It also matches the product: one run drafts ONE post, and variety
+          // lives in the lane rotation rather than in the batch (the canonical
+          // writer instructions in docs/linkedin-agent-portal.md). Options kept
+          // for the day this becomes a staff control.
+          hidden: true,
           options: [
             { value: "1", label: "1 post" },
             { value: "2", label: "2 posts" },

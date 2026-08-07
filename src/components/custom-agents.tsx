@@ -303,6 +303,49 @@ function AgentBlurb({ text, className }: { text: string; className?: string }) {
  */
 export type AgentSetupState = {
   ready: boolean;
+  /**
+   * Has this agent's one-time STAND-UP run happened? A second question from
+   * `ready` ("has the client filled the form in"), and only LinkedIn v2 has it:
+   * v2 derives the lanes, the voice and the first topics from a run, so a client
+   * whose form is saved still has nothing to draft from until that run has been.
+   *
+   * TRUE for every other family, because they have no such run — answering "no"
+   * for them would block agents the server would happily run.
+   *
+   * WHY IT IS A FIELD HERE rather than derived where it is needed. The predicate
+   * already existed as `standUpDone()` below, but it reads `setup.data.isSetUp`,
+   * which is only present when the intake PANES were built — and the client's
+   * detail route builds panes for staff only. So for every client the old
+   * predicate answered "done" by omission, which is the one answer that cannot be
+   * right for the state both submit cores refuse on.
+   *
+   * IT MARKS AN OUTSTANDING STEP, not the raw predicate. Newsletter and blog v2
+   * have stand-up runs too, and they answer the question a different way — both
+   * fold `isSetUp` straight into `ready`, deliberately, because their writers
+   * claim an index number at step 01 and a run started without one is charged for
+   * and dies immediately. For them this field is `true`: their intake rung has
+   * already refused, and reporting the raw flag would fire the stand-up rung a
+   * second time and tell a newsletter client about LinkedIn.
+   *
+   * So two idioms coexist, which is worth naming rather than hiding: LinkedIn
+   * keeps the questions separate so its copy can say "one press stands this up"
+   * instead of blaming the client for answers they have already given, and the
+   * other two merge them because the cheaper failure is to refuse early. Folding
+   * all three onto this field is a real follow-up, and it needs the refusal
+   * sentence to move onto the setup state per family first — the string in
+   * client-agent-runs.ts names LinkedIn out loud.
+   *
+   * SCOPE, stated precisely because the two are easy to conflate: this field
+   * reaches the surfaces that read an `AgentSetupState` directly — the two run
+   * gates in client-agent-runs.ts. It does NOT reach the run dialog's
+   * `standUpDone()` helper below, because `intakeFor` projects only
+   * `{ ready, data }` into AgentIntakeContext, so that helper still derives the
+   * answer from `data.isSetUp`. The two cannot disagree today — `isSetUp` is
+   * `hasLinkedInV2Setup` too, resolved in agent-intake-views.ts — so this is
+   * redundancy rather than drift, and collapsing them into one answer is a
+   * follow-up that touches the dialog's open-on-data behaviour.
+   */
+  standUpDone: boolean;
   href: string;
   /**
    * The OPERATOR's name for the intake page, e.g. "X agent data" - it matches

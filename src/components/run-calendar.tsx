@@ -1605,9 +1605,10 @@ function LegendDot({ className, label }: { className: string; label: string }) {
  * Every member is NAMED here — that is what the Record buys — but not every
  * member is OFFERED to every viewer: the render site filters through
  * `calendarFilterKeyMatchable`, which is where the per-viewer answer and its
- * enumeration live. Today that withholds exactly one chip from a client
- * ("draft", a status their calendar is never built from); "held" and the rest
- * stay, because a client's calendar can hold them.
+ * enumeration live. Today that withholds nothing from a client — "draft"
+ * included, since a client's calendar and dashboard now show the same pending
+ * work staff see (see `isClientCalendarStatus`'s docstring in lib/calendar-kind
+ * for the reversal).
  *
  * THE LABELS ARE NO LONGER HERE. They moved to `calendarFilterLabel`
  * (lib/calendar-kind) because two of them were wrong in a way a component-local

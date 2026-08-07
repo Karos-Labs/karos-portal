@@ -129,29 +129,37 @@ export const ALL_CALENDAR_FILTER_KEYS = Object.keys(FILTER_KEY_PRESENT) as Calen
 /**
  * Which assets a CLIENT's calendar is built from at all.
  *
- * ONE home for it, because it is now asked twice: calendar-body filters the
- * fetched assets through it, and the legend rule below derives what a client can
- * therefore match. Written as the positive question so the two readers cannot
+ * ONE home for it, because it is asked in three places that must not disagree:
+ * calendar-body filters the fetched assets through it, the legend rule below
+ * derives what a client can therefore match, and client-state-domain's
+ * "performance" surface unions it with the archive to decide what a client's
+ * dashboard may show. Written as the positive question so none of the three can
  * disagree about the polarity.
  *
- * Drafts only. A client's calendar has never shown internal drafts (it matches
- * /assets, which redirects a client away entirely), and the archive excludes them
- * too — but the SCOPE of this predicate is the calendar's own asset set, which is
- * the one thing the legend rule may reason from.
+ * NO LONGER DRAFT-EXCLUDING, by product decision: a client's calendar and
+ * dashboard now show the same pending work staff see, including unapproved
+ * drafts — "these are their posts, they should see it like admins, even if it's
+ * only pending and not approved yet". This reverses the draft-hiding rule this
+ * function used to enforce (directives A3/A4, still described in
+ * client-state-domain.ts's module docstring for history); the Archive view is
+ * unaffected and still excludes drafts via `isInClientArchive`, which does not
+ * call this function.
  */
-export function isClientCalendarStatus(status: CalendarKindInput["status"]): boolean {
-  return status !== "draft";
+export function isClientCalendarStatus(_status: CalendarKindInput["status"]): boolean {
+  return true;
 }
 
 /**
  * Filter keys a CLIENT's calendar can never hold — so the legend must not offer
  * them a dot that can never dim anything.
  *
- * ENUMERATED, not guessed at, and the enumeration is what the set is for. The
- * finding named the Draft chip; the sharper question is which of the other six
- * are in the same position, and the answer is none of them:
+ * ENUMERATED, not guessed at, and the enumeration is what the set is for.
+ * Every chip kind is matchable by a client today, "draft" included now that
+ * `isClientCalendarStatus` no longer drops draft-status assets before `postKind`
+ * sees them (see that function's docstring for the reversal):
  *
- *  • published, scheduled — most of a client's calendar. Obviously matchable.
+ *  • published, scheduled, draft — a client's calendar shows every status staff
+ *    see, unredacted content aside.
  *  • placeholder — `publishMode: "placeholder"` reaches a client on both sides
  *    of the unlock: redactLockedAsset carries that one value through, and an
  *    unlocked post keeps the field whole. While it was stripped the chip was
@@ -166,9 +174,6 @@ export function isClientCalendarStatus(status: CalendarKindInput["status"]): boo
  *  • review — calendar-past-runs' table marks the "review" run state
  *    client-visible, and a client's card needs one unlocked deliverable, which
  *    is the ordinary case for a run in review.
- *  • draft — the one that cannot. `isClientCalendarStatus` drops draft-status
- *    assets before `postKind` ever sees them, and postKind's only "draft" branch
- *    requires exactly that status.
  *
  * The derivation is pinned in calendar-kind.test.ts, which probes `postKind`
  * over every shape it reads rather than trusting this list. It is an UPPER bound
@@ -177,9 +182,7 @@ export function isClientCalendarStatus(status: CalendarKindInput["status"]): boo
  * That is the safe direction: the failure mode of a wrong entry here is a filter
  * a client needed, not a chip they cannot use.
  */
-const CLIENT_UNMATCHABLE_FILTER_KEYS: ReadonlySet<CalendarFilterKey> = new Set<CalendarFilterKey>([
-  "draft",
-]);
+const CLIENT_UNMATCHABLE_FILTER_KEYS: ReadonlySet<CalendarFilterKey> = new Set<CalendarFilterKey>([]);
 
 /** Can this viewer's calendar hold anything this filter key would hide? */
 export function calendarFilterKeyMatchable(

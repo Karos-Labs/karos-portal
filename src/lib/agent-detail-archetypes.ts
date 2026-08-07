@@ -375,12 +375,16 @@ export function agentsWithDeliveredWork(args: {
  *
  *  • not a launch deliverable and not a test run — `getClientLibraryAssets` drops
  *    both, so neither is ever on anyone's calendar;
- *  • `isClientCalendarStatus` — the draft rule, in the one place it lives;
+ *  • `isClientCalendarStatus` — kept for the call, even though it now always
+ *    returns `true` (the calendar no longer hides drafts from a client — see its
+ *    docstring); this predicate's own "planned, not yet done" answer for a draft
+ *    still comes out `false` below, because a draft's chip kind is `draft`, never
+ *    `scheduled` or `placeholder`;
  *  • a chip kind of `scheduled` or `placeholder`. Those are the two `postKind`
  *    answers that mean "planned for a day, not yet done". `published` is history,
  *    `failed` and `held` are a publish attempt that went wrong (an agent whose
  *    posts will not go out is not the thing Albert asked to be called Live), and
- *    `draft` cannot reach a client's calendar at all.
+ *    `draft` is content still in review, not yet planned.
  *  • `scheduledAt` strictly in the future. A past-due scheduled post is a post
  *    that did not go out, not upcoming work.
  *

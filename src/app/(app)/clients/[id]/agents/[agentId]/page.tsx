@@ -305,6 +305,10 @@ export default async function ClientAgentDetailPage({
     readAgentInputDocs(id, agent.key),
   ]);
   const agentSetup = await buildAgentSetup(id, [summary], panes);
+  // Declared HERE, not further down, because the status strip reads it: the badge
+  // and the run gate must answer "can this be run" off one object, and a `const`
+  // is not hoisted.
+  const setup = agentSetup[agent.id] ?? null;
   const scheduleRows = toScheduleRows(scheduledRuns, viewerIsClient);
   const rows = umbrella
     ? await toClientAgentRows({
@@ -383,6 +387,12 @@ export default async function ClientAgentDetailPage({
     scheduleRefusalAt: schedule?.lastErrorAt ?? null,
     scheduleActive: schedule?.status === "active",
     hasDelivered: stripHasDelivered,
+    // The second proof of "this can be run", beside delivered work. Both
+    // readiness questions, from the SAME object `legacyGate` below reads — so the
+    // badge cannot say "Not set up yet" over a working Run button, which is what
+    // it did for any configured agent that had simply never been asked yet.
+    // Undefined when this agent runs on no intake: unknown must not read as ready.
+    ...(setup ? { readyToRun: setup.ready && setup.standUpDone } : {}),
     // Read through the SAME helper the roster uses (lastRunFailedAgentIds), not
     // re-derived from `agentRuns` below: that list is staff-only and capped at
     // eight rows, so a client's page would answer this differently — or not at
@@ -528,7 +538,6 @@ export default async function ClientAgentDetailPage({
           .map((item) => ({ id: item.id, name: item.name, at: item.createdAt }))
       : [];
 
-  const setup = agentSetup[agent.id] ?? null;
   const connections = sanitizeIntegrations(integrations);
   // Platform ids for the deliverable modal's publish controls - the same
   // sanitized set the connector chips below render, never the raw integration
@@ -682,11 +691,26 @@ export default async function ClientAgentDetailPage({
       : []),
   ];
 
-  // The SAME condition the hero chain resolves to LegacyAgentPanel below —
-  // the shape whose pace-and-price summary now rides the status strip's aside
-  // slot instead of floating mid-column. Bound once so the strip's card and
-  // the panel cannot disagree about which shape this page is showing.
-  const legacyShape = !row && (schedule?.status === "active" || hasDelivered);
+  // ── WHICH AGENTS GET THE RUN BAND (Daniel's ruling, 2026-08-06) ──
+  //
+  // It used to be `schedule?.status === "active" || hasDelivered` — production
+  // HISTORY. An agent that had never produced got no run gesture and no price
+  // card, so the only way to obtain the affordance was to already have used it.
+  // For X that was invisible (it has delivered), and for a freshly granted
+  // LinkedIn agent it meant a fully-configured product with nowhere to press:
+  // "READY TO RUN" on the inputs band, and nothing on the page that could run it.
+  //
+  // `intakeDriven` is the third way in, and it is deliberately about CAPABILITY
+  // rather than history: an agent whose readiness the server can actually answer
+  // (X / LinkedIn / Reddit — `setup` is non-null exactly for those) is an agent
+  // that can be asked for something. The gate below still decides whether the
+  // press is OFFERED, and it now knows every rung the submit cores know — so
+  // widening who SEES the band cannot widen who can fire a refused run.
+  //
+  // Deliberately not "every agent": one with no `setup` has no server-answerable
+  // readiness, so its band could only guess. Those keep the old behaviour.
+  const intakeDriven = setup !== null;
+  const legacyShape = !row && (schedule?.status === "active" || hasDelivered || intakeDriven);
 
   // Where "everything this agent has made" actually lives for THIS viewer.
   // The old link sent both readers to /clients/<id>/assets, which redirects a
@@ -907,7 +931,7 @@ export default async function ClientAgentDetailPage({
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
             />
-          ) : schedule?.status === "active" || hasDelivered ? (
+          ) : legacyShape ? (
             /* The legacy shape (CD-H8): no umbrella was ever bound, but a weekly
                schedule is firing — so this agent genuinely IS producing, and the
                roster and header badge it Live.

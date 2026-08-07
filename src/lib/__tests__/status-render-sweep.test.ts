@@ -723,8 +723,9 @@ describe("the calendar legend names no state twice", () => {
     //    of WORK STAFF OWE on a deliverable — and this legend is naming a CHIP ON A
     //    DATE GRID: a draft-status asset that carries a `scheduledAt`. "Show
     //    awaiting review items" is not what that filter does. It stays the
-    //    calendar's own word, and it is withheld from clients entirely
-    //    (`calendarFilterKeyMatchable`), so no client reads either word.
+    //    calendar's own word ("Draft") for both viewers — reachable for a client
+    //    now that the calendar/dashboard draft-hiding rule was reversed, but still
+    //    never the register's staff word.
     //
     // So the closed question is not "does every shared key match the register" but
     // "does any key have a viewer-dependent word that the register did not give it".
@@ -754,9 +755,11 @@ describe("the calendar legend names no state twice", () => {
     // copy decision someone has to make on purpose, not a drift.
     expect(calendarFilterLabel("draft", false)).toBe("Draft");
     expect(STAFF_ASSET_STATUS_LABEL.draft).toBe("Awaiting review");
-    // And it is unreachable for a client, which is what keeps the divergence off a
-    // client's screen rather than merely off the one we looked at.
-    expect(calendarFilterKeyMatchable("draft", true)).toBe(false);
+    // The divergence is reachable for a client too now — the calendar/dashboard
+    // draft-hiding rule was deliberately reversed (see `isClientCalendarStatus`'s
+    // docstring), so a client's own legend uses "Draft" the same as staff's does
+    // (the words already agreed; only reachability changed).
+    expect(calendarFilterKeyMatchable("draft", true)).toBe(true);
     expect(calendarFilterKeyMatchable("draft", false)).toBe(true);
   });
 

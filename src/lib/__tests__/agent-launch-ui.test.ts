@@ -283,7 +283,22 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
     for (const route of ["x-agent", "linkedin-agent", "reddit-agent"]) {
       expect(rows).toContain(`/clients/\${clientId}/${route}`);
     }
-    expect(rows).toContain("{ ready, href, label, clientLabel }");
+    // The pane-less branch still carries href/label/clientLabel — the href is
+    // NOT conditional on a payload.
+    //
+    // TWO EXACT LITERALS rather than one regex over both. The obvious rewrite
+    // when `standUpDone` arrived was `standUpDone(?:: true)?`, and that
+    // alternation is blind to the one substitution this pair exists to catch: a
+    // LinkedIn branch that HARDCODES `standUpDone: true` instead of resolving the
+    // predicate would satisfy it, which is precisely the regression. The families
+    // with no stand-up run say so with a literal; LinkedIn's is resolved, so the
+    // two shapes are different on purpose and are pinned separately.
+    expect(rows, "the families with no stand-up run must say so with a literal").toContain(
+      "{ ready, standUpDone: true, href, label, clientLabel }",
+    );
+    expect(rows, "LinkedIn's stand-up must be RESOLVED, never hardcoded true").toContain(
+      "{ ready, standUpDone, href, label, clientLabel }",
+    );
   });
 
   it("attaches a prefetched form to the agent it belongs to", () => {
@@ -299,6 +314,55 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
     expect(rows).toContain("hasXAgentIntake(clientId)");
     expect(rows).toContain("hasLinkedInAgentIntake(clientId, agent.key)");
     expect(rows).toContain("hasRedditAgentIntake(clientId)");
+  });
+
+  it("answers the LinkedIn v2 STAND-UP question too, from the cores' predicate", () => {
+    // A saved form is not a stood-up agent. LinkedIn v2 derives its lanes, its
+    // voice and its first topics from a one-time run, and BOTH submit cores
+    // refuse a writer run before it has happened — so a surface that resolves
+    // only `ready` hands out a press the server turns away (F131).
+    //
+    // hasLinkedInV2Setup used to be called by the two cores ALONE, which is why
+    // two control surfaces disagreed with them at once: this readiness object and
+    // the schedule gate — where the cost was a schedule that passed, read as live,
+    // and was then refused on every single fire with no job row, no failed status
+    // and nothing on screen to explain it. (The run gate is the third surface and
+    // is asserted by the next test, which is where its ordering lives.)
+    for (const file of ["src/lib/client-agent-rows.ts", "src/lib/jobs/schedule-gate.ts"]) {
+      const src = readFileSync(join(process.cwd(), file), "utf8");
+      expect(src, `${file} never asks whether v2 has been stood up`).toContain(
+        "hasLinkedInV2Setup(",
+      );
+      // THE FULL CONJUNCTION THE CORES SPELL, not either half of it. Keyed to v2
+      // because the e10 generation has no stand-up run, AND exempting the setup
+      // skill because it is the run that WRITES the foundation row.
+      //
+      // Asserted as one pattern because the halves separately cannot catch what
+      // shipped once: the rung was keyed to v2 and not exempted, which made these
+      // surfaces stricter than the cores they mirror and refused the only run that
+      // could ever satisfy them — so a paused setup schedule could never be
+      // resumed. A test that merely proved both function NAMES appear stayed green
+      // through exactly that.
+      expect(
+        src,
+        `${file} does not spell the cores' guard: v2 AND not the setup skill`,
+      ).toMatch(/isLinkedInV2Agent\((?:agent\.)?key\)\s*&&\s*!isLinkedInSetupV2\((?:agent\.)?key\)/);
+    }
+  });
+
+  it("declares the stand-up refusal code the run gate returns", () => {
+    // The CODE only. The rung's behaviour — what it returns, where it sits in the
+    // ladder, and the two cases where it must stay silent — is asserted by
+    // evaluating the function in client-agent-runs.test.ts, which is strictly
+    // better than measuring byte offsets in this file's source.
+    //
+    // An earlier version of this test DID pin the order by offset, and it was
+    // wrong in a way worth recording: it sliced from the function's name to the
+    // END OF FILE, so it only happened to cover one function because that gate is
+    // the module's last export. The bound is the part such a test has to get
+    // right, and the behavioural test needs no bound at all.
+    const src = readFileSync(join(process.cwd(), "src/lib/client-agent-runs.ts"), "utf8");
+    expect(src).toContain('code: "stand_up_required"');
   });
 
   it("carries the agent key at the CORES' call sites, not only the card's", () => {

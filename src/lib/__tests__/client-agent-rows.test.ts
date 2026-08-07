@@ -400,6 +400,7 @@ function cardArgs(patch: Partial<CardArgs> = {}): CardArgs {
     agentSetup: {
       ca_x: {
         ready: true,
+        standUpDone: true,
         href: "/clients/c1/x-agent",
         label: "X agent data",
         clientLabel: "Your X details",
@@ -1535,6 +1536,7 @@ describe("toClientAgentRows — the card projection", () => {
         agentSetup: {
           ca_x: {
             ready: false,
+            standUpDone: true,
             href: "/clients/c1/x-agent",
             label: "X agent data",
             clientLabel: "Your X details",
