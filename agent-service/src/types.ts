@@ -149,6 +149,8 @@ export interface DynamicRunReport {
     durationMs: number;
     model?: string;
     error?: string;
+    /** This step's own token/cost usage (AI steps only) — the per-step breakdown behind the run-level `usage` total. */
+    usage?: JobUsage;
   }>;
   failedStepId?: string;
   failedStepIndex?: number;

@@ -1,10 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { DynamicRunReport, JobSpec, RunnerCompleteBody } from "../../../src/types.js";
+import type { DynamicRunReport, JobSpec, JobUsage, RunnerCompleteBody } from "../../../src/types.js";
 import type { DynamicAgentJobPayload } from "../../../src/dynamic-types.js";
 import { prepareWorkspace } from "../workspace.js";
 import { collectArtifacts, guessContentType, snapshotOutputs } from "../artifacts.js";
 import { ServiceCallback } from "../callback.js";
+import { TranscriptStreamer } from "../transcript.js";
 import { runDynamicSteps, type DynamicStepTraceEntry } from "./step-runner.js";
 
 /**
@@ -45,58 +46,85 @@ export async function runDynamicJob(
   await mkdir(clientDir, { recursive: true });
   await mkdir(internalDir, { recursive: true });
 
-  const result = await runDynamicSteps(payload.specSnapshot, payload.inputs, {
-    // Per-step model routing rides the brief's existing `step_models` field.
-    // `payload.stepModels` is that map (stepId -> alias), threaded from the
-    // brief by main.ts; the step runner prefers it over the snapshot's own
-    // step.model. See resolveStepModel() in step-runner.ts.
-    stepModels: payload.stepModels,
-    onProgress: (event) => {
-      // Live progress goes into the SAME transcript stream the SDK's own
-      // messages flow through (TranscriptStreamer, wired by main.ts), so a
-      // run can be watched while it is still going. The DURABLE copy the
-      // Portal renders its step bar from is the structured `dynamicRun`
-      // report returned below — see DynamicRunReport in src/types.ts.
-      callback.appendTranscript(`${JSON.stringify({ type: "dynamic_step_progress", ...event })}\n`).catch(() => {
-        // best-effort — the job's outcome doesn't depend on progress delivery
-      });
-    },
-  });
+  // SAME transcript streamer the hardcoded path uses (main.ts), so
+  // `/v1/jobs/:id/transcript` and the Portal's transcript viewer work
+  // identically for a dynamic run: every AI step's raw SDK message log
+  // (assistant text, tool calls, the result message) is batched and flushed
+  // here, not just the step-progress events a dynamic run also emits.
+  const transcript = new TranscriptStreamer(callback);
 
-  await writeFile(path.join(internalDir, "trace.json"), JSON.stringify(result.trace, null, 2));
+  try {
+    const result = await runDynamicSteps(payload.specSnapshot, payload.inputs, {
+      // Per-step model routing rides the brief's existing `step_models` field.
+      // `payload.stepModels` is that map (stepId -> alias), threaded from the
+      // brief by main.ts; the step runner prefers it over the snapshot's own
+      // step.model. See resolveStepModel() in step-runner.ts.
+      stepModels: payload.stepModels,
+      onProgress: (event) => {
+        // Live progress goes into the SAME transcript stream the SDK's own
+        // messages flow through, so a run can be watched while it is still
+        // going. The DURABLE copy the Portal renders its step bar from is the
+        // structured `dynamicRun` report returned below — see DynamicRunReport
+        // in src/types.ts.
+        transcript.append({ type: "dynamic_step_progress", ...event });
+      },
+      onTranscriptMessage: (message) => transcript.append(message),
+    });
 
-  if (!result.ok) {
-    // DECISION: persist the partial context so far and surface it as an
-    // incomplete deliverable rather than discarding it.
-    await writeFile(
-      path.join(internalDir, "partial-outputs.json"),
-      JSON.stringify(result.partialOutputs ?? {}, null, 2),
-    );
-    await writeFile(
-      path.join(clientDir, "INCOMPLETE.md"),
-      `# This run did not finish\n\nFailed at step \`${result.failedStepId ?? "unknown"}\`: ${result.error ?? "unknown error"}\n\nPartial output from earlier steps is in this run's internal trace.\n`,
-    );
+    await writeFile(path.join(internalDir, "trace.json"), JSON.stringify(result.trace, null, 2));
+
+    // Run-level usage total (tokens + cost per model), summed across every AI
+    // step by runDynamicSteps via the same mergeJobUsage the hardcoded path
+    // uses across retry attempts. `report.usage`/`report.model` are the SAME
+    // fields the hardcoded path (main.ts) populates, so the rest of the
+    // pipeline (worker.ts's buildWebhookPayload, the Portal's webhook route,
+    // cost/usage logging) needs NO changes to pick this up for dynamic runs.
+    const usageFields = usageReportFields(result.usage);
+
+    if (!result.ok) {
+      // DECISION: persist the partial context so far and surface it as an
+      // incomplete deliverable rather than discarding it.
+      await writeFile(
+        path.join(internalDir, "partial-outputs.json"),
+        JSON.stringify(result.partialOutputs ?? {}, null, 2),
+      );
+      await writeFile(
+        path.join(clientDir, "INCOMPLETE.md"),
+        `# This run did not finish\n\nFailed at step \`${result.failedStepId ?? "unknown"}\`: ${result.error ?? "unknown error"}\n\nPartial output from earlier steps is in this run's internal trace.\n`,
+      );
+      await uploadArtifacts(callback, workspace.repoDir, workspace.clientSlug, before);
+      return {
+        outcome: "failed",
+        error: `failed at step "${result.failedStepId ?? "unknown"}": ${result.error ?? "unknown error"}`,
+        transient: false,
+        agentsRepoSha: workspace.agentsRepoSha,
+        dynamicRun: buildRunReport(payload, result),
+        ...usageFields,
+      };
+    }
+
+    await writeFile(path.join(internalDir, "outputs.json"), JSON.stringify(result.outputs ?? {}, null, 2));
+    await writeFile(path.join(clientDir, "output.md"), finalOutputMarkdown(result.finalOutput, result.trace));
+
     await uploadArtifacts(callback, workspace.repoDir, workspace.clientSlug, before);
+
     return {
-      outcome: "failed",
-      error: `failed at step "${result.failedStepId ?? "unknown"}": ${result.error ?? "unknown error"}`,
+      outcome: "done",
       transient: false,
       agentsRepoSha: workspace.agentsRepoSha,
       dynamicRun: buildRunReport(payload, result),
+      ...usageFields,
     };
+  } finally {
+    await transcript.close();
   }
+}
 
-  await writeFile(path.join(internalDir, "outputs.json"), JSON.stringify(result.outputs ?? {}, null, 2));
-  await writeFile(path.join(clientDir, "output.md"), finalOutputMarkdown(result.finalOutput, result.trace));
-
-  await uploadArtifacts(callback, workspace.repoDir, workspace.clientSlug, before);
-
-  return {
-    outcome: "done",
-    transient: false,
-    agentsRepoSha: workspace.agentsRepoSha,
-    dynamicRun: buildRunReport(payload, result),
-  };
+/** Mirrors main.ts's `report.usage`/`report.model` assignment off a result message's usage. */
+function usageReportFields(usage: JobUsage | undefined): { usage?: JobUsage; model?: string } {
+  if (!usage) return {};
+  const models = Object.keys(usage.models);
+  return models.length > 0 ? { usage, model: models.join(",") } : { usage };
 }
 
 /**
@@ -119,6 +147,7 @@ function buildRunReport(
       durationMs: entry.durationMs,
       ...(entry.model ? { model: entry.model } : {}),
       ...(entry.error ? { error: entry.error } : {}),
+      ...(entry.usage ? { usage: entry.usage } : {}),
     })),
   };
   if (result.failedStepId !== undefined) report.failedStepId = result.failedStepId;
