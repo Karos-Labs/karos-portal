@@ -273,6 +273,29 @@ export const NEWSLETTER_RUN_CREDITS = 10;
 export const BLOG_RUN_CREDITS = 10;
 
 /**
+ * What one reputation pulse costs a billable client.
+ *
+ * NOT A CARRIED PRICE, unlike the two above, and that difference is the whole
+ * note. The newsletter and the blog each replaced a managed product at a price a
+ * client was already paying, so holding the number was the only honest option.
+ * Reputation replaces nothing: there has never been a managed reputation task,
+ * so this figure is a DECISION, and it should read as one.
+ *
+ * 25 is the generic `CREDIT_COSTS.customAgentRun` rate, chosen deliberately
+ * rather than by omission. It is above the two carried tens because a pulse is a
+ * heavier run than either: it reaches five external review surfaces (the only v2
+ * agent with DYNAMIC egress rather than a finite host list), triages everything
+ * new since the last pulse, and drafts a reply per review worth answering rather
+ * than one deliverable per run. Setting it equal to the default also means the
+ * submit core's fallback and this constant agree, so a future reprice of one
+ * cannot silently diverge from the other without someone noticing here.
+ *
+ * Revisit after a live month, like its siblings. Unlike theirs, moving this one
+ * does not change any client's existing bill.
+ */
+export const REPUTATION_RUN_CREDITS = 25;
+
+/**
  * Resolve what one task execution costs given the product that will actually
  * run it. No product (in-process generic path) or "custom" (custom agents
  * have their own per-agent pricing) ⇒ the flat baseline.

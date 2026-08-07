@@ -19,7 +19,7 @@
  *
  * Run: FIRESTORE_DATABASE_ID=prep NODE_PATH=./node_modules npx tsx \
  *        --env-file=.env.local scripts/enable-v2-agents-prep.ts \
- *        [--apply] [--family all|linkedin|reddit|newsletter|blog] [--client <id>]
+ *        [--apply] [--family all|linkedin|reddit|newsletter|blog|reputation] [--client <id>]
  */
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
@@ -33,6 +33,9 @@ import {
   NEWSLETTER_WRITER_V2_KEY,
   REDDIT_RUNNER_V2_KEY,
   REDDIT_SETUP_V2_KEY,
+  REPUTATION_MANAGER_KEY,
+  REPUTATION_RUNNER_KEY,
+  REPUTATION_SETUP_KEY,
 } from "../src/lib/custom-agent-launch";
 
 const APPLY = process.argv.includes("--apply");
@@ -70,6 +73,7 @@ const FAMILIES: Record<string, readonly string[]> = {
     COMPLIANCE_LOCK_V2_KEY,
   ],
   blog: [BLOG_WRITER_V2_KEY, BLOG_SETUP_V2_KEY, BLOG_MANAGER_V2_KEY],
+  reputation: [REPUTATION_RUNNER_KEY, REPUTATION_SETUP_KEY, REPUTATION_MANAGER_KEY],
 };
 
 async function main() {

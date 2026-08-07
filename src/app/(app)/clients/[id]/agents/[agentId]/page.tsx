@@ -63,6 +63,7 @@ import {
   buildLinkedInAgentIntakeView,
   buildNewsletterAgentIntakeView,
   buildRedditAgentIntakeView,
+  buildReputationAgentIntakeView,
   buildXAgentIntakeView,
 } from "@/lib/agent-intake-views";
 import {
@@ -72,6 +73,7 @@ import {
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
+  isReputationAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
 } from "@/lib/custom-agent-launch";
@@ -141,6 +143,14 @@ async function agentIntakePane(
   if (isBlogAgentIdentity(agent.key)) {
     return {
       blog: await buildBlogAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
+  if (isReputationAgentIdentity(agent.key)) {
+    return {
+      reputation: await buildReputationAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
       }),
@@ -704,6 +714,14 @@ export default async function ClientAgentDetailPage({
     // below, where a null family deliberately keeps the FULL list.
     newsletter: [],
     blog: [],
+    // EMPTY, and for a different reason than the two above — which is why it is
+    // not folded in with them. The newsletter and the blog have no platform at
+    // all. Reputation READS five (Google Business, Yelp, App Store, Trustpilot,
+    // Facebook), but none of them is a Karos INTEGRATION: the runner reaches
+    // them through its own egress allowlist, and this card lists connections the
+    // CLIENT has authorised. Listing them here would offer a "Connect" affordance
+    // for accounts nothing in this portal can connect.
+    reputation: [],
   };
   const familyPlatforms = family ? FAMILY_PLATFORMS[family] : null;
   const scopedConnections = familyPlatforms
@@ -728,6 +746,13 @@ export default async function ClientAgentDetailPage({
     // carefully worded around.
     newsletter: "Newsletter issue",
     blog: "Blog article",
+    // "Replies", plural, and it is the one exception to the singular rule its two
+    // neighbours follow. One pulse genuinely does produce several drafts, one per
+    // review worth answering — so a singular here would be the inaccuracy, not the
+    // batch-shaped tell the rule guards against. What that rule forbids is
+    // implying a WEEK arrived in one lump; a set of replies to a set of reviews is
+    // just what the run is.
+    reputation: "Review replies",
   };
   const rowTitleFields = (
     asset: (typeof archiveRows)[number],

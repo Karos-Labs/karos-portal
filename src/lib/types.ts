@@ -1812,7 +1812,7 @@ export interface AgentIntake {
   id: string;
   clientId: string;
   /** Agent family. Widen the union as more agents get intake. */
-  agent: "x" | "linkedin" | "reddit" | "newsletter" | "blog";
+  agent: "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation";
   /** null = company-page intake; otherwise the ClientSeat id. */
   seatId: string | null;
   /**
@@ -1907,6 +1907,43 @@ export interface AgentIntake {
    * Rides every issue as a visible review flag until they do.
    */
   openComplianceNote?: string;
+  /**
+   * Reputation only — the surfaces the client actually has, in their words.
+   *
+   * ASKED because it cannot be discovered: a business may have a Google Business
+   * Profile under a trading name, three Yelp listings from a merge, and no App
+   * Store presence at all. Setup builds the roster FROM this; it is the seed, not
+   * the roster itself.
+   */
+  reviewSurfaces?: string[];
+  /**
+   * Reputation only — locations or markets the reviews are spread across.
+   * A single-site business leaves it empty; a chain needs it to keep one
+   * branch's complaints off another branch's report.
+   */
+  reviewMarkets?: string[];
+  /**
+   * Reputation only — standing context a responder must know before writing:
+   * a known outage, a recall, an ownership change, a dispute in progress.
+   * Rides every run as background, never as a subject to write about.
+   */
+  reputationContext?: string;
+  /**
+   * Reputation only — WHO a crisis goes to, and how.
+   *
+   * The one field on this document with a same-day consequence. The runner is
+   * draft-only, so when it flags something as a crisis the portal's whole answer
+   * is telling a human, and this is who. Free text on purpose: it may be a name,
+   * a shared inbox, a rota, or "call me". Absent means the flag sits in the
+   * deliverable until someone opens it.
+   */
+  crisisRoutingTag?: string;
+  /**
+   * Reputation only — claims the client may never make in a public reply.
+   * Refund promises, medical or legal assertions, anything their regulator
+   * forbids. The response gate refuses a draft rather than editing around one.
+   */
+  responseNoGos?: string[];
   /**
    * Blog only — domains whose pages count as the client's own for outbound
    * linking. The writer links out only to a target that exists, so this is what
@@ -2658,6 +2695,84 @@ export interface BlogAgentState {
   kind: "post-index" | "clusters" | "voice-card" | "v1-posts" | "next-request";
   content: string;
   contentType: string;
+  contentDate: string;
+  capturedFromJobId: string;
+  capturedAt: number;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * The reputation agent's intake, as a client's browser may receive it.
+ *
+ * The FIELDS live on `AgentIntake` (all six families share one collection); this
+ * is the whitelist that decides which of them cross the RSC boundary.
+ *
+ * ASK vs BUILD: the roster proper, the response voice, the autonomy bounds and
+ * the recurring-complaint themes are all BUILT by setup from the client's own
+ * documents and from their real review history. What is asked is what setup
+ * cannot discover — above all `crisisRoutingTag`, which is a fact about the
+ * client's own organisation and exists nowhere else.
+ */
+export interface ReputationAgentIntake {
+  reviewSurfaces?: string[];
+  reviewMarkets?: string[];
+  reputationContext?: string;
+  crisisRoutingTag?: string;
+  responseNoGos?: string[];
+}
+
+/**
+ * The reputation agent's DURABLE state — the seven files setup emits under
+ * `clients/<slug>/skills/reputation-agent-v2/`, which the runner and the manager
+ * both read and write.
+ *
+ * The fifth instance of the ephemeral-workspace capture, and the one with the
+ * most files. Two of them are the reason it matters:
+ *
+ *  - `response-ledger` is the NO-REPEAT memory. The runner appends every review
+ *    it has answered, and losing it means drafting a second reply to a review a
+ *    human already answered publicly, under the client's own name.
+ *  - `crisis-ledger` is the record of what was escalated and to whom. Losing it
+ *    loses the audit trail on the one class of event with a same-day cost.
+ *
+ * WHOLE-FILE REPLACE, INCLUDING THE .jsonl. `crisis-ledger.jsonl` is append-only
+ * in the workspace, but the portal stores whatever the run delivers as one blob
+ * and hands the whole thing back next run — so the RUN does the appending and
+ * this collection never merges. The alternative, appending on the portal side,
+ * would put two writers on one file with no ordering guarantee between a run's
+ * own append and ours. The cost is stated rather than hidden: a run that
+ * delivers a TRUNCATED ledger overwrites the full one, so
+ * `reputationStateHasContent` refuses an empty body and the webhook reports a
+ * failed capture loudly.
+ */
+export interface ReputationAgentState {
+  id: string;
+  clientId: string;
+  /**
+   *  - `facts`           — 01-facts.md, what setup established about the business
+   *  - `config`          — 02-config.json, the surfaces and cadence it settled on
+   *  - `autonomy`        — 03-autonomy.json, HOW MUCH the agent may do unattended.
+   *                        The bounds a draft-only product still needs: what it may
+   *                        flag, what it must escalate, what it may never touch.
+   *  - `roster`          — roster.json, the real listings per surface and market
+   *  - `response-voice`  — response-voice.md, the style a reply is written in,
+   *                        plus the manager's learning log appended to it
+   *  - `response-ledger` — response-ledger.json, the NO-REPEAT memory
+   *  - `crisis-ledger`   — crisis-ledger.jsonl, what was escalated and to whom
+   */
+  kind:
+    | "facts"
+    | "config"
+    | "autonomy"
+    | "roster"
+    | "response-voice"
+    | "response-ledger"
+    | "crisis-ledger";
+  content: string;
+  contentType: string;
+  /** YYYY-MM-DD the content was produced. */
   contentDate: string;
   capturedFromJobId: string;
   capturedAt: number;

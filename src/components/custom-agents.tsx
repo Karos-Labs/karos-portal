@@ -13,6 +13,7 @@ import {
 } from "@/components/agent-identity";
 import { AgentInputFiles } from "@/components/agent-input-files";
 import { BlogAgentIntake } from "@/components/blog-agent-intake";
+import { ReputationAgentIntake } from "@/components/reputation-agent-intake";
 import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 import { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
@@ -67,6 +68,7 @@ import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   NEWSLETTER_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
+  REPUTATION_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   groupAgentsByParent,
   isSupersededAgentKey,
@@ -326,6 +328,7 @@ export type AgentSetupState = {
   | { kind: "reddit"; data: ComponentProps<typeof RedditAgentIntake> }
   | { kind: "newsletter"; data: ComponentProps<typeof NewsletterAgentIntake> }
   | { kind: "blog"; data: ComponentProps<typeof BlogAgentIntake> }
+  | { kind: "reputation"; data: ComponentProps<typeof ReputationAgentIntake> }
 );
 
 function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
@@ -375,14 +378,21 @@ export interface BlogAgentSetup {
   data: ComponentProps<typeof BlogAgentIntake>;
 }
 
-type IntakeKind = "x" | "linkedin" | "reddit" | "newsletter" | "blog";
+/** The reputation v2 twin of XAgentSetup. */
+export interface ReputationAgentSetup {
+  ready: boolean;
+  data: ComponentProps<typeof ReputationAgentIntake>;
+}
+
+type IntakeKind = "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation";
 
 type AgentIntakeContext =
   | { kind: "x"; setup: XAgentSetup }
   | { kind: "linkedin"; setup: LinkedInAgentSetup }
   | { kind: "reddit"; setup: RedditAgentSetup }
   | { kind: "newsletter"; setup: NewsletterAgentSetup }
-  | { kind: "blog"; setup: BlogAgentSetup };
+  | { kind: "blog"; setup: BlogAgentSetup }
+  | { kind: "reputation"; setup: ReputationAgentSetup };
 
 const INTAKE_LABEL: Record<IntakeKind, string> = {
   x: "X",
@@ -390,6 +400,7 @@ const INTAKE_LABEL: Record<IntakeKind, string> = {
   reddit: "Reddit",
   newsletter: "Newsletter",
   blog: "Blog",
+  reputation: "Reputation",
 };
 
 /** Route segment of the full agent data page, for callers with no inline payload. */
@@ -399,6 +410,7 @@ const INTAKE_ROUTE: Record<IntakeKind, string> = {
   reddit: "reddit-agent",
   newsletter: "newsletter-agent",
   blog: "blog-agent",
+  reputation: "reputation-agent",
 };
 
 /**
@@ -418,6 +430,9 @@ const INTAKE_ASKS: Record<IntakeKind, string> = {
   // subjects from the newsletter's handoff, so offering one here would promise a
   // lane the agent does not have.
   blog: "your own websites for linking, and the subjects we should never cover",
+  // Leads with the routing contact, because it is the one answer whose absence
+  // costs something the same day rather than degrading a draft.
+  reputation: "who hears about an urgent review, and what we must never say in a reply",
 };
 
 /** The first thing to do in the data pane, per kind. */
@@ -430,6 +445,7 @@ const INTAKE_FIRST_STEP: Record<IntakeKind, string> = {
   // have followed while the button beside it stays disabled.
   newsletter: "Save your details below, then set the newsletter up, to continue.",
   blog: "Save your details below, then set the blog up, to continue.",
+  reputation: "Save your details below, then set the monitoring up, to continue.",
 };
 
 /**
@@ -466,6 +482,9 @@ function intakeFor(setup: AgentSetupState | null | undefined): AgentIntakeContex
   if (setup.kind === "blog") {
     return { kind: "blog", setup: { ready: setup.ready, data: setup.data } };
   }
+  if (setup.kind === "reputation") {
+    return { kind: "reputation", setup: { ready: setup.ready, data: setup.data } };
+  }
   return null;
 }
 
@@ -482,6 +501,7 @@ function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string
   if (kind === "linkedin") return <LinkedInLogo className={className} />;
   if (kind === "newsletter") return <Icon name="Mail" className={className} />;
   if (kind === "blog") return <Icon name="PenLine" className={className} />;
+  if (kind === "reputation") return <Icon name="MessageSquare" className={className} />;
   return <SocialPlatformMark platform="reddit" className={className} />;
 }
 
@@ -507,11 +527,12 @@ function intakeComplete(intake: AgentIntakeContext): boolean {
 /**
  * Has this agent's one-time STAND-UP run happened?
  *
- * A second question from "has the client filled the form in", and THREE families
+ * A second question from "has the client filled the form in", and FOUR families
  * have it. LinkedIn v2 derives the lanes, the voice and the first topics from a
  * run; the newsletter derives its issue index, voice card, topic pool and
  * watch-list the same way; the blog derives its post index, cluster map and
- * voice card. In both cases a client whose form is saved still has
+ * voice card; and reputation derives the ROSTER of the client's real listings,
+ * without which a pulse has nowhere to read. In both cases a client whose form is saved still has
  * nothing to draft from until that run has been, and both submit cores refuse a
  * writer run before it — so the dialog has to open where the press that starts
  * it lives, otherwise pressing Run reads as broken (a brief, a press, and a
@@ -529,7 +550,8 @@ function standUpDone(intake: AgentIntakeContext): boolean {
   if (
     intake.kind !== "linkedin" &&
     intake.kind !== "newsletter" &&
-    intake.kind !== "blog"
+    intake.kind !== "blog" &&
+    intake.kind !== "reputation"
   ) {
     return true;
   }
@@ -549,6 +571,7 @@ function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
   if (intake.kind === "reddit") return <RedditAgentIntake {...intake.setup.data} />;
   if (intake.kind === "newsletter") return <NewsletterAgentIntake {...intake.setup.data} />;
   if (intake.kind === "blog") return <BlogAgentIntake {...intake.setup.data} />;
+  if (intake.kind === "reputation") return <ReputationAgentIntake {...intake.setup.data} />;
   return null;
 }
 
@@ -1057,7 +1080,8 @@ function refusalNamesSetup(refusal: string): boolean {
     refusal.startsWith(LINKEDIN_SETUP_REQUIRED_PREFIX) ||
     refusal.startsWith(REDDIT_SETUP_REQUIRED_PREFIX) ||
     refusal.startsWith(NEWSLETTER_SETUP_REQUIRED_PREFIX) ||
-    refusal.startsWith(BLOG_SETUP_REQUIRED_PREFIX)
+    refusal.startsWith(BLOG_SETUP_REQUIRED_PREFIX) ||
+    refusal.startsWith(REPUTATION_SETUP_REQUIRED_PREFIX)
   );
 }
 
@@ -2174,7 +2198,9 @@ export function RunCustomAgentModal({
             ? "newsletter"
             : error.startsWith(BLOG_SETUP_REQUIRED_PREFIX)
               ? "blog"
-              : null;
+              : error.startsWith(REPUTATION_SETUP_REQUIRED_PREFIX)
+                ? "reputation"
+                : null;
 
   // Both panes share the dialog's single scroll box, which also holds the title
   // and the sentence explaining the swap, so a switch has to go back to the top

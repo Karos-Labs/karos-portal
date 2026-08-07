@@ -13,6 +13,7 @@ import type { AgentProfileScopeFields } from "@/lib/data";
 import {
   isBlogAgentIdentity,
   isLinkedInAgentIdentity,
+  isReputationAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
@@ -197,6 +198,14 @@ function intakeAnswersFor(
       // per-account identity answers the first two families show inline. Its own
       // surface is where a client reads it.
       return [];
+    case "reputation":
+      // Same call as newsletter and blog, same reason — with one addition worth
+      // naming. This family's most important stored answer is WHO an urgent
+      // review is routed to, and that is a named person or inbox inside the
+      // client's own organisation. It is not the kind of thing to surface on a
+      // page a reader lands on by clicking an agent card; its own surface, which
+      // a person opens deliberately, is where it belongs.
+      return [];
     case "reddit":
       return redditAnswers(toRedditIntakeView(doc));
   }
@@ -241,6 +250,7 @@ export function intakeFamilyFor(agentKey: string): AgentIntake["agent"] | null {
   if (isRedditAgentIdentity(agentKey)) return "reddit";
   if (isNewsletterAgentIdentity(agentKey)) return "newsletter";
   if (isBlogAgentIdentity(agentKey)) return "blog";
+  if (isReputationAgentIdentity(agentKey)) return "reputation";
   return null;
 }
 
@@ -312,6 +322,19 @@ const FAMILY_CAPABILITIES: Record<AgentIntake["agent"], IntakeFamilyCapabilities
     profileDoc: false,
     companyLabel: "Your Reddit account",
     companyIcon: "User",
+  },
+  reputation: {
+    // No seats: a review is about the business, not a person.
+    seats: false,
+    // No news drop. This agent does not broadcast anything — it READS what other
+    // people have already published about the client and drafts replies. A drop
+    // row would offer an input channel it cannot consume.
+    newsDrop: false,
+    takes: false,
+    direction: false,
+    profileDoc: false,
+    companyLabel: "Your review details",
+    companyIcon: "MessageSquare",
   },
   blog: {
     // No seats: the blog writes for the company, and its scope choice (company

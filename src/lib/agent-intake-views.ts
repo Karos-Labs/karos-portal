@@ -40,6 +40,7 @@ import {
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
+  isReputationAgentIdentity,
   isXAgentIdentity,
 } from "@/lib/custom-agent-launch";
 import {
@@ -48,8 +49,13 @@ import {
 } from "@/lib/agent-service/linkedin-agent-context";
 import { hasNewsletterV2Setup } from "@/lib/agent-service/newsletter-agent-context";
 import { hasBlogV2Setup } from "@/lib/agent-service/blog-agent-context";
+import { hasReputationV2Setup } from "@/lib/agent-service/reputation-agent-context";
 import type { AgentProfileScopeFields } from "@/lib/data";
 import type { BlogAgentIntake, BlogIntakeView } from "@/components/blog-agent-intake";
+import type {
+  ReputationAgentIntake,
+  ReputationIntakeView,
+} from "@/components/reputation-agent-intake";
 import type {
   NewsletterAgentIntake,
   NewsletterIntakeView,
@@ -81,6 +87,7 @@ export type LinkedInAgentIntakeProps = ComponentProps<typeof LinkedInAgentIntake
 export type RedditAgentIntakeProps = ComponentProps<typeof RedditAgentIntake>;
 export type NewsletterAgentIntakeProps = ComponentProps<typeof NewsletterAgentIntake>;
 export type BlogAgentIntakeProps = ComponentProps<typeof BlogAgentIntake>;
+export type ReputationAgentIntakeProps = ComponentProps<typeof ReputationAgentIntake>;
 
 /**
  * Which key predicate answers for which intake family.
@@ -95,6 +102,7 @@ const IDENTITY_BY_FAMILY: Record<AgentIntake["agent"], (key: string) => boolean>
   reddit: isRedditAgentIdentity,
   newsletter: isNewsletterAgentIdentity,
   blog: isBlogAgentIdentity,
+  reputation: isReputationAgentIdentity,
 };
 
 /**
@@ -586,6 +594,56 @@ export async function buildBlogAgentIntakeView(
     company: toBlogIntakeView(companyIntake),
     isSetUp,
     runs: toRunRowViews(blogJobs, opts.isStaff),
+    isStaff: opts.isStaff,
+  };
+}
+
+/**
+ * Strip an intake doc to the client-safe reputation view. All five fields are
+ * the client's own answers, so all five cross; the type exists so a field added
+ * to `AgentIntake` for another family cannot reach a browser by riding the
+ * shared document.
+ */
+export function toReputationIntakeView(
+  intake: AgentIntake | null,
+): ReputationIntakeView | null {
+  if (!intake) return null;
+  return {
+    ...(intake.reviewSurfaces?.length ? { reviewSurfaces: intake.reviewSurfaces } : {}),
+    ...(intake.reviewMarkets?.length ? { reviewMarkets: intake.reviewMarkets } : {}),
+    ...(intake.reputationContext ? { reputationContext: intake.reputationContext } : {}),
+    ...(intake.crisisRoutingTag ? { crisisRoutingTag: intake.crisisRoutingTag } : {}),
+    ...(intake.responseNoGos?.length ? { responseNoGos: intake.responseNoGos } : {}),
+  };
+}
+
+export async function buildReputationAgentIntakeView(
+  clientId: string,
+  opts: { isStaff: boolean; jobs?: Job[] },
+): Promise<ReputationAgentIntakeProps> {
+  const [companyIntake, isSetUp, jobs] = await Promise.all([
+    getAgentIntake(clientId, "reputation", null),
+    hasReputationV2Setup(clientId),
+    opts.jobs ?? listJobs({ clientId }),
+  ]);
+
+  // Matched on the agent NAME the way its four siblings are, so all three
+  // reputation skills report into one history: a client asking "when did you
+  // last check my reviews" means the product, not one of its steps.
+  const reputationJobs: Job[] = jobs
+    .filter(
+      (j) =>
+        j.agentId === "agent-service" &&
+        j.external?.taskType === "custom" &&
+        /reputation/i.test(j.agentName),
+    )
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  return {
+    clientId,
+    company: toReputationIntakeView(companyIntake),
+    isSetUp,
+    runs: toRunRowViews(reputationJobs, opts.isStaff),
     isStaff: opts.isStaff,
   };
 }

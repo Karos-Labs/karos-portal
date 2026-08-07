@@ -44,7 +44,15 @@
       "api.fontshare.com",
       "cdn.fontshare.com"
     ],
-    "npm": ["registry.npmjs.org"]
+    "npm": ["registry.npmjs.org"],
+    "review_platforms": [
+      "mybusiness.googleapis.com",
+      "api.yelp.com",
+      "itunes.apple.com",
+      "api.trustpilot.com",
+      "graph.facebook.com"
+    ]
   },
+  "_review_platforms_note": "Added 2026-08-06 for reputation-agent-v2, whose runner is the first with DYNAMIC egress rather than a finite host list. Attached to the shared `custom` task type, so EVERY custom agent can now reach these five - there is no per-agent egress today, and that widening is the cost of running reputation at all. api.anthropic.com was already in `core`.",
   "_deferred_task_types_note": "seo_audit / onboarding / website-redesign class skills WebFetch arbitrary client and press domains and cannot run behind a static allowlist; enabling them requires an egress policy decision (see docs/agent-integration.md)."
 }

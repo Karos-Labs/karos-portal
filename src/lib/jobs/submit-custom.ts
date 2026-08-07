@@ -50,6 +50,13 @@ import {
   isBlogAgent,
   isBlogSetupV2,
 } from "@/lib/agent-service/blog-agent-context";
+import {
+  buildReputationAgentContextFiles,
+  hasReputationAgentIntake,
+  hasReputationV2Setup,
+  isReputationAgent,
+  isReputationSetupV2,
+} from "@/lib/agent-service/reputation-agent-context";
 import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
 import { getClientAgentByKey } from "@/lib/data-client-agents";
 import {
@@ -58,6 +65,8 @@ import {
   BLOG_SETUP_REQUIRED_PREFIX,
   NEWSLETTER_RUN_CREDITS,
   NEWSLETTER_SETUP_REQUIRED_PREFIX,
+  REPUTATION_RUN_CREDITS,
+  REPUTATION_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
   agentKeyMatchesClientSlug,
@@ -441,6 +450,26 @@ export async function submitCustomAgentJob(
     }
   }
 
+  if (isReputationAgent(agent.key)) {
+    if (!(await hasReputationAgentIntake(input.clientId))) {
+      return {
+        error: `${REPUTATION_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs to know who hears about an urgent review before it reads anything. Nothing has run.`,
+      };
+    }
+    if (!isReputationSetupV2(agent.key) && !(await hasReputationV2Setup(input.clientId))) {
+      return {
+        error: `${REPUTATION_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the reputation agent card, which finds their real listings and sets what counts as urgent. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildReputationAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's reputation data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
   // Client-agent feedback (§5): every run of a LIVE umbrella carries the
   // client's standing direction — global first, then per-template. Launch runs
   // are excluded by construction: a setup run is what CREATES the templates, so
@@ -528,7 +557,9 @@ export async function submitCustomAgentJob(
     ? NEWSLETTER_RUN_CREDITS
     : isBlogAgent(agent.key)
       ? BLOG_RUN_CREDITS
-      : null;
+      : isReputationAgent(agent.key)
+        ? REPUTATION_RUN_CREDITS
+        : null;
   const runCost = input.charge
     ? input.charge.amount
     : (agent.creditCost ?? carriedDefault ?? CREDIT_COSTS.customAgentRun) * multiplier;

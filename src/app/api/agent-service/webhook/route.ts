@@ -17,6 +17,7 @@ import {
   updateJob,
   upsertLiAgentState,
   upsertBlogAgentState,
+  upsertReputationAgentState,
   upsertNewsletterAgentState,
   upsertNewsletterLedgerEntry,
   upsertRedditAgentState,
@@ -42,6 +43,17 @@ import {
 } from "@/lib/agent-service/reddit-agent-context";
 import { isNewsletterAgent } from "@/lib/agent-service/newsletter-agent-context";
 import { isBlogAgent } from "@/lib/agent-service/blog-agent-context";
+import { isReputationAgent } from "@/lib/agent-service/reputation-agent-context";
+import {
+  REPUTATION_STATE_MAX_CHARS,
+  type ReputationClientFile,
+  buildReputationEnvelope,
+  reputationEnvelopeHasContent,
+  reputationStateContentType,
+  reputationStateDateFor,
+  reputationStateHasContent,
+  reputationStateKindFor,
+} from "@/lib/agent-service/reputation-state-capture";
 import {
   BLOG_STATE_MAX_CHARS,
   type BlogClientFile,
@@ -81,7 +93,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { BlogAgentState, ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, NewsletterAgentState, NewsletterLedgerEntry, RedditAgentState } from "@/lib/types";
+import type { BlogAgentState, ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, NewsletterAgentState, NewsletterLedgerEntry, RedditAgentState, ReputationAgentState } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -443,6 +455,10 @@ export async function POST(req: NextRequest) {
   // two presses write the same article — or how the rebuild deletes posts it can
   // no longer see a run for.
   let isBlogStateJob = false;
+  // Reputation v2: the response ledger is the no-repeat memory, and losing it
+  // means drafting a second public reply to a review a human already answered
+  // under the client's own name.
+  let isReputationStateJob = false;
   try {
     const producing = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
     isLinkedInStateJob = producing ? isLinkedInV2Agent(producing.key) : false;
@@ -452,12 +468,14 @@ export async function POST(req: NextRequest) {
       : false;
     isNewsletterStateJob = producing ? isNewsletterAgent(producing.key) : false;
     isBlogStateJob = producing ? isBlogAgent(producing.key) : false;
+    isReputationStateJob = producing ? isReputationAgent(producing.key) : false;
   } catch {
     isLinkedInStateJob = false;
     isLinkedInSetupJob = false;
     isRedditStateJob = false;
     isNewsletterStateJob = false;
     isBlogStateJob = false;
+    isReputationStateJob = false;
   }
 
   // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
@@ -549,6 +567,15 @@ export async function POST(req: NextRequest) {
   const newsletterClientFiles: NewsletterClientFile[] = [];
   /** A blog v2 run's client-facing five, flattened into the envelope after the claim. */
   const blogClientFiles: BlogClientFile[] = [];
+  /** A reputation pulse's client-facing folder, flattened after the claim. */
+  const reputationClientFiles: ReputationClientFile[] = [];
+  /** Reputation v2 durable state, same rules as its four siblings. */
+  const reputationStateArtifacts: {
+    kind: ReputationAgentState["kind"];
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
   /** Blog v2 durable state, same rules as its three siblings. */
   const blogStateArtifacts: {
     kind: BlogAgentState["kind"];
@@ -729,6 +756,34 @@ export async function POST(req: NextRequest) {
           // Best-effort, same as its three siblings.
         }
       }
+      const reputationState = isReputationStateJob ? reputationStateKindFor(liPath) : null;
+      if (!artifact.client_facing && reputationState && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, REPUTATION_STATE_MAX_CHARS);
+              // The guard that makes whole-file replace safe for the two ledgers:
+              // an empty body would REPLACE a full response ledger with nothing,
+              // which is exactly the state that produces a duplicate public reply.
+              if (reputationStateHasContent(text)) {
+                reputationStateArtifacts.push({
+                  kind: reputationState,
+                  content: text,
+                  contentDate: reputationStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch {
+          // Best-effort, same as its four siblings.
+        }
+      }
       const redditState = isRedditStateJob ? redditStateKindFor(liPath) : null;
       const redditIsRunRecord = isRedditStateJob && isRedditRunRecordArtifact(liPath);
       if (!artifact.client_facing && (redditState || redditIsRunRecord) && artifact.url) {
@@ -883,6 +938,17 @@ export async function POST(req: NextRequest) {
                 if (isBlogStateJob) {
                   blogClientFiles.push({ path: artifact.path ?? artifact.name, text: content });
                 }
+                // A reputation pulse's client folder: `01-response-drafts/`,
+                // `02-flags/` and about.txt. Collected as (path, text) pairs
+                // because the FOLDER decides which bucket a file lands in, and
+                // the size race would otherwise hand the reader one draft and
+                // drop every flag — the half with a deadline.
+                if (isReputationStateJob) {
+                  reputationClientFiles.push({
+                    path: artifact.path ?? artifact.name,
+                    text: content,
+                  });
+                }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
                 // agents (X, LinkedIn) — prefer it deterministically over the
                 // size race, so a long sibling text file (a video brief, an
@@ -1001,6 +1067,15 @@ export async function POST(req: NextRequest) {
   const blogEnvelopeJson =
     blogEnvelope && blogEnvelopeHasContent(blogEnvelope) ? JSON.stringify(blogEnvelope) : null;
 
+  // ── Reputation v2: the client folder becomes the reader's one string ──
+  const reputationEnvelope = isReputationStateJob
+    ? buildReputationEnvelope(reputationClientFiles)
+    : null;
+  const reputationEnvelopeJson =
+    reputationEnvelope && reputationEnvelopeHasContent(reputationEnvelope)
+      ? JSON.stringify(reputationEnvelope)
+      : null;
+
   const deliveredCount = rehosted.length;
   // For the Task Map sync below: the run may have been dispatched by a board
   // task, whose ticket gets the deliverable for client preview.
@@ -1009,6 +1084,8 @@ export async function POST(req: NextRequest) {
     ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : blogEnvelopeJson
     ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : reputationEnvelopeJson
+    ? reputationEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : redditEnvelopeJson
     ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : primaryText
@@ -1274,6 +1351,41 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Reputation v2 durable state. Reported as an error because the RESPONSE
+    // LEDGER is the no-repeat memory: without it the next pulse drafts a second
+    // public reply to a review a human already answered, under the client's own
+    // name, on a page strangers read.
+    if (reputationStateArtifacts.length > 0) {
+      const byKind = new Map(reputationStateArtifacts.map((row) => [row.kind, row]));
+      for (const row of byKind.values()) {
+        try {
+          await upsertReputationAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            content: row.content,
+            contentType: reputationStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] reputation ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              row.kind === "response-ledger"
+                ? "The reputation RESPONSE LEDGER did not persist. The next check may draft a second public reply to a review that has already been answered - check the ledger before running again."
+                : row.kind === "crisis-ledger"
+                  ? "The reputation CRISIS LEDGER did not persist. The record of what was escalated, and to whom, is missing for this run."
+                  : row.kind === "roster"
+                    ? "The reputation ROSTER did not persist. The next check has nowhere to read from and will stop."
+                    : `Reputation ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
     // Reddit v2 durable state. After the claim and best-effort, like the sibling
     // sweeps. Reported as an error event because a run whose RULES AUDIT did not
     // persist is the one case where the next run is not merely forgetful but
@@ -1399,6 +1511,8 @@ export async function POST(req: NextRequest) {
             ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
             : blogEnvelopeJson
             ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+            : reputationEnvelopeJson
+            ? reputationEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
             : redditEnvelopeJson
             ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
             : primaryText

@@ -12,10 +12,15 @@ import {
 } from "@/lib/agent-service/newsletter-agent-context";
 import { hasBlogAgentIntake, hasBlogV2Setup } from "@/lib/agent-service/blog-agent-context";
 import {
+  hasReputationAgentIntake,
+  hasReputationV2Setup,
+} from "@/lib/agent-service/reputation-agent-context";
+import {
   agentKeyMatchesClientSlug,
   clientSafeRefusal,
   isBlogAgentIdentity,
   isLinkedInAgentIdentity,
+  isReputationAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
@@ -35,6 +40,7 @@ import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { ComponentProps } from "react";
 import type { BlogAgentIntake } from "@/components/blog-agent-intake";
+import type { ReputationAgentIntake } from "@/components/reputation-agent-intake";
 import type { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 import type { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import type { RedditAgentIntake } from "@/components/reddit-agent-intake";
@@ -296,6 +302,7 @@ export interface AgentIntakePanes {
   reddit?: ComponentProps<typeof RedditAgentIntake>;
   newsletter?: ComponentProps<typeof NewsletterAgentIntake>;
   blog?: ComponentProps<typeof BlogAgentIntake>;
+  reputation?: ComponentProps<typeof ReputationAgentIntake>;
 }
 
 export async function buildAgentSetup(
@@ -391,6 +398,32 @@ export async function buildAgentSetup(
           agent.id,
           panes?.blog
             ? { ready: hasIntake && isSetUp, href, label, clientLabel, kind: "blog", data: panes.blog }
+            : { ready: hasIntake && isSetUp, href, label, clientLabel },
+        ];
+      }
+      if (isReputationAgentIdentity(agent.key)) {
+        // BOTH RUNGS, like the newsletter and the blog. The runner reads from the
+        // ROSTER setup resolves, and a pulse without one has nowhere to read —
+        // the submit core gates on both, so a one-rung answer here would offer a
+        // run the server refuses.
+        const [hasIntake, isSetUp] = await Promise.all([
+          hasReputationAgentIntake(clientId),
+          hasReputationV2Setup(clientId),
+        ]);
+        const href = `/clients/${clientId}/reputation-agent`;
+        const label = "Reputation agent data";
+        const clientLabel = "Your review details";
+        return [
+          agent.id,
+          panes?.reputation
+            ? {
+                ready: hasIntake && isSetUp,
+                href,
+                label,
+                clientLabel,
+                kind: "reputation",
+                data: panes.reputation,
+              }
             : { ready: hasIntake && isSetUp, href, label, clientLabel },
         ];
       }

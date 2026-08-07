@@ -257,7 +257,20 @@ Run the "landing-builder" skill (products/live/landing-page/landing-builder/SKIL
     // fan-out — X (e13) and LinkedIn (e10) do; wiring more agents onto this is
     // a skill-side change, not a service-side one.
     stepModels: { research: "claude-sonnet-4-6" },
-    egressGroups: ["core", "research", "image_sourcing", "social_platforms", "fonts"],
+    // `review_platforms` joined 2026-08-06 for reputation-agent-v2, and the
+    // widening is worth naming: `custom` is ONE task type shared by every custom
+    // agent, so adding a group here grants it to all of them. There is no
+    // per-agent egress today. The alternative — a `reputation` task type of its
+    // own — would put a product-specific entry back into the service the four v2
+    // migrations spent their time taking out.
+    egressGroups: [
+      "core",
+      "research",
+      "image_sourcing",
+      "social_platforms",
+      "fonts",
+      "review_platforms",
+    ],
     buildPrompt: (spec, ctx) => {
       const brief = spec.brief;
       const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");

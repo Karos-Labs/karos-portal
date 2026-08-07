@@ -51,6 +51,7 @@ import type {
   LiDraftFeedback,
   BlogAgentState,
   NewsletterAgentState,
+  ReputationAgentState,
   NewsletterDraftFeedback,
   NewsletterLedgerEntry,
   RedditAgentState,
@@ -158,6 +159,10 @@ const col = {
   // and the clusters file is the subject-claim register that stops two runs
   // writing the same article.
   blogAgentState: () => adminDb().collection("blogAgentState"),
+  // Reputation v2's durable state. The response ledger in here is the no-repeat
+  // memory: lose it and the agent drafts a second public reply to a review a
+  // human already answered under the client's own name.
+  reputationAgentState: () => adminDb().collection("reputationAgentState"),
   // Per-seat AI-built voice profiles (agent-scoped: x/linkedin/reddit), one doc
   // per (clientId, agent, seatId). See upsertSeatVoiceProfile.
   seatVoiceProfiles: () => adminDb().collection("seatVoiceProfiles"),
@@ -480,6 +485,7 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "newsletterAgentState",
   "newsletterLedger",
   "blogAgentState",
+  "reputationAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];
@@ -3133,6 +3139,58 @@ export async function upsertBlogAgentState(
     return existing.id;
   }
   const ref = await col.blogAgentState().add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───────── Reputation v2: the durable state the ephemeral runner loses ───────── */
+
+export async function getReputationAgentState(
+  clientId: string,
+  kind: ReputationAgentState["kind"],
+): Promise<ReputationAgentState | null> {
+  const snap = await col
+    .reputationAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<ReputationAgentState>(snap.docs[0]);
+}
+
+export async function listReputationAgentState(
+  clientId: string,
+): Promise<ReputationAgentState[]> {
+  const snap = await col.reputationAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<ReputationAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file, WHOLE-FILE — including `crisis-ledger`,
+ * which is append-only in the runner's workspace and is still stored here as one
+ * blob.
+ *
+ * The run does its own appending and delivers the whole file; the portal never
+ * merges. Appending on this side would put two writers on one ledger with no
+ * ordering guarantee between the run's append and ours, on the one file that is
+ * an audit trail. The cost is that a run delivering a truncated ledger
+ * overwrites the full one, which is why the capture refuses an empty body and
+ * the webhook reports a failed capture rather than swallowing it.
+ */
+export async function upsertReputationAgentState(
+  data: Omit<ReputationAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getReputationAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .reputationAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .reputationAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
   return ref.id;
 }
 

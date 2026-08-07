@@ -70,6 +70,7 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "newsletterAgentState",
   "newsletterLedger",
   "blogAgentState",
+  "reputationAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];

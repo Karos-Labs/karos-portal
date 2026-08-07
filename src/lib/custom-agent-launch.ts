@@ -116,6 +116,17 @@ export const REDDIT_RUNNER_V2_KEY = "karos-reddit-runner";
 export const REDDIT_SETUP_V2_KEY = "karos-reddit-setup";
 
 /**
+ * The reputation v2 keys. NO `-v2` SUFFIX, like the Reddit pair and unlike the
+ * newsletter and blog fours — the manifest's own inconsistency, not a choice
+ * available here. Verified against `catalog/agent-runtime-manifest.json`;
+ * guessing wrong means a key that matches nothing and an agent that is never
+ * gated, fed or hidden.
+ */
+export const REPUTATION_RUNNER_KEY = "karos-reputation-runner";
+export const REPUTATION_SETUP_KEY = "karos-reputation-setup";
+export const REPUTATION_MANAGER_KEY = "karos-reputation-manager";
+
+/**
  * The blog v2 keys. THREE skills, not four: there is no blog compliance lock —
  * the blog reuses the newsletter's `karos-compliance-lock-v2`, and the framework
  * re-decides its behaviour so it stops hand-editing blog posts and flags
@@ -916,6 +927,100 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       },
     },
   },
+  /* ── reputation v2: three EXACT keys, above the loose matcher below ──
+   *
+   * The loose `/reputation|reviews|monitor/` profile that follows predates v2
+   * and still serves the catalogue's `karos-reputation`. It would capture all
+   * three v2 skills, and its brief asks the client for the brand, the surfaces,
+   * the market and the response rules — every one of which v2 BUILDS at setup
+   * from the client's own documents and their real review history. Two of its
+   * fields are `required: true`, so a client would be blocked from running until
+   * they typed answers this product does not want.
+   *
+   * `profiles` is first-match-wins, so placement IS the mechanism. */
+  {
+    matches: (identity) => identity.startsWith("karos-reputation-runner "),
+    profile: {
+      eyebrow: "Reputation pulse",
+      intro:
+        "One pulse: we read what people have posted about you since the last one, sort it, and draft replies for you to send. Nothing is posted, and nothing is answered twice.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything to steer this pulse? (optional)",
+          type: "textarea",
+          placeholder: "A surface to prioritise, a complaint you already know about, a week you care about.",
+          helper:
+            "Leave it empty and we cover every surface on your roster since the last pulse.",
+        },
+      ],
+      quickStarts: [
+        "Run the usual pulse across every surface.",
+        "Prioritise anything that looks urgent, then the rest.",
+        "Focus on the surface with the most new reviews.",
+      ],
+      deliverables: [
+        "A reply drafted for each review worth answering",
+        "Anything urgent, flagged and routed to your named contact",
+        "What we chose not to answer, and why",
+      ],
+      estimate: "~15-25 min",
+      attachments: {
+        label: "Extra context (optional)",
+        hint: "A screenshot of a review that is not on a surface we watch, or a note about an incident in progress.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
+    matches: (identity) => identity.startsWith("karos-reputation-setup "),
+    profile: {
+      eyebrow: "Reputation setup",
+      intro:
+        "The one-time stand-up: we find your real listings, work out how you should sound in a reply, and set the bounds for what gets escalated rather than drafted.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything setup should know? (optional)",
+          type: "textarea",
+          placeholder: "A listing under a different trading name, a location that closed, a dispute in progress.",
+          helper: "Everything else is derived from your own documents and your review history.",
+        },
+      ],
+      quickStarts: ["Set up reputation monitoring from what we already have."],
+      deliverables: [
+        "Your listings, found and confirmed per surface",
+        "How a reply from you should sound",
+        "What gets escalated to a person instead of drafted",
+      ],
+      estimate: "~15-30 min",
+      attachments: {
+        label: "Reference material (optional)",
+        hint: "Past replies you were happy with, your escalation policy, anything your legal team has ruled on.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
+    matches: (identity) => identity.startsWith("karos-reputation-manager "),
+    profile: {
+      eyebrow: "Reputation review",
+      intro:
+        "The monthly look back: what came in, what we drafted, what you sent, and what keeps coming up.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything to look at in particular? (optional)",
+          type: "textarea",
+          placeholder: "A surface that feels off, a complaint theme you want quantified.",
+        },
+      ],
+      quickStarts: ["Run the monthly reputation review."],
+      deliverables: ["The month in review", "Recurring themes worth acting on", "What to change next month"],
+      estimate: "~10-20 min",
+      attachments: generalAttachments,
+    },
+  },
   {
     matches: (identity) => /reputation|reviews|monitor/.test(identity),
     profile: {
@@ -1236,6 +1341,25 @@ export function isBlogAgentIdentity(key: string): boolean {
   return key === BLOG_WRITER_V2_KEY;
 }
 
+/**
+ * The reputation agent. EXACTLY the runner.
+ *
+ * Same rule as its four siblings: this decides who gets the reputation INTAKE
+ * and the setup gate, and a setup run that gated on its own output could never
+ * run at all.
+ *
+ * The loose `/reputation|reviews|monitor/` LAUNCH PROFILE further up this file
+ * still exists and still serves the catalogue entry `karos-reputation`, which is
+ * a different product. Exact-key profiles for all three v2 skills sit ABOVE it,
+ * so the runner is never captured by a brief asking the client for the brand,
+ * the surfaces, the market and the response rules — every one of which v2 BUILDS
+ * at setup, and two of which are `required: true` and would block every run
+ * until somebody typed into them.
+ */
+export function isReputationAgentIdentity(key: string): boolean {
+  return key === REPUTATION_RUNNER_KEY;
+}
+
 export function isRedditAgentIdentity(key: string): boolean {
   return (
     key === REDDIT_RUNNER_V2_KEY ||
@@ -1259,6 +1383,9 @@ export const NEWSLETTER_SETUP_REQUIRED_PREFIX = "Set up the newsletter agent";
 /** The blog twin. Same literal-constant rule as its four siblings. */
 export const BLOG_SETUP_REQUIRED_PREFIX = "Set up the blog agent";
 
+/** The reputation twin. Same literal-constant rule as its five siblings. */
+export const REPUTATION_SETUP_REQUIRED_PREFIX = "Set up the reputation agent";
+
 /**
  * What one newsletter issue costs a billable client.
  *
@@ -1272,7 +1399,7 @@ export const BLOG_SETUP_REQUIRED_PREFIX = "Set up the blog agent";
  *
  * The re-export keeps every existing importer unchanged.
  */
-export { NEWSLETTER_RUN_CREDITS, BLOG_RUN_CREDITS } from "@/lib/credits";
+export { NEWSLETTER_RUN_CREDITS, BLOG_RUN_CREDITS, REPUTATION_RUN_CREDITS } from "@/lib/credits";
 
 /**
  * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string

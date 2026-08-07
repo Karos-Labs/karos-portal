@@ -287,6 +287,7 @@ describe("#86 — every intake write goes through the funnel", () => {
       "src/components/linkedin-agent-intake.tsx",
       "src/components/newsletter-agent-intake.tsx",
       "src/components/reddit-agent-intake.tsx",
+      "src/components/reputation-agent-intake.tsx",
       "src/components/x-agent-intake.tsx",
     ]);
   });
@@ -362,6 +363,7 @@ describe("#86 — every intake write goes through the funnel", () => {
       "src/components/linkedin-seats-workspace.tsx",
       "src/components/newsletter-agent-intake.tsx",
       "src/components/reddit-agent-intake.tsx",
+      "src/components/reputation-agent-intake.tsx",
       "src/components/x-agent-intake.tsx",
     ]);
   });

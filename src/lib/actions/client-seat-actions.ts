@@ -57,6 +57,11 @@ const INTAKE_FAMILY_PRESENT: Record<AgentIntake["agent"], true> = {
   // choice (company vs an executive byline) is a config field, not a seat. Listed
   // for the same reason — proving there are none beats assuming it.
   blog: true,
+  // Same as the two above: a review is about the business, never a person, so
+  // this family never HAS a seat row. Listed anyway, because the sweep's job is
+  // to leave no orphan behind and "there are none" is cheaper to prove by
+  // looking than to assume.
+  reputation: true,
 };
 const INTAKE_FAMILIES = Object.keys(INTAKE_FAMILY_PRESENT) as Array<AgentIntake["agent"]>;
 
