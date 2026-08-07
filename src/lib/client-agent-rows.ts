@@ -21,9 +21,14 @@ import {
   hasReputationV2Setup,
 } from "@/lib/agent-service/reputation-agent-context";
 import {
+  hasCarouselAgentIntake,
+  hasCarouselV2Setup,
+} from "@/lib/agent-service/carousel-agent-context";
+import {
   agentKeyMatchesClientSlug,
   clientSafeRefusal,
   isBlogAgentIdentity,
+  isCarouselAgentIdentity,
   isLinkedInAgentIdentity,
   isReputationAgentIdentity,
   isNewsletterAgentIdentity,
@@ -45,6 +50,7 @@ import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { ComponentProps } from "react";
 import type { BlogAgentIntake } from "@/components/blog-agent-intake";
+import type { CarouselAgentIntake } from "@/components/carousel-agent-intake";
 import type { ReputationAgentIntake } from "@/components/reputation-agent-intake";
 import type { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 import type { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
@@ -308,6 +314,7 @@ export interface AgentIntakePanes {
   newsletter?: ComponentProps<typeof NewsletterAgentIntake>;
   blog?: ComponentProps<typeof BlogAgentIntake>;
   reputation?: ComponentProps<typeof ReputationAgentIntake>;
+  carousel?: ComponentProps<typeof CarouselAgentIntake>;
 }
 
 export async function buildAgentSetup(
@@ -464,6 +471,33 @@ export async function buildAgentSetup(
                 clientLabel,
                 kind: "reputation",
                 data: panes.reputation,
+              }
+            : { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel },
+        ];
+      }
+      if (isCarouselAgentIdentity(agent.key)) {
+        // BOTH RUNGS and `standUpDone: true`, the newsletter/blog/reputation
+        // idiom: `ready` folds `isSetUp` in, so the intake rung refuses first and
+        // there can never be an OUTSTANDING stand-up step for the run gate to
+        // catch. See the field's doc on AgentSetupState.
+        const [hasIntake, isSetUp] = await Promise.all([
+          hasCarouselAgentIntake(clientId),
+          hasCarouselV2Setup(clientId),
+        ]);
+        const href = `/clients/${clientId}/carousel-agent`;
+        const label = "Carousel agent data";
+        const clientLabel = "Your carousel details";
+        return [
+          agent.id,
+          panes?.carousel
+            ? {
+                ready: hasIntake && isSetUp,
+                standUpDone: true,
+                href,
+                label,
+                clientLabel,
+                kind: "carousel",
+                data: panes.carousel,
               }
             : { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel },
         ];

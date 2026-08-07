@@ -1812,7 +1812,7 @@ export interface AgentIntake {
   id: string;
   clientId: string;
   /** Agent family. Widen the union as more agents get intake. */
-  agent: "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation";
+  agent: "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation" | "carousel";
   /** null = company-page intake; otherwise the ClientSeat id. */
   seatId: string | null;
   /**
@@ -1908,6 +1908,20 @@ export interface AgentIntake {
    */
   openComplianceNote?: string;
   /**
+   * Carousel only — the Instagram account the slides are for.
+   *
+   * NOT a credential and not a connection: nothing in this product reads that
+   * account. It is how a person tells the drafts apart, and what a caption
+   * signs off as.
+   */
+  carouselHandle?: string;
+  /**
+   * Carousel only — how many slides a post should run to, as the client wants
+   * them. Absent means the agent decides per topic, which is the better default
+   * and the one setup assumes.
+   */
+  slideCountPreference?: number | null;
+  /**
    * Reputation only — the surfaces the client actually has, in their words.
    *
    * ASKED because it cannot be discovered: a business may have a Google Business
@@ -1955,7 +1969,12 @@ export interface AgentIntake {
    * Setup builds the voice card; this is the client's chance to say it is wrong.
    */
   toneNote?: string;
-  /** Blog only — subjects never to write about, on top of the house rules. */
+  /**
+   * Blog AND carousel — subjects never to make something about, on top of the
+   * house rules. Shared like `audienceNote` is: the two families hold separate
+   * DOCUMENTS (one per clientId+agent+seatId), so one name is one meaning per
+   * row rather than two products fighting over a field.
+   */
   bannedTopics?: string[];
   /**
    * Blog only — the CMS they publish on. Data for a future direct-publish
@@ -2695,6 +2714,69 @@ export interface BlogAgentState {
   kind: "post-index" | "clusters" | "voice-card" | "v1-posts" | "next-request";
   content: string;
   contentType: string;
+  contentDate: string;
+  capturedFromJobId: string;
+  capturedAt: number;
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * The carousel agent's intake, as a client's browser may receive it.
+ *
+ * The FIELDS live on `AgentIntake` (all seven families share one collection);
+ * this is the whitelist that decides which cross the RSC boundary.
+ *
+ * ASK vs BUILD: the visual style, the brand tokens, the slide templates and the
+ * topic catalogue are all BUILT by setup from the client's own brand material.
+ * None of it is asked here. What is asked is the account the slides are for, how
+ * long a post should run, and what never to build one about.
+ */
+export interface CarouselAgentIntake {
+  carouselHandle?: string;
+  slideCountPreference?: number | null;
+  bannedTopics?: string[];
+}
+
+/**
+ * The carousel agent's DURABLE state — what setup writes under
+ * `clients/<slug>/skills/carousel-agent-v2/` and the runner reads back.
+ *
+ * ── ONE DISCREPANCY, RECORDED RATHER THAN SMOOTHED OVER ───────────────────
+ *
+ * The integration spec named `02-style-config.json` and `03-catalog-state.yaml`
+ * as the two files to sync. Against the lab manifest only the first is standing
+ * state: setup writes `{02-style-config.json, brand-tokens.json, templates/,
+ * topic-catalog.yaml}` to the skills directory, while `03-catalog-state.yaml`
+ * is a numbered artifact inside the RUN's `internal/` trail.
+ *
+ * The file that actually carries continuity is `topic-catalog.yaml` — the
+ * manifest says the runner "flips one topic-catalog.yaml row unused -> used", so
+ * losing it means re-picking a topic already posted. It is captured for that
+ * reason. `catalog-state` is captured too, because the spec named it and a run's
+ * own view of the catalogue is cheap to keep, but it is NOT what protects
+ * against a repeat.
+ *
+ * `templates/` is a DIRECTORY and is deliberately not a kind: one row holds one
+ * file. Capturing a template set needs either a manifest row per file or an
+ * archive, and neither is worth building before a pilot run shows how often
+ * templates actually change.
+ */
+export interface CarouselAgentState {
+  id: string;
+  clientId: string;
+  /**
+   *  - `style-config`   — 02-style-config.json, the visual system every slide obeys
+   *  - `brand-tokens`   — brand-tokens.json, the colours and type the templates read
+   *  - `topic-catalog`  — topic-catalog.yaml, THE CONTINUITY FILE. Rows flip
+   *                       unused -> used as posts ship; lose it and a topic repeats
+   *  - `catalog-state`  — 03-catalog-state.yaml, the run's own view of the above
+   */
+  kind: "style-config" | "brand-tokens" | "topic-catalog" | "catalog-state";
+  content: string;
+  contentType: string;
+  /** YYYY-MM-DD the content was produced. */
   contentDate: string;
   capturedFromJobId: string;
   capturedAt: number;

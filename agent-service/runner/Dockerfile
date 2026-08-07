@@ -25,12 +25,32 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 # `import { chromium } from 'playwright'` and screenshots HTML slides to PNG —
 # without it, social/newsletter/landing renders ship blank. Baked in because the
 # render sandbox can't install it at runtime (no npm/npx tool grant, no registry
-# egress). playwright is installed globally and exposed via NODE_PATH so each
-# engine's bare `import 'playwright'` resolves without a per-engine install.
+# egress). playwright is installed globally so each engine's bare
+# `import 'playwright'` resolves without a per-engine install.
 # Pin to the engines' dependency (playwright ^1.53.0).
+#
+# TWO RESOLUTION MECHANISMS, because the engines use two module systems and only
+# one of them reads NODE_PATH.
+#
+#   NODE_PATH covers CommonJS `require('playwright')`. It is a CJS-only legacy
+#   mechanism and Node's ESM loader IGNORES IT ENTIRELY — there is no ESM
+#   equivalent and none is planned.
+#
+#   The `/node_modules` SYMLINK covers ESM `import 'playwright'` from a `.mjs`
+#   engine. The ESM resolver finds a bare specifier by walking UP from the
+#   importing file checking each `node_modules` directory, so a link at the
+#   filesystem root is reachable from anywhere — including
+#   /opt/karos-agents/products/**/engine/*.mjs, which is where the renderers
+#   actually live. Without it those files die on ERR_MODULE_NOT_FOUND, and a
+#   renderer that cannot start is indistinguishable from one that rendered
+#   nothing: the run ships blank slides rather than failing loudly.
+#
+# The link must be created here, before `USER agent` below — the root filesystem
+# is not writable by the unprivileged user.
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 ENV NODE_PATH=/usr/local/lib/node_modules
 RUN npm install -g playwright@1.53.0 \
+    && ln -s /usr/local/lib/node_modules /node_modules \
     && npx --yes playwright@1.53.0 install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 

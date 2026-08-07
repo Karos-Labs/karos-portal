@@ -122,6 +122,15 @@ export const REDDIT_SETUP_V2_KEY = "karos-reddit-setup";
  * guessing wrong means a key that matches nothing and an agent that is never
  * gated, fed or hidden.
  */
+/**
+ * The carousel v2 keys. NO `-v2` SUFFIX while the DIRECTORY has one
+ * (`products/building/carousel-agent-v2/`), matching the Reddit and reputation
+ * pairs. Verified against `catalog/agent-runtime-manifest.json`.
+ */
+export const CAROUSEL_RUNNER_KEY = "karos-carousel-runner";
+export const CAROUSEL_SETUP_KEY = "karos-carousel-setup";
+export const CAROUSEL_MANAGER_KEY = "karos-carousel-manager";
+
 export const REPUTATION_RUNNER_KEY = "karos-reputation-runner";
 export const REPUTATION_SETUP_KEY = "karos-reputation-setup";
 export const REPUTATION_MANAGER_KEY = "karos-reputation-manager";
@@ -943,6 +952,102 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       },
     },
   },
+  /* ── carousel v2: three EXACT keys ──
+   *
+   * Placed with the other exact-key v2 profiles rather than near the loose
+   * `/instagram|tiktok|content.?engine/` matcher it must beat. That matcher is
+   * the LEGACY Instagram agent's brief, and the carousel is described as its
+   * modern replacement — so an identity carrying "carousel" would not hit it
+   * today, but a future rename to "Instagram Carousel" would, and its brief asks
+   * for inputs v2 builds at setup.
+   *
+   * `profiles` is first-match-wins, so placement IS the mechanism. */
+  {
+    matches: (identity) => identity.startsWith("karos-carousel-runner "),
+    profile: {
+      eyebrow: "Carousel brief",
+      // The publishing sentence is exact and load-bearing. The AGENT renders
+      // PNGs and stops; it holds no Instagram credential and no posting path.
+      // What can auto-publish is the PORTAL, from an approved asset, through the
+      // same publish cron every other channel uses. Saying "the agent publishes"
+      // would promise a capability that does not exist in the runner.
+      intro:
+        "One carousel per press, built on the style your setup pinned. Approval-gated drafts; portal auto-publishing available via Next.js execution.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything to steer this one? (optional)",
+          type: "textarea",
+          placeholder: "A topic from your catalogue to prioritise, an angle, a launch to build around.",
+          helper: "Leave it empty and we take the next unused topic from your catalogue.",
+        },
+      ],
+      quickStarts: [
+        "Build the next carousel from my topic catalogue.",
+        "Make one about the topic that has been waiting longest.",
+      ],
+      deliverables: [
+        "Eight to ten rendered slides, on your brand",
+        "The caption, written to match",
+        "The topic marked used so it does not come round again",
+      ],
+      estimate: "~10-20 min",
+      attachments: {
+        label: "Extra material (optional)",
+        hint: "A product photo, a chart, a screenshot you want on a slide.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
+    matches: (identity) => identity.startsWith("karos-carousel-setup "),
+    profile: {
+      eyebrow: "Carousel setup",
+      intro:
+        "The one-time stand-up: we derive the visual system from your brand material, build the slide templates, and seed the topic catalogue every future post draws from.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything setup should know? (optional)",
+          type: "textarea",
+          placeholder: "A look you want, a look you do not, an existing deck to match.",
+          helper: "Everything else is derived from the brand material you already gave us.",
+        },
+      ],
+      quickStarts: ["Set up carousels from our brand material."],
+      deliverables: [
+        "The visual system every slide obeys",
+        "Your slide templates, rendered and checked",
+        "A topic catalogue to draw from",
+      ],
+      estimate: "~15-30 min",
+      attachments: {
+        label: "Brand material (optional)",
+        hint: "Brand guidelines, a deck you like, fonts and colour references.",
+        accept: DOCUMENTS_AND_IMAGES,
+      },
+    },
+  },
+  {
+    matches: (identity) => identity.startsWith("karos-carousel-manager "),
+    profile: {
+      eyebrow: "Carousel review",
+      intro:
+        "The monthly look back: what shipped, how much catalogue is left, and any style changes worth making. It PROPOSES a style change and never applies one.",
+      fields: [
+        {
+          key: "request",
+          label: "Anything to look at in particular? (optional)",
+          type: "textarea",
+          placeholder: "A template that is not landing, a topic vein worth more posts.",
+        },
+      ],
+      quickStarts: ["Run the monthly carousel review."],
+      deliverables: ["The month in review", "Fresh topics added to the catalogue", "Style changes proposed, never applied"],
+      estimate: "~10-20 min",
+      attachments: generalAttachments,
+    },
+  },
   /* ── reputation v2: three EXACT keys, above the loose matcher below ──
    *
    * The loose `/reputation|reviews|monitor/` profile that follows predates v2
@@ -1376,6 +1481,23 @@ export function isReputationAgentIdentity(key: string): boolean {
   return key === REPUTATION_RUNNER_KEY;
 }
 
+/**
+ * The carousel agent. EXACTLY the runner.
+ *
+ * Same rule as its five siblings: this decides who gets the carousel intake and
+ * the setup gate, and a setup run that gated on its own output could never run.
+ *
+ * NOTE this does NOT answer for `karos-instagram-agent`. The carousel is
+ * described as its modern replacement, but the legacy agent is a separate
+ * document with its own key, its own (much larger) credential set and its own
+ * intake shape. Folding it into this family would attach carousel intake to an
+ * agent that reads none of it. Retiring it is a deprecation of its own, and this
+ * integration is purely additive.
+ */
+export function isCarouselAgentIdentity(key: string): boolean {
+  return key === CAROUSEL_RUNNER_KEY;
+}
+
 export function isRedditAgentIdentity(key: string): boolean {
   return (
     key === REDDIT_RUNNER_V2_KEY ||
@@ -1402,6 +1524,9 @@ export const BLOG_SETUP_REQUIRED_PREFIX = "Set up the blog agent";
 /** The reputation twin. Same literal-constant rule as its five siblings. */
 export const REPUTATION_SETUP_REQUIRED_PREFIX = "Set up the reputation agent";
 
+/** The carousel twin. Same literal-constant rule as its six siblings. */
+export const CAROUSEL_SETUP_REQUIRED_PREFIX = "Set up the carousel agent";
+
 /**
  * What one newsletter issue costs a billable client.
  *
@@ -1415,7 +1540,12 @@ export const REPUTATION_SETUP_REQUIRED_PREFIX = "Set up the reputation agent";
  *
  * The re-export keeps every existing importer unchanged.
  */
-export { NEWSLETTER_RUN_CREDITS, BLOG_RUN_CREDITS, REPUTATION_RUN_CREDITS } from "@/lib/credits";
+export {
+  NEWSLETTER_RUN_CREDITS,
+  BLOG_RUN_CREDITS,
+  REPUTATION_RUN_CREDITS,
+  CAROUSEL_RUN_CREDITS,
+} from "@/lib/credits";
 
 /**
  * The e15 twin of X_SETUP_REQUIRED_PREFIX. Keep these three as literal string

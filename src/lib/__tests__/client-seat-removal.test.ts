@@ -120,7 +120,7 @@ describe("removeClientSeatAction", () => {
     // sweep's job is to leave no orphan behind, and "there are none" is cheaper to
     // prove by looking than to assume. A family omitted from the Record in
     // client-seat-actions.ts is a compile error, and this is its runtime twin.
-    expect(families).toEqual(["blog", "linkedin", "newsletter", "reddit", "reputation", "x"]);
+    expect(families).toEqual(["blog", "carousel", "linkedin", "newsletter", "reddit", "reputation", "x"]);
     expect(order).toContain("intake:i-x");
     expect(order).toContain("intake:i-linkedin");
   });
@@ -139,6 +139,7 @@ describe("removeClientSeatAction", () => {
     // seat-2 survive.
     expect(order.filter((o) => o.startsWith("intake:")).sort()).toEqual([
       "intake:i-blog",
+      "intake:i-carousel",
       "intake:i-linkedin",
       "intake:i-newsletter",
       "intake:i-reddit",

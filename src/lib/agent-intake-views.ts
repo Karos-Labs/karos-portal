@@ -37,6 +37,7 @@ import {
   agentKeyMatchesClientSlug,
   isUnlistedAgent,
   isBlogAgentIdentity,
+  isCarouselAgentIdentity,
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
@@ -50,8 +51,13 @@ import {
 import { hasNewsletterV2Setup } from "@/lib/agent-service/newsletter-agent-context";
 import { hasBlogV2Setup } from "@/lib/agent-service/blog-agent-context";
 import { hasReputationV2Setup } from "@/lib/agent-service/reputation-agent-context";
+import { hasCarouselV2Setup } from "@/lib/agent-service/carousel-agent-context";
 import type { AgentProfileScopeFields } from "@/lib/data";
 import type { BlogAgentIntake, BlogIntakeView } from "@/components/blog-agent-intake";
+import type {
+  CarouselAgentIntake,
+  CarouselIntakeView,
+} from "@/components/carousel-agent-intake";
 import type {
   ReputationAgentIntake,
   ReputationIntakeView,
@@ -88,6 +94,7 @@ export type RedditAgentIntakeProps = ComponentProps<typeof RedditAgentIntake>;
 export type NewsletterAgentIntakeProps = ComponentProps<typeof NewsletterAgentIntake>;
 export type BlogAgentIntakeProps = ComponentProps<typeof BlogAgentIntake>;
 export type ReputationAgentIntakeProps = ComponentProps<typeof ReputationAgentIntake>;
+export type CarouselAgentIntakeProps = ComponentProps<typeof CarouselAgentIntake>;
 
 /**
  * Which key predicate answers for which intake family.
@@ -103,6 +110,7 @@ const IDENTITY_BY_FAMILY: Record<AgentIntake["agent"], (key: string) => boolean>
   newsletter: isNewsletterAgentIdentity,
   blog: isBlogAgentIdentity,
   reputation: isReputationAgentIdentity,
+  carousel: isCarouselAgentIdentity,
 };
 
 /**
@@ -644,6 +652,54 @@ export async function buildReputationAgentIntakeView(
     company: toReputationIntakeView(companyIntake),
     isSetUp,
     runs: toRunRowViews(reputationJobs, opts.isStaff),
+    isStaff: opts.isStaff,
+  };
+}
+
+/**
+ * Strip an intake doc to the client-safe carousel view.
+ *
+ * `slideCountPreference` is copied UNCONDITIONALLY, like the newsletter's
+ * weekday: absent and null both mean "let the agent decide", which is the
+ * product DEFAULT and a real answer rather than a gap. A conditional spread
+ * would be harmless today because both read the same downstream, but the field
+ * is a tri-state in the making and the honest copy costs nothing.
+ */
+export function toCarouselIntakeView(intake: AgentIntake | null): CarouselIntakeView | null {
+  if (!intake) return null;
+  return {
+    slideCountPreference: intake.slideCountPreference ?? null,
+    ...(intake.carouselHandle ? { carouselHandle: intake.carouselHandle } : {}),
+    ...(intake.bannedTopics?.length ? { bannedTopics: intake.bannedTopics } : {}),
+  };
+}
+
+export async function buildCarouselAgentIntakeView(
+  clientId: string,
+  opts: { isStaff: boolean; jobs?: Job[] },
+): Promise<CarouselAgentIntakeProps> {
+  const [companyIntake, isSetUp, jobs] = await Promise.all([
+    getAgentIntake(clientId, "carousel", null),
+    hasCarouselV2Setup(clientId),
+    opts.jobs ?? listJobs({ clientId }),
+  ]);
+
+  // Matched on the agent NAME the way its five siblings are, so all three
+  // carousel skills report into one history.
+  const carouselJobs: Job[] = jobs
+    .filter(
+      (j) =>
+        j.agentId === "agent-service" &&
+        j.external?.taskType === "custom" &&
+        /carousel/i.test(j.agentName),
+    )
+    .sort((a, b) => b.createdAt - a.createdAt);
+
+  return {
+    clientId,
+    company: toCarouselIntakeView(companyIntake),
+    isSetUp,
+    runs: toRunRowViews(carouselJobs, opts.isStaff),
     isStaff: opts.isStaff,
   };
 }

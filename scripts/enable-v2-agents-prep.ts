@@ -19,12 +19,15 @@
  *
  * Run: FIRESTORE_DATABASE_ID=prep NODE_PATH=./node_modules npx tsx \
  *        --env-file=.env.local scripts/enable-v2-agents-prep.ts \
- *        [--apply] [--family all|linkedin|reddit|newsletter|blog|reputation] [--client <id>]
+ *        [--apply] [--family all|linkedin|reddit|newsletter|blog|reputation|carousel] [--client <id>]
  */
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import {
   BLOG_MANAGER_V2_KEY,
+  CAROUSEL_MANAGER_KEY,
+  CAROUSEL_RUNNER_KEY,
+  CAROUSEL_SETUP_KEY,
   BLOG_SETUP_V2_KEY,
   BLOG_WRITER_V2_KEY,
   COMPLIANCE_LOCK_V2_KEY,
@@ -74,6 +77,7 @@ const FAMILIES: Record<string, readonly string[]> = {
   ],
   blog: [BLOG_WRITER_V2_KEY, BLOG_SETUP_V2_KEY, BLOG_MANAGER_V2_KEY],
   reputation: [REPUTATION_RUNNER_KEY, REPUTATION_SETUP_KEY, REPUTATION_MANAGER_KEY],
+  carousel: [CAROUSEL_RUNNER_KEY, CAROUSEL_SETUP_KEY, CAROUSEL_MANAGER_KEY],
 };
 
 async function main() {

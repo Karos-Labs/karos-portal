@@ -50,6 +50,7 @@ import type {
   LiDirectionRequest,
   LiDraftFeedback,
   BlogAgentState,
+  CarouselAgentState,
   NewsletterAgentState,
   ReputationAgentState,
   NewsletterDraftFeedback,
@@ -163,6 +164,9 @@ const col = {
   // memory: lose it and the agent drafts a second public reply to a review a
   // human already answered under the client's own name.
   reputationAgentState: () => adminDb().collection("reputationAgentState"),
+  // Carousel v2's durable state. The topic catalogue in here is the continuity
+  // file: rows flip unused -> used as posts ship, so losing it repeats a topic.
+  carouselAgentState: () => adminDb().collection("carouselAgentState"),
   // Per-seat AI-built voice profiles (agent-scoped: x/linkedin/reddit), one doc
   // per (clientId, agent, seatId). See upsertSeatVoiceProfile.
   seatVoiceProfiles: () => adminDb().collection("seatVoiceProfiles"),
@@ -486,6 +490,7 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "newsletterLedger",
   "blogAgentState",
   "reputationAgentState",
+  "carouselAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];
@@ -3139,6 +3144,50 @@ export async function upsertBlogAgentState(
     return existing.id;
   }
   const ref = await col.blogAgentState().add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───────── Carousel v2: the durable state the ephemeral runner loses ───────── */
+
+export async function getCarouselAgentState(
+  clientId: string,
+  kind: CarouselAgentState["kind"],
+): Promise<CarouselAgentState | null> {
+  const snap = await col
+    .carouselAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<CarouselAgentState>(snap.docs[0]);
+}
+
+export async function listCarouselAgentState(clientId: string): Promise<CarouselAgentState[]> {
+  const snap = await col.carouselAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<CarouselAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file. Wholesale, not a field merge: each is a whole
+ * file the run rewrote, and merging two versions of the topic catalogue at field
+ * level could produce a used/unused flag neither run wrote — on the one file that
+ * decides whether a topic is posted twice.
+ */
+export async function upsertCarouselAgentState(
+  data: Omit<CarouselAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getCarouselAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .carouselAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .carouselAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
   return ref.id;
 }
 

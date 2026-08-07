@@ -284,6 +284,7 @@ describe("#86 — every intake write goes through the funnel", () => {
     // asking nothing, which is the quietest way for this guard to die.
     expect(surfaces).toEqual([
       "src/components/blog-agent-intake.tsx",
+      "src/components/carousel-agent-intake.tsx",
       "src/components/linkedin-agent-intake.tsx",
       "src/components/newsletter-agent-intake.tsx",
       "src/components/reddit-agent-intake.tsx",
@@ -357,6 +358,7 @@ describe("#86 — every intake write goes through the funnel", () => {
     const users = files.filter((rel) => /\bintakeSave\b/.test(stripComments(read(rel))));
     expect(users).toEqual([
       "src/components/blog-agent-intake.tsx",
+      "src/components/carousel-agent-intake.tsx",
       "src/components/client-seat-remove.tsx",
       "src/components/company-news-box.tsx",
       "src/components/linkedin-agent-intake.tsx",

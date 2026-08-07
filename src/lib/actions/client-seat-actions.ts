@@ -62,6 +62,10 @@ const INTAKE_FAMILY_PRESENT: Record<AgentIntake["agent"], true> = {
   // to leave no orphan behind and "there are none" is cheaper to prove by
   // looking than to assume.
   reputation: true,
+  // Same as the three above: a carousel is posted from the company account, so
+  // this family never HAS a seat row. Listed anyway, because the sweep's job is
+  // to leave no orphan behind.
+  carousel: true,
 };
 const INTAKE_FAMILIES = Object.keys(INTAKE_FAMILY_PRESENT) as Array<AgentIntake["agent"]>;
 

@@ -60,6 +60,7 @@ import {
 } from "@/components/client-agents/agent-sections";
 import {
   buildBlogAgentIntakeView,
+  buildCarouselAgentIntakeView,
   buildLinkedInAgentIntakeView,
   buildNewsletterAgentIntakeView,
   buildRedditAgentIntakeView,
@@ -70,6 +71,7 @@ import {
   agentKeyMatchesClientSlug,
   defaultRunBatchSize,
   isBlogAgentIdentity,
+  isCarouselAgentIdentity,
   isLinkedInAgentIdentity,
   isNewsletterAgentIdentity,
   isRedditAgentIdentity,
@@ -151,6 +153,14 @@ async function agentIntakePane(
   if (isReputationAgentIdentity(agent.key)) {
     return {
       reputation: await buildReputationAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
+  if (isCarouselAgentIdentity(agent.key)) {
+    return {
+      carousel: await buildCarouselAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
       }),
@@ -746,6 +756,14 @@ export default async function ClientAgentDetailPage({
     // CLIENT has authorised. Listing them here would offer a "Connect" affordance
     // for accounts nothing in this portal can connect.
     reputation: [],
+    // EMPTY, and this is the one that will look wrong at a glance: the carousel
+    // makes INSTAGRAM slides, and Instagram is a platform this portal connects.
+    // But the agent holds no credential and does not post — it renders PNGs a
+    // person uploads, and the portal's own publish path is what would ever use a
+    // connection. Listing it here would put a "Connected accounts" row on the
+    // agent's page implying this agent needs or uses that connection, which is
+    // the F7 shape: an affordance that answers a question nobody asked.
+    carousel: [],
   };
   const familyPlatforms = family ? FAMILY_PLATFORMS[family] : null;
   const scopedConnections = familyPlatforms
@@ -777,6 +795,9 @@ export default async function ClientAgentDetailPage({
     // implying a WEEK arrived in one lump; a set of replies to a set of reviews is
     // just what the run is.
     reputation: "Review replies",
+    // Singular: one run produces ONE carousel post. Its eight to ten slides are
+    // that post, not a batch of posts.
+    carousel: "Carousel post",
   };
   const rowTitleFields = (
     asset: (typeof archiveRows)[number],
