@@ -124,6 +124,8 @@ const dynamicRunSchema = z.object({
         durationMs: z.number().default(0),
         model: z.string().optional(),
         error: z.string().optional(),
+        /** This step's own token/cost usage (AI steps only). */
+        usage: usageSchema.optional(),
       }),
     )
     .default([]),

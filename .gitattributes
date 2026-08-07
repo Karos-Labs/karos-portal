@@ -1,0 +1,7 @@
+# tinyproxy's config parser chokes on CRLF ("Syntax error on line 1"), which
+# crash-loops the egress proxy container and makes every job container's
+# outbound call (e.g. to api.anthropic.com) fail as ConnectionRefused, since
+# the proxy is the only route out of the jobs-internal Docker network. Force
+# LF regardless of the checkout platform's core.autocrlf setting.
+agent-service/config/tinyproxy.conf text eol=lf
+agent-service/config/proxy-filter.txt text eol=lf

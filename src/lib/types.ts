@@ -597,6 +597,21 @@ export interface DynamicAgentRunStep {
   /** Concrete model this step ran on — staff-facing audit of per-step routing. */
   model?: string;
   error?: string;
+  /** This step's own token/cost usage (AI steps only) — the per-step breakdown behind the job's run-level totalCostUsd/tokens. */
+  usage?: {
+    totalCostUsd?: number;
+    numTurns?: number;
+    models: Record<
+      string,
+      {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadInputTokens: number;
+        cacheCreationInputTokens: number;
+        costUsd?: number;
+      }
+    >;
+  };
 }
 
 /**

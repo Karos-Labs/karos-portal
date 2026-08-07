@@ -1,8 +1,10 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { JobUsage } from "../../../src/types.js";
 import { AGENT_MODEL_ALIASES } from "../../../src/task-types.js";
 import type { DynamicAgentModelAlias, DynamicAgentSpec, DynamicAgentStepDef } from "../../../src/dynamic-types.js";
+import { mergeJobUsage } from "../../../src/state/usage.js";
 import { isTransientError, isTransientResultError } from "../error-classification.js";
-import { isResultMessage } from "../transcript.js";
+import { extractUsage, isResultMessage } from "../transcript.js";
 import { buildStepAgentDefinitions, sdkEnv } from "../sdk-options.js";
 import { createContextStore, serializeContext, withStepOutput, type DynamicRunContext } from "./context-store.js";
 import { runCodeStep } from "./code-sandbox.js";
@@ -21,6 +23,13 @@ export interface DynamicStepTraceEntry {
   error?: string;
   /** Only set for a code step's failure — never the client-facing text. */
   stderr?: string;
+  /**
+   * Token/cost usage for THIS step's SDK call (an AI step's own result
+   * message; unset for a code step, which never calls the SDK). Internal
+   * trace only — the run-level total is what travels to the Portal, the same
+   * way the hardcoded path only ever reports a run-level total.
+   */
+  usage?: JobUsage;
 }
 
 export interface DynamicRunResult {
@@ -34,6 +43,13 @@ export interface DynamicRunResult {
   failedStepIndex?: number;
   /** Partial context accumulated up to (not including) the failed step. */
   partialOutputs?: Record<string, unknown>;
+  /**
+   * Every AI step's usage, summed via the SAME mergeJobUsage the hardcoded
+   * path uses across retry attempts — so a run with several AI steps reports
+   * one run-level total (tokens + cost per model), not just its last step's.
+   * Undefined when the spec has no AI steps at all (a code-steps-only run).
+   */
+  usage?: JobUsage;
 }
 
 export interface DynamicStepRunnerDeps {
@@ -45,6 +61,14 @@ export interface DynamicStepRunnerDeps {
    * `step.model`, is consulted first.
    */
   stepModels?: Record<string, string> | undefined;
+  /**
+   * Raw SDK message sink for an AI step — the same per-message stream
+   * main.ts's hardcoded path feeds into its `TranscriptStreamer`. Wired by
+   * run-dynamic-job.ts to the job's real transcript (so `/v1/jobs/:id/transcript`
+   * shows the actual conversation, not just step-progress events); left
+   * undefined in tests that don't care about transcript content.
+   */
+  onTranscriptMessage?: (message: unknown) => void;
 }
 
 const RETRY_BACKOFF_MS = 2_000;
@@ -122,12 +146,14 @@ export async function runDynamicSteps(
   const steps = [...spec.steps].sort((a, b) => a.order - b.order);
   let context = createContextStore(inputs);
   const trace: DynamicStepTraceEntry[] = [];
+  let usage: JobUsage | undefined;
 
   for (const [index, step] of steps.entries()) {
     deps.onProgress?.({ stepId: step.id, index, total: steps.length, status: "running" });
     const startedAt = Date.now();
 
-    const result = await runOneStepWithRetry(step, context, deps.stepModels);
+    const result = await runOneStepWithRetry(step, context, deps.stepModels, deps.onTranscriptMessage);
+    if (result.usage) usage = mergeJobUsage(usage, result.usage);
 
     if (!result.ok) {
       trace.push({
@@ -139,6 +165,7 @@ export async function runDynamicSteps(
         ...(result.model ? { model: result.model } : {}),
         error: result.error,
         ...(result.stderr ? { stderr: result.stderr } : {}),
+        ...(result.usage ? { usage: result.usage } : {}),
       });
       deps.onProgress?.({ stepId: step.id, index, total: steps.length, status: "failed" });
       return {
@@ -148,6 +175,7 @@ export async function runDynamicSteps(
         failedStepId: step.id,
         failedStepIndex: index,
         partialOutputs: context.outputs,
+        ...(usage ? { usage } : {}),
       };
     }
 
@@ -159,6 +187,7 @@ export async function runDynamicSteps(
       status: "done",
       durationMs: Date.now() - startedAt,
       ...(result.model ? { model: result.model } : {}),
+      ...(result.usage ? { usage: result.usage } : {}),
     });
     deps.onProgress?.({ stepId: step.id, index, total: steps.length, status: "done" });
   }
@@ -169,12 +198,13 @@ export async function runDynamicSteps(
     outputs: context.outputs,
     finalOutput: lastStepId ? context.outputs[lastStepId] : undefined,
     trace,
+    ...(usage ? { usage } : {}),
   };
 }
 
 type StepOutcome =
-  | { ok: true; output: unknown; model?: string }
-  | { ok: false; error: string; stderr?: string; transient?: boolean; model?: string };
+  | { ok: true; output: unknown; model?: string; usage?: JobUsage }
+  | { ok: false; error: string; stderr?: string; transient?: boolean; model?: string; usage?: JobUsage };
 
 /**
  * // DECISION: one automatic retry for a transient AI/API error (429, 5xx,
@@ -197,23 +227,31 @@ async function runOneStepWithRetry(
   step: DynamicAgentStepDef,
   context: DynamicRunContext,
   stepModels: Record<string, string> | undefined,
+  onTranscriptMessage: ((message: unknown) => void) | undefined,
 ): Promise<StepOutcome> {
-  const first = await runOneStep(step, context, stepModels);
+  const first = await runOneStep(step, context, stepModels, onTranscriptMessage);
   if (first.ok) return first;
   if (step.type === "code") return first; // no retry, ever
   if (!first.transient) return first;
 
   await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS));
-  return runOneStep(step, context, stepModels);
+  const retried = await runOneStep(step, context, stepModels, onTranscriptMessage);
+  // Both attempts burned real tokens (see mergeJobUsage's doc comment on the
+  // hardcoded path's identical reasoning) — fold the failed first attempt's
+  // usage into whatever the retry reports, so a step that succeeds on retry
+  // doesn't under-report what it actually cost.
+  const mergedUsage = mergeJobUsage(first.usage, retried.usage);
+  return mergedUsage ? { ...retried, usage: mergedUsage } : retried;
 }
 
 async function runOneStep(
   step: DynamicAgentStepDef,
   context: DynamicRunContext,
   stepModels: Record<string, string> | undefined,
+  onTranscriptMessage: ((message: unknown) => void) | undefined,
 ): Promise<StepOutcome> {
   if (step.type === "code") return runCodeStepOutcome(step, context);
-  return runAiStepOutcome(step, context, stepModels);
+  return runAiStepOutcome(step, context, stepModels, onTranscriptMessage);
 }
 
 async function runCodeStepOutcome(
@@ -296,6 +334,7 @@ async function runAiStepOutcome(
   step: Extract<DynamicAgentStepDef, { type: "ai" }>,
   context: DynamicRunContext,
   stepModels: Record<string, string> | undefined,
+  onTranscriptMessage: ((message: unknown) => void) | undefined,
 ): Promise<StepOutcome> {
   const resolved = resolveStepModel(step, stepModels);
   if (!resolved.ok) return { ok: false, error: resolved.error };
@@ -307,6 +346,7 @@ async function runAiStepOutcome(
   let sawResult = false;
   let resultError: string | undefined;
   let resultTransient = false;
+  let usage: JobUsage | undefined;
 
   try {
     const q = query({
@@ -322,6 +362,7 @@ async function runAiStepOutcome(
       },
     });
     for await (const message of q) {
+      onTranscriptMessage?.(message);
       const typed = message as { type?: string; message?: { content?: Array<{ type: string; text?: string }> } };
       if (typed.type === "assistant" && typed.message?.content) {
         for (const block of typed.message.content) {
@@ -329,6 +370,7 @@ async function runAiStepOutcome(
         }
       } else if (isResultMessage(message)) {
         sawResult = true;
+        usage = extractUsage(message);
         const result = message as { subtype: string; errors?: string[] };
         if (result.subtype !== "success") {
           resultTransient = isTransientResultError(result.subtype, result.errors);
@@ -343,13 +385,13 @@ async function runAiStepOutcome(
     return { ok: false, error: message, transient: isTransientError(err), model };
   }
 
-  if (resultError) return { ok: false, error: resultError, transient: resultTransient, model };
+  if (resultError) return { ok: false, error: resultError, transient: resultTransient, model, ...(usage ? { usage } : {}) };
   if (!sawResult) return { ok: false, error: "AI step ended without a result.", model };
-  if (!text.trim()) return { ok: false, error: "AI step produced no text output.", model };
+  if (!text.trim()) return { ok: false, error: "AI step produced no text output.", model, ...(usage ? { usage } : {}) };
   // Dash normalization happens HERE, before the text enters the context store
   // — so every downstream step reads normalized text, and the persisted
   // artifact and the returned deliverable are normalized by construction
   // rather than at each write site. See text-normalize.ts for why the runner
   // is this utility's home.
-  return { ok: true, output: normalizeDashesDeep(text), model };
+  return { ok: true, output: normalizeDashesDeep(text), model, ...(usage ? { usage } : {}) };
 }

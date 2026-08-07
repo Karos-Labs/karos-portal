@@ -25,8 +25,22 @@ async function* sdkStream(messages: unknown[]) {
 function assistantText(text: string) {
   return { type: "assistant", message: { content: [{ type: "text", text }] } };
 }
-function resultOk() {
-  return { type: "result", subtype: "success" };
+function resultOk(usage?: { model: string; inputTokens: number; outputTokens: number; totalCostUsd: number }) {
+  if (!usage) return { type: "result", subtype: "success" };
+  return {
+    type: "result",
+    subtype: "success",
+    total_cost_usd: usage.totalCostUsd,
+    modelUsage: {
+      [usage.model]: {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        costUSD: usage.totalCostUsd,
+      },
+    },
+  };
 }
 function resultError(subtype: string, errors?: string[]) {
   return { type: "result", subtype, ...(errors ? { errors } : {}) };
@@ -112,6 +126,39 @@ describe("runDynamicSteps", () => {
     const result = await runDynamicSteps(baseSpec([aiStep()]), {});
     expect(result.ok).toBe(true);
     expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("sums each AI step's token/cost usage into one run-level total, and records it per-step on the trace", async () => {
+    queryMock.mockImplementationOnce(() =>
+      sdkStream([assistantText("a-out"), resultOk({ model: "claude-haiku", inputTokens: 10, outputTokens: 5, totalCostUsd: 0.01 })]),
+    );
+    queryMock.mockImplementationOnce(() =>
+      sdkStream([assistantText("b-out"), resultOk({ model: "claude-sonnet", inputTokens: 20, outputTokens: 8, totalCostUsd: 0.05 })]),
+    );
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const steps = [aiStep({ id: "a", order: 0 }), aiStep({ id: "b", order: 1 })];
+    const result = await runDynamicSteps(baseSpec(steps), {});
+
+    expect(result.ok).toBe(true);
+    expect(result.usage?.totalCostUsd).toBeCloseTo(0.06);
+    expect(result.usage?.models["claude-haiku"]).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      costUsd: 0.01,
+    });
+    expect(result.trace[0]?.usage?.models["claude-haiku"]?.inputTokens).toBe(10);
+    expect(result.trace[1]?.usage?.models["claude-sonnet"]?.inputTokens).toBe(20);
+  });
+
+  it("forwards every raw SDK message from an AI step to onTranscriptMessage, like the hardcoded path's TranscriptStreamer", async () => {
+    queryMock.mockImplementation(() => sdkStream([assistantText("out"), resultOk()]));
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const seen: unknown[] = [];
+    const result = await runDynamicSteps(baseSpec([aiStep()]), {}, { onTranscriptMessage: (m) => seen.push(m) });
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual([assistantText("out"), resultOk()]);
   });
 
   it("DECISION 4: does not retry a permanent AI result error, and fails the run at that step", async () => {
