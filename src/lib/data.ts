@@ -32,6 +32,7 @@ import type {
   CreditOperation,
   CustomAgent,
   Job,
+  JiraConfig,
   JobStatus,
   LoginLog,
   PerformanceBenchmarks,
@@ -75,6 +76,8 @@ import {
   encryptCredentials,
   decryptCredentials,
   decryptCredentialsAvailable,
+  encryptToken,
+  decryptToken,
 } from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
@@ -99,6 +102,8 @@ const col = {
   clientContextDocs: () => adminDb().collection("clientContextDocs"),
   clientActivityLogs: () => adminDb().collection("clientActivityLogs"),
   clientIntegrations: () => adminDb().collection("clientIntegrations"),
+  // Agency-wide Jira connection — singleton doc, id "config" (not client-scoped).
+  jiraConfig: () => adminDb().collection("jiraConfig"),
   clientRequests: () => adminDb().collection("clientRequests"),
   loginLogs: () => adminDb().collection("loginLogs"),
   clientTasks: () => adminDb().collection("clientTasks"),
@@ -1140,6 +1145,21 @@ export async function listActionItemsForTranscript(transcriptId: string): Promis
     .sort((a, b) => a.sourceIndex - b.sourceIndex);
 }
 
+/**
+ * Assigned items missing a Jira link — created before Jira was configured,
+ * or that failed to sync (e.g. a misconfigured project key). Lets the "Retry
+ * pending Jira syncs" admin action catch these up in bulk rather than making
+ * someone re-open and reassign each one by hand. `jiraIssueKey` is absent
+ * (not explicitly null) on unsynced docs, which Firestore can't query for
+ * directly — filtered here instead of at the query layer.
+ */
+export async function listActionItemsPendingJiraSync(): Promise<ActionItem[]> {
+  const snap = await col.actionItems().get();
+  return snap.docs
+    .map((d) => withId<ActionItem>(d))
+    .filter((i) => !!i.assigneeUserId && !i.jiraIssueKey);
+}
+
 /* -------------------------- context items -------------------------- */
 
 export async function listContextItems(opts: { clientId: string }): Promise<ContextItem[]> {
@@ -1861,6 +1881,40 @@ export async function deleteClientIntegration(
 ): Promise<void> {
   const docId = `${clientId}_${platform}`;
   await col.clientIntegrations().doc(docId).delete();
+}
+
+/* -------------------- jira integration ------------------------------ */
+
+const JIRA_CONFIG_DOC_ID = "config";
+
+/**
+ * Read the agency-wide Jira connection. Unlike client integrations this is a
+ * single singleton doc — Jira here is one board for the whole agency's
+ * internal action items, not a per-client connection.
+ */
+export async function getJiraConfig(): Promise<JiraConfig | null> {
+  const doc = await col.jiraConfig().doc(JIRA_CONFIG_DOC_ID).get();
+  if (!doc.exists) return null;
+  const data = withId<JiraConfig>(doc);
+  return { ...data, apiToken: decryptToken(data.apiToken) };
+}
+
+/**
+ * Create or overwrite the Jira connection. `apiToken` is encrypted at rest,
+ * same scheme as `ClientIntegration.credentials`. Deterministic doc ID —
+ * there is only ever one.
+ */
+export async function upsertJiraConfig(data: Omit<JiraConfig, "id">): Promise<void> {
+  await col.jiraConfig().doc(JIRA_CONFIG_DOC_ID).set({
+    id: JIRA_CONFIG_DOC_ID,
+    ...data,
+    apiToken: encryptToken(data.apiToken),
+  });
+}
+
+/** Disconnect Jira entirely. */
+export async function deleteJiraConfig(): Promise<void> {
+  await col.jiraConfig().doc(JIRA_CONFIG_DOC_ID).delete();
 }
 
 /* ---------------- LinkedIn employee-advocacy seats ------------------ */

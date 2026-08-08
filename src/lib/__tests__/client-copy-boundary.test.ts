@@ -2280,6 +2280,9 @@ const NOT_TEXT: readonly string[] = [
   "upsertClientIntegration.status",
   "upsertClientMarketingAnalytics.assetType",
   "upsertClientMarketingAnalytics.platform",
+  // Jira issue type name (Task/Bug/Story) — an admin-only config value read
+  // only by the Jira API client, never rendered on any client screen.
+  "upsertJiraConfig.issueType",
 ];
 
 describe("the client copy that travels through the database", () => {

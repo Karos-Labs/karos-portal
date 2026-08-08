@@ -60,7 +60,7 @@ describe("SEO/GEO surfaces stay mounted (QA F152)", () => {
     // A zero-importer component here means a merge dropped a render — exactly the
     // regression that hid SeoGeoActionPlan for five weeks. Delete it or mount it.
     expect(orphans).toEqual([]);
-  });
+  }, 15_000); // Full-repo file scan — the default 5s budget is already gone as the codebase grows, not a slow assertion.
 
   it("keeps the client-facing action plan mounted in the panel", () => {
     const panel = read(path.join(SRC, "components", "seo-geo-panel.tsx"));

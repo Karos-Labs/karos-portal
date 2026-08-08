@@ -1474,7 +1474,7 @@ export interface ActionItemHistoryEntry {
   /** "system" for automated events (Fireflies ingestion). */
   actorId: string;
   actorName: string;
-  type: "created" | "status_changed" | "reassigned" | "comment_added";
+  type: "created" | "status_changed" | "reassigned" | "comment_added" | "jira_linked";
   /** Human-readable description, e.g. 'Marked Done and assigned to Y by Tomer'. */
   detail: string;
 }
@@ -1501,7 +1501,29 @@ export interface ActionItem {
   history: ActionItemHistoryEntry[];
   /** Future client rollout: when true, the owning client's users may view this item. Staff-only while absent/false. */
   visibleToClient?: boolean;
+  /** Set the first time this item is pushed to Jira; a later reassignment updates the same issue instead of creating a new one. */
+  jiraIssueKey?: string | null;
+  jiraIssueUrl?: string | null;
   createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Agency-wide Jira connection (singleton doc, id "config") — not client-scoped,
+ * unlike ClientIntegration. Powers one-way push: assigning an action item to a
+ * staff member creates/reassigns a Jira issue. apiToken is encrypted at rest,
+ * same as ClientIntegration.credentials.
+ */
+export interface JiraConfig {
+  id: string;
+  siteUrl: string;
+  email: string;
+  apiToken: string;
+  projectKey: string;
+  issueType: string;
+  enabled: boolean;
+  connectedBy: string;
+  connectedAt: number;
   updatedAt: number;
 }
 

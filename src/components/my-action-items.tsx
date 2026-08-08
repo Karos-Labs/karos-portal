@@ -272,6 +272,17 @@ function ActionItemRow({
               <Icon name="Mic" className="h-3 w-3" />
               <span className="max-w-[220px] truncate">{item.transcriptTitle}</span>
             </Link>
+            {item.jiraIssueKey && item.jiraIssueUrl && (
+              <a
+                href={item.jiraIssueUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 hover:text-neon"
+              >
+                <Icon name="ExternalLink" className="h-3 w-3" />
+                {item.jiraIssueKey}
+              </a>
+            )}
             {clientName && <Badge tone="neutral">{clientName}</Badge>}
             <span>{relativeTime(item.meetingDate ?? item.createdAt)}</span>
           </p>

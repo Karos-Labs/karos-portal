@@ -12,6 +12,7 @@ export * from "./intel-actions";
 export * from "./competitor-actions";
 export * from "./user-actions";
 export * from "./integration-actions";
+export * from "./jira-actions";
 export * from "./request-actions";
 export * from "./support-actions";
 export * from "./task-actions";
