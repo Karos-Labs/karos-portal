@@ -175,9 +175,12 @@ describe("DECISION 3: a retry never re-charges — source 2, the runner's own AI
 
   it("the retry is a re-invocation of ONE step, not a re-submission of the job", () => {
     const src = stripComments(readFileSync(join(dynamicDir, "step-runner.ts"), "utf8"));
-    // runOneStepWithRetry re-runs runOneStep. Nothing in this module creates or
-    // resubmits a job, which is the only thing that could bill.
-    expect(src).toMatch(/return runOneStep\(/);
+    // runOneStepWithRetry re-runs runOneStep (twice: the first attempt, and —
+    // only for a transient AI-step failure — the retry, whose usage then
+    // merges with the first attempt's before either result is returned).
+    // Nothing in this module creates or resubmits a job, which is the only
+    // thing that could bill.
+    expect(src).toMatch(/await runOneStep\(/);
     expect(src).not.toContain("createJob");
     expect(src).not.toContain("submitAgentServiceJob");
   });
