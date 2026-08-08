@@ -11,16 +11,26 @@
  * When a Docker daemon and a sandbox image are available, the kernel-level
  * controls Docker gives us (`--network none`, `--read-only`, a tmpfs scratch,
  * `--memory`, `--pids-limit`, `--cap-drop ALL`) are the real enforcement and
- * these guards are belt-and-braces on top. Without Docker they ARE the
+ * these guards are belt-and-braces on top. Without Docker they are the ONLY
  * enforcement for network and filesystem: interpreter-level, applied before a
- * single line of author code runs, and not bypassable from inside ordinary
+ * single line of author code runs, ordinarily not bypassable from inside
  * script code (an author cannot un-require a blocked builtin or restore a
- * deleted import hook without the very modules that are blocked).
+ * deleted import hook without the very modules that are blocked) — with one
+ * exception each language needed a second hook for: Node's dynamic `import()`
+ * has its own ESM resolution pipeline that never goes through `Module._load`,
+ * so `require("net")` alone being blocked would not have stopped
+ * `await import("node:net")`; a `module.register()` loader hook closes that
+ * separately. Python's `subprocess`/`multiprocessing` being blocked at import
+ * would not have stopped `os.system()`/`os.popen()`/`os.fork()`/the
+ * `exec*`/`spawn*` family, which reach the OS directly without importing
+ * anything — those are disabled unconditionally on `os` itself.
  *
  * What they cannot do is contain a native-code exploit of the interpreter
- * itself. That is exactly why decision 5 keeps the whole feature behind
- * DYNAMIC_CODE_STEPS_ENABLED pending a security review, and why the Docker
- * tier exists as the path to real isolation.
+ * itself, or a spawning/network primitive neither language's guard above
+ * accounts for — this is a blocklist, not a kernel boundary. That is exactly
+ * why decision 5 keeps the whole feature behind DYNAMIC_CODE_STEPS_ENABLED
+ * pending a security review, and why the Docker tier exists as the path to
+ * real isolation.
  */
 
 /** Loaded with `node --require` so it runs before the author's script. */
@@ -77,6 +87,28 @@ Module._load = function (request, parent, isMain) {
   if (BLOCKED_MODULES.has(bare)) throw blocked('require("' + request + '")');
   return origLoad.apply(this, arguments);
 };
+
+/* dynamic import() never goes through Module._load — it has its own ESM
+   resolution pipeline, reachable even from this CommonJS guard/script pair.
+   module.register() installs a loader hook for that pipeline; the hook body
+   travels as a data: URL so it needs its own copy of the blocklist (it runs
+   in a separate loader realm with no access to this file's variables). */
+try {
+  const { register } = require("node:module");
+  const { pathToFileURL } = require("node:url");
+  const loaderSource =
+    "const BLOCKED=new Set(" +
+    JSON.stringify(Array.from(BLOCKED_MODULES)) +
+    ");" +
+    "export async function resolve(specifier,context,next){" +
+    "const bare=specifier.startsWith('node:')?specifier.slice(5):specifier;" +
+    "if(BLOCKED.has(bare)){throw new Error('Blocked in the dynamic code sandbox: import(\"'+specifier+'\"). A code step has no network access and may only write inside its own scratch directory.');}" +
+    "return next(specifier,context);" +
+    "}";
+  register("data:text/javascript," + encodeURIComponent(loaderSource), pathToFileURL(__filename).href);
+} catch (err) {
+  throw blocked("dynamic code sandbox setup (" + (err && err.message) + ")");
+}
 
 /* ---------------- network globals ---------------- */
 for (const name of ["fetch", "WebSocket", "XMLHttpRequest", "EventSource"]) {
@@ -340,6 +372,49 @@ for _fn in ("remove", "unlink", "mkdir", "makedirs", "rmdir", "removedirs", "tru
     _wrap_single(os, _fn)
 for _fn in ("rename", "replace"):
     _wrap_single(os, _fn, index=1)
+
+
+# ---------------- process spawning ----------------
+# subprocess/multiprocessing are blocked at import above, but os itself
+# exposes process-spawning primitives (system(), popen(), the exec*/spawn*
+# family, fork()) that never go through an import and so are untouched by
+# the meta_path hook. Every one of these is disabled unconditionally, not
+# gated on a path check like the fs wrappers above.
+def _block_call(module, name):
+    if not hasattr(module, name):
+        return
+
+    def _blocked_call(*_args, **_kwargs):
+        raise _blocked("os.%s()" % name)
+
+    setattr(module, name, _blocked_call)
+
+
+for _fn in (
+    "system",
+    "popen",
+    "posix_spawn",
+    "posix_spawnp",
+    "spawnl",
+    "spawnle",
+    "spawnlp",
+    "spawnlpe",
+    "spawnv",
+    "spawnve",
+    "spawnvp",
+    "spawnvpe",
+    "execl",
+    "execle",
+    "execlp",
+    "execlpe",
+    "execv",
+    "execve",
+    "execvp",
+    "execvpe",
+    "fork",
+    "forkpty",
+):
+    _block_call(os, _fn)
 
 # ---------------- hand off to the author's script ----------------
 _script = sys.argv[1]

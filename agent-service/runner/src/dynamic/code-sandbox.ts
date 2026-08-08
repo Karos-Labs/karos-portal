@@ -65,14 +65,30 @@ export interface CodeStepResult {
  *                             cap rather than total RSS, because `ulimit -v`
  *                             makes V8 abort at startup (it reserves a large
  *                             virtual range) — verified, not assumed.
- *       no network egress   → REAL at the interpreter level: the guards in
- *                             sandbox-guards.ts remove `net`/`http`/`https`/
- *                             `tls`/`dgram`/`dns`/`child_process` (Node) and
- *                             `socket`/`ssl`/`urllib`/`http`/`subprocess`/
- *                             `ctypes` (Python) before author code runs, and
- *                             neuter `fetch`. Not a kernel firewall: it stops
- *                             script-level egress, not a native exploit of the
- *                             interpreter.
+ *       process-count cap    → `ulimit -u` (fork-bomb backstop; belt-and-
+ *                             braces alongside the guards below, which block
+ *                             `os.fork`/`spawn*`/`exec*` outright for Python
+ *                             and never expose `child_process` to Node).
+ *       no network egress   → BEST-EFFORT at the interpreter level: the
+ *                             guards in sandbox-guards.ts block `require()`
+ *                             AND dynamic `import()` (via a `module.register`
+ *                             loader hook — the two have separate resolution
+ *                             pipelines and both must be covered) of `net`/
+ *                             `http`/`https`/`tls`/`dgram`/`dns`/
+ *                             `child_process` (Node) and `socket`/`ssl`/
+ *                             `urllib`/`http`/`subprocess`/`ctypes` (Python),
+ *                             neuter `fetch`, and disable the whole os-level
+ *                             process-spawning family (`system`, `popen`,
+ *                             `fork`, `exec*`, `spawn*`) so a step can't shell
+ *                             out to curl/wget either. This is a blocklist,
+ *                             not a firewall: it stops every network/spawn
+ *                             primitive we've identified in either language's
+ *                             standard surface, not a native exploit of the
+ *                             interpreter, and a blocklist can in principle
+ *                             miss a primitive we haven't thought of — which
+ *                             is exactly why this is the FALLBACK tier and the
+ *                             docker tier's kernel-level `--network none` is
+ *                             the one to trust for production.
  *       read-only fs        → REAL at the interpreter level for the same
  *                             reason: every write entry point is wrapped to
  *                             refuse a path outside the scratch dir
@@ -276,6 +292,7 @@ export function localInvocation(args: {
   const limits = [
     `ulimit -f ${MAX_FILE_SIZE_BLOCKS} 2>/dev/null || true`,
     `ulimit -t ${cpuSeconds} 2>/dev/null || true`,
+    `ulimit -u ${MAX_PIDS} 2>/dev/null || true`,
   ];
   let exec: string;
   if (args.language === "python") {

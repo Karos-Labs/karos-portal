@@ -84,6 +84,7 @@ import type {
   Client,
   CreditOperation,
   CustomAgent,
+  DynamicAgentInputDef,
   DynamicAgentInputValue,
   DynamicAgentJobPayload,
   JobRunType,
@@ -103,6 +104,12 @@ import type {
 
 const MAX_INSTRUCTIONS_CHARS = 12_000;
 const MAX_PROMPT_CHARS = 4_000;
+// A dynamic agent's per-run price is fixed at spec-authoring time
+// (CREDIT_COSTS / spec.creditsCost) — an oversized text/textarea answer
+// spliced into an AI step's prompt would let a client inflate real LLM spend
+// past what was billed, so client-answer text is capped independently of the
+// admin-authored schema's own label/help/placeholder caps.
+const MAX_INPUT_VALUE_CHARS = 10_000;
 const MAX_KEY_CHARS = 120;
 const MAX_NAME_CHARS = 200;
 
@@ -718,17 +725,40 @@ export interface SubmitDynamicAgentInput {
   runType?: JobRunType;
 }
 
+interface UploadedFileRef {
+  id: string;
+  url: string;
+  name: string;
+}
+
+function isUploadedFileRef(value: unknown): value is UploadedFileRef {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as UploadedFileRef).id === "string" &&
+    typeof (value as UploadedFileRef).url === "string" &&
+    typeof (value as UploadedFileRef).name === "string"
+  );
+}
+
 /**
  * Every key the client submitted must be declared on the snapshot's
- * inputSchema, and every required field on the schema must have a non-empty
- * answer — Phase 6's Portal-side guard, checked against the FROZEN snapshot
- * that is about to ship, not the live spec (which may have changed since the
- * client loaded the form).
+ * inputSchema, every required field on the schema must have a non-empty
+ * answer, and every value's shape must match its field's `type` — Phase 6's
+ * Portal-side guard, checked against the FROZEN snapshot that is about to
+ * ship, not the live spec (which may have changed since the client loaded
+ * the form).
+ *
+ * Shape-checking matters beyond UX: `step-runner.ts` splices text/textarea
+ * answers verbatim into AI-step prompts and a `select` answer is trusted to
+ * be one of the admin-authored `options` — an unchecked value reaching
+ * either is a prompt-injection / spec-integrity gap, not just a bad-input
+ * one. file/image identity (does `id` actually belong to this client) is
+ * verified separately in `resolveDynamicFileInputs`, since that needs a
+ * Firestore read this synchronous shape check can't do.
  */
-function validateDynamicInputs(
-  inputSchema: DynamicAgentJobPayload["specSnapshot"]["inputSchema"],
-  inputs: Record<string, DynamicAgentInputValue>,
-): string | null {
+function validateDynamicInputs(inputSchema: DynamicAgentInputDef[], inputs: Record<string, DynamicAgentInputValue>): string | null {
   const schemaKeys = new Set(inputSchema.map((f) => f.key));
   for (const key of Object.keys(inputs)) {
     if (!schemaKeys.has(key)) return `"${key}" is not a field on this agent.`;
@@ -737,8 +767,70 @@ function validateDynamicInputs(
     const value = inputs[field.key];
     const isEmpty = value == null || value === "" || (Array.isArray(value) && value.length === 0);
     if (field.required && isEmpty) return `"${field.label}" is required.`;
+    if (isEmpty) continue;
+
+    switch (field.type) {
+      case "text":
+      case "textarea":
+        if (typeof value !== "string") return `"${field.label}" must be text.`;
+        if (value.length > MAX_INPUT_VALUE_CHARS) {
+          return `"${field.label}" is too long (max ${MAX_INPUT_VALUE_CHARS.toLocaleString()} characters).`;
+        }
+        break;
+      case "select":
+        if (typeof value !== "string") return `"${field.label}" must be one of the offered options.`;
+        if (!(field.options ?? []).includes(value)) return `"${field.label}" must be one of the offered options.`;
+        break;
+      case "file": {
+        const refs = Array.isArray(value) ? value : [value];
+        if (!refs.every(isUploadedFileRef)) return `"${field.label}" has an invalid uploaded file reference.`;
+        break;
+      }
+      case "image": {
+        if (Array.isArray(value)) return `"${field.label}" accepts a single image.`;
+        if (!isUploadedFileRef(value)) return `"${field.label}" has an invalid uploaded file reference.`;
+        break;
+      }
+    }
   }
   return null;
+}
+
+/**
+ * file/image values carry a client-supplied `url`/`name` alongside the `id` —
+ * fine for a legitimate upload (the intake form fills them in from the
+ * upload response), but a server action's payload is just JSON off the wire,
+ * so nothing stops a forged `{id: <a real id>, url: "http://attacker/..."}`
+ * from reaching here. Mirrors the existing `contextItemIds` ownership check
+ * a few functions away: re-fetch each referenced context item, confirm it
+ * belongs to THIS client, and rebuild the value from the server's own
+ * `url`/`name` rather than trusting the client's claim — the same
+ * SSRF-shaped gap `contextItemIds` was already closed for.
+ */
+async function resolveDynamicFileInputs(
+  inputSchema: DynamicAgentInputDef[],
+  inputs: Record<string, DynamicAgentInputValue>,
+  clientId: string,
+): Promise<{ inputs: Record<string, DynamicAgentInputValue>; error?: string }> {
+  const resolved: Record<string, DynamicAgentInputValue> = { ...inputs };
+  for (const field of inputSchema) {
+    if (field.type !== "file" && field.type !== "image") continue;
+    const value = inputs[field.key];
+    if (value == null || value === "") continue;
+    const refs = Array.isArray(value) ? value : [value];
+
+    const rebuilt: UploadedFileRef[] = [];
+    for (const ref of refs) {
+      if (!isUploadedFileRef(ref)) continue; // already rejected by validateDynamicInputs
+      const item = await getContextItem(ref.id);
+      if (!item || item.clientId !== clientId) {
+        return { inputs, error: `"${field.label}" references a file that no longer belongs to this client.` };
+      }
+      rebuilt.push({ id: item.id, url: item.url, name: item.name });
+    }
+    resolved[field.key] = field.type === "image" ? (rebuilt[0] ?? null) : rebuilt;
+  }
+  return { inputs: resolved };
 }
 
 export async function submitDynamicAgentJob(
@@ -779,6 +871,9 @@ export async function submitDynamicAgentJob(
 
   const inputError = validateDynamicInputs(specSnapshot.inputSchema, input.inputs);
   if (inputError) return { error: inputError };
+
+  const resolvedInputs = await resolveDynamicFileInputs(specSnapshot.inputSchema, input.inputs, input.clientId);
+  if (resolvedInputs.error) return { error: resolvedInputs.error };
 
   // Per-step model routing, expressed in the brief's existing `step_models`
   // shape (stepId → alias). Built from the SNAPSHOT, so it is frozen with
@@ -841,7 +936,7 @@ export async function submitDynamicAgentJob(
     specVersion,
     specSnapshot,
     clientId: input.clientId,
-    inputs: input.inputs,
+    inputs: resolvedInputs.inputs,
     ...(input.runType ? { runType: input.runType } : {}),
   };
 

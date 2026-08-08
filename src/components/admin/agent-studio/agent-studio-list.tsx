@@ -57,6 +57,7 @@ export function AgentStudioList({
   }
 
   function handleDelete(spec: DynamicAgentSpec) {
+    if (!confirm(`Delete "${spec.name}"? This can't be undone.`)) return;
     startTransition(async () => {
       const result = await deleteDynamicAgentSpecAction(spec.id);
       if (result.ok) router.refresh();

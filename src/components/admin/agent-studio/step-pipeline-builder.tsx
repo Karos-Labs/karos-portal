@@ -11,12 +11,33 @@ const MODEL_OPTIONS: { value: DynamicAgentModelAlias; label: string }[] = [
   { value: "haiku", label: "Haiku — fast & cheap" },
 ];
 
-function blankAiStep(order: number): DynamicAgentStepDef {
-  return { id: `step_${order + 1}`, type: "ai", label: "", model: "sonnet", prompt: "", order };
+/**
+ * `step_${order + 1}` collides once a step has been deleted: e.g. step_1/
+ * step_2/step_3, delete step_2 (leaving step_1/step_3 re-ordered to 0/1), add
+ * one more — `order + 1` is 2, reproducing `step_3` verbatim. Walk past every
+ * id already in use instead of trusting the next array length to be unused.
+ */
+function nextStepId(existingIds: string[]): string {
+  const used = new Set(existingIds);
+  let n = existingIds.length + 1;
+  while (used.has(`step_${n}`)) n += 1;
+  return `step_${n}`;
 }
 
-function blankCodeStep(order: number): DynamicAgentStepDef {
-  return { id: `step_${order + 1}`, type: "code", label: "", language: "node", code: "", timeoutMs: 30_000, order };
+function blankAiStep(order: number, existingIds: string[]): DynamicAgentStepDef {
+  return { id: nextStepId(existingIds), type: "ai", label: "", model: "sonnet", prompt: "", order };
+}
+
+function blankCodeStep(order: number, existingIds: string[]): DynamicAgentStepDef {
+  return {
+    id: nextStepId(existingIds),
+    type: "code",
+    label: "",
+    language: "node",
+    code: "",
+    timeoutMs: 30_000,
+    order,
+  };
 }
 
 /** Context keys available to a step at `index`: every client input, plus every preceding step's own id (its `outputs.<stepId>`). */
@@ -55,7 +76,13 @@ export function StepPipelineBuilder({
   }
 
   function addStep(type: "ai" | "code") {
-    setSteps((current) => [...current, type === "ai" ? blankAiStep(current.length) : blankCodeStep(current.length)]);
+    setSteps((current) => {
+      const existingIds = current.map((s) => s.id);
+      return [
+        ...current,
+        type === "ai" ? blankAiStep(current.length, existingIds) : blankCodeStep(current.length, existingIds),
+      ];
+    });
   }
 
   function removeStep(index: number) {

@@ -184,12 +184,15 @@ describe("the runner gets the credential the scan actually reads", () => {
       "utf8",
     );
     expect(worker).toContain("env.CLAUDE_API_KEY = config.anthropicApiKey");
-    const runner = readFileSync(
-      join(process.cwd(), "agent-service/runner/src/main.ts"),
+    // The allowlist itself now lives in sdk-options.ts (moved out of main.ts so
+    // the Dynamic Agent Studio step runner can reuse the same plumbing without
+    // importing a module that ends in `void main()`).
+    const sdkOptions = readFileSync(
+      join(process.cwd(), "agent-service/runner/src/sdk-options.ts"),
       "utf8",
     );
     // Present in the sandbox allowlist, or the worker setting it changes nothing.
-    expect(runner).toContain('"CLAUDE_API_KEY"');
+    expect(sdkOptions).toContain('"CLAUDE_API_KEY"');
   });
 });
 

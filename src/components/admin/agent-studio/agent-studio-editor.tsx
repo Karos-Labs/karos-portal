@@ -27,6 +27,12 @@ export function AgentStudioEditor({
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
 
+  function switchTab(next: Tab) {
+    setError(null);
+    setSaved(false);
+    setTab(next);
+  }
+
   function saveGeneral(draft: GeneralSettingsDraft) {
     setError(null);
     setSaved(false);
@@ -76,13 +82,13 @@ export function AgentStudioEditor({
     <Card>
       <div className="mb-4 flex items-center justify-between">
         <div className="flex border-b border-border">
-          <TabButton active={tab === "general"} onClick={() => setTab("general")} icon="Settings">
+          <TabButton active={tab === "general"} onClick={() => switchTab("general")} icon="Settings">
             General
           </TabButton>
-          <TabButton active={tab === "inputs"} onClick={() => setTab("inputs")} icon="ListChecks">
+          <TabButton active={tab === "inputs"} onClick={() => switchTab("inputs")} icon="ListChecks">
             Inputs
           </TabButton>
-          <TabButton active={tab === "pipeline"} onClick={() => setTab("pipeline")} icon="Workflow">
+          <TabButton active={tab === "pipeline"} onClick={() => switchTab("pipeline")} icon="Workflow">
             Pipeline
           </TabButton>
         </div>

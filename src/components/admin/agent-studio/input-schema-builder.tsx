@@ -13,13 +13,6 @@ const INPUT_TYPES: { value: DynamicAgentInputType; label: string }[] = [
   { value: "select", label: "Select" },
 ];
 
-let nextTempId = 0;
-/** Client-side-only id for a field that has no key yet — never persisted. */
-function tempKey(): string {
-  nextTempId += 1;
-  return `__new_${nextTempId}`;
-}
-
 function blankField(order: number): DynamicAgentInputDef {
   return {
     key: "",
@@ -84,7 +77,10 @@ export function InputSchemaBuilder({
       ) : (
         <div className="space-y-3">
           {fields.map((field, index) => {
-            const key = field.key || tempKey();
+            // htmlFor/id pairing only needs to be unique within this render, and the
+            // list is already keyed by `index` below — no need for a field that has
+            // no key yet to mint its own id from a module-level counter.
+            const key = field.key || `field-${index}`;
             return (
               <div key={index} className="rounded-md border border-border bg-surface-2 p-3">
                 <div className="mb-3 flex items-center justify-between">

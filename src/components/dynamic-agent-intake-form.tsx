@@ -195,7 +195,7 @@ export function DynamicAgentIntakeForm({
   }
 
   return (
-    <form className="space-y-4" onSubmit={handleSubmit}>
+    <form className="space-y-4" onSubmit={handleSubmit} noValidate>
       {fields.length === 0 ? (
         <p className="text-xs text-muted-2">This agent has no additional questions, just run it.</p>
       ) : (
