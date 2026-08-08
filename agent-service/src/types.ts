@@ -126,6 +126,36 @@ export interface RunnerCompleteBody {
   usage?: JobUsage;
   agentsRepoSha?: string;
   model?: string;
+  /** Dynamic Agent Studio runs only — see DynamicRunReport. */
+  dynamicRun?: DynamicRunReport;
+}
+
+/**
+ * // DECISION: a failed step fails the job at that step, and
+ * `failedStepId` / `failedStepIndex` / the partial context are PERSISTED
+ * rather than only rendered into an error string. This is the structured
+ * carrier: the runner fills it, the queue worker forwards it on the webhook as
+ * `dynamic_run`, and the Portal stores it on the job so the step bar and the
+ * "incomplete" banner can be rendered from data instead of parsed out of prose.
+ */
+export interface DynamicRunReport {
+  specId: string;
+  specVersion: number;
+  steps: Array<{
+    stepId: string;
+    type: "ai" | "code";
+    label: string;
+    status: "done" | "failed";
+    durationMs: number;
+    model?: string;
+    error?: string;
+    /** This step's own token/cost usage (AI steps only) — the per-step breakdown behind the run-level `usage` total. */
+    usage?: JobUsage;
+  }>;
+  failedStepId?: string;
+  failedStepIndex?: number;
+  /** True when earlier steps produced output the client can still be shown. */
+  hasPartialOutput?: boolean;
 }
 
 export interface WebhookPayload {
@@ -150,6 +180,8 @@ export interface WebhookPayload {
   error?: string;
   transcript_url?: string;
   attempt: number;
+  /** Dynamic Agent Studio runs only — the structured per-step report. */
+  dynamic_run?: DynamicRunReport;
 }
 
 /** Everything the runner needs; serialized into the job container's environment. */

@@ -31,8 +31,18 @@ and the rules for each token are documented in `src/app/globals.css`'s own heade
   reply from their own account — no posting code path exists or may be added), and one run
   drafts ONE reply.
   The old in-app agent systems (builder agents + `lib/agents` engine, intel system agent,
-  Claude-platform launcher, content-engine e12, newsletter e11) were removed 2026-07 —
-  don't reintroduce them.
+  Claude-platform launcher, content-engine e12, newsletter e11) were removed 2026-07.
+- **Dynamic Agent Studio** (2026-08) is a deliberate, distinct reintroduction of an
+  admin-authored agent builder — not the removed `lib/agents` engine. An admin composes a
+  `dynamicAgentSpecs` doc (input schema + a step pipeline of AI/code steps) at
+  `/admin/agents/builder`; a client runs it from `/clients/[id]/dynamic-agents`. Execution is
+  entirely on the `agent-service` side (`agent-service/runner/src/dynamic/*`), routed by a
+  frozen `specSnapshot` on the brief (`isDynamicAgentBrief`) rather than a hardcoded task
+  type — never the in-app engine that was removed. Server actions: `src/lib/actions/dynamic-agent-actions.ts`;
+  validation: `src/lib/dynamic-agent-validation.ts`; submission core:
+  `src/lib/jobs/submit-custom.ts`'s `submitDynamicAgentJob`. Code steps (sandboxed script
+  execution) ship behind `DYNAMIC_CODE_STEPS_ENABLED` (default OFF) pending a full security
+  review of the sandbox — AI-only dynamic agents are fully usable without it.
 - **Credits** = client-billed AI usage. Pricing + window maths are pure in `src/lib/credits.ts`
   (client-safe); transactional charge/grant/ledger in `src/lib/data.ts` (`clientCredits`,
   `creditLedger` collections). Only `isBillableClientActor()` sessions charge — staff and

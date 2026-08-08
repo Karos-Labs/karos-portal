@@ -185,6 +185,34 @@ const usageSchema = z.object({
     )
     .default({}),
 });
+/**
+ * Dynamic Agent Studio's per-step report. Present only for a dynamic run; a
+ * hardcoded agent's webhook never carries it, which is why every field is
+ * optional at the payload level rather than gated on task_type.
+ */
+const dynamicRunSchema = z.object({
+  specId: z.string().min(1),
+  specVersion: z.number(),
+  steps: z
+    .array(
+      z.object({
+        stepId: z.string().min(1),
+        type: z.enum(["ai", "code"]),
+        label: z.string().default(""),
+        status: z.enum(["done", "failed"]),
+        durationMs: z.number().default(0),
+        model: z.string().optional(),
+        error: z.string().optional(),
+        /** This step's own token/cost usage (AI steps only). */
+        usage: usageSchema.optional(),
+      }),
+    )
+    .default([]),
+  failedStepId: z.string().optional(),
+  failedStepIndex: z.number().optional(),
+  hasPartialOutput: z.boolean().optional(),
+});
+
 const webhookPayloadSchema = z.object({
   event: z.literal("job.completed"),
   job_id: z.string().min(1),
@@ -215,6 +243,7 @@ const webhookPayloadSchema = z.object({
   error: z.string().optional(),
   transcript_url: z.string().optional(),
   attempt: z.number().default(0),
+  dynamic_run: dynamicRunSchema.optional(),
 });
 
 function extension(name: string): string {
@@ -1880,6 +1909,10 @@ export async function POST(req: NextRequest) {
       assetIds: mergedAssetIds,
       events: mergedEvents,
       error: payload.status === "done" ? null : (payload.error ?? payload.status),
+      // Dynamic Agent Studio only: the structured per-step report, stored so the
+      // job page can render a step bar and an "incomplete" banner from data
+      // rather than parsing them back out of `error`.
+      ...(payload.dynamic_run ? { dynamicRun: payload.dynamic_run } : {}),
       external: {
         ...job.external,
         ...(payload.agents_repo_sha ? { agentsRepoSha: payload.agents_repo_sha } : {}),

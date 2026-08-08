@@ -10,6 +10,8 @@ import { AssetCard } from "@/components/asset-card";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ManagedJobCancelButton } from "@/components/managed-job-cancel";
 import { ManagedJobProgress } from "@/components/managed-job-progress";
+import { DynamicAgentStepProgress } from "@/components/dynamic-agent-step-progress";
+import { getDynamicAgentSpec } from "@/lib/data";
 import { JobDeleteButton } from "@/components/job-delete";
 import { JobRetryButton } from "@/components/job-retry";
 import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
@@ -40,6 +42,19 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   // the client component is platform ids, never integration records.
   const connectedPlatforms = (await pushablePlatformsByClient(realAssets))?.[job.clientId];
 
+  // The spec snapshot's step list, so the bar can also show steps a failed run
+  // never reached. Best-effort: a spec deleted since the run still renders the
+  // executed steps, just without the not-reached tail.
+  let plannedSteps: Array<{ id: string; label: string; type: "ai" | "code" }> | undefined;
+  if (job.dynamicRun && job.dynamicAgentSpecId) {
+    const spec = await getDynamicAgentSpec(job.dynamicAgentSpecId);
+    if (spec && spec.version === job.dynamicRun.specVersion) {
+      plannedSteps = [...spec.steps]
+        .sort((a, b) => a.order - b.order)
+        .map((step) => ({ id: step.id, label: step.label, type: step.type }));
+    }
+  }
+
   return (
     <>
       {inProgress && <AutoRefresh />}
@@ -63,7 +78,19 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         </div>
       </div>
 
-      {job.external && <ManagedJobProgress status={job.status} />}
+      {/* A Dynamic Agent Studio run gets a per-step bar from its own recorded
+          trace instead of the fixed 3-phase managed strip — one row per step of
+          the spec's pipeline, the same shape CampaignStepProgress uses for a
+          campaign's tasks. */}
+      {job.dynamicRun ? (
+        <DynamicAgentStepProgress
+          report={job.dynamicRun}
+          jobStatus={job.status}
+          {...(plannedSteps ? { plannedSteps } : {})}
+        />
+      ) : (
+        job.external && <ManagedJobProgress status={job.status} />
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">
