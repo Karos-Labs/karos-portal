@@ -237,9 +237,12 @@ async function main(): Promise<void> {
       ...(report.agentsRepoSha ? { agentsRepoSha: report.agentsRepoSha } : {}),
     };
   } finally {
-    // No point saving on the last attempt — a transient verdict past
-    // maxAttempts dead-letters the job with no further attempt to restore into.
-    if (report.outcome === "failed" && report.transient && spec.attempt < spec.maxAttempts && checkpointTarget) {
+    // Every failed attempt saves, not just the ones with an automatic retry
+    // left: POST /v1/jobs/:id/retry (agent-service/src/api/jobs.ts) can
+    // manually re-queue a job that's already dead-lettered or permanently
+    // failed, and that resume is only worth anything if the LAST attempt's
+    // progress — not just attempt 1's — is what gets restored.
+    if (report.outcome === "failed" && checkpointTarget) {
       await saveCheckpoint(callback, checkpointTarget.repoDir, checkpointTarget.clientSlug, spec.attempt).catch(
         (err) => console.warn("checkpoint save failed:", err instanceof Error ? err.message : err),
       );

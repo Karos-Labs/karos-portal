@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getJob, updateJob } from "@/lib/data";
-import { cancelAgentServiceJob } from "@/lib/agent-service/client";
+import { AgentServiceNotResumable, cancelAgentServiceJob, retryAgentServiceJob } from "@/lib/agent-service/client";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { reconcileOneJob } from "@/lib/agent-service/reconcile-job";
 import type { Job, JobStatus } from "@/lib/types";
@@ -68,15 +68,22 @@ export async function cancelClientAgentJobAction(jobId: string): Promise<{ error
 }
 
 /**
- * Re-submit a failed custom-agent run with the same agent/client/prompt (staff
- * only — item 4's execution transparency asked for a retry trigger, and today
- * there is none; a failed run otherwise requires firing a brand-new run by
- * hand). Reconstructs from what the job doc actually persisted — `input.prompt`
- * (see submitCustomAgentJob, which stamps `input: { agent, prompt }`) plus the
+ * Retry a failed custom-agent run (staff only — item 4's execution
+ * transparency asked for a retry trigger, and today there is none; a failed
+ * run otherwise requires firing a brand-new run by hand).
+ *
+ * Tries to RESUME the same underlying agent-service job first — it retains a
+ * checkpoint of whatever the failed attempt already finished (see
+ * agent-service/src/lifecycle/finalize.ts), so a resumed run doesn't redo (and
+ * re-bill Anthropic tokens for) work that already succeeded. That only works
+ * while the service still has something to resume from — recently failed,
+ * never already retried past it — so `AgentServiceNotResumable` falls back to
+ * today's from-scratch behavior: reconstructing the run from what the job doc
+ * actually persisted (`input.prompt`, see submitCustomAgentJob) plus the
  * run-type/umbrella/template fields already on the job. `contextItemIds` were
- * never persisted past the original submission, so a retry can't reattach the
- * exact context files the first attempt used — an acceptable gap for a retry
- * button versus building new context-recovery plumbing for it.
+ * never persisted past the original submission, so that fallback can't
+ * reattach the exact context files the first attempt used — an acceptable gap
+ * for a retry button versus building new context-recovery plumbing for it.
  */
 export async function retryJobAction(jobId: string): Promise<{ jobId?: string; error?: string }> {
   const user = await requireStaff();
@@ -84,6 +91,32 @@ export async function retryJobAction(jobId: string): Promise<{ jobId?: string; e
   if (!job) return { error: NOT_FOUND };
   if (job.status !== "failed") return { error: "Only a failed run can be retried." };
   if (!job.customAgentId) return { error: "This run has no retryable agent reference." };
+
+  if (job.external?.serviceJobId) {
+    try {
+      await retryAgentServiceJob(job.external.serviceJobId);
+      await updateJob(jobId, {
+        status: "queued",
+        error: null,
+        events: [
+          ...job.events,
+          { at: Date.now(), level: "info", message: "Retried — resuming from the failed attempt's saved progress" },
+        ],
+        updatedAt: Date.now(),
+      });
+      revalidatePath(`/clients/${job.clientId}/agents`);
+      revalidatePath("/jobs");
+      revalidatePath(`/jobs/${jobId}`);
+      return { jobId };
+    } catch (e) {
+      if (!(e instanceof AgentServiceNotResumable)) {
+        return { error: e instanceof Error ? e.message : "Retry failed" };
+      }
+      // Nothing to resume from (e.g. too old, or it never wrote anything
+      // worth checkpointing) — fall through to a fresh submission below.
+    }
+  }
+
   const prompt = job.input?.prompt;
   if (!prompt) return { error: "Original prompt not found for this run." };
 

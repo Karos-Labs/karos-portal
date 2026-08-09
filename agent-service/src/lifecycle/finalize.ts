@@ -16,9 +16,14 @@ export async function finalizeJob(
   if (transcriptUrl) {
     await deps.store.update(record.id, (r) => ({ ...r, transcriptUrl }));
   }
-  // The job is terminal — no further attempt will ever restore this
-  // checkpoint, so there's nothing left for it to do but take up storage.
-  if (record.checkpoint) {
+  // A successful or deliberately-cancelled run has nothing worth resuming —
+  // delete its checkpoint immediately. A failed/dead-lettered run is kept:
+  // POST /v1/jobs/:id/retry (api/jobs.ts) re-queues the SAME job against its
+  // existing checkpoint so a manual retry doesn't redo (and re-bill) work the
+  // failed attempt already finished. Removed by the same route once the
+  // record reaches a terminal state that isn't retryable, or ages out via the
+  // record's own TTL.
+  if (record.checkpoint && (record.status === "done" || record.status === "cancelled")) {
     await deps.artifactStore.deleteCheckpoint(record.id).catch(() => undefined);
     await deps.store.update(record.id, (r) => {
       const { checkpoint: _checkpoint, ...rest } = r;
