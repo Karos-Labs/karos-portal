@@ -5,6 +5,7 @@ import type { RunnerCompleteBody } from "../../src/types.js";
 import { isDynamicAgentBrief, type DynamicAgentJobPayload } from "../../src/dynamic-types.js";
 import { runDynamicJob } from "./dynamic/run-dynamic-job.js";
 import { ServiceCallback } from "./callback.js";
+import { reportComplete } from "./report-complete.js";
 import { prepareWorkspace, writeClientContext } from "./workspace.js";
 import { buildSkillsShim } from "./skills-shim.js";
 import { contextFileList, downloadContextFiles } from "./context-files.js";
@@ -56,13 +57,11 @@ async function main(): Promise<void> {
       console.error("dynamic runner failed:", message);
       report = { outcome: "failed", error: message.slice(0, 20000), transient: isTransientError(err) };
     } finally {
-      await callback.complete(report);
+      await reportComplete(callback, report);
     }
     process.exit(report.outcome === "done" ? 0 : 1);
     return;
   }
-
-  const taskConfig = resolveTaskConfig(spec.taskType, spec.brief);
 
   let report: RunnerCompleteBody = { outcome: "failed", error: "runner did not finish", transient: true };
   const transcript = new TranscriptStreamer(callback);
@@ -72,6 +71,11 @@ async function main(): Promise<void> {
   let checkpointTarget: { repoDir: string; clientSlug: string } | undefined;
 
   try {
+    // Resolved inside the try (not before it): a malformed brief throws here
+    // (bad entry_skill_dir etc.), and that throw needs to land in the catch
+    // below and get reported like any other failure — not skip straight past
+    // it as an unhandled rejection with no callback.complete() call at all.
+    const taskConfig = resolveTaskConfig(spec.taskType, spec.brief);
     const workspace = await prepareWorkspace({
       bakedRepoDir: process.env.AGENTS_REPO_DIR ?? "/opt/karos-agents",
       workDir: process.env.WORK_DIR ?? "/work",
@@ -241,7 +245,7 @@ async function main(): Promise<void> {
       );
     }
     await transcript.close();
-    await callback.complete(report);
+    await reportComplete(callback, report);
   }
   process.exit(report.outcome === "done" ? 0 : 1);
 }

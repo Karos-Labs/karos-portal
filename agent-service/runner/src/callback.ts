@@ -113,14 +113,50 @@ export class ServiceCallback {
     );
   }
 
+  /**
+   * The last thing every job does — report done/failed/cancelled back to the
+   * service. Retried with backoff because there's no second chance: unlike
+   * appendTranscript (loss is tolerable) or the checkpoint calls (a retry
+   * attempt can re-upload), a `complete` that never lands leaves the job
+   * stuck exactly as this fixes — the container exits, the service never
+   * hears back, and the real outcome (including a real error message) is
+   * lost behind worker.ts's generic "job container exited without reporting"
+   * fallback. A 4xx is a bad request retries can't fix (bad token, bad job
+   * id) — everything else (network failure, timeout, 5xx) is worth retrying.
+   */
   async complete(body: RunnerCompleteBody): Promise<void> {
-    await fetch(this.url("complete"), {
-      method: "POST",
-      headers: await this.headers({ "content-type": "application/json" }),
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const backoffMs = [1_000, 2_000, 4_000];
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= backoffMs.length; attempt++) {
+      let response: Response | undefined;
+      try {
+        response = await fetch(this.url("complete"), {
+          method: "POST",
+          headers: await this.headers({ "content-type": "application/json" }),
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(30_000),
+        });
+      } catch (err) {
+        lastErr = err;
+      }
+      if (response) {
+        if (response.ok) return;
+        // A 4xx (other than 429) is a bad request retrying can't fix — bad
+        // token, bad job id — so it throws immediately instead of joining
+        // the retry loop below.
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          throw new Error(`complete callback rejected (${response.status})`);
+        }
+        lastErr = new Error(`complete callback failed (${response.status})`);
+      }
+      if (attempt < backoffMs.length) await sleep(backoffMs[attempt]!);
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export type { JobUsage };
