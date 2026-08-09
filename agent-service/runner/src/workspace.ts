@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, rm, writeFile, appendFile, access } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -37,7 +38,23 @@ export async function prepareWorkspace(params: {
 }): Promise<Workspace> {
   const repoDir = path.join(params.workDir, "repo");
   await mkdir(params.workDir, { recursive: true });
-  await execFileAsync("git", ["clone", "--no-hardlinks", params.bakedRepoDir, repoDir], {
+  // Shallow by default: WORK_DIR lives on Cloud Run gen2's in-memory filesystem,
+  // where every byte written counts against the container's memory limit —
+  // cloning the baked repo's full history in here (rather than just its
+  // current tree) is what pushed a run over that limit and got it SIGBUS'd
+  // (signal 7) before it ever reached a single tool call. A historical
+  // agent_version override still needs the full history to check out an
+  // older ref, so that path alone pays for the full clone.
+  //
+  // Plain local-path sources take git's "local clone" fast path, which
+  // silently IGNORES --depth (git just warns "--depth is ignored in local
+  // clones; use file:// instead" on stderr and clones full history anyway) —
+  // a file:// URL is what actually makes the shallow clone shallow.
+  const source = pathToFileURL(params.bakedRepoDir).href;
+  const cloneArgs = params.agentVersion
+    ? ["clone", "--no-hardlinks", source, repoDir]
+    : ["clone", "--no-hardlinks", "--depth", "1", source, repoDir];
+  await execFileAsync("git", cloneArgs, {
     maxBuffer: 10 * 1024 * 1024,
   });
 

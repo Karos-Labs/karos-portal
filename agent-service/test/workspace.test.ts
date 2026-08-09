@@ -18,6 +18,8 @@ describe("deriveSlug", () => {
 
 describe("prepareWorkspace", () => {
   let bakedRepo: string;
+  /** The first commit's sha — older than HEAD, only reachable with full history. */
+  let firstCommitSha: string;
 
   beforeAll(async () => {
     bakedRepo = await mkdtemp(path.join(tmpdir(), "baked-repo-"));
@@ -35,6 +37,12 @@ describe("prepareWorkspace", () => {
     await git("config", "user.name", "t");
     await git("add", "-A");
     await git("commit", "-qm", "init");
+    firstCommitSha = (await git("rev-parse", "HEAD")).stdout.trim();
+    // A second commit, so HEAD moves past firstCommitSha and there's real
+    // history for the shallow-vs-full-clone tests below to tell apart.
+    await writeFile(path.join(bakedRepo, "CLAUDE.md"), "# lab rules v2\n");
+    await git("add", "-A");
+    await git("commit", "-qm", "v2");
   });
 
   it("prunes every other client, keeps the target, records the sha", async () => {
@@ -70,6 +78,31 @@ describe("prepareWorkspace", () => {
         agentVersion: "deadbeef",
       }),
     ).rejects.toThrow(/not present in the baked agents repo/);
+  });
+
+  it("clones shallow by default — only HEAD is reachable, not older history", async () => {
+    const workDir = await mkdtemp(path.join(tmpdir(), "work-"));
+    const ws = await prepareWorkspace({ bakedRepoDir: bakedRepo, workDir, clientId: "c1", clientSlug: "acme" });
+    const { stdout } = await execFileAsync("git", ["-C", ws.repoDir, "rev-list", "--count", "HEAD"]);
+    expect(stdout.trim()).toBe("1");
+    await expect(
+      execFileAsync("git", ["-C", ws.repoDir, "cat-file", "-e", firstCommitSha]),
+    ).rejects.toThrow();
+  });
+
+  it("clones full history when agent_version is set, so an older ref is still reachable", async () => {
+    const workDir = await mkdtemp(path.join(tmpdir(), "work-"));
+    // A depth-1 clone of the baked repo's HEAD ("v2") wouldn't even contain
+    // firstCommitSha's object, so this only succeeds if the clone fetched
+    // full history for the checkout below to find it.
+    const ws = await prepareWorkspace({
+      bakedRepoDir: bakedRepo,
+      workDir,
+      clientId: "c1",
+      clientSlug: "acme",
+      agentVersion: firstCommitSha,
+    });
+    expect(ws.agentsRepoSha).toBe(firstCommitSha);
   });
 
   it("writes the brief into client_context", async () => {
