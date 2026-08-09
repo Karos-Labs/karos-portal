@@ -8,6 +8,11 @@ describe("isTransientError", () => {
     expect(isTransientError(new Error("upstream returned 503"))).toBe(true);
     expect(isTransientError(new Error("overloaded_error"))).toBe(true);
     expect(isTransientError(new Error("rate limit exceeded"))).toBe(true);
+    expect(
+      isTransientError(
+        new Error("Claude Code returned an error result: API Error: Connection closed mid-response."),
+      ),
+    ).toBe(true);
   });
 
   it("does not flag permanent account/billing failures", () => {

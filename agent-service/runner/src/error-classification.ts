@@ -1,4 +1,5 @@
-const TRANSIENT_PATTERN = /ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|50\d|overloaded|rate.?limit/i;
+const TRANSIENT_PATTERN =
+  /ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|50\d|overloaded|rate.?limit|connection closed/i;
 
 /** For a thrown exception (workspace prep, a network fetch, an SDK crash before any result message). */
 export function isTransientError(err: unknown): boolean {
