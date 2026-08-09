@@ -1202,7 +1202,7 @@ export default async function ClientAgentDetailPage({
             <SectionHeading title="Connected accounts" />
             {scopedConnections.length === 0 ? (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
-                {familyPlatforms
+                {familyPlatforms && familyPlatforms.length > 0
                   ? `No ${platformLabel(familyPlatforms[0])} account connected yet. Posts are delivered to your Workspace for you to publish.`
                   : "No accounts connected yet. Posts are delivered to your Workspace for you to publish."}
               </p>
