@@ -84,7 +84,7 @@ export const INPUT_ANSWERS_SHOWN = 5;
 /** One intake document, as a browser may receive it. */
 export interface AgentInputRow {
   id: string;
-  /** What this document is, in the reader's words ("Company profile"). */
+  /** What this document is, in the reader's words ("Karos Labs company account"). */
   label: string;
   /** One line of what is stored — the handle, or a count of the drop's rows. */
   detail: string;
@@ -309,8 +309,10 @@ interface IntakeFamilyCapabilities {
   direction: boolean;
   /** x-agent-v2's profile-scope doc, which carries handle/off-limits/come-across. */
   profileDoc: boolean;
-  /** What the company-scope row is called, in the reader's words. */
-  companyLabel: string;
+  /** What the company-scope row is called, in the reader's words. `null` means
+      the row is the client's own account and the label is composed from the
+      client's name ("Karos Labs company account") by `toAgentInputRows`. */
+  companyLabel: string | null;
   /** lucide name for that row's mark. */
   companyIcon: string;
 }
@@ -322,7 +324,9 @@ const FAMILY_CAPABILITIES: Record<AgentIntake["agent"], IntakeFamilyCapabilities
     takes: true,
     direction: false,
     profileDoc: true,
-    companyLabel: "Company profile",
+    // Composed as "<Client> company account" — "Company profile" read as a
+    // document about the business, when the row is the brand's own X account.
+    companyLabel: null,
     companyIcon: "Building2",
   },
   linkedin: {
@@ -331,7 +335,7 @@ const FAMILY_CAPABILITIES: Record<AgentIntake["agent"], IntakeFamilyCapabilities
     takes: false,
     direction: true,
     profileDoc: false,
-    companyLabel: "Company profile",
+    companyLabel: null,
     companyIcon: "Building2",
   },
   reddit: {
@@ -340,7 +344,12 @@ const FAMILY_CAPABILITIES: Record<AgentIntake["agent"], IntakeFamilyCapabilities
     takes: false,
     direction: false,
     profileDoc: false,
-    companyLabel: "Your Reddit account",
+    // Composed from the client's name like X and LinkedIn. Reddit has no seat
+    // model on purpose (a company answers threads from its own account; we are
+    // not putting individual people's profiles behind this), so this ONE row is
+    // the whole of who the agent speaks as, and naming it after the company is
+    // what says so.
+    companyLabel: null,
     companyIcon: "User",
   },
   carousel: {
@@ -413,6 +422,9 @@ const FAMILY_CAPABILITIES: Record<AgentIntake["agent"], IntakeFamilyCapabilities
  */
 export function toAgentInputRows(args: {
   agent: AgentIntake["agent"];
+  /** The client's display name, for families whose company row IS the client's
+      own account (companyLabel: null) — "Karos Labs company account". */
+  companyName?: string;
   company: AgentIntake | null;
   seats: ClientSeat[];
   /** Every intake doc for this agent family, company row included. */
@@ -438,9 +450,11 @@ export function toAgentInputRows(args: {
 
   rows.push({
     id: "company",
-    label: can.companyLabel,
+    label:
+      can.companyLabel ??
+      (args.companyName ? `${args.companyName} company account` : "Company account"),
     detail: args.company
-      ? (args.company.handle ?? "Saved — no account name yet")
+      ? (args.company.handle ?? "Saved, no account name yet")
       : "Not filled in yet",
     updatedAt: args.company?.updatedAt ?? null,
     filled: Boolean(args.company),
@@ -461,7 +475,7 @@ export function toAgentInputRows(args: {
       rows.push({
         id: `seat-${seat.id}`,
         label: seat.name,
-        detail: doc ? (doc.handle ?? "Saved — no account yet") : "No answers saved yet",
+        detail: doc ? (doc.handle ?? "Saved, no account yet") : "No answers saved yet",
         // The SEAT's own date when its form is empty: a seat that has existed
         // for a month with nothing in it is the state this row exists to show,
         // and a null date there would read as "just added".
@@ -580,6 +594,8 @@ export interface AgentInputDocs {
 export async function readAgentInputDocs(
   clientId: string,
   agentKey: string,
+  /** The client's display name, for the composed company-account row label. */
+  clientName?: string,
 ): Promise<AgentInputDocs | null> {
   const agent = intakeFamilyFor(agentKey);
   if (!agent) return null;
@@ -612,6 +628,7 @@ export async function readAgentInputDocs(
     // intake surface, same as before.
     rows: toAgentInputRows({
       agent,
+      ...(clientName ? { companyName: clientName } : {}),
       company,
       seats,
       intake,

@@ -169,6 +169,6 @@ function ChipList({
 
 function SectionHeading({ title }: { title: string }) {
   return (
-    <h2 className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{title}</h2>
+    <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
   );
 }

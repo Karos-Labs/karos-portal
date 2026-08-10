@@ -560,15 +560,25 @@ export function ActivityTimeline({
               Every agent run, brand update, and competitor change shows up here as your team works.
             </p>
             {!isStaff && (
-              /* The label and the href come from the same call and are rendered
-                 on the same element — the arrow rides inside the resolved label,
-                 so a control that has lost its destination cannot keep an arrow
-                 pointing at one. */
+              /* The label, the href and the arrow's DIRECTION all come from the
+                 same call and are rendered on the same element, so a control
+                 that has lost its destination cannot keep an arrow pointing at
+                 one. The glyph is drawn here rather than embedded in the label
+                 because no em dash or arrow belongs in client copy (2026-08);
+                 `back` is the resolver's word on which way it points, and this
+                 roster CTA is a forward move for a reader who never came from
+                 the agent's page. */
               <Link
                 href={runControl.href}
                 className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-neon hover:underline"
               >
+                {runControl.back && (
+                  <Icon name="ChevronLeft" className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
                 {runControl.label}
+                {!runControl.back && (
+                  <Icon name="ArrowRight" className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
               </Link>
             )}
           </div>

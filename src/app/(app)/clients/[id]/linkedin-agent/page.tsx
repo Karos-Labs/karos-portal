@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { buildLinkedInAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
+import { IntakePageActionLink } from "@/components/intake-page-action-link";
 import { PageHeader } from "@/components/ui";
 import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 
@@ -58,12 +59,7 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
         title="LinkedIn agent"
         description="What we collect to run LinkedIn for you: the company page, a seat per person, and your ongoing drops. Drafts only. A person always posts."
         action={
-          <a
-            href={action.href}
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            {action.label}
-          </a>
+          <IntakePageActionLink href={action.href} label={action.label} back={action.back} />
         }
       />
       <LinkedInAgentIntake {...view} />

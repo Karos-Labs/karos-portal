@@ -7,6 +7,7 @@
  */
 import type { ManagedTaskType } from "@/lib/types";
 import type { AgentAttachmentProfile } from "@/lib/custom-agent-launch";
+import { RUN_ESTIMATE } from "@/lib/run-estimate";
 
 export interface BriefField {
   key: string;
@@ -74,7 +75,7 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     icon: "Camera",
     color: "#E879F9",
     deliverables: ["Post visual per item", "caption.txt + about.txt per item", "Research trail (internal)"],
-    estimate: "~10–25 min",
+    estimate: RUN_ESTIMATE,
     briefFields: [
       { key: "count", label: "Number of posts", type: "number", min: 1, max: 10, placeholder: "3", defaultValue: "3" },
       {
@@ -112,7 +113,7 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     icon: "LayoutTemplate",
     color: "#FBBF24",
     deliverables: ["Page source + static build", "Build/run README", "Design rationale (internal)"],
-    estimate: "~15–30 min",
+    estimate: RUN_ESTIMATE,
     briefFields: [
       { key: "page_goal", label: "Page goal", type: "text", required: true, placeholder: "e.g. collect demo bookings" },
       { key: "offer", label: "Offer", type: "textarea", placeholder: "What the page promises, including important terms" },

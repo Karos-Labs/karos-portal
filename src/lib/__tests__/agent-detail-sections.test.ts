@@ -90,6 +90,7 @@ describe("toAgentInputRows", () => {
   it("carries a label, a summary and a date — and none of the document's private fields", () => {
     const rows = toAgentInputRows({
       agent: "x",
+      companyName: "Karos Labs",
       company: makeIntake({
         offLimits: "Never mention the lawsuit",
         cvUrl: "https://secret",
@@ -101,7 +102,9 @@ describe("toAgentInputRows", () => {
       takes: [],
     });
     const company = rows.find((r) => r.id === "company");
-    expect(company?.label).toBe("Company profile");
+    // The client's own name on the row, not "Company profile" — that read as a
+    // document about the business when the row is the brand's own X account.
+    expect(company?.label).toBe("Karos Labs company account");
     expect(company?.detail).toBe("@karoslabs");
     expect(company?.updatedAt).toBe(NOW - 2 * DAY);
     // AF-7 MOVED THE LINE, and it is worth naming where it moved to. `offLimits`
@@ -271,13 +274,18 @@ describe("toAgentInputRows", () => {
     // produce extra rows here rather than passing on an empty fixture. This is
     // the case the old `agent !== "reddit"` negative list got wrong — it
     // answered "yes, you have seats" for every family nobody had thought about.
+    // Reddit's row is now composed from the client's name, like X and
+    // LinkedIn: it has no seat model on purpose, so that ONE row is the whole
+    // of who the agent speaks as, and naming it after the company says so.
+    // The newsletter keeps its own label — there is no account there at all.
     const cases: Array<[AgentIntake["agent"], string]> = [
-      ["reddit", "Your Reddit account"],
+      ["reddit", "Karos Labs company account"],
       ["newsletter", "Your newsletter details"],
     ];
     for (const [agent, label] of cases) {
       const rows = toAgentInputRows({
         agent,
+        companyName: "Karos Labs",
         company: makeIntake({ agent, handle: agent === "reddit" ? "u/karoslabs" : null }),
         seats: [makeSeat()],
         intake: [
@@ -323,8 +331,9 @@ describe("toAgentInputRows", () => {
     expect(company?.filled).toBe(true);
     expect(company?.updatedAt).toBe(NOW - 2 * DAY);
     // No handle on this family, and the fallback copy has to say so without
-    // implying an account name is coming.
-    expect(company?.detail).toBe("Saved — no account name yet");
+    // implying an account name is coming. Comma, not an em dash: no em dashes
+    // anywhere a client reads (2026-08 directive; F71's " - " stays banned too).
+    expect(company?.detail).toBe("Saved, no account name yet");
     // Never "Company profile": there is no profile and no account here, and
     // that label would send a reader looking for an identity page.
     expect(company?.label).toBe("Your newsletter details");

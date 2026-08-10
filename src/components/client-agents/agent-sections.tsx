@@ -5,6 +5,7 @@ import { formatDate, relativeTime } from "@/lib/utils";
 import { intakeRowHref } from "@/lib/agent-intake-links";
 import type { AgentInputsView, AgentSetupFact } from "@/lib/agent-detail-sections";
 import type { RosterStatus } from "@/lib/client-agents";
+import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 /**
  * The dated, categorized bands of an agent's page (CD-K1).
@@ -74,14 +75,24 @@ export function AgentStatusStrip({
   facts: AgentSetupFact[];
   /**
    * An optional secondary card the page seats INSIDE the strip, on the right —
-   * the legacy shape's pace-and-price summary (schedule state, credits per
-   * post). It used to float mid-column as its own unstyled section; status,
-   * pace and price are all "how this agent runs" facts, so they share the
-   * banner. A ReactNode rather than data because what goes here is the page's
-   * call — this strip stays a dumb frame and re-derives nothing.
+   * the legacy shape's pace summary (schedule state). It used to float
+   * mid-column as its own unstyled section; status and pace are both "how this
+   * agent runs" facts, so they share the banner. A ReactNode rather than data
+   * because what goes here is the page's call — this strip stays a dumb frame
+   * and re-derives nothing.
    */
   aside?: React.ReactNode;
 }) {
+  // AN EMPTY BAND IS WORSE THAN NO BAND. With no facts, no aside and no run in
+  // flight, this strip says one word — and the header badge said the same word
+  // a hundred pixels above it, so a not-set-up agent got a full-width bar
+  // repeating itself over blank space. A LIVE agent keeps its strip whatever
+  // else it has: the breathing mark is the point of it, and dropping that would
+  // be losing a signal rather than removing a duplicate.
+  const saysSomething =
+    running || facts.length > 0 || Boolean(aside) || Boolean(staffNote) || status.tone === "live";
+  if (!saysSomething) return null;
+
   const live = status.tone === "live";
   const tone =
     live
@@ -130,7 +141,7 @@ export function AgentStatusStrip({
             {running && (
               <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-2">
                 <Icon name="LoaderCircle" className="h-3 w-3 animate-spin-slow" aria-hidden="true" />
-                This takes 10–20 minutes
+                This takes {RUN_ESTIMATE_SENTENCE}
               </span>
             )}
           </div>
@@ -198,8 +209,8 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
   const missing = view.rows.filter((row) => !row.filled).length;
   return (
     <section>
-      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">
           What it runs on
         </h2>
         <Badge tone={view.ready ? "success" : "warning"}>
@@ -344,7 +355,7 @@ export function AgentSetupSection({ facts }: { facts: AgentSetupFact[] }) {
   if (facts.length === 0) return null;
   return (
     <section>
-      <h2 className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">
         How it&rsquo;s set up
       </h2>
       <dl className="grid gap-x-4 gap-y-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 sm:grid-cols-2">

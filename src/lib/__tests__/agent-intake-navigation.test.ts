@@ -446,23 +446,32 @@ describe("#82 — the intake page's one control per role", () => {
     // THE HALF THAT SHIPS. Asking the resolver and rendering `{action.label}`
     // says nothing about where the control GOES: with both of those left
     // untouched, putting `/clients/${id}/agents` back on the anchor was green
-    // everywhere, which is a client reading "Back to the agent →" and landing on
+    // everywhere, which is a client reading "Back to the agent" and landing on
     // the one page whose own comment says it has no Run button — #82 with a
-    // resolver bolted on the front. So the href is asserted on the anchor
-    // ELEMENT that renders the label, and asserted as its whole value.
+    // resolver bolted on the front.
+    //
+    // The pages now render the pair through ONE shared component
+    // (IntakePageActionLink), so the invariant is asserted in two halves:
+    // every page hands BOTH resolved fields to the same element, and the
+    // component's one Link puts its href prop on the element rendering its
+    // label prop — so the pair still cannot come apart into a right
+    // destination under a wrong promise.
     for (const family of ["x", "linkedin", "reddit"] as const) {
       const rel = `src/app/(app)/clients/[id]/${family}-agent/page.tsx`;
-      const controls = anchorsRendering(stripComments(read(rel)), "{action.label}");
-      expect(controls.length, `${rel}: nothing renders {action.label}`).toBeGreaterThan(0);
-      for (const control of controls) {
-        expect(control, `${rel}: {action.label} is rendered outside any <a>`).not.toBeNull();
-        // Exactly one href, and it is the resolved one — a second href attribute
-        // or a re-derived URL is a different list.
-        expect(hrefValues(control!.tag), rel).toEqual(["{action.href}"]);
-        // And the anchor carries the resolved label and nothing else, so the
-        // pair cannot come apart into a right destination under a wrong promise.
-        expect(control!.body.trim(), rel).toBe("{action.label}");
-      }
+      const controls =
+        stripComments(read(rel)).match(/<IntakePageActionLink\b[^>]*\/>/g) ?? [];
+      expect(controls.length, `${rel}: nothing renders IntakePageActionLink`).toBe(1);
+      const control = controls[0]!;
+      expect(hrefValues(control), rel).toEqual(["{action.href}"]);
+      expect(control, rel).toContain("label={action.label}");
+      expect(control, rel).toContain("back={action.back}");
     }
+    const component = stripComments(read("src/components/intake-page-action-link.tsx"));
+    const links = [...component.matchAll(/<Link(?=[\s/>])/g)].map((m) => m.index);
+    expect(links.length, "component: exactly one Link").toBe(1);
+    const link = elementAt(component, "Link", links[0]!);
+    expect(link, "component: Link parses").not.toBeNull();
+    expect(hrefValues(link!.tag), "component").toEqual(["{href}"]);
+    expect(link!.body, "component: the Link renders the label prop").toContain("{label}");
   });
 });

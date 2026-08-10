@@ -270,11 +270,11 @@ export function publishHoldMessage(
     // nobody is "finishing" it. This wording is true under all four.
     return (
       `${PUBLISH_HOLD_PREFIX} an earlier post in this format that isn't in your Workspace ` +
-      `yet — your Karos team is getting it out. ${PUBLISH_HOLD_TAIL}`
+      `yet. Your Karos team is getting it out. ${PUBLISH_HOLD_TAIL}`
     );
   }
   return (
-    `${PUBLISH_HOLD_PREFIX} "${blocker.title}" — it comes earlier in this format, and its ` +
+    `${PUBLISH_HOLD_PREFIX} "${blocker.title}". It comes earlier in this format, and its ` +
     `status is still ${clientAssetStatusLabel(blocker.status)}. ${PUBLISH_HOLD_TAIL}`
   );
 }

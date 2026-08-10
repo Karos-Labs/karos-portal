@@ -217,9 +217,29 @@ describe("#92 — the activity tab's empty state", () => {
     expect(controls.length, `${TIMELINE}: nothing renders {runControl.label}`).toBe(1);
     const control = controls[0]!;
     expect(hrefValues(control.tag), TIMELINE).toEqual(["{runControl.href}"]);
-    // Nothing else inside it: an arrow glyph or a second word beside the label
-    // is a promise the resolver did not make and cannot withdraw.
-    expect(control.body.trim(), TIMELINE).toBe("{runControl.label}");
+    // No second WORD beside the label: a promise the resolver did not make is
+    // one it cannot withdraw. The arrow is no longer such a promise — it moved
+    // out of the label (no arrows in client copy, 2026-08) and is drawn from
+    // `runControl.back`, the resolver's own word on which way this control
+    // points, so it withdraws with the destination like the label does. Any
+    // glyph NOT gated on that flag is the hand-built promise this pins against.
+    const body = control.body.trim();
+    expect(body, TIMELINE).toContain("{runControl.label}");
+    for (const icon of body.matchAll(/<Icon\b[^>]*\/>/g)) {
+      const at = body.indexOf(icon[0]);
+      const guard = body.slice(0, at);
+      expect(
+        /\{(!?)runControl\.back\s*&&\s*\($/.test(guard.trimEnd()),
+        `${TIMELINE}: an arrow that is not gated on runControl.back`,
+      ).toBe(true);
+    }
+    // Prose beside the label is still forbidden: strip the resolver's own
+    // expressions and the gated icons, and nothing readable may remain.
+    const leftover = body
+      .replace(/\{!?runControl\.back\s*&&\s*\(\s*<Icon\b[^>]*\/>\s*\)\}/g, "")
+      .replace(/\{runControl\.label\}/g, "")
+      .trim();
+    expect(leftover, `${TIMELINE}: unresolved copy beside the label`).toBe("");
   });
 
   it("has no hand-built roster link left anywhere in the file", () => {

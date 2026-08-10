@@ -140,16 +140,25 @@ export function intakePageAction(args: {
   isStaff: boolean;
   /** This client's granted, enabled instance — see requireIntakeAgentAccess. */
   agentId: string | null;
-}): { href: string; label: string } {
+}): { href: string; label: string; back: boolean } {
+  // `back` is the ARROW'S direction, and it belongs to the LABEL rather than to
+  // the viewer: only "Back to the agent" is a return, so only it earns a back
+  // chevron. The roster branch is a forward move for both roles — a caller can
+  // reach it from a surface that was never the agent's page (the Workspace
+  // timeline's empty state does), and a left chevron there would point at a
+  // journey the reader did not make. No arrows in the labels themselves: each
+  // caller draws the icon this flag names.
   if (!args.agentId) {
     // No resolvable instance for either role: name the roster, drop the verb.
     return {
       href: `/clients/${args.clientId}/agents`,
-      label: args.isStaff ? "All agents →" : "Your agents →",
+      label: args.isStaff ? "All agents" : "Your agents",
+      back: false,
     };
   }
   return {
     href: `/clients/${args.clientId}/agents/${args.agentId}`,
-    label: args.isStaff ? "Open the agent →" : "Back to the agent →",
+    label: args.isStaff ? "Open the agent" : "Back to the agent",
+    back: !args.isStaff,
   };
 }

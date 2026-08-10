@@ -12,21 +12,10 @@ import { SlotNoteModal } from "./slot-note-modal";
 import { OptionPicked, OptionPicker } from "./option-picker";
 import { noRunnableTemplateReason, visibleTemplates } from "@/lib/client-agent-runs";
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
-import type { AgentArchetype } from "@/lib/agent-archetype";
+import { OUTPUT_NOUN, type AgentArchetype } from "@/lib/agent-archetype";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
+import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
-/**
- * What one run of this agent makes, in the client's words (CD-I1).
- *
- * "Create a new post" is wrong on a clip maker and wrong on a Reddit agent, and
- * a control that misnames its own output is how a client presses a button
- * expecting one thing and is billed for another.
- */
-const OUTPUT_NOUN: Record<AgentArchetype, string> = {
-  template_calendar: "post",
-  clip_maker: "clip",
-  daily_finder: "reply",
-};
 
 /**
  * The interactive half of an agent's detail page (CD-G1).
@@ -163,9 +152,9 @@ export function AgentDetailPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your {agent.activeRun.templateName ?? "next"} {noun} now. This takes 10–20
-              minutes. Your Karos team reviews it when it lands, and finished work appears in your
-              Workspace once approved.
+              Making your {agent.activeRun.templateName ?? "next"} {noun} now. This takes{" "}
+              {RUN_ESTIMATE_SENTENCE}. Your Karos team reviews it when it lands, and finished work
+              appears in your Workspace once approved.
             </p>
           </div>
           {/* F30, restored. The cancel used to ride the generic run rows, and
@@ -188,7 +177,7 @@ export function AgentDetailPanel({
             <p className="text-sm text-foreground">Create a new {noun}</p>
             <p className="mt-0.5 text-xs text-muted-2">
               {runnableTemplate
-                ? `Makes one ${runnableTemplate.name} ${noun} now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace.`
+                ? `Makes one ${runnableTemplate.name} ${noun} now. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
                 : `Making a ${noun} now is not available yet.`}
             </p>
           </div>
@@ -315,9 +304,10 @@ export function AgentDetailPanel({
               <Icon name="SlidersHorizontal" className="h-4 w-4" /> Adjust pace
             </Button>
           )}
-          <p className="text-xs text-muted-2">
-            {agent.runCost != null ? `${agent.runCost} credits per ${noun}` : "Staff runs are free"}
-          </p>
+          {/* No price line here. The run button at the top of this panel is the
+              one gesture that spends and already quotes its cost, so a second
+              number beside the steering controls said it twice and read as a
+              per-post rate for what is a flat per-run charge. */}
         </div>
       </section>
 
@@ -362,8 +352,8 @@ export function AgentDetailPanel({
 
 function SectionHeading({ title, hint }: { title: string; hint?: string }) {
   return (
-    <div className="mb-2.5">
-      <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{title}</h2>
+    <div className="mb-3">
+      <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
       {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
     </div>
   );

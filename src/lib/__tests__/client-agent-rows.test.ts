@@ -1547,7 +1547,7 @@ describe("toClientAgentRows — the card projection", () => {
     expect(rows[0].templateGates.playbook).toStrictEqual({
       allowed: false,
       code: "setup_missing",
-      reason: "Your X details are missing — this agent needs them before it can make a post.",
+      reason: "Your X details are missing. This agent needs them before it can make a post.",
     });
     expect(rows[0].setupLabel).toBe("Your X details");
     // The operator's name for that page stays server-side.
