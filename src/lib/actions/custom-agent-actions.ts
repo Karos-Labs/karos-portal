@@ -14,6 +14,7 @@ import {
   updateCustomAgent,
   updatePlannedScheduledRun,
 } from "@/lib/data";
+import { listClientAgents, updateClientAgent } from "@/lib/data-client-agents";
 import type { PlannedScheduledRun } from "@/lib/types";
 import {
   containsLabJargon,
@@ -277,6 +278,31 @@ export async function setCustomAgentEnabledAction(
 
 export async function deleteCustomAgentAction(id: string): Promise<{ error?: string }> {
   await requireAdmin();
+  // Snapshot before the delete: every umbrella/schedule lookup below keys off
+  // this agent's stable `key` or this doc's id, both gone once it's deleted.
+  const agent = await getCustomAgent(id);
+  if (agent) {
+    // Cross-client, like setCustomAgentEnabledAction's schedule pause below —
+    // neither umbrellas nor schedules are scoped to one client.
+    const [umbrellas, runs] = await Promise.all([listClientAgents(), listPlannedScheduledRuns()]);
+    // A deleted agent can never resolve again (resolveUmbrellaForAgent reads
+    // the customAgents doc first), so a bound umbrella left `live` becomes a
+    // phantom owner of its chainFamily — the calendar stays claimed while
+    // nothing can ever fill it. launch_failed is the state machine's existing
+    // "not live, error retained for staff" bucket; reusing it beats inventing
+    // a new terminal state for one cause.
+    await Promise.all(
+      umbrellas
+        .filter((u) => u.agentKey === agent.key && u.launchState !== "launch_failed")
+        .map((u) =>
+          updateClientAgent(u.id, {
+            launchState: "launch_failed",
+            launchError: "Bound custom agent was deleted.",
+          }),
+        ),
+    );
+    await pauseActiveSchedules(runs.filter((r) => r.customAgentId === id));
+  }
   await deleteCustomAgent(id);
   // Best-effort allowlist scrub; save flows also tolerate stale ids.
   try {
@@ -285,6 +311,7 @@ export async function deleteCustomAgentAction(id: string): Promise<{ error?: str
     // non-fatal — setClientCustomAgentsAction drops unknown ids on next save
   }
   revalidatePath("/agents");
+  revalidatePath("/clients");
   return {};
 }
 

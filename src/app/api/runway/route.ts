@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { requireCronSecret } from "@/lib/cron-auth";
 import { isJobInFlight, listClients, listClientIntegrations, listAssets, listJobs } from "@/lib/data";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
@@ -133,10 +134,20 @@ export async function GET(req: NextRequest) {
         continue;
       }
 
-      const [integrations, assets] = await Promise.all([
+      const [integrations, assets, clientAgents] = await Promise.all([
         listClientIntegrations(client.id),
         listAssets({ clientId: client.id }),
+        listClientAgents({ clientId: client.id }),
       ]);
+      // A live umbrella already owns its chainFamily's calendar (client-agents
+      // Phase-3 model) and fires on its own schedule — the autopilot topping
+      // up the same family on top of it would be two producers fighting over
+      // one calendar. Not-live states (not_launched/launching/curating/
+      // launch_failed) don't own anything, so the family falls back to this
+      // sweep exactly like a client who never had the umbrella at all.
+      const familiesOwnedByLiveUmbrella = new Set(
+        clientAgents.filter((a) => a.launchState === "live" && a.chainFamily).map((a) => a.chainFamily!),
+      );
       const connectedPlatforms = integrations
         .filter((i) => i.platform !== "google" && integrationIsUsable(i))
         .map((i) => i.platform);
@@ -163,7 +174,7 @@ export async function GET(req: NextRequest) {
       // below — an undefined slipping through would dispatch `taskType:
       // undefined` and 422 at the service.
       const candidates = runway.shortFamilies
-        .filter((f) => AUTOGEN_FAMILIES.includes(f))
+        .filter((f) => AUTOGEN_FAMILIES.includes(f) && !familiesOwnedByLiveUmbrella.has(f))
         .flatMap((f) => {
           const product = FAMILY_PRODUCT[f];
           return product && !inFlightProducts.has(product) ? [{ family: f, product }] : [];
@@ -172,14 +183,24 @@ export async function GET(req: NextRequest) {
       // Explain every short family this run does NOT dispatch for, so a
       // deficit alongside "skipped" never reads as unexplained inaction: a
       // family the autopilot never auto-fires (blog_article — needs a real
-      // topic) vs. one already generating from a prior run (idempotency).
+      // topic) vs. one already generating from a prior run (idempotency) vs.
+      // one a live custom-agent umbrella already owns.
       const notAutoFired = runway.shortFamilies.filter((f) => !AUTOGEN_FAMILIES.includes(f));
+      const ownedByUmbrella = runway.shortFamilies.filter(
+        (f) => AUTOGEN_FAMILIES.includes(f) && familiesOwnedByLiveUmbrella.has(f),
+      );
       const alreadyInFlight = runway.shortFamilies.filter((f) => {
         const product = FAMILY_PRODUCT[f];
-        return AUTOGEN_FAMILIES.includes(f) && product !== undefined && inFlightProducts.has(product);
+        return (
+          AUTOGEN_FAMILIES.includes(f) &&
+          !familiesOwnedByLiveUmbrella.has(f) &&
+          product !== undefined &&
+          inFlightProducts.has(product)
+        );
       });
       const skipReasons = [
         ...notAutoFired.map((f) => `${f}: needs manual input, not auto-generated`),
+        ...ownedByUmbrella.map((f) => `${f}: owned by a live custom-agent umbrella, not auto-generated`),
         ...alreadyInFlight.map((f) => `${f}: already generating (job in flight)`),
       ];
 
