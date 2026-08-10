@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { buildNewsletterAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
+import { IntakePageActionLink } from "@/components/intake-page-action-link";
 import { PageHeader } from "@/components/ui";
 import { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 
@@ -53,12 +54,7 @@ export default async function NewsletterAgentPage({
         title="Newsletter agent"
         description="What we collect to run your newsletter: the day you want your issue ready, where you send it from, and anything we must never print. What it is about and how it sounds we work out from the material you already gave us. We prepare the whole issue; you send it from your own platform."
         action={
-          <a
-            href={action.href}
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            {action.label}
-          </a>
+          <IntakePageActionLink href={action.href} label={action.label} back={action.back} />
         }
       />
       <NewsletterAgentIntake {...view} />

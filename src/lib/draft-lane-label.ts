@@ -21,6 +21,8 @@
  * carries an account heading inside itself; see `toClientXOption`.
  */
 
+import { normalizeDashes } from "@/lib/text-utils";
+
 const LANE_COPY: Record<string, string> = {
   "build-in-public": "Building in public",
   "build in public": "Building in public",
@@ -104,9 +106,14 @@ export function laneLabelOrNull(heading: string): string | null {
   const base = withoutPrefix.replace(/\s*\([^)]*\)\s*$/, "").trim();
 
   const mapped = LANE_COPY[base.toLowerCase()];
-  const label = mapped ?? sentenceCase(base);
+  // `mapped` is our own curated copy; the fallback is the AGENT's heading text,
+  // which reaches a client verbatim and is therefore subject to the same copy
+  // rule as the rest of the surface: no em dashes anywhere a client reads.
+  // Normalized here rather than at each reader so every consumer of this label
+  // is covered by one call.
+  const label = mapped ?? normalizeDashes(sentenceCase(base));
   if (!label) return null;
-  return flag ? `${label} · ${flag.toLowerCase()}` : label;
+  return flag ? `${label} · ${normalizeDashes(flag.toLowerCase())}` : label;
 }
 
 /**

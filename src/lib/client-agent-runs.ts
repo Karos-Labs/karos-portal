@@ -32,8 +32,8 @@ export interface UmbrellaRunBlock {
 }
 
 const UMBRELLA_RUN_BLOCK: Record<UmbrellaRunBlockCode, string> = {
-  setup_not_started: "This agent isn't set up yet — launch it first and it starts producing.",
-  setup_running: "Setup is still running — this agent starts producing as soon as it finishes.",
+  setup_not_started: "This agent isn't set up yet. Launch it first and it starts producing.",
+  setup_running: "Setup is still running. This agent starts producing as soon as it finishes.",
   setup_failed: "Setup needs another pass before this agent can run.",
 };
 
@@ -88,7 +88,7 @@ export type TemplateRunBlockCode =
  * is a run nobody has fired, and blaming them for it is the wrong instruction.
  */
 const STAND_UP_REQUIRED_REASON =
-  "This agent has not been set up for you yet. One run works out how you post on LinkedIn — the kinds of post, how it sounds, and the first subjects — and nothing posts.";
+  "This agent has not been set up for you yet. One run works out how you post on LinkedIn (the kinds of post, how it sounds, and the first subjects), and nothing posts.";
 
 export interface TemplateRunGateInput {
   launchState: ClientAgentLaunchState;
@@ -154,7 +154,7 @@ export function evaluateTemplateRunGate(input: TemplateRunGateInput): TemplateRu
       code: "template_paused",
       reason:
         input.templateStatus === "paused"
-          ? "This format is paused — turn it back on to run it."
+          ? "This format is paused. Turn it back on to run it."
           : "This format has been retired.",
     };
   }
@@ -166,7 +166,7 @@ export function evaluateTemplateRunGate(input: TemplateRunGateInput): TemplateRu
       // Word for word the legacy ladder's line: the two gates guard the same
       // refusal on the same agent, and a client who meets one on the roster and
       // the other on the detail page must not read two different explanations.
-      reason: `${input.setup.clientLabel} are missing — this agent needs them before it can make a post.`,
+      reason: `${input.setup.clientLabel} are missing. This agent needs them before it can make a post.`,
     };
   }
 
@@ -193,7 +193,7 @@ export function evaluateTemplateRunGate(input: TemplateRunGateInput): TemplateRu
       allowed: false,
       code: "credits_short",
       reason:
-        input.creditBlockReason?.trim() || "Not enough credits — ask your Karos team for a top-up.",
+        input.creditBlockReason?.trim() || "Not enough credits. Ask your Karos team for a top-up.",
     };
   }
   return { allowed: true, cost: input.cost };
@@ -222,7 +222,7 @@ export function noRunnableTemplateReason(input: {
 }): string | null {
   if (input.hasTemplates) return null;
   return input.optionsMode
-    ? "This agent writes one post a day and you choose its direction — there is no separate format to run on demand."
+    ? "This agent writes one post a day and you choose its direction, so there is no separate format to run on demand."
     : "Your Karos team is still setting up the formats this agent writes. Making a post now works once they are in place.";
 }
 
@@ -255,7 +255,7 @@ export function templateRunPrompt(input: {
   }
   lines.push(
     "",
-    "Stay inside that template — this is one post in an established recurring format, not a new idea for one.",
+    "Stay inside that template: this is one post in an established recurring format, not a new idea for one.",
   );
   return lines.join("\n");
 }
@@ -374,20 +374,28 @@ export function evaluateLegacyRunGate(input: {
   availableCredits?: number;
   /** Which limit bit, resolved by the same ladder assessCharge uses. */
   creditBlockReason?: string | null;
+  /**
+   * What one run of this agent makes, in the client's words (OUTPUT_NOUN).
+   * Defaults to "post" so callers that predate it read exactly as before; the
+   * Reddit agent passes "reply", because a refusal that says "before it can
+   * make a post" contradicts the one rule that product is built around.
+   */
+  noun?: string;
 }): LegacyRunGateResult {
+  const noun = input.noun ?? "post";
   if (!input.serviceConfigured) {
     return {
       allowed: false,
       code: "service_down",
       reason:
-        "Agent runs are paused right now — this will work again once your Karos team clears it.",
+        "Agent runs are paused right now. This will work again once your Karos team clears it.",
     };
   }
   if (input.setup && !input.setup.ready) {
     return {
       allowed: false,
       code: "setup_missing",
-      reason: `${input.setup.clientLabel} are missing — this agent needs them before it can make a post.`,
+      reason: `${input.setup.clientLabel} are missing. This agent needs them before it can make a ${noun}.`,
       href: input.setup.href,
       hrefLabel: input.setup.clientLabel,
     };
@@ -413,7 +421,7 @@ export function evaluateLegacyRunGate(input: {
     return {
       allowed: false,
       code: "credits_short",
-      reason: input.creditBlockReason ?? "Not enough credits for a post right now.",
+      reason: input.creditBlockReason ?? `Not enough credits for a ${noun} right now.`,
     };
   }
   return { allowed: true };

@@ -203,14 +203,14 @@ export const LAUNCH_BLOCK_REASON: Record<
   // Same wording the submit core uses for an agent outside the allowlist —
   // never leak which agents exist beyond it.
   not_granted: "Agent not found.",
-  launch_in_flight: "Setup is already running — this page updates itself when it finishes.",
+  launch_in_flight: "Setup is already running. This page updates itself when it finishes.",
   already_live: "This agent is already set up.",
-  pricing_uncalibrated: "Launch pricing for this agent is being finalized — ask your Karos team.",
+  pricing_uncalibrated: "Launch pricing for this agent is being finalized. Ask your Karos team.",
 };
 
 /** The intake rung's line, naming the page that unblocks it. */
 export function intakeBlockReason(intakeLabel: string): string {
-  return `Setup needs your ${intakeLabel} — this agent is built from it.`;
+  return `Setup needs your ${intakeLabel}: this agent is built from it.`;
 }
 
 /**
@@ -219,7 +219,7 @@ export function intakeBlockReason(intakeLabel: string): string {
  * agent, and the fix is to use this client's own instance.
  */
 export function bindingBlockReason(agentKey: string): string {
-  return `This agent belongs to the "${perClientAgentSlug(agentKey)}" workspace — its playbook is baked under that client's folder, so it would draft the wrong company. Use this client's own agent.`;
+  return `This agent belongs to the "${perClientAgentSlug(agentKey)}" workspace. Its playbook is baked under that client's folder, so it would draft the wrong company. Use this client's own agent.`;
 }
 
 export interface LaunchGateInput {
@@ -330,7 +330,7 @@ export function evaluateLaunchGate(input: LaunchGateInput): LaunchGateResult {
       code: "credits_short",
       reason:
         input.creditBlockReason?.trim() ||
-        "Not enough credits — ask your Karos team for a top-up.",
+        "Not enough credits. Ask your Karos team for a top-up.",
     };
   }
   return { allowed: true, cost };

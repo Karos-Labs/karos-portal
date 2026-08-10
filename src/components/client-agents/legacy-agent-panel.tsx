@@ -16,6 +16,7 @@ import {
 import type { ContextItem } from "@/lib/types";
 
 import type { LegacyRunGateResult } from "@/lib/client-agent-runs";
+import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 /**
  * An agent that is genuinely producing but has no umbrella doc (CD-H8).
@@ -62,6 +63,7 @@ export function LegacyAgentPanel({
   cost,
   batchSize = 1,
   gate,
+  noun = "post",
   setup,
   contextItems,
   viewerIsClient,
@@ -87,6 +89,15 @@ export function LegacyAgentPanel({
   batchSize?: number;
   /** Server-evaluated, already resolved to a paintable reason (F25/F131). */
   gate: LegacyRunGateResult;
+  /**
+   * What one run of THIS agent makes, in the client's words (OUTPUT_NOUN).
+   *
+   * Hardcoded "post" before, which is how the Reddit agent — whose entire
+   * product promise is that we never post — ended up with "Create a new post"
+   * as the strongest affordance on its page, directly under a hero explaining
+   * that a human always posts the reply themselves.
+   */
+  noun?: string;
   /**
    * This agent's run that has not landed yet (F31). Resolved server-side from
    * the client's own jobs, and deliberately just an id and a phase - the strip
@@ -121,8 +132,8 @@ export function LegacyAgentPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your next post now. This takes 10–20 minutes. Your Karos team reviews it when
-              it lands, and finished posts appear in your Workspace once approved.
+              Making your next {noun} now. This takes {RUN_ESTIMATE_SENTENCE}. Your Karos team reviews
+              it when it lands, and finished work appears in your Workspace once approved.
             </p>
           </div>
           <ManagedJobProgress
@@ -143,16 +154,16 @@ export function LegacyAgentPanel({
               flex-wrap is on this container for. */}
           <div className="min-w-0 basis-56 grow">
             <p className="text-sm text-foreground">
-              {batchSize > 1 ? "Create new drafts" : "Create a new post"}
+              {batchSize > 1 ? "Create new drafts" : `Create a new ${noun}`}
             </p>
             <p className="mt-0.5 text-xs text-muted-2">
               {gate.allowed
                 ? batchSize > 1
-                  ? `Drafts a batch of ${batchSize} posts for you to pick from. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace.`
-                  : "Makes one post now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace."
+                  ? `Drafts a batch of ${batchSize} posts for you to pick from. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
+                  : `Makes one ${noun} now. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
                 : batchSize > 1
                   ? "Drafting a batch now is not available yet."
-                  : "Making a post now is not available yet."}
+                  : `Making a ${noun} now is not available yet.`}
             </p>
           </div>
           <Button
@@ -166,8 +177,8 @@ export function LegacyAgentPanel({
                 ? `Create new drafts · ${cost} credits`
                 : "Create new drafts"
               : cost != null
-                ? `Create new post · ${cost} credits`
-                : "Create new post"}
+                ? `Create new ${noun} · ${cost} credits`
+                : `Create new ${noun}`}
           </Button>
         </div>
         {!gate.allowed && gate.reason && !(outageAnnounced && gate.code === "service_down") && (
@@ -207,29 +218,25 @@ export function LegacyAgentPanel({
 }
 
 /**
- * The legacy shape's pace-and-price summary, seated in the status strip's
- * aside slot by the agent detail page (the strip's `aside` prop).
+ * The legacy shape's pace summary, seated in the status strip's aside slot by
+ * the agent detail page (the strip's `aside` prop).
  *
  * It replaces the "How often it posts" section this panel used to render
- * mid-column — an unstyled heading, a sentence and a floating credits line,
- * living two screens away from the status banner that answers the same
- * question ("how does this agent run?"). The copy is unchanged; only where it
- * sits and how it is framed moved. "Adjust pace" keeps the same paceOnly
- * schedule modal — clients get how many posts a week, never how they are
- * batched (D3 / A3-A4).
+ * mid-column. The price moved out entirely: the run button is the one gesture
+ * that spends and already quotes its cost, so a "credits per post" line here
+ * said the same number twice and misstated the unit (a run is priced flat,
+ * whatever it yields). "Adjust pace" keeps the same paceOnly schedule modal —
+ * clients get how many posts a week, never how they are batched (D3 / A3-A4).
  */
 export function SchedulePaceCard({
   clientId,
   agent,
-  cost,
   schedule,
   viewerIsClient,
   availableCredits,
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
-  /** Null for staff - quoting them a price they never pay would be a lie. */
-  cost: number | null;
   schedule: ClientAgentScheduleRow | null;
   viewerIsClient: boolean;
   availableCredits?: number;
@@ -240,25 +247,25 @@ export function SchedulePaceCard({
     // backgrounds, and in light mode a translucent fill dragged muted-2's
     // 12px copy just under the 4.5:1 floor QA F119 re-established for it
     // (~4.46:1). Opaque surface keeps the documented ~4.7:1.
-    <div className="rounded-md border border-border/70 bg-surface px-3 py-2.5">
+    // No price line here: the run button below the strip already quotes the
+    // cost of the one gesture that spends, and a second number in the corner
+    // was the strip's tallest row.
+    <div className="rounded-md border border-border/70 bg-surface px-3 py-2">
       <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
         How often it posts
       </h2>
       <p className="mt-1 text-xs text-muted-2">
         {schedule
           ? "This agent is already posting for you on a schedule. Change how often whenever you like."
-          : "This agent has no schedule yet. Your Karos team sets one up."}
+          : "No schedule yet. Your Karos team sets one up."}
       </p>
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {schedule && (
+      {schedule && (
+        <div className="mt-2">
           <Button size="sm" variant="subtle" onClick={() => setScheduling(true)}>
             <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" /> Adjust pace
           </Button>
-        )}
-        <p className="text-xs text-muted-2">
-          {cost != null ? `${cost} credits per post` : "Staff runs are free"}
-        </p>
-      </div>
+        </div>
+      )}
       {scheduling && schedule && (
         <AgentScheduleModal
           agent={agent}

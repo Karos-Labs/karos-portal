@@ -72,6 +72,7 @@ import {
 } from "@/lib/client-agent-feedback";
 import type { Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 export const maxDuration = 60;
 
@@ -492,7 +493,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    */
   const styleAppendix =
     `\n\n## WRITING STYLE\nNever use an em dash (—) in your replies. Use a comma, a full stop, or "·" instead. ` +
-    `Do not substitute a spaced hyphen (" - ") either. An en dash is fine for ranges ("3–4 posts", "10–20 minutes").`;
+    `Do not substitute a spaced hyphen (" - ") either. An en dash is fine for ranges ("3–4 posts", "2–3 weeks").`;
 
   const systemPrompt =
     `${baseSystemPrompt}\n\n` +
@@ -1197,7 +1198,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? clientSafeRunError(result.error)
           : `Couldn't start that run: ${result.error}`;
       }
-      return `Started a run of **${match.name}**. It takes 10–20 minutes, and your Karos team reviews the result before it reaches your Workspace.`;
+      return `Started a run of **${match.name}**. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
     },
   });
 

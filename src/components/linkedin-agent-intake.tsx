@@ -272,7 +272,7 @@ function IdentityPicker({
   return (
     <Card className="p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <CardTitle>Who else we post as</CardTitle>
+        <CardTitle>Members of the company</CardTitle>
         {seats.length > 0 ? (
           <Badge tone={seats.some((s) => s.voiceReady) ? "success" : "warning"}>
             {seats.filter((s) => s.voiceReady).length} of {seats.length} ready
@@ -318,7 +318,7 @@ function IdentityPicker({
                 : "border-dashed border-border text-muted hover:text-foreground"
             }`}
           >
-            + Add someone
+            + Add a seat
           </button>
         </div>
       ) : null}

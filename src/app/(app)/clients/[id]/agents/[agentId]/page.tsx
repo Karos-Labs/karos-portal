@@ -36,7 +36,7 @@ import {
   type SourceFile,
 } from "@/components/client-agents/archetype-cards";
 import { evaluateLegacyRunGate } from "@/lib/client-agent-runs";
-import { agentArchetype } from "@/lib/agent-archetype";
+import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
 import {
   agentProducedAssets,
   agentsWithDeliveredWork,
@@ -93,6 +93,7 @@ import {
   toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
+import { draftsDisplayTitle } from "@/lib/deliverable-titles";
 import type { Job } from "@/lib/types";
 
 /**
@@ -312,7 +313,7 @@ export default async function ClientAgentDetailPage({
           ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
         })
       : Promise.resolve(undefined),
-    readAgentInputDocs(id, agent.key),
+    readAgentInputDocs(id, agent.key, client.name),
   ]);
   const agentSetup = await buildAgentSetup(id, [summary], panes);
   // Declared HERE, not further down, because the status strip reads it: the badge
@@ -438,6 +439,10 @@ export default async function ClientAgentDetailPage({
   // the §7.3 idiom, and it decides the HERO only - status, archive, data,
   // connectors and feedback are the common chassis and render for all three.
   const archetype = agentArchetype({ key: agent.key, name: agent.name });
+  // What ONE run of this agent makes, in the client's words. Every control and
+  // refusal on this page is named from it, so a never-post product (Reddit)
+  // cannot end up with "Create a new post" as its strongest affordance.
+  const outputNoun = OUTPUT_NOUN[archetype];
 
   // The agent's own schedule row, unredacted, for the day projections.
   // `scheduleRows` above is the client-safe projection and deliberately drops
@@ -485,6 +490,15 @@ export default async function ClientAgentDetailPage({
   const archiveRows = (
     clipView ? clipView.documents : finderView ? finderView.documents : produced
   ).slice(0, 8);
+  // Whether the hero above this archive actually shows anything. The daily
+  // finder and the clip gallery both claim "everything this agent has made is
+  // above", and on a brand-new agent that pointed at an empty card: two empty
+  // states in a column, one of them citing the other.
+  const hasAnythingAbove = clipView
+    ? clipView.clips.length > 0
+    : finderView
+      ? finderView.today.length > 0 || finderView.earlier.length > 0
+      : true;
   const archiveHeading =
     archetype === "template_calendar" ? "What it has made for you" : "Documents it produced";
 
@@ -568,6 +582,7 @@ export default async function ClientAgentDetailPage({
     cost: runCost,
     ...(spendable !== undefined ? { availableCredits: spendable } : {}),
     creditBlockReason: creditBlockReasons[agent.id] ?? null,
+    noun: outputNoun,
   });
 
   // F31. The legacy branch had no run state at all: a client pressed "Create a
@@ -778,9 +793,21 @@ export default async function ClientAgentDetailPage({
   // dates it with the row's own delivery stamp, in the VIEWER's timezone,
   // because a server-formatted day can sit one day off beside the client-side
   // relative stamp on the same row.
+  // PLURAL-SAFE, and that is the whole design of this table: it is only read
+  // when the per-post title below could NOT be made, which happens when the
+  // delivery holds more than one draft or cannot be parsed at all. A singular
+  // noun here would be a false count on exactly the rows that are not one post.
+  // "Batch" is gone from both (it tells a client their week arrived in a lump,
+  // the A3/A4 tell); "drafts" is honest without saying how many.
+  //
+  // The two families genuinely differ, and the difference is NOT in this table:
+  // one LinkedIn v2 press drafts ONE post, while an X press still drafts a
+  // week's worth across the avenues (its batch_size is hidden but defaults to
+  // 10, and docs/x-agent-portal.md pins that as the canonical run). So X rows
+  // usually land here and LinkedIn rows usually do not.
   const FAMILY_BATCH_NOUN: Record<NonNullable<typeof family>, string> = {
-    x: "X draft batch",
-    linkedin: "LinkedIn draft batch",
+    x: "X drafts",
+    linkedin: "LinkedIn drafts",
     reddit: "Reddit reply draft",
     // SINGULAR for both, and not for tidiness: one run of either product
     // prepares exactly ONE thing. "Batch" would tell a client their week
@@ -799,6 +826,19 @@ export default async function ClientAgentDetailPage({
     // that post, not a batch of posts.
     carousel: "Carousel post",
   };
+  // A one-post delivery is named by what the post is ABOUT ("X post · First
+  // words of the hook"), not by its date — a list of dated rows tells the client
+  // when things happened but never what any of them said. A delivery holding
+  // several drafts cannot honestly take one subject as its name, so it keeps
+  // the dated plural noun above.
+  //
+  // Both families read the post's own opening words. LinkedIn's "Topic:" meta
+  // bullet looks like the better source and is not: those are written in the
+  // lab's vocabulary (catalog row slugs, series names), which is internal
+  // shorthand a client should never be shown as the name of their own post.
+  //
+  // `draftsDisplayTitle` is the ONE composer, shared with the modal these rows
+  // open, so the name on the row and the name on the panel cannot disagree.
   const rowTitleFields = (
     asset: (typeof archiveRows)[number],
   ): { title: string } | { fallbackNoun: string } => {
@@ -812,6 +852,8 @@ export default async function ClientAgentDetailPage({
       return { title: `${stored || agent.name} · ${runLabel.trim()}` };
     }
     if (!generic || !family) return { title: stored || agent.name };
+    const topical = draftsDisplayTitle(asset.content);
+    if (topical) return { title: topical };
     return { fallbackNoun: FAMILY_BATCH_NOUN[family] };
   };
 
@@ -855,8 +897,8 @@ export default async function ClientAgentDetailPage({
         <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
           <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
           {viewerIsClient
-            ? "Agent runs are paused right now. Starting a new post will not work until this clears. Contact your Karos team if you need a post today. Everything below is unaffected."
-            : "Agent runs are paused. The agent-service environment is not configured, so starting a post will fail until it is set. Everything below is unaffected."}
+            ? `Agent runs are paused right now. Starting a new ${outputNoun} will not work until this clears. Contact your Karos team if you need a ${outputNoun} today. Everything below is unaffected.`
+            : `Agent runs are paused. The agent-service environment is not configured, so starting a ${outputNoun} will fail until it is set. Everything below is unaffected.`}
         </p>
       )}
 
@@ -885,13 +927,12 @@ export default async function ClientAgentDetailPage({
             running={running}
             facts={statusFacts}
             {...(isStaff && status.staffNote ? { staffNote: status.staffNote } : {})}
-            {...(legacyShape
+            {...(legacyShape && archetype !== "daily_finder"
               ? {
                   aside: (
                     <SchedulePaceCard
                       clientId={id}
                       agent={summary}
-                      cost={spendable !== undefined ? cost : null}
                       schedule={schedule}
                       viewerIsClient={viewerIsClient}
                       {...(spendable !== undefined ? { availableCredits: spendable } : {})}
@@ -983,6 +1024,7 @@ export default async function ClientAgentDetailPage({
             <LegacyAgentPanel
               clientId={id}
               agent={summary}
+              noun={outputNoun}
               cost={spendable !== undefined ? runCost : null}
               batchSize={runBatchSize}
               gate={legacyGate}
@@ -1092,7 +1134,9 @@ export default async function ClientAgentDetailPage({
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-4 py-3 text-xs text-muted-2">
                 {archetype === "template_calendar"
                   ? "Nothing yet. Finished work appears here once your Karos team has approved it."
-                  : "Nothing else yet. Everything this agent has made is above."}
+                  : hasAnythingAbove
+                    ? "Nothing else yet. Everything this agent has made is above."
+                    : "Nothing yet. Finished work appears here once your Karos team has approved it."}
               </p>
             ) : (
               /* Each row now carries its own way in — a neon-outline
@@ -1248,7 +1292,7 @@ export default async function ClientAgentDetailPage({
 
 function SectionHeading({ title }: { title: string }) {
   return (
-    <h2 className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{title}</h2>
+    <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
   );
 }
 

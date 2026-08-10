@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { buildBlogAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
+import { IntakePageActionLink } from "@/components/intake-page-action-link";
 import { PageHeader } from "@/components/ui";
 import { BlogAgentIntake } from "@/components/blog-agent-intake";
 
@@ -53,12 +54,7 @@ export default async function BlogAgentPage({
         title="Blog agent"
         description="What we collect to run your blog: your own websites so we can link between them, and the subjects we should never cover. What each article is about comes from your newsletter. We take something it covered and go properly deep on it, then prepare the whole article for you to publish."
         action={
-          <a
-            href={action.href}
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            {action.label}
-          </a>
+          <IntakePageActionLink href={action.href} label={action.label} back={action.back} />
         }
       />
       <BlogAgentIntake {...view} />

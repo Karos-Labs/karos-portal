@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { buildReputationAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
+import { IntakePageActionLink } from "@/components/intake-page-action-link";
 import { PageHeader } from "@/components/ui";
 import { ReputationAgentIntake } from "@/components/reputation-agent-intake";
 
@@ -53,12 +54,7 @@ export default async function ReputationAgentPage({
         title="Reputation agent"
         description="What we collect to watch your reviews: who should hear about an urgent one, where people review you, and anything we must never say in a reply. Which listings are yours and how you should sound are worked out during setup. We draft the replies; you post them."
         action={
-          <a
-            href={action.href}
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            {action.label}
-          </a>
+          <IntakePageActionLink href={action.href} label={action.label} back={action.back} />
         }
       />
       <ReputationAgentIntake {...view} />

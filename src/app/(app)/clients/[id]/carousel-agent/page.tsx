@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { buildCarouselAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
+import { IntakePageActionLink } from "@/components/intake-page-action-link";
 import { PageHeader } from "@/components/ui";
 import { CarouselAgentIntake } from "@/components/carousel-agent-intake";
 
@@ -53,12 +54,7 @@ export default async function CarouselAgentPage({
         title="Carousel agent"
         description="What we collect to build your carousels: the account they are for, how long a post should run, and the subjects to never build one about. How the slides look and which subjects they work through are set up once from your brand material. We build the slides; you post them."
         action={
-          <a
-            href={action.href}
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            {action.label}
-          </a>
+          <IntakePageActionLink href={action.href} label={action.label} back={action.back} />
         }
       />
       <CarouselAgentIntake {...view} />
