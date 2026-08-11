@@ -35,6 +35,35 @@ Deliverable:
 `;
 
 /**
+ * The X-archive backfill's shared filters — used by the admin action
+ * (lib/actions/asset-title-backfill-actions.ts) and the standalone script
+ * (scripts/backfill-x-asset-titles.ts), so "which assets qualify" cannot
+ * drift between the button and the command line.
+ */
+
+/** The generic placeholders the webhook wrote before titling existed. */
+export function isGenericXTitle(title: string): boolean {
+  const t = title.trim();
+  return (
+    !t ||
+    t === "X Agent" ||
+    t === "X Agent v2 (unreviewed)" ||
+    t === "X drafts" ||
+    t.startsWith("X Agent - ")
+  );
+}
+
+/** The X deliverable shape x-drafts.ts parses — sniffed without the parser's dependency chain. */
+export function looksLikeXDrafts(content: string): boolean {
+  return /^# Account \d+/m.test(content) && /^## Avenue \d+/m.test(content);
+}
+
+/** One draft per avenue block — the same unit the archive rows count. */
+export function xDraftCount(content: string): number {
+  return content.match(/^## Avenue \d+/gm)?.length ?? 0;
+}
+
+/**
  * A model completion reduced to a usable title, or null when nothing usable
  * came back (the caller then keeps its fallback). Tolerates the two classic
  * near-misses — a "Title: ..." prefix and wrapping quotes — because a model

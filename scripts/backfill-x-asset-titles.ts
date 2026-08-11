@@ -63,9 +63,12 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { generateText } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import {
+  isGenericXTitle,
+  looksLikeXDrafts,
   sanitizeGeneratedTitle,
   TITLE_CONTENT_SAMPLE_CHARS,
   TITLE_PROMPT,
+  xDraftCount,
 } from "../src/lib/asset-title-core";
 
 function initAdmin() {
@@ -93,27 +96,6 @@ function initAdmin() {
 // only thing needed, and the script must stay runnable standalone.
 const HAIKU = "claude-haiku-4-5-20251001";
 
-/** The generic placeholders the webhook wrote before titling existed. */
-function isGenericXTitle(title: string): boolean {
-  const t = title.trim();
-  return (
-    !t ||
-    t === "X Agent" ||
-    t === "X Agent v2 (unreviewed)" ||
-    t === "X drafts" ||
-    t.startsWith("X Agent - ")
-  );
-}
-
-/** The X deliverable shape x-drafts.ts parses — sniffed without importing the parser's dependency chain. */
-function looksLikeXDrafts(content: string): boolean {
-  return /^# Account \d+/m.test(content) && /^## Avenue \d+/m.test(content);
-}
-
-/** One draft per avenue block — the same unit the archive rows count. */
-function draftCount(content: string): number {
-  return content.match(/^## Avenue \d+/gm)?.length ?? 0;
-}
 
 async function processDatabase(app: ReturnType<typeof initAdmin>, databaseId: string, write: boolean) {
   const db: Firestore = databaseId === "(default)" ? getFirestore(app) : getFirestore(app, databaseId);
@@ -151,7 +133,7 @@ async function processDatabase(app: ReturnType<typeof initAdmin>, databaseId: st
       console.log(`  !! ${doc.id}: no usable title came back — left as "${data.title}"`);
       continue;
     }
-    const n = draftCount(content);
+    const n = xDraftCount(content);
     const title = n > 1 ? `${topic} · ${n} drafts` : topic;
     console.log(`  ${write ? "WROTE" : "would"} ${doc.id} [${data.clientId}]: "${data.title}" -> "${title}"`);
     if (write) {

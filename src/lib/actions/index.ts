@@ -4,6 +4,7 @@
 
 export * from "./client-actions";
 export * from "./asset-actions";
+export * from "./asset-title-backfill-actions";
 export * from "./asset-chain-actions";
 export * from "./transcript-actions";
 export * from "./action-item-actions";
