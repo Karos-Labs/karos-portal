@@ -580,40 +580,37 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
     // accidentally pick up this profile.
     matches: (identity) => identity.startsWith("karos-x-agent-v2 "),
     profile: {
-      eyebrow: "X drafts",
+      eyebrow: "X draft",
       intro:
-        "Drafts a batch of posts from your X agent data: the company page, seats, and ongoing drops. Voice, audience, and cadence are built from that data. This form only scopes the run. Draft-only; nothing posts without a human.",
+        "Drafts one X post from your X agent data: the company page or one seat, their voice and ongoing drops. This form only scopes the run. Draft-only; nothing posts without a human.",
       fields: [
         {
           key: "run_scope",
           label: "Draft for",
           type: "select",
-          defaultValue: "the company page and every seat",
+          defaultValue: "the company page",
           options: [
-            { value: "the company page and every seat", label: "Company page and every seat" },
-            { value: "the company page only", label: "Company page only" },
+            { value: "the company page", label: "Company page" },
+            { value: "one seat (named in the request below)", label: "One person's seat" },
           ],
         },
         {
           key: BATCH_SIZE_FIELD_KEY,
           label: "How many drafts?",
           type: "select",
-          defaultValue: "10",
-          // Hidden by request (client-lens pass, 2026-08): the size question
-          // was one more decision between the client and "Start run". Hidden
-          // means INERT for pricing: no charge multiplier and no "Create
-          // exactly N" prefix reach the run (see the `hidden` doc on
-          // AgentBriefField) — the press charges the flat per-run price the
-          // button quotes, and the skill's own default batch (a week of
-          // posts, per the canonical instructions) governs what comes back.
-          // Options kept for the day this becomes a staff control or gets
-          // unhidden.
+          defaultValue: "1",
+          // ONE POST PER RUN — Daniel's ruling, 2026-08-11, the same treatment
+          // LinkedIn's selector has carried since 2026-08-06: one run drafts
+          // ONE post, and batches do not exist. Hidden means INERT for pricing:
+          // no charge multiplier and no "Create exactly N" prefix reach the run
+          // (see the `hidden` doc on AgentBriefField) — the press charges the
+          // flat per-run price the button quotes, and the canonical
+          // instructions (scripts/promote-x-agent-v2.ts) pin the run to one
+          // post. The field itself stays because the launch-brief contract test
+          // pins the X field list, and removing a serialized key is a schema
+          // change for no behavioural gain.
           hidden: true,
-          options: [
-            { value: "5", label: "5 drafts" },
-            { value: "10", label: "10 drafts" },
-            { value: "21", label: "21 drafts" },
-          ],
+          options: [{ value: "1", label: "1 post" }],
         },
         {
           key: "request",
@@ -625,14 +622,14 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       ],
       quickStarts: [
         "Lean into this week's announcement.",
-        "Focus this batch on one person's seat.",
+        "Draft for one person's seat.",
         "React to what happened in the industry this week.",
       ],
-      deliverables: ["A batch of post drafts across the avenues", "A linked source on every news, quote, and reply post"],
+      deliverables: ["One post draft, on the avenue the request calls for", "A linked source on every news, quote, and reply post"],
       estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
-        hint: "One-off references for this batch. Handles, off-limits, rosters, takes, and news live in your X agent data, not here.",
+        hint: "One-off references for this run. Handles, off-limits, rosters, takes, and news live in your X agent data, not here.",
         accept: DOCUMENTS_AND_IMAGES,
       },
     },

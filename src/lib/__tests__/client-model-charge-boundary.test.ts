@@ -95,8 +95,15 @@ const SRC = resolve(__dirname, "..", "..");
 const MODEL_FNS = new Set(["generateText", "generateObject", "streamText"]);
 const CHARGE_FNS = new Set(["chargeClientModelCall", "withClientModelCharge"]);
 const ENTRY_GATES = new Set(["requireStaff", "requireAdmin", "requireFirstOnboarding"]);
-/** lib/cron-auth.ts — the two functions that actually refuse an unsigned caller. */
-const CRON_GATES = new Set(["requireCronSecret", "checkWebhookSecret"]);
+/**
+ * lib/cron-auth.ts — the two functions that actually refuse an unsigned
+ * caller — plus lib/agent-service/verify.ts's HMAC check, the same gate class
+ * for the agent-service webhook: the handler 401s before any work when the
+ * signature is invalid, so no client credential can ever reach a model call
+ * behind it (the webhook's own titling call, asset-titles.ts, is
+ * platform-absorbed by that gate's design).
+ */
+const CRON_GATES = new Set(["requireCronSecret", "checkWebhookSecret", "verifyAgentServiceSignature"]);
 const ALL_GATES = new Set([...ENTRY_GATES, ...CRON_GATES]);
 
 function walk(dir: string, out: string[] = []): string[] {
