@@ -37,9 +37,12 @@ substitutions:
   # Failure-alert on-call list (job-alerts.ts) — separate from _ADMIN_EMAIL
   # above (support/signup mail). Keep in sync with cloudbuild.yaml's own copy.
   _ADMIN_EMAILS: "hello@karoslabs.com"
-  # Runway autopilot — production already runs this live (confirmed from the
-  # pre-CI-migration revision), unlike cloudbuild.yaml's off-by-default.
-  _RUNWAY_AUTOGEN_ENABLED: "1"
+  # Runway autopilot — turned OFF 2026-08-10 after an unrelated agent-service
+  # Anthropic credit exhaustion made its normal weekly top-up dispatch as a
+  # wall of failed jobs with no advance visibility on the portal (it fires
+  # immediately on a deficit, never as a schedule row). Route still measures
+  # and reports deficits either way; flip back to "1" to resume auto-dispatch.
+  _RUNWAY_AUTOGEN_ENABLED: "0"
   _RUNWAY_MAX_JOBS_PER_CLIENT: "14"
   # The rest of these existed as literal env vars / Secret Manager refs on the
   # production Cloud Run service from its Cloud Run-native-CD days, discovered
