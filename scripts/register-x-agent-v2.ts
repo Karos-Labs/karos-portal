@@ -72,7 +72,7 @@ including its own run-folder naming convention (NOT the generic
 "<date>-job-<id>" folder name this platform's own preamble otherwise suggests;
 the skill's own protocol takes precedence for this agent).
 
-ONE RUN PRODUCES ONE POST. This is the product ruling of 2026-08-11 and it
+One run produces exactly one post. This is the product ruling of 2026-08-11 and it
 supersedes the skill's own batch framing wherever the two disagree: SKILL.md
 and its references still describe a batch of N drafts (5/10/21) — that text
 is stale, and there is no batch. A run belongs to ONE identity (the company
@@ -130,7 +130,7 @@ async function main() {
     key: KEY,
     name: "X Agent v2 (unreviewed)",
     description:
-      "On-demand rebuild of the X drafting engine: one run drafts ONE post for one identity (the company page or a single seat). Resumable, draft-only. Separate from and does not replace the production X Agent. karos-agents manifest status: unreviewed.",
+      "On-demand rebuild of the X drafting engine: one run drafts one post for one identity (the company page or a single seat). Resumable, draft-only. Separate from and does not replace the production X Agent. karos-agents manifest status: unreviewed.",
     clientBlurb: "Drafts one X post on demand, any time: build-in-public, knowledge, POV, news-reaction, or quote, grounded in your X agent data.",
     icon: "Zap",
     color: "#FDE047",

@@ -800,11 +800,13 @@ export default async function ClientAgentDetailPage({
   // "Batch" is gone from both (it tells a client their week arrived in a lump,
   // the A3/A4 tell); "drafts" is honest without saying how many.
   //
-  // The two families genuinely differ, and the difference is NOT in this table:
-  // one LinkedIn v2 press drafts ONE post, while an X press still drafts a
-  // week's worth across the avenues (its batch_size is hidden but defaults to
-  // 10, and docs/x-agent-portal.md pins that as the canonical run). So X rows
-  // usually land here and LinkedIn rows usually do not.
+  // The two families no longer differ: one X press drafts one post, the same
+  // as LinkedIn (Daniel's ruling, 2026-08-11 — the canonical instructions in
+  // scripts/promote-x-agent-v2.ts pin it, and X_V2_MAX_OUTPUTS_PER_RUN backs
+  // it server-side). The plural noun stays honest for LEGACY X deliveries
+  // still in the archive, which genuinely hold a week of drafts — and this
+  // fallback only ever shows for a row with no usable title, which after the
+  // title backfill is almost exclusively those.
   const FAMILY_BATCH_NOUN: Record<NonNullable<typeof family>, string> = {
     x: "X drafts",
     linkedin: "LinkedIn drafts",

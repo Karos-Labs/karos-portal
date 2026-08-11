@@ -599,9 +599,9 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           label: "How many drafts?",
           type: "select",
           defaultValue: "1",
-          // ONE POST PER RUN — Daniel's ruling, 2026-08-11, the same treatment
+          // One post per run — Daniel's ruling, 2026-08-11, the same treatment
           // LinkedIn's selector has carried since 2026-08-06: one run drafts
-          // ONE post, and batches do not exist. Hidden means INERT for pricing:
+          // one post, and batches do not exist. Hidden means INERT for pricing:
           // no charge multiplier and no "Create exactly N" prefix reach the run
           // (see the `hidden` doc on AgentBriefField) — the press charges the
           // flat per-run price the button quotes, and the canonical

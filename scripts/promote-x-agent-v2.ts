@@ -83,7 +83,7 @@ including its own run-folder naming convention (NOT the generic
 "<date>-job-<id>" folder name this platform's own preamble otherwise suggests;
 the skill's own protocol takes precedence for this agent).
 
-ONE RUN PRODUCES ONE POST. This is the product ruling of 2026-08-11 and it
+One run produces exactly one post. This is the product ruling of 2026-08-11 and it
 supersedes the skill's own batch framing wherever the two disagree: SKILL.md
 and its references still describe a batch of N drafts (5/10/21) — that text
 is stale, and there is no batch. A run belongs to ONE identity (the company
@@ -135,7 +135,7 @@ const V2_DATA = {
   key: V2_KEY,
   name: "X Agent",
   description:
-    "On-demand X drafting engine: one run drafts ONE post for one identity (the company page or a single seat), on the avenue the request calls for. Resumable, draft-only, grounded in the client's own X agent data.",
+    "On-demand X drafting engine: one run drafts one post for one identity (the company page or a single seat), on the avenue the request calls for. Resumable, draft-only, grounded in the client's own X agent data.",
   clientBlurb:
     "Drafts one X post on demand, any time: build-in-public, knowledge, POV, news-reaction, or quote, grounded in your X agent data.",
   icon: "Zap",
