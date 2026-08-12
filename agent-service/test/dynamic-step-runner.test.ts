@@ -337,3 +337,252 @@ describe("dash normalization of AI output", () => {
     expect(prompts[1]).not.toContain("first — one");
   });
 });
+
+describe("per-AI-step capability grants (allowNetwork / allowClientData)", () => {
+  beforeEach(() => {
+    delete process.env.HTTP_PROXY;
+    delete process.env.HTTPS_PROXY;
+  });
+
+  it("a step without allowNetwork gets no tools at all — unchanged from before this capability existed", async () => {
+    queryMock.mockImplementation(() => sdkStream([assistantText("out"), resultOk()]));
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    await runDynamicSteps(baseSpec([aiStep()]), {});
+    const options = queryMock.mock.calls[0]![0].options;
+    expect(options.allowedTools).toEqual([]);
+  });
+
+  it("a step with allowNetwork gets exactly the WebFetch tool, when a proxy is configured", async () => {
+    process.env.HTTP_PROXY = "http://proxy:8888";
+    queryMock.mockImplementation(() => sdkStream([assistantText("out"), resultOk()]));
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec([aiStep({ allowNetwork: true })]), {});
+    expect(result.ok).toBe(true);
+    const options = queryMock.mock.calls[0]![0].options;
+    expect(options.allowedTools).toEqual(["WebFetch"]);
+  });
+
+  it("fails the step (and the job) with an English reason when allowNetwork is requested but no proxy is configured — never falls back to unrestricted egress or silent no-op", async () => {
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec([aiStep({ allowNetwork: true })]), {});
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/network access.*no egress proxy/i);
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(result.trace[0]!.capabilities).toEqual({
+      allowNetwork: true,
+      allowClientData: false,
+      networkHonored: false,
+      clientDataHonored: false,
+    });
+  });
+
+  it("records capabilities on a successful step that requested a grant, and omits capabilities on a step that requested neither", async () => {
+    process.env.HTTP_PROXY = "http://proxy:8888";
+    queryMock.mockImplementation(() => sdkStream([assistantText("out"), resultOk()]));
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(
+      baseSpec([
+        aiStep({ id: "granted", order: 0, allowNetwork: true }),
+        aiStep({ id: "plain", order: 1 }),
+      ]),
+      {},
+    );
+    expect(result.ok).toBe(true);
+    const granted = result.trace.find((t) => t.stepId === "granted");
+    const plain = result.trace.find((t) => t.stepId === "plain");
+    expect(granted?.capabilities).toEqual({
+      allowNetwork: true,
+      allowClientData: false,
+      networkHonored: true,
+      clientDataHonored: false,
+    });
+    expect(plain?.capabilities).toBeUndefined();
+  });
+
+  it("delivers clientContextText into the prompt of a step with allowClientData, and withholds it from every other step in the SAME run", async () => {
+    const prompts: string[] = [];
+    queryMock.mockImplementation((args: { prompt: string }) => {
+      prompts.push(args.prompt);
+      return sdkStream([assistantText("out"), resultOk()]);
+    });
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const granted = aiStep({ id: "granted", order: 0, allowClientData: true, prompt: "Use the client's docs." });
+    const ungranted = aiStep({ id: "ungranted", order: 1, prompt: "Do not see client docs." });
+    const result = await runDynamicSteps(baseSpec([granted, ungranted]), {}, {
+      clientContextText: "CONFIDENTIAL: this client's brand voice is playful.",
+    });
+    expect(result.ok).toBe(true);
+    expect(prompts[0]).toContain("CONFIDENTIAL: this client's brand voice is playful.");
+    expect(prompts[1]).not.toContain("CONFIDENTIAL");
+  });
+
+  it("a step with allowClientData but no clientContextText available (e.g. the client has no docs yet) still runs normally", async () => {
+    queryMock.mockImplementation(() => sdkStream([assistantText("out"), resultOk()]));
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec([aiStep({ allowClientData: true })]), {}, {});
+    expect(result.ok).toBe(true);
+  });
+});
+
+/**
+ * Topic guardrails and output de-duplication, at the PROMPT level
+ * (docs/dynamic-agent-guardrails.md). The two injections have deliberately
+ * different scopes, and that difference is the whole point of these tests:
+ *
+ *  - the guardrail goes into EVERY AI step, because a constraint that only one
+ *    step sees is not a guardrail;
+ *  - the history goes into the FINAL AI step only, because every earlier step
+ *    is extraction or analysis where repetition is harmless, and paying tokens
+ *    to tell a research step not to repeat itself is waste.
+ */
+describe("topic guardrails and output history injection", () => {
+  function capturePrompts(): string[] {
+    const prompts: string[] = [];
+    queryMock.mockImplementation((args: { prompt: string }) => {
+      prompts.push(args.prompt);
+      return sdkStream([assistantText("out"), resultOk()]);
+    });
+    return prompts;
+  }
+
+  /* ── zero impact ── */
+
+  it("injects nothing at all when neither feature is configured", async () => {
+    const prompts = capturePrompts();
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec([aiStep()]), {}, {});
+    expect(result.ok).toBe(true);
+    expect(prompts[0]).not.toContain("HARD CONSTRAINT");
+    expect(prompts[0]).not.toContain("ALREADY PRODUCED");
+    expect(result.guardrailInjectedStepIds).toEqual([]);
+  });
+
+  it("treats an EMPTY forbidden-topics list as no guardrails at all", async () => {
+    const prompts = capturePrompts();
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec([aiStep()]), {}, { forbiddenTopics: [] });
+    expect(prompts[0]).not.toContain("HARD CONSTRAINT");
+    expect(result.guardrailInjectedStepIds).toEqual([]);
+  });
+
+  /* ── the guardrail reaches every AI step ── */
+
+  it("injects the forbidden topics into EVERY AI step, not just the first or last", async () => {
+    const prompts = capturePrompts();
+    const steps = [aiStep({ id: "a", order: 0 }), aiStep({ id: "b", order: 1 }), aiStep({ id: "c", order: 2 })];
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec(steps), {}, { forbiddenTopics: ["competitor pricing"] });
+    expect(result.ok).toBe(true);
+    expect(prompts).toHaveLength(3);
+    for (const prompt of prompts) {
+      expect(prompt).toContain("HARD CONSTRAINT");
+      expect(prompt).toContain("competitor pricing");
+    }
+    expect(result.guardrailInjectedStepIds).toEqual(["a", "b", "c"]);
+  });
+
+  it("lists every configured topic, not only the first", async () => {
+    const prompts = capturePrompts();
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    await runDynamicSteps(baseSpec([aiStep()]), {}, { forbiddenTopics: ["alpha", "beta", "gamma"] });
+    for (const topic of ["alpha", "beta", "gamma"]) expect(prompts[0]).toContain(topic);
+  });
+
+  it("does not count a code step as guardrail-injected — a script reads no prompt", async () => {
+    capturePrompts();
+    runCodeStepMock.mockResolvedValue({ ok: true, output: { done: true } });
+    const steps = [aiStep({ id: "a", order: 0 }), codeStep({ id: "b", order: 1 })];
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec(steps), {}, { forbiddenTopics: ["x"] });
+    expect(result.guardrailInjectedStepIds).toEqual(["a"]);
+  });
+
+  it("records the steps that carried the guardrail even when the run FAILS partway", async () => {
+    // A failed run still has to answer "was the constraint in force?" for the
+    // steps that did execute.
+    let call = 0;
+    queryMock.mockImplementation(() => {
+      call += 1;
+      return call === 1 ? sdkStream([assistantText("ok"), resultOk()]) : sdkStream([resultError("error_max_turns")]);
+    });
+    const steps = [aiStep({ id: "a", order: 0 }), aiStep({ id: "b", order: 1 })];
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec(steps), {}, { forbiddenTopics: ["x"] });
+    expect(result.ok).toBe(false);
+    expect(result.guardrailInjectedStepIds).toEqual(["a", "b"]);
+  });
+
+  /* ── history reaches the final AI step only ── */
+
+  it("injects prior outputs into the FINAL AI step only", async () => {
+    const prompts = capturePrompts();
+    const steps = [aiStep({ id: "research", order: 0 }), aiStep({ id: "write", order: 1 })];
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec(steps), {}, {
+      outputHistory: [{ jobId: "job-1", createdAt: 1, excerpt: "LAST MONTH'S POST BODY" }],
+    });
+    expect(result.ok).toBe(true);
+    expect(prompts[0]).not.toContain("ALREADY PRODUCED");
+    expect(prompts[0]).not.toContain("LAST MONTH'S POST BODY");
+    expect(prompts[1]).toContain("ALREADY PRODUCED");
+    expect(prompts[1]).toContain("LAST MONTH'S POST BODY");
+  });
+
+  it("picks the last AI step even when a code step comes after it", async () => {
+    const prompts = capturePrompts();
+    runCodeStepMock.mockResolvedValue({ ok: true, output: { done: true } });
+    const steps = [aiStep({ id: "write", order: 0 }), codeStep({ id: "format", order: 1 })];
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec(steps), {}, {
+      outputHistory: [{ jobId: "job-1", createdAt: 1, excerpt: "PRIOR BODY" }],
+    });
+    expect(result.ok).toBe(true);
+    expect(prompts[0]).toContain("PRIOR BODY");
+  });
+
+  it("labels prior outputs as what NOT to produce, so they cannot read as source material", async () => {
+    const prompts = capturePrompts();
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    await runDynamicSteps(baseSpec([aiStep()]), {}, {
+      outputHistory: [{ jobId: "job-1", createdAt: 1, excerpt: "PRIOR BODY" }],
+    });
+    expect(prompts[0]).toMatch(/NOT source material/i);
+    expect(prompts[0]).toMatch(/must differ from|must be substantially different/i);
+  });
+
+  it("injects nothing for an empty history list", async () => {
+    const prompts = capturePrompts();
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    await runDynamicSteps(baseSpec([aiStep()]), {}, { outputHistory: [] });
+    expect(prompts[0]).not.toContain("ALREADY PRODUCED");
+  });
+
+  /* ── the two compose ── */
+
+  it("carries both the guardrail and the history on the final step when both are configured", async () => {
+    const prompts = capturePrompts();
+    const steps = [aiStep({ id: "research", order: 0 }), aiStep({ id: "write", order: 1 })];
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    await runDynamicSteps(baseSpec(steps), {}, {
+      forbiddenTopics: ["competitor pricing"],
+      outputHistory: [{ jobId: "job-1", createdAt: 1, excerpt: "PRIOR BODY" }],
+    });
+    expect(prompts[0]).toContain("HARD CONSTRAINT");
+    expect(prompts[0]).not.toContain("PRIOR BODY");
+    expect(prompts[1]).toContain("HARD CONSTRAINT");
+    expect(prompts[1]).toContain("PRIOR BODY");
+  });
+
+  it("keeps the admin's own prompt and the run context intact alongside the injections", async () => {
+    // The injections ADD to the composed prompt; they must never replace what
+    // the admin wrote or the context every step relies on.
+    const prompts = capturePrompts();
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    await runDynamicSteps(baseSpec([aiStep({ prompt: "ADMIN AUTHORED BODY" })]), { topic: "x" }, {
+      forbiddenTopics: ["y"],
+      outputHistory: [{ jobId: "j", createdAt: 1, excerpt: "PRIOR" }],
+    });
+    expect(prompts[0]).toContain("ADMIN AUTHORED BODY");
+    expect(prompts[0]).toContain("Full run context so far");
+  });
+});

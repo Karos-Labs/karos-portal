@@ -54,6 +54,10 @@ export type DynamicAgentStepDef =
       prompt: string;
       order: number;
       dependsOn?: string[];
+      /** May this step reach the network? Default false (absent === false). See the Portal's copy. */
+      allowNetwork?: boolean;
+      /** May this step read this client's own documents? Default false (absent === false). See the Portal's copy. */
+      allowClientData?: boolean;
     }
   | {
       id: string;
@@ -80,6 +84,8 @@ export interface DynamicAgentSpec {
   allowedClientIds?: string[];
   inputSchema: DynamicAgentInputDef[];
   steps: DynamicAgentStepDef[];
+  /** Opt-in output de-duplication. Default false (absent === false). See the Portal's copy and docs/dynamic-agent-guardrails.md. */
+  dedupeAgainstHistory?: boolean;
   createdAt: number;
   updatedAt: number;
   createdBy: string;
@@ -123,6 +129,21 @@ export interface DynamicAgentJobPayload {
    * `step.model`. See resolveStepModel() in the dynamic step runner.
    */
   stepModels?: Record<string, string>;
+  /**
+   * This client's topic guardrails, frozen at job-creation time exactly like
+   * `specSnapshot`. Absent when the client has no forbidden topics, which is
+   * what makes the feature inert — see docs/dynamic-agent-guardrails.md.
+   */
+  guardrails?: { forbiddenTopics: string[] };
+  /** Prior deliverables from this same agent for this client, newest first. Present only when the snapshot sets `dedupeAgainstHistory`. */
+  outputHistory?: { items: DynamicAgentHistoryItem[] };
+}
+
+/** One prior deliverable, as shown to a de-duplicating run. */
+export interface DynamicAgentHistoryItem {
+  jobId: string;
+  createdAt: number;
+  excerpt: string;
 }
 
 /** True when a raw custom-task brief carries a frozen dynamic-agent snapshot. */

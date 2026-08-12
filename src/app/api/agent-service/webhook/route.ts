@@ -205,13 +205,103 @@ const dynamicRunSchema = z.object({
         error: z.string().optional(),
         /** This step's own token/cost usage (AI steps only). */
         usage: usageSchema.optional(),
+        /**
+         * The per-step capability grants this step actually ran with.
+         *
+         * DECLARED, not optional-by-omission: zod strips undeclared keys, so
+         * while this field was missing from the schema the runner's capability
+         * record was silently dropped before it was ever stored on the job —
+         * the audit trail the network / client-data grants promise did not
+         * survive ingestion. See docs/dynamic-agent-guardrails.md §5.
+         */
+        capabilities: z
+          .object({
+            allowNetwork: z.boolean(),
+            allowClientData: z.boolean(),
+            networkHonored: z.boolean(),
+            clientDataHonored: z.boolean(),
+          })
+          .optional(),
       }),
     )
     .default([]),
   failedStepId: z.string().optional(),
   failedStepIndex: z.number().optional(),
   hasPartialOutput: z.boolean().optional(),
+  /** Topic guardrails, as exercised by this run. See docs/dynamic-agent-guardrails.md. */
+  guardrail: z
+    .object({
+      forbiddenTopics: z.array(z.string()).default([]),
+      injectedStepIds: z.array(z.string()).default([]),
+      verification: z
+        .object({
+          status: z.enum(["clean", "violation", "error"]),
+          violatedTopics: z.array(z.string()).default([]),
+          evidence: z.string().optional(),
+          model: z.string().optional(),
+          durationMs: z.number().default(0),
+        })
+        .optional(),
+    })
+    .optional(),
+  /** Output de-duplication verdict. Present only when the spec opted in. */
+  dedupe: z
+    .object({
+      status: z.enum(["ok", "similar", "no_history"]),
+      comparedCount: z.number().default(0),
+      maxSimilarity: z.number().default(0),
+      threshold: z.number().default(0),
+      mostSimilarJobId: z.string().optional(),
+    })
+    .optional(),
 });
+
+/**
+ * Timeline lines for a run whose guardrails or de-duplication check fired.
+ *
+ * // UPDATED (2026-08): a topic-guardrail violation now BLOCKS the run at
+ * the source (agent-service run-dynamic-job.ts returns `outcome: "failed"`),
+ * so no asset is created and the client is refunded like any other failed
+ * run — status already reflects it. This event is still emitted regardless,
+ * so staff see WHY a run failed without opening the internal trace, and it
+ * still fires unconditionally for a de-duplication "similar" finding, which
+ * remains flag-only (a similarity signal for a human to weigh, not a
+ * correctness violation). Staff-facing: the job page is staff-only.
+ *
+ * Returns [] for the overwhelmingly common case (no dynamic run, or a run
+ * where everything was clean), so an unflagged job's timeline is byte-identical
+ * to before this existed.
+ */
+function guardrailEvents(dynamicRun: z.infer<typeof dynamicRunSchema> | undefined): JobRunEvent[] {
+  if (!dynamicRun) return [];
+  const at = Date.now();
+  const out: JobRunEvent[] = [];
+  const verification = dynamicRun.guardrail?.verification;
+  if (verification?.status === "violation") {
+    const topics = verification.violatedTopics.join(", ") || "an unnamed topic";
+    out.push({
+      at,
+      level: "error",
+      message: `Topic guardrail: this draft engages with ${topics}. Review before sending it to the client.`,
+    });
+  } else if (verification?.status === "error") {
+    out.push({
+      at,
+      level: "info",
+      message: "Topic guardrail: the verification check could not be completed for this run.",
+    });
+  }
+  if (dynamicRun.dedupe?.status === "similar") {
+    const pct = Math.round(dynamicRun.dedupe.maxSimilarity * 100);
+    out.push({
+      at,
+      level: "info",
+      message: `Repetition check: this draft is ${pct}% similar to an earlier one for this client.`,
+    });
+  }
+  return out;
+}
+
 
 const webhookPayloadSchema = z.object({
   event: z.literal("job.completed"),
@@ -1894,7 +1984,11 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error("[webhook] pre-write job re-read failed, merging onto the pre-re-host copy:", e);
   }
-  const mergedEvents = [...(freshJob?.events ?? job.events), ...events];
+  const mergedEvents = [
+    ...(freshJob?.events ?? job.events),
+    ...events,
+    ...guardrailEvents(payload.dynamic_run),
+  ];
   const mergedAssetIds = [...(freshJob?.assetIds ?? job.assetIds), ...newAssetIds];
 
   // Best-effort like the blocks below it: the job is already claimed (single

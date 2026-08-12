@@ -253,6 +253,21 @@ export interface Client {
    * Written only after a send actually succeeds.
    */
   lastDigestSentDay?: number;
+  /**
+   * Topics this company does not engage with — the Dynamic Agent Studio's
+   * topic guardrails (docs/dynamic-agent-guardrails.md).
+   *
+   * Injected into EVERY AI step of every dynamic-agent run for this client,
+   * and verified against the finished deliverable by an engine-appended
+   * verification pass. Lives on the client rather than on an agent because the
+   * policy is the company's: a new agent authored tomorrow inherits it with no
+   * further action.
+   *
+   * Absent or empty means the feature is inert for this client — no injection,
+   * no verification call, no added cost. Parsing/limits are pure and live in
+   * `lib/dynamic-agent-guardrails.ts`.
+   */
+  forbiddenTopics?: string[];
   createdAt: number;
   createdBy: string;
 }
@@ -573,6 +588,22 @@ export type DynamicAgentStepDef =
       prompt: string;
       order: number;
       dependsOn?: string[];
+      /**
+       * May this step reach the network? Default false (absent === false,
+       * everywhere — see dynamic-agent-validation.ts's normalizeSteps). Egress,
+       * when granted, is still restricted to the agent-service allowlist proxy;
+       * this flag decides whether the step gets a network-capable tool at all,
+       * not a second egress mechanism.
+       */
+      allowNetwork?: boolean;
+      /**
+       * May this step read this client's own documents (their internal-tier
+       * `clientContextDocs`)? Default false. This is the first capability that
+       * lets a dynamic agent see client data at all — see
+       * `buildDynamicAgentClientContextFiles` in
+       * `lib/agent-service/dynamic-agent-context.ts`.
+       */
+      allowClientData?: boolean;
     }
   | {
       id: string;
@@ -617,6 +648,20 @@ export interface DynamicAgentSpec {
   allowedClientIds?: string[];
   inputSchema: DynamicAgentInputDef[];
   steps: DynamicAgentStepDef[];
+  /**
+   * Opt-in output de-duplication (docs/dynamic-agent-guardrails.md). When
+   * true, a run is shown the deliverables this SAME agent already produced for
+   * this client and instructed not to repeat them, and the produced text is
+   * scored against that history afterwards.
+   *
+   * // DECISION: agent-level, not step-level, and default OFF. De-duplication
+   * is a property of the run's single DELIVERABLE, not of any one step. It is
+   * opt-in because injecting prior outputs changes what the model writes and
+   * costs tokens on every run — a real behaviour change, so it follows the
+   * same default-deny rule as the per-step capability grants. Absent === false
+   * everywhere, so every spec written before this field existed is unaffected.
+   */
+  dedupeAgainstHistory?: boolean;
   createdAt: number;
   updatedAt: number;
   createdBy: string;
@@ -668,6 +713,28 @@ export interface DynamicAgentJobPayload {
    * `step.model`. See resolveStepModel() in the dynamic step runner.
    */
   stepModels?: Record<string, string>;
+  /**
+   * This client's topic guardrails, frozen at job-creation time exactly like
+   * `specSnapshot` — a mid-flight edit to the client's list can no more reach a
+   * running job than a mid-flight edit to the agent can. Omitted entirely when
+   * the client has no forbidden topics, which is what makes the feature inert.
+   */
+  guardrails?: { forbiddenTopics: string[] };
+  /**
+   * Prior deliverables this same agent produced for this client, newest first.
+   * Present only when the snapshot sets `dedupeAgainstHistory`. Carried inline
+   * on the brief rather than as an uploaded context file: it is small and
+   * bounded (see DYNAMIC_AGENT_HISTORY_RUNS / _EXCERPT_CHARS), and an inline
+   * field avoids a storage write plus a download on every run.
+   */
+  outputHistory?: { items: DynamicAgentHistoryItem[] };
+}
+
+/** One prior deliverable, as shown to a de-duplicating run. `excerpt` is the asset's own text, truncated. */
+export interface DynamicAgentHistoryItem {
+  jobId: string;
+  createdAt: number;
+  excerpt: string;
 }
 
 /**
@@ -687,6 +754,20 @@ export interface DynamicAgentRunStep {
   /** Concrete model this step ran on — staff-facing audit of per-step routing. */
   model?: string;
   error?: string;
+  /**
+   * AI steps only — the capability grants this step actually ran with. Present
+   * whenever either grant was requested on the step, so an operator reading a
+   * completed run can see what actually happened rather than just what the
+   * spec asked for. `networkHonored`/`clientDataHonored` are false when the
+   * grant was requested but could not be satisfied (e.g. no egress proxy
+   * configured) — the step still records the request, not just its outcome.
+   */
+  capabilities?: {
+    allowNetwork: boolean;
+    allowClientData: boolean;
+    networkHonored: boolean;
+    clientDataHonored: boolean;
+  };
   /** This step's own token/cost usage (AI steps only) — the per-step breakdown behind the job's run-level totalCostUsd/tokens. */
   usage?: {
     totalCostUsd?: number;
@@ -719,6 +800,58 @@ export interface DynamicAgentRunReport {
   failedStepIndex?: number;
   /** True when earlier steps produced output the client can still be shown. */
   hasPartialOutput?: boolean;
+  /**
+   * Topic guardrails, as ACTUALLY exercised by this run. Present only when the
+   * client had forbidden topics at submit time.
+   *
+   * // DECISION: a violation FLAGS the run — it never fails it and never
+   * rewrites the deliverable. Failing would destroy already-paid work over what
+   * may be one offending paragraph, and would make a verifier false positive
+   * catastrophic rather than annoying. The output is already safe by default
+   * (every asset the webhook creates lands as a draft, so nothing reaches a
+   * client without a human approving it) — the guardrail's job is to make sure
+   * that human knows. Staff-facing only; rendered on the job page, which is
+   * staff-only.
+   */
+  guardrail?: DynamicAgentGuardrailReport;
+  /** Output de-duplication verdict. Present only when the spec opted in via `dedupeAgainstHistory`. */
+  dedupe?: DynamicAgentDedupeReport;
+}
+
+export interface DynamicAgentGuardrailReport {
+  /** The topics that were in force for this run — the frozen list, not the client's current one. */
+  forbiddenTopics: string[];
+  /** Every AI step that carried the constraint block. Empty for a spec with no AI steps. */
+  injectedStepIds: string[];
+  /**
+   * The engine-appended verification pass. Absent when the run failed before
+   * producing a deliverable — verifying partial output would raise findings
+   * about text nobody will ever ship.
+   *
+   * `status: "error"` is the FAIL-OPEN case: the check could not be completed
+   * (the call errored, or the model returned unparseable JSON). It is never
+   * reported as a violation — a broken verifier must not manufacture findings
+   * against good output — but it is surfaced so staff know the check did not run.
+   */
+  verification?: {
+    status: "clean" | "violation" | "error";
+    violatedTopics: string[];
+    /** A short quote from the deliverable supporting the finding. Staff-facing. */
+    evidence?: string;
+    model?: string;
+    durationMs: number;
+  };
+}
+
+export interface DynamicAgentDedupeReport {
+  /** "no_history" = the feature was on but this is the agent's first run for this client. */
+  status: "ok" | "similar" | "no_history";
+  comparedCount: number;
+  /** Highest Jaccard trigram overlap against any prior deliverable, 0..1. */
+  maxSimilarity: number;
+  threshold: number;
+  /** The prior run this one most resembles — only set when status is "similar". */
+  mostSimilarJobId?: string;
 }
 
 /**
@@ -853,6 +986,15 @@ export interface Job {
   dynamicAgentSpecId?: string;
   /** Dynamic Agent Studio runs only — the persisted per-step report. */
   dynamicRun?: DynamicAgentRunReport;
+  /**
+   * Dynamic Agent Studio runs only — the capability grants this run was
+   * CREATED with, computed from the frozen specSnapshot at submit time (see
+   * submitDynamicAgentJob). Lets an operator answer "did this run see client
+   * data" or "could this run reach the network" without reading the
+   * snapshot's every step. Absent on jobs that predate this field and on
+   * every non-dynamic-agent job.
+   */
+  dynamicCapabilities?: { anyNetwork: boolean; anyClientData: boolean };
   /** See JobRunType. Absent on jobs written before run-type tracking existed. */
   runType?: JobRunType;
   /** The client-agent umbrella (clientAgents doc id) this run belongs to, when one exists. */

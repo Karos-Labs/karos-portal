@@ -13,6 +13,8 @@ export interface GeneralSettingsDraft {
   creditsCost: number;
   active: boolean;
   allowedClientIds: string[];
+  /** Opt-in output de-duplication. See docs/dynamic-agent-guardrails.md. */
+  dedupeAgainstHistory: boolean;
 }
 
 /**
@@ -143,6 +145,23 @@ export function GeneralSettingsForm({
             Active (visible to clients)
           </label>
         </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-surface-2 p-3">
+        <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+          <input
+            type="checkbox"
+            className="mt-0.5 accent-neon"
+            checked={draft.dedupeAgainstHistory}
+            onChange={(e) => set("dedupeAgainstHistory", e.target.checked)}
+          />
+          <span>Avoid repeating previous outputs</span>
+        </label>
+        <p className="mt-1.5 text-[11px] leading-snug text-muted-2">
+          Shows this agent the last few drafts it produced for the same client and tells it not to repeat
+          them, then scores the new draft against them and flags a near-duplicate for your team. Off by
+          default — turn it on for an agent that produces on a recurring cadence.
+        </p>
       </div>
 
       <div>

@@ -19,6 +19,8 @@ import {
   validateGeneral,
   type DynamicAgentGeneralInput,
 } from "@/lib/dynamic-agent-validation";
+import { checkDanglingReferences } from "@/lib/dynamic-agent-reference-check";
+import { generateDynamicAgentDraft, MAX_GENERATION_DESCRIPTION_CHARS } from "@/lib/dynamic-agent-generation";
 import { submitDynamicAgentJob } from "@/lib/jobs/submit-custom";
 import { requireAdmin, requireClientAccess } from "./_shared";
 
@@ -64,6 +66,9 @@ export async function createDynamicAgentSpecAction(
     active: input.active,
     version: 1,
     allowedClientIds: input.allowedClientIds ?? [],
+    // Explicit boolean, never the wire value's truthiness — a saved spec is
+    // never ambiguous about whether de-duplication is on.
+    dedupeAgainstHistory: input.dedupeAgainstHistory === true,
     inputSchema: [],
     steps: [],
     createdAt: now,
@@ -91,7 +96,7 @@ export interface DynamicAgentSpecPatch {
 export async function updateDynamicAgentSpecAction(
   id: string,
   patch: DynamicAgentSpecPatch,
-): Promise<{ ok: boolean; error?: string; version?: number }> {
+): Promise<{ ok: boolean; error?: string; version?: number; warning?: string }> {
   const user = await requireAdmin();
   const existing = await getDynamicAgentSpec(id);
   if (!existing) return { ok: false, error: "Agent not found." };
@@ -111,6 +116,7 @@ export async function updateDynamicAgentSpecAction(
     update.creditsCost = patch.general.creditsCost;
     update.active = patch.general.active;
     update.allowedClientIds = patch.general.allowedClientIds ?? [];
+    update.dedupeAgainstHistory = patch.general.dedupeAgainstHistory === true;
   }
 
   if (patch.inputSchema) {
@@ -125,6 +131,20 @@ export async function updateDynamicAgentSpecAction(
     update.steps = result.steps;
   }
 
+  // Non-blocking: a dangling {{inputs.KEY}}/{{outputs.STEP_ID}} reference does
+  // not fail the save (that would break every spec written before this check
+  // existed) — it surfaces as a warning the admin can act on or ignore. Only
+  // checked when this save actually touches the input schema or the pipeline;
+  // a general-settings-only save has nothing new to warn about.
+  let warning: string | undefined;
+  if (patch.inputSchema || patch.steps) {
+    const messages = checkDanglingReferences(
+      update.inputSchema ?? existing.inputSchema,
+      update.steps ?? existing.steps,
+    );
+    if (messages.length > 0) warning = messages.join(" ");
+  }
+
   const nextVersion = existing.version + 1;
   await updateDynamicAgentSpec(id, {
     ...update,
@@ -134,7 +154,7 @@ export async function updateDynamicAgentSpecAction(
   });
   revalidatePath("/admin/agents/builder");
   revalidatePath(`/admin/agents/builder/${id}`);
-  return { ok: true, version: nextVersion };
+  return { ok: true, version: nextVersion, ...(warning ? { warning } : {}) };
 }
 
 export async function deleteDynamicAgentSpecAction(id: string): Promise<{ ok: boolean; error?: string }> {
@@ -162,6 +182,44 @@ export async function setDynamicAgentSpecActiveAction(
   });
   revalidatePath("/admin/agents/builder");
   return { ok: true };
+}
+
+/* ─────────────────────── free-text spec generation ─────────────────────── */
+
+/**
+ * Generates a complete draft input schema + step pipeline from an admin's
+ * free-text description of the agent they want. Internal AUTHORING tool, not
+ * a client-facing run: `requireAdmin()` gates it like the rest of the Studio,
+ * and it never charges credits (see generateDynamicAgentDraft's own doc
+ * comment for why).
+ *
+ * // DECISION: the result is NEVER written to Firestore here. This action
+ * only returns a draft for the editor to hold as unsaved state; the admin
+ * saves it through the normal updateDynamicAgentSpecAction path (or discards
+ * it) exactly like a hand-built pipeline. A generation that auto-saved could
+ * silently overwrite a working agent with no way back — there is no spec
+ * history beyond `version`.
+ */
+export async function generateDynamicAgentDraftAction(input: {
+  description: string;
+  specId?: string;
+}): Promise<
+  { ok: true; inputSchema: DynamicAgentInputDef[]; steps: DynamicAgentStepDef[]; notes: string[] } | { ok: false; error: string }
+> {
+  await requireAdmin();
+
+  const description = input.description.trim();
+  if (!description) return { ok: false, error: "Describe the agent you want before generating." };
+  if (description.length > MAX_GENERATION_DESCRIPTION_CHARS) {
+    return {
+      ok: false,
+      error: `Description is too long (max ${MAX_GENERATION_DESCRIPTION_CHARS.toLocaleString()} characters).`,
+    };
+  }
+
+  const result = await generateDynamicAgentDraft(description);
+  if (!result.ok) return { ok: false, error: result.error };
+  return { ok: true, inputSchema: result.inputSchema, steps: result.steps, notes: result.notes };
 }
 
 /* ─────────────────────── client-facing run action ─────────────────────── */

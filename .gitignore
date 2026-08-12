@@ -56,3 +56,6 @@ ops-inbox/
 
 # dynamic-agent
 _dynamic-agent-studio-delivery/*
+
+# scratch full-repo tarballs (contain .env secrets — never commit)
+_scratch_tar/
