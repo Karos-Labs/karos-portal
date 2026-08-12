@@ -1,6 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
+import type { DynamicAgentStepDef } from "@/lib/types";
 
 vi.mock("server-only", () => ({}));
+
+/**
+ * The generator is AI-only by contract (dynamic-agent-generation.ts's own
+ * top DECISION comment — it never emits a `code` step), so every step this
+ * module returns has `prompt`/`allowNetwork`/`allowClientData`. The return
+ * type is still the full `DynamicAgentStepDef` union, though, so these tests
+ * narrow explicitly rather than asserting the field exists.
+ */
+type AiStepDef = Extract<DynamicAgentStepDef, { type: "ai" }>;
+function asAiStep(step: DynamicAgentStepDef): AiStepDef {
+  if (step.type !== "ai") throw new Error(`Expected an AI step, got "${step.type}" — the generator is AI-only.`);
+  return step;
+}
 
 /**
  * LIVE end-to-end coverage for generateDynamicAgentDraft, hitting the real
@@ -63,8 +77,7 @@ describe.skipIf(!LIVE)("generateDynamicAgentDraft — live end-to-end (real Anth
     expect(result.steps.length).toBeGreaterThan(1);
     // Every AI-only invariant the editor relies on.
     for (const step of result.steps) {
-      expect(step.type).toBe("ai");
-      expect(step.prompt.length).toBeGreaterThan(0);
+      expect(asAiStep(step).prompt.length).toBeGreaterThan(0);
     }
   }, 180_000);
 
@@ -88,8 +101,8 @@ describe.skipIf(!LIVE)("generateDynamicAgentDraft — live end-to-end (real Anth
     const result = await generateDynamicAgentDraft(description);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
-    expect(result.steps.some((s) => s.allowNetwork)).toBe(true);
-    expect(result.steps.every((s) => !s.allowClientData)).toBe(true);
+    expect(result.steps.some((s) => asAiStep(s).allowNetwork)).toBe(true);
+    expect(result.steps.every((s) => !asAiStep(s).allowClientData)).toBe(true);
   }, 60_000);
 
   it("grants allowClientData ONLY to a step that needs the client's stored documents, and grants nothing else", async () => {
@@ -99,8 +112,8 @@ describe.skipIf(!LIVE)("generateDynamicAgentDraft — live end-to-end (real Anth
     const result = await generateDynamicAgentDraft(description);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
-    expect(result.steps.some((s) => s.allowClientData)).toBe(true);
-    expect(result.steps.every((s) => !s.allowNetwork)).toBe(true);
+    expect(result.steps.some((s) => asAiStep(s).allowClientData)).toBe(true);
+    expect(result.steps.every((s) => !asAiStep(s).allowNetwork)).toBe(true);
     // The prompt's own rule: an agent that asks the client nothing gets an empty inputSchema.
     expect(result.inputSchema.length).toBe(0);
   }, 60_000);
@@ -112,6 +125,6 @@ describe.skipIf(!LIVE)("generateDynamicAgentDraft — live end-to-end (real Anth
     const result = await generateDynamicAgentDraft(description);
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
-    expect(result.steps.every((s) => !s.allowNetwork && !s.allowClientData)).toBe(true);
+    expect(result.steps.every((s) => !asAiStep(s).allowNetwork && !asAiStep(s).allowClientData)).toBe(true);
   }, 60_000);
 });

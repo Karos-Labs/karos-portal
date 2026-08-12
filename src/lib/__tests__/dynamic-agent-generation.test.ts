@@ -36,6 +36,18 @@ import { generateObject, NoObjectGeneratedError } from "ai";
 type GeneratedObjectResult = Awaited<ReturnType<typeof generateObject>>;
 const objectResult = (object: unknown): GeneratedObjectResult => ({ object }) as unknown as GeneratedObjectResult;
 
+/**
+ * `NoObjectGeneratedError` is imported from "ai" for its TYPE (so
+ * `dynamic-agent-generation.ts`'s `NoObjectGeneratedError.isInstance` check
+ * lines up), but at runtime the module is mocked above with a lenient
+ * constructor — the real AI SDK's constructor requires `response`/`usage`,
+ * which this test has no reason to fabricate. This helper is the one place
+ * that bridges the two: it constructs through the mocked class but with a
+ * signature matching what's actually mocked, not the real SDK's.
+ */
+const truncationError = (finishReason: string) =>
+  new (NoObjectGeneratedError as unknown as new (opts: { finishReason: string }) => Error)({ finishReason });
+
 function validDraft(overrides: Partial<{ inputSchema: unknown[]; steps: unknown[]; notes: string[] }> = {}) {
   return {
     inputSchema: [{ key: "company_name", type: "text", label: "Company name", required: true }],
@@ -160,7 +172,7 @@ describe("generateDynamicAgentDraft", () => {
 
   it("retries once when the first generation is truncated (finishReason: length), and succeeds when the retry finishes cleanly", async () => {
     vi.mocked(generateObject)
-      .mockRejectedValueOnce(new NoObjectGeneratedError({ finishReason: "length" }))
+      .mockRejectedValueOnce(truncationError("length"))
       .mockResolvedValueOnce(objectResult(validDraft()));
     const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
     const result = await generateDynamicAgentDraft("A very detailed agent description.");
@@ -173,7 +185,7 @@ describe("generateDynamicAgentDraft", () => {
   });
 
   it("reports a clear error — not the generic fallback — when generation is truncated twice in a row", async () => {
-    vi.mocked(generateObject).mockRejectedValue(new NoObjectGeneratedError({ finishReason: "length" }));
+    vi.mocked(generateObject).mockRejectedValue(truncationError("length"));
     const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
     const result = await generateDynamicAgentDraft("A very detailed agent description.");
     expect(result.ok).toBe(false);
@@ -183,7 +195,7 @@ describe("generateDynamicAgentDraft", () => {
 
   it("still recovers via retry when the first attempt is truncated and the SECOND is merely invalid (not truncated again)", async () => {
     vi.mocked(generateObject)
-      .mockRejectedValueOnce(new NoObjectGeneratedError({ finishReason: "length" }))
+      .mockRejectedValueOnce(truncationError("length"))
       .mockResolvedValueOnce(
         objectResult(validDraft({ steps: [{ id: "a", label: "A", model: "sonnet", prompt: "{{inputs.missing}}", allowNetwork: false, allowClientData: false }] })),
       );
