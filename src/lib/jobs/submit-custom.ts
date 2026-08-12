@@ -923,7 +923,12 @@ export async function submitDynamicAgentJob(
     agentName: spec.name,
     title: jobTitleForClient(spec.name, client.name),
     status: "queued",
-    input: { agent: spec.name },
+    // `inputs` (JSON-safe: strings/arrays/file refs, never raw bytes) is
+    // persisted so a from-scratch resume fallback (resumeFailedJobAction,
+    // when agent-service has nothing left to resume from) can reconstruct
+    // this run's original client answers — mirrors the hardcoded path's own
+    // input.prompt for the same reason.
+    input: { agent: spec.name, inputs: JSON.stringify(resolvedInputs.inputs) },
     assetIds: [],
     events: [{ at: now, level: "info", message: "Submitted to agent service" }],
     createdBy: user.uid,

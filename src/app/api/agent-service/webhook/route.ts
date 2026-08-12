@@ -126,6 +126,7 @@ import {
   syncTaskForJobOutcome,
 } from "@/lib/task-sync";
 import { notifyJobFailure } from "@/lib/job-alerts";
+import { buildStepBreakdown } from "@/lib/jobs/step-breakdown";
 import { logger } from "@/services/logger";
 
 // The re-host phase is budgeted to end well inside this (rehost-budget.ts),
@@ -213,7 +214,7 @@ const dynamicRunSchema = z.object({
   hasPartialOutput: z.boolean().optional(),
 });
 
-const webhookPayloadSchema = z.object({
+const jobCompletedPayloadSchema = z.object({
   event: z.literal("job.completed"),
   job_id: z.string().min(1),
   status: z.enum(["done", "failed", "cancelled", "dead_letter"]),
@@ -245,6 +246,28 @@ const webhookPayloadSchema = z.object({
   attempt: z.number().default(0),
   dynamic_run: dynamicRunSchema.optional(),
 });
+
+/**
+ * Dynamic Agent Studio only: a best-effort, fire-and-forget live-progress
+ * ping (see agent-service/src/api/internal.ts's /step-progress route). Unlike
+ * job.completed, losing one of these is harmless — the next ping, or the
+ * eventual job.completed, resyncs the Portal — so this branch (below) never
+ * touches credits, artifacts, or refunds.
+ */
+const jobStepProgressPayloadSchema = z.object({
+  event: z.literal("job.step_progress"),
+  job_id: z.string().min(1),
+  status: z.literal("running"),
+  client_id: z.string().min(1),
+  current_step_id: z.string().optional(),
+  current_step_name: z.string().optional(),
+  completed_step_ids: z.array(z.string()).default([]),
+});
+
+const webhookPayloadSchema = z.discriminatedUnion("event", [
+  jobCompletedPayloadSchema,
+  jobStepProgressPayloadSchema,
+]);
 
 function extension(name: string): string {
   const i = name.lastIndexOf(".");
@@ -328,23 +351,26 @@ export async function POST(req: NextRequest) {
   }
   const payload = parsed.data;
 
+  // `metadata`/`task_type` only exist on the job.completed variant — a
+  // job.step_progress ping never carries either, by design, so this fallback
+  // (and the log line below it) is a no-op for that event rather than a
+  // lookup it could ever satisfy.
+  const platformJobId = payload.event === "job.completed" ? payload.metadata?.platform_job_id : undefined;
+
   let job = await getJobByExternalServiceId(payload.job_id);
-  if (!job) {
+  if (!job && platformJobId && payload.event === "job.completed") {
     // Submission race: the action may not have persisted external.serviceJobId
     // yet — fall back to the platform job id echoed through metadata.
-    const platformJobId = payload.metadata?.platform_job_id;
-    if (platformJobId) {
-      const candidate = await getJob(platformJobId);
-      if (
-        candidate &&
-        candidate.clientId === payload.client_id &&
-        (!candidate.external || candidate.external.serviceJobId === payload.job_id)
-      ) {
-        job = {
-          ...candidate,
-          external: candidate.external ?? { serviceJobId: payload.job_id, taskType: payload.task_type },
-        };
-      }
+    const candidate = await getJob(platformJobId);
+    if (
+      candidate &&
+      candidate.clientId === payload.client_id &&
+      (!candidate.external || candidate.external.serviceJobId === payload.job_id)
+    ) {
+      job = {
+        ...candidate,
+        external: candidate.external ?? { serviceJobId: payload.job_id, taskType: payload.task_type },
+      };
     }
   }
   if (!job || !job.external) {
@@ -375,13 +401,32 @@ export async function POST(req: NextRequest) {
     // attempt costs one or two Firestore reads and no re-host.
     console.error(
       `[webhook] no platform job matched service job ${payload.job_id} ` +
-        `(client ${payload.client_id}, platform_job_id ${payload.metadata?.platform_job_id ?? "absent"}). ` +
+        `(client ${payload.client_id}, platform_job_id ${platformJobId ?? "absent"}). ` +
         `Delivery failed for retry.`,
     );
     return NextResponse.json(
       { error: "No matching platform job — retry delivery" },
       { status: 503 },
     );
+  }
+
+  // Dynamic Agent Studio only: a live-progress ping, handled and returned
+  // entirely separately from job.completed below. Guarded by the SAME
+  // in-flight check the advisory pre-filter uses just below (a stale/
+  // out-of-order ping against an already-terminal job is a no-op), but with
+  // none of job.completed's claim/refund/artifact/asset machinery — this
+  // event never carries usage, credits, or artifacts.
+  if (payload.event === "job.step_progress") {
+    if (!isJobInFlight(job.status)) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
+    }
+    await updateJob(job.id, {
+      currentStepId: payload.current_step_id ?? null,
+      currentStepName: payload.current_step_name ?? null,
+      completedStepIds: payload.completed_step_ids,
+      updatedAt: Date.now(),
+    });
+    return NextResponse.json({ ok: true });
   }
 
   // Advisory pre-filter — an OPTIMISATION, not a second gate. The claim below
@@ -1911,8 +1956,14 @@ export async function POST(req: NextRequest) {
       error: payload.status === "done" ? null : (payload.error ?? payload.status),
       // Dynamic Agent Studio only: the structured per-step report, stored so the
       // job page can render a step bar and an "incomplete" banner from data
-      // rather than parsing them back out of `error`.
-      ...(payload.dynamic_run ? { dynamicRun: payload.dynamic_run } : {}),
+      // rather than parsing them back out of `error`. `stepBreakdown` is the
+      // same data reshaped into the Job Control Room's cost/token vocabulary
+      // (see step-breakdown.ts). Nothing is "current" once the run is terminal.
+      ...(payload.dynamic_run
+        ? { dynamicRun: payload.dynamic_run, stepBreakdown: buildStepBreakdown(payload.dynamic_run) }
+        : {}),
+      currentStepId: null,
+      currentStepName: null,
       external: {
         ...job.external,
         ...(payload.agents_repo_sha ? { agentsRepoSha: payload.agents_repo_sha } : {}),
@@ -2054,6 +2105,45 @@ export async function POST(req: NextRequest) {
         status: usageStatus,
         errorMessage: payload.error ?? payload.status,
       });
+    }
+    // Dynamic Agent Studio only: one usageLogs row PER STEP that spent tokens,
+    // tagged with stepId — in addition to the per-model run-level rows above,
+    // not instead of them. This is what makes "which step costs the most"
+    // answerable ACROSS jobs (the run-level rows above only answer it within
+    // one job's own sidebar); Job.stepBreakdown is the within-this-job answer.
+    //
+    // GATED ON status === "done", deliberately narrower than the run-level
+    // loop above: a resumed run's dynamic_run.steps carries every EARLIER
+    // attempt's completed steps too (resumeFrom prepends their original
+    // trace entries so step-level cost history survives a resume — see
+    // step-runner.ts), and THIS SAME webhook route already processed a
+    // job.completed delivery for that earlier failed attempt, logging those
+    // steps once already. Logging them again here on every later delivery
+    // would double (or triple...) count their tokens/cost in usageLogs and
+    // analyticsSnapshot every time. Restricting to the run's one eventual
+    // "done" delivery means every step is logged exactly once, ever — at the
+    // cost of a step's usageLogs row not existing at all if the job never
+    // succeeds (dead-lettered after exhausting attempts). That step's cost is
+    // still visible on Job.stepBreakdown (written regardless of status,
+    // right above), and the run-level rows above are unaffected either way.
+    for (const step of payload.status === "done" ? payload.dynamic_run?.steps ?? [] : []) {
+      const models = Object.entries(step.usage?.models ?? {});
+      if (models.length === 0) continue;
+      for (const [modelName, usage] of models) {
+        logger.logUsage({
+          clientId,
+          agentId: "agent-service",
+          agentName,
+          modelName,
+          operation: "managed_job_step",
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          jobId,
+          stepId: step.stepId,
+          status: step.status === "done" ? "success" : "failed",
+          ...(step.error ? { errorMessage: step.error } : {}),
+        });
+      }
     }
   });
 

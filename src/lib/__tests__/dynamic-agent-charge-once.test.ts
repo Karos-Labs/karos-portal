@@ -126,30 +126,43 @@ describe("one submission bills once, at the snapshot's price", () => {
   });
 });
 
-describe("DECISION 3: a retry never re-charges — source 1, the Portal's retry action", () => {
-  const RETRY_FILE = join(__dirname, "..", "actions", "external-job-actions.ts");
-  const retrySource = stripComments(readFileSync(RETRY_FILE, "utf8"));
+describe("DECISION 3: a retry never re-charges — source 1, the Portal's retry/resume actions", () => {
+  const ACTIONS_FILE = join(__dirname, "..", "actions", "external-job-actions.ts");
+  const actionsSource = stripComments(readFileSync(ACTIONS_FILE, "utf8"));
 
   it("retryJobAction refuses a run that has no customAgentId, which is every dynamic run", () => {
     // A dynamic job is written with `dynamicAgentSpecId` and no
     // `customAgentId` (see submitDynamicAgentJob's createJob call), so this
     // guard is what keeps the retry path — and therefore a second charge —
     // unreachable for dynamic runs.
-    expect(retrySource).toMatch(/if \(!job\.customAgentId\) return \{ error:/);
+    expect(actionsSource).toMatch(/if \(!job\.customAgentId\) return \{ error:/);
   });
 
-  it("retryJobAction does not know about dynamic specs at all", () => {
-    // If someone teaches it to retry a dynamic run, this fails and they have to
-    // decide, deliberately, what happens to the charge.
-    expect(retrySource).not.toMatch(/dynamicAgentSpecId/);
-    expect(retrySource).not.toMatch(/submitDynamicAgentJob/);
+  /**
+   * DELIBERATE DECISION (dynamic-agent step resume): `resumeFailedJobAction`
+   * was added to this same file specifically to resume a failed Dynamic
+   * Agent Studio run — the canary above (originally "retryJobAction does not
+   * know about dynamic specs at all") is what forced this update. The
+   * invariant it must preserve is the same one retryJobAction relies on: it
+   * only ever reuses the existing (already-charged) jobId via
+   * retryAgentServiceJob, or falls back to submitDynamicAgentJob's own single
+   * charge-on-creation call — never a second chargeClientCredits call from
+   * this file.
+   */
+  it("resumeFailedJobAction — the dynamic-run counterpart — refuses a run that has no dynamicAgentSpecId, which is every customAgent run", () => {
+    expect(actionsSource).toMatch(/if \(!job\.dynamicAgentSpecId\) return \{ error:/);
   });
 
-  it("the job page only offers the retry button for a customAgent run", () => {
+  it("neither retryJobAction nor resumeFailedJobAction calls chargeClientCredits — any charge can only come from submitCustomAgentJob/submitDynamicAgentJob's own single charge-on-creation call, never duplicated here", () => {
+    expect(actionsSource).not.toMatch(/chargeClientCredits\s*\(/);
+  });
+
+  it("the job page offers the retry button for a customAgent run and the resume button for a dynamicAgentSpec run", () => {
     const page = stripComments(
       readFileSync(join(__dirname, "..", "..", "app", "(app)", "jobs", "[id]", "page.tsx"), "utf8"),
     );
     expect(page).toMatch(/job\.customAgentId && <JobRetryButton/);
+    expect(page).toMatch(/job\.dynamicAgentSpecId && <JobResumeButton/);
   });
 });
 

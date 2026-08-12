@@ -279,13 +279,20 @@ export const MCP_TOOLS: McpTool[] = [
       const job = await getJob(id);
       if (!job) throw new ToolError("Job not found.");
       await requireClient(actor, job.clientId);
+      // `input.inputs` (Dynamic Agent Studio jobs only) is a JSON blob of the
+      // client's raw form answers, persisted solely so a failed run can be
+      // resumed from scratch — it is not meant for display, and dumping it
+      // into a tool result would bloat an agent's context with a client's
+      // full intake submission. The job-detail UI excludes the same key for
+      // the same reason (src/app/(app)/jobs/[id]/page.tsx).
+      const { inputs: _inputs, ...redactedInput } = job.input;
       return textResult({
         id: job.id,
         clientId: job.clientId,
         title: job.title,
         status: job.status,
         agentName: job.agentName,
-        input: job.input,
+        input: redactedInput,
         events: job.events,
         error: job.error ?? null,
         assetIds: job.assetIds,

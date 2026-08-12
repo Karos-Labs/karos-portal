@@ -1,12 +1,13 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DynamicRunReport, JobSpec, JobUsage, RunnerCompleteBody } from "../../../src/types.js";
 import type { DynamicAgentJobPayload } from "../../../src/dynamic-types.js";
 import { prepareWorkspace } from "../workspace.js";
 import { collectArtifacts, guessContentType, snapshotOutputs } from "../artifacts.js";
 import { ServiceCallback } from "../callback.js";
+import { restoreCheckpoint, saveCheckpoint } from "../checkpoint.js";
 import { TranscriptStreamer } from "../transcript.js";
-import { runDynamicSteps, type DynamicStepTraceEntry } from "./step-runner.js";
+import { runDynamicSteps, type DynamicRunResumeState, type DynamicStepTraceEntry } from "./step-runner.js";
 
 /**
  * Everything main.ts needs to route a `specSnapshot` brief through the
@@ -36,15 +37,31 @@ export async function runDynamicJob(
     ...(spec.clientSlug ? { clientSlug: spec.clientSlug } : {}),
   });
 
-  const before = await snapshotOutputs(workspace.repoDir, workspace.clientSlug);
-
-  const isoDate = new Date().toISOString().slice(0, 10);
-  const runFolder = `${isoDate}-job-${spec.jobId.slice(0, 8)}`;
+  // Deterministic across attempts (no date component): a resumed attempt
+  // needs to find a PRIOR attempt's internal/trace.json + partial-outputs.json
+  // at this exact path after restoreCheckpoint downloads them, without
+  // knowing which calendar day the first attempt ran on.
+  const runFolder = `job-${spec.jobId.slice(0, 8)}`;
   const outDir = path.join(workspace.repoDir, "clients", workspace.clientSlug, "outputs", "dynamic-agent", runFolder);
   const clientDir = path.join(outDir, "client");
   const internalDir = path.join(outDir, "internal");
   await mkdir(clientDir, { recursive: true });
   await mkdir(internalDir, { recursive: true });
+
+  const resumeFrom =
+    spec.attempt > 1 ? await recoverResumeState(callback, workspace.repoDir, internalDir) : undefined;
+
+  // Snapshotted AFTER restoring the prior attempt's checkpoint (above), not
+  // before: `collectArtifacts` below treats anything absent from `before` as
+  // a NEW deliverable of THIS attempt. A restored-but-not-rewritten file —
+  // most importantly the prior attempt's own INCOMPLETE.md — must count as
+  // already-there, or a resume that goes on to SUCCEED would re-upload that
+  // stale "this run did not finish" file as a fresh client-facing artifact
+  // alongside the real output. Restored files that DO get rewritten this
+  // attempt (trace.json, partial-outputs.json, a re-failed INCOMPLETE.md)
+  // still show up as changed — collectArtifacts diffs by size/mtime, and a
+  // rewrite always changes at least the mtime.
+  const before = await snapshotOutputs(workspace.repoDir, workspace.clientSlug);
 
   // SAME transcript streamer the hardcoded path uses (main.ts), so
   // `/v1/jobs/:id/transcript` and the Portal's transcript viewer work
@@ -60,13 +77,17 @@ export async function runDynamicJob(
       // brief by main.ts; the step runner prefers it over the snapshot's own
       // step.model. See resolveStepModel() in step-runner.ts.
       stepModels: payload.stepModels,
+      ...(resumeFrom ? { resumeFrom } : {}),
       onProgress: (event) => {
         // Live progress goes into the SAME transcript stream the SDK's own
         // messages flow through, so a run can be watched while it is still
         // going. The DURABLE copy the Portal renders its step bar from is the
         // structured `dynamicRun` report returned below — see DynamicRunReport
-        // in src/types.ts.
+        // in src/types.ts. `reportStepProgress` is the ADDITIONAL live channel
+        // that reaches the Portal's Job doc (job.step_progress webhook) before
+        // the run finishes — best-effort, see callback.ts's doc comment.
         transcript.append({ type: "dynamic_step_progress", ...event });
+        void callback.reportStepProgress({ stepId: event.stepId, stepName: event.label, status: event.status });
       },
       onTranscriptMessage: (message) => transcript.append(message),
     });
@@ -93,6 +114,14 @@ export async function runDynamicJob(
         `# This run did not finish\n\nFailed at step \`${result.failedStepId ?? "unknown"}\`: ${result.error ?? "unknown error"}\n\nPartial output from earlier steps is in this run's internal trace.\n`,
       );
       await uploadArtifacts(callback, workspace.repoDir, workspace.clientSlug, before);
+      // Preserve this attempt's whole output tree — including the
+      // trace.json/partial-outputs.json just written above — so a retried
+      // attempt can resume from `result.failedStepId` instead of re-running
+      // every step (and re-billing every step's tokens) from scratch. Mirrors
+      // what main.ts's hardcoded path already does in its own finally block.
+      await saveCheckpoint(callback, workspace.repoDir, workspace.clientSlug, spec.attempt).catch((err) => {
+        console.warn("dynamic-agent checkpoint save failed:", err instanceof Error ? err.message : err);
+      });
       return {
         outcome: "failed",
         error: `failed at step "${result.failedStepId ?? "unknown"}": ${result.error ?? "unknown error"}`,
@@ -117,6 +146,35 @@ export async function runDynamicJob(
     };
   } finally {
     await transcript.close();
+  }
+}
+
+/**
+ * Best-effort recovery of a prior attempt's checkpoint. Any failure — nothing
+ * checkpointed yet, a missing/corrupt file — just means this attempt starts
+ * fresh, exactly like attempt 1; it is never a hard error.
+ */
+async function recoverResumeState(
+  callback: ServiceCallback,
+  repoDir: string,
+  internalDir: string,
+): Promise<DynamicRunResumeState | undefined> {
+  try {
+    await restoreCheckpoint(callback, repoDir);
+    const [traceRaw, outputsRaw] = await Promise.all([
+      readFile(path.join(internalDir, "trace.json"), "utf8"),
+      readFile(path.join(internalDir, "partial-outputs.json"), "utf8"),
+    ]);
+    const priorTrace = (JSON.parse(traceRaw) as DynamicStepTraceEntry[]).filter((entry) => entry.status === "done");
+    const outputs = JSON.parse(outputsRaw) as Record<string, unknown>;
+    return {
+      completedStepIds: new Set(priorTrace.map((entry) => entry.stepId)),
+      outputs,
+      priorTrace,
+    };
+  } catch (err) {
+    console.warn("dynamic-agent checkpoint restore skipped:", err instanceof Error ? err.message : err);
+    return undefined;
   }
 }
 

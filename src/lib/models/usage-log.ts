@@ -32,6 +32,8 @@ export interface UsageLog {
   webSearchCount?: number;
   estimatedCostUsd: number;
   jobId?: string | null;
+  /** Dynamic Agent Studio only — which step of `jobId`'s run this row's tokens belong to. Absent on every non-step-level row (the run-level rows this codebase has always written, and every other operation). */
+  stepId?: string;
   durationMs?: number;
   timestamp: number;
   /**

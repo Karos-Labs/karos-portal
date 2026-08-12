@@ -1,6 +1,15 @@
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import type { DynamicAgentRunReport, DynamicAgentRunStep, JobStatus } from "@/lib/types";
+import { fmtCost, fmtTokens } from "@/lib/data-analytics";
+import type { DynamicAgentRunReport, DynamicAgentRunStep, JobStatus, JobStepBreakdownEntry } from "@/lib/types";
+
+function formatCostLine(step: { inputTokens?: number; outputTokens?: number; costUsd?: number }): string | null {
+  const parts: string[] = [];
+  if (step.inputTokens !== undefined) parts.push(`${fmtTokens(step.inputTokens)} in`);
+  if (step.outputTokens !== undefined) parts.push(`${fmtTokens(step.outputTokens)} out`);
+  if (step.costUsd !== undefined) parts.push(fmtCost(step.costUsd));
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
 
 type StepTone = "done" | "active" | "failed" | "skipped" | "idle";
 
@@ -54,28 +63,65 @@ const TYPE_ICON: Record<DynamicAgentRunStep["type"], string> = {
  * the caller has it) lets the bar also show the steps that were never reached,
  * which is the difference between "the run is 2 steps long" and "the run was 5
  * steps long and died at 2".
+ *
+ * `currentStepId`/`completedStepIds` (from the job.step_progress webhook, see
+ * Job.currentStepId/Job.completedStepIds) are the AUTHORITATIVE live-progress
+ * signal when present — updated WHILE the run is still in flight, before any
+ * `report` exists at all. `report` is therefore optional: the caller mounts
+ * this component the moment a run starts (see jobs/[id]/page.tsx, gated on
+ * `job.dynamicAgentSpecId` rather than `job.dynamicRun`), and only gets a
+ * `report` once the run reaches a terminal state and the completion webhook
+ * writes `Job.dynamicRun`. Absent `currentStepId` (a legacy job mid-flight
+ * before this shipped, or once the run is terminal and the completion
+ * webhook has cleared it) falls back to the old heuristic (first
+ * not-yet-executed row of an in-flight job).
  */
 export function DynamicAgentStepProgress({
   report,
   jobStatus,
   plannedSteps,
+  currentStepId,
+  completedStepIds,
+  stepBreakdown,
 }: {
-  report: DynamicAgentRunReport;
+  report?: DynamicAgentRunReport;
   jobStatus: JobStatus;
   plannedSteps?: Array<{ id: string; label: string; type: DynamicAgentRunStep["type"] }>;
+  currentStepId?: string | null;
+  completedStepIds?: string[];
+  stepBreakdown?: JobStepBreakdownEntry[];
 }) {
-  const executed = new Map(report.steps.map((s) => [s.stepId, s]));
-  const rows: Array<{ key: string; label: string; type: DynamicAgentRunStep["type"]; tone: StepTone; model?: string; durationMs?: number }> =
-    (plannedSteps && plannedSteps.length > 0
+  const steps = report?.steps ?? [];
+  const executed = new Map(steps.map((s) => [s.stepId, s]));
+  const liveDone = new Set(completedStepIds ?? []);
+  const cost = new Map((stepBreakdown ?? []).map((s) => [s.stepId, s]));
+  const rows: Array<{
+    key: string;
+    label: string;
+    type: DynamicAgentRunStep["type"];
+    tone: StepTone;
+    model?: string;
+    durationMs?: number;
+    costLine?: string;
+  }> = (plannedSteps && plannedSteps.length > 0
       ? plannedSteps
-      : report.steps.map((s) => ({ id: s.stepId, label: s.label, type: s.type }))
+      : steps.map((s) => ({ id: s.stepId, label: s.label, type: s.type }))
     ).map((planned) => {
       const run = executed.get(planned.id);
       let tone: StepTone;
+      // A step can be "done" two ways: the terminal report says so, or —
+      // while the run is still in flight and no report exists yet — the
+      // live job.step_progress channel already marked it complete. Without
+      // this second check, every step that finished before the run's FIRST
+      // webhook delivery would show as "idle"/"not started" for the whole
+      // remainder of the run, which is exactly backwards.
       if (run?.status === "failed") tone = "failed";
-      else if (run?.status === "done") tone = "done";
-      else if (jobStatus === "running" || jobStatus === "queued") tone = "active";
-      else tone = report.failedStepId ? "skipped" : "idle";
+      else if (run?.status === "done" || liveDone.has(planned.id)) tone = "done";
+      else if (currentStepId ? currentStepId === planned.id : jobStatus === "running" || jobStatus === "queued") {
+        tone = "active";
+      } else tone = report?.failedStepId ? "skipped" : "idle";
+      const costEntry = cost.get(planned.id);
+      const costLine = costEntry ? formatCostLine(costEntry) : null;
       return {
         key: planned.id,
         label: planned.label || planned.id,
@@ -83,22 +129,26 @@ export function DynamicAgentStepProgress({
         tone,
         ...(run?.model ? { model: run.model } : {}),
         ...(run?.durationMs !== undefined ? { durationMs: run.durationMs } : {}),
+        ...(costLine ? { costLine } : {}),
       };
     });
 
   // Only the FIRST not-yet-run step of an in-flight job is "Working"; the ones
   // after it are still waiting, and saying three steps are working at once
-  // would be a lie the client can see.
-  const firstPending = rows.findIndex((r) => r.tone === "active");
-  if (firstPending !== -1) {
-    rows.forEach((row, i) => {
-      if (row.tone === "active" && i !== firstPending) row.tone = "idle";
-    });
+  // would be a lie the client can see. Skipped entirely once `currentStepId`
+  // names the active row directly — at most one row can ever match it.
+  if (!currentStepId) {
+    const firstPending = rows.findIndex((r) => r.tone === "active");
+    if (firstPending !== -1) {
+      rows.forEach((row, i) => {
+        if (row.tone === "active" && i !== firstPending) row.tone = "idle";
+      });
+    }
   }
 
   return (
     <div className="mb-6 space-y-2 rounded-[var(--radius)] border border-border bg-surface p-4">
-      {report.failedStepId && report.hasPartialOutput ? (
+      {report?.failedStepId && report?.hasPartialOutput ? (
         <p className="mb-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
           This run stopped partway through. The work the earlier steps finished is included below and is
           incomplete.
@@ -141,6 +191,7 @@ export function DynamicAgentStepProgress({
                 This step hit a problem. Your Karos team is on it.
               </p>
             )}
+            {row.costLine && <p className="mt-0.5 truncate text-xs text-muted-2">{row.costLine}</p>}
           </div>
         </div>
       ))}

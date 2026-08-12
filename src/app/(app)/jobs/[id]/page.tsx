@@ -14,6 +14,8 @@ import { DynamicAgentStepProgress } from "@/components/dynamic-agent-step-progre
 import { getDynamicAgentSpec } from "@/lib/data";
 import { JobDeleteButton } from "@/components/job-delete";
 import { JobRetryButton } from "@/components/job-retry";
+import { JobResumeButton } from "@/components/job-resume";
+import { JobStepCostTable } from "@/components/job-step-cost-table";
 import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
 import { fetchJobTranscript } from "@/lib/agent-service/transcript";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
@@ -43,12 +45,14 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const connectedPlatforms = (await pushablePlatformsByClient(realAssets))?.[job.clientId];
 
   // The spec snapshot's step list, so the bar can also show steps a failed run
-  // never reached. Best-effort: a spec deleted since the run still renders the
-  // executed steps, just without the not-reached tail.
+  // never reached — and, for an IN-FLIGHT run, every step at all (there is no
+  // `dynamicRun` yet to fall back to). Best-effort: a spec deleted since the
+  // run still renders whatever the live/executed data has, just without the
+  // not-reached tail.
   let plannedSteps: Array<{ id: string; label: string; type: "ai" | "code" }> | undefined;
-  if (job.dynamicRun && job.dynamicAgentSpecId) {
+  if (job.dynamicAgentSpecId) {
     const spec = await getDynamicAgentSpec(job.dynamicAgentSpecId);
-    if (spec && spec.version === job.dynamicRun.specVersion) {
+    if (spec && (!job.dynamicRun || spec.version === job.dynamicRun.specVersion)) {
       plannedSteps = [...spec.steps]
         .sort((a, b) => a.order - b.order)
         .map((step) => ({ id: step.id, label: step.label, type: step.type }));
@@ -73,6 +77,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         <div className="flex items-center gap-3">
           {job.external && inProgress && <ManagedJobCancelButton jobId={job.id} />}
           {job.status === "failed" && job.customAgentId && <JobRetryButton jobId={job.id} />}
+          {job.status === "failed" && job.dynamicAgentSpecId && <JobResumeButton jobId={job.id} />}
           {user.role === "KAROS_ADMIN" && <JobDeleteButton jobId={job.id} />}
           <JobStatusBadge status={job.status} />
         </div>
@@ -81,12 +86,19 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
       {/* A Dynamic Agent Studio run gets a per-step bar from its own recorded
           trace instead of the fixed 3-phase managed strip — one row per step of
           the spec's pipeline, the same shape CampaignStepProgress uses for a
-          campaign's tasks. */}
-      {job.dynamicRun ? (
+          campaign's tasks. Mounted as soon as the job IS a dynamic-agent run
+          (job.dynamicAgentSpecId), not only once it has a completed report
+          (job.dynamicRun) — otherwise the live currentStepId/completedStepIds
+          channel below has nothing to render into until the run is already
+          over, which defeats the point of a live indicator. */}
+      {job.dynamicRun || job.dynamicAgentSpecId ? (
         <DynamicAgentStepProgress
-          report={job.dynamicRun}
           jobStatus={job.status}
+          currentStepId={job.currentStepId}
+          {...(job.dynamicRun ? { report: job.dynamicRun } : {})}
+          {...(job.completedStepIds ? { completedStepIds: job.completedStepIds } : {})}
           {...(plannedSteps ? { plannedSteps } : {})}
+          {...(job.stepBreakdown ? { stepBreakdown: job.stepBreakdown } : {})}
         />
       ) : (
         job.external && <ManagedJobProgress status={job.status} />
@@ -201,13 +213,17 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
             </Card>
           )}
 
+          {job.stepBreakdown && job.stepBreakdown.length > 0 && (
+            <JobStepCostTable steps={job.stepBreakdown} />
+          )}
+
           <Card>
             <CardTitle className="mb-3">Inputs</CardTitle>
-            {Object.entries(job.input).filter(([, v]) => v).length === 0 ? (
+            {Object.entries(job.input).filter(([k, v]) => v && k !== "inputs").length === 0 ? (
               <p className="text-sm text-muted-2">No inputs.</p>
             ) : (
               <dl className="space-y-2">
-                {Object.entries(job.input).filter(([, v]) => v).map(([k, v]) => (
+                {Object.entries(job.input).filter(([k, v]) => v && k !== "inputs").map(([k, v]) => (
                   <div key={k}>
                     <dt className="text-xs text-muted-2">{k}</dt>
                     <dd className="text-sm">{v}</dd>

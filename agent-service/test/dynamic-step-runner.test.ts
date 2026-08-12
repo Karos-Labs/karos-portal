@@ -209,6 +209,67 @@ describe("runDynamicSteps", () => {
   });
 });
 
+describe("resumeFrom — skipping steps a prior attempt already completed", () => {
+  it("skips a completed step entirely (no SDK call, no onProgress ping) and seeds context from its prior output", async () => {
+    queryMock.mockImplementation(() => sdkStream([assistantText("b-out"), resultOk()]));
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const events: unknown[] = [];
+    const steps = [aiStep({ id: "a", order: 0, prompt: "uses nothing" }), aiStep({ id: "b", order: 1, prompt: "uses {{outputs.a}}" })];
+    const result = await runDynamicSteps(baseSpec(steps), {}, {
+      onProgress: (e) => events.push(e),
+      resumeFrom: {
+        completedStepIds: new Set(["a"]),
+        outputs: { a: "a-out-from-prior-attempt" },
+        priorTrace: [{ stepId: "a", type: "ai", label: "Step 1", status: "done", durationMs: 111 }],
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(queryMock).toHaveBeenCalledTimes(1); // only step b ran
+    expect(events.every((e) => (e as { stepId: string }).stepId !== "a")).toBe(true);
+    expect(result.trace[0]).toMatchObject({ stepId: "a", status: "done", durationMs: 111 });
+    expect(result.outputs).toEqual({ a: "a-out-from-prior-attempt", b: "b-out" });
+  });
+
+  it("does not double-count a resumed step's usage into this attempt's returned total, but keeps it in the trace", async () => {
+    queryMock.mockImplementation(() =>
+      sdkStream([assistantText("b-out"), resultOk({ model: "claude-sonnet", inputTokens: 20, outputTokens: 8, totalCostUsd: 0.05 })]),
+    );
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const steps = [aiStep({ id: "a", order: 0 }), aiStep({ id: "b", order: 1 })];
+    const result = await runDynamicSteps(baseSpec(steps), {}, {
+      resumeFrom: {
+        completedStepIds: new Set(["a"]),
+        outputs: { a: "a-out" },
+        priorTrace: [{
+          stepId: "a",
+          type: "ai",
+          label: "Step 1",
+          status: "done",
+          durationMs: 50,
+          usage: { totalCostUsd: 0.01, models: { "claude-haiku": { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUsd: 0.01 } } },
+        }],
+      },
+    });
+    expect(result.ok).toBe(true);
+    // Only THIS attempt's own spend (step b) — step a's prior-attempt usage is
+    // agent-service's job to merge cross-attempt (mergeJobUsage at /complete),
+    // not this function's.
+    expect(result.usage?.totalCostUsd).toBeCloseTo(0.05);
+    expect(result.usage?.models["claude-haiku"]).toBeUndefined();
+    // But the full step history — including step a's original cost — survives
+    // in the trace for stepBreakdown/analytics purposes.
+    expect(result.trace[0]?.usage?.totalCostUsd).toBe(0.01);
+  });
+
+  it("runs every step fresh when resumeFrom is absent (unchanged default behavior)", async () => {
+    queryMock.mockImplementation(() => sdkStream([assistantText("out"), resultOk()]));
+    const { runDynamicSteps } = await import("../runner/src/dynamic/step-runner.js");
+    const result = await runDynamicSteps(baseSpec([aiStep({ id: "a" }), aiStep({ id: "b", order: 1 })]), {});
+    expect(result.ok).toBe(true);
+    expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("resolveStepModel — reusing the brief's step_models", () => {
   it("prefers the brief's step_models entry over the snapshot's own step.model", async () => {
     const { resolveStepModel } = await import("../runner/src/dynamic/step-runner.js");

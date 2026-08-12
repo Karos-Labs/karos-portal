@@ -722,6 +722,39 @@ export interface DynamicAgentRunReport {
 }
 
 /**
+ * The per-step cost/token analytics row for one executed step of a Dynamic
+ * Agent Studio run — a Portal-native reshape of `DynamicAgentRunReport.steps`
+ * (adding `costUsd` and renaming for the Job Control Room's own vocabulary),
+ * stored redundantly on `Job.stepBreakdown` for a simpler UI/query surface,
+ * exactly like `Job.external.inputTokens/outputTokens` is already a derived
+ * flattening of the same `dynamicRun` data.
+ *
+ * Dynamic Agent Studio jobs only. The hardcoded custom-agent / managed-product
+ * path is a single long SDK session with no step boundaries to attribute cost
+ * to — `stepBreakdown` is simply absent there and on every legacy job; readers
+ * must fall back to `Job.external`'s run-level totals when it's missing.
+ *
+ * `status: "skipped"` is reserved for future use — today's webhook ingestion
+ * only ever emits `"completed"` or `"failed"` (a resumed run's reused steps
+ * are reported `"completed"`, carrying their ORIGINAL cost, not `"skipped"`,
+ * since they really did execute and really did cost real tokens).
+ */
+export interface JobStepBreakdownEntry {
+  stepId: string;
+  stepName: string;
+  stepType: "ai" | "code";
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Cost is tracked in USD, never in credits — this codebase never derives
+   * credits from tokens anywhere (credits are a flat per-run price; see
+   * `Job.external.totalCostUsd`, the run-level equivalent of this field). */
+  costUsd?: number;
+  modelUsed?: string;
+  durationMs: number;
+  status: "completed" | "failed" | "skipped";
+}
+
+/**
  * A recurring weekly cadence, local to `timezone`. Days are 0=Sun..6=Sat.
  * e.g. { daysOfWeek: [2,3,4], hour: 9, minute: 0, timezone: "America/Sao_Paulo" }
  * fires Tue/Wed/Thu at 09:00 BRT.
@@ -853,6 +886,17 @@ export interface Job {
   dynamicAgentSpecId?: string;
   /** Dynamic Agent Studio runs only — the persisted per-step report. */
   dynamicRun?: DynamicAgentRunReport;
+  /** Dynamic Agent Studio runs only — per-step cost/token analytics, derived from dynamicRun at webhook completion. Absent on every other job type and on legacy jobs. */
+  stepBreakdown?: JobStepBreakdownEntry[];
+  /**
+   * Dynamic Agent Studio runs only — LIVE progress, updated by the
+   * job.step_progress webhook as the runner reports each step transition.
+   * Cleared (set to null) once the job reaches a terminal status; absent on
+   * every other job type.
+   */
+  currentStepId?: string | null;
+  currentStepName?: string | null;
+  completedStepIds?: string[];
   /** See JobRunType. Absent on jobs written before run-type tracking existed. */
   runType?: JobRunType;
   /** The client-agent umbrella (clientAgents doc id) this run belongs to, when one exists. */
