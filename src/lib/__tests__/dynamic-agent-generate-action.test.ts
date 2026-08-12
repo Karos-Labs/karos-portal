@@ -25,9 +25,10 @@ vi.mock("@/lib/dynamic-agent-generation", () => ({
 import { getCurrentUser } from "@/lib/auth";
 import * as data from "@/lib/data";
 import { generateDynamicAgentDraft } from "@/lib/dynamic-agent-generation";
+import type { AppUser } from "@/lib/types";
 
-const ADMIN = { uid: "u-admin", email: "admin@karoslabs.test", name: "Admin", role: "KAROS_ADMIN", disabled: false, createdAt: 0 } as any;
-const EMPLOYEE = { uid: "u-emp", email: "emp@karoslabs.test", name: "Employee", role: "KAROS_EMPLOYEE", disabled: false, createdAt: 0 } as any;
+const ADMIN = { uid: "u-admin", email: "admin@karoslabs.test", name: "Admin", role: "KAROS_ADMIN", disabled: false, createdAt: 0 } as AppUser;
+const EMPLOYEE = { uid: "u-emp", email: "emp@karoslabs.test", name: "Employee", role: "KAROS_EMPLOYEE", disabled: false, createdAt: 0 } as AppUser;
 
 beforeEach(() => {
   vi.clearAllMocks();

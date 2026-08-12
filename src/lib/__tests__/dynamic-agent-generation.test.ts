@@ -15,6 +15,10 @@ vi.mock("@/services/logger", () => ({ logger: { logError: vi.fn(), logUsage: vi.
 
 import { generateObject } from "ai";
 
+/** Only `object` is ever read off the result (dynamic-agent-generation.ts), so a mock only needs that field. */
+type GeneratedObjectResult = Awaited<ReturnType<typeof generateObject>>;
+const objectResult = (object: unknown): GeneratedObjectResult => ({ object }) as unknown as GeneratedObjectResult;
+
 function validDraft(overrides: Partial<{ inputSchema: unknown[]; steps: unknown[]; notes: string[] }> = {}) {
   return {
     inputSchema: [{ key: "company_name", type: "text", label: "Company name", required: true }],
@@ -30,7 +34,7 @@ beforeEach(() => {
 
 describe("generateDynamicAgentDraft", () => {
   it("returns a valid draft on the first attempt, with order assigned positionally and type: 'ai' on every step", async () => {
-    vi.mocked(generateObject).mockResolvedValue({ object: validDraft() } as any);
+    vi.mocked(generateObject).mockResolvedValue(objectResult(validDraft()));
     const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
     const result = await generateDynamicAgentDraft("An agent that writes about a company.");
     expect(result.ok).toBe(true);
@@ -45,10 +49,10 @@ describe("generateDynamicAgentDraft", () => {
 
   it("retries exactly once when the first draft fails validation, and succeeds if the retry is clean", async () => {
     vi.mocked(generateObject)
-      .mockResolvedValueOnce({
-        object: validDraft({ steps: [{ id: "a", label: "A", model: "sonnet", prompt: "{{inputs.missing}}", allowNetwork: false, allowClientData: false }] }),
-      } as any)
-      .mockResolvedValueOnce({ object: validDraft() } as any);
+      .mockResolvedValueOnce(
+        objectResult(validDraft({ steps: [{ id: "a", label: "A", model: "sonnet", prompt: "{{inputs.missing}}", allowNetwork: false, allowClientData: false }] })),
+      )
+      .mockResolvedValueOnce(objectResult(validDraft()));
     const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
     const result = await generateDynamicAgentDraft("An agent.");
     expect(result.ok).toBe(true);
@@ -60,7 +64,7 @@ describe("generateDynamicAgentDraft", () => {
 
   it("returns an error — never an invalid draft — when the draft is invalid twice in a row", async () => {
     const bad = validDraft({ steps: [{ id: "a", label: "A", model: "sonnet", prompt: "{{inputs.missing}}", allowNetwork: false, allowClientData: false }] });
-    vi.mocked(generateObject).mockResolvedValue({ object: bad } as any);
+    vi.mocked(generateObject).mockResolvedValue(objectResult(bad));
     const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
     const result = await generateDynamicAgentDraft("An agent.");
     expect(result.ok).toBe(false);
@@ -70,35 +74,39 @@ describe("generateDynamicAgentDraft", () => {
   });
 
   it("catches a dangling {{outputs.STEP}} reference to a step that does not exist, exactly like a hand-built spec would fail", async () => {
-    vi.mocked(generateObject).mockResolvedValue({
-      object: validDraft({ steps: [{ id: "a", label: "A", model: "sonnet", prompt: "{{outputs.nonexistent}}", allowNetwork: false, allowClientData: false }] }),
-    } as any);
+    vi.mocked(generateObject).mockResolvedValue(
+      objectResult(validDraft({ steps: [{ id: "a", label: "A", model: "sonnet", prompt: "{{outputs.nonexistent}}", allowNetwork: false, allowClientData: false }] })),
+    );
     const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
     const result = await generateDynamicAgentDraft("An agent.");
     expect(result.ok).toBe(false);
   });
 
   it("catches a dangling {{outputs.STEP}} reference to a LATER step", async () => {
-    vi.mocked(generateObject).mockResolvedValue({
-      object: validDraft({
-        steps: [
-          { id: "a", label: "A", model: "sonnet", prompt: "{{outputs.b}}", allowNetwork: false, allowClientData: false },
-          { id: "b", label: "B", model: "sonnet", prompt: "go", allowNetwork: false, allowClientData: false },
-        ],
-      }),
-    } as any);
+    vi.mocked(generateObject).mockResolvedValue(
+      objectResult(
+        validDraft({
+          steps: [
+            { id: "a", label: "A", model: "sonnet", prompt: "{{outputs.b}}", allowNetwork: false, allowClientData: false },
+            { id: "b", label: "B", model: "sonnet", prompt: "go", allowNetwork: false, allowClientData: false },
+          ],
+        }),
+      ),
+    );
     const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
     const result = await generateDynamicAgentDraft("An agent.");
     expect(result.ok).toBe(false);
   });
 
   it("produces a working zero-input draft when the model returns an empty inputSchema", async () => {
-    vi.mocked(generateObject).mockResolvedValue({
-      object: validDraft({
-        inputSchema: [],
-        steps: [{ id: "write", label: "Write", model: "sonnet", prompt: "Write from the client's own documents.", allowNetwork: false, allowClientData: true }],
-      }),
-    } as any);
+    vi.mocked(generateObject).mockResolvedValue(
+      objectResult(
+        validDraft({
+          inputSchema: [],
+          steps: [{ id: "write", label: "Write", model: "sonnet", prompt: "Write from the client's own documents.", allowNetwork: false, allowClientData: true }],
+        }),
+      ),
+    );
     const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
     const result = await generateDynamicAgentDraft("An agent that works entirely from the client's own documents.");
     expect(result.ok).toBe(true);

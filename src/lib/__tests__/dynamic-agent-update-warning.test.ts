@@ -17,9 +17,9 @@ vi.mock("@/lib/dynamic-agent-generation", () => ({ generateDynamicAgentDraft: vi
 
 import { getCurrentUser } from "@/lib/auth";
 import * as data from "@/lib/data";
-import type { DynamicAgentSpec } from "@/lib/types";
+import type { AppUser, DynamicAgentSpec } from "@/lib/types";
 
-const ADMIN = { uid: "u-admin", email: "admin@karoslabs.test", name: "Admin", role: "KAROS_ADMIN", disabled: false, createdAt: 0 } as any;
+const ADMIN = { uid: "u-admin", email: "admin@karoslabs.test", name: "Admin", role: "KAROS_ADMIN", disabled: false, createdAt: 0 } as AppUser;
 
 function spec(patch: Partial<DynamicAgentSpec> = {}): DynamicAgentSpec {
   return {
@@ -44,7 +44,7 @@ function spec(patch: Partial<DynamicAgentSpec> = {}): DynamicAgentSpec {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getCurrentUser).mockResolvedValue(ADMIN);
-  vi.mocked(data.updateDynamicAgentSpec).mockResolvedValue(undefined as any);
+  vi.mocked(data.updateDynamicAgentSpec).mockResolvedValue(undefined);
 });
 
 describe("updateDynamicAgentSpecAction — dangling-reference warning", () => {
