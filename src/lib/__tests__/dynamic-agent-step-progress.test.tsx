@@ -98,6 +98,54 @@ describe("one row per step, toned by its own recorded status", () => {
   });
 });
 
+/**
+ * A run's FIRST webhook delivery only arrives at completion — while a job is
+ * still in flight there is no `report` at all, only the live
+ * currentStepId/completedStepIds channel (job.step_progress). The bar must
+ * still render something useful from that alone, or the entire point of
+ * shipping a live channel is lost (this was a real bug: report=undefined,
+ * and completed steps not yet echoed by a report showed as "idle").
+ */
+describe("live progress with no report yet (job still in flight)", () => {
+  function paintLive(opts: {
+    currentStepId?: string | null;
+    completedStepIds?: string[];
+    plannedSteps: Array<{ id: string; label: string; type: "ai" | "code" }>;
+  }): string {
+    return renderToStaticMarkup(
+      <DynamicAgentStepProgress
+        jobStatus="running"
+        plannedSteps={opts.plannedSteps}
+        {...(opts.currentStepId !== undefined ? { currentStepId: opts.currentStepId } : {})}
+        {...(opts.completedStepIds ? { completedStepIds: opts.completedStepIds } : {})}
+      />,
+    );
+  }
+
+  const steps: Array<{ id: string; label: string; type: "ai" | "code" }> = [
+    { id: "a", label: "Research", type: "ai" },
+    { id: "b", label: "Draft", type: "ai" },
+    { id: "c", label: "Polish", type: "ai" },
+  ];
+
+  it("marks a step named by currentStepId as Working, with no report at all", () => {
+    const html = paintLive({ currentStepId: "b", completedStepIds: ["a"], plannedSteps: steps });
+    expect(html.match(/Working/g)).toHaveLength(1);
+  });
+
+  it("marks every step in completedStepIds as Completed even though no report has landed yet", () => {
+    const html = paintLive({ currentStepId: "c", completedStepIds: ["a", "b"], plannedSteps: steps });
+    expect(html.match(/Completed/g)).toHaveLength(2);
+    expect(html.match(/Working/g)).toHaveLength(1);
+  });
+
+  it("without currentStepId, falls back to the legacy heuristic — only the first step shows Working, nothing shows Completed", () => {
+    const html = paintLive({ plannedSteps: steps });
+    expect(html).not.toContain("Completed");
+    expect(html.match(/Working/g)).toHaveLength(1);
+  });
+});
+
 describe("what a client is allowed to read", () => {
   it("never prints the stored raw engine error, only the fixed sentence", () => {
     const html = paint(

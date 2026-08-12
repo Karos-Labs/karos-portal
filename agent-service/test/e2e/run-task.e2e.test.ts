@@ -110,8 +110,10 @@ describe.skipIf(!RUN)("agent-service e2e", () => {
 
       const webhook = received.get(job_id);
       expect(webhook, "signed webhook must have been delivered and verified").toBeDefined();
-      expect(webhook?.status).toBe("done");
-      expect(webhook?.artifacts.length).toBeGreaterThan(0);
+      expect(webhook?.event).toBe("job.completed");
+      if (webhook?.event !== "job.completed") throw new Error("unreachable — asserted above");
+      expect(webhook.status).toBe("done");
+      expect(webhook.artifacts.length).toBeGreaterThan(0);
     },
     JOB_TIMEOUT_MS + 60_000,
   );

@@ -88,6 +88,30 @@ export class ServiceCallback {
     }
   }
 
+  /**
+   * Dynamic Agent Studio only: a best-effort live-progress ping. Unlike
+   * `complete()`, there is no retry — a dropped ping just means the Portal's
+   * step indicator is one beat stale until the next ping or the job's own
+   * completion callback, which is an acceptable loss for a cosmetic
+   * indicator and not worth the complexity of a durable retry.
+   */
+  async reportStepProgress(event: {
+    stepId: string;
+    stepName?: string;
+    status: "running" | "done" | "failed";
+  }): Promise<void> {
+    try {
+      await fetch(this.url("step-progress"), {
+        method: "POST",
+        headers: await this.headers({ "content-type": "application/json" }),
+        body: JSON.stringify({ step_id: event.stepId, step_name: event.stepName, status: event.status }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      // Best-effort — see doc comment above.
+    }
+  }
+
   async fetchCheckpointManifest(): Promise<CheckpointManifest> {
     const response = await fetch(this.url("checkpoint"), {
       method: "GET",

@@ -6,7 +6,7 @@ import { JobsStore } from "../state/jobs-store.js";
 import { isTerminal } from "../state/machine.js";
 import type { JobEvent } from "../state/machine.js";
 import { getTaskTypeConfig } from "../task-types.js";
-import type { JobRecord, JobSpec, WebhookPayload } from "../types.js";
+import type { JobCompletedWebhookPayload, JobRecord, JobSpec, WebhookPayload } from "../types.js";
 import { DockerExecutor } from "../exec/docker-executor.js";
 import { CloudRunJobExecutor } from "../exec/cloudrun-executor.js";
 import type { ExecutionHandle, JobExecutor } from "../exec/executor.js";
@@ -101,15 +101,15 @@ export function buildRunnerEnv(config: ServiceConfig, spec?: JobSpec): Record<st
   return env;
 }
 
-export function buildWebhookPayload(record: JobRecord): WebhookPayload {
-  const payload: WebhookPayload = {
+export function buildWebhookPayload(record: JobRecord): JobCompletedWebhookPayload {
+  const payload: JobCompletedWebhookPayload = {
     event: "job.completed",
     job_id: record.id,
-    status: record.status as WebhookPayload["status"],
+    status: record.status as JobCompletedWebhookPayload["status"],
     task_type: record.request.task_type,
     client_id: record.request.client_id,
     artifacts: record.artifacts.map((a) => {
-      const entry: WebhookPayload["artifacts"][number] = {
+      const entry: JobCompletedWebhookPayload["artifacts"][number] = {
         name: a.name,
         path: a.path,
         bytes: a.bytes,

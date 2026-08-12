@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { getJob, updateJob } from "@/lib/data";
 import { AgentServiceNotResumable, cancelAgentServiceJob, retryAgentServiceJob } from "@/lib/agent-service/client";
-import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { submitCustomAgentJob, submitDynamicAgentJob } from "@/lib/jobs/submit-custom";
+import type { DynamicAgentInputValue } from "@/lib/types";
 import { reconcileOneJob } from "@/lib/agent-service/reconcile-job";
 import type { Job, JobStatus } from "@/lib/types";
 import { requireClientAccess, requireStaff } from "./_shared";
@@ -127,6 +128,87 @@ export async function retryJobAction(jobId: string): Promise<{ jobId?: string; e
     runType: job.runType,
     clientAgentId: job.clientAgentId,
     templateKey: job.templateKey,
+  });
+  if (result.jobId) {
+    revalidatePath(`/clients/${job.clientId}/agents`);
+    revalidatePath("/jobs");
+  }
+  return result;
+}
+
+/**
+ * Resume a failed Dynamic Agent Studio run (staff only) — the dynamic-agent
+ * counterpart of retryJobAction above, for the job type retryJobAction's own
+ * `job.customAgentId` gate excludes.
+ *
+ * Tries to RESUME the same underlying agent-service job first — now that the
+ * dynamic-agent runner participates in the same file-checkpoint mechanism the
+ * hardcoded path already used (agent-service/runner/src/dynamic/run-dynamic-job.ts),
+ * a resumed run skips every step that already succeeded instead of re-running
+ * (and re-spending real Anthropic tokens on) the whole pipeline from step one.
+ * `AgentServiceNotResumable` falls back to a fresh `submitDynamicAgentJob`,
+ * reconstructed from `job.input.inputs` (the client's original answers,
+ * persisted at submission for exactly this fallback — see submit-custom.ts) —
+ * mirroring retryJobAction's own from-scratch fallback for the hardcoded path.
+ *
+ * No new charge call anywhere in this action: the resume path reuses the
+ * existing (already-charged) jobId, and the fallback goes through
+ * submitDynamicAgentJob's own single charge-on-creation path — the same
+ * "never re-charged on retry" invariant retryJobAction already relies on.
+ */
+export async function resumeFailedJobAction(jobId: string): Promise<{ jobId?: string; error?: string }> {
+  const user = await requireStaff();
+  const job = await getJob(jobId);
+  if (!job) return { error: NOT_FOUND };
+  if (job.status !== "failed") return { error: "Only a failed run can be resumed." };
+  if (!job.dynamicAgentSpecId) return { error: "This run has no resumable agent reference." };
+
+  if (job.external?.serviceJobId) {
+    try {
+      await retryAgentServiceJob(job.external.serviceJobId);
+      await updateJob(jobId, {
+        status: "queued",
+        error: null,
+        events: [
+          ...job.events,
+          { at: Date.now(), level: "info", message: "Resumed — continuing from the failed step" },
+        ],
+        updatedAt: Date.now(),
+      });
+      revalidatePath(`/clients/${job.clientId}/agents`);
+      revalidatePath("/jobs");
+      revalidatePath(`/jobs/${jobId}`);
+      return { jobId };
+    } catch (e) {
+      if (!(e instanceof AgentServiceNotResumable)) {
+        return { error: e instanceof Error ? e.message : "Resume failed" };
+      }
+      // Nothing to resume from — fall through to a fresh submission below.
+    }
+  }
+
+  // Absent (not merely empty) `input.inputs` means this job predates the
+  // change that persists it — a genuine "can't reconstruct this run" case,
+  // not "this run had no inputs." Reported explicitly rather than silently
+  // resubmitting `{}`, which would either fail validation with a confusing
+  // "field is required" error the client never touched, or — for a spec with
+  // no required fields — silently produce a garbage deliverable from empty
+  // answers with no error at all.
+  if (!job.input?.inputs) {
+    return { error: "This run predates resumable execution and has no saved inputs to resubmit from." };
+  }
+  let inputs: Record<string, DynamicAgentInputValue>;
+  try {
+    inputs = JSON.parse(job.input.inputs);
+  } catch {
+    return { error: "Original inputs could not be read for this run." };
+  }
+
+  const result = await submitDynamicAgentJob(user, {
+    specId: job.dynamicAgentSpecId,
+    clientId: job.clientId,
+    inputs,
+    runType: job.runType,
   });
   if (result.jobId) {
     revalidatePath(`/clients/${job.clientId}/agents`);

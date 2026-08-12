@@ -6,7 +6,8 @@ import { MAX_ARTIFACT_TOTAL_BYTES, MAX_CHECKPOINT_TOTAL_BYTES, type ServerDeps }
 import { timingSafeStringEqual } from "../webhooks/sign.js";
 import { mergeJobUsage } from "../state/usage.js";
 import { appendCheckpointFile } from "../state/checkpoint.js";
-import type { JobRecord, RunnerCompleteBody } from "../types.js";
+import { deliverWebhook } from "../webhooks/deliver.js";
+import type { JobRecord, JobStepProgressWebhookPayload, RunnerCompleteBody } from "../types.js";
 
 const CHECKPOINT_PREFIX = "_checkpoint/";
 
@@ -167,6 +168,70 @@ export function registerInternalRoutes(app: FastifyInstance, deps: ServerDeps): 
         return reply.send(stream);
       }
       return reply.redirect(file.url);
+    },
+  );
+
+  // Dynamic Agent Studio only: a best-effort live-progress ping, fired once
+  // per step transition. Deliberately NOT the durable BullMQ webhook queue
+  // job.completed uses — losing one of these is harmless (the next ping, or
+  // the eventual completion webhook, resyncs the Portal), so delivery here is
+  // fire-and-forget with no retry.
+  app.post<{
+    Params: { id: string };
+    Body: { step_id: string; step_name?: string; status: "running" | "done" | "failed" };
+  }>(
+    "/internal/jobs/:id/step-progress",
+    {
+      schema: {
+        body: {
+          type: "object",
+          required: ["step_id", "status"],
+          additionalProperties: false,
+          properties: {
+            step_id: { type: "string", maxLength: 200 },
+            step_name: { type: "string", maxLength: 200 },
+            status: { type: "string", enum: ["running", "done", "failed"] },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const record = await authorizeRunner(deps, request, reply);
+      if (!record) return;
+      const { step_id: stepId, step_name: stepName, status } = request.body;
+      const updated = await deps.store.update(record.id, (r) => {
+        const alreadyCompleted = r.completedStepIds ?? [];
+        const completedStepIds =
+          status === "done" && !alreadyCompleted.includes(stepId) ? [...alreadyCompleted, stepId] : alreadyCompleted;
+        // A failed step is not "currently running" — leaving currentStepId
+        // pinned to it would show that step as active in the Portal's live
+        // indicator for the whole retry-backoff window (or forever, on a
+        // permanent failure) until the eventual completion webhook clears
+        // it. Clear it here instead (omitted, not set to undefined —
+        // exactOptionalPropertyTypes forbids the latter): no row is
+        // authoritatively "active" until the next "running" ping (this
+        // step's retry, or the next step after a permanent failure moves
+        // the job on).
+        const { currentStepId: _prevId, currentStepName: _prevName, ...rest } = r;
+        const nextStepName = stepName ?? r.currentStepName;
+        return {
+          ...rest,
+          completedStepIds,
+          ...(status !== "failed" ? { currentStepId: stepId } : {}),
+          ...(status !== "failed" && nextStepName ? { currentStepName: nextStepName } : {}),
+        };
+      });
+      const payload: JobStepProgressWebhookPayload = {
+        event: "job.step_progress",
+        job_id: record.id,
+        status: "running",
+        client_id: record.request.client_id,
+        completed_step_ids: updated.completedStepIds ?? [],
+        ...(updated.currentStepId ? { current_step_id: updated.currentStepId } : {}),
+        ...(updated.currentStepName ? { current_step_name: updated.currentStepName } : {}),
+      };
+      void deliverWebhook(deps.config.webhookSecret, record.request.callback_url, payload);
+      return reply.code(204).send();
     },
   );
 

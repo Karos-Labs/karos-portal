@@ -114,6 +114,10 @@ export interface JobRecord {
   artifactBytes?: number;
   /** most recent attempt's saved output-tree state; see JobCheckpoint */
   checkpoint?: JobCheckpoint;
+  /** Dynamic Agent Studio runs only — live step-progress, updated by /internal/jobs/:id/step-progress as the runner reports each step. Cleared implicitly once the job reaches a terminal status. */
+  currentStepId?: string;
+  currentStepName?: string;
+  completedStepIds?: string[];
 }
 
 export type RunnerOutcome = "done" | "failed" | "cancelled";
@@ -191,7 +195,7 @@ export interface DynamicRunReport {
   };
 }
 
-export interface WebhookPayload {
+export interface JobCompletedWebhookPayload {
   event: "job.completed";
   job_id: string;
   status: Extract<JobStatus, "done" | "failed" | "cancelled" | "dead_letter">;
@@ -216,6 +220,24 @@ export interface WebhookPayload {
   /** Dynamic Agent Studio runs only — the structured per-step report. */
   dynamic_run?: DynamicRunReport;
 }
+
+/**
+ * Best-effort, fire-and-forget live progress ping — Dynamic Agent Studio runs
+ * only. Unlike JobCompletedWebhookPayload, a dropped or out-of-order delivery
+ * of this event is harmless: the next ping, or the eventual job.completed,
+ * resyncs the Portal. Never carries usage/credits/artifacts.
+ */
+export interface JobStepProgressWebhookPayload {
+  event: "job.step_progress";
+  job_id: string;
+  status: "running";
+  client_id: string;
+  current_step_id?: string;
+  current_step_name?: string;
+  completed_step_ids: string[];
+}
+
+export type WebhookPayload = JobCompletedWebhookPayload | JobStepProgressWebhookPayload;
 
 /** Everything the runner needs; serialized into the job container's environment. */
 export interface JobSpec {

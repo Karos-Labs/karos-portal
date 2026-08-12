@@ -103,6 +103,17 @@ export function deliverableTitle(args: { noun: string; body?: string | null }): 
 }
 
 /**
+ * True when the stored title was written by the ingestion titler
+ * (asset-titles.ts) rather than defaulted to the agent's name. Surfaces that
+ * compose a display name from content (draftsDisplayTitle below) step aside
+ * for it: the generated title read the WHOLE deliverable and named its topic,
+ * where the composer can only quote the first post's opening words.
+ */
+export function hasGeneratedTitle(asset: { meta?: Record<string, unknown> | null }): boolean {
+  return asset.meta?.titleGenerated === true;
+}
+
+/**
  * The display name for a WHOLE X or LinkedIn deliverable, or null when the
  * content is not one of those (the caller then keeps the stored title).
  *

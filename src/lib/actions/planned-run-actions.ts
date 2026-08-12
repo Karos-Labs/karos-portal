@@ -499,13 +499,23 @@ export async function setPlannedRunStatusAction(
   // cancelling are always allowed. A deleted agent has nothing left to test, and
   // that schedule cannot fire anyway.
   //
+  // The agent's OWN enabled flag is checked here too, same as create and
+  // configureClientAgentScheduleAction — this was the one gate missing on the
+  // resume path. Without it, pausing then resuming a schedule after staff
+  // disabled its agent silently re-armed `nextRunAt` on a row that reads
+  // "active" but can never fire: submitCustomAgentJob refuses a disabled agent
+  // before a job doc is even created, so the failure never surfaces as
+  // anything a client or staff member would see — not a job, not an error on
+  // the calendar, just a schedule that quietly never produces again.
+  //
   // `client` is re-tested for the compiler's sake, not for the product's: the
   // fence above returns on a missing client, so by here it is always present.
   // The clause used to carry the same meaning as the agent's ("nothing left to
   // test") and no longer does.
   if (status === "active") {
     const agent = await getCustomAgent(run.customAgentId);
-    if (agent && client) {
+    if (!agent || !agent.enabled) return { error: "Agent not found." };
+    if (client) {
       const blocked = await unfireableScheduleReason(client, agent);
       if (blocked) return { error: blocked };
     }

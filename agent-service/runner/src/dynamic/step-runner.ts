@@ -81,7 +81,13 @@ export interface DynamicRunResult {
 
 export interface DynamicStepRunnerDeps {
   /** Per-step progress emission (Phase 7's acceptance) — mirrors the campaign step bar. */
-  onProgress?: (event: { stepId: string; index: number; total: number; status: "running" | "done" | "failed" }) => void;
+  onProgress?: (event: {
+    stepId: string;
+    label: string;
+    index: number;
+    total: number;
+    status: "running" | "done" | "failed";
+  }) => void;
   /**
    * The brief's own `step_models` map (stepId → model alias), threaded through
    * from the job payload. See resolveStepModel below for why this, and not
@@ -127,6 +133,21 @@ export interface DynamicStepRunnerDeps {
    * did not opt into de-duplication.
    */
   outputHistory?: DynamicAgentHistoryItem[];
+  /**
+   * Set only when `spec.attempt > 1` and run-dynamic-job.ts recovered a prior
+   * attempt's checkpoint. Steps named here are skipped outright (no SDK call,
+   * no onProgress ping) — their outputs are seeded into context and their
+   * original trace entries (with the ORIGINAL usage/model/duration, so
+   * step-level cost history survives a resume) are prepended to this
+   * attempt's own trace.
+   */
+  resumeFrom?: DynamicRunResumeState;
+}
+
+export interface DynamicRunResumeState {
+  completedStepIds: Set<string>;
+  outputs: Record<string, unknown>;
+  priorTrace: DynamicStepTraceEntry[];
 }
 
 const RETRY_BACKOFF_MS = 2_000;
@@ -215,8 +236,22 @@ export async function runDynamicSteps(
   const finalAiStepId = [...steps].reverse().find((s) => s.type === "ai")?.id;
   const hasGuardrails = Array.isArray(deps.forbiddenTopics) && deps.forbiddenTopics.length > 0;
 
+  const resumeFrom = deps.resumeFrom;
+  if (resumeFrom) {
+    for (const [stepId, output] of Object.entries(resumeFrom.outputs)) {
+      context = withStepOutput(context, stepId, output);
+    }
+    trace.push(...resumeFrom.priorTrace);
+  }
+
   for (const [index, step] of steps.entries()) {
-    deps.onProgress?.({ stepId: step.id, index, total: steps.length, status: "running" });
+    // Already completed in an earlier attempt (per the restored checkpoint) —
+    // its output is already seeded into context and its trace entry already
+    // pushed above. No SDK call, no progress ping: nothing about this step
+    // changed this attempt.
+    if (resumeFrom?.completedStepIds.has(step.id)) continue;
+
+    deps.onProgress?.({ stepId: step.id, label: step.label, index, total: steps.length, status: "running" });
     const startedAt = Date.now();
 
     const isFinalAiStep = step.type === "ai" && step.id === finalAiStepId;
@@ -246,7 +281,7 @@ export async function runDynamicSteps(
         ...(result.usage ? { usage: result.usage } : {}),
         ...(result.capabilities ? { capabilities: result.capabilities } : {}),
       });
-      deps.onProgress?.({ stepId: step.id, index, total: steps.length, status: "failed" });
+      deps.onProgress?.({ stepId: step.id, label: step.label, index, total: steps.length, status: "failed" });
       return {
         ok: false,
         error: result.error,
@@ -270,7 +305,7 @@ export async function runDynamicSteps(
       ...(result.usage ? { usage: result.usage } : {}),
       ...(result.capabilities ? { capabilities: result.capabilities } : {}),
     });
-    deps.onProgress?.({ stepId: step.id, index, total: steps.length, status: "done" });
+    deps.onProgress?.({ stepId: step.id, label: step.label, index, total: steps.length, status: "done" });
   }
 
   const lastStepId = steps[steps.length - 1]?.id;
