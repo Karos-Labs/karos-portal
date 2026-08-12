@@ -1,7 +1,7 @@
 import { ExecutionsClient, JobsClient } from "@google-cloud/run";
 import type { ServiceConfig } from "../config.js";
 import type { JobSpec } from "../types.js";
-import { encodeJobSpec, type ExecutionHandle, type JobExecutor } from "./executor.js";
+import { buildSpecEnv, type ExecutionHandle, type JobExecutor } from "./executor.js";
 
 /**
  * Runs each agent job as one Cloud Run Job execution: per-job container
@@ -18,7 +18,7 @@ export class CloudRunJobExecutor implements JobExecutor {
     const cloudRun = this.config.cloudRun;
     if (!cloudRun) throw new Error("cloudRun config missing");
     const name = `projects/${cloudRun.project}/locations/${cloudRun.region}/jobs/${cloudRun.job}`;
-    const envList = Object.entries({ ...env, JOB_SPEC_B64: encodeJobSpec(spec) }).map(([key, value]) => ({
+    const envList = Object.entries({ ...env, ...buildSpecEnv(spec) }).map(([key, value]) => ({
       name: key,
       value,
     }));

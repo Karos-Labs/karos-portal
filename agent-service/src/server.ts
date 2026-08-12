@@ -31,15 +31,18 @@ export const MAX_ARTIFACT_TOTAL_BYTES = 500 * 1024 * 1024;
 export const MAX_CHECKPOINT_TOTAL_BYTES = 50 * 1024 * 1024;
 
 /**
- * The whole JobSpec travels to the runner as ONE env var (JOB_SPEC_B64), and
- * Cloud Run caps env overrides at ~32 KiB total. Reject at submit time — a
- * spec over budget would be accepted here and then dead-letter on every start
- * attempt without the runner ever launching. 30 KiB leaves headroom for the
- * worker's other env (proxy vars, API key).
+ * A broad sanity/DoS ceiling on the submitted brief, independent of transport.
+ * This is NOT the Cloud Run env-var budget any more — a spec too big for one
+ * env var (JOB_SPEC_B64) now travels via a fetched reference instead of being
+ * inlined (see exec/executor.ts's buildSpecEnv / INLINE_SPEC_MAX_BYTES), so
+ * rejecting here no longer needs to track that limit. What's left is just
+ * "absurdly large", loosely under the schema's own worst case (40 steps at
+ * the 20,000-char prompt ceiling plus 40 inputSchema items) with headroom,
+ * and well under the server's own 5 MiB body limit.
  */
-export const MAX_JOB_SPEC_B64_BYTES = 30 * 1024;
+export const MAX_JOB_SPEC_TOTAL_BYTES = 2 * 1024 * 1024;
 
-function estimatedSpecB64Bytes(deps: ServerDeps, request: JobRecord["request"]): number {
+function estimatedSpecBytes(deps: ServerDeps, request: JobRecord["request"]): number {
   const worstCase = {
     jobId: "00000000-0000-0000-0000-000000000000",
     taskType: request.task_type,
@@ -82,11 +85,11 @@ export function createJobRecord(deps: ServerDeps, body: unknown): { record: JobR
       return { errors: [`/brief ${err instanceof Error ? err.message : String(err)}`] };
     }
   }
-  const specBytes = estimatedSpecB64Bytes(deps, request);
-  if (specBytes > MAX_JOB_SPEC_B64_BYTES) {
+  const specBytes = estimatedSpecBytes(deps, request);
+  if (specBytes > MAX_JOB_SPEC_TOTAL_BYTES) {
     return {
       errors: [
-        `job spec too large (~${Math.ceil(specBytes / 1024)} KiB encoded; max ${MAX_JOB_SPEC_B64_BYTES / 1024} KiB) — ` +
+        `job spec too large (~${Math.ceil(specBytes / 1024)} KiB; max ${MAX_JOB_SPEC_TOTAL_BYTES / 1024} KiB) — ` +
           "trim the brief (instructions/notes) or attach fewer context files",
       ],
     };

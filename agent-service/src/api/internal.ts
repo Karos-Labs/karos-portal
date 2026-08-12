@@ -7,6 +7,7 @@ import { timingSafeStringEqual } from "../webhooks/sign.js";
 import { mergeJobUsage } from "../state/usage.js";
 import { appendCheckpointFile } from "../state/checkpoint.js";
 import { deliverWebhook } from "../webhooks/deliver.js";
+import { buildJobSpec } from "../queue/worker.js";
 import type { JobRecord, JobStepProgressWebhookPayload, RunnerCompleteBody } from "../types.js";
 
 const CHECKPOINT_PREFIX = "_checkpoint/";
@@ -36,6 +37,18 @@ function sanitizeRelPath(relPath: string): string | null {
 }
 
 export function registerInternalRoutes(app: FastifyInstance, deps: ServerDeps): void {
+  // Fetched only for jobs whose spec was too big to inline as JOB_SPEC_B64
+  // (see exec/executor.ts's buildSpecEnv) — those runners start with a small
+  // JOB_SPEC_REF_B64 pointer and fetch the real spec here instead. Rebuilt
+  // fresh from the stored record rather than cached anywhere; buildJobSpec is
+  // the SAME function the worker uses for the inline path, so both transports
+  // always produce an identical JobSpec.
+  app.get<{ Params: { id: string } }>("/internal/jobs/:id/spec", async (request, reply) => {
+    const record = await authorizeRunner(deps, request, reply);
+    if (!record) return;
+    return reply.send(buildJobSpec(deps.config, record));
+  });
+
   app.post<{ Params: { id: string }; Body: { lines: string } }>(
     "/internal/jobs/:id/transcript",
     {
