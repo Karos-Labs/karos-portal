@@ -66,6 +66,9 @@ import {
   isCarouselSetupV2,
 } from "@/lib/agent-service/carousel-agent-context";
 import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
+import { buildDynamicAgentClientContextFiles } from "@/lib/agent-service/dynamic-agent-context";
+import { buildDynamicAgentHistory } from "@/lib/agent-service/dynamic-agent-history";
+import { hasForbiddenTopics } from "@/lib/dynamic-agent-guardrails";
 import { getClientAgentByKey } from "@/lib/data-client-agents";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
@@ -914,9 +917,34 @@ export async function submitDynamicAgentJob(
     if (step.type === "ai") dynamicStepModels[step.id] = step.model;
   }
 
+  // Per-AI-step capability grants (network / client-data access). Computed
+  // from the FROZEN snapshot, not the live spec, so the capability set is
+  // frozen with everything else the run was created from — an admin editing
+  // the spec mid-run can never widen or narrow what an in-flight job may do.
+  const needsClientData = specSnapshot.steps.some((s) => s.type === "ai" && s.allowClientData === true);
+  const needsNetwork = specSnapshot.steps.some((s) => s.type === "ai" && s.allowNetwork === true);
+  const dynamicContextFiles = needsClientData ? await buildDynamicAgentClientContextFiles(input.clientId) : [];
+
+  // Topic guardrails and output de-duplication (docs/dynamic-agent-guardrails.md).
+  // Both are resolved HERE, at job creation, and travel on the frozen brief —
+  // so a mid-flight edit to the client's topic list or to the agent's opt-in
+  // can no more reach a running job than a mid-flight edit to the spec can.
+  //
+  // Both are also inert by construction: a client with no forbidden topics
+  // produces no `guardrails` field, and an agent without the opt-in never even
+  // reads its history. Neither costs an unconfigured run anything.
+  const forbiddenTopics = hasForbiddenTopics(client.forbiddenTopics) ? client.forbiddenTopics! : [];
+  const wantsDedupe = specSnapshot.dedupeAgainstHistory === true;
+  const outputHistory = wantsDedupe ? await buildDynamicAgentHistory(spec.id, input.clientId) : [];
+
   const now = Date.now();
   const jobId = await createJob({
     clientId: input.clientId,
+    // Recorded so an operator can answer "did this run see client data" or
+    // "could this run reach the network" without reading every step of the
+    // snapshot. Present on every dynamic-agent job going forward; absent on
+    // jobs created before this field existed and on every non-dynamic job.
+    dynamicCapabilities: { anyNetwork: needsNetwork, anyClientData: needsClientData },
     agentId: "agent-service",
     dynamicAgentSpecId: spec.id,
     ...(input.runType ? { runType: input.runType } : {}),
@@ -974,6 +1002,8 @@ export async function submitDynamicAgentJob(
     clientId: input.clientId,
     inputs: resolvedInputs.inputs,
     ...(input.runType ? { runType: input.runType } : {}),
+    ...(forbiddenTopics.length > 0 ? { guardrails: { forbiddenTopics } } : {}),
+    ...(wantsDedupe ? { outputHistory: { items: outputHistory } } : {}),
   };
 
   let submittedServiceJobId: string | undefined;
@@ -999,8 +1029,28 @@ export async function submitDynamicAgentJob(
         // it through AGENT_MODEL_ALIASES and prefers it over the snapshot's own
         // step.model; see resolveStepModel() in the dynamic step runner.
         ...(Object.keys(dynamicStepModels).length > 0 ? { step_models: dynamicStepModels } : {}),
+        // snake_case on the wire, matching the brief's existing spec_version /
+        // step_models convention. custom.json declares both explicitly, since
+        // that schema is additionalProperties: false. Omitted entirely when
+        // inactive, so an unconfigured run's brief is byte-identical to before.
+        ...(forbiddenTopics.length > 0 ? { guardrails: { forbidden_topics: forbiddenTopics } } : {}),
+        ...(wantsDedupe
+          ? {
+              output_history: {
+                items: outputHistory.map((item) => ({
+                  job_id: item.jobId,
+                  created_at: item.createdAt,
+                  excerpt: item.excerpt,
+                })),
+              },
+            }
+          : {}),
       },
       callback_url: `${origin}/api/agent-service/webhook`,
+      // Sent ONLY when at least one step has allowClientData — an agent whose
+      // steps never ask for client data must never receive it, and the
+      // runner scopes delivery further per step (see step-runner.ts).
+      ...(dynamicContextFiles.length > 0 ? { context_files: dynamicContextFiles } : {}),
       metadata: {
         platform_job_id: jobId,
         karos_agent_key: `dynamic:${spec.id}`.slice(0, 120),

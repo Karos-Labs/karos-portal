@@ -18,6 +18,35 @@ import { buildStepAgentDefinitions, sdkEnv } from "./sdk-options.js";
 
 const SELF_TIMEOUT_BUFFER_MS = 45_000;
 
+/** brief.guardrails -> payload.guardrails. Returns {} for anything malformed or empty, so a bad field can never turn into an empty-but-present guardrail record. */
+function normalizeGuardrails(raw: unknown): Pick<DynamicAgentJobPayload, "guardrails"> | Record<string, never> {
+  if (typeof raw !== "object" || raw === null) return {};
+  const topics = (raw as { forbidden_topics?: unknown }).forbidden_topics;
+  if (!Array.isArray(topics)) return {};
+  const forbiddenTopics = topics.filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+  return forbiddenTopics.length > 0 ? { guardrails: { forbiddenTopics } } : {};
+}
+
+/**
+ * brief.output_history -> payload.outputHistory.
+ *
+ * A well-formed but EMPTY items array is preserved, not dropped: presence of
+ * this field is the de-duplication opt-in signal, and an empty list is the
+ * meaningful "first run for this client" state rather than "feature off".
+ */
+function normalizeOutputHistory(raw: unknown): Pick<DynamicAgentJobPayload, "outputHistory"> | Record<string, never> {
+  if (typeof raw !== "object" || raw === null) return {};
+  const items = (raw as { items?: unknown }).items;
+  if (!Array.isArray(items)) return {};
+  const normalized = items.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { job_id: jobId, created_at: createdAt, excerpt } = entry as Record<string, unknown>;
+    if (typeof jobId !== "string" || typeof excerpt !== "string" || !excerpt.trim()) return [];
+    return [{ jobId, createdAt: typeof createdAt === "number" ? createdAt : 0, excerpt }];
+  });
+  return { outputHistory: { items: normalized } };
+}
+
 async function main(): Promise<void> {
   const specB64 = process.env.JOB_SPEC_B64;
   if (!specB64) throw new Error("JOB_SPEC_B64 not set");
@@ -49,6 +78,13 @@ async function main(): Promise<void> {
           ...(spec.brief.step_models
             ? { stepModels: spec.brief.step_models as Record<string, string> }
             : {}),
+          // Topic guardrails and prior-output history travel snake_case on the
+          // brief (matching spec_version / step_models) and are renamed to the
+          // payload's camelCase here — the same one-place rename the fields
+          // above get. Both are absent for an unconfigured run, so the payload
+          // is then identical to what it was before these features existed.
+          ...normalizeGuardrails(spec.brief.guardrails),
+          ...normalizeOutputHistory(spec.brief.output_history),
         },
         callback,
       );

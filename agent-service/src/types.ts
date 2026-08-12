@@ -155,11 +155,44 @@ export interface DynamicRunReport {
     error?: string;
     /** This step's own token/cost usage (AI steps only) — the per-step breakdown behind the run-level `usage` total. */
     usage?: JobUsage;
+    /** AI steps only — the capability grants this step actually ran with. See DynamicStepCapabilities in runner/src/dynamic/step-runner.ts. */
+    capabilities?: {
+      allowNetwork: boolean;
+      allowClientData: boolean;
+      networkHonored: boolean;
+      clientDataHonored: boolean;
+    };
   }>;
   failedStepId?: string;
   failedStepIndex?: number;
   /** True when earlier steps produced output the client can still be shown. */
   hasPartialOutput?: boolean;
+  /**
+   * Topic guardrails as exercised by this run — present only when the client
+   * had forbidden topics at submit time. A violation BLOCKS the run
+   * (`outcome: "failed"`, no asset created, client refunded) — see
+   * docs/dynamic-agent-guardrails.md §2.3 for why this superseded the
+   * original flag-only contract.
+   */
+  guardrail?: {
+    forbiddenTopics: string[];
+    injectedStepIds: string[];
+    verification?: {
+      status: "clean" | "violation" | "error";
+      violatedTopics: string[];
+      evidence?: string;
+      model?: string;
+      durationMs: number;
+    };
+  };
+  /** Output de-duplication verdict. Present only when the spec opted in. */
+  dedupe?: {
+    status: "ok" | "similar" | "no_history";
+    comparedCount: number;
+    maxSimilarity: number;
+    threshold: number;
+    mostSimilarJobId?: string;
+  };
 }
 
 export interface JobCompletedWebhookPayload {

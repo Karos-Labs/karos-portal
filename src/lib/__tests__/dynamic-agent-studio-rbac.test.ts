@@ -35,6 +35,9 @@ const ADMIN_ONLY_ACTIONS = [
   "updateDynamicAgentSpecAction",
   "deleteDynamicAgentSpecAction",
   "setDynamicAgentSpecActiveAction",
+  // Internal authoring tool (free-text → draft spec), admin-only like the
+  // rest of the Studio — never charges credits, never auto-saves.
+  "generateDynamicAgentDraftAction",
 ] as const;
 
 /**

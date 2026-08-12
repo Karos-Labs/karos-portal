@@ -19,6 +19,7 @@ import { clampClientCategoryValue } from "@/lib/utils";
 import { toStoredPace } from "@/lib/daily-pace";
 import { isValidTimeZone } from "@/lib/run-cadence";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
+import { parseForbiddenTopics, validateForbiddenTopics } from "@/lib/dynamic-agent-guardrails";
 import { requireStaff, logGenerationFailure } from "./_shared";
 
 export async function createClientAction(input: {
@@ -222,10 +223,33 @@ export async function updateClientAction(
     /** As typed in the Edit dialog. Blank/unusable ⇒ that lane has no ceiling set. */
     clipsPerDay?: string;
     postsPerDay?: string;
+    /** The forbidden-topics box, one topic per line. See dynamic-agent-guardrails.ts. */
+    forbiddenTopicsText?: string;
   },
 ) {
   await requireStaff();
   const patch: Partial<Client> = { ...input };
+  // Topic guardrails (docs/dynamic-agent-guardrails.md). Parsed here rather
+  // than in the browser for the same reason the pace boxes are: this action
+  // takes a whole Partial<Client>, so the parse has to happen on the write side
+  // to be true of the API and not just of the one form that calls it.
+  //
+  // An empty box stores `[]`, not a dropped key — updateClient merges, so an
+  // absent key would leave the previous list in force and clearing the box
+  // would silently do nothing.
+  if (input.forbiddenTopicsText !== undefined) {
+    const topics = parseForbiddenTopics(input.forbiddenTopicsText);
+    const error = validateForbiddenTopics(topics);
+    if (error) return { ok: false as const, error };
+    patch.forbiddenTopics = topics;
+  } else if (patch.forbiddenTopics !== undefined) {
+    // A caller that sent the array directly is held to the same limits.
+    const topics = parseForbiddenTopics(patch.forbiddenTopics.join("\n"));
+    const error = validateForbiddenTopics(topics);
+    if (error) return { ok: false as const, error };
+    patch.forbiddenTopics = topics;
+  }
+  delete (patch as Partial<Client> & { forbiddenTopicsText?: string }).forbiddenTopicsText;
   if (input.domainsCsv !== undefined) {
     patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
     delete (patch as { domainsCsv?: string }).domainsCsv;
@@ -294,6 +318,7 @@ export async function updateClientAction(
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");
+  return { ok: true as const };
 }
 
 /**

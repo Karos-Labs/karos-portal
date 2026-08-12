@@ -43,6 +43,16 @@ and the rules for each token are documented in `src/app/globals.css`'s own heade
   `src/lib/jobs/submit-custom.ts`'s `submitDynamicAgentJob`. Code steps (sandboxed script
   execution) ship behind `DYNAMIC_CODE_STEPS_ENABLED` (default OFF) pending a full security
   review of the sandbox — AI-only dynamic agents are fully usable without it.
+  Two engine-owned safety features ride on top, both INERT unless configured and both
+  documented in `docs/dynamic-agent-guardrails.md`: **topic guardrails** (a client's
+  `Client.forbiddenTopics`, injected by the runner into every AI step and verified against
+  the finished deliverable by an appended haiku pass — a violation BLOCKS the run (`outcome:
+  "failed"`, no asset created, client refunded automatically, draft preserved in the internal
+  trace for staff review), updated 2026-08, see `docs/dynamic-agent-guardrails.md` §2.3) and
+  **output de-duplication** (opt-in per agent via
+  `DynamicAgentSpec.dedupeAgainstHistory`; prior deliverables are injected into the final
+  AI step and the result is scored against them by a pure trigram-Jaccard measure). Neither
+  lives in `spec.steps`, deliberately — a guardrail an admin can delete is not a guarantee.
 - **Credits** = client-billed AI usage. Pricing + window maths are pure in `src/lib/credits.ts`
   (client-safe); transactional charge/grant/ledger in `src/lib/data.ts` (`clientCredits`,
   `creditLedger` collections). Only `isBillableClientActor()` sessions charge — staff and

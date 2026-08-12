@@ -59,6 +59,15 @@ export interface DynamicAgentGeneralInput {
   active: boolean;
   /** Empty/absent = every client may run this agent. */
   allowedClientIds?: string[];
+  /**
+   * Opt-in output de-duplication (docs/dynamic-agent-guardrails.md). Absent
+   * === false, so a caller written before this field existed still saves an
+   * agent with the feature off — which is the default either way.
+   *
+   * No validation rule of its own: it is a boolean, and the actions coerce it
+   * with `=== true` rather than trusting the wire value's truthiness.
+   */
+  dedupeAgainstHistory?: boolean;
 }
 
 export function validateGeneral(input: DynamicAgentGeneralInput): string | null {
@@ -187,7 +196,22 @@ export function validateAndNormalizeInputSchema(
   return { ok: true, inputSchema: normalizeInputSchema(inputs) };
 }
 
-/** Validates one pipeline step (Phase 5). // DECISION: `dependsOn` must be empty in v1. */
+/**
+ * Validates one pipeline step (Phase 5). // DECISION: `dependsOn` must be empty in v1.
+ *
+ * // DECISION: `allowNetwork: true` + `allowClientData: true` on the SAME step
+ * is legal, not rejected here. That combination is the one that can move
+ * client data off the platform (a step that can both read a client's
+ * documents and reach the network), so a spec-level opt-in gate was
+ * considered — but every dynamic agent is already admin-authored and
+ * admin-only end to end (requireAdmin on every Studio action), so a second
+ * confirmation gate on top of that would be theatre, not a real boundary.
+ * Instead the combination must never be SILENT: step-pipeline-builder.tsx
+ * renders a visible on-step warning whenever both are on (Step 1.5), and the
+ * runner's trace.json / DynamicAgentRunStep.capabilities record it on every
+ * run that actually exercises it (Step 1.7) — so a reviewer scanning the
+ * pipeline, and an operator reading a completed run, both see it either way.
+ */
 function validateStepDef(step: DynamicAgentStepDef, seenIds: Set<string>): string | null {
   const id = step.id.trim();
   if (!id) return "Every step needs an id.";
@@ -225,6 +249,16 @@ function validateStepDef(step: DynamicAgentStepDef, seenIds: Set<string>): strin
     ) {
       return `The timeout for step "${id}" must be a whole number of ms between 1 and ${MAX_CODE_TIMEOUT_MS.toLocaleString()}.`;
     }
+    // Capability grants exist only on the `ai` variant of DynamicAgentStepDef,
+    // so TypeScript never lets a code step carry them — but a spec written
+    // directly to Firestore (bypassing this validator) or a future schema
+    // relaxation could still smuggle one in. Reject explicitly rather than
+    // silently ignoring it: a code step's network posture is governed by the
+    // sandbox and the egress proxy, never by a per-step flag.
+    const withFlags = step as unknown as { allowNetwork?: boolean; allowClientData?: boolean };
+    if (withFlags.allowNetwork || withFlags.allowClientData) {
+      return `Step "${id}" is a code step and cannot set allowNetwork/allowClientData — those flags only apply to AI steps.`;
+    }
   } else {
     return `Step "${id}" has an unrecognized type.`;
   }
@@ -237,7 +271,19 @@ function normalizeSteps(steps: DynamicAgentStepDef[]): DynamicAgentStepDef[] {
     .map((step, index) => {
       const base = { id: step.id.trim(), label: step.label.trim(), order: index };
       if (step.type === "ai") {
-        return { ...base, type: "ai" as const, model: step.model, prompt: step.prompt };
+        return {
+          ...base,
+          type: "ai" as const,
+          model: step.model,
+          prompt: step.prompt,
+          // Explicit booleans, always — a saved spec is never ambiguous about
+          // its own capabilities, and a later reader (the runner, an admin
+          // scanning the pipeline list, the free-text generator's reference
+          // check) never has to know that "absent" means "false". Default
+          // deny: an unset flag normalizes to false, never true.
+          allowNetwork: step.allowNetwork === true,
+          allowClientData: step.allowClientData === true,
+        };
       }
       return {
         ...base,

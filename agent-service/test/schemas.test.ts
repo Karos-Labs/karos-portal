@@ -208,6 +208,74 @@ describe("job request validation", () => {
         expect(validateJobRequest(request).ok).toBe(false);
       });
 
+      /* ── topic guardrails & output history (docs/dynamic-agent-guardrails.md) ── */
+
+      it("accepts a brief carrying forbidden topics", () => {
+        const request = dynamicRequest({ guardrails: { forbidden_topics: ["competitor pricing"] } });
+        expect(validateJobRequest(request).ok).toBe(true);
+      });
+
+      it("accepts a brief carrying prior output history", () => {
+        const request = dynamicRequest({
+          output_history: { items: [{ job_id: "job-1", created_at: 1700000000000, excerpt: "prior draft" }] },
+        });
+        expect(validateJobRequest(request).ok).toBe(true);
+      });
+
+      it("accepts a brief carrying an EMPTY history — the agent's first run with the opt-in on", () => {
+        expect(validateJobRequest(dynamicRequest({ output_history: { items: [] } })).ok).toBe(true);
+      });
+
+      it("still accepts a brief carrying NEITHER — every existing run's shape", () => {
+        // The backward-compatibility assertion: the overwhelming majority of
+        // briefs will never carry either field, and this schema is
+        // additionalProperties:false, so both had to be declared for the new
+        // ones to pass WITHOUT making the old ones fail.
+        expect(validateJobRequest(dynamicRequest()).ok).toBe(true);
+      });
+
+      it("accepts a snapshot with the de-duplication opt-in set", () => {
+        const spec = dynamicSpec({ dedupeAgainstHistory: true });
+        expect(validateJobRequest(dynamicRequest({ specSnapshot: spec })).ok).toBe(true);
+      });
+
+      it("accepts a snapshot OMITTING the opt-in — every spec written before it existed", () => {
+        expect(validateJobRequest(dynamicRequest()).ok).toBe(true);
+      });
+
+      it("rejects a non-boolean de-duplication opt-in", () => {
+        const spec = dynamicSpec({ dedupeAgainstHistory: "yes" });
+        expect(validateJobRequest(dynamicRequest({ specSnapshot: spec })).ok).toBe(false);
+      });
+
+      it("rejects a guardrails object with no forbidden_topics array", () => {
+        expect(validateJobRequest(dynamicRequest({ guardrails: {} })).ok).toBe(false);
+      });
+
+      it("rejects a non-string forbidden topic", () => {
+        expect(validateJobRequest(dynamicRequest({ guardrails: { forbidden_topics: [42] } })).ok).toBe(false);
+      });
+
+      it("rejects more forbidden topics than the Portal's own cap allows", () => {
+        const tooMany = Array.from({ length: 41 }, (_, i) => `topic ${i}`);
+        expect(validateJobRequest(dynamicRequest({ guardrails: { forbidden_topics: tooMany } })).ok).toBe(false);
+      });
+
+      it("rejects a history item missing its excerpt", () => {
+        const request = dynamicRequest({ output_history: { items: [{ job_id: "j", created_at: 1 }] } });
+        expect(validateJobRequest(request).ok).toBe(false);
+      });
+
+      it("rejects more history items than the submit path ever sends", () => {
+        const items = Array.from({ length: 6 }, (_, i) => ({ job_id: `j${i}`, created_at: i, excerpt: "x" }));
+        expect(validateJobRequest(dynamicRequest({ output_history: { items } })).ok).toBe(false);
+      });
+
+      it("rejects an unknown key inside guardrails", () => {
+        const request = dynamicRequest({ guardrails: { forbidden_topics: ["x"], sneaky: true } });
+        expect(validateJobRequest(request).ok).toBe(false);
+      });
+
       it("rejects a brief mixing specSnapshot with legacy hardcoded-agent fields", () => {
         expect(validateJobRequest(dynamicRequest({ entry_skill_dir: "products/live/x" })).ok).toBe(false);
         expect(validateJobRequest(dynamicRequest({ instructions: "legacy" })).ok).toBe(false);
@@ -248,6 +316,27 @@ describe("job request validation", () => {
 
       it("rejects a spec with zero steps", () => {
         expect(validateJobRequest(dynamicRequest({ specSnapshot: dynamicSpec({ steps: [] }) })).ok).toBe(false);
+      });
+
+      it("accepts an AI step carrying allowNetwork/allowClientData", () => {
+        const spec = dynamicSpec({
+          steps: [
+            { id: "a", type: "ai", label: "A", model: "sonnet", prompt: "go", order: 0, allowNetwork: true, allowClientData: true },
+          ],
+        });
+        expect(validateJobRequest(dynamicRequest({ specSnapshot: spec })).ok).toBe(true);
+      });
+
+      it("still accepts an AI step that omits allowNetwork/allowClientData entirely — an older snapshot must keep validating", () => {
+        const spec = dynamicSpec({ steps: [{ id: "a", type: "ai", label: "A", model: "sonnet", prompt: "go", order: 0 }] });
+        expect(validateJobRequest(dynamicRequest({ specSnapshot: spec })).ok).toBe(true);
+      });
+
+      it("rejects a non-boolean allowNetwork on an AI step", () => {
+        const spec = dynamicSpec({
+          steps: [{ id: "a", type: "ai", label: "A", model: "sonnet", prompt: "go", order: 0, allowNetwork: "yes" }],
+        });
+        expect(validateJobRequest(dynamicRequest({ specSnapshot: spec })).ok).toBe(false);
       });
 
       it("accepts the late-arriving summary and per-field placeholder (SCRUM-132 / SCRUM-133)", () => {

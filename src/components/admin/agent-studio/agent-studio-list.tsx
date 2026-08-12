@@ -22,6 +22,9 @@ const BLANK_DRAFT: GeneralSettingsDraft = {
   creditsCost: 0,
   active: false,
   allowedClientIds: [],
+  // Default OFF — a new agent opts in deliberately, same rule as the per-step
+  // capability grants. See docs/dynamic-agent-guardrails.md.
+  dedupeAgainstHistory: false,
 };
 
 export function AgentStudioList({

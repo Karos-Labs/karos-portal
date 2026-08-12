@@ -20,6 +20,9 @@ vi.mock("@/lib/credit-reconcile", () => ({
   refundJobCharge: vi.fn().mockResolvedValue({ refunded: false }),
 }));
 vi.mock("@/lib/mcp/job-token", () => ({ mintJobToken: () => null }));
+vi.mock("@/lib/storage", () => ({
+  uploadBytes: vi.fn().mockResolvedValue({ url: "https://storage.test/client-context.md", path: "x" }),
+}));
 
 const submitAgentServiceJob = vi.fn().mockResolvedValue({ job_id: "svc-1" });
 vi.mock("@/lib/agent-service/client", () => ({
@@ -198,5 +201,232 @@ describe("submitDynamicAgentJob", () => {
     expect(brief.entry_skill_dir).toBeUndefined();
     expect(brief.instructions).toBeUndefined();
     expect(brief.prompt).toBeUndefined();
+  });
+
+  /**
+   * First-class, not an edge case: an agent whose steps read client data
+   * often needs no client input at all — it generates from the company's own
+   * documents. The whole submit path must work end to end with zero fields.
+   */
+  it("an agent with an empty input schema creates a job normally with an empty inputs payload", async () => {
+    installMocks(spec({ inputSchema: [] }));
+    const { submitDynamicAgentJob } = await import("@/lib/jobs/submit-custom");
+    const result = await submitDynamicAgentJob(CLIENT_USER, { specId: "spec-1", clientId: "c1", inputs: {} });
+    expect(result.error).toBeUndefined();
+    expect(result.jobId).toBe("job-1");
+    const data = await import("@/lib/data");
+    expect(data.createJob).toHaveBeenCalledTimes(1);
+    expect(data.chargeClientCredits).toHaveBeenCalledTimes(1);
+  });
+
+  describe("per-AI-step capability grants", () => {
+    it("sends no context_files and records dynamicCapabilities as all-false when no step requests client data or network", async () => {
+      installMocks(spec());
+      const { submitDynamicAgentJob } = await import("@/lib/jobs/submit-custom");
+      await submitDynamicAgentJob(CLIENT_USER, { specId: "spec-1", clientId: "c1", inputs: { company_name: "Acme" } });
+
+      const call = submitAgentServiceJob.mock.calls[0][0];
+      expect(call.context_files).toBeUndefined();
+
+      const data = await import("@/lib/data");
+      const jobArg = (data.createJob as any).mock.calls[0][0];
+      expect(jobArg.dynamicCapabilities).toEqual({ anyNetwork: false, anyClientData: false });
+    });
+
+    it("attaches context_files and records anyClientData: true when a step has allowClientData", async () => {
+      const data = await import("@/lib/data");
+      installMocks(
+        spec({
+          steps: [
+            { id: "research", type: "ai", label: "Research", model: "sonnet", prompt: "Go", order: 0, allowClientData: true },
+          ],
+        }),
+      );
+      (data.listClientContextDocs as any).mockResolvedValue([
+        { id: "doc-1", clientId: "c1", docType: "brand-voice", tier: "internal", content: "Speaks plainly.", version: 1, createdAt: 0, updatedAt: 0 },
+      ]);
+      const { submitDynamicAgentJob } = await import("@/lib/jobs/submit-custom");
+      await submitDynamicAgentJob(CLIENT_USER, { specId: "spec-1", clientId: "c1", inputs: { company_name: "Acme" } });
+
+      const call = submitAgentServiceJob.mock.calls[0][0];
+      expect(call.context_files).toHaveLength(1);
+      expect(call.context_files[0].name).toBe("client-context.md");
+
+      const jobArg = (data.createJob as any).mock.calls[0][0];
+      expect(jobArg.dynamicCapabilities).toEqual({ anyNetwork: false, anyClientData: true });
+    });
+
+    it("requests client docs at the INTERNAL tier only", async () => {
+      const data = await import("@/lib/data");
+      installMocks(
+        spec({
+          steps: [
+            { id: "research", type: "ai", label: "Research", model: "sonnet", prompt: "Go", order: 0, allowClientData: true },
+          ],
+        }),
+      );
+      (data.listClientContextDocs as any).mockResolvedValue([]);
+      const { submitDynamicAgentJob } = await import("@/lib/jobs/submit-custom");
+      await submitDynamicAgentJob(CLIENT_USER, { specId: "spec-1", clientId: "c1", inputs: { company_name: "Acme" } });
+      expect(data.listClientContextDocs).toHaveBeenCalledWith("c1", "internal");
+    });
+
+    it("sends no context_files when allowClientData is set but the client has no internal-tier docs yet", async () => {
+      const data = await import("@/lib/data");
+      installMocks(
+        spec({
+          steps: [
+            { id: "research", type: "ai", label: "Research", model: "sonnet", prompt: "Go", order: 0, allowClientData: true },
+          ],
+        }),
+      );
+      (data.listClientContextDocs as any).mockResolvedValue([]);
+      const { submitDynamicAgentJob } = await import("@/lib/jobs/submit-custom");
+      await submitDynamicAgentJob(CLIENT_USER, { specId: "spec-1", clientId: "c1", inputs: { company_name: "Acme" } });
+      const call = submitAgentServiceJob.mock.calls[0][0];
+      expect(call.context_files).toBeUndefined();
+    });
+
+    it("records anyNetwork: true from an allowNetwork step, independent of client-data", async () => {
+      const data = await import("@/lib/data");
+      installMocks(
+        spec({
+          steps: [
+            { id: "research", type: "ai", label: "Research", model: "sonnet", prompt: "Go", order: 0, allowNetwork: true },
+          ],
+        }),
+      );
+      const { submitDynamicAgentJob } = await import("@/lib/jobs/submit-custom");
+      await submitDynamicAgentJob(CLIENT_USER, { specId: "spec-1", clientId: "c1", inputs: { company_name: "Acme" } });
+      const jobArg = (data.createJob as any).mock.calls[0][0];
+      expect(jobArg.dynamicCapabilities).toEqual({ anyNetwork: true, anyClientData: false });
+      const call = submitAgentServiceJob.mock.calls[0][0];
+      expect(call.context_files).toBeUndefined();
+    });
+  });
+});
+
+/**
+ * Topic guardrails and output de-duplication, at the SUBMIT boundary
+ * (docs/dynamic-agent-guardrails.md). What matters here is exactly what does
+ * and does not reach the brief: both features are inert by default, and the
+ * "inert" case is asserted first because it is the one that protects every
+ * existing client from this work.
+ */
+describe("submitDynamicAgentJob — guardrails and de-duplication", () => {
+  function brief() {
+    const call = submitAgentServiceJob.mock.calls[0]?.[0] as { brief: Record<string, unknown> } | undefined;
+    return call?.brief;
+  }
+
+  async function submit(user = ADMIN_USER) {
+    const { submitDynamicAgentJob } = await import("@/lib/jobs/submit-custom");
+    return submitDynamicAgentJob(user, { specId: "spec-1", clientId: "c1", inputs: { company_name: "Acme" } });
+  }
+
+  /* ── zero impact ── */
+
+  it("sends NEITHER field for a client with no topics and an agent without the opt-in", async () => {
+    installMocks(spec());
+    await submit();
+    expect(brief()).toBeDefined();
+    expect(brief()!.guardrails).toBeUndefined();
+    expect(brief()!.output_history).toBeUndefined();
+  });
+
+  it("never reads job history when the agent did not opt in", async () => {
+    // The read is a full client job scan; an agent without the flag must not
+    // pay for it on every run.
+    installMocks(spec());
+    await submit();
+    expect(data.listJobs).not.toHaveBeenCalled();
+  });
+
+  it("treats an EMPTY forbidden-topics list on the client as no guardrails", async () => {
+    installMocks(spec());
+    (data.getClient as any).mockResolvedValue({ id: "c1", name: "Acme", forbiddenTopics: [] });
+    await submit();
+    expect(brief()!.guardrails).toBeUndefined();
+  });
+
+  /* ── guardrails ── */
+
+  it("sends the client's forbidden topics on the brief, snake_cased", async () => {
+    installMocks(spec());
+    (data.getClient as any).mockResolvedValue({
+      id: "c1",
+      name: "Acme",
+      forbiddenTopics: ["competitor pricing", "pending litigation"],
+    });
+    await submit();
+    expect(brief()!.guardrails).toEqual({
+      forbidden_topics: ["competitor pricing", "pending litigation"],
+    });
+  });
+
+  it("sends guardrails regardless of the agent's de-duplication setting — they are independent features", async () => {
+    installMocks(spec({ dedupeAgainstHistory: false }));
+    (data.getClient as any).mockResolvedValue({ id: "c1", name: "Acme", forbiddenTopics: ["x"] });
+    await submit();
+    expect(brief()!.guardrails).toBeDefined();
+    expect(brief()!.output_history).toBeUndefined();
+  });
+
+  it("records the guardrail on the job payload frozen at creation time", async () => {
+    installMocks(spec());
+    (data.getClient as any).mockResolvedValue({ id: "c1", name: "Acme", forbiddenTopics: ["x"] });
+    await submit();
+    // The brief is the frozen carrier — a later edit to the client's list
+    // cannot reach this job, exactly like specSnapshot.
+    expect(brief()!.guardrails).toEqual({ forbidden_topics: ["x"] });
+  });
+
+  /* ── de-duplication ── */
+
+  it("sends prior deliverables when the agent opted in", async () => {
+    installMocks(spec({ dedupeAgainstHistory: true }));
+    (data.listJobs as any).mockResolvedValue([
+      {
+        id: "job-old",
+        clientId: "c1",
+        dynamicAgentSpecId: "spec-1",
+        status: "delivered",
+        assetIds: ["asset-1"],
+        createdAt: 1_000,
+      },
+    ]);
+    (data.getAsset as any).mockResolvedValue({ id: "asset-1", content: "last month's post" });
+    await submit();
+    expect(brief()!.output_history).toEqual({
+      items: [{ job_id: "job-old", created_at: 1_000, excerpt: "last month's post" }],
+    });
+  });
+
+  it("sends an EMPTY history — not an absent field — on the agent's first run", async () => {
+    // Presence of the field is the runner's opt-in signal, and an empty list is
+    // the meaningful "nothing to compare against yet" state. Dropping the field
+    // here would make the runner report nothing at all.
+    installMocks(spec({ dedupeAgainstHistory: true }));
+    (data.listJobs as any).mockResolvedValue([]);
+    await submit();
+    expect(brief()!.output_history).toEqual({ items: [] });
+  });
+
+  it("ignores other agents' jobs for the same client", async () => {
+    installMocks(spec({ dedupeAgainstHistory: true }));
+    (data.listJobs as any).mockResolvedValue([
+      { id: "other", clientId: "c1", dynamicAgentSpecId: "spec-999", status: "delivered", assetIds: ["a"], createdAt: 5 },
+    ]);
+    await submit();
+    expect(brief()!.output_history).toEqual({ items: [] });
+    expect(data.getAsset).not.toHaveBeenCalled();
+  });
+
+  it("still charges exactly once with both features on", async () => {
+    installMocks(spec({ dedupeAgainstHistory: true }));
+    (data.getClient as any).mockResolvedValue({ id: "c1", name: "Acme", forbiddenTopics: ["x"] });
+    (data.listJobs as any).mockResolvedValue([]);
+    await submit(CLIENT_USER);
+    expect(charge()).not.toBeNull();
   });
 });

@@ -8,8 +8,9 @@ import type { DynamicAgentInputDef, DynamicAgentSpec, DynamicAgentStepDef } from
 import { GeneralSettingsForm, type GeneralSettingsDraft } from "./general-settings-form";
 import { InputSchemaBuilder } from "./input-schema-builder";
 import { StepPipelineBuilder } from "./step-pipeline-builder";
+import { GenerateFromTextPanel } from "./generate-from-text-panel";
 
-type Tab = "general" | "inputs" | "pipeline";
+type Tab = "general" | "inputs" | "pipeline" | "generate";
 
 export function AgentStudioEditor({
   spec,
@@ -24,8 +25,30 @@ export function AgentStudioEditor({
   const [tab, setTab] = useState<Tab>("general");
   const [version, setVersion] = useState(spec.version);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  // The editor's own working copy of the input schema / pipeline — starts as
+  // the persisted spec, but a generated-and-applied draft (see
+  // GenerateFromTextPanel below) overwrites it BEFORE it is ever saved.
+  // `draftKey` forces InputSchemaBuilder/StepPipelineBuilder to remount with
+  // the new `initial` when a draft is applied — both builders only read
+  // `initial` on mount, by design (an admin's in-progress edits must never be
+  // clobbered by a server prop refresh).
+  const [inputSchema, setInputSchema] = useState<DynamicAgentInputDef[]>(spec.inputSchema);
+  const [steps, setSteps] = useState<DynamicAgentStepDef[]>(spec.steps);
+  const [draftKey, setDraftKey] = useState(0);
+
+  function applyGeneratedDraft(draft: { inputSchema: DynamicAgentInputDef[]; steps: DynamicAgentStepDef[] }) {
+    setInputSchema(draft.inputSchema);
+    setSteps(draft.steps);
+    setDraftKey((k) => k + 1);
+    setError(null);
+    setWarning(null);
+    setSaved(false);
+    setTab("inputs");
+  }
 
   function switchTab(next: Tab) {
     setError(null);
@@ -50,6 +73,7 @@ export function AgentStudioEditor({
 
   function saveInputSchema(fields: DynamicAgentInputDef[]) {
     setError(null);
+    setWarning(null);
     setSaved(false);
     startTransition(async () => {
       const result = await updateDynamicAgentSpecAction(spec.id, { inputSchema: fields });
@@ -57,22 +81,27 @@ export function AgentStudioEditor({
         setError(result.error ?? "Could not save the input schema.");
         return;
       }
+      setInputSchema(fields);
       setVersion(result.version ?? version);
+      setWarning(result.warning ?? null);
       setSaved(true);
       router.refresh();
     });
   }
 
-  function saveSteps(steps: DynamicAgentStepDef[]) {
+  function saveSteps(nextSteps: DynamicAgentStepDef[]) {
     setError(null);
+    setWarning(null);
     setSaved(false);
     startTransition(async () => {
-      const result = await updateDynamicAgentSpecAction(spec.id, { steps });
+      const result = await updateDynamicAgentSpecAction(spec.id, { steps: nextSteps });
       if (!result.ok) {
         setError(result.error ?? "Could not save the pipeline.");
         return;
       }
+      setSteps(nextSteps);
       setVersion(result.version ?? version);
+      setWarning(result.warning ?? null);
       setSaved(true);
       router.refresh();
     });
@@ -91,12 +120,21 @@ export function AgentStudioEditor({
           <TabButton active={tab === "pipeline"} onClick={() => switchTab("pipeline")} icon="Workflow">
             Pipeline
           </TabButton>
+          <TabButton active={tab === "generate"} onClick={() => switchTab("generate")} icon="WandSparkles">
+            Generate
+          </TabButton>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-2">
           <Badge tone="neutral">v{version}</Badge>
           {saved ? <span className="text-success">Saved</span> : null}
         </div>
       </div>
+
+      {warning ? (
+        <p className="mb-3 text-xs text-warning" role="alert">
+          {warning}
+        </p>
+      ) : null}
 
       {tab === "general" ? (
         <GeneralSettingsForm
@@ -109,6 +147,7 @@ export function AgentStudioEditor({
             creditsCost: spec.creditsCost,
             active: spec.active,
             allowedClientIds: spec.allowedClientIds ?? [],
+            dedupeAgainstHistory: spec.dedupeAgainstHistory === true,
           }}
           clients={clients}
           submitLabel="Save general settings"
@@ -119,17 +158,25 @@ export function AgentStudioEditor({
       ) : null}
 
       {tab === "inputs" ? (
-        <InputSchemaBuilder initial={spec.inputSchema} pending={pending} error={error} onSave={saveInputSchema} />
+        <InputSchemaBuilder key={draftKey} initial={inputSchema} pending={pending} error={error} onSave={saveInputSchema} />
       ) : null}
 
       {tab === "pipeline" ? (
         <StepPipelineBuilder
-          initial={spec.steps}
-          inputSchema={spec.inputSchema}
+          key={draftKey}
+          initial={steps}
+          inputSchema={inputSchema}
           codeStepsEnabled={codeStepsEnabled}
           pending={pending}
           error={error}
           onSave={saveSteps}
+        />
+      ) : null}
+
+      {tab === "generate" ? (
+        <GenerateFromTextPanel
+          hasExistingContent={inputSchema.length > 0 || steps.length > 0}
+          onApply={applyGeneratedDraft}
         />
       ) : null}
     </Card>

@@ -11,6 +11,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { ManagedJobCancelButton } from "@/components/managed-job-cancel";
 import { ManagedJobProgress } from "@/components/managed-job-progress";
 import { DynamicAgentStepProgress } from "@/components/dynamic-agent-step-progress";
+import { DynamicAgentGuardrailReportCard } from "@/components/dynamic-agent-guardrail-report";
 import { getDynamicAgentSpec } from "@/lib/data";
 import { JobDeleteButton } from "@/components/job-delete";
 import { JobRetryButton } from "@/components/job-retry";
@@ -103,6 +104,16 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
       ) : (
         job.external && <ManagedJobProgress status={job.status} />
       )}
+
+      {/* Topic-guardrail and repetition findings for a dynamic run. Staff-only
+          material (it names a restricted topic and quotes the draft), and this
+          page is staff-only. Renders nothing when neither check was active. */}
+      {job.dynamicRun ? (
+        <DynamicAgentGuardrailReportCard
+          {...(job.dynamicRun.guardrail ? { guardrail: job.dynamicRun.guardrail } : {})}
+          {...(job.dynamicRun.dedupe ? { dedupe: job.dynamicRun.dedupe } : {})}
+        />
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">

@@ -87,6 +87,18 @@ describe("validateAndNormalizeInputSchema — key rules", () => {
       expect(result.inputSchema.map((f) => f.order)).toEqual([0, 1]);
     }
   });
+
+  /**
+   * An agent whose steps read client data (allowClientData) often needs NO
+   * client input at all — it generates from the company's own documents. This
+   * is a first-class path, not an edge case: an empty input schema must save
+   * and validate cleanly, not just "happen to not throw".
+   */
+  it("accepts an empty input schema — an agent that needs no client input at all", () => {
+    const result = validateAndNormalizeInputSchema([]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.inputSchema).toEqual([]);
+  });
 });
 
 describe("validateAndNormalizeInputSchema — type-specific rules", () => {
@@ -235,6 +247,45 @@ describe("validateAndNormalizeSteps — discriminated union narrowing", () => {
   it("rejects a code step timeout above the hard cap", () => {
     const result = validateAndNormalizeSteps([codeStep({ timeoutMs: 999_999 })]);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("validateAndNormalizeSteps — per-step capability grants (allowNetwork/allowClientData)", () => {
+  it("a step saved without either flag round-trips as false after normalization — the backward-compatibility guard", () => {
+    const result = validateAndNormalizeSteps([aiStep()]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const step = result.steps[0];
+    expect(step.type === "ai" ? step.allowNetwork : undefined).toBe(false);
+    expect(step.type === "ai" ? step.allowClientData : undefined).toBe(false);
+  });
+
+  it("normalizes an explicit true through unchanged", () => {
+    const result = validateAndNormalizeSteps([aiStep({ allowNetwork: true, allowClientData: true })]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const step = result.steps[0];
+    expect(step.type === "ai" ? step.allowNetwork : undefined).toBe(true);
+    expect(step.type === "ai" ? step.allowClientData : undefined).toBe(true);
+  });
+
+  it("rejects allowNetwork on a code step", () => {
+    const bad = { ...codeStep(), allowNetwork: true } as unknown as DynamicAgentStepDef;
+    const result = validateAndNormalizeSteps([bad]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/code step/i);
+  });
+
+  it("rejects allowClientData on a code step", () => {
+    const bad = { ...codeStep(), allowClientData: true } as unknown as DynamicAgentStepDef;
+    const result = validateAndNormalizeSteps([bad]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/code step/i);
+  });
+
+  it("allows both grants on the same AI step — the combination is legal, just never silent (UI warning + trace record, not a validation error)", () => {
+    const result = validateAndNormalizeSteps([aiStep({ allowNetwork: true, allowClientData: true })]);
+    expect(result.ok).toBe(true);
   });
 });
 
