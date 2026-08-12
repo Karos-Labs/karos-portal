@@ -1,7 +1,8 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { decodeJobSpec } from "../../src/exec/executor.js";
+import { decodeJobSpec, decodeJobSpecRef } from "../../src/exec/executor.js";
+import { fetchJobSpec } from "./spec-ref.js";
 import { resolveTaskConfig } from "../../src/task-types.js";
-import type { RunnerCompleteBody } from "../../src/types.js";
+import type { JobSpec, RunnerCompleteBody } from "../../src/types.js";
 import { isDynamicAgentBrief, type DynamicAgentJobPayload } from "../../src/dynamic-types.js";
 import { runDynamicJob } from "./dynamic/run-dynamic-job.js";
 import { ServiceCallback } from "./callback.js";
@@ -49,9 +50,45 @@ function normalizeOutputHistory(raw: unknown): Pick<DynamicAgentJobPayload, "out
 
 async function main(): Promise<void> {
   const specB64 = process.env.JOB_SPEC_B64;
-  if (!specB64) throw new Error("JOB_SPEC_B64 not set");
+  const specRefB64 = process.env.JOB_SPEC_REF_B64;
   delete process.env.JOB_SPEC_B64;
-  const spec = decodeJobSpec(specB64);
+  delete process.env.JOB_SPEC_REF_B64;
+  let spec: JobSpec;
+  if (specB64) {
+    spec = decodeJobSpec(specB64);
+  } else if (specRefB64) {
+    // Spec was too large for one env var — fetch the real thing from the
+    // service instead (see exec/executor.ts's buildSpecEnv). This is the
+    // FIRST network call the container makes, before ServiceCallback even
+    // exists — so a failure here can't be left to bubble up as an unhandled
+    // rejection (there'd be nothing left to call reportComplete with), or
+    // this job silently dead-letters as "job container exited without
+    // reporting" (worker.ts) with no real error ever recorded. The ref alone
+    // (jobId/callbackBaseUrl/runnerToken) is everything ServiceCallback
+    // needs, so build a stand-in spec from just that to report the real
+    // failure instead.
+    const ref = decodeJobSpecRef(specRefB64);
+    try {
+      spec = await fetchJobSpec(ref);
+    } catch (err) {
+      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      console.error("failed to fetch job spec:", message);
+      const stubSpec = {
+        jobId: ref.jobId,
+        callbackBaseUrl: ref.callbackBaseUrl,
+        runnerToken: ref.runnerToken,
+      } as JobSpec;
+      await reportComplete(new ServiceCallback(stubSpec), {
+        outcome: "failed",
+        error: `failed to fetch job spec: ${message}`.slice(0, 20000),
+        transient: true,
+      });
+      process.exit(1);
+      return;
+    }
+  } else {
+    throw new Error("JOB_SPEC_B64 or JOB_SPEC_REF_B64 not set");
+  }
   const callback = new ServiceCallback(spec);
 
   // Dynamic Agent Studio's WHOLE routing signal (Phase 7): a brief carrying a
@@ -289,4 +326,13 @@ async function main(): Promise<void> {
   process.exit(report.outcome === "done" ? 0 : 1);
 }
 
-void main();
+void main().catch((err) => {
+  // Last-resort net: anything thrown before ServiceCallback exists (a
+  // corrupt/malformed JOB_SPEC_B64, or any other synchronous throw above)
+  // has no jobId/callbackBaseUrl to report through, so it can't call
+  // reportComplete — but it MUST still be visible in `docker logs` instead
+  // of vanishing into worker.ts's opaque "job container exited without
+  // reporting" dead letter with zero trace of why.
+  console.error("main() failed before a report could be sent:", err instanceof Error ? (err.stack ?? err.message) : err);
+  process.exit(1);
+});
