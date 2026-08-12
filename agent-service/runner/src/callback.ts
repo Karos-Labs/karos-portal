@@ -3,6 +3,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { createWriteStream } from "node:fs";
+import { Agent } from "undici";
 import type { JobSpec, JobUsage, RunnerCompleteBody } from "../../src/types.js";
 import { fetchIdToken } from "../../src/gcp-identity.js";
 
@@ -10,6 +11,26 @@ export interface CheckpointManifest {
   attempt?: number;
   files: Array<{ path: string; bytes: number }>;
 }
+
+/**
+ * These calls are few and far between over a job's lifetime — a step ping
+ * here, a completion report 20+ minutes later — long enough for Cloud Run's
+ * load balancer to silently close an idle backend connection that undici's
+ * default pool still considers reusable. Reusing a connection the far end
+ * already closed fails instantly as a generic, cause-swallowing "TypeError:
+ * fetch failed" (confirmed live: a fresh execution's first call succeeds
+ * every time; a call minutes into a run does not) — which is exactly what
+ * worker.ts's dead-lettered "job container exited without reporting"
+ * fallback traces back to, since main.ts only logs err.stack, not err.cause.
+ * A dedicated dispatcher with keep-alive effectively disabled costs one
+ * extra TLS handshake per call — free, given how infrequent these are.
+ */
+// Typed `any`: Node's global fetch() types its `dispatcher` option against the
+// `undici-types` copy vendored into @types/node, a structurally-identical but
+// nominally distinct package from this standalone `undici` dependency — a
+// real Agent instance works fine at runtime (fetch duck-types the dispatcher
+// interface) but TypeScript sees two different `Dispatcher` types.
+export const internalApiDispatcher: any = new Agent({ keepAliveTimeout: 1, keepAliveMaxTimeout: 1 });
 
 /**
  * HTTP client for the service's /internal endpoints. App-level auth is the
@@ -41,6 +62,7 @@ export class ServiceCallback {
       headers: await this.headers({ "content-type": "application/json" }),
       body: JSON.stringify({ lines }),
       signal: AbortSignal.timeout(30_000),
+      dispatcher: internalApiDispatcher,
     });
   }
 
@@ -65,6 +87,7 @@ export class ServiceCallback {
       headers: await this.headers(),
       body: form,
       signal: AbortSignal.timeout(120_000),
+      dispatcher: internalApiDispatcher,
     });
     if (!response.ok) {
       throw new Error(`artifact upload failed (${response.status}) for ${params.relPath}`);
@@ -82,6 +105,7 @@ export class ServiceCallback {
       headers: await this.headers(),
       body: form,
       signal: AbortSignal.timeout(120_000),
+      dispatcher: internalApiDispatcher,
     });
     if (!response.ok) {
       throw new Error(`checkpoint upload failed (${response.status}) for ${params.relPath}`);
@@ -106,6 +130,7 @@ export class ServiceCallback {
         headers: await this.headers({ "content-type": "application/json" }),
         body: JSON.stringify({ step_id: event.stepId, step_name: event.stepName, status: event.status }),
         signal: AbortSignal.timeout(10_000),
+        dispatcher: internalApiDispatcher,
       });
     } catch {
       // Best-effort — see doc comment above.
@@ -117,6 +142,7 @@ export class ServiceCallback {
       method: "GET",
       headers: await this.headers(),
       signal: AbortSignal.timeout(30_000),
+      dispatcher: internalApiDispatcher,
     });
     if (!response.ok) return { files: [] };
     return (await response.json()) as CheckpointManifest;
@@ -127,6 +153,7 @@ export class ServiceCallback {
       method: "GET",
       headers: await this.headers(),
       signal: AbortSignal.timeout(60_000),
+      dispatcher: internalApiDispatcher,
     });
     if (!response.ok || !response.body) {
       throw new Error(`checkpoint download failed (${response.status}) for ${relPath}`);
@@ -159,6 +186,7 @@ export class ServiceCallback {
           headers: await this.headers({ "content-type": "application/json" }),
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(30_000),
+          dispatcher: internalApiDispatcher,
         });
       } catch (err) {
         lastErr = err;

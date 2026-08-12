@@ -1,6 +1,7 @@
 import type { JobSpec } from "../../src/types.js";
 import type { JobSpecRef } from "../../src/exec/executor.js";
 import { fetchIdToken } from "../../src/gcp-identity.js";
+import { internalApiDispatcher } from "./callback.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -35,6 +36,7 @@ export async function fetchJobSpec(ref: JobSpecRef): Promise<JobSpec> {
       const res = await fetch(`${ref.callbackBaseUrl}/internal/jobs/${ref.jobId}/spec`, {
         headers,
         signal: AbortSignal.timeout(30_000),
+        dispatcher: internalApiDispatcher,
       });
       if (res.ok) return (await res.json()) as JobSpec;
       if (res.status >= 400 && res.status < 500 && res.status !== 429) {
