@@ -12,7 +12,7 @@ import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
-import { draftsDisplayTitle } from "@/lib/deliverable-titles";
+import { draftsDisplayTitle, hasGeneratedTitle } from "@/lib/deliverable-titles";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import {
   PUBLISH_HOLD_HEADING,
@@ -251,12 +251,15 @@ export function AssetDetailModal({
       open={open}
       onClose={onClose}
       // The SAME name the row that opened this panel shows. Stored titles for
-      // agent-service deliveries are just the agent's name ("X Agent"), so
-      // printing `asset.title` meant clicking a row called "X post · <subject>"
-      // and landing on a panel headed "X Agent". One composer, both surfaces.
+      // LEGACY agent-service deliveries are just the agent's name ("X Agent"),
+      // so printing `asset.title` meant clicking a row called "X post ·
+      // <subject>" and landing on a panel headed "X Agent". One composer, both
+      // surfaces. New deliveries carry a generated topic title (asset-titles.ts,
+      // meta.titleGenerated) — the archive row already shows any non-generic
+      // stored title, so the panel must prefer it too or the two disagree again.
       // Falls back to the stored title for everything that is not an X or
       // LinkedIn drafts deliverable.
-      title={draftsDisplayTitle(content) ?? asset.title}
+      title={hasGeneratedTitle(asset) ? asset.title : draftsDisplayTitle(content) ?? asset.title}
       className={liBatch || xBatch ? "max-w-3xl" : "max-w-2xl"}
     >
       {/* Tabs */}

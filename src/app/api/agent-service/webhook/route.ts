@@ -3,6 +3,7 @@ import { after } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { assetTitleFromJobTitle } from "@/lib/job-title";
+import { generateAssetTitle } from "@/lib/asset-titles";
 import {
   claimExternalJobCompletion,
   createAsset,
@@ -1665,6 +1666,45 @@ export async function POST(req: NextRequest) {
       // keeps reading a produced-work title. It also keeps free text out of
       // AgentMark's platform sniff, which reads titles.
       const assetTitle = assetTitleFromJobTitle(job.title, job.agentName);
+      // The Reddit v2 envelope wins over the size-picked primary text: the
+      // reader parses this exact string, and one of the run's own approach
+      // files would otherwise be chosen as "the deliverable" by length.
+      // The newsletter envelope wins over the size race for the same reason
+      // Reddit's does: the largest text file here is one of the two HTML
+      // renders, and picking it would call half the deliverable the whole of
+      // it and lose the other three files.
+      // The blog envelope wins for the same reason both of those do, and its
+      // size race is the worst of the three: `<slug>.html` and
+      // `<slug>-body.html` are near-identical in length, so which one a
+      // client received as "the article" would have come down to how much
+      // page chrome the template happened to add.
+      const assetContent = newsletterEnvelopeJson
+        ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : blogEnvelopeJson
+        ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : reputationEnvelopeJson
+        ? reputationEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : carouselEnvelopeJson
+        ? carouselEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : redditEnvelopeJson
+        ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : primaryText
+          ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
+          : "";
+      // A natural, topic-first name for the deliverable, written by Haiku from
+      // the same content string the asset stores (asset-titles.ts has the full
+      // contract). Null on any failure — the agent-name title below is the
+      // fallback, so naming can never cost a delivery. meta.titleGenerated is
+      // how display surfaces know the stored title is a real name rather than
+      // the agent-name placeholder: deliverable-titles' display-time composer
+      // steps aside for it.
+      const generatedTitle = assetContent
+        ? await generateAssetTitle({
+            content: assetContent,
+            clientId: job.clientId,
+            agentName: job.agentName,
+          })
+        : null;
       // Only real catalog products get a template chip; "custom" runs have no
       // managed product (getManagedProduct would fall back to the first one).
       const managedProduct = MANAGED_PRODUCTS.find((p) => p.taskType === payload.task_type);
@@ -1680,34 +1720,11 @@ export async function POST(req: NextRequest) {
           jobId: job.id,
           agentId: "agent-service",
           type: assetType,
-          title: assetTitle,
-          // The Reddit v2 envelope wins over the size-picked primary text: the
-          // reader parses this exact string, and one of the run's own approach
-          // files would otherwise be chosen as "the deliverable" by length.
-          // The newsletter envelope wins over the size race for the same reason
-          // Reddit's does: the largest text file here is one of the two HTML
-          // renders, and picking it would call half the deliverable the whole of
-          // it and lose the other three files.
-          // The blog envelope wins for the same reason both of those do, and its
-          // size race is the worst of the three: `<slug>.html` and
-          // `<slug>-body.html` are near-identical in length, so which one a
-          // client received as "the article" would have come down to how much
-          // page chrome the template happened to add.
-          content: newsletterEnvelopeJson
-            ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
-            : blogEnvelopeJson
-            ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
-            : reputationEnvelopeJson
-            ? reputationEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
-            : carouselEnvelopeJson
-            ? carouselEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
-            : redditEnvelopeJson
-            ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
-            : primaryText
-              ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
-              : "",
+          title: generatedTitle ?? assetTitle,
+          content: assetContent,
           meta: {
             taskType: payload.task_type,
+            ...(generatedTitle ? { titleGenerated: true } : {}),
             agentsRepoSha: payload.agents_repo_sha,
             // What the run was ASKED to do (see Job.runLabel). Staff-facing
             // data: surfaces that show it must gate on the viewer (F132).
