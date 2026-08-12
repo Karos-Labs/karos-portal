@@ -804,14 +804,12 @@ export interface DynamicAgentRunReport {
    * Topic guardrails, as ACTUALLY exercised by this run. Present only when the
    * client had forbidden topics at submit time.
    *
-   * // DECISION: a violation FLAGS the run — it never fails it and never
-   * rewrites the deliverable. Failing would destroy already-paid work over what
-   * may be one offending paragraph, and would make a verifier false positive
-   * catastrophic rather than annoying. The output is already safe by default
-   * (every asset the webhook creates lands as a draft, so nothing reaches a
-   * client without a human approving it) — the guardrail's job is to make sure
-   * that human knows. Staff-facing only; rendered on the job page, which is
-   * staff-only.
+   * // UPDATED (2026-08, supersedes the original "flags, never fails" design
+   * below): a violation now BLOCKS the run (agent-service run-dynamic-job.ts
+   * returns `outcome: "failed"`) — no asset is created and the client is
+   * refunded automatically, exactly like any other failed run. The draft
+   * itself is preserved in the internal trace for staff review. See
+   * docs/dynamic-agent-guardrails.md §2.3.
    */
   guardrail?: DynamicAgentGuardrailReport;
   /** Output de-duplication verdict. Present only when the spec opted in via `dedupeAgainstHistory`. */

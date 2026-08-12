@@ -197,8 +197,19 @@ export async function verifyForbiddenTopics(
     const parsed = parseVerificationJson(reply);
     if (!parsed) return finish({ status: "error", violatedTopics: [] });
 
+    if (parsed.violations.length === 0) return finish({ status: "clean", violatedTopics: [] });
+
     const reconciled = reconcileTopics(parsed.violations, forbiddenTopics);
-    if (reconciled.length === 0) return finish({ status: "clean", violatedTopics: [] });
+    if (reconciled.length === 0) {
+      // The model claimed at least one violation, but none of them matched a
+      // topic on the client's own list (a paraphrase, or a hallucinated
+      // topic) — this is NOT the same as a genuinely clean draft. Reporting
+      // "clean" here would silently ship a deliverable the model itself
+      // flagged; "error" preserves the fail-open invariant above by telling
+      // staff the check could not be trusted, rather than manufacturing a
+      // green tick it did not earn.
+      return finish({ status: "error", violatedTopics: [] });
+    }
 
     const evidence = reconciled.find((r) => r.evidence)?.evidence;
     return finish({

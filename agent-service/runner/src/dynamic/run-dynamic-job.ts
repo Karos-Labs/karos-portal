@@ -320,7 +320,10 @@ export async function runPostChecks(
     if (history.length === 0 || !deliverable.trim()) {
       checks.dedupe = {
         status: "no_history",
-        comparedCount: history.length,
+        // An empty deliverable compares against nothing even when history
+        // exists — comparedCount says what was ACTUALLY compared, not what
+        // was available, so it can't contradict a "no_history" status.
+        comparedCount: deliverable.trim() ? history.length : 0,
         maxSimilarity: 0,
         threshold: DEDUPE_SIMILARITY_THRESHOLD,
       };

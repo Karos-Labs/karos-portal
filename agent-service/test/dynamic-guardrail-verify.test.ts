@@ -148,11 +148,16 @@ describe("verifyForbiddenTopics", () => {
     ).resolves.toMatchObject({ status: "error" });
   });
 
-  it("ignores a hallucinated topic and reports clean when nothing real was found", async () => {
+  it("reports error, not clean, when every claimed violation is a hallucinated topic", async () => {
+    // The model claimed a finding, so this is NOT the same as a genuinely
+    // clean draft — reporting "clean" would silently ship a deliverable the
+    // model itself flagged. "error" tells staff the check could not be
+    // trusted, matching the fail-open invariant for every other broken-check
+    // path above.
     const result = await verifyForbiddenTopics("A draft.", TOPICS, {
       runVerification: async () => '{"violations": [{"topic": "a topic nobody configured"}]}',
     });
-    expect(result.status).toBe("clean");
+    expect(result.status).toBe("error");
   });
 
   it("records the model and a duration on every verdict", async () => {

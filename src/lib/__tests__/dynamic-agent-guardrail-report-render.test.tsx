@@ -55,7 +55,7 @@ describe("topic guardrails", () => {
         },
       },
     });
-    expect(html).toMatch(/flagged/i);
+    expect(html).toMatch(/blocked/i);
     expect(html).toContain("competitor pricing");
     expect(html).toContain("we beat them on price");
   });

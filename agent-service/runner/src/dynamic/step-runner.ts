@@ -242,6 +242,15 @@ export async function runDynamicSteps(
       context = withStepOutput(context, stepId, output);
     }
     trace.push(...resumeFrom.priorTrace);
+    // A prior attempt's AI steps carried the guardrail too (it is injected
+    // into every AI step, not opted into per step) — without this, a run
+    // that resumes past every step reports an empty injectedStepIds despite
+    // the constraint having been in force for the whole pipeline.
+    if (hasGuardrails) {
+      for (const entry of resumeFrom.priorTrace) {
+        if (entry.type === "ai") guardrailInjectedStepIds.push(entry.stepId);
+      }
+    }
   }
 
   for (const [index, step] of steps.entries()) {

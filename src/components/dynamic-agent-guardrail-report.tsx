@@ -48,7 +48,7 @@ function GuardrailRow({ guardrail }: { guardrail: DynamicAgentGuardrailReport })
   const headline = !verification
     ? "Not checked — the run did not produce a deliverable."
     : verification.status === "violation"
-      ? `Flagged: this draft engages with ${verification.violatedTopics.join(", ") || "a restricted topic"}.`
+      ? `Blocked: this draft engaged with ${verification.violatedTopics.join(", ") || "a restricted topic"}. No asset was created and the client was refunded.`
       : verification.status === "error"
         ? "The check could not be completed for this run."
         : "Clean — no restricted topic found in the deliverable.";
