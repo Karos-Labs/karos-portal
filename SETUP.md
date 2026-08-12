@@ -121,6 +121,7 @@ gcloud builds submit --project=<PROJECT_ID> --config cloudbuild.yaml \
 ```
 
 Server-side secrets are mounted from Secret Manager (see the `--set-secrets` list in
-`cloudbuild.yaml`); the public `NEXT_PUBLIC_FIREBASE_*` values come from `.env.production`
-at build time and are identical in both environments (same Firebase project). Point your
-Fireflies webhook at the production URL.
+`cloudbuild.yaml`); the public `NEXT_PUBLIC_FIREBASE_*` values also come from Secret
+Manager, read at build time via `cloudbuild.yaml`'s `availableSecrets`/`--build-arg`, and
+are identical in both environments (same Firebase project). Point your Fireflies webhook
+at the production URL.

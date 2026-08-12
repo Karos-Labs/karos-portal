@@ -21,10 +21,10 @@ import "server-only";
  * freshly added item.
  */
 
-import { generateObject } from "ai";
+import { generateObject, NoObjectGeneratedError } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
-import { MODELS } from "@/lib/constants";
+import { DOC_MAX_TOKENS, MODELS } from "@/lib/constants";
 import {
   validateAndNormalizeInputSchema,
   validateAndNormalizeSteps,
@@ -154,6 +154,24 @@ function validateDraft(inputSchema: DynamicAgentInputDef[], steps: DynamicAgentS
   return null;
 }
 
+/**
+ * The output-token ceiling for one generation call. Reuses `DOC_MAX_TOKENS`
+ * (documented in constants.ts as the Sonnet 4.6 ceiling this codebase already
+ * verified) rather than a fresh magic number.
+ *
+ * // DECISION (2026-08, bugfix): this was previously hardcoded to 4_000,
+ * which is not enough room for a draft with more than a handful of
+ * inputs/steps — a richly-detailed description (still well under the 5,000
+ * char cap `generateDynamicAgentDraftAction` enforces) routinely produces a
+ * schema-valid draft that simply doesn't fit in 4,000 tokens. The model does
+ * not fail gracefully when it runs out of room: it stops mid-JSON-string,
+ * the AI SDK throws `NoObjectGeneratedError` with `finishReason: "length"`
+ * trying to parse the truncated text, and that landed in generateDraft's
+ * outer catch as the generic "Generation failed" message — for EVERY
+ * sufficiently detailed description, not only unusually long ones.
+ */
+const GENERATION_MAX_OUTPUT_TOKENS = DOC_MAX_TOKENS;
+
 async function generateOnce(description: string, correction?: string): Promise<GeneratedDraft> {
   const prompt = correction
     ? `${description}\n\n---\nYour previous attempt was invalid for these reasons — fix them and return a corrected draft:\n${correction}`
@@ -163,9 +181,39 @@ async function generateOnce(description: string, correction?: string): Promise<G
     schema: GENERATION_SCHEMA,
     system: SYSTEM_PROMPT,
     prompt,
-    maxOutputTokens: 4_000,
+    maxOutputTokens: GENERATION_MAX_OUTPUT_TOKENS,
   });
   return object;
+}
+
+/**
+ * Turns a truncated generation into the SAME shape of "here's what went
+ * wrong, fix it" correction text the validation-failure retry already uses,
+ * rather than treating it as an unrecoverable error. `finishReason: "length"`
+ * is the AI SDK's signal that the model was cut off by the token ceiling
+ * mid-object, NOT a validation problem — it needs a different instruction
+ * (write less, not write differently) but the same one-retry budget covers
+ * it fine. Returns null for every other kind of thrown error, which the
+ * caller re-throws unchanged into the outer catch (auth/network/etc. are not
+ * this function's concern).
+ */
+function truncationCorrection(err: unknown): string | null {
+  if (!NoObjectGeneratedError.isInstance(err) || err.finishReason !== "length") return null;
+  return "Your previous attempt was cut off before it finished — it asked for too many steps/fields, or wrote prompts longer than necessary. Return a SHORTER, more concise draft this time: fewer steps, more compact prompts, no redundant fields — while still covering every requirement in the description.";
+}
+
+/** One generation call, with a truncated response reported as a correction rather than thrown. Anything else thrown propagates to the caller. */
+async function attemptGeneration(
+  description: string,
+  correction?: string,
+): Promise<{ ok: true; draft: GeneratedDraft } | { ok: false; correction: string }> {
+  try {
+    return { ok: true, draft: await generateOnce(description, correction) };
+  } catch (err) {
+    const truncation = truncationCorrection(err);
+    if (truncation) return { ok: false, correction: truncation };
+    throw err;
+  }
 }
 
 /**
@@ -177,6 +225,11 @@ async function generateOnce(description: string, correction?: string): Promise<G
  * per-field Zod schema cannot express on its own (uniqueness) are caught by
  * `validateAndNormalizeInputSchema`/`validateAndNormalizeSteps`, same as a
  * hand-built spec.
+ *
+ * The one retry budget is shared by BOTH failure modes: a schema-valid but
+ * house-rule-invalid draft (dangling reference, bad key, etc.) and a
+ * generation that got cut off by the token ceiling before it finished. Either
+ * one produces a correction string that becomes the retry's prompt.
  */
 export async function generateDynamicAgentDraft(
   description: string,
@@ -184,17 +237,29 @@ export async function generateDynamicAgentDraft(
   { ok: true; inputSchema: DynamicAgentInputDef[]; steps: DynamicAgentStepDef[]; notes: string[] } | { ok: false; error: string }
 > {
   try {
-    const first = await generateOnce(description);
-    const firstInputSchema = toPortalInputSchema(first.inputSchema);
-    const firstSteps = toPortalSteps(first.steps);
-    const firstError = validateDraft(firstInputSchema, firstSteps);
-    if (!firstError) return { ok: true, inputSchema: firstInputSchema, steps: firstSteps, notes: first.notes };
+    const first = await attemptGeneration(description);
+    let correction: string;
+    if (first.ok) {
+      const firstInputSchema = toPortalInputSchema(first.draft.inputSchema);
+      const firstSteps = toPortalSteps(first.draft.steps);
+      const firstError = validateDraft(firstInputSchema, firstSteps);
+      if (!firstError) return { ok: true, inputSchema: firstInputSchema, steps: firstSteps, notes: first.draft.notes };
+      correction = firstError;
+    } else {
+      correction = first.correction;
+    }
 
-    const retry = await generateOnce(description, firstError);
-    const retryInputSchema = toPortalInputSchema(retry.inputSchema);
-    const retrySteps = toPortalSteps(retry.steps);
+    const retry = await attemptGeneration(description, correction);
+    if (!retry.ok) {
+      return {
+        ok: false,
+        error: "Generation was cut off twice in a row. Try a shorter or more focused description, or build the agent by hand.",
+      };
+    }
+    const retryInputSchema = toPortalInputSchema(retry.draft.inputSchema);
+    const retrySteps = toPortalSteps(retry.draft.steps);
     const retryError = validateDraft(retryInputSchema, retrySteps);
-    if (!retryError) return { ok: true, inputSchema: retryInputSchema, steps: retrySteps, notes: retry.notes };
+    if (!retryError) return { ok: true, inputSchema: retryInputSchema, steps: retrySteps, notes: retry.draft.notes };
 
     return { ok: false, error: `Generation produced an invalid draft twice. Last error: ${retryError}` };
   } catch (err) {

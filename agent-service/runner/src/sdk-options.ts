@@ -50,8 +50,9 @@ export function buildStepAgentDefinitions(
 
 /**
  * Environment for the SDK subprocess (and therefore every Bash child the
- * agent spawns). Explicit allowlist: JOB_SPEC_B64 (runner token) must never
- * reach the sandbox, and nothing beyond what tools legitimately need does.
+ * agent spawns). Explicit allowlist: JOB_SPEC_B64 / JOB_SPEC_REF_B64 (runner
+ * token) must never reach the sandbox, and nothing beyond what tools
+ * legitimately need does.
  * ANTHROPIC_API_KEY has to be present for the CLI itself — proxy-side key
  * injection is the follow-up that removes it from the sandbox entirely.
  * APIFY_TOKEN is optional (skills that read it degrade gracefully when unset);

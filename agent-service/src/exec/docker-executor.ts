@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import type { ServiceConfig } from "../config.js";
 import type { JobSpec } from "../types.js";
-import { encodeJobSpec, type ExecutionHandle, type JobExecutor } from "./executor.js";
+import { buildSpecEnv, type ExecutionHandle, type JobExecutor } from "./executor.js";
 
 const STOP_GRACE_SECONDS = 25;
 
@@ -15,7 +15,7 @@ export class DockerExecutor implements JobExecutor {
     if (this.config.dockerNetwork) args.push("--network", this.config.dockerNetwork);
     // Name-only -e: values come from the docker client's own environment,
     // keeping secrets out of the host-visible process table (argv).
-    const jobEnv = { ...env, JOB_SPEC_B64: encodeJobSpec(spec) };
+    const jobEnv = { ...env, ...buildSpecEnv(spec) };
     for (const key of Object.keys(jobEnv)) {
       args.push("-e", key);
     }

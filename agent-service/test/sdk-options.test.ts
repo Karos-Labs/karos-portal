@@ -43,6 +43,17 @@ describe("sdkEnv", () => {
     }
   });
 
+  it("never forwards the spec reference pointer either", () => {
+    const prior = process.env.JOB_SPEC_REF_B64;
+    process.env.JOB_SPEC_REF_B64 = "secret-ref";
+    try {
+      expect(sdkEnv().JOB_SPEC_REF_B64).toBeUndefined();
+    } finally {
+      if (prior === undefined) delete process.env.JOB_SPEC_REF_B64;
+      else process.env.JOB_SPEC_REF_B64 = prior;
+    }
+  });
+
   it("forwards an allowlisted variable when it is set, and omits it when it is not", () => {
     const prior = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = "sk-test";
