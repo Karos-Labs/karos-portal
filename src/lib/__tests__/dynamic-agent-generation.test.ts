@@ -9,11 +9,28 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("ai", () => ({ generateObject: vi.fn() }));
+vi.mock("ai", () => {
+  // Mirrors the real `NoObjectGeneratedError` shape this module now checks
+  // (`NoObjectGeneratedError.isInstance(err) && err.finishReason === "length"`)
+  // closely enough to exercise the truncation-retry path without hitting the
+  // real AI SDK.
+  class NoObjectGeneratedError extends Error {
+    finishReason?: string;
+    constructor(opts: { message?: string; finishReason?: string } = {}) {
+      super(opts.message ?? "No object generated");
+      this.name = "NoObjectGeneratedError";
+      this.finishReason = opts.finishReason;
+    }
+    static isInstance(err: unknown): err is NoObjectGeneratedError {
+      return err instanceof NoObjectGeneratedError;
+    }
+  }
+  return { generateObject: vi.fn(), NoObjectGeneratedError };
+});
 vi.mock("@ai-sdk/anthropic", () => ({ anthropic: vi.fn((id: string) => id) }));
 vi.mock("@/services/logger", () => ({ logger: { logError: vi.fn(), logUsage: vi.fn() } }));
 
-import { generateObject } from "ai";
+import { generateObject, NoObjectGeneratedError } from "ai";
 
 /** Only `object` is ever read off the result (dynamic-agent-generation.ts), so a mock only needs that field. */
 type GeneratedObjectResult = Awaited<ReturnType<typeof generateObject>>;
@@ -119,5 +136,62 @@ describe("generateDynamicAgentDraft", () => {
     const result = await generateDynamicAgentDraft("An agent.");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toBeTruthy();
+  });
+
+  // ── Regression coverage for the 2026-08 bugfix: generation calls were
+  // capped at maxOutputTokens: 4_000, far too low for a richly-detailed
+  // draft. The model would get cut off mid-JSON (finishReason: "length"),
+  // the AI SDK's JSON parse would throw `NoObjectGeneratedError`, and that
+  // landed in the outer catch as a generic "Generation failed" message for
+  // EVERY sufficiently detailed description — reproduced live against the
+  // real Anthropic API before this fix. See dynamic-agent-generation.ts's
+  // own doc comments on `GENERATION_MAX_OUTPUT_TOKENS` and
+  // `truncationCorrection`.
+
+  it("calls the model with the raised token ceiling (DOC_MAX_TOKENS), not the old 4,000 cap", async () => {
+    vi.mocked(generateObject).mockResolvedValue(objectResult(validDraft()));
+    const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
+    const { DOC_MAX_TOKENS } = await import("@/lib/constants");
+    await generateDynamicAgentDraft("An agent.");
+    const callArgs = vi.mocked(generateObject).mock.calls[0]![0] as { maxOutputTokens: number };
+    expect(callArgs.maxOutputTokens).toBe(DOC_MAX_TOKENS);
+    expect(callArgs.maxOutputTokens).toBeGreaterThan(4_000);
+  });
+
+  it("retries once when the first generation is truncated (finishReason: length), and succeeds when the retry finishes cleanly", async () => {
+    vi.mocked(generateObject)
+      .mockRejectedValueOnce(new NoObjectGeneratedError({ finishReason: "length" }))
+      .mockResolvedValueOnce(objectResult(validDraft()));
+    const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
+    const result = await generateDynamicAgentDraft("A very detailed agent description.");
+    expect(result.ok).toBe(true);
+    expect(generateObject).toHaveBeenCalledTimes(2);
+    // The retry asks for something SHORTER, not a validation fix — a distinct
+    // correction from the dangling-reference/invalid-draft one.
+    const secondCallArgs = vi.mocked(generateObject).mock.calls[1]![0] as { prompt: string };
+    expect(secondCallArgs.prompt).toMatch(/cut off|concise|shorter/i);
+  });
+
+  it("reports a clear error — not the generic fallback — when generation is truncated twice in a row", async () => {
+    vi.mocked(generateObject).mockRejectedValue(new NoObjectGeneratedError({ finishReason: "length" }));
+    const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
+    const result = await generateDynamicAgentDraft("A very detailed agent description.");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/cut off twice/i);
+    expect(generateObject).toHaveBeenCalledTimes(2);
+  });
+
+  it("still recovers via retry when the first attempt is truncated and the SECOND is merely invalid (not truncated again)", async () => {
+    vi.mocked(generateObject)
+      .mockRejectedValueOnce(new NoObjectGeneratedError({ finishReason: "length" }))
+      .mockResolvedValueOnce(
+        objectResult(validDraft({ steps: [{ id: "a", label: "A", model: "sonnet", prompt: "{{inputs.missing}}", allowNetwork: false, allowClientData: false }] })),
+      );
+    const { generateDynamicAgentDraft } = await import("@/lib/dynamic-agent-generation");
+    const result = await generateDynamicAgentDraft("A very detailed agent description.");
+    // Only ONE retry budget total — a truncation on attempt 1 consumes it, so
+    // an invalid (not truncated) attempt 2 is reported, not retried again.
+    expect(result.ok).toBe(false);
+    expect(generateObject).toHaveBeenCalledTimes(2);
   });
 });
