@@ -21,7 +21,7 @@ describe("reportComplete", () => {
 
     expect(consoleError).toHaveBeenCalledWith(
       "failed to report completion to service after retries:",
-      "service unreachable",
+      expect.stringContaining("Error: service unreachable"),
     );
     consoleError.mockRestore();
   });

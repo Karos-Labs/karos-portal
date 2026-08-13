@@ -16,6 +16,7 @@ import { KAROS_MCP_ALLOWED_TOOLS, karosMcpServers } from "./mcp.js";
 import { isTransientError, isTransientResultError } from "./error-classification.js";
 import { restoreCheckpoint, saveCheckpoint } from "./checkpoint.js";
 import { buildStepAgentDefinitions, sdkEnv } from "./sdk-options.js";
+import { formatError } from "./error-format.js";
 
 const SELF_TIMEOUT_BUFFER_MS = 45_000;
 
@@ -71,7 +72,7 @@ async function main(): Promise<void> {
     try {
       spec = await fetchJobSpec(ref);
     } catch (err) {
-      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      const message = formatError(err);
       console.error("failed to fetch job spec:", message);
       const stubSpec = {
         jobId: ref.jobId,
@@ -126,7 +127,7 @@ async function main(): Promise<void> {
         callback,
       );
     } catch (err) {
-      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      const message = formatError(err);
       console.error("dynamic runner failed:", message);
       report = { outcome: "failed", error: message.slice(0, 20000), transient: isTransientError(err) };
     } finally {
@@ -177,10 +178,7 @@ async function main(): Promise<void> {
     let resumedFileCount = 0;
     if (spec.attempt > 1) {
       resumedFileCount = await restoreCheckpoint(callback, workspace.repoDir).catch((err) => {
-        console.warn(
-          "checkpoint restore failed, continuing from scratch:",
-          err instanceof Error ? err.message : err,
-        );
+        console.warn("checkpoint restore failed, continuing from scratch:", formatError(err));
         return 0;
       });
       if (resumedFileCount > 0) {
@@ -301,7 +299,7 @@ async function main(): Promise<void> {
       };
     }
   } catch (err) {
-    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    const message = formatError(err);
     console.error("runner failed:", message);
     report = {
       outcome: "failed",
@@ -317,7 +315,7 @@ async function main(): Promise<void> {
     // progress — not just attempt 1's — is what gets restored.
     if (report.outcome === "failed" && checkpointTarget) {
       await saveCheckpoint(callback, checkpointTarget.repoDir, checkpointTarget.clientSlug, spec.attempt).catch(
-        (err) => console.warn("checkpoint save failed:", err instanceof Error ? err.message : err),
+        (err) => console.warn("checkpoint save failed:", formatError(err)),
       );
     }
     await transcript.close();
@@ -333,6 +331,6 @@ void main().catch((err) => {
   // reportComplete — but it MUST still be visible in `docker logs` instead
   // of vanishing into worker.ts's opaque "job container exited without
   // reporting" dead letter with zero trace of why.
-  console.error("main() failed before a report could be sent:", err instanceof Error ? (err.stack ?? err.message) : err);
+  console.error("main() failed before a report could be sent:", formatError(err));
   process.exit(1);
 });

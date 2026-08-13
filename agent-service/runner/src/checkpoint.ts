@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { snapshotOutputs } from "./artifacts.js";
 import type { CheckpointManifest } from "./callback.js";
+import { formatError } from "./error-format.js";
 
 /** The slice of ServiceCallback this module needs — narrowed for testability. */
 export interface CheckpointCallback {
@@ -30,7 +31,7 @@ export async function saveCheckpoint(
       // Best-effort: a partial checkpoint (some files saved) is still worth
       // more on the next attempt than none, so one file's failure must not
       // abort the rest.
-      console.warn(`checkpoint upload failed for ${relPath}:`, err instanceof Error ? err.message : err);
+      console.warn(`checkpoint upload failed for ${relPath}:`, formatError(err));
     }
   }
 }

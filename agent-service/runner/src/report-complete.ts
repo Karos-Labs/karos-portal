@@ -1,5 +1,6 @@
 import type { RunnerCompleteBody } from "../../src/types.js";
 import type { ServiceCallback } from "./callback.js";
+import { formatError } from "./error-format.js";
 
 /**
  * callback.complete() already retries transient failures; this is the
@@ -14,9 +15,6 @@ export async function reportComplete(callback: ServiceCallback, report: RunnerCo
   try {
     await callback.complete(report);
   } catch (err) {
-    console.error(
-      "failed to report completion to service after retries:",
-      err instanceof Error ? err.message : err,
-    );
+    console.error("failed to report completion to service after retries:", formatError(err));
   }
 }

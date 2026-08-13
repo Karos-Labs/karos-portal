@@ -8,6 +8,7 @@ import { ServiceCallback } from "../callback.js";
 import { restoreCheckpoint, saveCheckpoint } from "../checkpoint.js";
 import { TranscriptStreamer } from "../transcript.js";
 import { downloadContextFiles } from "../context-files.js";
+import { formatError } from "../error-format.js";
 import {
   runDynamicSteps,
   type DynamicRunResumeState,
@@ -148,7 +149,7 @@ export async function runDynamicJob(
       // every step (and re-billing every step's tokens) from scratch. Mirrors
       // what main.ts's hardcoded path already does in its own finally block.
       await saveCheckpoint(callback, workspace.repoDir, workspace.clientSlug, spec.attempt).catch((err) => {
-        console.warn("dynamic-agent checkpoint save failed:", err instanceof Error ? err.message : err);
+        console.warn("dynamic-agent checkpoint save failed:", formatError(err));
       });
       return {
         outcome: "failed",
@@ -252,7 +253,7 @@ async function recoverResumeState(
       priorTrace,
     };
   } catch (err) {
-    console.warn("dynamic-agent checkpoint restore skipped:", err instanceof Error ? err.message : err);
+    console.warn("dynamic-agent checkpoint restore skipped:", formatError(err));
     return undefined;
   }
 }
