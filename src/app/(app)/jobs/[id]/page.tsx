@@ -91,8 +91,11 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           (job.dynamicAgentSpecId), not only once it has a completed report
           (job.dynamicRun) — otherwise the live currentStepId/completedStepIds
           channel below has nothing to render into until the run is already
-          over, which defeats the point of a live indicator. */}
-      {job.dynamicRun || job.dynamicAgentSpecId ? (
+          over, which defeats the point of a live indicator. Also mounted for
+          a hardcoded job that got a write-checkpoint estimate (job.stepBreakdown
+          alone, no dynamicRun/dynamicAgentSpecId) — see this component's own
+          doc comment for that third shape. */}
+      {job.dynamicRun || job.dynamicAgentSpecId || (job.stepBreakdown && job.stepBreakdown.length > 0) ? (
         <DynamicAgentStepProgress
           jobStatus={job.status}
           currentStepId={job.currentStepId}

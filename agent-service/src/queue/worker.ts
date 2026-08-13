@@ -132,6 +132,10 @@ export function buildWebhookPayload(record: JobRecord): JobCompletedWebhookPaylo
   // so the Portal can persist failedStepId / failedStepIndex / the trace
   // instead of parsing them back out of `error`.
   if (record.runnerReport?.dynamicRun) payload.dynamic_run = record.runnerReport.dynamicRun;
+  // The hardcoded path's best-effort step-boundary signal (see WriteCheckpoint)
+  // — only present when the skill happened to checkpoint its own progress.
+  if (record.runnerReport?.writeCheckpoints) payload.write_checkpoints = record.runnerReport.writeCheckpoints;
+  if (record.runnerReport?.runDurationMs !== undefined) payload.run_duration_ms = record.runnerReport.runDurationMs;
   return payload;
 }
 

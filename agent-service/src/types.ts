@@ -122,6 +122,18 @@ export interface JobRecord {
 
 export type RunnerOutcome = "done" | "failed" | "cancelled";
 
+/**
+ * The hardcoded path's best-effort step-boundary signal — see
+ * `extractWriteCheckpoint` in runner/src/transcript.ts. `path` is the
+ * repo-relative file the skill wrote (first write only, per path); `atMs` is
+ * wall-clock ms since the SDK query started, the same basis `runDurationMs`
+ * on `RunnerCompleteBody` uses.
+ */
+export interface WriteCheckpoint {
+  path: string;
+  atMs: number;
+}
+
 export interface RunnerCompleteBody {
   outcome: RunnerOutcome;
   error?: string;
@@ -132,6 +144,17 @@ export interface RunnerCompleteBody {
   model?: string;
   /** Dynamic Agent Studio runs only — see DynamicRunReport. */
   dynamicRun?: DynamicRunReport;
+  /**
+   * The hardcoded path only, and only when the skill's own file-writing
+   * happens to checkpoint its progress — absent for a skill that doesn't.
+   * The Portal prorates `usage`/`runDurationMs` across these to approximate
+   * a per-step cost breakdown; see step-breakdown.ts's
+   * buildStepBreakdownFromCheckpoints. Never exact the way Dynamic Agent
+   * Studio's per-step usage is — see JobStepBreakdownEntry.estimated.
+   */
+  writeCheckpoints?: WriteCheckpoint[];
+  /** Wall-clock ms the SDK query itself ran for — the denominator writeCheckpoints' `atMs` values are prorated against. Only set alongside writeCheckpoints. */
+  runDurationMs?: number;
 }
 
 /**
@@ -219,6 +242,9 @@ export interface JobCompletedWebhookPayload {
   attempt: number;
   /** Dynamic Agent Studio runs only — the structured per-step report. */
   dynamic_run?: DynamicRunReport;
+  /** The hardcoded path's best-effort step-boundary signal — see WriteCheckpoint. */
+  write_checkpoints?: WriteCheckpoint[];
+  run_duration_ms?: number;
 }
 
 /**

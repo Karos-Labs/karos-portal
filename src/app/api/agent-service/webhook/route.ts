@@ -127,7 +127,7 @@ import {
   syncTaskForJobOutcome,
 } from "@/lib/task-sync";
 import { notifyJobFailure } from "@/lib/job-alerts";
-import { buildStepBreakdown } from "@/lib/jobs/step-breakdown";
+import { buildStepBreakdown, buildStepBreakdownFromCheckpoints } from "@/lib/jobs/step-breakdown";
 import { logger } from "@/services/logger";
 
 // The re-host phase is budgeted to end well inside this (rehost-budget.ts),
@@ -335,6 +335,14 @@ const jobCompletedPayloadSchema = z.object({
   transcript_url: z.string().optional(),
   attempt: z.number().default(0),
   dynamic_run: dynamicRunSchema.optional(),
+  /**
+   * The hardcoded custom-agent path's best-effort step-boundary signal —
+   * present only when the skill happened to checkpoint its own progress by
+   * writing files as it went. See step-breakdown.ts's
+   * buildStepBreakdownFromCheckpoints for what this becomes.
+   */
+  write_checkpoints: z.array(z.object({ path: z.string().min(1), atMs: z.number() })).optional(),
+  run_duration_ms: z.number().optional(),
 });
 
 /**
@@ -2087,7 +2095,21 @@ export async function POST(req: NextRequest) {
       // (see step-breakdown.ts). Nothing is "current" once the run is terminal.
       ...(payload.dynamic_run
         ? { dynamicRun: payload.dynamic_run, stepBreakdown: buildStepBreakdown(payload.dynamic_run) }
-        : {}),
+        : payload.write_checkpoints && payload.run_duration_ms !== undefined
+          ? {
+              // The hardcoded path's ESTIMATE — see buildStepBreakdownFromCheckpoints
+              // and JobStepBreakdownEntry.estimated. Only reached when a skill
+              // happens to checkpoint its own progress; every other hardcoded
+              // job (and every legacy one) simply never sets stepBreakdown,
+              // exactly as before this branch existed.
+              stepBreakdown: buildStepBreakdownFromCheckpoints(
+                payload.write_checkpoints,
+                payload.run_duration_ms,
+                { costUsd: payload.usage?.totalCostUsd, inputTokens, outputTokens },
+                payload.status !== "done",
+              ),
+            }
+          : {}),
       currentStepId: null,
       currentStepName: null,
       external: {

@@ -10,12 +10,17 @@ const STATUS_LABEL: Record<JobStepBreakdownEntry["status"], string> = {
 };
 
 /**
- * Per-step token/cost breakdown for a Dynamic Agent Studio run — sorted most
- * expensive first, with the single costliest step called out, so staff can
- * see at a glance which step of the pipeline is worth optimizing. Renders
- * nothing when `stepBreakdown` is empty (every non-dynamic and every legacy
- * job) — this is a purely additive surface, never a replacement for the
- * run-level "Agent run" card beside it.
+ * Per-step token/cost breakdown — sorted most expensive first, with the
+ * single costliest step called out, so staff can see at a glance which step
+ * of the pipeline is worth optimizing. Renders nothing when `stepBreakdown`
+ * is empty (a non-dynamic job whose skill doesn't checkpoint its own
+ * progress, or a legacy job) — this is a purely additive surface, never a
+ * replacement for the run-level "Agent run" card beside it.
+ *
+ * `steps` is either EXACT (Dynamic Agent Studio's own per-step SDK usage) or
+ * an ESTIMATE (the hardcoded path's write-checkpoint proration — see
+ * JobStepBreakdownEntry.estimated); the note below only appears for the
+ * latter, so staff never mistake a prorated number for a measured one.
  */
 export function JobStepCostTable({ steps }: { steps: JobStepBreakdownEntry[] }) {
   if (steps.length === 0) return null;
@@ -24,10 +29,16 @@ export function JobStepCostTable({ steps }: { steps: JobStepBreakdownEntry[] }) 
   // second scan needed to find it.
   const sorted = [...steps].sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0));
   const mostExpensiveId = (sorted[0]?.costUsd ?? 0) > 0 ? sorted[0]?.stepId : undefined;
+  const isEstimate = steps.some((s) => s.estimated);
 
   return (
     <Card>
-      <CardTitle className="mb-3">Step cost breakdown</CardTitle>
+      <CardTitle className={isEstimate ? "mb-1" : "mb-3"}>Step cost breakdown</CardTitle>
+      {isEstimate && (
+        <p className="mb-3 text-xs text-muted-2">
+          Estimated from step timing, not exact per-step token accounting.
+        </p>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

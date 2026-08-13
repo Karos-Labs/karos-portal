@@ -75,6 +75,14 @@ const TYPE_ICON: Record<DynamicAgentRunStep["type"], string> = {
  * before this shipped, or once the run is terminal and the completion
  * webhook has cleared it) falls back to the old heuristic (first
  * not-yet-executed row of an in-flight job).
+ *
+ * A THIRD caller shape: the hardcoded custom-agent path has no `report`, no
+ * `plannedSteps`, and no live channel at all — only `stepBreakdown`'s
+ * write-checkpoint ESTIMATE (see JobStepBreakdownEntry.estimated), arriving
+ * only once the run is already terminal. When that's the only data
+ * available, rows are built directly from `stepBreakdown` and toned from
+ * each entry's own `status` — the live/dynamic tone heuristic above does not
+ * apply (there is nothing "active" about a historical estimate).
  */
 export function DynamicAgentStepProgress({
   report,
@@ -95,7 +103,8 @@ export function DynamicAgentStepProgress({
   const executed = new Map(steps.map((s) => [s.stepId, s]));
   const liveDone = new Set(completedStepIds ?? []);
   const cost = new Map((stepBreakdown ?? []).map((s) => [s.stepId, s]));
-  const rows: Array<{
+
+  type Row = {
     key: string;
     label: string;
     type: DynamicAgentRunStep["type"];
@@ -103,46 +112,67 @@ export function DynamicAgentStepProgress({
     model?: string;
     durationMs?: number;
     costLine?: string;
-  }> = (plannedSteps && plannedSteps.length > 0
-      ? plannedSteps
-      : steps.map((s) => ({ id: s.stepId, label: s.label, type: s.type }))
-    ).map((planned) => {
-      const run = executed.get(planned.id);
-      let tone: StepTone;
-      // A step can be "done" two ways: the terminal report says so, or —
-      // while the run is still in flight and no report exists yet — the
-      // live job.step_progress channel already marked it complete. Without
-      // this second check, every step that finished before the run's FIRST
-      // webhook delivery would show as "idle"/"not started" for the whole
-      // remainder of the run, which is exactly backwards.
-      if (run?.status === "failed") tone = "failed";
-      else if (run?.status === "done" || liveDone.has(planned.id)) tone = "done";
-      else if (currentStepId ? currentStepId === planned.id : jobStatus === "running" || jobStatus === "queued") {
-        tone = "active";
-      } else tone = report?.failedStepId ? "skipped" : "idle";
-      const costEntry = cost.get(planned.id);
-      const costLine = costEntry ? formatCostLine(costEntry) : null;
-      return {
-        key: planned.id,
-        label: planned.label || planned.id,
-        type: planned.type,
-        tone,
-        ...(run?.model ? { model: run.model } : {}),
-        ...(run?.durationMs !== undefined ? { durationMs: run.durationMs } : {}),
-        ...(costLine ? { costLine } : {}),
-      };
-    });
+  };
 
-  // Only the FIRST not-yet-run step of an in-flight job is "Working"; the ones
-  // after it are still waiting, and saying three steps are working at once
-  // would be a lie the client can see. Skipped entirely once `currentStepId`
-  // names the active row directly — at most one row can ever match it.
-  if (!currentStepId) {
-    const firstPending = rows.findIndex((r) => r.tone === "active");
-    if (firstPending !== -1) {
-      rows.forEach((row, i) => {
-        if (row.tone === "active" && i !== firstPending) row.tone = "idle";
-      });
+  const hasPlanned = (plannedSteps?.length ?? 0) > 0;
+  const hasReportSteps = steps.length > 0;
+  const estimateOnly = !hasPlanned && !hasReportSteps && (stepBreakdown?.length ?? 0) > 0;
+
+  let rows: Row[];
+  if (estimateOnly) {
+    // The hardcoded path's write-checkpoint estimate — see this component's
+    // own doc comment. Every entry already carries its own final status;
+    // there is no "active"/"idle" concept for a run that's already over.
+    rows = (stepBreakdown ?? []).map((s) => ({
+      key: s.stepId,
+      label: s.stepName,
+      type: s.stepType,
+      tone: s.status === "failed" ? "failed" : s.status === "skipped" ? "skipped" : "done",
+      ...(s.durationMs !== undefined ? { durationMs: s.durationMs } : {}),
+      ...(formatCostLine(s) ? { costLine: formatCostLine(s)! } : {}),
+    }));
+  } else {
+    rows = (hasPlanned ? plannedSteps! : steps.map((s) => ({ id: s.stepId, label: s.label, type: s.type }))).map(
+      (planned) => {
+        const run = executed.get(planned.id);
+        let tone: StepTone;
+        // A step can be "done" two ways: the terminal report says so, or —
+        // while the run is still in flight and no report exists yet — the
+        // live job.step_progress channel already marked it complete. Without
+        // this second check, every step that finished before the run's FIRST
+        // webhook delivery would show as "idle"/"not started" for the whole
+        // remainder of the run, which is exactly backwards.
+        if (run?.status === "failed") tone = "failed";
+        else if (run?.status === "done" || liveDone.has(planned.id)) tone = "done";
+        else if (currentStepId ? currentStepId === planned.id : jobStatus === "running" || jobStatus === "queued") {
+          tone = "active";
+        } else tone = report?.failedStepId ? "skipped" : "idle";
+        const costEntry = cost.get(planned.id);
+        const costLine = costEntry ? formatCostLine(costEntry) : null;
+        return {
+          key: planned.id,
+          label: planned.label || planned.id,
+          type: planned.type,
+          tone,
+          ...(run?.model ? { model: run.model } : {}),
+          ...(run?.durationMs !== undefined ? { durationMs: run.durationMs } : {}),
+          ...(costLine ? { costLine } : {}),
+        };
+      },
+    );
+
+    // Only the FIRST not-yet-run step of an in-flight job is "Working"; the
+    // ones after it are still waiting, and saying three steps are working at
+    // once would be a lie the client can see. Skipped entirely once
+    // `currentStepId` names the active row directly — at most one row can
+    // ever match it.
+    if (!currentStepId) {
+      const firstPending = rows.findIndex((r) => r.tone === "active");
+      if (firstPending !== -1) {
+        rows.forEach((row, i) => {
+          if (row.tone === "active" && i !== firstPending) row.tone = "idle";
+        });
+      }
     }
   }
 

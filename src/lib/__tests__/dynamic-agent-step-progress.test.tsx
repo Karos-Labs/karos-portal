@@ -198,3 +198,55 @@ describe("what a client is allowed to read", () => {
     expect(paint(report())).not.toMatch(/[֐-׿]/);
   });
 });
+
+/**
+ * The hardcoded custom-agent path: no `report`, no `plannedSteps`, no live
+ * channel — only `stepBreakdown`'s write-checkpoint estimate, arriving once
+ * the run is already terminal. Rows must come straight from each entry's own
+ * `status`, not the live/dynamic tone heuristic (which would wrongly show
+ * every row as "Not started" — there is no in-flight signal for a historical
+ * estimate to hook into).
+ */
+describe("estimate-only mode (hardcoded path, stepBreakdown with no report/plannedSteps)", () => {
+  function paintEstimate(stepBreakdown: import("@/lib/types").JobStepBreakdownEntry[], jobStatus: JobStatus = "review") {
+    return renderToStaticMarkup(
+      <DynamicAgentStepProgress jobStatus={jobStatus} stepBreakdown={stepBreakdown} />,
+    );
+  }
+
+  it("marks every step Completed on a successful run", () => {
+    const html = paintEstimate([
+      { stepId: "01-run", stepName: "Run", stepType: "ai", durationMs: 100, status: "completed", estimated: true },
+      { stepId: "12-commit", stepName: "Commit", stepType: "ai", durationMs: 200, status: "completed", estimated: true },
+    ]);
+    expect(html.match(/Completed/g)).toHaveLength(2);
+    expect(html).not.toContain("Working");
+  });
+
+  it("marks the last step Failed on a failed run, without needing report.failedStepId", () => {
+    const html = paintEstimate(
+      [
+        { stepId: "01-run", stepName: "Run", stepType: "ai", durationMs: 100, status: "completed", estimated: true },
+        { stepId: "12-commit", stepName: "Commit", stepType: "ai", durationMs: 200, status: "failed", estimated: true },
+      ],
+      "failed",
+    );
+    expect(html).toContain("Completed");
+    expect(html).toContain("Failed");
+  });
+
+  it("shows the humanized step name and its cost/token line", () => {
+    const html = paintEstimate([
+      { stepId: "06-angles", stepName: "Angles", stepType: "ai", durationMs: 1000, status: "completed", estimated: true, inputTokens: 500, outputTokens: 100, costUsd: 0.5 },
+    ]);
+    expect(html).toContain("Angles");
+    expect(html).toContain("500 in");
+    expect(html).toContain("100 out");
+  });
+
+  it("falls back to the fixed 3-phase strip's territory (no rows) when stepBreakdown is also empty", () => {
+    const html = paintEstimate([]);
+    expect(html).not.toContain("Completed");
+    expect(html).not.toContain("Working");
+  });
+});

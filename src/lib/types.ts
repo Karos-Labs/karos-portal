@@ -853,22 +853,35 @@ export interface DynamicAgentDedupeReport {
 }
 
 /**
- * The per-step cost/token analytics row for one executed step of a Dynamic
- * Agent Studio run — a Portal-native reshape of `DynamicAgentRunReport.steps`
- * (adding `costUsd` and renaming for the Job Control Room's own vocabulary),
- * stored redundantly on `Job.stepBreakdown` for a simpler UI/query surface,
- * exactly like `Job.external.inputTokens/outputTokens` is already a derived
- * flattening of the same `dynamicRun` data.
+ * The per-step cost/token analytics row for one executed step of a job — one
+ * of TWO sources, distinguished by `estimated`:
  *
- * Dynamic Agent Studio jobs only. The hardcoded custom-agent / managed-product
- * path is a single long SDK session with no step boundaries to attribute cost
- * to — `stepBreakdown` is simply absent there and on every legacy job; readers
- * must fall back to `Job.external`'s run-level totals when it's missing.
+ *  - Dynamic Agent Studio runs (`estimated` absent/false): a Portal-native
+ *    reshape of `DynamicAgentRunReport.steps` (adding `costUsd` and renaming
+ *    for the Job Control Room's own vocabulary), EXACT — each step really is
+ *    its own SDK call with its own usage. See step-breakdown.ts's
+ *    `buildStepBreakdown`.
+ *  - The hardcoded custom-agent / managed-product path (`estimated: true`):
+ *    that path is a single long SDK session with no real step boundaries, so
+ *    this is instead built from `WriteCheckpoint`s — timestamps of when the
+ *    skill wrote each of its own checkpoint files, where a skill happens to
+ *    have that convention — and the run's total cost/tokens PRORATED across
+ *    the resulting intervals by wall-clock share. See step-breakdown.ts's
+ *    `buildStepBreakdownFromCheckpoints`. Absent entirely for a skill that
+ *    doesn't checkpoint its progress this way, and on every legacy job;
+ *    readers must fall back to `Job.external`'s run-level totals when
+ *    `stepBreakdown` is missing altogether — it always was optional for
+ *    exactly this reason.
+ *
+ * Stored redundantly on `Job.stepBreakdown` for a simpler UI/query surface,
+ * exactly like `Job.external.inputTokens/outputTokens` is already a derived
+ * flattening of the same underlying data.
  *
  * `status: "skipped"` is reserved for future use — today's webhook ingestion
- * only ever emits `"completed"` or `"failed"` (a resumed run's reused steps
- * are reported `"completed"`, carrying their ORIGINAL cost, not `"skipped"`,
- * since they really did execute and really did cost real tokens).
+ * only ever emits `"completed"` or `"failed"` (a resumed Dynamic Agent
+ * Studio run's reused steps are reported `"completed"`, carrying their
+ * ORIGINAL cost, not `"skipped"`, since they really did execute and really
+ * did cost real tokens).
  */
 export interface JobStepBreakdownEntry {
   stepId: string;
@@ -883,6 +896,8 @@ export interface JobStepBreakdownEntry {
   modelUsed?: string;
   durationMs: number;
   status: "completed" | "failed" | "skipped";
+  /** True only for the hardcoded path's write-checkpoint-prorated rows — see this interface's own doc comment. Absent (not false) for Dynamic Agent Studio's exact rows. */
+  estimated?: boolean;
 }
 
 /**

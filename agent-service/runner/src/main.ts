@@ -11,7 +11,7 @@ import { prepareWorkspace, writeClientContext } from "./workspace.js";
 import { buildSkillsShim } from "./skills-shim.js";
 import { contextFileList, downloadContextFiles } from "./context-files.js";
 import { collectArtifacts, guessContentType, snapshotOutputs } from "./artifacts.js";
-import { extractUsage, isResultMessage, TranscriptStreamer } from "./transcript.js";
+import { extractUsage, extractWriteCheckpoint, isResultMessage, TranscriptStreamer } from "./transcript.js";
 import { KAROS_MCP_ALLOWED_TOOLS, karosMcpServers } from "./mcp.js";
 import { isTransientError, isTransientResultError } from "./error-classification.js";
 import { restoreCheckpoint, saveCheckpoint } from "./checkpoint.js";
@@ -143,6 +143,12 @@ async function main(): Promise<void> {
   // checkpoint even when the failure was thrown (not delivered as a result
   // message) — as long as there's an output tree to snapshot.
   let checkpointTarget: { repoDir: string; clientSlug: string } | undefined;
+  // Best-effort step-boundary signal for THIS (hardcoded) path — see
+  // extractWriteCheckpoint's doc comment. Declared here, not inside the try
+  // block, so a thrown error still reports whatever checkpoints were
+  // observed before the throw (attached in the catch block below).
+  const runStartedAt = Date.now();
+  const writeCheckpoints: NonNullable<RunnerCompleteBody["writeCheckpoints"]> = [];
 
   try {
     // Resolved inside the try (not before it): a malformed brief throws here
@@ -239,6 +245,13 @@ async function main(): Promise<void> {
     try {
       for await (const message of q) {
         transcript.append(message);
+        const checkpointPath = extractWriteCheckpoint(message, workspace.repoDir, workspace.clientSlug);
+        // Only the FIRST write to a given path marks that step's start — a
+        // skill re-writing the same file later (a fix-up, a retry) must not
+        // manufacture a second "step".
+        if (checkpointPath && !writeCheckpoints.some((c) => c.path === checkpointPath)) {
+          writeCheckpoints.push({ path: checkpointPath, atMs: Date.now() - runStartedAt });
+        }
         if (isResultMessage(message)) {
           sawResult = true;
           report.usage = extractUsage(message);
@@ -279,6 +292,11 @@ async function main(): Promise<void> {
       report = { ...report, outcome: "failed", transient: true, error: "SDK stream ended without a result message" };
     }
 
+    if (writeCheckpoints.length > 0) {
+      report.writeCheckpoints = writeCheckpoints;
+      report.runDurationMs = Date.now() - runStartedAt;
+    }
+
     const { artifacts, skipped } = await collectArtifacts(workspace.repoDir, workspace.clientSlug, before);
     for (const s of skipped) console.warn(`artifact skipped: ${s}`);
     for (const artifact of artifacts) {
@@ -306,6 +324,9 @@ async function main(): Promise<void> {
       error: message.slice(0, 20000),
       transient: isTransientError(err),
       ...(report.agentsRepoSha ? { agentsRepoSha: report.agentsRepoSha } : {}),
+      ...(writeCheckpoints.length > 0
+        ? { writeCheckpoints, runDurationMs: Date.now() - runStartedAt }
+        : {}),
     };
   } finally {
     // Every failed attempt saves, not just the ones with an automatic retry

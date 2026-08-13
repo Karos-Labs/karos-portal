@@ -274,6 +274,11 @@ export function registerInternalRoutes(app: FastifyInstance, deps: ServerDeps): 
             // agent job. `usage`/`model`/`agentsRepoSha` above worked because
             // they WERE declared; this one just never was.
             dynamicRun: { type: "object" },
+            // The hardcoded path's best-effort step-boundary signal (see
+            // WriteCheckpoint in ../types.js) — declared up front this time,
+            // not discovered missing after shipping unused for months.
+            writeCheckpoints: { type: "array" },
+            runDurationMs: { type: "number" },
           },
         },
       },
