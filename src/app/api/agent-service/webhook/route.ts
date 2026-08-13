@@ -544,7 +544,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
   }
 
-  const status = STATUS_MAP[payload.status] ?? "failed";
+  // `let`, not `const`: the zero-deliverable branch below corrects this to
+  // "failed" once it learns the "done" run produced nothing the client can
+  // see — the value here is only what the atomic claim needs up front.
+  let status = STATUS_MAP[payload.status] ?? "failed";
+  // Mirrors the correction above onto `job.error`, which otherwise stays
+  // forced to null for any payload.status === "done" (see the final
+  // updateJob below) even when this handler decides the run actually failed.
+  let statusError: string | null = null;
 
   // Client-charged runs (custom agents fired by CLIENT_USERs) get their
   // credits back when the run dies without deliverables. This MUST happen
@@ -1982,6 +1989,15 @@ export async function POST(req: NextRequest) {
             `and none of them could be copied into platform storage. They are listed above with a reason each.`,
         });
       }
+      // The service said "done", but the client got nothing — the same outcome
+      // as a failed run (see the refund above), so the job record must read
+      // the same way. Left at "review" this sat in the same queue as a genuine
+      // success awaiting approval, indistinguishable from one in the UI.
+      status = "failed";
+      statusError =
+        notRehosted.length > 0
+          ? `No deliverable was created: ${notRehosted.length} client-facing file(s) could not be copied into platform storage`
+          : "The run finished without producing a client-facing deliverable";
     }
     // Counts what was ATTACHED, not what the manifest declared, and names the
     // shortfall rather than letting the run read as clean (#47/#50/#51). The
@@ -2063,7 +2079,7 @@ export async function POST(req: NextRequest) {
       status,
       assetIds: mergedAssetIds,
       events: mergedEvents,
-      error: payload.status === "done" ? null : (payload.error ?? payload.status),
+      error: statusError ?? (payload.status === "done" ? null : (payload.error ?? payload.status)),
       // Dynamic Agent Studio only: the structured per-step report, stored so the
       // job page can render a step bar and an "incomplete" banner from data
       // rather than parsing them back out of `error`. `stepBreakdown` is the
@@ -2178,7 +2194,7 @@ export async function POST(req: NextRequest) {
     if (status === "failed") {
       const client = await getClient(clientId).catch(() => null);
       await notifyJobFailure(
-        { ...job, status, error: payload.error ?? payload.status },
+        { ...job, status, error: statusError ?? payload.error ?? payload.status },
         client,
       );
     }

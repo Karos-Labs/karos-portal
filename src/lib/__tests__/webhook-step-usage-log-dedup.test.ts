@@ -19,9 +19,27 @@ import { logger } from "@/services/logger";
  */
 
 vi.mock("server-only", () => ({}));
+/**
+ * Real `after()` keeps the serverless function alive until its callback
+ * settles; it is genuinely fire-and-forget only from the RESPONSE's point of
+ * view. The route's own `after(async () => {...})` now reaches an `await`
+ * before the per-step usageLogs loop whenever the run is marked "failed"
+ * (the notifyJobFailure alert added upstream of it) — so a mock that just
+ * calls `fn()` and drops the promise races the test's own assertions against
+ * that alert's pending awaits. `afterState` gives `post()` below something
+ * to wait on so it observes the callback's fully-settled effects, matching
+ * what the runtime actually guarantees.
+ */
+const afterState: { promise: Promise<unknown> } = { promise: Promise.resolve() };
 vi.mock("next/server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("next/server")>();
-  return { ...actual, after: (fn: () => void) => fn() };
+  return {
+    ...actual,
+    after: (fn: () => void | Promise<void>) => {
+      afterState.promise = Promise.resolve().then(fn);
+      return afterState.promise;
+    },
+  };
 });
 vi.mock("@/lib/data");
 vi.mock("@/lib/data-client-agents");
@@ -103,7 +121,9 @@ async function post(body: Record<string, any>) {
     headers: { "x-signature": "sig", "x-timestamp": "1", "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  return POST(req as any);
+  const res = await POST(req as any);
+  await afterState.promise;
+  return res;
 }
 
 function stepUsageCalls() {

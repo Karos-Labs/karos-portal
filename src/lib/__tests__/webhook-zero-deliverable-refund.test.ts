@@ -7,9 +7,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * The webhook's refund is gated on `payload.status !== "done"`, so a run the
  * service reports as DONE never reaches it. When such a run carries zero
  * client-facing artifacts, no asset is created either — the asset-creation
- * refund below it is unreachable, because no creation is attempted — and the job
- * is still recorded as a success. The client paid for a deliverable and got
- * nothing, which is the same outcome as a failed run and now costs the same.
+ * refund below it is unreachable, because no creation is attempted. The client
+ * paid for a deliverable and got nothing, which is the same outcome as a
+ * failed run: it now costs the same (this describe block) AND the job record
+ * itself is corrected from the optimistic "review" claim to "failed" (see
+ * "the deliveries under test actually ran" below), so it no longer sits
+ * indistinguishable from a genuine success awaiting approval.
  *
  * The counterweight has its own test: a LAUNCH run's deliverable is not an asset
  * (it is the umbrella advancing), so judging one by artifact count would refund
@@ -239,10 +242,22 @@ describe("the runs it must NOT refund", () => {
  * actually reached the end.
  */
 describe("the deliveries under test actually ran", () => {
-  it("claims the job and writes the job record on the zero-deliverable path", async () => {
+  it("claims the job provisionally as 'review', then corrects the final record to 'failed'", async () => {
     const res = await deliver(payload());
     expect(res.status).toBe(200);
+    // The claim fires before the deliverable count is known, so it still takes
+    // the optimistic "done" mapping — see STATUS_MAP and the comment on the
+    // `let status` declaration above it.
     expect(data.claimExternalJobCompletion).toHaveBeenCalledWith("job-1", "review");
-    expect(data.updateJob).toHaveBeenCalledWith("job-1", expect.objectContaining({ status: "review" }));
+    // The client got nothing, which reads the same as a failed run — so the
+    // record the job page and every dashboard actually query must say "failed",
+    // not sit in the same "review" bucket as a genuine success.
+    expect(data.updateJob).toHaveBeenCalledWith(
+      "job-1",
+      expect.objectContaining({
+        status: "failed",
+        error: "The run finished without producing a client-facing deliverable",
+      }),
+    );
   });
 });
