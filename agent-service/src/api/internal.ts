@@ -263,6 +263,17 @@ export function registerInternalRoutes(app: FastifyInstance, deps: ServerDeps): 
             usage: { type: "object" },
             agentsRepoSha: { type: "string", maxLength: 64 },
             model: { type: "string", maxLength: 100 },
+            // Dynamic Agent Studio only. PRE-EXISTING BUG, fixed here: this
+            // property was never declared, and Fastify's default AJV
+            // validator (removeAdditional: true, implied by
+            // additionalProperties: false) silently stripped it from every
+            // request body before the handler ever saw it — so
+            // runnerReport.dynamicRun, and therefore the webhook's
+            // dynamic_run field, and therefore Job.dynamicRun/stepBreakdown,
+            // has never once reached the Portal for any completed dynamic-
+            // agent job. `usage`/`model`/`agentsRepoSha` above worked because
+            // they WERE declared; this one just never was.
+            dynamicRun: { type: "object" },
           },
         },
       },
