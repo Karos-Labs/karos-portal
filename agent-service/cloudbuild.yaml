@@ -70,7 +70,17 @@ steps:
       - --vpc-connector=${_VPC_CONNECTOR}
       - --memory=1Gi
       - --min-instances=1
-      - --set-env-vars=ARTIFACT_STORE=gcs,EXECUTOR=cloudrun,CLOUDRUN_PROJECT=$PROJECT_ID,CLOUDRUN_REGION=${_REGION},CLOUDRUN_JOB=agent-runner
+      # INTERNAL_BASE_URL matters here too, not just on the worker: buildJobSpec
+      # (queue/worker.ts) is also called from GET /internal/jobs/:id/spec
+      # (api/internal.ts), which serves the full JobSpec — including its own
+      # callbackBaseUrl — to runners whose spec was too large to inline
+      # (JOB_SPEC_REF_B64, see exec/executor.ts's buildSpecEnv). Without this,
+      # that response's callbackBaseUrl falls back to config.ts's
+      # http://localhost:${PORT} default, and the runner then sends every
+      # subsequent call (checkpoint, step-progress, complete) to itself —
+      # ECONNREFUSED 127.0.0.1:8080 — even though the initial spec fetch, using
+      # the worker-issued ref's correct URL, succeeded.
+      - --set-env-vars=ARTIFACT_STORE=gcs,EXECUTOR=cloudrun,CLOUDRUN_PROJECT=$PROJECT_ID,CLOUDRUN_REGION=${_REGION},CLOUDRUN_JOB=agent-runner,INTERNAL_BASE_URL=${_INTERNAL_API_URL}
       - --set-secrets=AGENT_SERVICE_TOKENS=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,REDIS_URL=agent-redis-url:latest,AGENT_ARTIFACTS_BUCKET=agent-artifacts-bucket:latest
 
   - id: deploy-worker
