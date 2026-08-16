@@ -4,7 +4,16 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 
-import { createTranscript, findDuplicateTranscript, getClientContextDoc, listClients, listUsers, upsertClientContextDoc } from "@/lib/data";
+import {
+  createTranscript,
+  findDuplicateTranscript,
+  getClientContextDoc,
+  getTranscript,
+  listClients,
+  listUsers,
+  upsertClientContextDoc,
+  TranscriptAlreadyExistsError,
+} from "@/lib/data";
 import { createActionItemDocsForTranscript } from "@/lib/action-items";
 import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
@@ -277,7 +286,22 @@ export async function ingestTranscript(
     createdAt: Date.now(),
   } satisfies Omit<Transcript, "id">;
 
-  const id = await createTranscript(transcriptData);
+  let id: string;
+  try {
+    id = await createTranscript(transcriptData);
+  } catch (e) {
+    // A concurrent ingest (webhook retry, auto-sync racing the manual sync button, etc.)
+    // won the write for this same recording between our check above and this write —
+    // treat it the same as the pre-check finding it (QA: duplicate "Karos All Hands" /
+    // "SOW portal revamp" meetings, 2026-08-11).
+    if (e instanceof TranscriptAlreadyExistsError) {
+      const winner = await getTranscript(e.existingId);
+      if (winner) {
+        return { id: winner.id, clientId: winner.clientId ?? null, matched: !!winner.clientId, duplicate: true };
+      }
+    }
+    throw e;
+  }
 
   // Promote extracted items to managed action-item docs (status / comments / history).
   try {

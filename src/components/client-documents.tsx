@@ -16,22 +16,10 @@ import {
   stripHeadingNumber,
   stripPipelineMarkers,
 } from "@/lib/doc-render";
-import {
-  generateDocSummaryAction,
-  generateIntelReportAction,
-  updateIntelScheduleAction,
-} from "@/lib/actions";
+import { generateDocSummaryAction, generateIntelReportAction } from "@/lib/actions";
 import { CorrectInfoModal } from "@/components/correct-info-modal";
 import { docListEmptyLine, docsPipelineState, unavailableDocCopy } from "@/lib/doc-rail-copy";
-import {
-  computeFirstIntelScheduleRun,
-  describeIntelSchedule,
-  MIN_INTERVAL_MONTHS,
-  MAX_INTERVAL_MONTHS,
-  MIN_DAY_OF_MONTH,
-  MAX_DAY_OF_MONTH,
-  type IntelScheduleInfo,
-} from "@/lib/intel-schedule";
+import type { IntelScheduleInfo } from "@/lib/intel-schedule";
 import type { ClientContextDoc, ContextDocType } from "@/lib/types";
 
 /** Documents surfaced to the client, in display order. Shown only when generated. */
@@ -787,230 +775,9 @@ export function RegenerateModal({
   );
 }
 
-/* ── Schedule modal ───────────────────────────────────────────────────── */
-
 function formatDate(ms: number | null): string {
   if (!ms) return "Never";
   return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
-}
-
-function ScheduleModal({
-  clientId,
-  schedule,
-  open,
-  onClose,
-  onSuccess,
-}: {
-  clientId: string;
-  schedule: IntelScheduleInfo;
-  open: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
-}) {
-  const [enabled, setEnabled] = useState(schedule.enabled);
-  const [intervalMonths, setIntervalMonths] = useState(schedule.intervalMonths);
-  const [dayOfMonth, setDayOfMonth] = useState(schedule.dayOfMonth);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setEnabled(schedule.enabled);
-      setIntervalMonths(schedule.intervalMonths);
-      setDayOfMonth(schedule.dayOfMonth);
-      setError(null);
-      setRunning(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !running) onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, running, onClose]);
-
-  async function handleSave() {
-    setRunning(true);
-    setError(null);
-    try {
-      const result = await updateIntelScheduleAction(clientId, { enabled, intervalMonths, dayOfMonth });
-      if ("error" in result && result.error) {
-        setError(result.error);
-        return;
-      }
-      onSuccess();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save the schedule. Please try again.");
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  if (!open) return null;
-
-  // The saved next run and the preview only agree at a one-month interval: the
-  // cron advances by adding the interval to the slot that just fired, while the
-  // preview is the next calendar occurrence of dayOfMonth. So show the SAVED
-  // date until something is edited, and relabel it once it is - the modal is the
-  // only place a schedule can be inspected, and "Next run" was the one number an
-  // admin opens it to check.
-  const edited =
-    enabled !== schedule.enabled ||
-    intervalMonths !== schedule.intervalMonths ||
-    dayOfMonth !== schedule.dayOfMonth;
-  // A schedule saved with no stored next run has nothing to report but the
-  // preview, so it gets the preview's label too rather than a bare date.
-  const previewing = edited || schedule.nextRunAt === null;
-  const nextRunLabel = previewing ? "Next run after saving" : "Next run";
-  const nextRunAt = enabled
-    ? previewing
-      ? computeFirstIntelScheduleRun(dayOfMonth)
-      : schedule.nextRunAt
-    : null;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(4px)" }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !running) onClose();
-      }}
-    >
-      <div className="w-full max-w-md overflow-hidden rounded-[16px] border border-border bg-surface shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-neon-soft neon-glow">
-              <Icon name="CalendarClock" className="h-3.5 w-3.5 text-neon" />
-            </div>
-            <p className="font-semibold text-foreground">Regeneration Schedule</p>
-          </div>
-          <button
-            onClick={onClose}
-            disabled={running}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:opacity-40"
-          >
-            <Icon name="X" className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="space-y-4 px-5 py-4">
-          <p className="text-sm text-muted">
-            Automatically re-run the Intel Report + SEO/GEO pipeline on a recurring cadence.
-            This is the only automatic re-trigger besides creating the client. Otherwise it
-            only runs when an admin clicks Regenerate.
-          </p>
-
-          <label className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-surface-2 px-3 py-2.5">
-            <span className="text-sm font-medium text-foreground">Enable recurring regeneration</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              onClick={() => setEnabled((v) => !v)}
-              disabled={running}
-              className={cn(
-                "relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50",
-                enabled ? "bg-neon" : "bg-surface",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform",
-                  enabled && "translate-x-4",
-                )}
-              />
-            </button>
-          </label>
-
-          <div className={cn("grid grid-cols-2 gap-3", !enabled && "pointer-events-none opacity-40")}>
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-                Repeat every
-              </p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={MIN_INTERVAL_MONTHS}
-                  max={MAX_INTERVAL_MONTHS}
-                  value={intervalMonths}
-                  onChange={(e) => setIntervalMonths(Number(e.target.value) || MIN_INTERVAL_MONTHS)}
-                  disabled={running || !enabled}
-                  className="w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground focus:border-neon focus:outline-none disabled:opacity-50"
-                />
-                <span className="shrink-0 text-sm text-muted">
-                  {intervalMonths === 1 ? "month" : "months"}
-                </span>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-                On day of month
-              </p>
-              <input
-                type="number"
-                min={MIN_DAY_OF_MONTH}
-                max={MAX_DAY_OF_MONTH}
-                value={dayOfMonth}
-                onChange={(e) => setDayOfMonth(Number(e.target.value) || MIN_DAY_OF_MONTH)}
-                disabled={running || !enabled}
-                className="w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground focus:border-neon focus:outline-none disabled:opacity-50"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1 rounded-[10px] border border-border px-3 py-2.5 text-xs">
-            <p className="text-muted">
-              <span className="text-muted-2">Cadence: </span>
-              {enabled ? describeIntelSchedule({ intervalMonths, dayOfMonth }) : "Off"}
-            </p>
-            {enabled && nextRunAt && (
-              <p className="text-muted">
-                <span className="text-muted-2">{nextRunLabel}: </span>
-                {formatDate(nextRunAt)}
-              </p>
-            )}
-            <p className="text-muted">
-              <span className="text-muted-2">Last generated: </span>
-              {formatDate(schedule.lastIntelReportAt)}
-            </p>
-          </div>
-
-          {error && (
-            <p className="rounded-[8px] border border-danger/20 bg-danger/10 px-3 py-2 text-xs text-danger">
-              {error}
-            </p>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2.5 border-t border-border px-5 py-4">
-          <button
-            onClick={onClose}
-            disabled={running}
-            className="rounded-[8px] px-4 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={running}
-            className="flex items-center gap-2 rounded-[10px] bg-neon px-4 py-2 text-sm font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-60"
-          >
-            <Icon name="CalendarClock" className={cn("h-3.5 w-3.5", running && "animate-pulse")} />
-            {running ? "Saving…" : "Save Schedule"}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
 }
 
 /* ── Documents list ───────────────────────────────────────────────────── */
@@ -1022,7 +789,9 @@ export function ClientDocuments({
   clientId,
   isAiProcessing,
   aiProcessingFailed,
-  intelSchedule,
+  // Kept on the signature for callers (client-rail.tsx); the sidebar's schedule
+  // button/modal that read this was removed.
+  intelSchedule: _intelSchedule,
   allowInternalFallback = false,
   correctionPricing,
 }: {
@@ -1055,7 +824,6 @@ export function ClientDocuments({
   const router = useRouter();
   const [openDoc, setOpenDoc] = useState<{ doc: ClientContextDoc; label: string } | null>(null);
   const [regenModalOpen, setRegenModalOpen] = useState(false);
-  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
 
   const available = DOC_TABS.map((t) => ({
     ...t,
@@ -1076,14 +844,6 @@ export function ClientDocuments({
         </p>
         {isAdmin && clientId && (
           <div className="flex items-center gap-0.5">
-            <button
-              onClick={() => setScheduleModalOpen(true)}
-              title="Configure recurring Intel Report + SEO/GEO regeneration"
-              className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-            >
-              <Icon name="CalendarClock" className="h-3 w-3" />
-              Schedule
-            </button>
             <button
               onClick={() => setRegenModalOpen(true)}
               disabled={isAiProcessing}
@@ -1186,27 +946,6 @@ export function ClientDocuments({
           onClose={() => setRegenModalOpen(false)}
           onSuccess={() => {
             setRegenModalOpen(false);
-            router.refresh();
-          }}
-        />
-      )}
-
-      {clientId && (
-        <ScheduleModal
-          clientId={clientId}
-          schedule={
-            intelSchedule ?? {
-              enabled: false,
-              intervalMonths: MIN_INTERVAL_MONTHS,
-              dayOfMonth: MIN_DAY_OF_MONTH,
-              nextRunAt: null,
-              lastIntelReportAt: null,
-            }
-          }
-          open={scheduleModalOpen}
-          onClose={() => setScheduleModalOpen(false)}
-          onSuccess={() => {
-            setScheduleModalOpen(false);
             router.refresh();
           }}
         />

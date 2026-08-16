@@ -763,7 +763,41 @@ export async function getAsset(id: string): Promise<Asset | null> {
   return doc.exists ? withId<Asset>(doc) : null;
 }
 
-export async function createAsset(data: Omit<Asset, "id">): Promise<string> {
+/**
+ * Creates an asset. With no `id`, an auto-generated one (the ordinary case,
+ * every existing caller).
+ *
+ * With an `id`, it is a caller-chosen DETERMINISTIC one and the create is
+ * idempotent against it: `.doc(id).create()` fails atomically when the id
+ * already exists — no read-then-write gap, so two callers racing the same id
+ * (a double click, a retry after a slow response) cannot both win. The
+ * loser's `create()` rejects with ALREADY_EXISTS (gRPC code 6) and that is
+ * treated as success, not an error: the id IS the idempotency key, so
+ * "someone already wrote this" and "I just wrote this" are the same outcome
+ * to a caller. Same idiom as `credit-reconcile.ts`'s `tx.create()` on a
+ * deterministic ledger id, minus the transaction — there is no read-modify-
+ * write here, just create-or-already-exists. Overloaded (rather than a
+ * differently-named sibling) so this stays the one writer #49's asset-type
+ * governance scan in platforms-publishable.test.ts has to know about.
+ */
+export async function createAsset(data: Omit<Asset, "id">): Promise<string>;
+export async function createAsset(
+  data: Omit<Asset, "id">,
+  id: string,
+): Promise<{ id: string; created: boolean }>;
+export async function createAsset(
+  data: Omit<Asset, "id">,
+  id?: string,
+): Promise<string | { id: string; created: boolean }> {
+  if (id) {
+    try {
+      await col.assets().doc(id).create(data);
+      return { id, created: true };
+    } catch (e) {
+      if ((e as { code?: number })?.code === 6) return { id, created: false };
+      throw e;
+    }
+  }
   const ref = await col.assets().add(data);
   return ref.id;
 }
@@ -1084,9 +1118,37 @@ export async function getTranscript(id: string): Promise<Transcript | null> {
   return doc.exists ? withId<Transcript>(doc) : null;
 }
 
+/** Thrown by createTranscript when a transcript for this externalId was already created
+ *  (by a concurrent sync/webhook call) between the caller's dedup check and this write. */
+export class TranscriptAlreadyExistsError extends Error {
+  constructor(public readonly existingId: string) {
+    super(`Transcript with this externalId already exists (id=${existingId})`);
+  }
+}
+
+/** Deterministic doc id per externalId, so two concurrent ingests for the same recording
+ *  race on the SAME Firestore doc instead of each creating their own via .add() — the
+ *  transaction below then makes "does it exist" and "create it" atomic. Manual entries get
+ *  a synthetic externalId (see ingestManualTranscriptAction) so this always applies. */
+function transcriptDocId(externalId: string): string {
+  return `ext_${externalId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
 export async function createTranscript(data: Omit<Transcript, "id">): Promise<string> {
-  const ref = await col.transcripts().add(data);
-  return ref.id;
+  if (!data.externalId) {
+    const ref = await col.transcripts().add(data);
+    return ref.id;
+  }
+  const id = transcriptDocId(data.externalId);
+  const ref = col.transcripts().doc(id);
+  const created = await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) return false;
+    tx.set(ref, data);
+    return true;
+  });
+  if (!created) throw new TranscriptAlreadyExistsError(id);
+  return id;
 }
 
 export async function updateTranscript(id: string, data: Partial<Transcript>): Promise<void> {

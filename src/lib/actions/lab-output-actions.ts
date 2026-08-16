@@ -17,6 +17,7 @@ import {
   pickPrimaryFiles,
   type LabRun,
 } from "@/lib/lab-outputs";
+import { labImportAssetId } from "@/lib/lab-outputs-shared";
 import { uploadBytes } from "@/lib/storage";
 import { labImportAssetType } from "@/lib/agent-service/deliverable-asset-type";
 import { recommendedScheduleFields } from "@/lib/scheduling";
@@ -263,33 +264,44 @@ export async function importLabRunAction(input: {
       const assetType = labImportAssetType(folderAssetType, input.agentFolder, content);
       const chainFamily = chainFamilyFor(assetType);
 
-      await createAsset({
-        clientId: input.clientId,
-        jobId: null,
-        agentId: null,
-        type: assetType,
-        title: humanizeItemName(group.key === "run" ? input.runName : group.key),
-        content,
-        meta: {
-          source: "lab-import",
-          labRun: itemKey,
-          agentFolder: input.agentFolder,
-          ...(about ? { about } : {}),
-          ...(imageUrls.length > 0 ? { images: imageUrls } : {}),
-          files: hosted,
+      // Deterministic on itemKey, not an auto id: two overlapping imports of
+      // this same item (a retry fired before the first request returned, a
+      // double click on "Import") both compute this id and race the create,
+      // which lets exactly one of them win. The in-memory `alreadyImported`
+      // check above is a fast path for the ordinary case (a later, separate
+      // import run) — it cannot see writes still in flight from a concurrent
+      // invocation, which is exactly the gap this closes.
+      const { created: didCreate } = await createAsset(
+        {
+          clientId: input.clientId,
+          jobId: null,
+          agentId: null,
+          type: assetType,
+          title: humanizeItemName(group.key === "run" ? input.runName : group.key),
+          content,
+          meta: {
+            source: "lab-import",
+            labRun: itemKey,
+            agentFolder: input.agentFolder,
+            ...(about ? { about } : {}),
+            ...(imageUrls.length > 0 ? { images: imageUrls } : {}),
+            files: hosted,
+          },
+          imageUrl,
+          status: "draft",
+          ...(template ? { templateKey: template.key, templateName: template.name } : {}),
+          orderKey: orderKeyForLabItem(input.runName, group.key, dataJson?.date),
+          // Chain-family types get their date + recommendedAt from the post-create
+          // reflow (A8/A4); only non-chain types keep the advisory stagger.
+          ...(chainFamily ? {} : recommendedScheduleFields(assetType, created)),
+          createdBy: ctx.user.uid,
+          createdAt: now,
+          updatedAt: now,
         },
-        imageUrl,
-        status: "draft",
-        ...(template ? { templateKey: template.key, templateName: template.name } : {}),
-        orderKey: orderKeyForLabItem(input.runName, group.key, dataJson?.date),
-        // Chain-family types get their date + recommendedAt from the post-create
-        // reflow (A8/A4); only non-chain types keep the advisory stagger.
-        ...(chainFamily ? {} : recommendedScheduleFields(assetType, created)),
-        createdBy: ctx.user.uid,
-        createdAt: now,
-        updatedAt: now,
-      });
-      created++;
+        labImportAssetId(input.clientId, itemKey),
+      );
+      if (didCreate) created++;
+      else skipped++;
     }
 
     void logActivity({

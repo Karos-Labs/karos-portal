@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { AssetType } from "@/lib/types";
 
 /**
@@ -148,6 +149,27 @@ const LAB_PROPOSAL_PATH = /^clients\/[A-Za-z0-9][\w.-]*\/refresh\/[A-Za-z0-9][\w
  */
 export function isLabProposalPath(path: string): boolean {
   return LAB_PROPOSAL_PATH.test(path);
+}
+
+/**
+ * Deterministic Firestore asset id for one lab-import item, keyed on the same
+ * `${agentFolder}/${runName}#${groupKey}` identity `importLabRunAction` already
+ * uses for its in-memory "already imported" set (`itemKey` there). Hashed
+ * (rather than used raw) because a Firestore doc id may not contain "/", which
+ * every itemKey does.
+ *
+ * This turns the import's per-item duplicate check from a read-then-write
+ * race into an atomic one: two overlapping imports of the same item (a retry
+ * fired before the first request returned, a double click) both compute this
+ * same id, and `createAsset`'s deterministic-id overload guarantees only one
+ * of them creates the document — closing the residual race
+ * `registeredClipIds` in api/assets/bulk-upload documents for the analogous
+ * gcsPath case, which that code path cannot close because it has no
+ * deterministic id to create against.
+ */
+export function labImportAssetId(clientId: string, itemKey: string): string {
+  const hash = createHash("sha256").update(`${clientId}::${itemKey}`).digest("hex");
+  return `labimport_${hash}`;
 }
 
 /** "01-template-launch-hero" → "Template launch hero"; "2026-07-06-template-launch" → "Template launch" */

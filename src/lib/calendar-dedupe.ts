@@ -9,22 +9,31 @@
  * ran later in the same session.
  *
  * The write-side hole that produced those duplicates is closed separately (the
- * "complete" step of api/assets/bulk-upload is now idempotent on
- * `meta.gcsPath`). This module is the other half: production already holds the
- * documents that hole created, no cleanup has run, and a client refreshing
- * their calendar must not see them. Nothing here deletes anything — survivors
- * are chosen for RENDER only, and every document stays where it is.
+ * "complete" step of api/assets/bulk-upload is idempotent on `meta.gcsPath`,
+ * and `importLabRunAction` is idempotent on `meta.labRun` — both against a
+ * deterministic Firestore id, see `lib/data.ts`'s `createAsset` overload).
+ * This module is the other half: production already holds the documents those
+ * holes created before their fixes landed, no cleanup has run, and a client
+ * refreshing their calendar must not see them. Nothing here deletes anything —
+ * survivors are chosen for RENDER only, and every document stays where it is.
  *
- * ONE SIGNAL REACHES THE SCREEN, and it has to be a fact rather than a guess,
+ * TWO SIGNALS REACH THE SCREEN, and each has to be a fact rather than a guess,
  * because the cost of a wrong merge is a client's real post disappearing:
  *
- *   Two documents of one client pointing at the same object in the bucket
- *   WHOSE PLACEMENT AGREES. The shared path alone is not enough. Using one clip
- *   twice is ordinary work here — the same podcast cut scheduled for two
- *   different days is two real posts, and collapsing that pair would show one
- *   and silently hide the other. So a shared-path set only collapses when at
- *   most one day is claimed across it: every copy sits on that day, or has no
- *   placement at all. Two dated copies on different days stay two posts.
+ *   gcsPath — two documents of one client pointing at the same object in the
+ *   bucket WHOSE PLACEMENT AGREES. The shared path alone is not enough. Using
+ *   one clip twice is ordinary work here — the same podcast cut scheduled for
+ *   two different days is two real posts, and collapsing that pair would show
+ *   one and silently hide the other. So a shared-path set only collapses when
+ *   at most one day is claimed across it: every copy sits on that day, or has
+ *   no placement at all. Two dated copies on different days stay two posts.
+ *
+ *   labRun — two documents of one client importing the same lab-generated
+ *   item. Placement agreement is NOT required here: a lab-import item is a
+ *   one-shot generated deliverable with no legitimate "reuse on a different
+ *   day" (unlike a clip, nothing schedules the same generated carousel twice
+ *   on purpose — see `assetLabRun`'s docstring), so any shared labRun collapses
+ *   regardless of which days the copies landed on.
  *
  * The title/day rule below is REPORTING ONLY and never runs on the render path.
  * Two posts on one day whose titles normalise alike is the ordinary shape of a
@@ -41,7 +50,7 @@
 import { postKind, type CalendarKindInput } from "@/lib/calendar-kind";
 
 /** Which signal grouped a set of assets together. */
-export type DuplicateKind = "gcsPath" | "titleDay";
+export type DuplicateKind = "gcsPath" | "labRun" | "titleDay";
 
 /**
  * Minimal shape this needs from an Asset — kept narrow (same reasoning as
@@ -91,6 +100,20 @@ const KEY_SEP = "|";
 export function assetGcsPath(a: CalendarDedupeAsset): string | null {
   const path = a.meta?.gcsPath;
   return typeof path === "string" && path.trim() !== "" ? path.trim() : null;
+}
+
+/**
+ * The lab-import item this asset came from, when it has one — the same
+ * `${agentFolder}/${runName}#${itemKey}` identity `importLabRunAction` checks
+ * before creating (lib/actions/lab-output-actions.ts), and its durable
+ * per-item id in `lib/lab-outputs-shared.ts`'s `labImportAssetId`. A gcsPath
+ * asset and a labRun asset are two different ingest paths (bulk-uploaded clip
+ * vs. lab-imported deliverable) so an asset never carries both; treated as the
+ * exact parallel of `assetGcsPath` below.
+ */
+export function assetLabRun(a: CalendarDedupeAsset): string | null {
+  const run = a.meta?.labRun;
+  return typeof run === "string" && run.trim() !== "" ? run.trim() : null;
 }
 
 /**
@@ -209,6 +232,19 @@ function sharedPathKey(a: CalendarDedupeAsset): { key: string; label: string } |
 }
 
 /**
+ * The lab-import equivalent of `sharedPathKey`. `importLabRunAction` closes
+ * the sequential-replay shape of this race at the write side
+ * (`createAssetIfAbsent` on a deterministic id) but that guard did not exist
+ * when the documents already in production were written, so the render path
+ * needs the same defence `sharedPathKey` gives bulk-uploaded clips.
+ */
+function sharedLabRunKey(a: CalendarDedupeAsset): { key: string; label: string } | null {
+  const labRun = assetLabRun(a);
+  if (!labRun) return null;
+  return { key: `${a.clientId}${KEY_SEP}labrun${KEY_SEP}${labRun}`, label: labRun };
+}
+
+/**
  * The reporting-only key: same client, same day, same normalised title, and no
  * gcsPath at all (the older duplicates, from before bulk upload existed). It
  * needs a real title and a real placement — an untitled asset, or one with no
@@ -299,13 +335,34 @@ function sharedPathSets<T extends CalendarDedupeAsset>(assets: T[]): CandidateSe
 }
 
 /**
+ * Same identity-sharing defence, keyed on the lab-import item instead of a GCS
+ * object path — but WITHOUT `splitByPlacement`. That split exists because
+ * reusing a bulk-uploaded clip on two different days is ordinary, ongoing work
+ * (the same podcast cut, scheduled twice on purpose) — so gcsPath duplicates
+ * only collapse when every copy agrees on where it sits.
+ *
+ * A lab-import item has no such legitimate reuse: `importLabRunAction` mints
+ * one item per generated deliverable and there is no staff action that
+ * schedules that same generated carousel a second time on a different day —
+ * dates are assigned by the post-create chain reflow, never chosen per item.
+ * So two assets sharing one `meta.labRun` are always copies of the SAME
+ * import, however far apart the reflow happened to land them (the race this
+ * closes creates exactly that shape: a retry's items pick up wherever the
+ * chain planner's next open slot was, which is rarely the day right after the
+ * original's).
+ */
+function sharedLabRunSets<T extends CalendarDedupeAsset>(assets: T[]): CandidateSet<T>[] {
+  return bucketBy(assets, "labRun", sharedLabRunKey);
+}
+
+/**
  * Every group holding more than one copy, high-confidence (`gcsPath`) groups
  * first and the reporting-only heuristic after them. Used by the cleanup script
  * to print a plan for a human; the calendar itself only ever calls
  * `dedupeCalendarAssets`, which does not consider `titleDay` at all.
  */
 export function findDuplicateGroups<T extends CalendarDedupeAsset>(assets: T[]): DuplicateGroup<T>[] {
-  return [...sharedPathSets(assets), ...bucketBy(assets, "titleDay", titleDayKey)]
+  return [...sharedPathSets(assets), ...sharedLabRunSets(assets), ...bucketBy(assets, "titleDay", titleDayKey)]
     .filter((s) => s.members.length > 1)
     .map((s) => ({
       kind: s.kind,
@@ -326,7 +383,7 @@ export function findDuplicateGroups<T extends CalendarDedupeAsset>(assets: T[]):
  */
 export function dedupeCalendarAssets<T extends CalendarDedupeAsset>(assets: T[]): T[] {
   const suppressed = new Set<string>();
-  for (const set of sharedPathSets(assets)) {
+  for (const set of [...sharedPathSets(assets), ...sharedLabRunSets(assets)]) {
     if (set.members.length < 2) continue;
     const survivor = pickSurvivor(set.members);
     for (const m of set.members) if (m.id !== survivor.id) suppressed.add(m.id);
