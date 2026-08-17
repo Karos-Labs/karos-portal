@@ -206,10 +206,18 @@ export async function importLabRunAction(input: {
         if (file.size > MAX_LAB_FILE_BYTES || totalBytes + file.size > MAX_LAB_RUN_BYTES) continue;
         const bytes = await downloadLabFile(file.path);
         totalBytes += bytes.length;
+        // ifAbsent: this path is deterministic (client/run/item/filename), so a
+        // concurrent or retried import of this same item must not re-upload —
+        // doing so would mint a fresh token on a NEW generation while an
+        // already-created Firestore doc keeps pointing at the old one, which
+        // Firebase Storage then answers with "Permission denied" forever
+        // (production incident, Karos Labs' celebrity-comeups run: the racing
+        // upload silently invalidated an already-surviving post's photos).
         const { url } = await uploadBytes({
           bytes,
           path: `lab-imports/${input.clientId}/${runKey}/${group.key}/${file.relPath.split("/").pop()}`,
           contentType: contentTypeFor(file.name),
+          ifAbsent: true,
         });
         hosted.push({ name: file.name, relPath: file.relPath, url, bytes: bytes.length });
         if (file === captionFile || (!captionFile && file === textFile)) {
