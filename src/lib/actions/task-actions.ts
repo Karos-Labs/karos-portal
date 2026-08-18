@@ -31,7 +31,7 @@ import {
   buildTaskExecutionPlanPrompt,
   buildTaskIngestionRoutingPrompt,
 } from "@/lib/ai/prompts/proactive-assistant";
-import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import { CREDIT_COSTS } from "@/lib/credits";
 import { chargeClientModelCall, withClientModelCharge } from "@/lib/client-model-charge";
 import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { logger } from "@/services/logger";
@@ -169,7 +169,6 @@ export async function updateTaskStatusAction(
       await updateClientTask(id, { completedAt: null, updatedAt: Date.now() });
     }
     after(() => runTaskExecution(clientId, id).catch(console.error));
-    revalidatePath("/tasks");
     revalidatePath(`/clients/${clientId}`);
     return { ok: true };
   }
@@ -179,64 +178,11 @@ export async function updateTaskStatusAction(
   if (status !== "completed") patch.completedAt = null;
 
   await updateClientTask(id, patch);
-  revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };
 }
 
-/**
- * Read-only price + billability preview of ONE task run, so the client is told
- * what pressing Run (or dragging a card into In Progress) costs BEFORE it
- * charges — the same announce-then-confirm shape
- * previewPendingTasksBatchAction already gives the batch runner. Nothing is
- * claimed, charged or run here.
- *
- * `billable` is the server's own isBillableClientActor verdict and is the only
- * honest source for it: an admin in "View as Client" carries role CLIENT_USER
- * in the browser, so a UI-side role test would put a price confirmation in
- * front of a session that is never charged. false ⇒ this move costs the client
- * nothing and needs no confirmation.
- *
- * The figure comes from plannedTaskExecutionCost — the exact function
- * updateTaskStatusAction charges with — so the price quoted is the price taken.
- */
-export async function previewTaskRunAction(
-  id: string,
-  clientId: string,
-): Promise<{ ok: boolean; credits?: number; billable?: boolean; error?: string }> {
-  const access = await requireTaskAccess(id, clientId);
-  if (!access.ok) return { ok: false, error: access.error };
-  const { user, task } = access;
-
-  // Only the karos_managed → In Progress move triggers an agent and a charge.
-  // Moving client-owned work costs nothing, and staff runs are agency overhead.
-  const charges = isBillableClientActor(user) && inferOwnerEngine(task) === "karos_managed";
-  if (!charges) return { ok: true, credits: 0, billable: false };
-
-  // The §2 refusal the run itself would give, surfaced instead of a price:
-  // quoting credits for a run that will be refused is worse than refusing now.
-  const blocked = await clientTaskRunRefusal({ user, clientId, task });
-  if (blocked) return { ok: false, error: blocked };
-
-  // The queue cap too, for the same reason: `updateTaskStatusAction` enforces it
-  // on a completed -> in_progress move (a re-opened Done card is a net new
-  // active slot), so quoting a price the run would then refuse asks the client
-  // to consent to a charge that cannot happen. Same wording as the run's own
-  // refusal so the two cannot read as different problems.
-  if (task.status === "completed") {
-    const capacity = await getTaskBoardCapacity(clientId);
-    if (capacity.activeCount >= MAX_ACTIVE_TASKS) {
-      return {
-        ok: false,
-        error: `The Karos AI queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). Complete or approve existing tasks first.`,
-      };
-    }
-  }
-
-  return { ok: true, credits: await plannedTaskExecutionCost(task), billable: true };
-}
-
-/** Create a task manually from the Tasks page or client page. */
+/** Create a task manually from the client page. */
 export async function createTaskAction(input: {
   clientId: string;
   title: string;
@@ -266,7 +212,6 @@ export async function createTaskAction(input: {
     updatedAt: Date.now(),
   });
 
-  revalidatePath("/tasks");
   revalidatePath(`/clients/${input.clientId}`);
   return { ok: true, id };
 }
@@ -295,7 +240,6 @@ export async function deleteTaskAction(
   }
 
   await deleteClientTask(id);
-  revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };
 }
@@ -328,7 +272,6 @@ export async function setTaskDisabledAction(
     updatedAt: Date.now(),
   });
 
-  revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };
 }
@@ -436,7 +379,6 @@ export async function generateTaskPlanAction(
   if (!outcome.ok) return { plan: "", error: outcome.denied };
   const text = outcome.result;
 
-  revalidatePath("/tasks");
   return { plan: text };
 }
 
@@ -582,7 +524,6 @@ async function ingestRoutedTask(args: {
     updatedAt: now,
   });
 
-  revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true, taskId, owner: parsed.owner, title: parsed.title };
 }

@@ -63,8 +63,6 @@ const { requireIntakeAgentAccess } = await import("@/lib/agent-intake-views");
 const REPO = path.resolve(__dirname, "../..", "..");
 const read = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 
-const TIMELINE = "src/components/activity-timeline.tsx";
-
 /* ─────────────────────── JSX element scanning ───────────────────────────── */
 /*
  * A LOCAL copy of the element walk agent-intake-navigation.test.ts uses, kept
@@ -202,64 +200,23 @@ function rosterControlsIn(rel: string): RosterControl[] {
     .map((el) => ({ file: rel, tag: el.tag, text: renderedText(el.body) }));
 }
 
-/* ───────────── #92: the timeline's control is the resolver's ────────────── */
-
-describe("#92 — the activity tab's empty state", () => {
-  it("renders the resolved label inside the anchor carrying the resolved href", () => {
-    // BOTH HALVES ON ONE ELEMENT. Asking the file for `intakePageAction(` alone
-    // would pass with the resolver called and its answer thrown away, and asking
-    // only for `{runControl.label}` would pass with `/clients/${clientId}/agents`
-    // hard-coded back onto the anchor under it — which is #92 with a resolver
-    // bolted on the front, and is the exact state its three siblings were caught
-    // in on the intake pages.
-    const code = stripComments(read(TIMELINE));
-    const controls = linkElements(code).filter((el) => el.body.includes("{runControl.label}"));
-    expect(controls.length, `${TIMELINE}: nothing renders {runControl.label}`).toBe(1);
-    const control = controls[0]!;
-    expect(hrefValues(control.tag), TIMELINE).toEqual(["{runControl.href}"]);
-    // No second WORD beside the label: a promise the resolver did not make is
-    // one it cannot withdraw. The arrow is no longer such a promise — it moved
-    // out of the label (no arrows in client copy, 2026-08) and is drawn from
-    // `runControl.back`, the resolver's own word on which way this control
-    // points, so it withdraws with the destination like the label does. Any
-    // glyph NOT gated on that flag is the hand-built promise this pins against.
-    const body = control.body.trim();
-    expect(body, TIMELINE).toContain("{runControl.label}");
-    for (const icon of body.matchAll(/<Icon\b[^>]*\/>/g)) {
-      const at = body.indexOf(icon[0]);
-      const guard = body.slice(0, at);
-      expect(
-        /\{(!?)runControl\.back\s*&&\s*\($/.test(guard.trimEnd()),
-        `${TIMELINE}: an arrow that is not gated on runControl.back`,
-      ).toBe(true);
-    }
-    // Prose beside the label is still forbidden: strip the resolver's own
-    // expressions and the gated icons, and nothing readable may remain.
-    const leftover = body
-      .replace(/\{!?runControl\.back\s*&&\s*\(\s*<Icon\b[^>]*\/>\s*\)\}/g, "")
-      .replace(/\{runControl\.label\}/g, "")
-      .trim();
-    expect(leftover, `${TIMELINE}: unresolved copy beside the label`).toBe("");
-  });
-
-  it("has no hand-built roster link left anywhere in the file", () => {
-    // The href above is the resolver's, but the file could still carry a second
-    // control the first assertion never looks at.
-    const hardCoded = rosterControlsIn(TIMELINE);
-    expect(hardCoded.map((c) => c.tag), TIMELINE).toEqual([]);
-  });
-});
-
 /* ─────────── the sweep: derived from the tree, not from a list ──────────── */
 
+// #92 — the Workspace activity tab's empty state — used to be pinned here
+// directly against activity-timeline.tsx, the file the finding was caught in.
+// That component was deleted 2026-08 (it was rendered only inside ProgressView,
+// which lost its own last renderer when the Workspace board's routes were
+// removed), so the specific fix it pinned went with the file it fixed. The
+// sweep below is the wider rule #92 was one instance of — no control anywhere
+// in the tree may offer a client a run on the roster — and it still runs over
+// every file that exists today, this one included.
 describe("no control offers a client a run on the roster", () => {
   const files = sourceFiles(path.join(REPO, "src"));
 
-  it("reads a source tree, and reaches the file this cluster fixed", () => {
+  it("reads a source tree, and finds enough of it to trust the sweep", () => {
     // Non-vacuity for the WALK. A sweep that silently found no files would
     // assert nothing at all, which is the failure mode a green run hides.
     expect(files.length).toBeGreaterThan(50);
-    expect(files).toContain(TIMELINE);
   });
 
   it("recognises the shape it is looking for", () => {

@@ -15,8 +15,11 @@ export default async function ClientAssetsPage({ params }: { params: Promise<{ i
   const { id } = await params;
 
   if (user.role === "CLIENT_USER") {
-    // Client Library lives in the Workspace's Archive tab now.
-    redirect(user.clientId === id ? "/tasks" : user.clientId ? `/clients/${user.clientId}` : "/tasks");
+    // Client Library lives in Account Center's Archive tab now. The Workspace
+    // board this used to bounce through is gone entirely (2026-08); a client
+    // with no resolvable id falls back to /calendar instead, same as the
+    // sidebar's own no-clientId fallback (see sidebar.tsx's homeHref).
+    redirect(user.clientId === id ? `/clients/${id}` : user.clientId ? `/clients/${user.clientId}` : "/calendar");
   } else if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") {
     redirect("/dashboard");
   }

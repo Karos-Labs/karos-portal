@@ -14,6 +14,13 @@ import { isStringDelimiter, matchingBrace, skipStringLiteral } from "./source-sc
  * karos_managed while the client sat on "Depending on you" was announced by name
  * (`Added "<title>"`) and rendered nowhere.
  *
+ * `onAdded` itself is gone now — `QuickAddTaskBar` was deleted with the
+ * Workspace board (2026-08), the only surface that ever rendered it. The
+ * anti-vacuity checks below anchor on `onNavigate` instead (notification-bell.tsx
+ * and its mounts), a currently-live optional callback with real, non-forwarding
+ * callers — the finding this file exists to catch is about the SHAPE of a dead
+ * channel, not about this one prop's name.
+ *
  * That is this campaign's "a predicate that exists is not a predicate that is
  * asked", one layer up: a channel that exists is not a channel that is wired.
  *
@@ -116,9 +123,8 @@ const declared = [...new Set(files.flatMap((rel) => declaredOptionalCallbacks(so
 
 describe("every declared optional callback prop has a caller", () => {
   it("finds the declarations at all", () => {
-    // Anti-vacuity: a scan that reads nothing passes for the wrong reason, and
-    // the prop this round wired is the one that must be in the set.
-    expect(declared).toContain("onAdded");
+    // Anti-vacuity: a scan that reads nothing passes for the wrong reason.
+    expect(declared).toContain("onNavigate");
     expect(declared.length).toBeGreaterThan(1);
   });
 
@@ -129,10 +135,10 @@ describe("every declared optional callback prop has a caller", () => {
 
   it("does not count a pass-through forward as the caller", () => {
     // The tightening that makes the check above mean something: if the only
-    // `onAdded={…}` in the tree were a forward of an `onAdded` the forwarding
-    // component was never given, nothing would supply it.
-    expect(passSites("onAdded").length).toBeGreaterThan(0);
-    expect(passSites("onAdded").every((site) => !/→ \{ onAdded \}$/.test(site))).toBe(true);
+    // `onNavigate={…}` in the tree were a forward of an `onNavigate` the
+    // forwarding component was never given, nothing would supply it.
+    expect(passSites("onNavigate").length).toBeGreaterThan(0);
+    expect(passSites("onNavigate").every((site) => !/→ \{ onNavigate \}$/.test(site))).toBe(true);
   });
 
   it("scans only the optional half, because tsc owns the required half", () => {

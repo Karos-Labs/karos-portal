@@ -1544,7 +1544,7 @@ describe("a client-facing dialog and the control that opens it", () => {
  *     is painted on `app/(app)/jobs/[id]/page.tsx`, which opens with
  *     `requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"])`; `ClientTask.sourceLabel`
  *     is written and never read at all; `ClientTask.metadata.executionError` is
- *     read ONLY as `Boolean(task.metadata?.executionError)` (tasks-board.tsx:241),
+ *     read ONLY as `!!t.metadata?.executionError` (campaigns/[campaignId]/page.tsx),
  *     which paints its own "Execution failed." instead. Rewriting those as client
  *     copy would be busywork at best and would put an operator's diagnostics in a
  *     client's register at worst.
@@ -2158,7 +2158,7 @@ const NOT_ON_A_CLIENT_SCREEN: Readonly<Record<string, string>> = {
   // "Submitted to agent service" are the operator's trace of a dispatch.
   "createJob.events[].message": "jobs/[id] event log — a staff-gated page",
   "updateJob.events[].message": "jobs/[id] event log — a staff-gated page",
-  // Read ONLY as `Boolean(task.metadata?.executionError)` (tasks-board.tsx:241),
+  // Read ONLY as `!!t.metadata?.executionError` (campaigns/[campaignId]/page.tsx),
   // which paints its own "Execution failed." No surface renders the string, on
   // either side of the boundary — which is also why its own spaced hyphen
   // ("couldn't be reached - please try again") is out of scope here rather than
@@ -2171,8 +2171,9 @@ const NOT_ON_A_CLIENT_SCREEN: Readonly<Record<string, string>> = {
   // The audit trail in my-action-items.tsx, mounted behind `isAdmin` on a
   // dashboard that redirects CLIENT_USER away before it renders.
   "updateActionItem.history[]": "admin-only action-item audit trail",
-  // token-manager.tsx on app/(app)/connect, requireUser(["KAROS_ADMIN",
-  // "KAROS_EMPLOYEE"]).
+  // Minted by createAccessTokenAction, staff-only (requireStaff). The one UI
+  // that ever rendered a token's name (token-manager.tsx on app/(app)/connect)
+  // was removed with that page (2026-08); no surface reads it now.
   "createAccessToken.name": "staff-gated personal access tokens",
   // KEYED BY TIER, because the audience is the argument and not the field. The
   // transcript signal doc is the only literal content this writer takes, and it
@@ -2262,7 +2263,13 @@ const NOT_TEXT: readonly string[] = [
   "logFeedback.creatorRole",
   "logFeedback.scope",
   "markIntegrationExpired.(arg1)",
-  "releaseTaskClaim.(arg1)",
+  // "releaseTaskClaim.(arg1)" was here for the literal "pending" the Workspace
+  // board's own batch runner passed (runPendingTasksBatchAction,
+  // settings-actions.ts). That action was deleted with the board (2026-08) —
+  // it was the only caller left once the board's routes were removed — and
+  // every remaining releaseTaskClaim call passes a variable (claimed.status),
+  // not a literal, so the citation is dropped rather than left pointing at
+  // nothing.
   "replaceReportCompetitors.(arg1)",
   "updateActionItem.status",
   "updateAsset.publishMode",
@@ -2707,10 +2714,14 @@ describe("the client copy that travels through the database", () => {
     // "Intel Report generated" kept this green, which is the exact drift the test
     // is for. The two persisted writers own the description as well; the timeline
     // composes its own from the report's score and date.
+    // Used to be three tellings — components/activity-timeline.tsx composed a
+    // third from the report's score and date. That component was deleted
+    // 2026-08 (it was rendered only inside ProgressView, which lost its own
+    // last renderer when the Workspace board's routes were removed), so only
+    // the two persisted writers remain to check.
     for (const rel of [
       "app/api/intel-report-schedule/route.ts",
       "lib/actions/intel-actions.ts",
-      "components/activity-timeline.tsx",
     ]) {
       expect(code(src(rel)), `${rel} no longer CALLS the title builder`).toContain(
         "researchReportReadyTitle(",

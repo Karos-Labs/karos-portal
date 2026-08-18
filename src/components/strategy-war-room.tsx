@@ -296,7 +296,7 @@ export function StrategyWarRoom({
               Consensus reached · {created} task{created === 1 ? "" : "s"} locked into your map.
             </p>
             <Link
-              href="/tasks"
+              href={`/clients/${clientId}`}
               onClick={onClose}
               className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80"
             >
@@ -313,7 +313,7 @@ export function StrategyWarRoom({
             <p className="text-xs opacity-90">{zeroOutcomeExplanation(outcome)}</p>
             <div className="flex flex-wrap items-center gap-3 pt-0.5">
               <Link
-                href="/tasks"
+                href={`/clients/${clientId}`}
                 onClick={onClose}
                 className="text-xs font-semibold underline underline-offset-2 hover:opacity-80"
               >

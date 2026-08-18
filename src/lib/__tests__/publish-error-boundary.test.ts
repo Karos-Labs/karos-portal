@@ -280,8 +280,7 @@ describe("the ordering hold, the one publish error a client may read", () => {
 /* ── source-level guards ─────────────────────────────────────────────────
    The publish cron is a route handler over Firestore, and the banners below are
    server components — none of them can be invoked from a unit test. These read
-   the source, the same way activity-timeline-boundary.test.ts does, and assert
-   the guarantee rather than the presence of a line.                         */
+   the source and assert the guarantee rather than the presence of a line.   */
 
 const ROOT = process.cwd();
 

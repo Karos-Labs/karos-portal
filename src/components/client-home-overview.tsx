@@ -58,20 +58,14 @@ export function ClientHomeOverview({
   tasksHitLimit = false,
 }: {
   /**
-   * Whose account this page is. Needed only so the archive links resolve for a
-   * STAFF reader: `?tab=archive` is read by ProgressView alone, and TasksBody
-   * mounts ProgressView only with a client in scope, so the flat
-   * `/tasks?tab=archive` these two links used to carry dropped a staff viewer
-   * onto the cross-client board with no archive at all — the same defect as #90
-   * on the three agent intake pages, found by grepping its shape rather than
-   * its symptom.
-   *
-   * The attention rows below were long read as NOT that shape, on the grounds
-   * that the board does hold this client's tasks. It holds them on one of two
-   * disjoint OWNER TABS, and a bare `/tasks` picks the wrong one for half of
-   * them — see `taskBoardHref` at the foot of this file (#101). Nothing in this
-   * card is staff-reachable in practice: the page hands `tasks` an empty array
-   * for a staff viewer, so every attention row is a client's.
+   * Whose account this page is. Needed so `clientArchiveLink` resolves the
+   * "Open archive" link below for a STAFF reader too — that helper takes the
+   * SAME href for either viewer now that Account Center's Archive tab is the
+   * one place left to reach it (the Workspace board, and the owner-tab
+   * routing `taskBoardHref` used to key into it, are both gone — 2026-08).
+   * Nothing in this card is staff-reachable in practice: the page hands
+   * `tasks` an empty array for a staff viewer, so every attention row is a
+   * client's.
    */
   clientId: string;
   tasks: ClientTask[];
@@ -221,9 +215,8 @@ export function ClientHomeOverview({
                 // this client's dashboard clicking "3 posts failed to publish"
                 // landed on every client's grid and had to find them again —
                 // the same wrong-surface defect `clientArchiveLink` above fixes
-                // for the archive, and `taskBoardHref` below for the board. A
-                // client has no client-scoped route (the staff one redirects
-                // them straight back), so theirs stays flat.
+                // for the archive. A client has no client-scoped route (the
+                // staff one redirects them straight back), so theirs stays flat.
                 href={viewerIsClient ? "/calendar" : `/clients/${clientId}/calendar`}
                 icon="TriangleAlert"
                 label={`${failedPublishes.length} post${failedPublishes.length === 1 ? "" : "s"} failed to publish`}
@@ -250,10 +243,8 @@ export function ClientHomeOverview({
                 //
                 // Deliberately NOT a link (F97 × F149). It counts drafts, and no
                 // surface a client can reach lists a draft: the archive excludes
-                // them by design (asset-visibility.ts getClientArchiveAssets),
-                // the calendar filters them out, and /assets redirects clients
-                // to /tasks. The Workspace board holds tasks, not deliverables,
-                // so it does not contain these either - the count and every
+                // them by design (asset-visibility.ts getClientArchiveAssets)
+                // and the calendar filters them out too - the count and every
                 // candidate destination are provably disjoint. The hint already
                 // says the right thing: they show up once the team is done.
                 icon="Sparkles"
@@ -263,7 +254,13 @@ export function ClientHomeOverview({
             )}
             {reviewPendingTasks.length > 0 && (
               <AttentionRow
-                href={taskBoardHref(reviewPendingTasks)}
+                // Also NOT a link, same reason as the row above (2026-08): it
+                // used to open the Workspace board to this task's own owner
+                // tab (`taskBoardHref`), and the board is gone - "The Board is
+                // replaced by the action list on Home" (locked decision). The
+                // count is still a real, live signal (`ClientTask` rows this
+                // client's team is working through); it just has nowhere left
+                // to send the reader, so it reports rather than links.
                 icon="Eye"
                 label={`${reviewPendingTasks.length}${more} task${reviewPendingTasks.length === 1 && !more ? "" : "s"} ready for review`}
                 hint="Completed work waiting for your sign-off."
@@ -271,10 +268,9 @@ export function ClientHomeOverview({
             )}
             {pendingTasks.length > 0 && (
               <AttentionRow
-                href={taskBoardHref(pendingTasks)}
                 icon="Circle"
                 label={`${pendingTasks.length}${more} pending task${pendingTasks.length === 1 && !more ? "" : "s"}`}
-                hint="Open items on your workspace board."
+                hint="Your Karos team is working through these."
               />
             )}
           </ul>
@@ -386,50 +382,11 @@ export function failedPublishText(asset: Asset, viewerIsClient: boolean): string
   return viewerIsClient ? clientSafePublishError(stored) : stored;
 }
 
-/**
- * The Workspace board, opened on a tab that actually holds this row's work (#101).
- *
- * The board has TWO tabs, split by task owner, and they are disjoint by
- * construction: `?owner=client` selects the client tab and anything else — a bare
- * `/tasks` included — selects "karos". So these rows counted tasks of either
- * owner and then sent the client to the karos tab, which for a client whose
- * review-pending work is all client-owned holds none of it. QA F64 fixed exactly
- * this in the notification bell and left it here.
- *
- * KEYED TO A TASK, NOT TO AN OWNER, and that is the point rather than a
- * shorthand. `?task=` makes the board resolve the tab itself
- * (`ownerTab(inferOwner(linkedTask))`), and it OUTRANKS `?owner=` whenever the
- * task resolves — so the decision is asked of the surface that owns it. Building
- * `?owner=` here would mean copying TWO rules that are each already spelled more
- * than once: owner→tab (tasks-board.tsx and notification-bell.tsx) and
- * owner-inference for a task whose `owner` field is unset (tasks-board.tsx,
- * task-dedup.ts, execution-engine.ts, task-sync.ts). Neither of those is this
- * card's to own, and a copy of either is the kind of duplicate this campaign
- * keeps paying for.
- *
- * TWO RESIDUALS, because a promise a file cannot keep is worse than a stated
- * limit:
- *
- *  - The row is a COUNT and the link is singular. When a row's tasks span both
- *    owners, no single link opens a tab holding all of them; this opens the tab
- *    holding the FIRST — the same tab the bell would open for that card — and
- *    the ticket with it. Splitting the row per owner needs the mapping written
- *    here after all.
- *  - "The board holds this task" is not guaranteed, only overwhelmingly likely.
- *    Both surfaces read `listClientTasks` for this client, but with different
- *    windows: this page takes the 50 newest pending/review_pending, the board
- *    the 200 newest of every status. A client with more than 200 live tasks can
- *    therefore have a row whose task the board's page does not contain — and
- *    then `?task=` resolves to nothing and the board opens on its default tab,
- *    which is exactly today's behaviour. It degrades to the bug, never past it.
- *
- * Exported for test: the rule is which PARAM the board is keyed on, and that is
- * a fact about the returned string, not about anything rendered.
- */
-export function taskBoardHref(tasks: ClientTask[]): string {
-  const first = tasks[0];
-  return first ? `/tasks?task=${encodeURIComponent(first.id)}` : "/tasks";
-}
+// `taskBoardHref` (the Workspace board, opened on the tab holding a row's
+// work — #101) was removed with the board itself, 2026-08. The two attention
+// rows it fed (`reviewPendingTasks`, `pendingTasks` above) still count real
+// ClientTask rows; they just report rather than link now, since there is
+// nowhere left for them to send the reader — see those rows' own comments.
 
 /**
  * `href` is optional: a row whose items have no screen a client can open is

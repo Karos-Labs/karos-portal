@@ -335,13 +335,17 @@ describe("#85 — every row the band paints has somewhere to land", () => {
 /* ─────────────────────── #90: the archive a reader reaches ──────────────── */
 
 describe("#90 — the archive link resolves for the viewer who is reading it", () => {
-  it("sends a client to their own workspace and staff to this client's", () => {
+  it("sends both a client and staff to the same Account Center archive tab", () => {
+    // BOTH readers land on the SAME route (2026-08): the Workspace board that
+    // used to split this into a client's own `/tasks?tab=archive` and staff's
+    // client-scoped `/clients/<id>/tasks?tab=archive` is gone entirely, and
+    // Account Center's Archive tab was already reachable by either viewer.
     expect(clientArchiveLink({ clientId: "c1", isStaff: false })).toEqual({
-      href: "/tasks?tab=archive",
+      href: "/clients/c1/settings?tab=archive",
       label: "your archive",
     });
     expect(clientArchiveLink({ clientId: "c1", isStaff: true })).toEqual({
-      href: "/clients/c1/tasks?tab=archive",
+      href: "/clients/c1/settings?tab=archive",
       label: "this client's archive",
     });
   });

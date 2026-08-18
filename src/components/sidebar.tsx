@@ -72,13 +72,16 @@ interface NavItem {
  * test resolves each row below to its route and rejects any whose page
  * redirects a CLIENT_USER. That is what dropped `/dashboard` (it redirects them
  * to `/clients/<id>`, or to `/assets` with no id) and `/assets` (it redirects
- * them to /tasks, which the Workspace row below already is).
+ * them onward, ultimately to `/calendar` with no id).
  *
- * The three that survive all serve a client with no company context on purpose:
+ * The two that survive both serve a client with no company context on purpose:
  * /transcripts scopes and redacts to their client and renders empty without
- * one, /calendar has an explicit no-clientId empty state, /tasks is theirs.
- * Their real nav — Dashboard, AI agents, Meetings, Calendar, Workspace — is
- * client-rail.tsx, which is the only place a resolvable client's shell is built.
+ * one, /calendar has an explicit no-clientId empty state. Their real nav —
+ * Dashboard, AI agents, Meetings, Calendar — is client-rail.tsx, which is the
+ * only place a resolvable client's shell is built. The Workspace board (`/tasks`)
+ * that used to be a third survivor is gone entirely (2026-08, locked: "The Board
+ * is replaced by the action list on Home"); `/connect` (Claude Code MCP setup)
+ * was removed the same pass as an unused staff-only page.
  */
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
@@ -88,9 +91,7 @@ const NAV: NavItem[] = [
   { href: "/transcripts", label: "Meetings", icon: "Mic", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/assets", label: "Assets", icon: "FolderOpen", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/calendar", label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
-  { href: "/tasks", label: "Workspace", icon: "SquareCheck", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"] },
   { href: "/team", label: "Team", icon: "Users", roles: ["KAROS_ADMIN"] },
-  { href: "/connect", label: "Connect", icon: "Plug", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   { href: "/admin/analytics", label: "Analytics", icon: "TrendingUp", roles: ["KAROS_ADMIN"] },
   { href: "/admin/ops", label: "Ops Import", icon: "Inbox", roles: ["KAROS_ADMIN"] },
   { href: "/admin/integrations", label: "Integrations", icon: "Cable", roles: ["KAROS_ADMIN"] },
@@ -494,10 +495,11 @@ export function Sidebar({
   // asked of the one control that is not in it. /dashboard is the STAFF home:
   // it redirects a CLIENT_USER to /clients/<clientId>, or to /assets when they
   // have no id. Neither ends anywhere for the client who reaches this shell —
-  // the first is the notFound() described above, and the second bounces on to
-  // /tasks. So the mark goes to /tasks directly: the Workspace is the page that
-  // actually holds their work.
-  const homeHref = isStaff ? "/dashboard" : "/tasks";
+  // the first is the notFound() described above, and the second now bounces on
+  // to /calendar (the Workspace board /assets used to land on is gone). So the
+  // mark goes to /calendar directly: it already has its own no-clientId empty
+  // state, same as the nav row above.
+  const homeHref = isStaff ? "/dashboard" : "/calendar";
 
   // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
   // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.

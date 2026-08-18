@@ -61,25 +61,28 @@ export function intakeRowHref(pageHref: string, rowId: string): string {
 /**
  * The archive a reader of an intake page can actually reach.
  *
- * `?tab=archive` is read only by ProgressView, and TasksBody mounts
- * ProgressView only when a client is IN SCOPE. All three intake pages are
- * staff-reachable, and all three hard-coded the flat `/tasks?tab=archive` — so
- * a staff viewer fell through to the cross-client branch and got a bare board
- * under "Every client's board in one place": no archive, no tabs, and no way to
- * reach the archive of the client whose page the link was on (#90). A client's
- * own `/tasks` IS their scope, so their link was right and stays unchanged.
+ * BOTH readers land on the SAME route now (2026-08): Account Center's Archive
+ * tab, `/clients/<id>/settings?tab=archive`. This used to split — a client's
+ * own Workspace board held its own `?tab=archive` view at the flat `/tasks`,
+ * and staff had a client-scoped twin at `/clients/<id>/tasks?tab=archive` — but
+ * the Workspace board itself is gone (`/tasks` retired entirely, the locked
+ * decision "The Board is replaced by the action list on Home" finished playing
+ * out), and Account Center's own Archive tab was already the one place either
+ * viewer could reach the same list, so this collapses to one destination
+ * instead of pointing two readers at two now-deleted pages.
  *
- * The label moves with the destination. "your archive" is client-voiced copy
- * and reads as the READER's archive; pointed at one client's workspace it would
- * be telling a staff member that this client's archive is theirs.
+ * The label still moves with the READER, not the destination: "your archive"
+ * is client-voiced copy; pointed at one client's workspace for a STAFF reader
+ * it would be telling them this client's archive is theirs.
  */
 export function clientArchiveLink(args: { clientId: string; isStaff: boolean }): {
   href: string;
   label: string;
 } {
-  return args.isStaff
-    ? { href: `/clients/${args.clientId}/tasks?tab=archive`, label: "this client's archive" }
-    : { href: "/tasks?tab=archive", label: "your archive" };
+  return {
+    href: `/clients/${args.clientId}/settings?tab=archive`,
+    label: args.isStaff ? "this client's archive" : "your archive",
+  };
 }
 
 /* ────────── the one control that offers a viewer their agent ───────── */

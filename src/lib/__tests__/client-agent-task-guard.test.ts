@@ -31,8 +31,6 @@ vi.mock("@/lib/execution-engine", () => ({
   runTaskExecution: vi.fn().mockResolvedValue(undefined),
   plannedTaskExecutionCost: vi.fn().mockResolvedValue(5),
   resolveTaskType: vi.fn().mockReturnValue("content_generation"),
-  runAutopilotBatch: vi.fn().mockResolvedValue(undefined),
-  runClaimedTasks: vi.fn().mockResolvedValue(undefined),
   dispatchArtifactEmail: vi.fn(),
 }));
 
@@ -171,26 +169,11 @@ describe("D1 — the Review-stage re-run honors the same guard", () => {
   });
 });
 
-describe("D1 — the pending-batch runner skips guarded tasks", () => {
-  it("charges and runs nothing when every pending task is a non-live agent", async () => {
-    (dataClientAgents.getClientAgentByKey as any).mockResolvedValue(umbrella("launching"));
-    (data.listClientTasks as any).mockResolvedValue([makeTask(), makeTask({ id: "t2" })]);
-    const { runPendingTasksBatchAction } = await import("@/lib/actions/settings-actions");
-
-    const result = await runPendingTasksBatchAction("c1");
-
-    expect(result).toMatchObject({ ok: true, started: 0 });
-    expect(data.claimTaskForExecution).not.toHaveBeenCalled();
-    expect(data.chargeClientCredits).not.toHaveBeenCalled();
-  });
-
-  it("prices the batch preview on only the tasks that will actually run", async () => {
-    (dataClientAgents.getClientAgentByKey as any).mockResolvedValue(umbrella("launching"));
-    (data.listClientTasks as any).mockResolvedValue([makeTask(), makeTask({ id: "t2" })]);
-    const { previewPendingTasksBatchAction } = await import("@/lib/actions/settings-actions");
-
-    const result = await previewPendingTasksBatchAction("c1");
-
-    expect(result).toMatchObject({ ok: true, count: 0, credits: 0, billable: true });
-  });
-});
+// "D1 — the pending-batch runner skips guarded tasks" used to test this same
+// guard through runPendingTasksBatchAction/previewPendingTasksBatchAction —
+// the Workspace board's own "run all pending" batch action and its price
+// preview. Both were deleted with the board (2026-08): the board was their
+// only caller, so once it was removed they were an unreachable pair of charge
+// points rather than a feature with nowhere left to trigger from. The guard
+// they exercised is still covered above via updateTaskStatusAction and
+// requestAdjustmentsAction, the two triggers that remain.

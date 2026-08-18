@@ -169,14 +169,21 @@ describe("a bell inside a dismissible container closes it", () => {
     expect(b).toContain("function closeAfterNavigate() { setOpen(false); onNavigate?.(); }");
     // A same-route link performs no navigation, so nothing but this callback
     // can close the sheet — every navigable element must run it.
-    expect(b.match(/onClose=\{closeAfterNavigate\}/g) ?? []).toHaveLength(2); // task rows
+    //
+    // Task rows used to be a Link with their own onClose here — the Workspace
+    // board they opened is gone entirely (2026-08), so TaskAlertRow is a status
+    // line now (same F97 × F149 ruling as ReviewJobRow's client branch) and
+    // takes no close callback at all: `onClose={closeAfterNavigate}` no longer
+    // appears anywhere in this file.
+    expect(b).not.toContain("onClose={closeAfterNavigate}");
     expect(b.match(/onClick=\{closeAfterNavigate\}/g) ?? []).toHaveLength(3); // transcript + 2 footer
     expect(b).toContain("onNavigate={closeAfterNavigate}"); // review rows
-    // Closed loop: every Link in the file runs one of those three handlers, and
-    // both row components are handed closeAfterNavigate (asserted above). So no
-    // navigable element can close the panel and leave the sheet standing.
-    expect(b.match(/<Link\b/g) ?? []).toHaveLength(5); // 3 in the panel + 2 row components
-    expect(b.match(/onClick=\{(closeAfterNavigate|onClose|onNavigate)\}/g) ?? []).toHaveLength(5);
+    // Closed loop: every Link in the file runs one of those two handlers left
+    // (the footer/transcript's onClick, or ReviewJobRow's own onNavigate — the
+    // one row component still capable of navigating). So no navigable element
+    // can close the panel and leave the sheet standing.
+    expect(b.match(/<Link\b/g) ?? []).toHaveLength(4); // 3 in the panel + ReviewJobRow's
+    expect(b.match(/onClick=\{(closeAfterNavigate|onClose|onNavigate)\}/g) ?? []).toHaveLength(4);
 
     // Dismissal is NOT navigation: the backdrop closes the panel and leaves the
     // sheet where it was, or a stray tap would tear down the whole sheet.

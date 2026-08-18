@@ -51,6 +51,7 @@ import {
   defaultRunBatchSize,
 } from "@/lib/custom-agent-launch";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
+import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { isInClientArchive, isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
@@ -1037,7 +1038,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     if (!isInClientArchive(asset, nowMs)) return null;
     if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}`;
-    return "/tasks?tab=archive";
+    // The Workspace board's own archive tab (`/tasks?tab=archive`) is gone
+    // with the board itself — Account Center's Archive tab is the one place
+    // left, same helper every other archive link in the app now goes through.
+    return clientArchiveLink({ clientId, isStaff: false }).href;
   };
 
   /** The "[View this output]" line, or nothing when no screen holds it. */

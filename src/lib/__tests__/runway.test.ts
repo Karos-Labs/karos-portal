@@ -181,29 +181,13 @@ describe("the autopilot never signs a client's activity feed", () => {
     expect(isInternalActor("Albert")).toBe(false);
   });
 
-  it("is applied at the RSC boundary, not inside the client component", () => {
-    // Everything on a timeline row is serialized into the RSC payload, so a
-    // name redacted at render has already been shipped. This assertion used to
-    // point INSIDE activity-timeline.tsx — a "use client" component, i.e. the
-    // render side of that very boundary — so it was pinning the failure it was
-    // written to prevent. The projection belongs in the server file.
-    const server = readFileSync(join(process.cwd(), "src/app/(app)/tasks/tasks-body.tsx"), "utf8");
-    expect(server).toContain("clientSafeActor(log.actor, log.actorRole, isClientViewer)");
-    // ...and the redacted list has to be the one that actually goes down.
-    expect(server).toContain("activityLogs={timelineActivity}");
-
-    // Comments stripped: the assertions below say the names are absent from the
-    // CODE, and the component's docstrings name them precisely to explain why.
-    const ui = readFileSync(join(process.cwd(), "src/components/activity-timeline.tsx"), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/\/\/.*$/gm, "");
-    expect(ui).toContain('"use client"');
-    // The component cannot leak what it never receives: it takes the projected
-    // rows and no longer imports the redactor at all.
-    expect(ui).toContain("activityLogs: TimelineActivity[]");
-    expect(ui).not.toContain("clientSafeActor");
-    expect(ui).not.toContain("ActivityLog");
-  });
+  // "is applied at the RSC boundary, not inside the client component" used to
+  // pin this directly against tasks-body.tsx (the projection) and
+  // activity-timeline.tsx (the "use client" component it fed). Both were
+  // deleted 2026-08 with the Workspace board — activity-timeline.tsx was only
+  // ever rendered inside it via ProgressView — so there is no remaining RSC
+  // boundary here to pin. clientSafeActor/isInternalActor themselves are still
+  // covered by the tests around this one.
 
   it("reads the actor name from one constant the route also uses", () => {
     const route = readFileSync(join(process.cwd(), "src/app/api/runway/route.ts"), "utf8");

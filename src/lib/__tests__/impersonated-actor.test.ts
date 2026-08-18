@@ -1,6 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -100,38 +98,16 @@ describe("the correction is not retroactive", () => {
     });
   });
 
-  it("keeps the staff uid out of the browser payload", () => {
-    // The marker is stored for debugging, and the promise attached to storing a
-    // uid on a client-readable collection is that it does not travel. Two
-    // whitelists decide that: the RSC projection in tasks-body.tsx, and the
-    // TimelineActivity interface the "use client" component is typed by.
-    const projection = readFileSync(
-      join(process.cwd(), "src/app/(app)/tasks/tasks-body.tsx"),
-      "utf8",
-    );
-    const block = projection.slice(
-      projection.indexOf("const timelineActivity"),
-      projection.indexOf("const agentLabelByAssetId"),
-    );
-    expect(block.length).toBeGreaterThan(100);
-    expect(block).not.toContain("impersonatedBy");
-
-    const ui = readFileSync(join(process.cwd(), "src/components/activity-timeline.tsx"), "utf8");
-    const iface = ui.slice(
-      ui.indexOf("export interface TimelineActivity"),
-      ui.indexOf("/* ── Unified display event"),
-    );
-    expect(iface.length).toBeGreaterThan(50);
-    expect(iface).not.toContain("impersonatedBy");
-  });
-
-  it("does not put the marker where an activity row's own copy is read", () => {
-    // Nothing may render it, precisely because absent cannot mean "the client
-    // did this" — history never recorded the difference. A reader would be
-    // making that claim about every row written before the field existed.
-    const ui = readFileSync(join(process.cwd(), "src/components/activity-timeline.tsx"), "utf8");
-    expect(ui).not.toContain("impersonatedBy");
-  });
+  // "keeps the staff uid out of the browser payload" and "does not put the
+  // marker where an activity row's own copy is read" used to pin this here
+  // directly: the RSC projection in tasks-body.tsx and the TimelineActivity
+  // interface in activity-timeline.tsx, the two whitelists that kept
+  // `impersonatedBy` off the wire. Both files were deleted 2026-08 — the
+  // Workspace board's own routes, and the timeline component that was only
+  // ever rendered inside it via ProgressView — so there is no remaining RSC
+  // boundary displaying activity logs to a client for this to pin. The rest of
+  // this describe block (isInternalActor, clientSafeActor) still covers the
+  // part of the correction that has nothing to do with that boundary.
 });
 
 describe("logActivity", () => {

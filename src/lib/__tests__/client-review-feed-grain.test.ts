@@ -323,24 +323,33 @@ describe("a dismissal reaches the list, not only the count", () => {
  * THE FOOTER RULE HAD NO ASSERTION AT ALL.
  *
  * `showWorkspaceLink = taskAlerts.length > 0 || (reviewRows.length > 0 && !viewerIsClient)`
- * is the mechanical form of the comment above it: for a CLIENT the drafts those
- * review rows stand for are provably not on any screen they can open, so the
- * footer must not offer a destination for them. Dropping `&& !viewerIsClient`
- * restores "View workspace →" under a client's summary row — the dead end the
- * comment claims to close — and nothing in the diff noticed.
+ * was the mechanical form of the comment above it: for a CLIENT the drafts
+ * those review rows stand for are provably not on any screen they can open, so
+ * the footer must not offer a destination for them. Dropping `&& !viewerIsClient`
+ * restored "View workspace →" under a client's summary row — the dead end the
+ * comment claimed to close — and nothing in the diff noticed.
+ *
+ * RENAMED AND NARROWED 2026-08: the Workspace board is gone entirely, so the
+ * task-alert half of the OR (task alerts always had a board link, for either
+ * viewer) has nothing left to link to — TaskAlertRow is a status line now, same
+ * ruling as ReviewJobRow's client branch. `showJobsLink` is what remains: a
+ * staff-only link to `/jobs`, the aggregate review queue these AgentReviewNotification
+ * rows are drawn from. The viewer gate this test exists to pin is now the WHOLE
+ * expression rather than half of an OR, but it is exactly as easy to silently
+ * drop, so it is still asked here rather than assumed.
  *
  * Read off the assignment's own right-hand side rather than the file, because
  * `viewerIsClient` appears a dozen times in this component.
  */
 describe("the bell offers a client no destination for work they cannot open", () => {
-  it("gates the workspace link on the viewer, not only on the rows", () => {
+  it("gates the jobs link on the viewer, not only on the review rows", () => {
     const bell = code(BELL);
-    const at = bell.indexOf("const showWorkspaceLink");
-    expect(at, "showWorkspaceLink is gone — the footer rule moved").toBeGreaterThan(-1);
+    const at = bell.indexOf("const showJobsLink");
+    expect(at, "showJobsLink is gone — the footer rule moved").toBeGreaterThan(-1);
     const rhs = bell.slice(bell.indexOf("=", at) + 1, bell.indexOf(";", at));
-    // The review half must be viewer-conditioned. The task half is not: a task
-    // alert IS reachable on the board, so its link is honest for either viewer.
-    expect(rhs, "a client is offered a workspace link for review rows again").toMatch(
+    // Viewer-conditioned: a client's whole review queue collapses to one
+    // stampless summary row with no /jobs to offer them.
+    expect(rhs, "a client is offered a jobs link for review rows again").toMatch(
       /reviewRows[\s\S]*!viewerIsClient|!viewerIsClient[\s\S]*reviewRows/,
     );
   });

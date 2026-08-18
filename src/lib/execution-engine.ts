@@ -1,7 +1,7 @@
 /**
  * Karos Task Execution Engine — server-side only.
  * Contains the actual AI generation logic without auth guards.
- * Called by execution-actions.ts (with auth) and settings-actions.ts (via after()).
+ * Called by execution-actions.ts (with auth).
  */
 import "server-only";
 
@@ -14,7 +14,6 @@ import {
   getClient,
   getCustomAgent,
   updateClientTask,
-  listClientTasks,
   listEmployeeSeats,
   getClientPerformanceBenchmarks,
 } from "@/lib/data";
@@ -24,7 +23,6 @@ import { MANAGED_PRODUCTS, type ManagedProduct } from "@/lib/agent-service/produ
 import { CREDIT_COSTS, taskExecutionCost } from "@/lib/credits";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { resolveTaskCustomAgentId } from "@/lib/task-agent-link";
-import { taskIsDisabled } from "@/lib/task-disable-copy";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
@@ -255,7 +253,6 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
           taskId,
           `Auto-refund · agent unavailable · ${task.title.slice(0, 80)}`,
         ).catch((e) => console.error(`[engine] custom-agent refund failed for ${taskId}:`, e));
-        revalidatePath("/tasks");
         revalidatePath(`/clients/${clientId}`);
         return;
       }
@@ -295,7 +292,6 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
           `Auto-refund · agent dispatch failed · ${task.title.slice(0, 80)}`,
         ).catch((e) => console.error(`[engine] custom-agent dispatch refund failed for ${taskId}:`, e));
       }
-      revalidatePath("/tasks");
       revalidatePath(`/clients/${clientId}`);
       return;
     }
@@ -346,7 +342,6 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
           `Auto-refund · agent dispatch failed · ${task.title.slice(0, 80)}`,
         ).catch((e) => console.error(`[engine] dispatch-failure refund failed for ${taskId}:`, e));
       }
-      revalidatePath("/tasks");
       revalidatePath(`/clients/${clientId}`);
       return;
     }
@@ -466,53 +461,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
     ).catch((e) => console.error(`[engine] failure refund failed for ${taskId}:`, e));
   }
 
-  revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
-}
-
-/* ── Autopilot batch runner ──────────────────────────────────────── */
-
-/**
- * Picks up all pending karos_managed tasks for a client and executes them
- * sequentially. Capped at 5 tasks per invocation to respect after() time budget.
- */
-export async function runAutopilotBatch(clientId: string): Promise<void> {
-  const allTasks = await listClientTasks({ clientId, status: "pending", limit: 10 });
-  const pendingKaros = allTasks
-    .filter((t) => inferOwnerEngine(t) === "karos_managed")
-    .filter((t) => !taskIsDisabled(t))
-    .slice(0, 5);
-
-  if (pendingKaros.length === 0) return;
-
-  const now = Date.now();
-  await Promise.all(
-    pendingKaros.map((t) =>
-      updateClientTask(t.id, {
-        status: "in_progress",
-        metadata: { ...(t.metadata ?? {}), executing: true, executionError: null },
-        updatedAt: now,
-      }),
-    ),
-  );
-
-  revalidatePath("/tasks");
-
-  for (const t of pendingKaros) {
-    await runTaskExecution(clientId, t.id).catch(console.error);
-  }
-}
-
-/**
- * Execute an explicit set of already-claimed tasks (status flipped to
- * in_progress + executing by claimTaskForExecution). Used by the credit-charged
- * client autopilot path so the executed batch is exactly the charged batch.
- */
-export async function runClaimedTasks(clientId: string, taskIds: string[]): Promise<void> {
-  revalidatePath("/tasks");
-  for (const id of taskIds) {
-    await runTaskExecution(clientId, id).catch(console.error);
-  }
 }
 
 /* ── Integration publish helper ──────────────────────────────────── */

@@ -454,10 +454,15 @@ describe("every client-reachable model call is charged or refused", () => {
     // reaches its model only through `const { applyDocCorrections } = await
     // import("@/lib/intel")`. Both must be classified, or the sweep is blind to
     // the two indirections this codebase uses most.
+    // runPendingTasksBatchAction (settings-actions.ts) used to be pinned here
+    // too — a third reachability shape, `chargeClientModelCall` called directly
+    // in a loop rather than through either indirection above. It was the
+    // Workspace board's own "run all pending" batch action and had no caller
+    // left once the board was removed entirely (2026-08), so it was deleted
+    // along with the board rather than kept as an unreachable charge point.
     const named = (fn: string) => BASELINE.find((v) => v.fn === fn);
     expect(named("proposeXRosterAction")?.kind).toBe("charged");
     expect(named("applyGlobalDocCorrectionAction")?.kind).toBe("charged");
-    expect(named("runPendingTasksBatchAction")?.kind).toBe("charged");
   });
 });
 

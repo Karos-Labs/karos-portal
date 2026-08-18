@@ -4,27 +4,21 @@ import { describe, expect, it, vi } from "vitest";
 import { stripComments } from "./source-scan";
 
 /**
- * THE LINK ON A TASK THE COPILOT JUST ADDED (#122).
+ * THE REPLY THE COPILOT GIVES AFTER ADDING A TASK (#122).
  *
- * F65's verdict recorded two surfaces landing the "name the card that was
- * actually created" fix: QuickAddTaskBar, which sits ON the board and moves it
- * to the tab the router chose, and the copilot, which is a dock over some other
- * page and therefore carried a link. A later refactor dropped the copilot's
- * half: the reply went back to plain text and the `taskId` the action returns
- * was fetched and discarded. That is a silent revert of a verdicted fix, and it
- * leaves a message naming a card with no way to reach it.
+ * This file used to pin a "[View]" link on the reply — F65's verdict, which
+ * kept it in step with QuickAddTaskBar's own "name the card that was actually
+ * created" fix, deliberately keyed on `?task=` rather than a guessed `?owner=`
+ * tab (the board's two tabs are disjoint, so a guess could open a board that
+ * did not hold the card).
  *
- * ASSERTED IN THREE PLACES, because there are three ways it can die:
- *
- *  1. the id can go missing from the sentence;
- *  2. the sentence can stop being turned into an anchor — the transcript is
- *     rendered by `renderSectionBody`, which escapes first and only then makes
- *     links, and refuses any href `isSafeHref` does not like;
- *  3. the link can point at the WRONG BOARD TAB. The board's two tabs are
- *     disjoint (`?owner=client` picks one, everything else picks the other), so
- *     a link that names an owner it guessed at opens a board that does not hold
- *     the card. `?task=` is the ruling — the board resolves the tab from the
- *     task itself — and this file pins that the copilot obeys it.
+ * REVERSED 2026-08, not silently: the Workspace board the link opened is gone
+ * entirely, and nothing replaced it as a screen that shows one task by id — the
+ * same wall Home's own attention rows hit (client-home-overview.tsx's
+ * `taskBoardHref` removal, notification-bell.tsx's `TaskAlertRow`). A link with
+ * nowhere correct to land is worse than no link, so `addTaskReply` now drops it
+ * and this file asserts the plain sentence instead of the anchor it used to
+ * require.
  */
 
 vi.mock("server-only", () => ({}));
@@ -32,7 +26,7 @@ vi.mock("@/lib/actions", () => ({ ingestCustomUserTaskAction: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
 const { addTaskReply } = await import("@/components/chatbot-widget");
-const { renderSectionBody, isSafeHref } = await import("@/lib/doc-render");
+const { renderSectionBody } = await import("@/lib/doc-render");
 
 const REPO = path.resolve(__dirname, "../..", "..");
 const WIDGET = "src/components/chatbot-widget.tsx";
@@ -46,47 +40,18 @@ function anchors(markup: string): Array<[string, string]> {
 }
 
 describe("the copilot's /add-task reply", () => {
-  it("carries a link to the card it just named", () => {
-    const reply = addTaskReply({ ok: true, title: "Book the venue", taskId: "task-42" });
+  it("names the card, without a link, whether or not the action returned an id", () => {
+    // No screen shows one task by id any more, so a returned `taskId` no
+    // longer changes the reply at all — the assertion is that BOTH shapes
+    // produce the identical plain sentence, not that one degrades to the
+    // other.
+    const withId = addTaskReply({ ok: true, title: "Book the venue", taskId: "task-42" });
+    const withoutId = addTaskReply({ ok: true, title: "Book the venue" });
 
-    expect(reply).toBe('Added "Book the venue" to your task board. [View](/tasks?task=task-42)');
-  });
-
-  it("renders that link as an anchor the reader can press", () => {
-    // The half a string assertion cannot see: `renderSectionBody` escapes before
-    // it formats, and only makes an anchor of an href `isSafeHref` accepts.
-    const markup = renderSectionBody(
-      addTaskReply({ ok: true, title: "Book the venue", taskId: "task-42" }),
-    );
-
-    expect(anchors(markup)).toEqual([["/tasks?task=task-42", "View"]]);
-  });
-
-  it("keys the board on the TASK, never on a guessed owner tab", () => {
-    const [[href]] = anchors(
-      renderSectionBody(addTaskReply({ ok: true, title: "Book the venue", taskId: "task-42" })),
-    );
-
-    expect(href.startsWith("/tasks?task=")).toBe(true);
-    expect(href).not.toMatch(/owner=/);
-    // Same-origin by `isSafeHref`'s own reckoning, which is what decides whether
-    // an anchor is produced at all.
-    expect(isSafeHref(href)).toBe(true);
-  });
-
-  it("percent-encodes the id rather than pasting it into the query", () => {
-    const [[href]] = anchors(
-      renderSectionBody(addTaskReply({ ok: true, title: "T", taskId: "a b&c" })),
-    );
-
-    expect(href).toContain("task=a%20b%26c");
-  });
-
-  it("ends the sentence cleanly when the action returned no id", () => {
-    const reply = addTaskReply({ ok: true, title: "Book the venue" });
-
-    expect(reply).toBe('Added "Book the venue" to your task board.');
-    expect(anchors(renderSectionBody(reply))).toEqual([]);
+    expect(withId).toBe('Added "Book the venue" to your task board.');
+    expect(withoutId).toBe('Added "Book the venue" to your task board.');
+    expect(anchors(renderSectionBody(withId))).toEqual([]);
+    expect(anchors(renderSectionBody(withoutId))).toEqual([]);
   });
 
   it("links nothing on a refusal, and keeps the two refusals distinct", () => {

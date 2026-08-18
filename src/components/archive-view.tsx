@@ -128,7 +128,7 @@ export function ArchiveView({
    * forgot it got the STAFF answer silently: staff copy, the generation stamp,
    * and now every status option including one a client's archive can never
    * hold. A defaulted viewer flag is the cheapest way to lose a disclosure rule,
-   * and the one mount (progress-view.tsx) already passes it.
+   * and every live mount (settings/page.tsx, run-calendar.tsx) already passes it.
    */
   viewerIsClient: boolean;
 }) {

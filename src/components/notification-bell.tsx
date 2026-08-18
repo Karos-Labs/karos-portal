@@ -14,7 +14,7 @@ import {
   type NotificationFeeds,
   type TaskAlert,
 } from "@/lib/notification-rows";
-import type { AgentReviewNotification, TaskOwner } from "@/lib/types";
+import type { AgentReviewNotification } from "@/lib/types";
 
 /* ── Priority colours for task alerts ───────────────────────────── */
 
@@ -186,14 +186,14 @@ export function NotificationBell({
   // describes the shell.
   const jobDeepLinks = allowJobDeepLinks && !viewerIsClient;
 
-  // The Workspace board holds TASKS. For staff a review is workspace work and
-  // the link is fair; for a CLIENT the drafts these review rows stand for are
-  // provably not on any screen they can open — the archive excludes drafts by
-  // design, the calendar filters them out, /assets redirects a client away — so
-  // the footer must not offer a destination for them. The dashboard's identical
-  // row is non-navigable for exactly this reason (F97 × F149); a client's own
-  // tasks still earn the link.
-  const showWorkspaceLink = taskAlerts.length > 0 || (reviewRows.length > 0 && !viewerIsClient);
+  // The Workspace board is gone entirely (2026-08) and nothing replaced it as
+  // an aggregate view of TASKS, so task alerts no longer earn a footer link —
+  // TaskAlertRow above is a status line for the same reason (F97 × F149). A
+  // staff review queue still has a real aggregate destination: /jobs, the
+  // staff-only dashboard these AgentReviewNotification rows are drawn from. A
+  // client's queue collapses to one ReviewSummaryRow with no /jobs to offer
+  // them (viewerIsClient excludes it here, same as jobDeepLinks above).
+  const showJobsLink = reviewRows.length > 0 && !viewerIsClient;
   const showMeetingsLink = visibleActions.length > 0;
 
   // CD-H7b: one number, one noun. The badge clamped at "9+" while the panel
@@ -317,7 +317,7 @@ export function NotificationBell({
                         </p>
                       </div>
                       {reviewPendingTasks.map((t) => (
-                        <TaskAlertRow key={t.id} task={t} now={now} onClose={closeAfterNavigate} />
+                        <TaskAlertRow key={t.id} task={t} now={now} />
                       ))}
                     </>
                   )}
@@ -331,7 +331,7 @@ export function NotificationBell({
                         </p>
                       </div>
                       {pendingTasks.map((t) => (
-                        <TaskAlertRow key={t.id} task={t} now={now} onClose={closeAfterNavigate} />
+                        <TaskAlertRow key={t.id} task={t} now={now} />
                       ))}
                     </>
                   )}
@@ -402,15 +402,15 @@ export function NotificationBell({
             {/* Footer - one link per KIND of row actually in the feed. A panel
                 of meeting action items used to be footed "View workspace →"
                 and vice versa (QA F143). */}
-            {(showWorkspaceLink || showMeetingsLink) && (
+            {(showJobsLink || showMeetingsLink) && (
               <div className="flex shrink-0 items-center gap-4 border-t border-border px-4 py-2.5">
-                {showWorkspaceLink && (
+                {showJobsLink && (
                   <Link
-                    href="/tasks"
+                    href="/jobs"
                     onClick={closeAfterNavigate}
                     className="text-[11px] text-muted-2 transition-colors hover:text-foreground"
                   >
-                    View workspace →
+                    View all jobs →
                   </Link>
                 )}
                 {showMeetingsLink && (
@@ -560,30 +560,23 @@ export function ReviewJobRow({
 
 /* ── Task alert row ──────────────────────────────────────────────── */
 
-function TaskAlertRow({
-  task,
-  now,
-  onClose,
-}: {
-  task: TaskAlert;
-  now: number;
-  onClose: () => void;
-}) {
+/**
+ * A task alert is a STATUS LINE, not a destination, same ruling as
+ * ReviewJobRow/ReviewSummaryRow above (F97 × F149): it used to open the
+ * Workspace board on the tab holding the task (QA F64's fix), and the board is
+ * gone entirely (2026-08). No screen replaced it — this row's data still
+ * surfaces on Home as an AttentionRow count, which carries the same "no
+ * destination" ruling for the identical reason (see client-home-overview.tsx).
+ * No arrow, no hover affordance: it must not promise a click it cannot honour.
+ */
+function TaskAlertRow({ task, now }: { task: TaskAlert; now: number }) {
   const isReview = task.status === "review_pending";
   const prioColor = PRIORITY_COLOR[task.priority] ?? PRIORITY_COLOR.low;
-  // Land on the tab that actually holds this card, and open it. The board used
-  // to always open on "Automated", so a click on one of the client's own items
-  // showed a tab that did not contain it (QA F64). `owner` is a distinct key -
-  // `tab` belongs to the Workspace's board/activity/archive toggle.
-  const owner: TaskOwner = task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
-  const href = `/tasks?owner=${owner === "client_managed" ? "client" : "karos"}&task=${task.id}`;
 
   return (
-    <Link
-      href={href}
-      onClick={onClose}
+    <div
       className={cn(
-        "flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2",
+        "flex gap-3 px-4 py-3",
         now - task.createdAt > STALE_MS && "opacity-60",
       )}
     >
@@ -611,7 +604,6 @@ function TaskAlertRow({
           {task.priority} priority · {relativeTime(task.createdAt)}
         </p>
       </div>
-      <Icon name="ArrowRight" className="mt-1 h-3 w-3 shrink-0 text-muted-2" />
-    </Link>
+    </div>
   );
 }

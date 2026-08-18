@@ -62,9 +62,12 @@ export default async function AssetsPage({
   const user = await requireUser();
   const { clientId: viewClientId } = await searchParams;
 
-  // The client Library merged into the Workspace's Archive tab (2026-07) -
-  // client users land there; this route stays the staff review surface.
-  if (user.role === "CLIENT_USER") redirect("/tasks");
+  // The client Library merged into Account Center's Archive tab (2026-07) -
+  // client users land there; this route stays the staff review surface. The
+  // Workspace board this used to bounce through is gone entirely (2026-08),
+  // so a client with no resolvable id falls back to /calendar instead, same
+  // as the sidebar's own no-clientId fallback (see sidebar.tsx's homeHref).
+  if (user.role === "CLIENT_USER") redirect(user.clientId ? `/clients/${user.clientId}` : "/calendar");
 
   const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
   const clients = await listClients(employeeFilter);

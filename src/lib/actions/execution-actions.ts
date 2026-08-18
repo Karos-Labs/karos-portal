@@ -289,7 +289,6 @@ export async function approveTaskArtifactAction(
     });
   }
 
-  revalidatePath("/tasks");
   revalidatePath("/assets");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };
@@ -365,7 +364,6 @@ export async function requestAdjustmentsAction(
   });
 
   after(() => runTaskExecution(clientId, taskId).catch(console.error));
-  revalidatePath("/tasks");
   return { ok: true };
 }
 
@@ -450,7 +448,6 @@ export async function publishIntegrationAction(
       );
     }
 
-    revalidatePath("/tasks");
     return { ok: false, error: result.error };
   }
 
@@ -465,7 +462,6 @@ export async function publishIntegrationAction(
     updatedAt: Date.now(),
   });
 
-  revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
   return { ok: true };
 }

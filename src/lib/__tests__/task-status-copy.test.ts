@@ -459,63 +459,20 @@ describe("the task-status vocabulary is written once", () => {
 /* ────────────── claim 4: the four print sites ask the register ────────── */
 
 /**
- * The two files that print a state, read at MODULE scope rather than inside the
+ * The file that prints a state, read at MODULE scope rather than inside the
  * describe below. A throw in a describe body is collected as "(0 test)" and the
  * file disappears quietly; at module scope a moved file is a loud import error.
+ *
+ * This used to read TWO files — tasks-board.tsx alongside this one — and pin
+ * its own STATUS_META/BOARD_COLUMNS assertions the same way. The board was
+ * deleted 2026-08 (it was rendered only inside ProgressView, which lost its
+ * own last renderer when the Workspace board's routes were removed), so those
+ * board-specific assertions went with it. The ticket modal's own assertions
+ * below are unaffected — the register it reads from is unchanged.
  */
-const board = code(join(SRC, "components/tasks-board.tsx"));
 const ticket = code(join(SRC, "components/task-ticket-modal.tsx"));
 
 describe("the surfaces that print a task state", () => {
-
-  it("leaves the board no map of its own to print from", () => {
-    // The two names this board held. Asserted as ABSENCES of the identifiers
-    // rather than of their words, because an identifier is what a revert brings
-    // back and it occurs nowhere else.
-    expect(board, "STATUS_META is back").not.toContain("STATUS_META");
-    // BOARD_COLUMNS survives — it decides WHICH columns and in what order — but
-    // it may not carry words. Read off the declaration itself, so a `label:`
-    // elsewhere in this 1200-line file cannot satisfy or break it.
-    const from = board.indexOf("const BOARD_COLUMNS");
-    expect(from, "BOARD_COLUMNS is gone entirely").toBeGreaterThan(-1);
-    const decl = board.slice(from, board.indexOf("];", from) + 2);
-    expect(decl, "BOARD_COLUMNS carries words again").not.toContain("label");
-    // Non-vacuity: the slice really is the declaration and really has entries.
-    expect(decl).toContain('status: "in_progress"');
-  });
-
-  it("asks the register wherever it prints a state, and the constant where it prints a run", () => {
-    // AT THE CALL. `expect(board).toContain("taskStatusLabel")` is satisfied by
-    // the import line for ever, which is the weaker form this directory has
-    // already tested and found useless. Each needle below is a distinct call
-    // with a distinct argument, so no two can stand in for each other.
-    const f = flat(board);
-    // The card badge — the one that said "Running Agent".
-    expect(f, "the card badge does not ask the register").toContain(
-      "{taskStatusLabel(task.status)}",
-    );
-    // The column heading, keyed to the column's own status rather than a word
-    // handed down as a prop.
-    expect(f, "the column heading does not ask the register").toContain(
-      "<h3 className=\"text-sm font-semibold text-foreground\">{taskStatusLabel(status)}</h3>",
-    );
-    // The empty-column sentence.
-    expect(f, "the empty-column line does not ask the register").toContain(
-      "`No ${taskStatusLabel(status).toLowerCase()} tasks`",
-    );
-    // The filter options, generated rather than typed.
-    expect(f, "the filter options are not generated from the register").toContain(
-      "{taskStatusLabel(column.status)}",
-    );
-    // And the card's running chip: the whole element, so the claim cannot be
-    // moved off the flag or reworded without failing here.
-    expect(f, "the card's running chip no longer reads the shared label").toContain(
-      "{isExecuting && (",
-    );
-    expect(f, "the card's running chip has a wording of its own again").toContain(
-      "<span className=\"text-[11px] font-medium text-neon\">{TASK_RUNNING_LABEL}</span>",
-    );
-  });
 
   it("hand-types no task-status <option> anywhere in src/", () => {
     // The third copy, by SHAPE and over the whole repo — the value of an
@@ -572,6 +529,6 @@ describe("the surfaces that print a task state", () => {
     expect(
       painted.sort(),
       "the running claim is painted nowhere; the deletion took the remedy with it",
-    ).toEqual(["components/task-ticket-modal.tsx", "components/tasks-board.tsx"]);
+    ).toEqual(["components/task-ticket-modal.tsx"]);
   });
 });

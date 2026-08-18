@@ -166,9 +166,10 @@ describe("#137 · the staff shell's client rows lead where a client can go", () 
 
   it("points the wordmark at a page the viewer of this shell can open", () => {
     // /dashboard redirects a CLIENT_USER to /clients/<clientId> — a notFound()
-    // for the only client who reaches this shell — or to /assets, which bounces
-    // on to /tasks. Both wordmarks go through one binding.
-    expect(flat(sidebar)).toContain('const homeHref = isStaff ? "/dashboard" : "/tasks";');
+    // for the only client who reaches this shell — or to /assets, which now
+    // bounces on to /calendar (the Workspace board /assets used to land on is
+    // gone, 2026-08). Both wordmarks go through one binding.
+    expect(flat(sidebar)).toContain('const homeHref = isStaff ? "/dashboard" : "/calendar";');
     expect(flat(sidebar).match(/<Link href=\{homeHref\}/g) ?? []).toHaveLength(2);
     // The staff arm of that binding is the file's only other /dashboard href.
     expect(sidebar.match(/href="\/dashboard"/g) ?? []).toHaveLength(0);
@@ -223,41 +224,41 @@ describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
   });
 
   it("leaves no route the staff shell offers a client that their own shell withholds", () => {
-    // #137's relation, still enforced, with TWO named exemptions.
+    // #137's relation, still enforced, with ONE named exemption.
     //
-    // /transcripts is the first and AF-1 is the reason: a client's meetings
-    // are the Settings tab above, so the route itself is deliberately not in
-    // their nav. The staff shell keeps its own Meetings row for CLIENT_USER,
-    // and that is not an oversight left behind by the ruling — that shell
-    // renders for exactly one client, the one whose client document did not
-    // resolve, and that client has no /clients/<id>/settings to reach. Two
-    // shells, two correct answers.
+    // /transcripts is it, and AF-1 is the reason: a client's meetings are the
+    // Settings tab above, so the route itself is deliberately not in their nav.
+    // The staff shell keeps its own Meetings row for CLIENT_USER, and that is
+    // not an oversight left behind by the ruling — that shell renders for
+    // exactly one client, the one whose client document did not resolve, and
+    // that client has no /clients/<id>/settings to reach. Two shells, two
+    // correct answers.
     //
-    // /tasks is the second, and the portal revamp is the reason: Workspace left
-    // the real client rail entirely (locked decision — "The Board is replaced
-    // by the action list on Home"), but the fallback NAV table's own docstring
-    // is explicit that /tasks is the one working destination a client with NO
-    // resolvable client document is left with — /assets redirects there by
-    // name. Removing the row would not align that edge case with the revamp,
-    // it would strand it with nowhere to land at all.
+    // /tasks used to be a second exemption — the Workspace board was the one
+    // working destination a client with no resolvable client document was left
+    // with. The board is gone entirely now (2026-08, locked decision — "The
+    // Board is replaced by the action list on Home"), and with it the whole
+    // route: the fallback NAV table no longer carries a /tasks row at all, so
+    // there is nothing left for the staff shell to offer that the rail could
+    // even be asked to match. One exemption, not two.
     //
     // Named rather than derived: an exemption computed from the settings page's
     // hrefs would grow silently the next time a route is linked from it, which
     // is the opposite of what this relation is for.
-    const EXEMPT = new Set(["/transcripts", "/tasks"]);
+    const EXEMPT = new Set(["/transcripts"]);
     const railSide = new Set(clientRailRoutes());
     for (const route of staffShellClientRoutes()) {
       if (EXEMPT.has(route)) continue;
       expect(railSide.has(route), `${route} is offered by the staff shell only`).toBe(true);
     }
-    // Non-vacuity in both directions: both exemptions are live (the staff shell
-    // really does still offer each), they are doing exactly one route's worth
-    // of work apiece, and the rail really has stopped offering either.
+    // Non-vacuity: the exemption is live (the staff shell really does still
+    // offer it), it is doing exactly one route's worth of work, and the rail
+    // really has stopped offering it — and /tasks is gone from both shells.
     expect(staffShellClientRoutes()).toContain("/transcripts");
-    expect(staffShellClientRoutes()).toContain("/tasks");
+    expect(staffShellClientRoutes()).not.toContain("/tasks");
     expect(railSide.has("/transcripts")).toBe(false);
     expect(railSide.has("/tasks")).toBe(false);
-    expect(staffShellClientRoutes().filter((r) => EXEMPT.has(r))).toHaveLength(2);
+    expect(staffShellClientRoutes().filter((r) => EXEMPT.has(r))).toHaveLength(1);
   });
 });
 
