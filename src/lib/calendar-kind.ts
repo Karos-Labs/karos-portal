@@ -171,9 +171,16 @@ export function isClientCalendarStatus(_status: CalendarKindInput["status"]): bo
  *  • held — verified live for clients, and the reason the kind exists: the
  *    publish cron writes its ordering hold onto an approved, dated, past-due
  *    post and nothing in the client projection removes it.
- *  • review — calendar-past-runs' table marks the "review" run state
- *    client-visible, and a client's card needs one unlocked deliverable, which
- *    is the ordinary case for a run in review.
+ *  • review — WITHHELD as of 2026-08 (the locked decision "In review is
+ *    removed. We are not reviewing anything."). calendar-past-runs' table
+ *    now marks the "review" run state client-INVISIBLE — see that table's
+ *    own note — so this is the one entry here that answers off a different
+ *    table (`pastRunStatuses`) rather than off `postKind`'s grid, same as the
+ *    reversed test below reads it. run-calendar.tsx also strips the "review"
+ *    legend chip unconditionally for every viewer (its own `key !== "review"`
+ *    filter) — belt-and-braces, not this entry's reason for existing: THIS
+ *    entry is what keeps `calendarFilterKeyMatchable` truthful on its own,
+ *    without relying on that separate UI-level filter to cover for it.
  *
  * The derivation is pinned in calendar-kind.test.ts, which probes `postKind`
  * over every shape it reads rather than trusting this list. It is an UPPER bound
@@ -182,7 +189,9 @@ export function isClientCalendarStatus(_status: CalendarKindInput["status"]): bo
  * That is the safe direction: the failure mode of a wrong entry here is a filter
  * a client needed, not a chip they cannot use.
  */
-const CLIENT_UNMATCHABLE_FILTER_KEYS: ReadonlySet<CalendarFilterKey> = new Set<CalendarFilterKey>([]);
+const CLIENT_UNMATCHABLE_FILTER_KEYS: ReadonlySet<CalendarFilterKey> = new Set<CalendarFilterKey>([
+  "review",
+]);
 
 /** Can this viewer's calendar hold anything this filter key would hide? */
 export function calendarFilterKeyMatchable(

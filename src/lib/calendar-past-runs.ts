@@ -41,14 +41,27 @@ import type { JobStatus } from "@/lib/types";
  * terminal status — the "no visibility into why it failed" gap that set exists
  * to close.
  *
- * A client is not shown two of those states at all, whatever the run produced:
+ * A client is not shown three of those states at all, whatever the run produced:
  *   - "failed" — an internal breakage. The people who own it tell the client.
  *   - "cancelled" — a staff member stopped the run on purpose. It reached the
  *     client as an unexplained "Cancelled" row with no reason and no action.
- * Both are refunded outcomes (see JobStatus), so neither is a run the client was
- * charged for or handed anything by — which is why the Workspace timeline
- * withholds them as well, rather than folding a stopped run into its "<agent>
- * worked on your content" row.
+ *   - "review" — REMOVED FROM THE CLIENT SIDE (2026-08, portal revamp SOW,
+ *     locked calendar decision: "In review is removed. We are not reviewing
+ *     anything."). Staff still see every "review" run in full — the state is
+ *     real, internal work still happens on it — but a client's own calendar
+ *     must not narrate that internal step at all: no "In review" badge, no
+ *     "Review deliverable" control, and (via this same table) no past-run
+ *     card for that job until it reaches a state a client IS shown. There is
+ *     no partial version of this: the SOW's own action list independently
+ *     locks "there is no approval step, so it is 'see your first output'" —
+ *     a client waiting on a review is exactly the approval gate that line
+ *     forbids narrating.
+ * "failed"/"cancelled" are refunded outcomes (see JobStatus), so neither is a
+ * run the client was charged for or handed anything by — which is why the
+ * Workspace timeline withholds them as well, rather than folding a stopped
+ * run into its "<agent> worked on your content" row. "review" is not
+ * refunded — the run is proceeding normally, a client just never sees the
+ * in-between step.
  *
  * The remaining states can each be a real client event, but on the calendar only
  * once the run has actually given the client something — see `projectPastRuns`.
@@ -56,7 +69,7 @@ import type { JobStatus } from "@/lib/types";
 const PAST_RUN_VISIBILITY: Record<JobStatus, { staff: boolean; client: boolean }> = {
   queued: { staff: true, client: true },
   running: { staff: true, client: true },
-  review: { staff: true, client: true },
+  review: { staff: true, client: false },
   approved: { staff: true, client: true },
   delivered: { staff: true, client: true },
   failed: { staff: true, client: false },

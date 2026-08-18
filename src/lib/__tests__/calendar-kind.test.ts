@@ -225,10 +225,13 @@ describe("the legend's per-viewer chips", () => {
     // The answer that derivation produces today, pinned so a change to it is a
     // decision someone takes rather than a diff nobody reads. "draft" used to be
     // withheld (a client's calendar was never built from it); the product
-    // decision behind `isClientCalendarStatus` reversed that, so every key is now
-    // matchable for a client, same as staff.
+    // decision behind `isClientCalendarStatus` reversed that, so every OTHER key
+    // is matchable for a client, same as staff. "review" is pinned the other way
+    // now (2026-08, locked: "In review is removed") — the one key a client's
+    // calendar can never hold at all, reversing what this same loop asserted
+    // before that decision landed.
     for (const key of ALL_CALENDAR_FILTER_KEYS) {
-      expect(calendarFilterKeyMatchable(key, true), `client chip: ${key}`).toBe(true);
+      expect(calendarFilterKeyMatchable(key, true), `client chip: ${key}`).toBe(key !== "review");
     }
   });
 
