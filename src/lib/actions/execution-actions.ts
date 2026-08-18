@@ -28,6 +28,7 @@ import { integrationIsUsable } from "@/lib/integration-status";
 import { recommendPublishTimeWithDensity } from "@/lib/scheduling";
 import type { AppUser, Asset, AssetType, ClientTask, ManagedTaskType } from "@/lib/types";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml } from "@/lib/text-utils";
 import {
   runTaskExecution,
   inferOwnerEngine,
@@ -424,15 +425,20 @@ export async function publishIntegrationAction(
       updatedAt: Date.now(),
     });
 
+    // task.title, client?.name, user.name and user.email are all editable by
+    // an authenticated actor (a client or staff member's own profile/task
+    // fields), so escaped before interpolation — an unescaped `user.name`
+    // containing markup would otherwise render as live HTML in this
+    // staff-facing alert.
     const alertHtml = `
       <p style="font-family:sans-serif;"><strong>Karos - Task Publish Failure</strong></p>
       <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;">
-        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Task ID</td><td>${taskId}</td></tr>
-        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Task Title</td><td>${task.title}</td></tr>
-        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Client</td><td>${client?.name ?? "-"} (${clientId})</td></tr>
-        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Recipient</td><td>${recipient}</td></tr>
-        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Error</td><td>${result.error}</td></tr>
-        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Triggered by</td><td>${user.name} &lt;${user.email}&gt;</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Task ID</td><td>${escapeHtml(taskId)}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Task Title</td><td>${escapeHtml(task.title)}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Client</td><td>${escapeHtml(client?.name ?? "-")} (${escapeHtml(clientId)})</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Recipient</td><td>${escapeHtml(recipient)}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Error</td><td>${escapeHtml(result.error)}</td></tr>
+        <tr><td style="padding:4px 16px 4px 0;color:#9c9ca3;">Triggered by</td><td>${escapeHtml(user.name)} &lt;${escapeHtml(user.email)}&gt;</td></tr>
       </table>`;
 
     const alertResult = await sendEmail({

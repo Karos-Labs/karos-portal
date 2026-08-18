@@ -10,7 +10,7 @@ import {
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { ensureActionItemDoc, historyEntry } from "@/lib/action-items";
-import { ingestTranscript, appendMeetingSignalToContextDoc, buildActionItemsByOwner } from "@/lib/transcripts/ingest";
+import { ingestTranscript, appendMeetingSignalToContextDoc } from "@/lib/transcripts/ingest";
 import { listFirefliesTranscripts, fetchFirefliesTranscript } from "@/lib/transcripts/fireflies";
 import { syncActionItemAssignmentToJira } from "@/lib/integrations/jira";
 import type { AppUser, Transcript } from "@/lib/types";
@@ -191,37 +191,6 @@ export async function toggleActionItemCompletionAction(
   revalidatePath("/dashboard");
   if (allDone) revalidatePath("/transcripts");
   return { allDone };
-}
-
-/**
- * Reassign a single action item to a new owner name.
- * Rebuilds actionItemsByOwner snapshot from the updated owners array.
- */
-export async function setActionItemOwnerAction(
-  transcriptId: string,
-  itemIndex: number,
-  ownerName: string | null,
-): Promise<void> {
-  await requireStaff();
-  const t = await getTranscript(transcriptId);
-  if (!t) throw new Error("Transcript not found");
-
-  const total = t.actionItems?.length ?? 0;
-  const owners: (string | null)[] = t.actionItemOwners?.length === total
-    ? [...t.actionItemOwners]
-    : Array.from({ length: total }, (_, i) => {
-        if (!t.actionItemsByOwner) return null;
-        for (const [name, tasks] of Object.entries(t.actionItemsByOwner)) {
-          if (tasks.includes(t.actionItems?.[i] ?? "")) return name === "Unassigned" ? null : name;
-        }
-        return null;
-      });
-
-  if (itemIndex >= 0 && itemIndex < owners.length) owners[itemIndex] = ownerName;
-  const actionItemsByOwner = buildActionItemsByOwner(t.actionItems ?? [], owners);
-
-  await updateTranscript(transcriptId, { actionItemOwners: owners, actionItemsByOwner });
-  revalidatePath(`/transcripts/${transcriptId}`);
 }
 
 /**

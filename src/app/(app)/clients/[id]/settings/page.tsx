@@ -52,7 +52,7 @@ import { CompetitorTrack, BrandColorsSection } from "@/components/client-context
 import { ArchiveView } from "@/components/archive-view";
 import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { isAiProcessingLockActive } from "@/lib/constants";
-import { hasAiProcessingFailure } from "@/lib/client-visibility";
+import { hasAiProcessingFailure, toClientPortalView } from "@/lib/client-visibility";
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
 import { AccountProfilePanel, AccountSecurityPanel } from "@/components/settings-form";
 import { ACCOUNT_TABS } from "@/lib/account-settings-tabs";
@@ -256,7 +256,14 @@ export default async function ClientSettingsPage({
   const profileSection = (
     <div className="space-y-8">
       {isStaff && <ClientEditor client={client} />}
-      <ClientProfilePanel client={client} />
+      {/* ClientProfilePanel is a "use client" component — the whole prop it is
+          handed serializes into the RSC payload whether or not anything it
+          renders paints it. A CLIENT_USER (including a group admin) gets the
+          same projection ClientRail uses (toClientPortalView), never the raw
+          document — clientKeyId, aiProcessingError, forbiddenTopics,
+          assignedEmployeeIds and the other staff-only fields on Client must
+          not reach this branch. */}
+      <ClientProfilePanel client={isStaff ? client : toClientPortalView(client)} />
       <BrandColorsSection
         guidelines={client.brandingGuidelines}
         clientId={client.id}
@@ -438,11 +445,23 @@ export default async function ClientSettingsPage({
     <ArchiveView assets={archiveAssets} agentLabelByAssetId={agentLabelByAssetId} viewerIsClient={isClientViewer} />
   );
 
+  // `CreditLedgerEntry.actorName`/`.actorUid` are staff-internal — set to the
+  // admin's own name+uid on a manual grant/deduct (adjustCreditsAction) — and
+  // CreditsPanel is a "use client" component, so whatever crosses here is
+  // readable from view-source whether or not the panel paints it. Only
+  // `.reason` is classified client-safe by client-copy-boundary.test.ts's
+  // NOT_ON_A_CLIENT_SCREEN/CLIENT_READ sweep; actor identity is not, so it is
+  // stripped before a client viewer's slice is built rather than left to the
+  // panel to withhold at render.
+  const clientLedgerFeed = creditLedger
+    .slice(0, LEDGER_FEED_LIMIT)
+    .map((row) => ({ ...row, actorName: undefined, actorUid: "" }));
+
   const creditsSection = (
     <CreditsPanel
       clientId={client.id}
       credits={credits}
-      ledger={creditLedger.slice(0, LEDGER_FEED_LIMIT)}
+      ledger={isStaff ? creditLedger.slice(0, LEDGER_FEED_LIMIT) : clientLedgerFeed}
       spendByAgent={spendByAgent}
       role={user.role}
       viewer={{ name: user.name, email: user.email }}

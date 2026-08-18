@@ -383,9 +383,9 @@ describe("#30 — Audience Simulation", () => {
  */
 describe("AI Insights · the forced Refresh", () => {
   async function refresh(force: boolean) {
-    const { GET } = await import("@/app/api/clients/[id]/insights/route");
+    const { POST } = await import("@/app/api/clients/[id]/insights/route");
     const url = `https://portal.test/api/clients/c1/insights${force ? "?force=1" : ""}`;
-    return GET(new Request(url), { params: Promise.resolve({ id: "c1" }) });
+    return POST(new Request(url, { method: "POST" }), { params: Promise.resolve({ id: "c1" }) });
   }
 
   beforeEach(() => {

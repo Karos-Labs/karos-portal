@@ -69,9 +69,19 @@ function ShareMeter({
 export function HomeStandingWidget({
   presence,
   href,
+  competitorsHref,
 }: {
   presence: PresenceView;
   href: string;
+  /**
+   * Where the empty-roster prompt below sends a client to actually track one
+   * — Account Center's Competitors tab, which has always had a self-serve
+   * "Add competitor" control. The prompt used to reuse `href` (the full
+   * Reporting tab breakdown), landing the client one tab away from the
+   * control its own copy promised, on a tab whose own empty state tells them
+   * to contact staff instead.
+   */
+  competitorsHref: string;
 }) {
   return (
     <Card>
@@ -112,7 +122,7 @@ export function HomeStandingWidget({
              prompt to create one rather than a 100% that would be an artifact
              of an empty roster. */
           <Link
-            href={href}
+            href={competitorsHref}
             className="flex flex-col justify-center rounded-md border border-dashed border-border p-3 transition-colors hover:border-border-strong"
           >
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">

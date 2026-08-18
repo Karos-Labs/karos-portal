@@ -53,7 +53,7 @@ export function AiInsights({
     async (controller: AbortController, force: boolean) => {
       try {
         const url = `/api/clients/${clientId}/insights${force ? "?force=1" : ""}`;
-        const res = await fetch(url, { signal: controller.signal });
+        const res = await fetch(url, { method: "POST", signal: controller.signal });
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: "Request failed" }));
           throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);

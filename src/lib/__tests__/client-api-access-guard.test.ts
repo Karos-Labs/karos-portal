@@ -399,11 +399,13 @@ describe("GET /api/clients/[id]/report", () => {
 
 /* ─────────────────────────────── insights ─────────────────────────────── */
 
-describe("GET /api/clients/[id]/insights", () => {
-  /** `?force=1` is the path that charges — see the route's own note. */
+describe("POST /api/clients/[id]/insights", () => {
+  /** `?force=1` is the path that charges — see the route's own note.
+   *  POST, not GET (2026-08): a GET here was a forgeable cross-site trigger
+   *  for a charging request — see the route's own note. */
   const call = async (force = true) => {
-    const { GET } = await import("@/app/api/clients/[id]/insights/route");
-    return GET(new Request(`http://t/x${force ? "?force=1" : ""}`), params);
+    const { POST } = await import("@/app/api/clients/[id]/insights/route");
+    return POST(new Request(`http://t/x${force ? "?force=1" : ""}`, { method: "POST" }), params);
   };
 
   beforeEach(() => {

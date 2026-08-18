@@ -17,6 +17,7 @@ import {
 import { agentKeyMatchesClientSlug, isUnlistedAgent } from "@/lib/custom-agent-launch";
 import { ActiveClientProvider } from "@/lib/active-client-context";
 import { availableCredits } from "@/lib/credits";
+import { clientSafeTaskAlerts } from "@/lib/notification-rows";
 import {
   toClientPortalView,
   toStaffShellView,
@@ -197,7 +198,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               agents={railAgents}
               actionItems={actionItems as ActionItemNotification[]}
               reviewJobs={reviewJobs}
-              taskAlerts={taskAlerts}
+              taskAlerts={clientSafeTaskAlerts(taskAlerts)}
               spendableCredits={spendableCredits}
             />
 

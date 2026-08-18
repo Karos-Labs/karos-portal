@@ -41,8 +41,41 @@
 
 import type { ActionItemNotification, AgentReviewNotification, ClientTask } from "@/lib/types";
 
-/** A task row in the bell. Staff feeds are cross-client and carry `_clientName`. */
-export type TaskAlert = ClientTask & { _clientName?: string };
+/**
+ * The shape the bell's rows actually need (notification-bell.tsx's
+ * `TaskAlertRow`): title, status, priority, createdAt, and — for staff, whose
+ * feed is cross-client — `_clientName`. Nothing else.
+ *
+ * `NotificationFeeds.taskAlerts` is typed to THIS, not to `ClientTask`,
+ * because the bell is mounted from `app/(app)/layout.tsx`'s CLIENT_USER branch
+ * into `ClientRail`, a "use client" component — so whatever shape crosses
+ * there is serialized into every client-portal page's RSC payload and
+ * readable from view-source, whether or not `TaskAlertRow` paints it. A full
+ * `ClientTask` carries fields this codebase already classifies staff-only
+ * even for the task's own client (`client-copy-boundary.test.ts`'s
+ * NOT_ON_A_CLIENT_SCREEN entries for `metadata.executionError` and
+ * `sourceLabel`), plus `metadata.aiPlan`, `adjustmentFeedback`,
+ * `externalJobId`, `agentName`, and `createdBy` (a uid) — none of which a real
+ * CLIENT_USER's browser should receive. Staff still pass a full `ClientTask`
+ * per row (it structurally satisfies this narrower Pick); only the
+ * client-facing feed is narrowed at the source via `clientSafeTaskAlerts`,
+ * built by construction rather than by spreading the whole document and
+ * trusting the renderer to withhold the rest.
+ */
+export type TaskAlert = Pick<ClientTask, "id" | "title" | "status" | "priority" | "createdAt"> & {
+  _clientName?: string;
+};
+
+/** Narrows a client viewer's own task alerts to the fields the bell renders. */
+export function clientSafeTaskAlerts(tasks: readonly ClientTask[]): TaskAlert[] {
+  return tasks.map(({ id, title, status, priority, createdAt }) => ({
+    id,
+    title,
+    status,
+    priority,
+    createdAt,
+  }));
+}
 
 /** The three server-fetched feeds every bell mount — and every badge beside one — reads. */
 export interface NotificationFeeds {

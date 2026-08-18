@@ -19,7 +19,8 @@
  */
 
 import { MAX_ACTIVE_TASKS } from "@/lib/constants";
-import type { ClientTask, TaskOwner, TaskStatus } from "@/lib/types";
+import type { ClientTask, TaskStatus } from "@/lib/types";
+import { inferTaskOwner } from "@/lib/task-owner";
 
 /** Statuses that count against the per-client active-task cap. */
 export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
@@ -30,10 +31,8 @@ export const ACTIVE_TASK_STATUSES: TaskStatus[] = [
 
 const ACTIVE = new Set<TaskStatus>(ACTIVE_TASK_STATUSES);
 
-/** Owner inference shared with the engine: manual source ⇒ client_managed. */
-export function inferTaskOwner(task: Pick<ClientTask, "owner" | "source">): TaskOwner {
-  return task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
-}
+/** Owner inference — shared with the engine via task-owner.ts, not a copy. */
+export { inferTaskOwner };
 
 /** Normalize a task title to a canonical form for dedup comparison. */
 export function normalizeTitleForDedup(title: string): string {

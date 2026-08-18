@@ -50,8 +50,17 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * liked — the same shape as the four unmetered calls this cluster closed. It is
  * charged at `CREDIT_COSTS.chatMessage` (1), the existing rate for one
  * client-pressed model call, and refunded if the briefing never streams.
+ *
+ * POST, not GET (2026-08): this route can spend a client's credits
+ * (`?force=1`), and a GET is exactly what a cross-site page can trigger
+ * unattended — a top-level navigation or an auto-redirecting link fires an
+ * authenticated GET from the signed-in visitor's own browser with no
+ * confirmation. `<AiInsights/>`'s own fetch never relied on GET semantics (no
+ * EventSource, just a streamed fetch), so there was nothing to preserve by
+ * keeping it. SameSite=Lax cookies aren't sent on a cross-site POST, which is
+ * what actually closes the gap.
  */
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user || user.disabled) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });

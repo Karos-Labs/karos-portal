@@ -89,7 +89,11 @@ export function ActionListWidget({
                 <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
               </Link>
               {a.status === "eligible" && (
-                <div className="absolute right-9 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100">
+                // Reachable without a pointer: these dismiss/snooze the row, and a
+                // hover-only reveal hides them entirely on touch and for keyboard
+                // nav (#89's shape — same fallback as client-context-sections.tsx's
+                // "Stop tracking" button and clients-grid.tsx).
+                <div className="absolute right-9 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 [@media(hover:none)]:opacity-100">
                   <button
                     type="button"
                     title="Dismiss for now"

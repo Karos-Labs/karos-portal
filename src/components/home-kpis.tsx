@@ -120,6 +120,7 @@ export function HomeKpisWidget({
   channels,
   visibilityScore,
   reportHref,
+  channelsHref,
 }: {
   /** Real stored follower snapshots only — an empty series hides the cell entirely. */
   audienceTotal: number;
@@ -129,6 +130,13 @@ export function HomeKpisWidget({
   /** The one ScoreView D6 kept — null when there is no snapshot to score yet. */
   visibilityScore: ScoreView | null;
   reportHref: string;
+  /**
+   * Where the real "Reconnect" control lives (Account Center's Settings tab,
+   * which mounts IntegrationsTab) — the badge below used to say "Reconnect"
+   * over plain, non-interactive text with no href/onClick at all, promising an
+   * action it did not perform.
+   */
+  channelsHref: string;
 }) {
   // A single point is a reading, not a trend — the sparkline needs two.
   const showAudience = audienceSeries.length >= 2;
@@ -200,11 +208,8 @@ export function HomeKpisWidget({
           ) : (
             <>
               <ul className="mt-2 space-y-1.5">
-                {shownChannels.map((c) => (
-                  <li key={c.platform} className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm text-foreground">
-                      {platformLabel(c.platform)}
-                    </span>
+                {shownChannels.map((c) => {
+                  const badge = (
                     <Badge tone={c.usable ? "neon" : "warning"}>
                       <Icon
                         name={c.usable ? "CircleCheck" : "TriangleAlert"}
@@ -212,8 +217,26 @@ export function HomeKpisWidget({
                       />
                       {c.usable ? "Connected" : "Reconnect"}
                     </Badge>
-                  </li>
-                ))}
+                  );
+                  return (
+                    <li key={c.platform} className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm text-foreground">
+                        {platformLabel(c.platform)}
+                      </span>
+                      {/* "Reconnect" is a real destination now — it used to be a
+                          plain, non-interactive label promising an action it
+                          could not perform. A healthy channel has nothing to
+                          reconnect, so only the broken row links out. */}
+                      {c.usable ? (
+                        badge
+                      ) : (
+                        <Link href={channelsHref} className="transition-opacity hover:opacity-80">
+                          {badge}
+                        </Link>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
               {extraChannels > 0 && (
                 <p className="mt-1.5 text-[11px] text-muted-2">

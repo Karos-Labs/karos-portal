@@ -9,7 +9,7 @@ import { AccountMenu } from "@/components/account-menu";
 import { LogoutButton } from "@/components/logout-button";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { NotificationBell, useNotificationDismissals } from "@/components/notification-bell";
-import { unreadNotificationCount } from "@/lib/notification-rows";
+import { unreadNotificationCount, type TaskAlert } from "@/lib/notification-rows";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { ClientRailAgentsNav, type RailAgent } from "@/components/client-rail-agents-nav";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
@@ -19,7 +19,6 @@ import type {
   AgentReviewNotification,
   AppUser,
   Client,
-  ClientTask,
 } from "@/lib/types";
 
 interface NavItem {
@@ -69,7 +68,13 @@ export function ClientRail({
   agents: RailAgent[];
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
-  taskAlerts: ClientTask[];
+  /**
+   * Already narrowed to `TaskAlert` (id/title/status/priority/createdAt) by
+   * the caller, not the full `ClientTask` — this component is "use client",
+   * so whatever shape it is handed serializes into every client-portal page's
+   * RSC payload. See notification-rows.ts's `TaskAlert`/`clientSafeTaskAlerts`.
+   */
+  taskAlerts: TaskAlert[];
   /**
    * Credits the client can actually SPEND right now - availableCredits(), i.e.
    * the balance clipped by the weekly/monthly caps, not the raw stored balance.

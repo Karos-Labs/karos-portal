@@ -9,11 +9,8 @@ import {
   listClientCompetitors,
   replaceReportCompetitors,
   updateClientCompetitor,
-  getClientContextDocByTier,
-  upsertClientContextDoc,
 } from "@/lib/data";
 import { competitorBrandKeys, parseCompetitorInput } from "@/lib/competitor-input";
-import type { ClientCompetitor } from "@/lib/types";
 import { requireStaff, requireClientAccess, logActivity } from "./_shared";
 import { MODELS } from "@/lib/constants";
 import { CREDIT_COSTS } from "@/lib/credits";
@@ -227,92 +224,6 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
   );
 }
 
-/** Manually add a competitor to a client's tracker. */
-export async function addCompetitorAction(
-  clientId: string,
-  input: {
-    company: string;
-    url?: string;
-    founded?: string;
-    marketTier: ClientCompetitor["marketTier"];
-    minInvestment?: string;
-    overlap: ClientCompetitor["overlap"];
-    positioning?: string;
-    scale?: string;
-    keyStrengths?: string[];
-    keyWeaknesses?: string[];
-    threatLevel?: ClientCompetitor["threatLevel"];
-  },
-): Promise<void> {
-  await requireStaff();
-
-  const now = Date.now();
-  await createClientCompetitor({
-    clientId,
-    company: input.company,
-    url: input.url,
-    founded: input.founded,
-    marketTier: input.marketTier,
-    minInvestment: input.minInvestment,
-    overlap: input.overlap,
-    deepDive: false,
-    positioning: input.positioning,
-    scale: input.scale,
-    keyStrengths: input.keyStrengths ?? [],
-    keyWeaknesses: input.keyWeaknesses ?? [],
-    threatLevel: input.threatLevel,
-    source: "manual",
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  try {
-    // Target the internal doc specifically — this is analyst-grade data, not client-visible.
-    const existingDoc = await getClientContextDocByTier(clientId, "competitor-analysis", "internal");
-    if (existingDoc) {
-      const today = new Date().toISOString().slice(0, 10);
-      const signal = [
-        "",
-        "---",
-        "",
-        `## Manually Added Competitor - ${today}`,
-        `- **Company:** ${input.company}`,
-        ...(input.url ? [`- **Website:** ${input.url}`] : []),
-        `- **Market Tier:** ${input.marketTier}`,
-        ...(input.threatLevel ? [`- **Threat Level:** ${input.threatLevel}`] : []),
-        `- **Overlap:** ${input.overlap}`,
-        ...(input.positioning ? [`- **Positioning:** ${input.positioning}`] : []),
-        ...(input.keyStrengths?.length ? [`- **Key Strengths:** ${input.keyStrengths.join(", ")}`] : []),
-        ...(input.keyWeaknesses?.length ? [`- **Key Weaknesses:** ${input.keyWeaknesses.join(", ")}`] : []),
-      ].join("\n");
-
-      await upsertClientContextDoc({
-        clientId,
-        docType: "competitor-analysis",
-        tier: "internal",
-        content: existingDoc.content + signal,
-        version: (existingDoc.version ?? 1) + 1,
-        sources: existingDoc.sources,
-        createdAt: existingDoc.createdAt,
-        updatedAt: now,
-      });
-    }
-  } catch {
-    // Non-fatal: competitor creation already succeeded
-  }
-
-  revalidatePath(`/clients/${clientId}`);
-}
-
-/** Remove a competitor from the tracker (staff back office — any client). */
-export async function deleteCompetitorAction(id: string): Promise<void> {
-  await requireStaff();
-  const competitor = await getClientCompetitor(id);
-  await deleteClientCompetitor(id);
-  if (competitor?.clientId) revalidatePath(`/clients/${competitor.clientId}`);
-  revalidatePath("/clients");
-}
-
 /**
  * Stop tracking a competitor from the dashboard widget — accessible to staff and
  * the client's own CLIENT_USER. Re-fetches the competitor server-side and verifies
@@ -343,43 +254,6 @@ export async function removeCompetitorAction(clientId: string, id: string): Prom
     actor: user.name,
     actorRole: isStaff ? "staff" : "client",
   });
-
-  revalidatePath(`/clients/${clientId}`);
-}
-
-/** Add a competitor by name/URL and trigger AI analysis for the full tracked list. */
-export async function addCompetitorAndAnalyzeAction(
-  clientId: string,
-  name: string,
-): Promise<void> {
-  const user = await requireStaff();
-  if (!name.trim()) throw new Error("Competitor name required");
-
-  const { company } = await upsertManualCompetitor(clientId, name);
-
-  await logActivity({
-    clientId,
-    timestamp: Date.now(),
-    type: "COMPETITOR_ADDED",
-    title: `Competitor added: ${company}`,
-    actor: user.name,
-    actorRole: "staff",
-  });
-
-  try {
-    await _analyzeCompetitors(clientId);
-    await logActivity({
-      clientId,
-      timestamp: Date.now(),
-      type: "COMPETITOR_ANALYZED",
-      title: "Competitor intelligence updated",
-      description: "AI analyzed all tracked competitors and refreshed profiles",
-      actor: SYSTEM_AI_ACTOR_NAME,
-      actorRole: "system",
-    });
-  } catch {
-    // Analysis failed; competitor name is saved, profiles will populate on next report run
-  }
 
   revalidatePath(`/clients/${clientId}`);
 }

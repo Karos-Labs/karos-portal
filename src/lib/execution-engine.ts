@@ -26,7 +26,7 @@ import { resolveTaskCustomAgentId } from "@/lib/task-agent-link";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
-import type { AppUser, ClientTask, CustomAgent, ManagedTaskType, TaskOwner } from "@/lib/types";
+import type { AppUser, ClientTask, CustomAgent, ManagedTaskType } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import { logger } from "@/services/logger";
 import type { ModelId } from "@/lib/constants";
@@ -38,9 +38,8 @@ const HAIKU = anthropic(MODELS.HAIKU);
 
 /* ── Internal helpers ────────────────────────────────────────────── */
 
-export function inferOwnerEngine(task: ClientTask): TaskOwner {
-  return task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
-}
+/** Owner inference — shared with task-dedup.ts via task-owner.ts, not a copy. */
+export { inferTaskOwner as inferOwnerEngine } from "@/lib/task-owner";
 
 export function resolveTaskType(task: ClientTask): "content_generation" | "integration_action" {
   const explicit = task.metadata?.type as string | undefined;

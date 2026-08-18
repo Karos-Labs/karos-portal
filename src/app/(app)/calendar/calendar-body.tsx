@@ -163,7 +163,17 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     single = true;
     title = "Calendar";
     const ownClient = await getClient(user.clientId);
-    if (ownClient) clients = [ownClient];
+    if (ownClient) {
+      clients = [ownClient];
+      // Set for a real client the same way the staff "View as client" branch
+      // sets them below — this was missing here, so the action-list effect
+      // that marks "Look at your week" done (needs viewerIsClient AND
+      // defaultClientId truthy in run-calendar.tsx) could never fire for an
+      // actual CLIENT_USER, and the runway badge's dailyPace read always fell
+      // back to the default pace instead of this client's configured one.
+      scopedClient = ownClient;
+      defaultClientId = ownClient.id;
+    }
   } else {
     const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
     clients = await listClients(employeeFilter);

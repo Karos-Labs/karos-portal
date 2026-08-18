@@ -267,7 +267,11 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // buildScoreViews / buildPresence calls that page renders from, so this is
   // not a second copy of the report; it is the report's headline.
   const standing = presence && hasStanding(presence) ? (
-    <HomeStandingWidget presence={presence} href={reportHref} />
+    <HomeStandingWidget
+      presence={presence}
+      href={reportHref}
+      competitorsHref={`/clients/${id}/settings?tab=competitors`}
+    />
   ) : null;
 
   const kpis = (
@@ -278,6 +282,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       channels={channelSummaries}
       visibilityScore={visibilityScore}
       reportHref={reportHref}
+      channelsHref={`/clients/${id}/settings?tab=settings`}
     />
   );
 

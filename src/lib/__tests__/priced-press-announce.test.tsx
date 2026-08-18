@@ -65,7 +65,7 @@ describe("the Task Map's Refresh Task Map button announces its price", () => {
 describe("the AI Insights Refresh announces its price", () => {
   it("paints the price a billable client will be charged", () => {
     const text = textOf(insightsMarkup(true));
-    // GET /api/clients/[id]/insights?force=1 charges CREDIT_COSTS.chatMessage —
+    // POST /api/clients/[id]/insights?force=1 charges CREDIT_COSTS.chatMessage —
     // singular today, which is exactly the case an unconditional "N credits"
     // renders as "1 credits".
     expect(text).toContain(creditsLabel(CREDIT_COSTS.chatMessage));
