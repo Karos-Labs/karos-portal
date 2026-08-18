@@ -5,25 +5,20 @@ import { usePathname } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
-import { ClientProfilePanel } from "@/components/client-profile-panel";
-import { ClientDocuments } from "@/components/client-documents";
-import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { AccountMenu } from "@/components/account-menu";
 import { LogoutButton } from "@/components/logout-button";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { NotificationBell, useNotificationDismissals } from "@/components/notification-bell";
 import { unreadNotificationCount } from "@/lib/notification-rows";
 import { ContactUsButton } from "@/components/contact-us-modal";
-import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
-import { isAiProcessingLockActive } from "@/lib/constants";
-import { hasAiProcessingFailure } from "@/lib/client-visibility";
+import { ClientRailAgentsNav, type RailAgent } from "@/components/client-rail-agents-nav";
+import { ClientProfilePanel } from "@/components/client-profile-panel";
+import { BrandColorsSection } from "@/components/client-context-sections";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
   AppUser,
   Client,
-  ClientCompetitor,
-  ClientContextDoc,
   ClientTask,
 } from "@/lib/types";
 
@@ -40,23 +35,38 @@ function isActive(pathname: string, item: NavItem): boolean {
     : pathname === item.href || pathname.startsWith(item.href + "/");
 }
 
+function NavLink({ item, pathname }: { item: NavItem; pathname: string }) {
+  const active = isActive(pathname, item);
+  return (
+    <Link
+      href={item.href}
+      className={cn(
+        "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+        active ? "bg-surface-2 text-foreground" : "text-muted hover:bg-surface-2 hover:text-foreground",
+      )}
+    >
+      <Icon
+        name={item.icon}
+        className={cn("h-4 w-4 shrink-0", active ? "text-foreground" : "text-muted-2 group-hover:text-foreground")}
+      />
+      <span className="flex-1">{item.label}</span>
+    </Link>
+  );
+}
+
 export function ClientRail({
   user,
   client,
-  contextDocs,
-  competitors,
-  isAdmin,
+  agents,
   actionItems,
   reviewJobs,
   taskAlerts,
   spendableCredits,
-  correctionPricing,
 }: {
   user: AppUser;
   client: Client;
-  contextDocs: ClientContextDoc[];
-  competitors: ClientCompetitor[];
-  isAdmin: boolean;
+  /** Every agent granted to this client, for the "AI agents" dropdown (Surface 01). */
+  agents: RailAgent[];
   actionItems: ActionItemNotification[];
   reviewJobs: AgentReviewNotification[];
   taskAlerts: ClientTask[];
@@ -67,30 +77,25 @@ export function ClientRail({
    * transaction would honour. Shown as a pill linking to settings; hidden when null.
    */
   spendableCredits?: number | null;
-  /**
-   * Price of a targeted document correction, for the Correct Info modal the
-   * rail's document panel opens. Resolved server-side and present ONLY for a
-   * billable client viewer, so staff never see a charge they don't incur;
-   * `blockReason` is the server's own refusal line when the cost won't fit.
-   */
-  correctionPricing?: { cost: number; blockReason?: string };
 }) {
   const pathname = usePathname();
   const home = `/clients/${client.id}`;
-  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
 
-  // The Library merged into the Workspace's Archive tab (2026-07) - one page
-  // for board + activity + everything the agents delivered.
+  // Portal revamp Surface 01: the rail is rebuilt around the agents a client
+  // actually uses. "AI agents" is no longer a plain nav row — the roster and
+  // its star toggles render inline (ClientRailAgentsNav, between Home and
+  // Calendar), so it is deliberately absent from this array. "Home" replaces
+  // "Dashboard" as the label (same route); the destination itself is unchanged.
   //
-  // "AI agents" in sentence case because that is the heading of the page it
-  // opens (clients/[id]/agents/page.tsx). A nav label and the header it lands
-  // on are one string said twice, and this pair used to disagree — the label
-  // read "AI Agents" and the client arrived at "AI agents" (#141).
+  // Workspace is gone — the locked decision list retires it ("The Board is
+  // replaced by the action list on Home"). The /tasks route and its data are
+  // untouched by this change: only the sidebar's entry point is removed, and
+  // its features are redistributed across the new surfaces as that engine
+  // ships (the Next Actions widget on Home, first).
   const tabNav: NavItem[] = [
-    { href: home, label: "Dashboard", icon: "LayoutDashboard", exact: true },
-    { href: `${home}/agents`, label: "AI agents", icon: "Bot" },
+    { href: home, label: "Home", icon: "LayoutDashboard", exact: true },
     { href: "/calendar", label: "Calendar", icon: "CalendarClock" },
-    { href: "/tasks", label: "Workspace", icon: "ListChecks" },
+    { href: `${home}/downloads`, label: "Downloads", icon: "Download" },
   ];
   /**
    * MEETINGS IS NOT A RAIL DESTINATION (AF-1).
@@ -107,7 +112,15 @@ export function ClientRail({
    * which lists their calls and links to the full page. Nothing about the page
    * or its scoping changed — only which surface offers it.
    */
-  const settingsItem: NavItem = { href: `${home}/settings`, label: "Settings", icon: "Settings" };
+  const settingsItem: NavItem = {
+    href: `${home}/settings`,
+    // "Account Center" (Surface 06) — same destination for now; that page's
+    // own tab set (Profile/Competitors/Documents/Archive/Credits/Meetings) is
+    // a separate follow-up build. The label changes here first since it is
+    // the name a client sees everywhere the destination is offered.
+    label: "Account Center",
+    icon: "Settings",
+  };
 
   // Bar + sheet frame are shared with the staff shell's client-context mode -
   // see components/mobile-shell.tsx (CD-G9a). The hook closes the sheet on
@@ -130,6 +143,8 @@ export function ClientRail({
     { viewerIsClient: true, dismissed: dismissals.dismissed },
   );
 
+  const starredAgentIds = client.starredAgentIds ?? [];
+
   return (
     <>
       {/* ── Desktop left rail (z-30 so its menus/panels sit above the center column) ── */}
@@ -150,81 +165,54 @@ export function ClientRail({
             </Link>
           </div>
 
-          {/* Body. NOT a scroll container by contract (CD-E3): nav + company
-              chip + Documents + Competitor Track + Brand Colors + footer must
-              fit the viewport at common laptop heights. The content set is
-              bounded (4 tabs, ≤6 documents, ≤5 tracked competitors, ≤4
-              swatches), so the compacted stack fits; overflow-y-auto remains
-              the safety valve for genuinely short windows rather than clipping
-              a whole section away.
+          {/* Body. Documents and Competitor Track moved out to Account Center
+              (portal revamp, Surface 01/06) — the full brand card stays, on
+              explicit direction: it is the client's own identity, prominent,
+              not collapsed into a bare name-and-logo row.
 
-              ONE gap between sections — space-y-1.5, the staff rail's own
-              (sidebar.tsx, `clientSections`). It was space-y-0.5 here, and the
-              two wrappers below carried an mt-4 on top of it that the other
-              two sections had nothing to answer with: Tailwind v4 compiles
-              space-y to a margin-BOTTOM, so the two margins added rather than
-              overriding and the rail ran 34 / 34 / 14 / 12. That is why Brand
-              Colors read as glued to the last competitor row — not because
-              12px is small, but because the two gaps above it were nearly
-              three times it. Dropping the mt-4 leaves every section on the
-              same border-t + pt rhythm and the same 6px outer gap, which is
-              the sidebar the product owner said looked better — and it gives
-              the no-scroll contract 16px back. */}
+              PINNED ABOVE THE NAV, NOT BELOW IT (2026-08, client-zero
+              feedback, Aug 8): the client's own brand is what a client should
+              see FIRST in their own sidebar, before Home/AI agents/Calendar/
+              Downloads — not three navigation rows down. `hideDescription`
+              drops the inline "about" text the same feedback asked to move:
+              it still lives one click away, in the Brand Profile popup this
+              panel's own Contact-icon button opens.
+
+              BRAND COLORS CAME BACK (2026-08, product owner). It moved out with
+              the other two and was asked for again by name: the swatch row is
+              part of the identity block, not a settings record — it is the one
+              thing in the rail a person copies a value OUT of (click-to-copy
+              hex), several times a day, and Account Center is two navigations
+              away from wherever they are working. It remains ON the Account
+              Center Profile tab as well; that is deliberate and is not the
+              duplication Surface 06 removed — this is a one-line reader and an
+              editor entry point, not a second copy of a page. */}
           <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-4 pb-0 pt-4">
-            <nav className="flex flex-col gap-0.5">
-              {tabNav.map((item) => {
-                const active = isActive(pathname, item);
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-                      active
-                        ? "bg-surface-2 text-foreground"
-                        : "text-muted hover:bg-surface-2 hover:text-foreground",
-                    )}
-                  >
-                    <Icon
-                      name={item.icon}
-                      className={cn(
-                        "h-4 w-4 shrink-0",
-                        active ? "text-foreground" : "text-muted-2 group-hover:text-foreground",
-                      )}
-                    />
-                    <span className="flex-1">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </nav>
+            <ClientProfilePanel client={client} compact hideDescription />
 
-            <div className="border-t border-border pt-4">
-              <ClientProfilePanel client={client} compact />
-            </div>
-
-            <div className="border-t border-border pt-4">
-              <ClientDocuments
-                contextDocs={contextDocs}
-                isAdmin={isAdmin}
-                clientId={client.id}
-                isAiProcessing={isAiProcessingLockActive(client)}
-                aiProcessingFailed={hasAiProcessingFailure(client)}
-                intelSchedule={clientIntelSchedule(client)}
-                correctionPricing={correctionPricing}
-              />
-            </div>
-
-            <CompetitorTrack
-              competitors={competitors}
-              clientId={client.id}
-              isStaff={isStaff}
-            />
-
+            {/* One line — label, swatches, pencil — which is what keeps the
+                rail inside the CD-E3 no-scroll contract it was pulled out of
+                to protect. `isStaff` is deliberately NOT passed: this rail is
+                mounted only for a CLIENT_USER, and the usage-percentage it
+                gates is staff-internal (CD-E2). */}
             <BrandColorsSection
               guidelines={client.brandingGuidelines}
               clientId={client.id}
               hasWebsite={!!client.website}
             />
+
+            <nav className="flex flex-col gap-0.5 border-t border-border pt-4">
+              <NavLink item={tabNav[0]} pathname={pathname} />
+              <ClientRailAgentsNav
+                clientId={client.id}
+                home={home}
+                agents={agents}
+                starredIds={starredAgentIds}
+              />
+              {tabNav.slice(1).map((item) => (
+                <NavLink key={item.href} item={item} pathname={pathname} />
+              ))}
+            </nav>
           </div>
 
           {/* Bottom account menu */}
@@ -307,27 +295,31 @@ export function ClientRail({
 
       {/* ── Mobile Company sheet ── */}
       <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
-        <ClientProfilePanel client={client} />
+        <ClientProfilePanel client={client} hideDescription />
 
-        <div className="border-t border-border pt-4">
-          <ClientDocuments
-            contextDocs={contextDocs}
-            isAdmin={isAdmin}
-            clientId={client.id}
-            isAiProcessing={isAiProcessingLockActive(client)}
-            aiProcessingFailed={hasAiProcessingFailure(client)}
-            intelSchedule={clientIntelSchedule(client)}
-            correctionPricing={correctionPricing}
-          />
-        </div>
-
-        <CompetitorTrack competitors={competitors} clientId={client.id} isStaff={isStaff} />
-
+        {/* Same row the desktop rail carries, for the same reason — the sheet
+            IS the rail at this width, and a swatch you cannot reach on a phone
+            is a swatch that is not in the product. */}
         <BrandColorsSection
           guidelines={client.brandingGuidelines}
           clientId={client.id}
           hasWebsite={!!client.website}
         />
+
+        {/* "AI agents" has no slot in the 3-icon bottom tab bar (Home, Calendar,
+            Downloads fill it), so the roster + star toggles live here on
+            mobile instead — the one-line mobile decision the SOW asked the
+            build to make explicit. Documents/Competitors/Brand Colors moved
+            to Account Center (Surface 06) — reached via the Account Center
+            row below, same as the desktop rail. */}
+        <div className="border-t border-border pt-4">
+          <ClientRailAgentsNav
+            clientId={client.id}
+            home={home}
+            agents={agents}
+            starredIds={starredAgentIds}
+          />
+        </div>
 
         <div className="space-y-0.5 border-t border-border pt-4">
           {/* No Meetings row here either (AF-1): the Settings row below is the
@@ -342,7 +334,7 @@ export function ClientRail({
             className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             <Icon name="Settings" className="h-4 w-4 text-muted-2" />
-            Settings
+            {settingsItem.label}
           </Link>
           {user.isGroupAdmin && (
             <Link

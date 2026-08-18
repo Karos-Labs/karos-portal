@@ -159,6 +159,28 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const engagementIsMock = engagementIsMockOrStale(scopedRecords, stalePlatforms);
   const dataSourceHeaders = engagementIsMock ? { "X-Insights-Data-Source": "mock" } : undefined;
 
+  /**
+   * THE GATE ABOVE IS ALL-OR-NOTHING, AND THE DIGEST NEEDS PER-ROW (2026-08).
+   *
+   * `engagementIsMockOrStale` asks `every(...)`, so it only fires when NOTHING
+   * is real. A client with one live Instagram row and twelve mock ones failed
+   * it: no badge, no `needs-connection`, and `buildDigest` then averaged the
+   * invented scores together with the measured one into `thisWeekAvgScore`,
+   * `deltaPct`, `perPlatform`, `topPerformers` and `bottomPerformers` — all of
+   * it interpolated into the prompt under "PERFORMANCE DATA (measured; do not
+   * invent beyond this)".
+   *
+   * The all-or-nothing gate is still right for the BADGE (it answers "is this
+   * whole panel demo data?"). The digest is built from live rows only, so a
+   * mixed set can no longer average a fabrication into a real number.
+   *
+   * Mock rows still exist in Firestore — the sync cron stopped writing them in
+   * 2026-08 (analytics-providers.ts), but everything written before that is
+   * still there — which is why this filter is a permanent fixture and not a
+   * migration step.
+   */
+  const measuredRecords = scopedRecords.filter((r) => r.source === "live");
+
   // QA F125: a "Demo data" badge does not offset paragraphs of specific, numbered budget
   // advice derived from invented figures. When every engagement row is mock, a client (or
   // staff viewing as one) gets the empty state + connect link instead of a briefing — no
@@ -176,7 +198,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     );
   }
 
-  const digest = buildDigest(scopedRecords, assets, stalePlatforms);
+  const digest = buildDigest(measuredRecords, assets, stalePlatforms);
 
   // No measured engagement yet — the sync cron hasn't captured any published-content
   // metrics for this client (no connected socials yet, nothing published yet, or the
@@ -424,8 +446,26 @@ function buildDigest(
   }
   const thisWeekAvg = avg(thisWeek);
   const lastWeekAvg = avg(lastWeek);
+  /**
+   * BOTH cohorts have to be non-empty, not just the denominator (2026-08).
+   *
+   * `avg([])` returns 0, and the guard only asked `lastWeekAvg > 0` — so a
+   * client who published nothing in the last seven days while having
+   * prior-week rows got `thisWeekAvg = 0` divided into a real baseline and a
+   * **-100%** handed to the model under the header "PERFORMANCE DATA (measured;
+   * do not invent beyond this)", with the system prompt asking for a
+   * week-over-week section. The briefing then told them engagement had
+   * collapsed, when the truth was that nothing shipped — a different fact, with
+   * a different fix, and the `sampleSize === 0` escape hatch never fires here
+   * because sampleSize counts ALL records rather than this week's.
+   *
+   * An empty week has no average to compare, so there is no delta. null is the
+   * shape the prompt already handles.
+   */
   const deltaPct =
-    lastWeekAvg > 0 ? Math.round(((thisWeekAvg - lastWeekAvg) / lastWeekAvg) * 1000) / 10 : null;
+    thisWeek.length > 0 && lastWeek.length > 0 && lastWeekAvg > 0
+      ? Math.round(((thisWeekAvg - lastWeekAvg) / lastWeekAvg) * 1000) / 10
+      : null;
 
   const platformScores = new Map<string, number[]>();
   for (const r of records) {

@@ -28,6 +28,7 @@ import {
   createClientTask,
 } from "@/lib/data";
 import { findDuplicateReason, normalizeTitleForDedup, queueCapacitySkipNote } from "@/lib/task-dedup";
+import { computePlatformGaps } from "@/lib/calendar-gaps";
 import { getClientCustomAgents, type ClientCustomAgentSummary } from "@/lib/agent-roster";
 import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engine";
 import { integrationIsUsable } from "@/lib/integration-status";
@@ -540,20 +541,15 @@ export async function buildSwarmContext(
   if (!client) throw new Error("Client not found");
 
   // Content-gap detection: connected platforms vs the next-14-day calendar.
+  // Shared with the calendar's own sparse-calendar banner (lib/calendar-gaps.ts)
+  // so the two can never disagree about what a "gap" is.
   const nowMs = Date.now();
-  const horizonMs = nowMs + 14 * 24 * 60 * 60 * 1000;
-  const scheduledByPlatform: Record<string, number> = {};
-  for (const a of assets) {
-    if (a.scheduledAt == null || a.scheduledAt < nowMs || a.scheduledAt > horizonMs) continue;
-    if (a.status !== "scheduled" && a.status !== "approved") continue;
-    const key = a.scheduledPlatform ?? "unassigned";
-    scheduledByPlatform[key] = (scheduledByPlatform[key] ?? 0) + 1;
-  }
   const active = integrations.filter((i) => i.platform !== "google" && integrationIsUsable(i));
-  const gapLines = active.map((i) => {
-    const count = scheduledByPlatform[i.platform] ?? 0;
-    return `- ${i.platform}: ${count === 0 ? "NO content scheduled in the next 14 days — GAP" : `${count} scheduled`}`;
-  });
+  const gaps = computePlatformGaps(assets, active.map((i) => i.platform), nowMs);
+  const gapLines = gaps.map(
+    (g) =>
+      `- ${g.platform}: ${g.scheduledCount === 0 ? "NO content scheduled in the next 14 days — GAP" : `${g.scheduledCount} scheduled`}`,
+  );
   const gapSummary = gapLines.length > 0 ? gapLines.join("\n") : "No social platforms connected yet.";
 
   // Brand guidance for the Creative Director.
@@ -569,21 +565,45 @@ export async function buildSwarmContext(
     : "No brand guidelines documented yet.";
 
   // Historical benchmarks for the Data Analyst.
+  //
+  // MEASURED ROWS ONLY (2026-08). Every analytics row carries
+  // `source: "mock" | "live"`, and a mock row's engagement score comes from
+  // `mockRawMetrics` — a seeded PRNG inventing 500–50,000 impressions. This
+  // block used to pass the raw top/bottom lists into the prompt, and the Data
+  // Analyst persona is instructed to raise the weight of what has "measurably
+  // won" — so it narrated invented scores as measurement, live, in the War Room
+  // console the client is watching and is charged for.
+  //
+  // `sampleSize > 0` did not catch it: a set of purely mock rows has a non-zero
+  // sample size, so the honest "No performance analytics captured yet" fallback
+  // never fired. The count is recomputed from the rows that SURVIVE the filter,
+  // which re-arms that fallback for the all-mock case — today's case for every
+  // client. Same fence api/clients/[id]/chat/route.ts already applies.
+  const measured = {
+    top: benchmarks.top.filter((r) => r.source === "live"),
+    bottom: benchmarks.bottom.filter((r) => r.source === "live"),
+  };
+  const measuredSampleSize = new Set([...measured.top, ...measured.bottom].map((r) => r.id)).size;
   const fmt = (r: (typeof benchmarks.top)[number]) =>
     `- [${r.engagementScore.toFixed(1)}] ${r.platform} · ${r.assetType ?? "?"} — "${r.assetLabel ?? r.assetId}"`;
   const benchmarkSummary =
-    benchmarks.sampleSize > 0
-      ? `TOP PERFORMERS:\n${benchmarks.top.map(fmt).join("\n") || "- none"}\n\nLOWEST PERFORMERS:\n${benchmarks.bottom.map(fmt).join("\n") || "- none"}`
+    measuredSampleSize > 0
+      ? `TOP PERFORMERS:\n${measured.top.map(fmt).join("\n") || "- none"}\n\nLOWEST PERFORMERS:\n${measured.bottom.map(fmt).join("\n") || "- none"}`
       : "No performance analytics captured yet — weight by strategic judgment.";
 
   // Campaign trend detection: an explicit override wins; otherwise a
   // measurably dominant top performer (score ≥ threshold) is treated as the
   // high-weight trend worth building a full campaign around.
+  //
+  // Reads `measured.top`, not `benchmarks.top` — the rationale string this
+  // builds quotes the score as the justification for a whole campaign bundle
+  // the client pays for, and a mock score clears the threshold as easily as a
+  // real one. "Measurably dominant" has to mean measured.
   let campaignTrend: CampaignTrend | null = null;
   if (trendOverride && trendOverride.trim()) {
     campaignTrend = { theme: trendOverride.trim(), weight: 90, rationale: "Operator-specified trend/event." };
   } else {
-    const top = benchmarks.top[0];
+    const top = measured.top[0];
     if (top && top.engagementScore >= CAMPAIGN_TREND_MIN_WEIGHT) {
       campaignTrend = {
         theme: top.assetLabel ?? top.assetType ?? "top-performing theme",

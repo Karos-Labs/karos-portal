@@ -959,8 +959,11 @@ describe("presence + prompts", () => {
         intentPrompts: [
           { prompt: "best fintech tool for startups", intent: "discovery" },
           { prompt: "Is Acme legit?", intent: "brand" },
-          // Classifier returns "comparison" before it checks the brand name, so this
-          // IS in the like-for-like comparison — it used to wear the opposite chip.
+          // A stored row from before the classifier's brand-before-comparison fix
+          // (lib/seo-geo.ts's classifyIntent now tags a fresh "Acme alternatives"
+          // capture "brand", not "comparison" — the asker already named Acme). The
+          // presenter renders whatever intent is stored, so a legacy "comparison"
+          // row still reads as in the like-for-like comparison, no chip.
           { prompt: "Acme alternatives", intent: "comparison" },
           // Bare domain: the pipeline counts it as naming you; the old name match missed it.
           { prompt: "acme.com", intent: "navigational" },

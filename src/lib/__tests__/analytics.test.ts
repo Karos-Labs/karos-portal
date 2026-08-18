@@ -4,10 +4,12 @@ import {
   VIDEO_REFERENCE_SECONDS,
   engagementIsMockOrStale,
   engagementScore,
-  mockRawMetrics,
+  hashSeed,
+  mulberry32,
   normalizePlatformMetrics,
   rankByEngagement,
 } from "../analytics";
+import type { RawPlatformMetrics } from "../analytics";
 import type { MarketingMetrics } from "../types";
 
 function metrics(patch: Partial<MarketingMetrics> = {}): MarketingMetrics {
@@ -149,6 +151,87 @@ describe("normalizePlatformMetrics", () => {
     expect(m.engagementRate).toBeCloseTo(0.05);
   });
 });
+
+/**
+ * TEST FIXTURE ONLY — moved here from src/lib/analytics.ts (2026-08).
+ *
+ * It builds a realistic, platform-native raw payload per `seedKey`, which is
+ * what lets the `normalizePlatformMetrics` cases below exercise each network's
+ * real API field names end to end. In production it was the sync cron's
+ * fallback, and the rows it produced were read downstream as measurements — so
+ * it was deleted from `src/lib` entirely rather than left behind an unused
+ * export. It is a fixture; it must not gain an importer outside this file.
+ */
+function mockRawMetrics(platform: string, seedKey: string): RawPlatformMetrics {
+  const rnd = mulberry32(hashSeed(`${platform}:${seedKey}`));
+  const between = (lo: number, hi: number) => Math.floor(lo + rnd() * (hi - lo));
+
+  const impressions = between(500, 50_000);
+  // Engagement runs ~1–8% of impressions; clicks a fraction of that.
+  const engaged = Math.floor(impressions * (0.01 + rnd() * 0.07));
+  const clicks = Math.floor(engaged * (0.1 + rnd() * 0.4));
+
+  switch (platform) {
+    case "linkedin":
+      return {
+        impressionCount: impressions,
+        clickCount: clicks,
+        likeCount: Math.floor(engaged * 0.7),
+        commentCount: Math.floor(engaged * 0.15),
+        shareCount: Math.floor(engaged * 0.15),
+      };
+    case "tiktok":
+      return {
+        video_views: impressions,
+        profile_views: clicks,
+        likes: Math.floor(engaged * 0.8),
+        comments: Math.floor(engaged * 0.1),
+        shares: Math.floor(engaged * 0.1),
+        total_time_watched: between(1_000, 60_000),
+      };
+    case "instagram":
+      return {
+        impressions,
+        website_clicks: Math.floor(clicks * 0.5),
+        profile_visits: Math.ceil(clicks * 0.5),
+        likes: Math.floor(engaged * 0.7),
+        comments: Math.floor(engaged * 0.1),
+        saves: Math.floor(engaged * 0.1),
+        shares: Math.floor(engaged * 0.1),
+      };
+    case "facebook":
+      return {
+        post_impressions: impressions,
+        post_clicks: clicks,
+        reactions: Math.floor(engaged * 0.75),
+        comments: Math.floor(engaged * 0.15),
+        shares: Math.floor(engaged * 0.1),
+      };
+    case "twitter":
+      return {
+        impression_count: impressions,
+        url_link_clicks: clicks,
+        like_count: Math.floor(engaged * 0.7),
+        retweet_count: Math.floor(engaged * 0.2),
+        reply_count: Math.floor(engaged * 0.1),
+      };
+    case "youtube":
+      return {
+        views: impressions,
+        clicks,
+        likes: Math.floor(engaged * 0.85),
+        comments: Math.floor(engaged * 0.15),
+        estimatedMinutesWatched: between(200, 20_000),
+      };
+    default:
+      return {
+        impressions,
+        clicks,
+        likes: Math.floor(engaged * 0.8),
+        comments: Math.floor(engaged * 0.2),
+      };
+  }
+}
 
 describe("mockRawMetrics", () => {
   it("is deterministic for a given platform + seed", () => {

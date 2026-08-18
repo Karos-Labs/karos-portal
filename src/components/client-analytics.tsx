@@ -182,7 +182,7 @@ export function ClientAnalytics({
   const maxCount = Math.max(1, ...statusRows.map(([, n]) => n));
 
   return (
-    <div className="space-y-6">
+    <div className="@container space-y-6">
       {!hideStats && (
         <ClientAnalyticsStats
           assets={assets}
@@ -196,7 +196,10 @@ export function ClientAnalytics({
         />
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      {/* `@container`-keyed, same reason as the Home widgets: `lg:` measured the
+          window, not the column the 288px rail leaves behind, so these two
+          charts halved themselves at a width where neither fit. */}
+      <div className="grid gap-6 @4xl:grid-cols-2">
         {/* Content by status */}
         <Card>
           <CardTitle className="mb-4">Content by status</CardTitle>
@@ -247,7 +250,7 @@ export function ClientAnalytics({
                 </p>
               )}
             </div>
-            <Link href={`/clients/${clientId}/settings?tab=channels`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
+            <Link href={`/clients/${clientId}/settings?tab=settings`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
               Manage
             </Link>
           </div>
@@ -264,7 +267,7 @@ export function ClientAnalytics({
                   key={i.platform}
                   className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{platformLabel(i.platform)}</p>
                     {i.accountName && <p className="truncate text-xs text-muted-2">{i.accountName}</p>}
                   </div>
@@ -272,7 +275,7 @@ export function ClientAnalytics({
                     // Same treatment Settings already gives a dead token, plus the
                     // route to fix it - the health truth existed, the dashboard
                     // just refused to show it.
-                    <Link href={`/clients/${clientId}/settings?tab=channels`} className="shrink-0">
+                    <Link href={`/clients/${clientId}/settings?tab=settings`} className="shrink-0">
                       <Badge tone="warning" className="hover:border-warning/60">
                         <Icon name="TriangleAlert" className="h-3 w-3" />
                         Reconnect needed →

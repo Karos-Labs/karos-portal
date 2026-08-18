@@ -26,6 +26,9 @@ import { platformLabel } from "@/lib/integrations/platforms";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
 import { LegacyAgentPanel, SchedulePaceCard } from "@/components/client-agents/legacy-agent-panel";
+import { AgentSetupHero } from "@/components/client-agents/agent-setup-hero";
+import { AgentStarButton } from "@/components/client-agents/agent-star-button";
+import { ClientAgentRunHistory } from "@/components/client-agents/client-agent-run-history";
 import { AgentArchiveRows } from "@/components/client-agents/agent-archive-rows";
 import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { ClipGallery } from "@/components/client-agents/clip-gallery";
@@ -511,6 +514,14 @@ export default async function ClientAgentDetailPage({
   const agentRuns = isStaff
     ? toRunRows(jobs, true, umbrellas).filter((run) => run.agentName === agent.name)
     : [];
+  // Portal revamp, Surface 03 — "Run history shows the last three, and opens
+  // to all of them." Same toRunRows() the staff rows above use, just with
+  // staff=false: it already strips prompt/href/error/runType and excludes
+  // launch/test runs (client-agent-rows.ts) — this was previously computed
+  // for nobody. Client-only; staff read the fuller `agentRuns` in ControlRoom.
+  const clientAgentRuns = viewerIsClient
+    ? toRunRows(jobs, false, umbrellas).filter((run) => run.agentName === agent.name)
+    : [];
   const reviewCount = isStaff
     ? jobs
         .filter(
@@ -737,6 +748,17 @@ export default async function ClientAgentDetailPage({
   const intakeDriven = setup !== null;
   const legacyShape = !row && (schedule?.status === "active" || hasDelivered || intakeDriven);
 
+  // Portal revamp, Surface 03 — "there is no way past setup." For an
+  // intake-driven agent (the only shape AgentSetupState can answer readiness
+  // for), `ready` and `standUpDone` are the same two rungs the run gates
+  // already evaluate server-side (client-agent-runs.ts) — this is a THIRD
+  // reader of the same two fields, not a new predicate. Deliberately not
+  // "&& !hasDelivered": an agent that has already produced is unambiguously
+  // past setup regardless of what these two flags say right now (a later
+  // intake edit cannot un-launch a live agent), so hasDelivered stays inside
+  // `legacyShape`'s own OR rather than gating this flag.
+  const needsSetup = intakeDriven && !hasDelivered && !(setup!.ready && setup!.standUpDone);
+
   // Where "everything this agent has made" actually lives for THIS viewer.
   // The old link sent both readers to /clients/<id>/assets, which redirects a
   // CLIENT_USER to /tasks — the Workspace board, not the archive tab they were
@@ -885,6 +907,15 @@ export default async function ClientAgentDetailPage({
               {...(agent.icon ? { icon: agent.icon } : {})}
             />
             <StatusBadge label={status.label} tone={status.tone} />
+            {/* Portal revamp, Surface 01 follow-up: the sidebar dropdown's star
+                is not the only way in. A prominent, always-visible button here
+                answers a report that the sidebar toggle was hard to find in
+                the first place. */}
+            <AgentStarButton
+              clientId={id}
+              agentId={agent.id}
+              starred={(client.starredAgentIds ?? []).includes(agent.id)}
+            />
           </div>
         }
       />
@@ -976,6 +1007,25 @@ export default async function ClientAgentDetailPage({
               The panel reads `view.scheduleState` — one answer, one source. */}
           {finderView && <DailyFinderPanel clientId={id} view={finderView} />}
 
+          {/* Portal revamp, Surface 03: an intake-driven agent that has not
+              finished setup gets ONE thing on the page — video + a Setup
+              button — instead of the hero-plus-inputs-band pair below (a run
+              band whose button the gate merely disabled, alongside a second
+              "NEEDED" prompt to the same forms). The wrapped block is
+              UNCHANGED beneath this condition; every other agent shape
+              (umbrella live/launch-card, legacy-scheduled) renders exactly as
+              it did before this branch existed. */}
+          {needsSetup ? (
+            <AgentSetupHero
+              agent={summary}
+              clientId={id}
+              contextItems={contextItems}
+              viewerIsClient={viewerIsClient}
+              setup={setup!}
+              previewVideoUrl={agent.previewVideoUrl}
+            />
+          ) : (
+            <>
           {/* Hero: the launch card for a non-live umbrella (§7.1 states 1–3),
               the working agent once it is live. An agent with no umbrella at
               all has neither - it is simply not set up, and says so rather
@@ -1079,6 +1129,8 @@ export default async function ClientAgentDetailPage({
               date and links the page that owns its writes - the forms are
               REUSED, never forked. */}
           {inputs && <AgentInputsSection view={inputs} />}
+            </>
+          )}
 
           {/* ── SETTINGS (CD-K1 directive 2) ──
               What the launch run decided: the registry, the rotation, the pace,
@@ -1086,6 +1138,12 @@ export default async function ClientAgentDetailPage({
               here already has an editor above or beside it, and the gap this
               fills is that none of those editors ever says WHEN. */}
           {setupFacts.length > 0 && <AgentSetupSection facts={setupFacts} />}
+
+          {/* Portal revamp, Surface 03 — client-facing run history, last three
+              opening to all of them. Staff keep their own fuller copy inside
+              ControlRoom below (prompt/href/error); this is the first time any
+              of these rows have rendered for a client. */}
+          {viewerIsClient && <ClientAgentRunHistory runs={clientAgentRuns} />}
 
           {/* ── CONTROL ROOM (AgentOps upgrade) ──
               Consolidates what used to be three scattered staff-only sections
@@ -1279,7 +1337,7 @@ export default async function ClientAgentDetailPage({
               </ul>
             )}
             <Link
-              href={`/clients/${id}/settings?tab=channels`}
+              href={`/clients/${id}/settings?tab=settings`}
               className="mt-2 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
             >
               Manage connections <Icon name="ArrowRight" className="h-3 w-3" />

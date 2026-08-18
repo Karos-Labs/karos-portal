@@ -374,11 +374,25 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
     // from the analytics collection and inject them as "successful past content
     // examples" so new content emulates proven patterns. Non-fatal: no analytics
     // (or a read failure) simply omits the block.
+    //
+    // `source === "live"` IS THE WHOLE GUARD (2026-08). Every row in
+    // `clientMarketingAnalytics` carries `source: "mock" | "live"` — a mock row
+    // comes from `mockRawMetrics`, a seeded PRNG that invents impressions
+    // between 500 and 50,000 — and this block used to take the top three
+    // without asking, then hand the model figures the prompt labels as proven
+    // results. Two things went wrong at once: new content emulated patterns
+    // that never performed, and invented percentages were free to be quoted
+    // into copy the client reads. The comment above already claimed "measured";
+    // this line is what makes the claim true. Same fence the copilot chat route
+    // applies (api/clients/[id]/chat/route.ts), and applied unconditionally
+    // rather than for client viewers only — a staff-triggered run still
+    // produces the client's deliverable.
     let topPerformerExamples: string | undefined;
     try {
       const benchmarks = await getClientPerformanceBenchmarks(clientId, 3);
-      if (benchmarks.top.length > 0) {
-        topPerformerExamples = benchmarks.top
+      const measuredTop = benchmarks.top.filter((r) => r.source === "live");
+      if (measuredTop.length > 0) {
+        topPerformerExamples = measuredTop
           .map(
             (r) =>
               `- [engagement ${r.engagementScore.toFixed(1)}/100 · ${r.platform}${r.assetType ? ` · ${r.assetType}` : ""}] "${r.assetLabel ?? r.assetId}" (${(r.metrics.engagementRate * 100).toFixed(1)}% engagement, ${r.metrics.impressions.toLocaleString()} impressions)`,

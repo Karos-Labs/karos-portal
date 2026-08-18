@@ -4,6 +4,7 @@ import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { adminAuth } from "@/lib/firebase/admin";
 import {
   getClientCredits,
+  getClientSeoGeo,
   listClientIntegrations,
   listCreditLedger,
   listCustomAgents,
@@ -11,18 +12,31 @@ import {
   listScheduledRuns,
   listTranscripts,
   getClientSettings,
+  listClientContextDocs,
+  listClientCompetitors,
+  listClientSeats,
+  listAssets,
 } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
 import { sanitizeIntegrations, sanitizeLinkedinSeats } from "@/lib/integrations/sanitize";
-import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
+import {
+  CREDIT_COSTS,
+  DEFAULT_LINKEDIN_SEAT_LIMIT,
+  availableCredits,
+  creditBlockReason,
+  isBillableClientActor,
+} from "@/lib/credits";
 import { spendAgentNames, summarizeClientSpend } from "@/lib/credit-reporting";
+import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
+import { contentLabelsByAsset } from "@/lib/agent-identity-map";
+import { computeTrackedCompetitors } from "@/lib/competitor-priority";
+import { SeoGeoPanel, SeoGeoScores, SeoGeoPlan } from "@/components/seo-geo-panel";
+import { ClientAnalytics } from "@/components/client-analytics";
 
 /** Rows the "Recent activity" feed shows. */
 const LEDGER_FEED_LIMIT = 15;
-/** Rows the per-agent breakdown aggregates over (§6.2a). */
-const LEDGER_SUMMARY_LIMIT = 500;
-import { Card, CardTitle, PageHeader } from "@/components/ui";
+import { Badge, Card, CardTitle, PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import AutoScheduleToggle from "@/components/auto-schedule-toggle";
 import { Icon } from "@/components/icon";
@@ -32,12 +46,34 @@ import { CreditsPanel } from "@/components/credits-panel";
 import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
+import { ClientProfilePanel } from "@/components/client-profile-panel";
+import { ClientDocuments } from "@/components/client-documents";
+import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
+import { ArchiveView } from "@/components/archive-view";
+import { clientIntelSchedule } from "@/lib/intel-schedule";
+import { isAiProcessingLockActive } from "@/lib/constants";
+import { hasAiProcessingFailure } from "@/lib/client-visibility";
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
 import { AccountProfilePanel, AccountSecurityPanel } from "@/components/settings-form";
 import { ACCOUNT_TABS } from "@/lib/account-settings-tabs";
-import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
+import { agentKeyMatchesClientSlug, isReputationAgentIdentity } from "@/lib/custom-agent-launch";
 import { relativeTime } from "@/lib/utils";
-import type { ClientIntegration, Transcript, ClientCredits, CreditLedgerEntry, CustomAgent, ClientSettings, EmployeeSeat, JobRunType, ScheduledRun } from "@/lib/types";
+import type {
+  ClientIntegration,
+  Transcript,
+  ClientCredits,
+  CreditLedgerEntry,
+  CustomAgent,
+  ClientSettings,
+  EmployeeSeat,
+  JobRunType,
+  ScheduledRun,
+  ClientContextDoc,
+  ClientCompetitor,
+  ClientSeat,
+  Asset,
+} from "@/lib/types";
+import type { SeoGeoInsights } from "@/lib/seo-geo";
 
 export default async function ClientSettingsPage({
   params,
@@ -63,15 +99,31 @@ export default async function ClientSettingsPage({
 
   const isAdmin = user.role === "KAROS_ADMIN";
   const isStaff = isAdmin || user.role === "KAROS_EMPLOYEE";
-  const [integrations, transcripts, credits, creditLedger, customAgents, settings, scheduledRuns] = (await Promise.all([
+  const isClientViewer = user.role === "CLIENT_USER";
+  const [
+    integrations,
+    transcripts,
+    credits,
+    creditLedger,
+    customAgents,
+    settings,
+    scheduledRuns,
+    contextDocs,
+    competitors,
+    seats,
+    rawAssets,
+    seoGeo,
+  ] = (await Promise.all([
     listClientIntegrations(id),
     listTranscripts({ clientId: id }),
     getClientCredits(id),
-    // The FEED is capped at 15; the breakdown below is aggregated over a much
-    // deeper slice, because "where your credits went" computed from the last
-    // fifteen rows would be a breakdown of this week presented as a breakdown
-    // of spend.
-    listCreditLedger(id, LEDGER_SUMMARY_LIMIT),
+    // The WHOLE ledger, uncapped. The feed below slices it to 15, but the
+    // per-agent breakdown (§6.2a) sums it, and "where your credits went"
+    // computed from a capped slice is a breakdown of recent spend presented as
+    // a breakdown of spend. The cap was 500 rows, which cost the same read as
+    // no cap - listCreditLedger fetches every row regardless - and only ever
+    // dropped the client's oldest agents off their own bill.
+    listCreditLedger(id),
     // Read for EVERY role now, not just admins. The admin-only cards below are
     // still the only thing rendered from it, but the credits panel needs the
     // library to name the agent behind a charge: with only the client's jobs to
@@ -80,7 +132,29 @@ export default async function ClientSettingsPage({
     listCustomAgents(),
     getClientSettings(id),
     isAdmin ? listScheduledRuns({ clientId: id }) : Promise.resolve([]),
-  ])) as [ClientIntegration[], Transcript[], ClientCredits, CreditLedgerEntry[], CustomAgent[], ClientSettings | null, ScheduledRun[]];
+    // Account Center Documents tab (portal revamp, Surface 06 — moved off the
+    // rail). Client viewers get the client tier only, same boundary the rail
+    // used to enforce; staff get every tier so ClientDocuments' own
+    // allowInternalFallback has something to fall back to.
+    listClientContextDocs(id, isClientViewer ? "client" : undefined),
+    listClientCompetitors(id),
+    listClientSeats(id),
+    listAssets({ clientId: id }),
+    getClientSeoGeo(id),
+  ])) as [
+    ClientIntegration[],
+    Transcript[],
+    ClientCredits,
+    CreditLedgerEntry[],
+    CustomAgent[],
+    ClientSettings | null,
+    ScheduledRun[],
+    ClientContextDoc[],
+    ClientCompetitor[],
+    ClientSeat[],
+    Asset[],
+    SeoGeoInsights | null,
+  ];
 
   // §6.2(a). The split between a scheduled fire and a run the client started
   // lives on the JOB, not the ledger row, so the jobs are joined here on the
@@ -125,11 +199,244 @@ export default async function ClientSettingsPage({
   // - plus which secrets are set, for the form's placeholder.
   const sanitizedIntegrations = sanitizeIntegrations(integrations);
 
+  // Account Center Archive tab (portal revamp, Surface 06). Same recipe
+  // tasks-body.tsx uses for the Workspace's own Archive tab: a client's set is
+  // POSTED work from the last ~30 days only (getClientArchiveAssets), staff
+  // keep the full library — reusing spendJobs/spendUmbrellas already fetched
+  // above rather than a second listJobs/listClientAgents round trip.
+  const archiveViewer = { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin };
+  const archiveAssets = isClientViewer
+    ? getClientLibraryAssets(getClientArchiveAssets(rawAssets, { viewer: archiveViewer }), {
+        forClient: true,
+        viewer: archiveViewer,
+      })
+    : getClientLibraryAssets(rawAssets);
+  const agentLabelByAssetId = contentLabelsByAsset(archiveAssets, spendJobs, spendUmbrellas);
+
+  // Reporting tab's "Content by status" / "Connected channels" charts (A2,
+  // 2026-08 UI/UX pass) — moved here from the client Home, which dropped
+  // <ClientAnalytics/> because it was inventory sitting below every
+  // actionable widget. Same locked-row recipe Home used for a client viewer
+  // (getClientLibraryAssets + drop future-dated rows) — NOT archiveAssets
+  // above, which is scoped to posted-in-the-last-30-days for the Archive tab
+  // and would undercount here.
+  const reportingAnalyticsAssets = isClientViewer
+    ? getClientLibraryAssets(rawAssets, { forClient: true, viewer: archiveViewer }).filter(
+        (a) => !a.locked,
+      )
+    : rawAssets;
+
+  // Price + refusal for a targeted document correction, for the Documents
+  // tab's Correct Info modal — moved here from the app layout (portal revamp):
+  // ClientDocuments no longer mounts on every page via the rail, so only the
+  // one page that still mounts it needs to resolve this. Present only for a
+  // billable client viewer; staff and admins in "View as Client" are never
+  // charged, so they see no price.
+  const correctionPricing = isBillableClientActor(user)
+    ? {
+        cost: CREDIT_COSTS.targetedCorrection,
+        ...(availableCredits(credits) < CREDIT_COSTS.targetedCorrection
+          ? { blockReason: creditBlockReason(credits, CREDIT_COSTS.targetedCorrection) }
+          : {}),
+      }
+    : undefined;
+
   // Grouped by task instead of stacked. Sections keep their existing markup -
   // only where they live changes. A tab whose content is entirely staff-gated
   // collapses to null and is dropped below, so a client is never shown an empty
-  // tab (the Profile tab is admin/employee-only in practice).
-  const profileSection = isStaff ? <ClientEditor client={client} /> : null;
+  // tab.
+  //
+  // Portal revamp, Surface 06: Profile now ALSO carries the identity a client
+  // edits themselves — logo, social handles, bio — which used to live in the
+  // rail (ClientProfilePanel, non-compact here: this tab has no no-scroll
+  // contract to clamp it under) — plus a read-only seat roster ("seat
+  // information"). Editing a seat's own intake fields (LinkedIn URL, role, CV)
+  // stays on that agent's own setup page; this is the consolidated LIST, not a
+  // second editor for the same data.
+  const profileSection = (
+    <div className="space-y-8">
+      {isStaff && <ClientEditor client={client} />}
+      <ClientProfilePanel client={client} />
+      <BrandColorsSection
+        guidelines={client.brandingGuidelines}
+        clientId={client.id}
+        hasWebsite={!!client.website}
+        isStaff={isStaff}
+      />
+      <Card>
+        <CardTitle className="mb-1">Seats</CardTitle>
+        <p className="mb-3 text-sm text-muted-2">
+          Everyone your agents draft as, shared across every agent that supports seats. Add or
+          edit a seat&apos;s details from that agent&apos;s own setup page.
+        </p>
+        {seats.length === 0 ? (
+          <p className="text-sm text-muted-2">No seats set up yet.</p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {seats.map((s) => (
+              <li key={s.id} className="flex items-center justify-between gap-3 py-2.5">
+                <span className="text-sm font-medium text-foreground">{s.name}</span>
+                <span className="text-xs text-muted-2">Added {relativeTime(s.createdAt)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+
+  // Competitors (new tab, moved off the rail's CompetitorTrack). `limit={null}`
+  // — "holds everything we gather" — is the display cap only; the SEO/GEO
+  // measurement roster (lib/intel/pipeline.ts) keeps reading
+  // TRACKED_COMPETITOR_LIMIT unchanged, so raising what this tab shows does not
+  // silently double that pipeline's per-capture cost.
+  //
+  // `collapseTo` is the readability half of that, added 2026-08: the auto-seed
+  // pool grows every capture, so "everything we gather" opened as a wall of
+  // names in which the six that matter were indistinguishable from the twenty
+  // that do not. The tab still HOLDS all of them — one click away, never
+  // dropped — but it opens on the top six by measured AI-answer presence (see
+  // CompetitorTrack's `collapseTo` note for why that ranking and not another).
+  // Six rather than five so this list is visibly not the tracked-5 measurement
+  // roster it would otherwise be mistaken for.
+  const competitorsSection = (
+    <CompetitorTrack
+      competitors={competitors}
+      clientId={client.id}
+      isStaff={isStaff}
+      limit={null}
+      collapseTo={6}
+      title="Competitors"
+    />
+  );
+
+  // Reporting (portal revamp, Surface 09 — reporting consolidation). Search &
+  // AI visibility used to be its own tab on the client dashboard; it moved
+  // here, next to Competitors, so it has one home instead of rendering on two
+  // pages. Same composition the dashboard tab used to build: headline scores,
+  // then the action plan, then the full report.
+  const trackedCompetitorRefs = computeTrackedCompetitors(competitors).map((c) => ({
+    name: c.company,
+    ...(c.url ? { url: c.url } : {}),
+  }));
+  // The Reputation agent has no report view of its own yet (its client
+  // surface today is just the intake form + run-status rows) — this is a
+  // short pointer into its own page, not a second report to build.
+  const reputationAgent = clientAgents.find((a) => isReputationAgentIdentity(a.key)) ?? null;
+  const reputationGranted = reputationAgent
+    ? (client.customAgentIds ?? []).includes(reputationAgent.id)
+    : false;
+  const reputationHref = reputationAgent
+    ? `/clients/${client.id}/agents/${reputationAgent.id}`
+    : `/clients/${client.id}/agents`;
+  const reputationBubble = (
+    <Card>
+      <div className="mb-1 flex items-center gap-2">
+        <CardTitle>Reputation</CardTitle>
+        <Badge tone="neon">Beta</Badge>
+      </div>
+      <p className="mb-3 text-sm text-muted-2">
+        Review requests, responses and monitoring for what people say about you online.
+      </p>
+      <Link
+        href={reputationHref}
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-neon"
+      >
+        {reputationAgent
+          ? reputationGranted
+            ? "Open the Reputation agent"
+            : "Set up the Reputation agent"
+          : "Find it on your agents page"}
+        <Icon name="ChevronRight" className="h-3.5 w-3.5" />
+      </Link>
+    </Card>
+  );
+  const visibilityPanel = (
+    <SeoGeoPanel
+      insights={seoGeo}
+      trackedCompetitors={trackedCompetitorRefs}
+      clientWebsite={client.website}
+      isClientViewer={isClientViewer}
+      intelScheduleEnabled={client.intelScheduleEnabled ?? false}
+      intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
+      isRefreshing={isAiProcessingLockActive(client)}
+      // The scores and the plan are already lifted to the top of this tab
+      // below when there is a snapshot to lift them from, so the panel must
+      // not repeat them (same rule the dashboard tab followed before the move).
+      hideScores={!!seoGeo}
+      hidePlan={!!seoGeo}
+    />
+  );
+  // A2's other half: the two charts client Home gave up, above the visibility
+  // scores. Client-only — staff still see <ClientAnalytics/> on their own Home
+  // (below the fold), and repeating it here would be the exact duplication
+  // this pass exists to remove. Same viewerIsClient + hideStats the Home mount
+  // used, so the status vocabulary and the counter-row contract don't drift
+  // between the two places this component now lives.
+  const analyticsSection = isClientViewer ? (
+    <section className="space-y-3">
+      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Performance</p>
+      <ClientAnalytics
+        clientId={client.id}
+        assets={reportingAnalyticsAssets}
+        jobs={spendJobs}
+        integrations={integrations}
+        viewerIsClient={isClientViewer}
+        hideStats
+      />
+    </section>
+  ) : null;
+
+  // No snapshot yet: skip straight to the panel's own empty state rather than
+  // showing two headed, empty "Visibility scores" / "Action plan" sections
+  // above it (F23's "no disclosure that opens onto an empty box", applied to
+  // headers instead of a disclosure).
+  const reportingSection = seoGeo ? (
+    <div className="space-y-8">
+      {analyticsSection}
+      <section className="space-y-3">
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+          Visibility scores
+        </p>
+        <SeoGeoScores insights={seoGeo} />
+      </section>
+      <section className="space-y-3">
+        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Action plan</p>
+        <SeoGeoPlan insights={seoGeo} isClientViewer={isClientViewer} />
+      </section>
+      {reputationBubble}
+      {visibilityPanel}
+    </div>
+  ) : (
+    <div className="space-y-8">
+      {analyticsSection}
+      {reputationBubble}
+      {visibilityPanel}
+    </div>
+  );
+
+  // Documents (moved off the rail). Same component, same reading experience
+  // (bullet-summary-first via DocOverlay's "In short" panel) — just a full tab
+  // now instead of a compact rail list.
+  const documentsSection = (
+    <ClientDocuments
+      contextDocs={contextDocs}
+      isAdmin={isAdmin}
+      clientId={client.id}
+      isAiProcessing={isAiProcessingLockActive(client)}
+      aiProcessingFailed={hasAiProcessingFailure(client)}
+      intelSchedule={clientIntelSchedule(client)}
+      allowInternalFallback={isStaff}
+      correctionPricing={correctionPricing}
+    />
+  );
+
+  // Archive (new tab). The exact component the Workspace's own Archive tab
+  // uses (archive-view.tsx) — reused rather than rebuilt, fed the same way
+  // tasks-body.tsx feeds it.
+  const archiveSection = (
+    <ArchiveView assets={archiveAssets} agentLabelByAssetId={agentLabelByAssetId} viewerIsClient={isClientViewer} />
+  );
 
   const creditsSection = (
     <CreditsPanel
@@ -288,13 +595,27 @@ export default async function ClientSettingsPage({
       </Card>
     ) : null;
 
+  // "Settings becomes a tab inside it" (locked decision) — Channels,
+  // Automation and Team are all sub-sections of ONE generic Settings tab now,
+  // rather than three of Account Center's top-level tabs. Nothing about any
+  // of the three sections themselves changed; only which tab they live under.
+  const settingsSection = (
+    <div className="space-y-8">
+      {channelsSection}
+      {automationSection}
+      {teamSection}
+    </div>
+  );
+
   const sections: SettingsTab[] = [
     { id: "profile", label: "Profile", icon: "Building2", content: profileSection },
-    { id: "channels", label: "Channels", icon: "Share2", content: channelsSection },
+    { id: "competitors", label: "Competitors", icon: "Users", content: competitorsSection },
+    { id: "reporting", label: "Reporting", icon: "Radar", content: reportingSection },
+    { id: "settings", label: "Settings", icon: "Settings", content: settingsSection },
+    { id: "documents", label: "Documents", icon: "FileText", content: documentsSection },
+    { id: "archive", label: "Archive", icon: "Archive", content: archiveSection },
     { id: "credits", label: "Credits", icon: "Coins", content: creditsSection },
-    { id: "automation", label: "Automation", icon: "Bot", content: automationSection },
     { id: "meetings", label: "Meetings", icon: "Mic", content: meetingsSection },
-    { id: "team", label: "Team", icon: "Users", content: teamSection },
   ].filter((t) => t.content !== null);
 
   /**
@@ -317,8 +638,8 @@ export default async function ClientSettingsPage({
   return (
     <>
       <PageHeader
-        title="Settings"
-        description="Credits and usage, connected channels, automation, meetings, and teammates."
+        title="Account Center"
+        description="Profile, competitors, reporting, documents, archive, credits and meetings: everything that is not daily use, in one place."
         action={
           isStaff ? (
             <Link

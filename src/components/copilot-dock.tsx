@@ -68,7 +68,12 @@ interface Props {
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
 export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, report, shell = "client" }: Props) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Closed by default (client-zero feedback, ship-Sunday ask): a first-time
+  // viewer gets the collapsed w-12 strip, not the full 380px panel claiming
+  // screen real estate before they've asked for it. The localStorage restore
+  // below still wins for a returning viewer who chose to keep it open — this
+  // default only governs the very first render, before that effect runs.
+  const [collapsed, setCollapsed] = useState(true);
   const [sheetOpen, setSheetOpen] = useState(false);
   /** Blocks the write-back below until the restore pass has run. */
   const hydratedRef = useRef(false);

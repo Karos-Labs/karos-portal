@@ -18,6 +18,8 @@ import type {
   ContextDocType,
   SeatVoiceProfile,
   Campaign,
+  ClientActionState,
+  ClientFollowerSnapshot,
   ClientInsightsCache,
   ClientIntegration,
   ClientMarketingAnalytics,
@@ -129,6 +131,14 @@ const col = {
   // Marketing performance analytics: one doc per (client, asset, platform),
   // doc ID = `${clientId}_${platform}_${assetId}`, written by /api/analytics/sync.
   clientMarketingAnalytics: () => adminDb().collection("clientMarketingAnalytics"),
+  // Channel follower/subscriber count snapshots (portal revamp Home KPIs, D6):
+  // one doc per (client, platform, day), doc ID =
+  // `${clientId}_${platform}_${capturedAt}`. Append-only — no writer exists
+  // yet; see the ClientFollowerSnapshot docstring in types.ts.
+  clientFollowerSnapshots: () => adminDb().collection("clientFollowerSnapshots"),
+  // The 15 preset actions' per-client state (portal revamp, Surface 08): one
+  // doc per (client, action), doc ID = `${clientId}_${actionId}`.
+  clientActionStates: () => adminDb().collection("clientActionStates"),
   // Omnichannel campaigns: themed bundles of dependent tasks/assets per client.
   campaigns: () => adminDb().collection("campaigns"),
   // Cached AI Insights briefing — one doc per client (doc ID = clientId), keyed
@@ -480,6 +490,8 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "actionItems",
   "scheduledRuns",
   "clientMarketingAnalytics",
+  "clientFollowerSnapshots",
+  "clientActionStates",
   "campaigns",
   "clientSeats",
   "agentIntake",
@@ -1423,13 +1435,101 @@ export async function upsertClientInsightsCache(
   await col.clientInsightsCache().doc(clientId).set({ clientId, ...patch }, { merge: true });
 }
 
+/**
+ * This client's best and worst measured content.
+ *
+ * MEASURED ROWS ONLY, FILTERED HERE (2026-08). Every row carries
+ * `source: "mock" | "live"`, and until 2026-08 the sync cron wrote a mock row
+ * whenever no live API could answer — including for every client with no
+ * connected channel at all. Those rows are gone from the WRITE path now
+ * (analytics-providers.ts), but everything written before that is still in
+ * Firestore, so the read has to refuse them too.
+ *
+ * The filter is at the source rather than at each caller because the callers
+ * are where it kept going wrong: of the four, only the copilot chat route ever
+ * checked, so content generation quoted invented figures as proven winners, the
+ * strategy swarm narrated them to the client as measurement, and a fabricated
+ * score ≥ 80 opened a paid campaign. One fence beats four, and a fifth caller
+ * inherits it for free.
+ *
+ * ZERO-IMPRESSION ROWS ARE ALSO REFUSED HERE (2026-08). `engagementScore` is
+ * `impressions > 0 ? clicks/impressions : 0` — no impressions means no
+ * denominator, so the score is forced to 0.0 regardless of what the content
+ * is. Provenance-wise the row is real ("live"), but informationally it's the
+ * same shape of problem the mock rows were: a number sitting where no
+ * measurement exists yet. Left in, it can never land in `top` (0.0 is the
+ * floor) but reliably wins `bottom` — a post nobody has been shown yet gets
+ * narrated to the client as their worst performer.
+ *
+ * `sampleSize` counts the rows that SURVIVE both filters, which is what
+ * re-arms the "no performance analytics captured yet" fallbacks downstream —
+ * those read `sampleSize > 0`, and a set that was all-mock, or is now all
+ * zero-impression, used to sail past it with a non-zero count.
+ */
 export async function getClientPerformanceBenchmarks(
   clientId: string,
   count = 5,
 ): Promise<PerformanceBenchmarks> {
-  const records = await listClientMarketingAnalytics(clientId);
+  const records = (await listClientMarketingAnalytics(clientId)).filter(
+    (r) => r.source === "live" && r.metrics.impressions > 0,
+  );
   const { top, bottom } = rankByEngagement(records, count);
   return { clientId, top, bottom, sampleSize: records.length };
+}
+
+/* ----------------- follower snapshots (portal revamp, D6) ----------------- */
+
+/** Deterministic doc id — one row per client+platform+day, re-runs overwrite in place. */
+function followerSnapshotDocId(clientId: string, platform: string, capturedAt: number): string {
+  return `${clientId}_${platform}_${capturedAt}`;
+}
+
+/** A client's whole follower history, oldest first (the shape a growth chart wants). */
+export async function listClientFollowerSnapshots(
+  clientId: string,
+): Promise<ClientFollowerSnapshot[]> {
+  const snap = await col.clientFollowerSnapshots().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<ClientFollowerSnapshot>(d))
+    .sort((a, b) => a.capturedAt - b.capturedAt);
+}
+
+/**
+ * Record one channel's follower count for one day. No caller exists yet — see
+ * the ClientFollowerSnapshot docstring in types.ts — this is the write side a
+ * future live-ingestion cron calls; `follower-tracking.ts`'s deterministic mock
+ * fills the display until then.
+ */
+export async function recordClientFollowerSnapshot(
+  input: Omit<ClientFollowerSnapshot, "id">,
+): Promise<void> {
+  const id = followerSnapshotDocId(input.clientId, input.platform, input.capturedAt);
+  await col.clientFollowerSnapshots().doc(id).set({ ...input, id }, { merge: true });
+}
+
+/* ----------------- the 15 preset actions (portal revamp, Surface 08) ----------------- */
+
+function actionStateDocId(clientId: string, actionId: string): string {
+  return `${clientId}_${actionId}`;
+}
+
+/** This client's whole action-state row set — small and bounded (at most 15), one read for the whole list. */
+export async function listClientActionStates(clientId: string): Promise<ClientActionState[]> {
+  const snap = await col.clientActionStates().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<ClientActionState>(d));
+}
+
+/** Upsert one action's state. Idempotent on the deterministic doc id — dismissing (or completing) the same action twice just rewrites `updatedAt`. */
+export async function upsertClientActionState(
+  clientId: string,
+  actionId: string,
+  status: ClientActionState["status"],
+): Promise<void> {
+  const id = actionStateDocId(clientId, actionId);
+  await col.clientActionStates().doc(id).set(
+    { id, clientId, actionId, status, updatedAt: Date.now() } satisfies ClientActionState,
+    { merge: true },
+  );
 }
 
 /* ------------------------------ campaigns --------------------------- */
@@ -2804,13 +2904,24 @@ export async function setClientCreditLimits(
   });
 }
 
-/** Ledger entries for a client, newest first. */
-export async function listCreditLedger(clientId: string, limit = 50): Promise<CreditLedgerEntry[]> {
+/**
+ * Ledger entries for a client, newest first. `limit` caps the rows returned;
+ * OMIT it to get the whole ledger.
+ *
+ * The fetch is unconditional either way — Firestore hands back every row and the
+ * cap is applied in memory afterwards. So a cap costs exactly the same read and
+ * can only ever remove information, which makes it the wrong default for any
+ * caller that AGGREGATES: a per-agent breakdown summed over the newest N rows,
+ * printed under "where your credits went", is a breakdown of a recent slice
+ * wearing the label of the whole ledger (2026-08). Cap the display lists, not
+ * the arithmetic.
+ */
+export async function listCreditLedger(clientId: string, limit?: number): Promise<CreditLedgerEntry[]> {
   const snap = await col.creditLedger().where("clientId", "==", clientId).get();
-  return snap.docs
+  const rows = snap.docs
     .map((d) => withId<CreditLedgerEntry>(d))
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, limit);
+    .sort((a, b) => b.createdAt - a.createdAt);
+  return limit === undefined ? rows : rows.slice(0, limit);
 }
 
 /* ─────────────────────── Task capacity / dedup ──────────────────── */

@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import {
   createClient,
+  getClient,
   updateClient,
   deleteClientCascade,
   getClientByKeyId,
@@ -213,6 +214,51 @@ export async function updateClientProfileAction(
 
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
+  return { ok: true };
+}
+
+/**
+ * Pin or unpin an agent above the client rail's "AI agents" dropdown
+ * (Surface 01, portal revamp). Same self-service rule as
+ * `updateClientProfileAction`: a CLIENT_USER may star their own client's
+ * agents, staff may star for any client (including from "View as Client" at
+ * onboarding). `starred: true` appends to the end of the pinned order;
+ * `false` removes it — the dropdown itself decides display order from the
+ * stored array, so no explicit position argument is needed.
+ */
+export async function toggleStarredAgentAction(
+  clientId: string,
+  agentId: string,
+  starred: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
+    return { ok: false, error: "Not authorized to edit this client's starred agents." };
+  }
+
+  const client = await getClient(clientId);
+  if (!client) return { ok: false, error: "Client not found." };
+
+  const current = client.starredAgentIds ?? [];
+  const next = starred
+    ? current.includes(agentId)
+      ? current
+      : [...current, agentId]
+    : current.filter((id) => id !== agentId);
+
+  await updateClient(clientId, { starredAgentIds: next });
+  // Server-side revalidation here is belt-and-suspenders, not the mechanism
+  // this depends on for the tab that just clicked — that tab calls
+  // `router.refresh()` itself right after this action resolves (see
+  // ClientRailAgentsNav and AgentStarButton), which is unambiguous per
+  // Next's own docs regardless of route-group path resolution. This call is
+  // only for a DIFFERENT tab/session revisiting later, so it uses the one
+  // path the docs confirm outright rather than a guessed route-group
+  // segment: `/` + "layout" is documented as "purge the Client Cache, and
+  // invalidate all cached data" — the ClientRail data this needs to reach
+  // lives in the ROOT `(app)/layout.tsx`, which sits one level under `/`.
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 

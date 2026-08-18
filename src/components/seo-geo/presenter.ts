@@ -1024,8 +1024,26 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
       emptyLine: "No category questions were measured this run.",
     }),
     takeaway,
+    /**
+     * TWO conditions, and the second one was missing (2026-08).
+     *
+     * The gate used to be `competitors > 0` alone — "is there a roster to have a
+     * share OF" — and never asked whether anything was MEASURED. But
+     * `computeRosterSharePct` (lib/seo-geo.ts) returns a literal `0` when its
+     * denominator is empty, which is every degraded capture: an all-UNAVAILABLE
+     * engine run, an imported bundle, a snapshot where no category question came
+     * back. So a client whose category tile correctly read "No category
+     * questions were measured this run" got a confident **0%** beside it, on a
+     * meter drawn to zero, for the same run — and this is the number this
+     * object's own explainer calls "the single number for how much of the AI
+     * conversation you own". Zero there is a verdict, not a blank.
+     *
+     * `measured` is the same count the category tile above branches on, read
+     * through the same `presenceCounts` helper, so the two cells can no longer
+     * disagree about whether the run produced anything.
+     */
     rosterShare:
-      competitors > 0
+      competitors > 0 && c.measured > 0
         ? {
             value: `${Math.round(insights.rosterSharePct)}%`,
             pct: Math.round(insights.rosterSharePct),

@@ -65,6 +65,8 @@ import {
   launchProfileFor,
   perClientAgentSlug,
   withLinkedInIdentityOptions,
+  ADD_SEAT_OPTION_VALUE,
+  LINKEDIN_IDENTITY_FIELD_KEY,
   BLOG_SETUP_REQUIRED_PREFIX,
   CAROUSEL_SETUP_REQUIRED_PREFIX,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
@@ -2291,6 +2293,15 @@ export function RunCustomAgentModal({
   }, [pane]);
 
   function setField(key: string, value: string) {
+    // "+ Add a seat" (portal revamp, Surface 04) is never a real identity —
+    // it is the one option in this field that means "leave and set one up",
+    // so it routes to the agent's own data page instead of becoming the run's
+    // brief value. `setup.href` is the same link the data pane's own "manage"
+    // affordance already uses.
+    if (key === LINKEDIN_IDENTITY_FIELD_KEY && value === ADD_SEAT_OPTION_VALUE) {
+      if (setup?.href) router.push(setup.href);
+      return;
+    }
     setBriefTouched(true);
     setFields((current) => ({ ...current, [key]: value }));
   }

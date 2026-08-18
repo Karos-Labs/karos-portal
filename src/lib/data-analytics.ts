@@ -89,20 +89,34 @@ export async function listRecentUsageLogs(opts?: {
  * filtered by clientId in memory — the same "avoid a composite index" shape
  * as every other read in this module. Shared by the agent leaderboard and
  * per-agent drilldown so both bound their scan the same way.
+ *
+ * `truncated` is true when the query came back full — the window holds more
+ * logs than were read. Every figure derived from a truncated fetch is a FLOOR,
+ * not a total, and the caller has to be able to say so: a partial sum rendered
+ * as "Total Cost" is indistinguishable from a complete one (2026-08).
+ *
+ * Note the ORDER, which makes this sharper than a plain cap: Firestore applies
+ * the limit across ALL clients and the clientId filter runs in memory after.
+ * So a truncated per-client read is not "this client's newest N" - it is
+ * whichever of their rows happened to fall inside the GLOBAL newest N, which
+ * on a busy account can be a small and arbitrary slice of their real range.
  */
 async function fetchUsageLogsCapped(opts: {
   since: number;
   clientId?: string;
   limit: number;
-}): Promise<UsageLog[]> {
+}): Promise<{ logs: UsageLog[]; truncated: boolean }> {
   const query = opts.since > 0
     ? adminDb().collection("usageLogs").where("timestamp", ">=", opts.since).orderBy("timestamp", "desc")
     : adminDb().collection("usageLogs").orderBy("timestamp", "desc");
   const snap = await query.limit(opts.limit).get();
+  // Read the cap off the RAW page size, before the in-memory clientId filter -
+  // a filtered result is short for a second reason and would read as complete.
+  const truncated = snap.size >= opts.limit;
 
   let logs = snap.docs.map((d) => withId<UsageLog>(d));
   if (opts.clientId) logs = logs.filter((l) => l.clientId === opts.clientId);
-  return logs;
+  return { logs, truncated };
 }
 
 /* ── Derived analytics ───────────────────────────────────────────── */
@@ -173,6 +187,12 @@ export interface RangeStats {
   totalErrors: number;
   modelStats: ModelStat[];
   agentStats: AgentStat[];
+  /**
+   * At least one of the two capped queries behind these figures came back
+   * full, so every total here is a lower bound. Surface it - see
+   * fetchUsageLogsCapped.
+   */
+  truncated: boolean;
 }
 
 /** Group already-fetched usage logs into per-agent cost/token stats, cost-desc. */
@@ -203,24 +223,35 @@ function aggregateAgentStats(logs: UsageLog[]): AgentStat[] {
   return [...agentMap.values()].sort((a, b) => b.costUsd - a.costUsd);
 }
 
+const RANGE_USAGE_LOG_CAP = 2000;
+const RANGE_ERROR_LOG_CAP = 500;
+
 /**
  * Compute KPI + breakdowns from raw logs since `since`.
- * Fetches up to 2000 usage logs and 500 error logs, filters by clientId in
- * memory. Avoids composite indexes by querying on a single indexed field.
+ * Fetches up to RANGE_USAGE_LOG_CAP usage logs and RANGE_ERROR_LOG_CAP error
+ * logs, filters by clientId in memory. Avoids composite indexes by querying on
+ * a single indexed field.
+ *
+ * Either cap can bite, and when one does the returned totals are FLOORS - hence
+ * `truncated`, which the dashboard renders rather than passing a partial sum off
+ * as a total. The error cap counts too: it feeds `totalErrors`, and a truncated
+ * error count also skews the error RATE, which is computed from both numbers.
  */
 export async function getRangeStats(opts: {
   since: number;
   clientId?: string;
 }): Promise<RangeStats> {
-  const [usageLogs, errorSnap] = await Promise.all([
-    fetchUsageLogsCapped({ since: opts.since, clientId: opts.clientId, limit: 2000 }),
+  const [usage, errorSnap] = await Promise.all([
+    fetchUsageLogsCapped({ since: opts.since, clientId: opts.clientId, limit: RANGE_USAGE_LOG_CAP }),
     adminDb()
       .collection("errorLogs")
       .where("timestamp", ">=", opts.since)
       .orderBy("timestamp", "desc")
-      .limit(500)
+      .limit(RANGE_ERROR_LOG_CAP)
       .get(),
   ]);
+  const usageLogs = usage.logs;
+  const truncated = usage.truncated || errorSnap.size >= RANGE_ERROR_LOG_CAP;
 
   let errorLogs = errorSnap.docs.map((d) => withId<ErrorLog>(d));
   if (opts.clientId) {
@@ -266,8 +297,11 @@ export async function getRangeStats(opts: {
     totalErrors: errorLogs.length,
     modelStats,
     agentStats,
+    truncated,
   };
 }
+
+const ALL_TIME_AGENT_LOG_CAP = 3000;
 
 /**
  * Agent leaderboard for "all time" — the analyticsSnapshot doc gives O(1)
@@ -275,13 +309,21 @@ export async function getRangeStats(opts: {
  * window of the most recent usage logs instead (same tradeoff as the
  * pre-refactor leaderboard, just grouped by resolveAgentAttribution and with
  * a wider window since dashboard reads are allowed to cost more than writes).
+ *
+ * Bounded means incomplete past the bound, so `truncated` rides along - an
+ * all-time leaderboard silently missing its oldest spend ranks agents wrong,
+ * not just low.
  */
 export async function getAllTimeAgentStats(opts?: {
   clientId?: string;
   limit?: number;
-}): Promise<AgentStat[]> {
-  const logs = await fetchUsageLogsCapped({ since: 0, clientId: opts?.clientId, limit: opts?.limit ?? 3000 });
-  return aggregateAgentStats(logs);
+}): Promise<{ stats: AgentStat[]; truncated: boolean }> {
+  const { logs, truncated } = await fetchUsageLogsCapped({
+    since: 0,
+    clientId: opts?.clientId,
+    limit: opts?.limit ?? ALL_TIME_AGENT_LOG_CAP,
+  });
+  return { stats: aggregateAgentStats(logs), truncated };
 }
 
 export interface AgentDrilldown {
@@ -292,12 +334,19 @@ export interface AgentDrilldown {
   totalOutputTokens: number;
   totalRuns: number;
   modelStats: ModelStat[];
+  /** The scan behind these figures hit its cap — see fetchUsageLogsCapped. */
+  truncated: boolean;
 }
 
 /**
  * Model/token breakdown for one agent (the Agent Leaderboard's filter-on-click
  * drilldown), scoped to the same since/clientId window as the rest of the
  * dashboard. Returns null when the agent has no logs in that window.
+ *
+ * `truncated` matters MORE here than on the headline KPIs: these numbers replace
+ * them when an agent is selected, and the agent's rows are a subset of a window
+ * that was already cut short, so a quiet agent can lose most of its history to a
+ * loud one's.
  */
 export async function getAgentDrilldown(opts: {
   agentKey: string;
@@ -305,10 +354,10 @@ export async function getAgentDrilldown(opts: {
   clientId?: string;
   limit?: number;
 }): Promise<AgentDrilldown | null> {
-  const logs = await fetchUsageLogsCapped({
+  const { logs, truncated } = await fetchUsageLogsCapped({
     since: opts.since,
     clientId: opts.clientId,
-    limit: opts.limit ?? (opts.since > 0 ? 2000 : 3000),
+    limit: opts.limit ?? (opts.since > 0 ? RANGE_USAGE_LOG_CAP : ALL_TIME_AGENT_LOG_CAP),
   });
   const scoped = logs.filter((l) => resolveAgentAttribution(l).agentKey === opts.agentKey);
   if (scoped.length === 0) return null;
@@ -344,6 +393,7 @@ export async function getAgentDrilldown(opts: {
     .sort((a, b) => b.costUsd - a.costUsd);
 
   return {
+    truncated,
     agentKey: opts.agentKey,
     agentDisplayName,
     totalCostUsd,

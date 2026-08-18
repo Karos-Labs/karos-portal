@@ -30,15 +30,20 @@ import type { JobStatus } from "@/lib/types";
 
 export const JOB_STATUS_META: Record<
   JobStatus,
-  { tone: "neutral" | "neon" | "warning" | "danger" | "info"; label: string }
+  {
+    tone: "neutral" | "neon" | "warning" | "danger" | "info";
+    label: string;
+    /** lucide icon NAME (a string, not a component) — stays importable from server-only callers. */
+    icon: string;
+  }
 > = {
-  queued: { tone: "neutral", label: "Queued" },
-  running: { tone: "info", label: "Running" },
-  review: { tone: "warning", label: "In review" },
-  approved: { tone: "neon", label: "Approved" },
-  delivered: { tone: "neon", label: "Delivered" },
-  failed: { tone: "danger", label: "Failed" },
-  cancelled: { tone: "neutral", label: "Cancelled" },
+  queued: { tone: "neutral", label: "Queued", icon: "Loader" },
+  running: { tone: "info", label: "Running", icon: "Loader" },
+  review: { tone: "warning", label: "In review", icon: "Eye" },
+  approved: { tone: "neon", label: "Approved", icon: "CircleCheck" },
+  delivered: { tone: "neon", label: "Delivered", icon: "CircleCheck" },
+  failed: { tone: "danger", label: "Failed", icon: "TriangleAlert" },
+  cancelled: { tone: "neutral", label: "Cancelled", icon: "CircleX" },
 };
 
 /**

@@ -177,6 +177,7 @@ export function toClientPortalView(c: Client): Client {
     ...(c.brief ? { brief: c.brief } : {}),
     ...(c.socialLinks ? { socialLinks: c.socialLinks } : {}),
     ...(c.contactEmail ? { contactEmail: c.contactEmail } : {}),
+    ...(c.starredAgentIds ? { starredAgentIds: c.starredAgentIds } : {}),
     ...(c.domains ? { domains: c.domains } : {}),
     ...(c.description ? { description: c.description } : {}),
     ...(c.brandVoice ? { brandVoice: c.brandVoice } : {}),

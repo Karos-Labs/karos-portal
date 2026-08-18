@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { domainFromName } from "@/lib/favicon";
 import { BrandingModal } from "@/components/branding-modal";
 import { addCompetitorByNameAction, removeCompetitorAction } from "@/lib/actions";
-import { computeTrackedCompetitors } from "@/lib/competitor-priority";
+import { computeTrackedCompetitors, TRACKED_COMPETITOR_LIMIT } from "@/lib/competitor-priority";
 import type { BrandColor, BrandingGuidelines, ClientCompetitor } from "@/lib/types";
 
 /* ── Competitor favicon with fallback ────────────────────────────────── */
@@ -34,10 +34,39 @@ export function CompetitorTrack({
   competitors,
   clientId,
   isStaff,
+  limit = TRACKED_COMPETITOR_LIMIT,
+  collapseTo = null,
+  title = "Competitor Track",
 }: {
   competitors: ClientCompetitor[];
   clientId: string;
   isStaff: boolean;
+  /**
+   * Display cap. Defaults to the rail's original top-5 view; the Account
+   * Center Competitors tab passes `null` ("holds everything we gather") —
+   * distinct from TRACKED_COMPETITOR_LIMIT, which still governs the SEO/GEO
+   * capture roster (lib/intel/pipeline.ts) and is untouched by this prop.
+   */
+  limit?: number | null;
+  /**
+   * How many rows render before the rest are behind a disclosure, or `null`
+   * for "all of them, always".
+   *
+   * NOT a second `limit`, and the difference is what the two words buy: `limit`
+   * DROPS rows — anything past it is not in this component's output and cannot
+   * be asked for. `collapseTo` keeps every row and hides the tail behind a
+   * toggle, so Account Center still "holds everything we gather" while opening
+   * on the handful that answer the question a person actually arrived with
+   * ("who am I losing to?").
+   *
+   * The order it cuts against is `computeTrackedCompetitors`'s, which is the
+   * point: manual rows first, then auto-seeded rivals by MEASURED AI-answer
+   * presence (llmMentions, written back after each SEO/GEO capture). So the
+   * visible ones are the rivals the engines actually name — the same ranking
+   * that decides who the next capture measures against.
+   */
+  collapseTo?: number | null;
+  title?: string;
 }) {
   const router = useRouter();
   const [addOpen, setAddOpen] = useState(false);
@@ -66,7 +95,14 @@ export function CompetitorTrack({
     const pending = addedRows.filter((c) => c.clientId === clientId && !serverIds.has(c.id));
     return [...competitors, ...pending].filter((c) => !removedIds.has(c.id));
   }, [addedRows, clientId, competitors, removedIds]);
-  const displayed = useMemo(() => computeTrackedCompetitors(active), [active]);
+  const displayed = useMemo(() => computeTrackedCompetitors(active, limit), [active, limit]);
+
+  const [showAll, setShowAll] = useState(false);
+  // A removal must not silently re-collapse the list under someone who opened
+  // it, so the toggle is state and never derived from the row count.
+  const collapsed = collapseTo != null && !showAll && displayed.length > collapseTo;
+  const rows = collapsed ? displayed.slice(0, collapseTo) : displayed;
+  const hiddenCount = displayed.length - rows.length;
 
   function handleRemove(competitor: ClientCompetitor) {
     setRemoveError(null);
@@ -141,9 +177,14 @@ export function CompetitorTrack({
 
   return (
     <div className="border-t border-border pt-3">
-      <div className="mb-1 flex items-center justify-between px-1">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-          Competitor Track
+      <div className="mb-1 flex items-center justify-between gap-2 px-1">
+        <p className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+          <span className="truncate">{title}</span>
+          {collapseTo != null && displayed.length > 0 && (
+            <span className="shrink-0 rounded-full border border-border bg-surface-2 px-1.5 py-px font-mono text-[9px] font-normal tracking-normal text-muted-2">
+              {collapsed ? `${rows.length}/${displayed.length}` : displayed.length}
+            </span>
+          )}
         </p>
         <button
           onClick={openAdd}
@@ -204,9 +245,9 @@ export function CompetitorTrack({
         </p>
       )}
 
-      {displayed.length > 0 && (
+      {rows.length > 0 && (
         <ul>
-          {displayed.map((c) => {
+          {rows.map((c) => {
             // CD-H3: a stored url wins, but a row that has none and whose NAME
             // is a domain ("Okara.ai", "ploy.ai") is just as linkable - and the
             // favicon beside it already resolves through exactly this fallback,
@@ -281,6 +322,25 @@ export function CompetitorTrack({
             );
           })}
         </ul>
+      )}
+
+      {/* The disclosure. Rendered whenever the list is collapsible in EITHER
+          direction, so the way back is the same control as the way out — a
+          "show all" that turns into nothing once pressed leaves a person
+          scrolling a list they did not ask to open. */}
+      {collapseTo != null && (hiddenCount > 0 || showAll) && (
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          aria-expanded={showAll}
+          className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-1.5 text-[11px] font-medium text-muted-2 transition-colors hover:border-border-strong hover:text-foreground"
+        >
+          {showAll ? "Show fewer" : `View all ${displayed.length} competitors`}
+          <Icon
+            name="ChevronDown"
+            className={cn("h-3 w-3 transition-transform", showAll && "rotate-180")}
+          />
+        </button>
       )}
 
       {removeError && <p className="mt-1 px-1 text-[11px] text-danger">{removeError}</p>}

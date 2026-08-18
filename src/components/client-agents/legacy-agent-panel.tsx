@@ -165,6 +165,15 @@ export function LegacyAgentPanel({
                   ? "Drafting a batch now is not available yet."
                   : `Making a ${noun} now is not available yet.`}
             </p>
+            {/* Portal revamp, Surface 03: the cost is a step on the page, never
+                on the button — moved off the label into its own line, right
+                where the rest of what-this-run-does copy already lives. */}
+            {cost != null && (
+              <p className="mt-1 flex items-center gap-1 text-xs text-muted-2">
+                <Icon name="Coins" className="h-3 w-3 text-neon" />
+                Costs {cost} credit{cost === 1 ? "" : "s"}
+              </p>
+            )}
           </div>
           <Button
             variant="accent"
@@ -172,13 +181,7 @@ export function LegacyAgentPanel({
             onClick={() => setRunning(true)}
           >
             <Icon name="Sparkles" className="h-4 w-4" />
-            {batchSize > 1
-              ? cost != null
-                ? `Create new drafts · ${cost} credits`
-                : "Create new drafts"
-              : cost != null
-                ? `Create new ${noun} · ${cost} credits`
-                : `Create new ${noun}`}
+            {batchSize > 1 ? "Create new drafts" : `Create a new ${noun}`}
           </Button>
         </div>
         {!gate.allowed && gate.reason && !(outageAnnounced && gate.code === "service_down") && (

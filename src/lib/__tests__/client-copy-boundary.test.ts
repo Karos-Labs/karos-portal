@@ -2281,6 +2281,12 @@ const NOT_TEXT: readonly string[] = [
   "updatePlannedScheduledRun.status",
   "updateTranscript.assignment",
   "upsertAgentIntake.agent",
+  // The 15-item action list's own id ("01".."15") and status
+  // ("dismissed"/"not_relevant"/"done") — read back through
+  // lib/action-list.ts's resolveActionList, never printed raw; the widget
+  // renders the matching ActionDefinition's label, not this row.
+  "upsertClientActionState.(arg1)",
+  "upsertClientActionState.(arg2)",
   "upsertClientContextDoc.docType",
   "upsertClientContextDoc.tier",
   "upsertClientIntegration.method",

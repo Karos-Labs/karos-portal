@@ -276,8 +276,17 @@ export function TemplateRows({
                 onClick={() => run(template)}
               >
                 <Icon name="Play" className="h-3.5 w-3.5" />
-                {agent.runCost != null ? `Run now · ${agent.runCost} credits` : "Run now"}
+                Run now
               </Button>
+              {/* Portal revamp, Surface 03: the cost is a step on the page,
+                  never on the button — a visible sibling, not folded into the
+                  button's own label. */}
+              {agent.runCost != null && (
+                <span className="flex items-center gap-1 text-[11px] text-muted-2">
+                  <Icon name="Coins" className="h-3 w-3 text-neon" />
+                  {agent.runCost} credit{agent.runCost === 1 ? "" : "s"}
+                </span>
+              )}
               <Button size="sm" variant="ghost" onClick={() => onFeedback(template)}>
                 <Icon name="MessageSquare" className="h-3.5 w-3.5" /> Feedback
               </Button>

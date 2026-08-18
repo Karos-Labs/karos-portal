@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
@@ -12,9 +12,16 @@ import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { platformLabel } from "@/lib/integrations/platforms";
-import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
+import {
+  setPlannedRunStatusAction,
+  deletePlannedRunAction,
+  updatePlannedRunPromptAction,
+} from "@/lib/actions/planned-run-actions";
+import { markActionDoneAction } from "@/lib/actions/action-list-actions";
 import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calendar-past-runs";
 import { cn, relativeTime } from "@/lib/utils";
+import { sameLocalDay } from "@/lib/scheduling";
+import { ArchiveView } from "@/components/archive-view";
 import type { AssetImage } from "@/lib/asset-images";
 import {
   calendarFilterKeyMatchable,
@@ -217,6 +224,21 @@ function dayKey(at: number): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
+/** Portal revamp, Surface 05 — the four calendar views. Week is the default. */
+type CalendarViewMode = "day" | "week" | "month" | "archive";
+
+/** Midnight of the same viewer-local day, on the one clock dayKey/the grid already use. */
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Midnight of the Sunday that starts this instant's week (viewer-local, same clock as the grid). */
+function startOfWeek(d: Date): Date {
+  const start = startOfDay(d);
+  start.setDate(start.getDate() - start.getDay());
+  return start;
+}
+
 function timeStr(at: number, timeZone?: string): string {
   // Pinned locale: SSR (Node) and the browser must format identically or the
   // chip title attributes trigger hydration mismatches. Pinning the zone too
@@ -391,6 +413,36 @@ function ScheduledRunCard({
   const [busy, setBusy] = useState<null | "pause" | "delete">(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Portal revamp, Surface 05 — "the box to add [instructions]." Local edit
+  // state for the prompt only; pause/delete keep their own `busy`/`error` so
+  // saving a note can never disable the pause button or vice versa.
+  const [editingPrompt, setEditingPrompt] = useState(false);
+  const [promptDraft, setPromptDraft] = useState(run.prompt ?? "");
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
+
+  async function savePrompt() {
+    setSavingPrompt(true);
+    setPromptError(null);
+    try {
+      const res = await updatePlannedRunPromptAction(run.id, promptDraft);
+      if (res?.error) {
+        setPromptError(res.error);
+        return;
+      }
+      setEditingPrompt(false);
+      // Action 13 ("Add context to a post that is coming up") — event-tracked,
+      // no live signal answers it (lib/action-list.ts). This IS the one save
+      // site the SOW names ("Instructions saved on one"); fire-and-forget,
+      // same as action 12 above.
+      if (viewerIsClient) void markActionDoneAction(run.clientId, "13");
+      router.refresh();
+    } catch (e) {
+      setPromptError(e instanceof Error ? e.message : "Couldn't save these instructions.");
+    } finally {
+      setSavingPrompt(false);
+    }
+  }
 
   // Both handlers previously ignored the result and never cleared the busy
   // flag: a refused call span forever with no message and left the card on
@@ -471,10 +523,58 @@ function ScheduledRunCard({
           {run.stuckMessage && <p className="mt-1.5 text-xs text-danger">{run.stuckMessage}</p>}
           {run.agentDescription && <p className="mt-1.5 text-xs text-muted-2">{run.agentDescription}</p>}
           <div className="mt-2.5 border-t border-border pt-2">
-            <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-2">Will run</p>
-            <p className="text-xs italic text-muted">
-              {run.prompt ? `“${run.prompt}”` : "Runs the agent's default playbook."}
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-2">
+                Instructions
+              </p>
+              {!editingPrompt && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPromptDraft(run.prompt ?? "");
+                    setPromptError(null);
+                    setEditingPrompt(true);
+                  }}
+                  className="text-[11px] text-muted-2 underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  {run.prompt ? "Edit" : "Add"}
+                </button>
+              )}
+            </div>
+            {editingPrompt ? (
+              <div className="mt-1.5">
+                <textarea
+                  autoFocus
+                  rows={2}
+                  maxLength={4000}
+                  value={promptDraft}
+                  onChange={(e) => setPromptDraft(e.target.value)}
+                  placeholder="Anything this post should know…"
+                  className="w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50"
+                />
+                {promptError && <p className="mt-1 text-xs text-danger">{promptError}</p>}
+                <div className="mt-1.5 flex items-center gap-2">
+                  <Button size="sm" variant="accent" disabled={savingPrompt} onClick={savePrompt}>
+                    {savingPrompt ? "Saving…" : "Save"}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingPrompt(false);
+                      setPromptError(null);
+                    }}
+                    disabled={savingPrompt}
+                    className="text-xs text-muted hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs italic text-muted">
+                {run.prompt ? `“${run.prompt}”` : "Nothing added yet. Runs the agent's default playbook."}
+              </p>
+            )}
           </div>
           {/* The schedule's own track record - this card IS a future
               projection with no job of its own, so this is the only place it
@@ -1133,6 +1233,190 @@ function PostCard({
   );
 }
 
+/* ── Week / Day views (portal revamp, Surface 05) ──────────────────────
+   Both read the SAME dayKey-mapped data the month grid already builds
+   (runsByDay/postsByDay) — no new data shape, just a different layout over
+   it, so nothing here can disagree with the month view about what is on a
+   given day. */
+
+function WeekView({
+  weekDays,
+  today,
+  runsByDay,
+  postsByDay,
+  selectedKey,
+  onSelectDay,
+  onOpenAsset,
+  viewerIsClient,
+  canSchedule,
+  onScheduleAt,
+}: {
+  weekDays: Date[];
+  today: Date;
+  runsByDay: Map<string, CalendarRun[]>;
+  postsByDay: Map<string, CalendarPost[]>;
+  selectedKey: string | null;
+  onSelectDay: (key: string) => void;
+  onOpenAsset: (id: string) => void;
+  viewerIsClient: boolean;
+  canSchedule: boolean;
+  onScheduleAt: (at: number) => void;
+}) {
+  return (
+    <>
+      {/* Week grid — one row, richer previews than the month cell allows */}
+      <div className="hidden grid-cols-7 sm:grid">
+        {weekDays.map((d) => {
+          const key = dayKey(d.getTime());
+          const isToday = sameLocalDay(d.getTime(), today.getTime());
+          const dayRuns = runsByDay.get(key) ?? [];
+          const dayPosts = postsByDay.get(key) ?? [];
+          const chipCount = dayRuns.length + dayPosts.length;
+          const isSelected = key === selectedKey;
+          const canScheduleHere = chipCount === 0 && canSchedule;
+          const activate = () => {
+            if (chipCount > 0) onSelectDay(key);
+            else if (canScheduleHere) onScheduleAt(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9, 0, 0, 0).getTime());
+          };
+          const interactive = chipCount > 0 || canScheduleHere;
+          return (
+            <div
+              key={key}
+              onClick={activate}
+              role={interactive ? "button" : undefined}
+              tabIndex={interactive ? 0 : -1}
+              onKeyDown={(event) => {
+                if (!interactive) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  activate();
+                }
+              }}
+              className={cn(
+                "min-h-[150px] border-b border-r border-border p-1.5 text-left align-top transition-colors last:border-r-0",
+                isToday && "bg-foreground/[0.04]",
+                isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
+                interactive && "cursor-pointer hover:bg-surface-2",
+              )}
+            >
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-2">
+                <span>{DAY_LABELS[d.getDay()]}</span>
+                <span className={cn(
+                  "flex h-5 w-5 items-center justify-center rounded-full text-[11px] leading-none",
+                  isToday ? "bg-primary text-primary-foreground font-bold" : "text-foreground",
+                )}>
+                  {d.getDate()}
+                </span>
+              </p>
+              <div className="space-y-1">
+                {dayRuns.slice(0, 4).map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
+                {dayRuns.length < 4 &&
+                  dayPosts
+                    .slice(0, 4 - dayRuns.length)
+                    .map((p) => (
+                      <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
+                    ))}
+                {chipCount > 4 && <p className="pl-1 text-[11px] text-muted-2">+{chipCount - 4} more</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Day-by-day list underneath — the SOW's own phrase: "the day by day
+          list underneath covers the next week." Shown at every width (unlike
+          the month view's mobile-only agenda), since a 7-cell week already
+          fits without the density problem a 42-cell month has. `sm:hidden`
+          previously contradicted this exact comment — it hid the list at
+          every width ≥640px, i.e. virtually every desktop/tablet session. */}
+      <ul className="divide-y divide-border">
+        {weekDays.map((d) => {
+          const key = dayKey(d.getTime());
+          const isToday = sameLocalDay(d.getTime(), today.getTime());
+          const dayRuns = runsByDay.get(key) ?? [];
+          const dayPosts = postsByDay.get(key) ?? [];
+          return (
+            <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+              <button
+                type="button"
+                onClick={() => onSelectDay(key)}
+                className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
+              >
+                <span className="text-xs font-semibold">{DAY_LABELS[d.getDay()]} {d.getDate()}</span>
+                <span className="text-[11px] text-muted-2">
+                  {dayRuns.length + dayPosts.length === 0
+                    ? "Nothing yet"
+                    : `${dayRuns.length + dayPosts.length} item${dayRuns.length + dayPosts.length === 1 ? "" : "s"}`}
+                </span>
+                <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 text-muted-2" />
+              </button>
+              {(dayRuns.length > 0 || dayPosts.length > 0) && (
+                <div className="space-y-1.5">
+                  {dayRuns.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
+                  {dayPosts.map((p) => (
+                    <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
+                  ))}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
+function DayView({
+  day,
+  isToday,
+  runs,
+  posts,
+  onOpenAsset,
+  viewerIsClient,
+  canSchedule,
+  onScheduleAt,
+}: {
+  day: Date;
+  isToday: boolean;
+  runs: CalendarRun[];
+  posts: CalendarPost[];
+  onOpenAsset: (id: string) => void;
+  viewerIsClient: boolean;
+  canSchedule: boolean;
+  onScheduleAt: (at: number) => void;
+}) {
+  const empty = runs.length === 0 && posts.length === 0;
+  return (
+    <div className="p-4">
+      <p className="mb-3 flex items-center gap-2 text-sm font-medium">
+        {day.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+        {isToday && <Badge tone="neon">Today</Badge>}
+      </p>
+      {empty ? (
+        <div className="rounded-md border border-dashed border-border bg-surface-2/50 px-4 py-6 text-center">
+          <p className="text-xs text-muted-2">Nothing on this day.</p>
+          {canSchedule && (
+            <button
+              type="button"
+              onClick={() => onScheduleAt(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0, 0, 0).getTime())}
+              className="mt-2 text-xs text-neon hover:underline"
+            >
+              Schedule a run
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {runs.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
+          {posts.map((p) => (
+            <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main component ──────────────────────────────────────────────────── */
 
 export function RunCalendar({
@@ -1147,6 +1431,8 @@ export function RunCalendar({
   agents = [],
   connectedPlatformsByClient,
   defaultClientId,
+  archiveAssets,
+  agentLabelByAssetId,
 }: {
   runs: CalendarRun[];
   /**
@@ -1184,10 +1470,40 @@ export function RunCalendar({
    */
   connectedPlatformsByClient?: Record<string, string[]>;
   defaultClientId?: string;
+  /**
+   * Archive view (portal revamp, Surface 05) — the SAME reader ArchiveView
+   * always took (Workspace's Archive tab, Account Center's Archive tab): a
+   * client's set is POSTED work from the last ~30 days (getClientArchiveAssets),
+   * staff keep the full library. Filtered server-side in calendar-body.tsx,
+   * not derived from `assets` above — that prop is unfiltered (it feeds the
+   * detail modal's lookup) and archive membership is a real rule, not "every
+   * asset this page happens to have in hand".
+   */
+  archiveAssets?: Asset[];
+  /** assetId → agent label for the rows above (§7.3 identity, contentLabelsByAsset). */
+  agentLabelByAssetId?: Record<string, string>;
 }) {
   const today = useMemo(() => new Date(), []);
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
+  // Portal revamp, Surface 05 — "Three views, weekly by default." Month's own
+  // year/month state above is untouched by this: Week and Day each navigate
+  // off their own anchor instant instead, so switching views never resets
+  // Month's position (or vice versa).
+  const [viewMode, setViewMode] = useState<CalendarViewMode>("week");
+  // Action 12 ("Look at your week") — event-tracked, no live signal answers it
+  // (lib/action-list.ts). Week is the default view, so a client who lands
+  // here at all has satisfied it; fire once per mount, never per re-render.
+  const firedWeekAction = useRef(false);
+  useEffect(() => {
+    if (firedWeekAction.current) return;
+    if (!viewerIsClient || !defaultClientId || viewMode !== "week") return;
+    firedWeekAction.current = true;
+    void markActionDoneAction(defaultClientId, "12");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire-once-on-mount by design, not a viewMode watcher
+  }, []);
+  const [weekAnchor, setWeekAnchor] = useState(() => startOfWeek(today));
+  const [dayAnchor, setDayAnchor] = useState(() => startOfDay(today));
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ images: AssetImage[]; index: number } | null>(null);
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
@@ -1275,6 +1591,45 @@ export function RunCalendar({
     setSelectedKey(null);
     if (viewMonth === 11) { setViewYear((y) => y + 1); setViewMonth(0); } else setViewMonth((m) => m + 1);
   }
+  function shiftWeek(days: number) {
+    setSelectedKey(null);
+    setWeekAnchor((prev) => {
+      const next = new Date(prev);
+      next.setDate(next.getDate() + days);
+      return next;
+    });
+  }
+  function shiftDay(days: number) {
+    setSelectedKey(null);
+    setDayAnchor((prev) => {
+      const next = new Date(prev);
+      next.setDate(next.getDate() + days);
+      return next;
+    });
+  }
+  /** One prev/next pair and one label, whichever view is active — the header reads one control, not four. */
+  const goPrev =
+    viewMode === "month" ? prevMonth : viewMode === "week" ? () => shiftWeek(-7) : () => shiftDay(-1);
+  const goNext =
+    viewMode === "month" ? nextMonth : viewMode === "week" ? () => shiftWeek(7) : () => shiftDay(1);
+  const weekDays = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => new Date(weekAnchor.getFullYear(), weekAnchor.getMonth(), weekAnchor.getDate() + i)),
+    [weekAnchor],
+  );
+  const rangeLabel =
+    viewMode === "month"
+      ? `${MONTH_NAMES[viewMonth]} ${viewYear}`
+      : viewMode === "week"
+        ? (() => {
+            const end = weekDays[6];
+            const sameMonth = weekAnchor.getMonth() === end.getMonth();
+            return sameMonth
+              ? `${MONTH_NAMES[weekAnchor.getMonth()].slice(0, 3)} ${weekAnchor.getDate()}–${end.getDate()}`
+              : `${MONTH_NAMES[weekAnchor.getMonth()].slice(0, 3)} ${weekAnchor.getDate()} – ${MONTH_NAMES[end.getMonth()].slice(0, 3)} ${end.getDate()}`;
+          })()
+        : viewMode === "day"
+          ? dayAnchor.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+          : "Archive";
 
   const selectedRuns = selectedKey ? (runsByDay.get(selectedKey) ?? []) : [];
   const selectedPosts = selectedKey ? (postsByDay.get(selectedKey) ?? []) : [];
@@ -1331,18 +1686,44 @@ export function RunCalendar({
                 Schedule a run
               </Button>
             )}
-            <div className="flex items-center gap-1">
-              <button onClick={prevMonth} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
-                <Icon name="ChevronLeft" className="h-4 w-4" />
-              </button>
-              <span className="w-[130px] shrink-0 whitespace-nowrap text-center text-sm font-medium">{MONTH_NAMES[viewMonth]} {viewYear}</span>
-              <button onClick={nextMonth} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
-                <Icon name="ChevronRight" className="h-4 w-4" />
-              </button>
-            </div>
+            {viewMode !== "archive" && (
+              <div className="flex items-center gap-1">
+                <button onClick={goPrev} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+                  <Icon name="ChevronLeft" className="h-4 w-4" />
+                </button>
+                <span className="w-[150px] shrink-0 whitespace-nowrap text-center text-sm font-medium">{rangeLabel}</span>
+                <button onClick={goNext} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+                  <Icon name="ChevronRight" className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
+        {/* View switcher — Day/Week/Month/Archive (portal revamp, Surface 05). Week is the default. */}
+        <div className="flex items-center gap-1 border-b border-border px-4 py-2">
+          {(["day", "week", "month", "archive"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => {
+                setSelectedKey(null);
+                setViewMode(mode);
+              }}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                viewMode === mode
+                  ? "bg-surface-2 text-foreground"
+                  : "text-muted hover:bg-surface-2 hover:text-foreground",
+              )}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+
+        {viewMode === "month" && (
+        <>
         {/* Day-of-week header - seven columns need width to mean anything */}
         <div className="hidden grid-cols-7 border-b border-border sm:grid">
           {DAY_LABELS.map((d) => (
@@ -1460,6 +1841,56 @@ export function RunCalendar({
             })
           )}
         </ul>
+        </>
+        )}
+
+        {viewMode === "week" && (
+          <WeekView
+            weekDays={weekDays}
+            today={today}
+            runsByDay={runsByDay}
+            postsByDay={postsByDay}
+            selectedKey={selectedKey}
+            onSelectDay={setSelectedKey}
+            onOpenAsset={setOpenAssetId}
+            viewerIsClient={viewerIsClient}
+            canSchedule={canSchedule}
+            onScheduleAt={(at) => {
+              setSchedulePrefillAt(at);
+              setScheduleOpen(true);
+            }}
+          />
+        )}
+
+        {viewMode === "day" && (
+          <DayView
+            day={dayAnchor}
+            isToday={sameLocalDay(dayAnchor.getTime(), today.getTime())}
+            runs={runsByDay.get(dayKey(dayAnchor.getTime())) ?? []}
+            posts={postsByDay.get(dayKey(dayAnchor.getTime())) ?? []}
+            onOpenAsset={setOpenAssetId}
+            viewerIsClient={viewerIsClient}
+            canSchedule={canSchedule}
+            onScheduleAt={(at) => {
+              setSchedulePrefillAt(at);
+              setScheduleOpen(true);
+            }}
+          />
+        )}
+
+        {viewMode === "archive" && (
+          <div className="p-4">
+            {archiveAssets && agentLabelByAssetId ? (
+              <ArchiveView
+                assets={archiveAssets}
+                agentLabelByAssetId={agentLabelByAssetId}
+                viewerIsClient={viewerIsClient}
+              />
+            ) : (
+              <p className="text-xs text-muted-2">Archive isn&apos;t available from this view.</p>
+            )}
+          </div>
+        )}
 
         {/* Legend + status filter - each chip toggles that status's visibility on the grid above. */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
@@ -1470,6 +1901,13 @@ export function RunCalendar({
             // offered at all — see calendarFilterKeyMatchable for which those are
             // and why. The chips a client CAN match are unchanged.
             .filter((key) => calendarFilterKeyMatchable(key, viewerIsClient))
+            // Portal revamp, Surface 05 — "In review is removed. We are not
+            // reviewing anything." The key/type stays (calendar-kind.ts's
+            // exhaustive CalendarFilterKey still names it, and a review-status
+            // run still renders its own badge) — this only drops the LEGEND
+            // chip and the ability to dim it, so nothing on this screen calls
+            // itself a review step any more.
+            .filter((key) => key !== "review")
             .map((key) => (
               <FilterChip
                 key={key}

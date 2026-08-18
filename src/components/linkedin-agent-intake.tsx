@@ -529,11 +529,21 @@ function CompanyForm({
   clientId,
   intake,
   pageUrlSuggestion,
+  isSetUp,
 }: {
   clientId: string;
   intake: LiIntakeView | null;
   /** The LinkedIn URL already on the client profile - confirm, don't re-ask. */
   pageUrlSuggestion?: string;
+  /**
+   * Portal revamp, Surface 04 — "saving is the setup." Only fires the
+   * one-time stand-up run automatically while it has never run: once set up,
+   * a later company-page edit updates the material the agent already reads
+   * without re-running the stand-up (SetupBand's own "Ready" state is what
+   * that would otherwise contradict). Absent ⇒ treated as set up, same
+   * default the rest of this file uses for props built before setup existed.
+   */
+  isSetUp?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -552,6 +562,11 @@ function CompanyForm({
       if (result.error) {
         setError(result.error);
         return;
+      }
+      // Saving the company page IS the setup, the first time. No further
+      // click, no separate "Set it up" press to remember.
+      if (isSetUp === false) {
+        await intakeSave(() => runLinkedInSetupAction({ clientId, identity: "company" }));
       }
       setEditing(false);
       router.refresh();
@@ -795,6 +810,15 @@ function SeatCard({
       if (result.error) {
         setError(result.error);
         return;
+      }
+      // Portal revamp, Surface 04: saving a seat that has never had its voice
+      // built fires that build immediately — the same treatment AddSeatForm
+      // already gives a brand-new seat. Re-saving a seat that already built
+      // its voice (a role/focus tweak, say) does not re-fire it; SeatSetup's
+      // own "Build their voice" stays for the rare case someone wants to
+      // force a rebuild without changing a field.
+      if (!seat.voiceReady) {
+        await intakeSave(() => runLinkedInSetupAction({ clientId, identity: seat.id }));
       }
       setEditing(false);
       router.refresh();
@@ -1281,6 +1305,7 @@ export function LinkedInAgentIntake({
           clientId={clientId}
           intake={company}
           {...(pageUrlSuggestion ? { pageUrlSuggestion } : {})}
+          isSetUp={isSetUp ?? true}
         />
       </div>
       {isSetUp === false ? (

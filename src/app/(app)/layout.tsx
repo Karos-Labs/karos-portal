@@ -10,17 +10,13 @@ import {
   getClient,
   getClientCredits,
   getClientReport,
-  listClientContextDocs,
   listClientIntegrations,
-  listClientCompetitors,
+  listCustomAgents,
+  updateClient,
 } from "@/lib/data";
+import { agentKeyMatchesClientSlug, isUnlistedAgent } from "@/lib/custom-agent-launch";
 import { ActiveClientProvider } from "@/lib/active-client-context";
-import {
-  CREDIT_COSTS,
-  availableCredits,
-  creditBlockReason,
-  isBillableClientActor,
-} from "@/lib/credits";
+import { availableCredits } from "@/lib/credits";
 import {
   toClientPortalView,
   toStaffShellView,
@@ -119,17 +115,60 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (user.role === "CLIENT_USER" && user.clientId) {
     const client = await getClient(user.clientId);
     if (client) {
-      const [contextDocs, integrations, report, competitors, credits] = await Promise.all([
-        // Tier-filtered at the server boundary, not at render: ClientRail is a
-        // "use client" component, so anything fetched here is serialized into the
-        // RSC payload the client's browser downloads. Internal analyst docs and
-        // never-published internal-only docs must not travel with it.
-        listClientContextDocs(user.clientId, "client"),
+      // contextDocs/competitors/correctionPricing no longer feed ClientRail —
+      // Documents, Competitor Track and Brand Colors all moved to Account
+      // Center (portal revamp, Surface 01/06), which fetches its own data on
+      // its own route rather than riding along on every page's layout.
+      const [integrations, report, credits, customAgents] = await Promise.all([
         listClientIntegrations(user.clientId),
         getClientReport(user.clientId),
-        listClientCompetitors(user.clientId),
         getClientCredits(user.clientId),
+        listCustomAgents(),
       ]);
+
+      // The rail's "AI agents" dropdown (Surface 01) — GRANTED agents, PLUS any
+      // agent already starred even without a grant (2026-08). The dropdown used
+      // to be granted-only, on the reasoning that an agent that only shows up
+      // via delivered work "will appear here once an admin grants it" — but the
+      // agent's own detail page can be opened, and now starred, by EITHER a
+      // grant OR delivered work (see that page's own gate), and a star that
+      // writes successfully but can never render a pinned row is a broken
+      // control, not a scoped one. Karos Labs' own Instagram Agent is the
+      // flagship case: it predates the umbrella/grant model entirely, so it is
+      // never in `customAgentIds` yet is the most-used agent in the portal —
+      // exactly the agent a client would reach for first to pin.
+      // `enabled`/`isUnlistedAgent`/slug-match stay mandatory regardless of
+      // grant OR star: those are data-integrity fences, not the grant boundary
+      // this loosens.
+      const allowedAgentIds = new Set(client.customAgentIds ?? []);
+      const starredAgentIdSet = new Set(client.starredAgentIds ?? []);
+      const railAgents = customAgents
+        .filter(
+          (a) =>
+            a.enabled &&
+            !isUnlistedAgent(a) &&
+            agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug) &&
+            (allowedAgentIds.has(a.id) || starredAgentIdSet.has(a.id)),
+        )
+        .map((a) => ({ id: a.id, key: a.key, name: a.name, icon: a.icon ?? null }));
+
+      // Onboarding default stars ("Karos sets the first stars at onboarding,
+      // to steer what they use" — SOW p.4). Checked on `=== undefined`, not
+      // `.length === 0`: a client who stars something and later unpins back
+      // down to zero has made a choice, and `toggleStarredAgentAction` always
+      // writes a real (possibly empty) array, never `undefined` — so this
+      // fires exactly once per client, the first time their rail is ever
+      // built, and never again once any stars exist. Every client onboarded
+      // before this field existed reads as `undefined` today, which is the
+      // "existing users" backfill case as well as the fresh-signup case; both
+      // get the same one-time default. Awaited, not fire-and-forget: it only
+      // runs once per client ever, and awaiting means THIS render already
+      // reflects it, instead of the pinned rows appearing a navigation later.
+      if (client.starredAgentIds === undefined && railAgents.length > 0) {
+        const defaultStarredIds = railAgents.slice(0, 2).map((a) => a.id);
+        await updateClient(client.id, { starredAgentIds: defaultStarredIds });
+        client.starredAgentIds = defaultStarredIds;
+      }
 
       // The SPENDABLE figure, not the raw balance. The pill is labelled "credits
       // remaining", and what the charge transaction actually enforces is the
@@ -142,19 +181,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       // (react-hooks/purity) for no behavioural gain.
       const spendableCredits = availableCredits(credits);
 
-      // Price + refusal for a targeted doc correction, resolved HERE rather than
-      // in the modal - same shape as the Agents page's creditBlockReasons map:
-      // the reason comes from the server's own ladder, so the modal can't invent
-      // a different one. Present only for a billable client viewer; staff and
-      // admins in "View as Client" are never charged, so they see no price.
-      const correctionPricing = isBillableClientActor(user)
-        ? {
-            cost: CREDIT_COSTS.targetedCorrection,
-            ...(spendableCredits < CREDIT_COSTS.targetedCorrection
-              ? { blockReason: creditBlockReason(credits, CREDIT_COSTS.targetedCorrection) }
-              : {}),
-          }
-        : undefined;
       // Same rule as the docs above, applied to the client record itself: the
       // rail is a "use client" component, so the WHOLE document would be
       // serialized into every client-portal RSC payload - including
@@ -168,14 +194,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <ClientRail
               user={user}
               client={clientView}
-              contextDocs={contextDocs}
-              competitors={competitors}
-              isAdmin={false}
+              agents={railAgents}
               actionItems={actionItems as ActionItemNotification[]}
               reviewJobs={reviewJobs}
               taskAlerts={taskAlerts}
               spendableCredits={spendableCredits}
-              correctionPricing={correctionPricing}
             />
 
             <div className="flex min-w-0 flex-1 flex-col">

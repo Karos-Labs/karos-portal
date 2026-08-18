@@ -9,11 +9,9 @@ import { Icon } from "@/components/icon";
 import Image from "next/image";
 import { cn, initials } from "@/lib/utils";
 import { useActiveClient } from "@/lib/active-client-context";
-import { ClientDocuments } from "@/components/client-documents";
-import { clientIntelSchedule } from "@/lib/intel-schedule";
-import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
+import { BrandColorsSection } from "@/components/client-context-sections";
 import {
   NotificationBell,
   useNotificationDismissals,
@@ -27,8 +25,7 @@ import { ThemeSwitch } from "@/components/theme-switch";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
 import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
-import { isAiProcessingLockActive } from "@/lib/constants";
-import { hasAiProcessingFailure, type StaffShellClientView } from "@/lib/client-visibility";
+import type { StaffShellClientView } from "@/lib/client-visibility";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
@@ -103,14 +100,23 @@ const NAV: NavItem[] = [
 // The client-facing tabs shown to staff when in Client View mode. The Library
 // merged into the Workspace's Archive tab (2026-07); staff review drafts via
 // the global Assets page.
+//
+// Portal revamp Surface 01: "Home" replaces "Dashboard" (same destination) and
+// "Downloads" joins the set, matching client-rail.tsx's tabNav. "AI agents"
+// stays a plain link here rather than the client rail's starred-rows +
+// dropdown (ClientRailAgentsNav) — this is a staff quick-preview strip, not
+// the client's own nav, so it trades the interactive roster for one row that
+// still reaches the same page. Workspace is gone from both shells — the
+// locked decision list retires it ("The Board is replaced by the action list
+// on Home"); the /tasks route itself is untouched, only its nav entry.
 function clientViewNav(clientId: string): NavItem[] {
   return [
-    { href: `/clients/${clientId}`, label: "Dashboard", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
+    { href: `/clients/${clientId}`, label: "Home", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
     /* Sentence case, like the client rail's own item and both headings on the
        page they open — one destination, one spelling (#141). */
     { href: `/clients/${clientId}/agents`, label: "AI agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
-    { href: `/clients/${clientId}/tasks`, label: "Workspace", icon: "ListChecks", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
+    { href: `/clients/${clientId}/downloads`, label: "Downloads", icon: "Download", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   ];
 }
 
@@ -578,85 +584,6 @@ export function Sidebar({
     </nav>
   );
 
-  /**
-   * THE EXTRA BUTTON IS GONE (CD-L P5).
-   *
-   * This rail used to hand ClientProfilePanel a ↗ to the client's own website
-   * (CD-G4), described in its own comment as "the whole difference between the
-   * two views of this panel". The product owner walked both views and ruled the
-   * difference out: "The rest of this page should be the exact same", with
-   * Schedule and Regenerate on the DOCUMENTS heading as the only staff extras
-   * left anywhere in the client-context stack.
-   *
-   * Staff can still reach the site — it is the Website field in the Brand
-   * Profile sheet the panel's contact button opens, and every Competitor Track
-   * row below keeps its own ↗. What is removed is a control that made the two
-   * mounts render differently, which is the thing being fixed.
-   */
-
-  // Client-context sections appended below core nav when a client is active.
-  // CD-G4: the top block — logo, nav, company panel, and the rule above the
-  // Documents header — is back to the 36a5200 baseline measurement-for-
-  // measurement; Documents and everything under it keeps the approved
-  // compaction. `space-y` is the one class that straddles that boundary (it
-  // sets the panel→Documents gap AND the Documents→Competitors→Brand Colors
-  // gaps), so it stays at the compact 1.5; the baseline air above Documents is
-  // restored through the two wrappers' own pt-4 instead.
-  //
-  // mt-1.5, not mt-2: the client's rail puts its nav and its first section 6px
-  // apart (space-y-1.5 on the body), and this is the same gap in the other
-  // shell. The 2px it gives back also matters — the company panel below costs
-  // this rail ~70px it did not spend before, and the no-scroll contract
-  // (CD-E3) is measured at 1440x900 with seven documents on screen.
-  const clientSections = activeClient ? (
-    <div className="mt-1.5 space-y-1.5">
-      {/* The client's OWN company panel, in the slot the company chip used to
-          hold and in the same place the client rail keeps it: first section
-          under the nav, directly above Documents (V3). Same component, same
-          `compact` — the rail is the no-scroll layout the clamp was written
-          for (CD-E3) — and now the same PROPS, full stop: the staff ↗ that used
-          to ride in its header was the last divergence between the two views
-          and CD-L P5 removed it. The chip this replaced drew the logo and the
-          name and stopped there, so bio and handles, the two things AF-4 put on
-          the client's rail, were the two things a staff member in client
-          context could not see. */}
-      <div className="border-t border-border pt-4">
-        <ClientProfilePanel client={activeClient.client} compact />
-      </div>
-
-      <div className="border-t border-border pt-4">
-        <ClientDocuments
-          contextDocs={activeClient.contextDocs}
-          isAdmin={activeClient.isAdmin}
-          clientId={activeClient.client.id}
-          isAiProcessing={isAiProcessingLockActive(activeClient.client)}
-          aiProcessingFailed={hasAiProcessingFailure(activeClient.client)}
-          intelSchedule={clientIntelSchedule(activeClient.client)}
-          /* Staff-only shell: internal-tier documents are readable here. */
-          allowInternalFallback
-        />
-      </div>
-
-      {/* key: switching client context must reset the panel's local state -
-          an optimistically added row otherwise stayed on screen for the NEXT
-          client's rail until a reload (QA F62 flag). */}
-      <CompetitorTrack
-        key={activeClient.client.id}
-        competitors={activeClient.competitors}
-        clientId={activeClient.client.id}
-        isStaff={true}
-      />
-
-      <BrandColorsSection
-        guidelines={activeClient.client.brandingGuidelines}
-        clientId={activeClient.client.id}
-        hasWebsite={!!activeClient.client.website}
-        /* Staff shell - internal usage percentages are visible and editable here. */
-        isStaff
-      />
-    </div>
-  ) : null;
-
   // `inDrawer` - the same tree serves the desktop rail and the narrow-width
   // drawer, but the drawer is itself one tap deep, so the chrome CD-G9c moved
   // into the account menu is surfaced a level higher there (see the footer).
@@ -679,15 +606,34 @@ export function Sidebar({
         </Link>
       </div>
 
-      {/* Body. NOT a scroll container by contract (CD-E3): nav + client chip +
-          Documents + Competitor Track + Brand Colors + footer must fit the
-          viewport at common laptop heights. The content set is bounded - 4
-          client tabs, ≤6 documents, ≤5 tracked competitors, ≤4 swatches - so
-          the compacted stack fits; overflow-y-auto stays as the safety valve
-          for genuinely short windows rather than clipping a section away. */}
+      {/* Body. Documents/Competitor Track left this rail with the client's own
+          (portal revamp, Surface 01/06) — the full brand card
+          (ClientProfilePanel) stays, on explicit direction, mirroring
+          client-rail.tsx so a staff member's client-context preview matches
+          what the client actually sees (AF-3 parity). Brand Colors came back
+          for the same reason it came back there, and the parity rule is why it
+          is here too: this rail is the staff PREVIEW of that one.
+
+          PINNED ABOVE {"{nav}"} (2026-08, client-zero feedback) — same
+          reorder as client-rail.tsx, for the same parity reason: if a client
+          sees their own brand before their nav, staff previewing that client
+          must see the identical order, not nav-then-brand. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-2">
-        {nav}
-        {clientSections}
+        {activeClient && (
+          <>
+            <ClientProfilePanel client={activeClient.client} compact hideDescription />
+            {/* isStaff: this rail is staff-only, and the swatch tooltips carry
+                the internal mix percentage for them (CD-E2). */}
+            <BrandColorsSection
+              guidelines={activeClient.client.brandingGuidelines}
+              clientId={activeClient.client.id}
+              hasWebsite={!!activeClient.client.website}
+              isStaff
+            />
+            <div className="mt-1.5 border-t border-border pt-4">{nav}</div>
+          </>
+        )}
+        {!activeClient && nav}
       </div>
 
       {/* Bottom - fixed */}
@@ -757,44 +703,22 @@ export function Sidebar({
           />
 
           <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
-            {/* NOT compact: the clamp exists for the no-scroll desktop rail, and
-                this sheet scrolls. The real client's sheet (client-rail.tsx)
-                shows the full text — one look for both views (AF-3). */}
-            <ClientProfilePanel client={clientCtx.client} />
-
-            <div className="border-t border-border pt-4">
-              <ClientDocuments
-                contextDocs={clientCtx.contextDocs}
-                isAdmin={clientCtx.isAdmin}
-                clientId={clientCtx.client.id}
-                isAiProcessing={isAiProcessingLockActive(clientCtx.client)}
-                aiProcessingFailed={hasAiProcessingFailure(clientCtx.client)}
-                intelSchedule={clientIntelSchedule(clientCtx.client)}
-                /* Staff-only shell: internal-tier documents are readable here. */
-                allowInternalFallback
-              />
-            </div>
-
-            {/* key: see the desktop mount - switching client must reset the
-                panel's optimistic rows (QA F62). */}
-            <CompetitorTrack
-              key={clientCtx.client.id}
-              competitors={clientCtx.competitors}
-              clientId={clientCtx.client.id}
-              isStaff={true}
-            />
-
-            <BrandColorsSection
-              guidelines={clientCtx.client.brandingGuidelines}
-              clientId={clientCtx.client.id}
-              hasWebsite={!!clientCtx.client.website}
-              /* Staff shell - internal usage percentages are visible here. */
-              isStaff
-            />
-
-            {/* Tail mirrors the client sheet's, plus the chrome CD-G9c moved off
-                the retired top bar and the sign-out the drawer used to carry. */}
-            <div className="space-y-0.5 border-t border-border pt-4">
+            {/* Documents/Competitor Track left this sheet with the client's own
+                (portal revamp, Surface 01/06) — reached through Account Center
+                now, same as the real client sees. The full brand card and the
+                Brand Colors row stay, mirroring client-rail.tsx's sheet. */}
+            {clientCtx && (
+              <div className="border-b border-border pb-4">
+                <ClientProfilePanel client={clientCtx.client} hideDescription />
+                <BrandColorsSection
+                  guidelines={clientCtx.client.brandingGuidelines}
+                  clientId={clientCtx.client.id}
+                  hasWebsite={!!clientCtx.client.website}
+                  isStaff
+                />
+              </div>
+            )}
+            <div className="space-y-0.5">
               {/* Explicit close: the sheet otherwise closes on navigation, and
                   tapping Settings while already ON /settings routes nowhere -
                   the sheet just sat there over the page it had reached. */}

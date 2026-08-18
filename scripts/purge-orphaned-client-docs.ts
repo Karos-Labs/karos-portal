@@ -55,6 +55,8 @@ const CLIENT_SCOPED_COLLECTIONS = [
   "actionItems",
   "scheduledRuns",
   "clientMarketingAnalytics",
+  "clientFollowerSnapshots",
+  "clientActionStates",
   "campaigns",
   "clientSeats",
   "agentIntake",

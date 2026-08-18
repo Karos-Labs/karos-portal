@@ -585,7 +585,7 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             <BulkUploadClips clientId={id} bucketName={process.env.GCS_MEDIA_BUCKET} />
             <ReplanCalendarButton clientId={id} />
             <a
-              href={`/clients/${id}/settings?tab=channels`}
+              href={`/clients/${id}/settings?tab=settings`}
               className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
             >
               Manage integrations →

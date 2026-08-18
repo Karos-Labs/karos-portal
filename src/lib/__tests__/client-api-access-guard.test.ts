@@ -60,6 +60,8 @@ const ASSIGNED_ON_USER = {
 const UNASSIGNED = { uid: "u-emp-2", role: "KAROS_EMPLOYEE", clientId: null, createdAt: 0 };
 /** The client whose workspace this is — must keep working on the routes they use. */
 const OWN_CLIENT_USER = { uid: "u-client", role: "CLIENT_USER", clientId: "c1", createdAt: 0 };
+/** A client logged into a DIFFERENT workspace — must never reach c1's data. */
+const OTHER_CLIENT_USER = { uid: "u-client-2", role: "CLIENT_USER", clientId: "c2", createdAt: 0 };
 
 const LEGITIMATE_STAFF = [
   ["an admin", ADMIN],
@@ -279,6 +281,29 @@ describe("POST /api/clients/[id]/logo", () => {
       expect.objectContaining({ logoUrl: "https://cdn.test/new.png" }),
     );
   });
+
+  // Portal revamp, Account Center Profile tab: a client manages their own
+  // "company picture" now — admitted through the same canViewClient fence
+  // staff use, not a role carve-out, so a client from another workspace still
+  // 404s exactly like the unassigned employee above.
+  it("lets the client whose workspace it is replace their own logo", async () => {
+    as(OWN_CLIENT_USER);
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(data.updateClient).toHaveBeenCalledWith(
+      "c1",
+      expect.objectContaining({ logoUrl: "https://cdn.test/new.png" }),
+    );
+  });
+
+  it("404s a client logged into a different workspace, and touches neither Storage nor the client", async () => {
+    as(OTHER_CLIENT_USER);
+    const res = await call();
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Client not found" });
+    expect(uploadBytes).not.toHaveBeenCalled();
+    expect(data.updateClient).not.toHaveBeenCalled();
+  });
 });
 
 describe("DELETE /api/clients/[id]/logo", () => {
@@ -301,6 +326,21 @@ describe("DELETE /api/clients/[id]/logo", () => {
     expect(res.status).toBe(200);
     expect(deleteObject).toHaveBeenCalledWith("clients/c1/logos/old.png");
     expect(data.updateClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the client whose workspace it is clear their own logo", async () => {
+    as(OWN_CLIENT_USER);
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(deleteObject).toHaveBeenCalledWith("clients/c1/logos/old.png");
+  });
+
+  it("404s a client logged into a different workspace, and deletes nothing", async () => {
+    as(OTHER_CLIENT_USER);
+    const res = await call();
+    expect(res.status).toBe(404);
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(data.updateClient).not.toHaveBeenCalled();
   });
 });
 
@@ -612,6 +652,7 @@ describe("every API route that takes a client id asks the fence", () => {
     "clients/[id]/agents/mentionable": "fenced",
     "clients/[id]/chat": "fenced",
     "clients/[id]/context": "fenced",
+    "clients/[id]/downloads": "fenced",
     "clients/[id]/insights": "fenced",
     "clients/[id]/logo": "fenced",
     "clients/[id]/report": "fenced",

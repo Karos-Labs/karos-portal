@@ -78,6 +78,12 @@ export default async function AnalyticsPage({
   let modelStats: ModelStat[] = [];
   let agentStats: AgentStat[] = [];
   let agentDisplayName: string | undefined;
+  // Two flags, not one: the all-time KPIs come from the O(1) snapshot doc and
+  // are EXACT, while the leaderboard beside them is always a capped scan. One
+  // shared flag would print "partial" over numbers that are complete, which is
+  // the same lie as printing nothing over numbers that aren't.
+  let kpisTruncated = false;
+  let leaderboardTruncated = false;
 
   if (range) {
     const [rs, errs, clients, loginLogs, feedbacks, drilldown, agentFeedbackRows, umbrellas] = await Promise.all([
@@ -98,6 +104,8 @@ export default async function AnalyticsPage({
     totalErrors       = rs.totalErrors;
     modelStats        = rs.modelStats;
     agentStats        = rs.agentStats;
+    // Inside a range every figure on the page comes from the capped scan.
+    kpisTruncated = leaderboardTruncated = rs.truncated;
 
     // Filter-on-click: the selected agent's own totals + model breakdown
     // replace the headline KPIs/model table, while the leaderboard itself
@@ -109,6 +117,7 @@ export default async function AnalyticsPage({
       totalRuns         = drilldown.totalRuns;
       modelStats        = drilldown.modelStats;
       agentDisplayName  = drilldown.agentDisplayName;
+      kpisTruncated     = drilldown.truncated;
     } else if (agentKey) {
       totalCostUsd = totalInputTokens = totalOutputTokens = totalRuns = 0;
       modelStats = [];
@@ -119,6 +128,7 @@ export default async function AnalyticsPage({
       rangeLabel, range, clientId, clients, agentKey, agentDisplayName,
       totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
       modelStats, agentStats,
+    kpisTruncated, leaderboardTruncated,
       errors: errs,
       loginCount: loginLogs.length,
       feedbacks,
@@ -149,7 +159,10 @@ export default async function AnalyticsPage({
   totalRuns         = snapshot.totalRuns;
   totalErrors       = snapshot.totalErrors;
   modelStats        = extractModelStats(snapshot);
-  agentStats        = allTimeAgentStats;
+  agentStats        = allTimeAgentStats.stats;
+  // The snapshot is a real running aggregate, so the KPIs above are exact here;
+  // only the leaderboard's raw-log scan is bounded.
+  leaderboardTruncated = allTimeAgentStats.truncated;
 
   if (agentKey && drilldown) {
     totalCostUsd      = drilldown.totalCostUsd;
@@ -158,6 +171,8 @@ export default async function AnalyticsPage({
     totalRuns         = drilldown.totalRuns;
     modelStats        = drilldown.modelStats;
     agentDisplayName  = drilldown.agentDisplayName;
+    // Selecting an agent swaps the exact snapshot KPIs for capped scan figures.
+    kpisTruncated     = drilldown.truncated;
   } else if (agentKey) {
     totalCostUsd = totalInputTokens = totalOutputTokens = totalRuns = 0;
     modelStats = [];
@@ -168,6 +183,7 @@ export default async function AnalyticsPage({
     rangeLabel, range, clientId, clients, agentKey, agentDisplayName,
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
     modelStats, agentStats,
+    kpisTruncated, leaderboardTruncated,
     errors,
     loginCount: loginLogs.length,
     feedbacks,
@@ -193,6 +209,10 @@ function renderPage(p: {
   totalErrors: number;
   modelStats: ModelStat[];
   agentStats: AgentStat[];
+  /** The headline KPI figures are floors, not totals — their scan hit its cap. */
+  kpisTruncated: boolean;
+  /** The agent leaderboard ranks a partial scan. */
+  leaderboardTruncated: boolean;
   errors: Awaited<ReturnType<typeof listRecentErrors>>;
   loginCount: number;
   feedbacks: Awaited<ReturnType<typeof listFeedbacks>>;
@@ -204,7 +224,8 @@ function renderPage(p: {
   const {
     rangeLabel, range, clientId, clients, agentKey, agentDisplayName,
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
-    modelStats, agentStats, errors, loginCount, feedbacks, agentFeedbackRows, agentNames, lowCredits,
+    modelStats, agentStats, kpisTruncated, leaderboardTruncated,
+    errors, loginCount, feedbacks, agentFeedbackRows, agentNames, lowCredits,
   } = p;
 
   /** Build an /admin/analytics href preserving clientId/range, overriding agentKey. */
@@ -312,6 +333,21 @@ function renderPage(p: {
         ))}
       </div>
 
+      {/* A capped read that renders as a total is indistinguishable from a real
+          one, so say it out loud rather than quietly under-reporting spend. */}
+      {kpisTruncated && (
+        <p className="-mt-4 flex items-start gap-1.5 text-xs text-muted-2">
+          <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0 text-neon" />
+          <span>
+            Partial window. This range holds more logs than one read returns, so every
+            figure above is a lower bound, not a total.
+            {clientId
+              ? " A per-client range is cut from the newest logs across ALL clients before this client's are picked out, so their slice here can be far smaller than the cap suggests."
+              : " Pick a narrower range for exact figures."}
+          </span>
+        </p>
+      )}
+
       {/* Clients low on credits - the agency's queue for the top-up the
           client-facing wall tells them to ask for (QA F117). */}
       {lowCredits.length > 0 && (
@@ -398,7 +434,16 @@ function renderPage(p: {
 
         {/* Agent leaderboard */}
         <Card>
-          <CardTitle className="mb-4">Agent leaderboard</CardTitle>
+          <CardTitle className={leaderboardTruncated ? "mb-1" : "mb-4"}>Agent leaderboard</CardTitle>
+          {/* Ranking a partial scan doesn't just lower the numbers, it can
+              reorder them — an agent whose spend sits outside the window loses
+              more of its history than a noisier one inside it. */}
+          {leaderboardTruncated && (
+            <p className="mb-4 flex items-start gap-1.5 text-xs text-muted-2">
+              <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0 text-neon" />
+              <span>Ranked from the most recent logs only. Older spend is outside this scan, so the order can be off, not just the totals.</span>
+            </p>
+          )}
           {agentStats.length === 0 ? (
             <EmptyState
               icon={<Icon name="Bot" className="h-5 w-5" />}

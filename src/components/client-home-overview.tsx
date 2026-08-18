@@ -53,6 +53,9 @@ export function ClientHomeOverview({
   tasks,
   assets,
   viewerIsClient = false,
+  agentLabelByAssetId,
+  recentActivityLimit = 5,
+  tasksHitLimit = false,
 }: {
   /**
    * Whose account this page is. Needed only so the archive links resolve for a
@@ -75,6 +78,29 @@ export function ClientHomeOverview({
   assets: Asset[];
   /** Whose "Recent activity" this is - see the list below (A3/A4). */
   viewerIsClient?: boolean;
+  /**
+   * assetId → the agent name its row should carry (§7.3 identity, same
+   * contentLabelsByAsset join the Workspace archive and Account Center's
+   * Archive tab use). Optional — a caller with nothing to join against (no
+   * jobs/umbrellas in hand) still gets rows, just without the agent line.
+   * Portal revamp: this is what turns "Recent activity" into Home's
+   * "Recent Agent Activity" widget (Surface 02).
+   */
+  agentLabelByAssetId?: Record<string, string>;
+  /** How many rows the Recent activity list shows. Default unchanged (5). */
+  recentActivityLimit?: number;
+  /**
+   * Did `tasks` arrive at its query cap? (2026-08)
+   *
+   * The page fetches with `limit: 50` and every count below is a `.length` of
+   * that array, so a client with eighty open items read a flat "50 pending
+   * tasks" — a truncation printed as a total, and the two categories eat into
+   * one another's share of the same cap. When the cap was hit the counts are
+   * suffixed "+", which is the honest reading of a windowed list: at least this
+   * many. Optional and defaulting false so a caller that fetches everything
+   * (staff, who are handed an empty array anyway) says nothing extra.
+   */
+  tasksHitLimit?: boolean;
 }) {
   const archive = clientArchiveLink({ clientId, isStaff: !viewerIsClient });
   // Counted off the deliverables themselves, not off agent runs in `review` —
@@ -99,6 +125,13 @@ export function ClientHomeOverview({
   const failedPublishes = assets.filter((a) => postKind(a) === "failed");
   const attentionCount =
     deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length + failedPublishes.length;
+  /**
+   * "+" when the number is a floor rather than a total (see `tasksHitLimit`).
+   * Applied only to the two counts derived from the capped `tasks` array —
+   * deliverables and failed publishes come from `assets`, which is fetched
+   * whole, and must not be marked as if they were windowed.
+   */
+  const more = tasksHitLimit ? "+" : "";
 
   // Date.now() intentional: the archive is a time-windowed view (30 days) and a
   // future-dated post is not in it yet, so "does this row have a destination"
@@ -134,7 +167,7 @@ export function ClientHomeOverview({
   const recentAssets = [...assets]
     .filter((a) => !viewerIsClient || isInClientArchive(a, now))
     .sort((a, b) => stampOf(b) - stampOf(a))
-    .slice(0, 5);
+    .slice(0, recentActivityLimit);
 
   return (
     /* CD-H4: `min-w-0` on the cards, not decoration. A grid item's automatic
@@ -144,14 +177,26 @@ export function ClientHomeOverview({
        archive" were cut off by the shell's overflow-x-clip. With the floor at 0
        the card takes the track and the rows' existing min-w-0/truncate chain
        does the shortening it was always meant to do. */
-    <div className="grid gap-6 lg:grid-cols-2">
+    /* `@3xl` (48rem), NOT `lg` (2026-08). Tailwind's `lg:` asks the VIEWPORT,
+       and this card sits in a column the 288px rail has already taken a bite
+       out of — so at a 1024-1280px window the breakpoint fired on a content
+       area barely 700px wide and split it into two ~330px tracks. That is the
+       squeezed dashboard in the product owner's capture: "Needs your attention"
+       broken over three lines, "16 deliverables in review" wrapping mid-phrase.
+       A container query asks the only width that matters here, the one this
+       grid actually has, so the same component behaves correctly at every
+       window size, zoom level and rail width. */
+    <div className="grid gap-6 @4xl:grid-cols-2">
       {/* Needs your attention */}
       <Card className="min-w-0">
-        <div className="mb-4 flex items-center justify-between">
-          <CardTitle>Needs your attention</CardTitle>
+        {/* gap + min-w-0 + a shrink-0 badge: the title truncates, the chip does
+            not, and neither pushes the other off the card. */}
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <CardTitle className="min-w-0 truncate">Needs your attention</CardTitle>
           {attentionCount > 0 && (
             <Badge tone="warning">
-              {attentionCount} item{attentionCount === 1 ? "" : "s"}
+              {attentionCount}
+              {more} item{attentionCount === 1 && !more ? "" : "s"}
             </Badge>
           )}
         </div>
@@ -161,7 +206,7 @@ export function ClientHomeOverview({
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success/10">
               <Icon name="CircleCheck" className="h-4 w-4 text-success" />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">All caught up</p>
               <p className="text-xs text-muted-2">Nothing is waiting on you right now.</p>
             </div>
@@ -220,7 +265,7 @@ export function ClientHomeOverview({
               <AttentionRow
                 href={taskBoardHref(reviewPendingTasks)}
                 icon="Eye"
-                label={`${reviewPendingTasks.length} task${reviewPendingTasks.length === 1 ? "" : "s"} ready for review`}
+                label={`${reviewPendingTasks.length}${more} task${reviewPendingTasks.length === 1 && !more ? "" : "s"} ready for review`}
                 hint="Completed work waiting for your sign-off."
               />
             )}
@@ -228,7 +273,7 @@ export function ClientHomeOverview({
               <AttentionRow
                 href={taskBoardHref(pendingTasks)}
                 icon="Circle"
-                label={`${pendingTasks.length} pending task${pendingTasks.length === 1 ? "" : "s"}`}
+                label={`${pendingTasks.length}${more} pending task${pendingTasks.length === 1 && !more ? "" : "s"}`}
                 hint="Open items on your workspace board."
               />
             )}
@@ -238,11 +283,11 @@ export function ClientHomeOverview({
 
       {/* Recent activity */}
       <Card className="min-w-0">
-        <div className="mb-4 flex items-center justify-between">
-          <CardTitle>Recent activity</CardTitle>
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <CardTitle className="min-w-0 truncate">Recent activity</CardTitle>
           <Link
             href={archive.href}
-            className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
+            className="shrink-0 whitespace-nowrap text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
           >
             Open archive
           </Link>
@@ -253,7 +298,7 @@ export function ClientHomeOverview({
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3">
               <Icon name="FolderOpen" className="h-4 w-4 text-muted-2" />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">No deliverables yet</p>
               <p className="text-xs text-muted-2">New assets will show up here as they land.</p>
             </div>
@@ -270,11 +315,13 @@ export function ClientHomeOverview({
               // rendered as links to a list they are not in. One predicate,
               // asked here instead of re-derived.
               const inArchive = isInClientArchive(a, now);
+              const agentLabel = agentLabelByAssetId?.[a.id];
               const body = (
                 <>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-foreground">{a.title}</p>
                     <p className="mt-0.5 text-xs text-muted-2">
+                      {agentLabel ? `${agentLabel} · ` : ""}
                       {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(stampOf(a))}
                     </p>
                   </div>
@@ -408,8 +455,11 @@ function AttentionRow({
         <Icon name={icon} className={`h-4 w-4 ${tone === "danger" ? "text-danger" : "text-warning"}`} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground">{label}</p>
-        <p className="text-xs text-muted-2">{hint}</p>
+        {/* `truncate` on the label, `line-clamp-2` on the hint: the label is a
+            count sentence that must stay on one line to be readable at a
+            glance, and the hint is the part that may lose its tail. */}
+        <p className="truncate text-sm font-medium text-foreground">{label}</p>
+        <p className="line-clamp-2 text-xs text-muted-2">{hint}</p>
       </div>
       {href && <Icon name="ArrowRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />}
     </>

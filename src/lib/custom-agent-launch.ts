@@ -344,7 +344,8 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       fields: [
         {
           key: LINKEDIN_IDENTITY_FIELD_KEY,
-          label: "Post as",
+          // "Choose my seat" (portal revamp, Surface 03/04) — was "Post as".
+          label: "Choose my seat",
           type: "select",
           defaultValue: "company",
           // Replaced per client by withLinkedInIdentityOptions — a seat only
@@ -1391,6 +1392,14 @@ export function groupAgentsByParent<T extends AgentListingFields & { name: strin
  * Pure, and returns the profile unchanged when it carries no identity field, so
  * the caller can apply it without asking which agent it has.
  */
+/**
+ * Sentinel option value for "+ Add a seat" (portal revamp, Surface 04 —
+ * "Add a seat sits in the same dropdown and runs that seat's setup"). Never a
+ * real identity: the modal's select handler intercepts this value and routes
+ * to the agent's own data page instead of writing it into the run's brief.
+ */
+export const ADD_SEAT_OPTION_VALUE = "__add_seat__";
+
 export function withLinkedInIdentityOptions(
   profile: AgentLaunchProfile,
   // `voiceReady` optional because the intake view's own field is: props built
@@ -1412,6 +1421,7 @@ export function withLinkedInIdentityOptions(
                 value: linkedInSeatIdentityToken(seat.id),
                 label: seat.name,
               })),
+              { value: ADD_SEAT_OPTION_VALUE, label: "+ Add a seat" },
             ],
           }
         : field,

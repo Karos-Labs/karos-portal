@@ -150,7 +150,13 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-[4px] border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em]",
+        /* `shrink-0 whitespace-nowrap` (2026-08): a badge is a two-word status
+           chip, and as a flex sibling of a min-w-0 text block it was being
+           chosen as the thing that gives — "AWAITING REVIEW" broke across two
+           lines and overlapped the row beside it once the dashboard columns got
+           narrow. The text block next to it already truncates; that is the
+           element meant to absorb the pressure. */
+        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-[4px] border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em]",
         tones[tone],
         className,
       )}

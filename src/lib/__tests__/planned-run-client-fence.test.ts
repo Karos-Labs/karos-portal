@@ -358,6 +358,7 @@ describe("every exported action in planned-run-actions.ts reaches the fence", ()
       "createPlannedRunAction",
       "deletePlannedRunAction",
       "setPlannedRunStatusAction",
+      "updatePlannedRunPromptAction",
     ]);
     for (const action of actions) {
       expect(action.body.startsWith("{"), `${action.name}: sliced from the wrong brace`).toBe(true);

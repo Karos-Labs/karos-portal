@@ -163,11 +163,50 @@ function BrandProfileModal({
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
   const [form, setForm] = useState({
     contactEmail: client.contactEmail ?? "",
     website: client.website ?? "",
     description: client.description ?? "",
   });
+
+  async function uploadLogo(file: File) {
+    setLogoError(null);
+    setLogoBusy(true);
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      const res = await fetch(`/api/clients/${client.id}/logo`, { method: "POST", body });
+      if (!res.ok) {
+        const { error: msg } = await res.json().catch(() => ({ error: "Upload failed" }));
+        setLogoError(msg ?? "Upload failed");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setLogoError("Upload failed");
+    } finally {
+      setLogoBusy(false);
+    }
+  }
+
+  async function removeLogo() {
+    setLogoError(null);
+    setLogoBusy(true);
+    try {
+      const res = await fetch(`/api/clients/${client.id}/logo`, { method: "DELETE" });
+      if (!res.ok) {
+        setLogoError("Could not remove logo");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setLogoError("Could not remove logo");
+    } finally {
+      setLogoBusy(false);
+    }
+  }
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -247,6 +286,53 @@ function BrandProfileModal({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          {/* Company picture (Account Center Profile tab, portal revamp). Same
+              upload the logo route always offered staff — a client managing
+              their own logo is admitted through the same canViewClient fence,
+              not a separate control. */}
+          <div>
+            <label className={labelCls}>Company picture</label>
+            <div className="flex items-center gap-3">
+              <BrandFavicon
+                src={client.logoUrl || client.brandingGuidelines?.logoUrl}
+                website={client.website}
+                name={client.name}
+                accentColor={client.accentColor ?? "#ff6b2c"}
+                faviconSize={64}
+                className="h-12 w-12 rounded-md text-sm"
+                imgClassName="border border-border bg-surface-2 object-contain"
+              />
+              <div className="flex flex-col gap-1.5">
+                <label className="inline-flex w-fit cursor-pointer items-center gap-1.5 rounded-[8px] border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-border-strong">
+                  <Icon name={logoBusy ? "Loader" : "Upload"} className={cn("h-3.5 w-3.5", logoBusy && "animate-spin")} />
+                  {client.logoUrl ? "Replace" : "Upload"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml"
+                    className="sr-only"
+                    disabled={logoBusy}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file) void uploadLogo(file);
+                    }}
+                  />
+                </label>
+                {client.logoUrl && (
+                  <button
+                    type="button"
+                    onClick={removeLogo}
+                    disabled={logoBusy}
+                    className="w-fit text-xs text-muted transition-colors hover:text-danger disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+            {logoError && <p className="mt-1.5 text-xs text-danger">{logoError}</p>}
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Contact Email</label>
@@ -309,8 +395,10 @@ function BrandProfileModal({
  * which is the wall of text the product owner hit in the client lens on the
  * 30 July call.
  *
- * It is also the ONLY prop left, which is the other half of this note now:
- * NO `headerAction`, AND THAT IS THE RULING (CD-L P5).
+ * `headerAction` specifically stays gone — the other half of this note
+ * (CD-L P5) — even though `hideDescription` below is a second prop; that one
+ * only ever toggles a paragraph off, never adds a divergent staff-only
+ * control back to the header.
  *
  * This prop existed for one caller: the staff client-context rail passed a ↗
  * that opened the client's own website, "the extra button that is the whole
@@ -328,9 +416,20 @@ function BrandProfileModal({
 export function ClientProfilePanel({
   client,
   compact = false,
+  hideDescription = false,
 }: {
   client: ClientProfileFields;
   compact?: boolean;
+  /**
+   * Sidebar-brand pass (2026-08, client-zero feedback): the sidebar's own
+   * brand card drops the inline "about" text — it lives in the Brand Profile
+   * popup this panel already opens (the Contact-icon button), not repeated in
+   * the compact card too. `compact` alone can't gate this: the mobile Company
+   * sheet and Account Center's Profile tab BOTH mount at `compact=false`, and
+   * only the sheet (a sidebar surface) should hide it — Account Center is the
+   * one place the full "about" still belongs inline.
+   */
+  hideDescription?: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -549,7 +648,7 @@ export function ClientProfilePanel({
               profile says, and a long "about" cannot push Competitor Track and
               Brand Colors off the viewport. The mobile Company sheet scrolls,
               so it keeps the full text. */}
-          {(client.description || client.brief) && (
+          {!hideDescription && (client.description || client.brief) && (
             <p
               className={cn(
                 "text-xs leading-relaxed text-muted-2",

@@ -3,6 +3,7 @@
 // Each domain file carries its own "use server" directive — re-exports remain server actions.
 
 export * from "./client-actions";
+export * from "./action-list-actions";
 export * from "./asset-actions";
 export * from "./asset-title-backfill-actions";
 export * from "./asset-chain-actions";

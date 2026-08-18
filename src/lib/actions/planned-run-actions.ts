@@ -10,6 +10,7 @@ import {
   listJobs,
   listPlannedScheduledRuns,
   updatePlannedScheduledRun,
+  upsertClientActionState,
 } from "@/lib/data";
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
@@ -560,6 +561,40 @@ export async function setPlannedRunStatusAction(
     });
   }
   await updatePlannedScheduledRun(id, patch);
+  revalidatePath("/calendar");
+  return {};
+}
+
+/**
+ * Portal revamp, Surface 05 — "Clicking any scheduled day opens the
+ * instructions drawer, to view or add post-specific guidelines." `prompt` is
+ * the free-text request the run already fires with each time
+ * (createPlannedRunAction); this lets whoever may see the run — staff or the
+ * client whose schedule it is — update it later from the calendar, same
+ * assignment fence setPlannedRunStatusAction uses. Unlike that action there is
+ * no staff-only branch: a note is not the irreversible/monetary kind of change
+ * pause/resume and delete are.
+ */
+export async function updatePlannedRunPromptAction(
+  id: string,
+  prompt: string,
+): Promise<{ error?: string }> {
+  const run = await getPlannedScheduledRun(id);
+  if (!run) return { error: "Scheduled run not found." };
+  const user = await requireClientAccess(run.clientId);
+  const client = await getClient(run.clientId);
+  const refusal = clientAccessRefusal(user, client);
+  if (refusal) return { error: refusal };
+
+  const trimmed = prompt.trim().slice(0, MAX_PROMPT_CHARS);
+  await updatePlannedScheduledRun(id, { prompt: trimmed, updatedAt: Date.now() });
+  // Action 13 ("add context to a post that is coming up") — event-tracked,
+  // no live signal answers it (lib/action-list.ts). Fired only for the
+  // client's own edit, not a staff member editing on their behalf, and only
+  // when they actually added something rather than clearing the field.
+  if (user.role === "CLIENT_USER" && trimmed) {
+    await upsertClientActionState(run.clientId, "13", "done");
+  }
   revalidatePath("/calendar");
   return {};
 }

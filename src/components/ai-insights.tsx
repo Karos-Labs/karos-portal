@@ -155,7 +155,7 @@ export function AiInsights({
           description="Connect a social account and we'll brief you weekly on what's working."
           action={
             <Link
-              href={`/clients/${clientId}/settings?tab=channels`}
+              href={`/clients/${clientId}/settings?tab=settings`}
               className="text-xs text-neon underline-offset-2 hover:underline"
             >
               Connect a channel

@@ -180,6 +180,15 @@ export function AgentDetailPanel({
                 ? `Makes one ${runnableTemplate.name} ${noun} now. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
                 : `Making a ${noun} now is not available yet.`}
             </p>
+            {/* Portal revamp, Surface 03: the cost is a step on the page, never
+                on the button — moved off the label into its own line, same
+                treatment legacy-agent-panel.tsx already uses. */}
+            {agent.runCost != null && (
+              <p className="mt-1 flex items-center gap-1 text-xs text-muted-2">
+                <Icon name="Coins" className="h-3 w-3 text-neon" />
+                Costs {agent.runCost} credit{agent.runCost === 1 ? "" : "s"}
+              </p>
+            )}
           </div>
           <Button
             variant="accent"
@@ -188,9 +197,7 @@ export function AgentDetailPanel({
             onClick={createPost}
           >
             <Icon name="Sparkles" className="h-4 w-4" />
-            {agent.runCost != null
-              ? `Create new ${noun} · ${agent.runCost} credits`
-              : `Create new ${noun}`}
+            Create new {noun}
           </Button>
         </div>
         {/* The reason it is off, PAINTED. The Button primitive sets

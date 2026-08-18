@@ -47,7 +47,7 @@ export function isAccountTab(tab: string | undefined): tab is AccountTabId {
  * /settings itself does — i.e. when there is no client to send them to.
  *
  * `tab` is carried through when it names an account panel, and dropped when it
- * does not: /settings has only these two, so a stale `?tab=channels` in
+ * does not: /settings has only these two, so a stale `?tab=settings` in
  * somebody's history is not an instruction this function should honour by
  * inventing a destination tab.
  */

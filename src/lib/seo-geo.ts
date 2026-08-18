@@ -1413,9 +1413,13 @@ export interface IntentPrompt {
 /**
  * Deterministically classify a buyer-intent prompt into the a3 taxonomy. Order is
  * significant, mirroring the PDF:
- *   navigational (points at the site) → comparison ("X alternative"/"best app",
- *   which stays COMP even when it names the brand, e.g. "Workfrom alternative") →
- *   brand (names the client, no comparison signal) → problem ("how/near me/right
+ *   navigational (points at the site) → brand (names the client — a prompt that
+ *   names the brand is a brand prompt EVEN when it also carries comparison
+ *   wording, e.g. "Acme Fintech alternative": the asker already named Acme, so
+ *   any mention there is a guaranteed one, not earned visibility, and must not
+ *   count toward the unprompted AI Share of Voice the way a true category
+ *   comparison like "best app to find work-friendly cafes" does) → comparison
+ *   ("X alternative"/"best app", no brand named) → problem ("how/near me/right
  *   now") → discovery (the default "best X"). A bare "?" is NOT treated as problem —
  *   most discovery/comparison queries are also questions.
  */
@@ -1424,8 +1428,8 @@ export function classifyIntent(prompt: string, gazetteer: Gazetteer): PromptInte
   if ((gazetteer.clientDomain && p.includes(gazetteer.clientDomain)) || /\bofficial (site|website)\b/.test(p)) {
     return "navigational";
   }
-  if (/\b(vs\.?|alternative|compare|comparison|best app|app to|apps? (for|to)|which app)\b/.test(p)) return "comparison";
   if (gazetteer.client.some((a) => findMention(prompt, a) >= 0)) return "brand";
+  if (/\b(vs\.?|alternative|compare|comparison|best app|app to|apps? (for|to)|which app)\b/.test(p)) return "comparison";
   if (/\b(how (do|can|to)|near me|right now|can i find|where can i)\b/.test(p)) return "problem";
   return "discovery";
 }

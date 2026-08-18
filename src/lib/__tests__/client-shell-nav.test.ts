@@ -42,6 +42,7 @@ const flat = (s: string) => s.replace(/\s+/g, " ");
 
 const SIDEBAR = "src/components/sidebar.tsx";
 const RAIL = "src/components/client-rail.tsx";
+const AGENTS_NAV = "src/components/client-rail-agents-nav.tsx";
 const AGENTS_PAGE = "src/app/(app)/clients/[id]/agents/page.tsx";
 const LAYOUT = "src/app/(app)/layout.tsx";
 const SETTINGS_PAGE = "src/app/(app)/clients/[id]/settings/page.tsx";
@@ -50,6 +51,7 @@ const PANEL = "src/components/client-profile-panel.tsx";
 
 const sidebar = source(SIDEBAR);
 const rail = source(RAIL);
+const agentsNav = source(AGENTS_NAV);
 const panelSrc = source(PANEL);
 
 /** A flat route's page module. Every route in play here is a literal segment. */
@@ -221,9 +223,9 @@ describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
   });
 
   it("leaves no route the staff shell offers a client that their own shell withholds", () => {
-    // #137's relation, still enforced, with ONE named exemption.
+    // #137's relation, still enforced, with TWO named exemptions.
     //
-    // /transcripts is the exemption and AF-1 is the reason: a client's meetings
+    // /transcripts is the first and AF-1 is the reason: a client's meetings
     // are the Settings tab above, so the route itself is deliberately not in
     // their nav. The staff shell keeps its own Meetings row for CLIENT_USER,
     // and that is not an oversight left behind by the ruling — that shell
@@ -231,21 +233,31 @@ describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
     // resolve, and that client has no /clients/<id>/settings to reach. Two
     // shells, two correct answers.
     //
+    // /tasks is the second, and the portal revamp is the reason: Workspace left
+    // the real client rail entirely (locked decision — "The Board is replaced
+    // by the action list on Home"), but the fallback NAV table's own docstring
+    // is explicit that /tasks is the one working destination a client with NO
+    // resolvable client document is left with — /assets redirects there by
+    // name. Removing the row would not align that edge case with the revamp,
+    // it would strand it with nowhere to land at all.
+    //
     // Named rather than derived: an exemption computed from the settings page's
     // hrefs would grow silently the next time a route is linked from it, which
     // is the opposite of what this relation is for.
-    const EXEMPT = new Set(["/transcripts"]);
+    const EXEMPT = new Set(["/transcripts", "/tasks"]);
     const railSide = new Set(clientRailRoutes());
     for (const route of staffShellClientRoutes()) {
       if (EXEMPT.has(route)) continue;
       expect(railSide.has(route), `${route} is offered by the staff shell only`).toBe(true);
     }
-    // Non-vacuity in both directions: the exemption is live (the staff shell
-    // really does still offer it), it is doing exactly one route's worth of
-    // work, and the rail really has stopped offering it.
+    // Non-vacuity in both directions: both exemptions are live (the staff shell
+    // really does still offer each), they are doing exactly one route's worth
+    // of work apiece, and the rail really has stopped offering either.
     expect(staffShellClientRoutes()).toContain("/transcripts");
+    expect(staffShellClientRoutes()).toContain("/tasks");
     expect(railSide.has("/transcripts")).toBe(false);
-    expect(staffShellClientRoutes().filter((r) => EXEMPT.has(r))).toHaveLength(1);
+    expect(railSide.has("/tasks")).toBe(false);
+    expect(staffShellClientRoutes().filter((r) => EXEMPT.has(r))).toHaveLength(2);
   });
 });
 
@@ -276,10 +288,22 @@ describe("AF-3 · View-as-Client and the client's own view are the same view", (
     // The divergence AF-1 closed: the branch put a fifth item (Meetings) in the
     // client's rail and not in the staff twin, so the two views of one client
     // had different navigation.
+    //
+    // Portal revamp Surface 01: "AI agents" left the client rail's plain
+    // `tabNav` array — it renders as ClientRailAgentsNav (starred rows + the
+    // roster dropdown) instead, positioned right after Home. The staff preview
+    // nav (clientViewNav) keeps it as a plain row, since that shell is a
+    // quick-look strip rather than the client's own interactive rail. Splicing
+    // it back into the client array at its render position is what keeps this
+    // test asserting the thing AF-1 actually cares about — same destinations,
+    // same order — rather than dropping the check because the mechanism split.
     const client = navLabels(rail, "const tabNav: NavItem[] = [");
     const staff = navLabels(sidebar, "function clientViewNav(");
-    expect(client).toEqual(["Dashboard", "AI agents", "Calendar", "Workspace"]);
-    expect(staff).toEqual(client);
+    // Workspace is gone from both shells (the locked decision list retires
+    // it — "The Board is replaced by the action list on Home").
+    expect(client).toEqual(["Home", "Calendar", "Downloads"]);
+    expect(agentsNav).toContain('<span className="flex-1 text-left">AI agents</span>');
+    expect(["Home", "AI agents", ...client.slice(1)]).toEqual(staff);
   });
 
   it("carries the same wordmark in both shells", () => {
@@ -304,107 +328,90 @@ describe("AF-3 · View-as-Client and the client's own view are the same view", (
     }
   });
 
-  /* ── V3: the company panel, and the slot it sits in ─────────────────── */
+  /* ── V3: the company panel, and the slot it used to sit in ──────────── */
 
-  const between = (src: string, from: string, to: string): string => {
-    const start = src.indexOf(from);
-    expect(start, `${from} not found`).toBeGreaterThan(-1);
-    const end = src.indexOf(to, start + from.length);
-    expect(end, `${to} not found after ${from}`).toBeGreaterThan(start);
-    return src.slice(start, end);
-  };
-  /** The client-context stack of a desktop rail, in render order. */
-  const desktopStack = (slice: string): string[] =>
-    [
-      ...slice.matchAll(
-        /<(ClientProfilePanel|ClientDocuments|CompetitorTrack|BrandColorsSection)\b/g,
-      ),
-    ].map((m) => m[1]!);
-  /** The rail's `md:block` aside — its mobile sheet mounts the same four again. */
-  const railDesktop = () => between(rail, "<aside", "</aside>");
-  const staffDesktop = () => between(sidebar, "const clientSections = activeClient ? (", ") : null;");
+  /**
+   * Superseded THREE times over now. V3 originally held ClientProfilePanel,
+   * ClientDocuments, CompetitorTrack and BrandColorsSection to an
+   * identical-stack rule across both shells. The Account Center pass moved all
+   * four out of both rails. Explicit direction then reversed the brand card
+   * (ClientProfilePanel), which belongs in the rail prominently rather than
+   * collapsed.
+   *
+   * 2026-08 reverses BRAND COLORS too, by name and for a stated reason: the
+   * swatch row is the one thing in the rail a person copies a value OUT of
+   * (click-to-copy hex), several times a day, and Account Center is two
+   * navigations away from wherever they are working. It is a one-line reader,
+   * not a page — the cost the original move was paying down (four stacked
+   * sections eating the CD-E3 no-scroll contract) is not a cost a single row
+   * carries.
+   *
+   * So MOVED is down to two, and Brand Colors joins the brand card in a group
+   * with the opposite rule: present in BOTH rails and STILL on Account Center,
+   * because a one-line reader in the rail and the editor on the settings page
+   * are two surfaces, not two copies.
+   */
+  const MOVED_COMPONENTS = ["ClientDocuments", "CompetitorTrack"];
 
-  it("builds the same four sections, in the same order, on both desktop rails", () => {
-    // The staff rail used to open this stack with a company CHIP of its own —
-    // logo, name, ↗ and nothing else — where the client's rail mounts the whole
-    // ClientProfilePanel. So a staff member in client context could not see the
-    // client's bio or any of their social handles, which are the two things AF-4
-    // put on that rail. Same component in the same slot now.
-    const expected = [
-      "ClientProfilePanel",
-      "ClientDocuments",
-      "CompetitorTrack",
-      "BrandColorsSection",
-    ];
-    expect(desktopStack(railDesktop())).toEqual(expected);
-    expect(desktopStack(staffDesktop())).toEqual(expected);
-  });
+  /** Reversed by explicit direction — asserted present rather than absent. */
+  const RESTORED_COMPONENTS = ["ClientProfilePanel", "BrandColorsSection"];
 
-  it("mounts the panel with IDENTICAL props on both desktop rails", () => {
-    // THE RULING THAT REPLACED "the same, with the extra buttons" (CD-L P5).
-    // This test used to REQUIRE the divergence it now forbids: it asserted the
-    // staff mount carried `headerAction={clientSiteAction}` and the client's
-    // did not. The product owner walked both views and ruled that out — "The
-    // rest of this page should be the exact same" — leaving Schedule and
-    // Regenerate on the DOCUMENTS heading as the only staff extras in the
-    // stack. So the two mounts are compared as EXPRESSIONS, minus the one token
-    // that cannot match (each shell names its own client), and any future prop
-    // added to one and not the other fails here rather than on a screenshot.
-    const mount = (slice: string) => {
-      const at = slice.indexOf("<ClientProfilePanel");
-      expect(at, "no ClientProfilePanel mount").toBeGreaterThan(-1);
-      return flat(slice.slice(at, slice.indexOf("/>", at) + 2));
-    };
-    const props = (m: string) => m.replace(/client=\{[^}]*\}/, "client={…}");
-    expect(props(mount(railDesktop()))).toBe(props(mount(staffDesktop())));
-    // Non-vacuity: the comparison is of a real mount carrying the real prop,
-    // not of two empty strings. `compact` is the no-scroll contract's clamp
-    // (CD-E3) and both desktop rails are under it.
-    expect(props(mount(railDesktop()))).toBe("<ClientProfilePanel client={…} compact />");
-    // The staff ↗ is gone from the panel AND from the shell that built it, so
-    // there is no slot left for the next divergence to arrive through.
-    expect(panelSrc).not.toContain("headerAction");
-    expect(flat(sidebar)).not.toContain("const clientSiteAction");
-    expect(sidebar).not.toContain("Open client website");
-  });
-
-  it("keeps Schedule and Regenerate as the only staff extras in the stack", () => {
-    // The other side of the same ruling, stated positively: staff DO get two
-    // controls the client does not, both on the Documents heading, and they are
-    // ClientDocuments' own (gated on `isAdmin` inside it) rather than something
-    // a shell adds. So the permitted difference lives in one component, and the
-    // rails themselves are twins.
-    const docs = source("src/components/client-documents.tsx");
-    expect(docs).toContain("Schedule");
-    expect(docs).toContain("Regenerate");
-    // Both shells mount that component the same way, extras and all.
-    for (const slice of [railDesktop(), staffDesktop()]) {
-      expect(slice).toContain("<ClientDocuments");
-      expect(slice).toContain("isAdmin");
+  it("mounts neither of the two moved sections in either rail any more", () => {
+    for (const name of MOVED_COMPONENTS) {
+      expect(rail, `client-rail.tsx still mounts <${name}`).not.toContain(`<${name}`);
+      expect(sidebar, `sidebar.tsx still mounts <${name}`).not.toContain(`<${name}`);
     }
+    // The imports left with the mounts — a stale import is exactly the kind of
+    // drift this rule exists to catch before the mount itself reappears.
+    for (const name of MOVED_COMPONENTS) {
+      expect(rail, `client-rail.tsx still imports ${name}`).not.toContain(name);
+      expect(sidebar, `sidebar.tsx still imports ${name}`).not.toContain(name);
+    }
+  });
+
+  it("keeps Brand Colors in both rails AND on Account Center, on explicit direction", () => {
+    // The rail mount is the reversal; the Account Center mount is the build it
+    // does NOT revert. Two mounts per shell — desktop aside and phone sheet —
+    // the same shape the brand card is held to below, so a staff member
+    // previewing a workspace sees what the client sees (AF-3).
+    for (const [rel, src] of [[RAIL, rail], [SIDEBAR, sidebar]] as const) {
+      const mounts = [...src.matchAll(/<BrandColorsSection[\s\S]*?\/>/g)];
+      expect(mounts.length, `${rel} mounts Brand Colors on its rail and in its sheet`).toBe(2);
+    }
+    expect(source(SETTINGS_PAGE)).toContain("<BrandColorsSection");
+  });
+
+  it("re-homes every moved-or-restored section in Account Center, where a client can now reach them", () => {
+    // Not a full render test (the page is a server component reaching the
+    // Admin SDK, same constraint as the two rails) — a source check that each
+    // component actually left the rails FOR here rather than for nowhere, and
+    // that the two restored ones did not leave Account Center on the way back.
+    const settingsPage = source(SETTINGS_PAGE);
+    for (const name of [...MOVED_COMPONENTS, ...RESTORED_COMPONENTS]) {
+      expect(settingsPage, `Account Center never mounts <${name}`).toContain(`<${name}`);
+    }
+  });
+
+  it("keeps the full brand card in both rails, on explicit direction", () => {
+    // Reversed after the fact: "restore the full, rich visual brand identity
+    // card... without being collapsed into a bare minimal text link." Both
+    // rails mount the real ClientProfilePanel again — the desktop aside AND
+    // the mobile sheet, in both shells — so the client and a staff member
+    // previewing their workspace see the same card (AF-3).
+    for (const [rel, src] of [[RAIL, rail], [SIDEBAR, sidebar]] as const) {
+      const mounts = [...src.matchAll(/<ClientProfilePanel[\s\S]*?\/>/g)];
+      expect(mounts.length, `${rel} mounts the panel on its rail and in its sheet`).toBe(2);
+    }
+    // It is ALSO still on Account Center's Profile tab — restoring the rail
+    // card is additive, not a revert of that build.
+    expect(source(SETTINGS_PAGE)).toContain("<ClientProfilePanel");
   });
 
   /* ── V2: one section rhythm ─────────────────────────────────────────── */
 
-  it("spaces the sections identically in both desktop rails", () => {
-    // Tailwind v4 compiles space-y to a margin-BOTTOM, so the rail's old
-    // `mt-4` wrappers ADDED to it rather than replacing it: the two sections
-    // that owned a wrapper got 34px of air and the two that did not got 14 and
-    // 12, which is why Brand Colors read as glued to the last competitor row.
-    // One outer gap, one wrapper class, both shells.
-    expect(rail).toContain('className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-4 pb-0 pt-4"');
-    expect(sidebar).toContain('className="mt-1.5 space-y-1.5"');
-    for (const [rel, slice] of [
-      [RAIL, railDesktop()],
-      [SIDEBAR, staffDesktop()],
-    ] as const) {
-      expect(slice, rel).not.toContain("mt-4 border-t");
-      expect(
-        (slice.match(/className="border-t border-border pt-4"/g) ?? []).length,
-        `${rel} wraps both of its own sections the same way`,
-      ).toBe(2);
-    }
-  });
+  /* ── V2 (spacing rhythm across the four sections) retired with them —
+     both rails are nav-only now, so there is no shared wrapper rhythm left
+     to hold two shells to. See V3 above for what replaced the rule. ── */
 
   /* ── V4: the accent is rationed the same way in both ─────────────────── */
 
@@ -440,9 +447,13 @@ describe("#141 · one destination, one spelling", () => {
   });
 
   it("labels every nav row leading there with that same heading", () => {
-    // The client rail's own item and the staff shell's client-context twin.
+    // The staff shell's client-context twin still spells it out as a plain nav
+    // row; the client's own rail moved the label into ClientRailAgentsNav's
+    // dropdown button (Surface 01), so that file is read in its place rather
+    // than the rail's own `.../agents\`, label: "..."` object literal, which no
+    // longer exists there.
     const labels = [
-      ...flat(rail).matchAll(/\/agents`, label: "([^"]+)"/g),
+      ...flat(agentsNav).matchAll(/<span className="flex-1 text-left">([^<]+)<\/span>/g),
       ...flat(sidebar).matchAll(/\/agents`, label: "([^"]+)"/g),
     ].map((m) => m[1]!);
     expect(labels).toHaveLength(2);

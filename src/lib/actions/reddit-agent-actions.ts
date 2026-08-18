@@ -27,6 +27,7 @@ import {
   getAgentIntake,
   getClient,
   upsertAgentIntake,
+  upsertClientActionState,
 } from "@/lib/data";
 import {
   REDDIT_COMMENT_CAP,
@@ -248,6 +249,13 @@ export async function addRedditDraftFeedbackAction(input: {
       ? { selectedApproach: input.selectedApproach }
       : {}),
   });
+  // Action 14 ("give us your feedback on a post") — event-tracked, no live
+  // signal answers it (lib/action-list.ts). Only the client's own feedback
+  // counts, not a staff member logging it on their behalf.
+  if (user.role === "CLIENT_USER") {
+    const feedbackClientId = input.clientId;
+    await upsertClientActionState(feedbackClientId, "14", "done");
+  }
   revalidatePath(`/clients/${input.clientId}/reddit-agent`);
   revalidatePath(`/clients/${input.clientId}/agents`);
   return {};

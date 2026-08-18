@@ -7,20 +7,49 @@ import {
   listClientIntegrations,
   listClientTasks,
   listClientCompetitors,
+  listClientFollowerSnapshots,
+  listClientSeats,
+  listClientActionStates,
 } from "@/lib/data";
-import { computeTrackedCompetitors } from "@/lib/competitor-priority";
+import { listClientAgents } from "@/lib/data-client-agents";
 import { isBillableClientActor } from "@/lib/credits";
 import { isAiProcessingLockActive } from "@/lib/constants";
+import { integrationIsUsable } from "@/lib/integration-status";
 import { PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
-import { ClientAnalytics, ClientAnalyticsStats } from "@/components/client-analytics";
+import { ClientAnalytics } from "@/components/client-analytics";
 import { AiInsights } from "@/components/ai-insights";
 import { ClientHomeOverview } from "@/components/client-home-overview";
-import { SeoGeoPanel, SeoGeoScores, SeoGeoPlan } from "@/components/seo-geo-panel";
-import { ClientDashboardTabs } from "@/components/client-dashboard-tabs";
+import { buildScoreViews, buildPresence } from "@/components/seo-geo/presenter";
 import { RegenerateWorkspaceButton } from "@/components/regenerate-workspace-button";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
-import type { ClientTask } from "@/lib/types";
+import { contentLabelsByAsset } from "@/lib/agent-identity-map";
+import {
+  resolveFollowerHistory,
+  totalFollowers,
+  combinedFollowerSeries,
+  followerGrowthPct,
+} from "@/lib/follower-tracking";
+import { ActionListWidget } from "@/components/home-action-list";
+import { resolveActionList, toClientActions, type ActionSignals } from "@/lib/action-list";
+import { computePlatformGaps, gapPlatformNames } from "@/lib/calendar-gaps";
+import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
+import { CalendarPreviewWidget } from "@/components/home-calendar-preview";
+import { HomeKpisWidget } from "@/components/home-kpis";
+import { HomeStandingWidget, hasStanding } from "@/components/home-standing";
+import { HomeOpsStrip, type OpsStat } from "@/components/home-ops-strip";
+import { relativeTime } from "@/lib/utils";
+import type { Asset } from "@/lib/types";
+
+/**
+ * How many open tasks the attention widget reads.
+ *
+ * Named rather than inlined because the widget's counts are `.length` of this
+ * array, so the cap is part of what those numbers MEAN — `tasksHitLimit` below
+ * turns "50" into "50+" when the window is full, instead of printing a
+ * truncation as a total.
+ */
+const TASK_FEED_LIMIT = 50;
 
 export default async function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
@@ -42,25 +71,49 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // other.
   const viewerIsBilled = isBillableClientActor(user);
 
-  const [assets, jobs, integrations, seoGeo, tasks, competitors] = await Promise.all([
+  const [
+    assets,
+    jobs,
+    integrations,
+    seoGeo,
+    tasks,
+    competitors,
+    umbrellas,
+    followerSnapshots,
+    seats,
+    actionStates,
+  ] = await Promise.all([
     listAssets({ clientId: id }),
     listJobs({ clientId: id }),
     listClientIntegrations(id),
     getClientSeoGeo(id),
-    isClientViewer
-      ? listClientTasks({ clientId: id, status: ["pending", "review_pending"], limit: 50 })
-      : Promise.resolve([] as ClientTask[]),
+    // Read for BOTH viewers now. It used to be client-only, which left the
+    // staff dashboard's Task Map nudge permanently reporting "0 suggestions"
+    // — a banner that cannot count is a banner that lies. Where the rows are
+    // ALLOWED to go is still split, and deliberately: `tasks` reaches
+    // ClientHomeOverview only on the client branch (see that component's note
+    // on `clientId` — its attention rows link to an owner-scoped board a staff
+    // viewer would land on the wrong tab of). Staff use the count only.
+    listClientTasks({ clientId: id, status: ["pending", "review_pending"], limit: TASK_FEED_LIMIT }),
     listClientCompetitors(id),
+    // The last four feed client-only Home widgets (Recent Agent Activity's
+    // §7.3 join, the KPIs follower chart, the 15-item action list's seat
+    // count and stored dismiss/not-relevant/done rows) — read unconditionally
+    // rather than gated on isClientViewer since all are cheap, indexed,
+    // single-field queries and gating them would just move the branch into
+    // every widget that needs them instead of removing a real cost.
+    listClientAgents({ clientId: id }),
+    listClientFollowerSnapshots(id),
+    listClientSeats(id),
+    listClientActionStates(id),
   ]);
 
-  // The currently-tracked competitors (same selector as the sidebar) drive the panel's
-  // comparison rows, so the SEO/GEO view and the Competitor Track always show the SAME
-  // five competitors side by side; urls feed the brand favicons (QA Fix 1).
-  const trackedCompetitorRefs = computeTrackedCompetitors(competitors).map((c) => ({
-    name: c.company,
-    ...(c.url ? { url: c.url } : {}),
-  }));
-
+  // `competitors` is read for ONE thing on this page now — the action list's
+  // `hasManualCompetitor` signal below. The tracked-competitor projection that
+  // used to be built here fed <SeoGeoPanel/>'s comparison rows, and that panel
+  // left this page with the rest of the deep report (see the note above the
+  // summary widgets); Account Center's Reporting tab builds the same projection
+  // from the same selector, so nothing about what the report compares changed.
   const firstName = user.name?.trim().split(/\s+/)[0];
 
   // Client viewers must never receive un-redacted future content across the RSC
@@ -80,6 +133,101 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     : assets;
   const analyticsAssets = overviewAssets;
 
+  // ── Home widgets (portal revamp, Surface 02) — client viewer only ──
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const now = Date.now();
+
+  // Calendar Preview WANTS the locked/future rows overviewAssets just dropped —
+  // that is the whole point of a preview — but never their real title:
+  // redactLockedAsset already replaces it with a template name or "Upcoming
+  // post", and the widget itself reads only `type` and `scheduledPlatform`
+  // (absent on a locked row), never `title`.
+  const isUpcoming = (a: Asset) => a.status === "scheduled" && (a.scheduledAt ?? 0) > now;
+  const upcomingAssets = isClientViewer
+    ? getClientLibraryAssets(assets, {
+        forClient: true,
+        viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
+      }).filter(isUpcoming)
+    : [];
+  // Staff read the unredacted set — there is no future-content rule to keep for
+  // an operator, and the preview shows type + platform either way.
+  const upcomingStaffAssets = isClientViewer ? [] : assets.filter(isUpcoming);
+
+  // Recent Agent Activity's §7.3 join — same helper the Workspace archive and
+  // Account Center's Archive tab use, so this widget cannot name an agent
+  // something those two disagree with.
+  const agentLabelByAssetId = contentLabelsByAsset(overviewAssets, jobs, umbrellas);
+
+  // KPIs, audience cell: REAL STORED SNAPSHOTS ONLY (D6). The mock fallback is
+  // gone — `resolveFollowerHistory` returns an empty series when nothing was
+  // captured, and the widget hides the cell rather than filling it in. Nothing
+  // writes `clientFollowerSnapshots` yet, so today this is empty for every
+  // client and the cell simply does not render; the moment an ingestion cron
+  // lands it appears on its own.
+  const followerHistoriesByPlatform: Record<string, ReturnType<typeof resolveFollowerHistory>> = {};
+  for (const integration of integrations) {
+    followerHistoriesByPlatform[integration.platform] = resolveFollowerHistory(
+      followerSnapshots,
+      integration.platform,
+    );
+  }
+  const followerTotal = totalFollowers(followerHistoriesByPlatform);
+  const followerSeries = combinedFollowerSeries(followerHistoriesByPlatform);
+  const followerGrowth = followerGrowthPct(followerSeries);
+  const channelSummaries = integrations.map((i) => ({
+    platform: i.platform,
+    usable: integrationIsUsable(i),
+  }));
+
+  // The KPI card's score meter and the full report share ONE buildScoreViews
+  // call so the widget and the page can never quote different numbers for the
+  // same snapshot. Same rule for buildPresence and "Where you stand".
+  const scoreViews = seoGeo ? buildScoreViews(seoGeo) : [];
+  // D6 kept exactly one of the three: "the overall Google/AI visibility
+  // rank" is this view's own established label ("AI visibility today"), not
+  // a new metric — search score and AI readiness stay on the full report only.
+  const visibilityScore = scoreViews.find((v) => v.key === "visibility") ?? null;
+  const presence = seoGeo ? buildPresence(seoGeo) : null;
+  const reportHref = `/clients/${id}/settings?tab=reporting`;
+
+  // Next Actions (Surface 08) — the real 15-item engine. Signals are read
+  // fresh from data already in hand this render; `actionStates` supplies the
+  // client-chosen (dismissed/not_relevant) and event-tracked (12/13/14) rows
+  // that no live signal can answer. See lib/action-list.ts for the full
+  // precedence rule and the documented proxies (02/05/07/09).
+  const actionSignals: ActionSignals = {
+    profileComplete: Boolean(client.description?.trim() && client.category?.trim()),
+    hasGrantedAgent: (client.customAgentIds?.length ?? 0) > 0,
+    grantedAgentCount: client.customAgentIds?.length ?? 0,
+    hasRun: jobs.length > 0,
+    runCount: jobs.length,
+    hasOutput: assets.length > 0,
+    hasStarredAgent: (client.starredAgentIds?.length ?? 0) > 0,
+    hasManualCompetitor: competitors.some((c) => c.source === "manual"),
+    hasUsableChannel: integrations.some((i) => integrationIsUsable(i)),
+    seatCount: seats.length,
+  };
+  const actionStatesById = new Map(
+    actionStates.map((s) => [s.actionId, { status: s.status, updatedAt: s.updatedAt }]),
+  );
+  const resolvedActions = resolveActionList(actionSignals, actionStatesById, now);
+
+  // Smart Task Map Fallback (final workflow enhancement) — the same gap math
+  // the swarm itself reasons from (lib/calendar-gaps.ts, shared with
+  // lib/agent-swarm.ts's buildSwarmContext), and the same `pending` rows
+  // calendar-body.tsx surfaces for review — Home only nudges + can trigger
+  // generation, the review cards live on the Calendar page (`reviewHref`).
+  const usablePlatforms = integrations.filter((i) => integrationIsUsable(i)).map((i) => i.platform);
+  const gapPlatforms = gapPlatformNames(computePlatformGaps(assets, usablePlatforms, now));
+  const pendingSuggestedTaskCount = tasks.filter(
+    (t) => t.status === "pending" && t.owner === "karos_managed" && t.source === "copilot",
+  ).length;
+
+  // Newest job, for the ops strip's "Last run" caption. Staff-only reader — a
+  // client's dashboard may not carry the batch timestamp (the churn rule; see
+  // ClientAnalyticsStats' note), and HomeOpsStrip is never mounted for them.
+  const lastJob = [...jobs].sort((a, b) => b.createdAt - a.createdAt)[0];
+
   const analytics = (
     <ClientAnalytics
       clientId={client.id}
@@ -91,34 +239,115 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       // two registers). Separate from hideStats below on purpose — that one is
       // about layout, this one is about vocabulary.
       viewerIsClient={isClientViewer}
-      // CD-H1: for a client the counter row is lifted to the top of Overview
-      // (below), so the Performance tab must not repeat it - the same
-      // hide-what-was-lifted contract the visibility panel already uses.
-      hideStats={isClientViewer}
+      // The counter row is lifted out of this component on BOTH branches now:
+      // a client's four tiles were lifted to the top of Overview by CD-H1 and
+      // then retired by the portal revamp, and staff's five became the one-line
+      // HomeOpsStrip below. Neither branch may print them twice.
+      hideStats
     />
   );
 
-  const visibilityPanel = (
-    <SeoGeoPanel
-      insights={seoGeo}
-      trackedCompetitors={trackedCompetitorRefs}
-      clientWebsite={client.website}
-      isClientViewer={isClientViewer}
-      // QA F20: the panel promises a "next snapshot" throughout, and the
-      // monthly schedule never fires for a client whose admin never turned
-      // it on - so the report ages silently forever. The panel needs to know.
-      intelScheduleEnabled={client.intelScheduleEnabled ?? false}
-      intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
-      isRefreshing={isAiProcessingLockActive(client)}
-      // QA F99: for the client the scores and the plan are lifted to the top of
-      // the visibility tab (below), so the panel must not repeat them.
-      hideScores={isClientViewer && !!seoGeo}
-      hidePlan={isClientViewer && !!seoGeo}
+  // ── Home's summary of the Search & AI visibility report ──
+  //
+  // THE FULL REPORT NO LONGER RENDERS ON THIS PAGE, FOR ANYONE (2026-08).
+  //
+  // Surface 09 moved it to Account Center's Reporting tab and took it off the
+  // CLIENT branch — but the staff branch went on mounting <SeoGeoPanel/> whole,
+  // with `hideScores={false} hidePlan={false}`, on the reasoning that staff
+  // "reach it ONLY here". That stopped being true the moment the Reporting tab
+  // shipped for staff too (settings/page.tsx builds it for every viewer), so
+  // the consolidation had simply not been applied to this half of the file:
+  // engine-by-engine breakdowns, the citation-source table and the question log
+  // rendered on the dashboard AND one click away, and the dashboard is where a
+  // person landed first.
+  //
+  // So Home carries two summaries and a link — score meters inside the KPI card
+  // and the two share numbers in "Where you stand" — and the deep report has
+  // exactly one address. Both summaries are projections of the same
+  // buildScoreViews / buildPresence calls that page renders from, so this is
+  // not a second copy of the report; it is the report's headline.
+  const standing = presence && hasStanding(presence) ? (
+    <HomeStandingWidget presence={presence} href={reportHref} />
+  ) : null;
+
+  const kpis = (
+    <HomeKpisWidget
+      audienceTotal={followerTotal}
+      audienceGrowthPct={followerGrowth}
+      audienceSeries={followerSeries}
+      channels={channelSummaries}
+      visibilityScore={visibilityScore}
+      reportHref={reportHref}
     />
   );
 
-  // Staff keep the plain single stack: this is the operator's read-everything
-  // view, and the findings below are about what a CLIENT lands on.
+  /**
+   * The retired five tiles, as one line (staff only — see HomeOpsStrip).
+   *
+   * Four of the five survive; "Channels" does not. It was a bare integer whose
+   * only interesting question — is any of them broken? — the KPI card answers
+   * properly now, and repeating the total beside it would be the duplication
+   * this pass exists to remove. "Awaiting review" is new and is the one number
+   * on the old row that was genuinely missing: it is the only counter here that
+   * asks somebody to DO something, which is why it is the only one that tints.
+   */
+  const opsStats: OpsStat[] = [
+    {
+      label: "Awaiting review",
+      value: assets.filter((a) => a.status === "draft").length,
+      href: `/clients/${id}/assets`,
+      warnWhenNonZero: true,
+    },
+    { label: "Scheduled", value: assets.filter(isUpcoming).length, href: "/calendar" },
+    {
+      label: "Published",
+      value: assets.filter((a) => a.status === "published").length,
+      href: `/clients/${id}/settings?tab=archive`,
+    },
+    { label: "Deliverables", value: assets.length, href: `/clients/${id}/assets` },
+    {
+      label: "Agent runs",
+      value: jobs.length,
+      href: "/jobs",
+      ...(lastJob ? { hint: `Last run ${relativeTime(lastJob.createdAt)}` } : {}),
+    },
+  ];
+
+  const calendarBanner = (
+    <CalendarSparseBanner
+      clientId={client.id}
+      gapPlatforms={gapPlatforms}
+      pendingSuggestionCount={pendingSuggestedTaskCount}
+      isAiProcessing={isAiProcessingLockActive(client)}
+      viewerIsBilled={viewerIsBilled}
+      reviewHref="/calendar"
+    />
+  );
+
+  /**
+   * THE STAFF DASHBOARD GOT THE SAME TREATMENT AS THE CLIENT ONE (2026-08).
+   *
+   * It was "the plain single stack: the operator's read-everything view", which
+   * in practice meant: five counter tiles, two chart cards, the entire SEO/GEO
+   * report, then AI Insights. Three screens before anything a person could act
+   * on, and the product owner's verdict was that most of it did not inform —
+   * the counters are inventory, the status bars restate the counters, and the
+   * report is a page that already exists elsewhere.
+   *
+   * So this branch is now the client's own information architecture with the
+   * operator's extras added, rather than a different page:
+   *
+   *   1. alerts        — processing banner, then the Task Map / calendar-gap nudge
+   *   2. what's next   — upcoming slots + recent agent activity, side by side
+   *   3. how we're doing — audience, channel health, the three scores (one card)
+   *   4. where we stand — category presence + share of conversation
+   *   5. the numbers   — one thin ops strip, the retired five tiles' content
+   *   6. performance   — the status/channel charts, below the fold where they belong
+   *   7. AI Insights   — the written briefing, last
+   *
+   * The two things staff keep that a client does not: the ops strip (§5, see
+   * HomeOpsStrip for why a client may not have it) and Regenerate in the header.
+   */
   if (!isClientViewer) {
     return (
       <>
@@ -143,9 +372,48 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           {/* CLIENT_USER already sees this via the (app) shell's own wrapper - only
               render here for staff, who use the plain Sidebar shell with no such wrapper. */}
           <AiProcessingBanner client={client} isAdmin={user.role === "KAROS_ADMIN"} />
-          <section className="space-y-3">{analytics}</section>
-          <section className="space-y-3">{visibilityPanel}</section>
+
+          {/* `@container` (2026-08). Every grid inside these widgets sizes
+              itself against THIS element now instead of the viewport, because
+              the content column is the window minus a 288px rail — so a
+              viewport-keyed `lg:` fired on a ~700px column and split it into
+              two ~330px tracks, which is the unreadable dashboard in the
+              product owner's capture. One declaration here makes every child's
+              container query resolve against the width they are actually
+              given, at any window size, zoom level or rail width. */}
+          <section className="@container space-y-6">
+            {calendarBanner}
+            <div className="grid gap-6 @4xl:grid-cols-2">
+              <CalendarPreviewWidget upcoming={upcomingStaffAssets} />
+              {/* `tasks` is deliberately empty here — see the fetch above and
+                  this component's own note on `clientId`: its attention rows
+                  link to an owner-scoped board that a staff viewer lands on the
+                  wrong tab of. Staff get the Recent activity half, which is the
+                  half that joins agent identity (§7.3). */}
+              <ClientHomeOverview
+                clientId={client.id}
+                tasks={[]}
+                assets={overviewAssets}
+                viewerIsClient={false}
+                agentLabelByAssetId={agentLabelByAssetId}
+                recentActivityLimit={4}
+              />
+            </div>
+            {kpis}
+            {standing}
+            <HomeOpsStrip stats={opsStats} />
+          </section>
+
           <section className="space-y-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              Performance
+            </p>
+            {analytics}
+          </section>
+          <section className="space-y-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              AI Insights
+            </p>
             {/* Staff branch — agency overhead, never billed, so no price is
                 quoted here even though the refresh does spend Karos money. */}
             <AiInsights clientId={client.id} viewerIsBilled={viewerIsBilled} />
@@ -155,41 +423,25 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     );
   }
 
-  // The whole search-and-AI-visibility story, in reading order, INSIDE its tab:
-  // headline scores first (and CD-B4's legacy-snapshot notice rides with them,
-  // since SeoGeoScores renders the two together), then the fix list, then the
-  // full report with those two suppressed so nothing renders twice.
+  // QA F99 - client dashboard, in value order: what needs the client now
+  // (attention + recent), then how they're doing, then where they stand.
+  // The full Search & AI visibility report moved off this page entirely
+  // (Surface 09 reporting consolidation) — it lives on Account Center's
+  // Reporting tab now, next to Competitors, so it has one home instead of
+  // rendering here AND there. The oversized "Welcome back" banner - the
+  // shallowest element on the page - becomes one line.
   //
-  // The scores and the plan used to sit outside the tabs, above the segmented
-  // control. That put ~1.6 screens of visibility content AHEAD of the control,
-  // and selecting "Search & AI visibility" then appended the rest of the report
-  // BELOW it - the client read the same subject twice, in two presentations, on
-  // one scroll. A tab control has to sit above everything it switches, and
-  // nothing behind a tab may also render outside it.
-  const visibility = seoGeo ? (
-    <div className="space-y-8">
-      <section className="space-y-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-          Visibility scores
-        </p>
-        <SeoGeoScores insights={seoGeo} />
-      </section>
-      <section className="space-y-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Action plan</p>
-        <SeoGeoPlan insights={seoGeo} isClientViewer />
-      </section>
-      {visibilityPanel}
-    </div>
-  ) : (
-    visibilityPanel
-  );
-
-  // QA F99 - client dashboard, in value order. What needs the client now
-  // (attention + recent), then the plain-English briefing. Everything heavy (the
-  // full performance breakdown and the full visibility report) sits behind a
-  // segmented control instead of five screens of always-expanded detail. The
-  // oversized "Welcome back" banner - the shallowest element on the page -
-  // becomes one line.
+  // AI INSIGHTS AND PERFORMANCE ARE GONE FROM THIS BRANCH (2026-08 UI/UX
+  // pass). Both sat below everything actionable and restated numbers the
+  // widgets above already show: AI Insights is a generated paragraph of the
+  // same scores and channel state, and the status/channel charts are
+  // inventory, not a next step. AI Insights stays on the STAFF branch below
+  // (operators do read it, same viewerIsBilled gate as before); the two
+  // <ClientAnalytics/> charts now mount in Account Center → Reporting instead
+  // (settings/page.tsx's analyticsSection) — moved, not deleted. After this
+  // cut the client Home is exactly: alerts → Next Actions + Calendar Preview
+  // → Your numbers → Where you stand → Recent activity. Nothing else belongs
+  // here without a fresh product decision.
   return (
     <>
       <p className="mb-6 text-sm text-muted">
@@ -199,33 +451,47 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       <div className="space-y-8">
         <section className="space-y-3">
           <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
-          {/* CD-H1: the five counters open the page. F99 left them inside the
-              Performance tab, which put them ~1000px down behind AI Insights -
-              the exact complaint CD-G6 struck F124 over. The rest of F99's
-              arrangement is untouched; only the stat row moves. */}
-          <div className="space-y-6">
-            <ClientAnalyticsStats
-              assets={analyticsAssets}
-              jobs={jobs}
-              integrations={integrations}
-              // A3: the "Agent runs · Last run …" tile is the generation batch,
-              // so a client gets four tiles about their own content and none
-              // about our machinery. See the component's note.
-              viewerIsClient={isClientViewer}
-            />
+          {/* Portal revamp, Surface 02: the old Published/Scheduled/Channels/
+              Deliverables tile row is gone — "Approved, Posted and Draft are
+              deleted" (locked decision). Scheduled becomes the Calendar
+              Preview widget below; Channels moves into the KPIs widget as
+              connection badges; the rest is superseded by real numbers (D6)
+              rather than activity counts. */}
+          {/* `@container` (2026-08). Every grid inside these widgets sizes
+              itself against THIS element now instead of the viewport, because
+              the content column is the window minus a 288px rail — so a
+              viewport-keyed `lg:` fired on a ~700px column and split it into
+              two ~330px tracks, which is the unreadable dashboard in the
+              product owner's capture. One declaration here makes every child's
+              container query resolve against the width they are actually
+              given, at any window size, zoom level or rail width. */}
+          <div className="@container space-y-6">
+            {calendarBanner}
+            <div className="grid gap-6 @4xl:grid-cols-2">
+              <ActionListWidget
+                clientId={client.id}
+                resolved={toClientActions(resolvedActions, client.id)}
+              />
+              <CalendarPreviewWidget upcoming={upcomingAssets} />
+            </div>
+            {kpis}
+            {/* "Where you stand" replaced the old Reporting chip card here. The
+                chips restated the three scores the KPI card now meters two
+                inches above; these are the two numbers that were NOT anywhere
+                on Home — how often the engines name you in an open category
+                question, and how much of that conversation is yours. */}
+            {standing}
             <ClientHomeOverview
               clientId={client.id}
               tasks={tasks}
               assets={overviewAssets}
               viewerIsClient={isClientViewer}
+              agentLabelByAssetId={agentLabelByAssetId}
+              recentActivityLimit={3}
+              tasksHitLimit={tasks.length >= TASK_FEED_LIMIT}
             />
           </div>
         </section>
-        <section className="space-y-3">
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">AI Insights</p>
-          <AiInsights clientId={client.id} viewerIsBilled={viewerIsBilled} />
-        </section>
-        <ClientDashboardTabs performance={analytics} visibility={visibility} />
       </div>
     </>
   );

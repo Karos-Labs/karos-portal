@@ -32,6 +32,7 @@ import {
   listLiDraftFeedback,
   patchAgentIntake,
   upsertAgentIntake,
+  upsertClientActionState,
 } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import { resolveAccountTitleToSeat } from "@/lib/client-seats";
@@ -444,6 +445,13 @@ export async function addLiDraftFeedbackAction(input: {
     }
   }
 
+  // Action 14 ("give us your feedback on a post") — event-tracked, no live
+  // signal answers it (lib/action-list.ts). Only the client's own feedback
+  // counts, not a staff member logging it on their behalf.
+  if (user.role === "CLIENT_USER") {
+    const feedbackClientId = input.clientId;
+    await upsertClientActionState(feedbackClientId, "14", "done");
+  }
   revalidatePath(`/clients/${input.clientId}/linkedin-agent`);
   revalidatePath(`/clients/${input.clientId}/agents`);
   return assetId ? { assetId } : {};

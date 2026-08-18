@@ -149,6 +149,13 @@ export interface Client {
    */
   customAgentIds?: string[];
   /**
+   * CustomAgent ids pinned above the "AI agents" dropdown in the client rail,
+   * in display order (portal revamp, Surface 01). Karos sets the first stars
+   * at onboarding (via View as Client); a client can re-pin their own from the
+   * same dropdown afterward. Absent/empty ⇒ no starred rows, dropdown only.
+   */
+  starredAgentIds?: string[];
+  /**
    * Plan capacity for LinkedIn employee-advocacy seats. Seats within this limit
    * are free; adding beyond it charges credits per seat (the monetization gate).
    * Absent ⇒ DEFAULT_LINKEDIN_SEAT_LIMIT. Admin-set from client settings.
@@ -408,6 +415,14 @@ export interface CustomAgent {
    * fall back to `description` until an admin writes one.
    */
   clientBlurb?: string | null;
+  /**
+   * Admin-set demo/preview video for the agent page's "not set up" state
+   * (portal revamp, Surface 03 — "the video sits at the top until the agent
+   * has been used once"). Absent ⇒ a coming-soon placeholder; the SOW's own
+   * scope note says filming is blocked on this document being finished, so
+   * most agents will carry no value here for a while.
+   */
+  previewVideoUrl?: string | null;
   /** lucide icon name (see components/icon.tsx). */
   icon: string;
   /** Badge/chip hex color. */
@@ -1818,6 +1833,53 @@ export interface PerformanceBenchmarks {
   bottom: ClientMarketingAnalytics[];
   /** Total analytics records considered when ranking. */
   sampleSize: number;
+}
+
+/**
+ * One channel's follower/subscriber count on one day (portal revamp Home KPIs,
+ * D6 — "total followers + growth chart"). Collection `clientFollowerSnapshots`,
+ * APPEND-ONLY unlike `clientMarketingAnalytics`'s upsert-in-place: the growth
+ * chart needs the series, not just the latest count. Doc id
+ * `${clientId}_${platform}_${capturedAt}` — deterministic per day so a re-run
+ * on the same day overwrites rather than duplicating.
+ *
+ * NO LIVE INGESTION CRON EXISTS YET (unlike clientMarketingAnalytics's
+ * `/api/analytics/sync`) — this collection ships as the storage half of the
+ * infrastructure only. Until something writes to it, `follower-tracking.ts`'s
+ * deterministic mock fills the display in memory, same "mock path stops being
+ * reached once wired" contract as `fetchLiveRaw` in analytics-providers.ts.
+ */
+export interface ClientFollowerSnapshot {
+  id: string;
+  clientId: string;
+  /** Canonical integration platform key, e.g. "linkedin", "instagram". */
+  platform: string;
+  count: number;
+  /** Epoch millis this count was captured, floored to the calendar day. */
+  capturedAt: number;
+}
+
+/**
+ * A client's own state for one of the 15 preset actions (portal revamp,
+ * Surface 08). Collection `clientActionStates`, doc id `${clientId}_${actionId}`
+ * (deterministic — one row per action per client, upsert in place).
+ *
+ * "done" IS COMPUTED for most of the 15, live, from data this app already has
+ * (src/lib/action-list.ts's `computeActionDone`) — a row here for one of
+ * those ids is written ONLY for the three genuinely event-based actions this
+ * app has no other way to answer for (looked at the calendar's week view,
+ * added instructions to a scheduled post, sent feedback on a post — see
+ * EVENT_TRACKED_ACTION_IDS). "dismissed" and "not_relevant" are the two
+ * client-chosen states (the locked decision's own two dismissal mechanisms):
+ * dismissed rotates the action back into the queue after
+ * ACTION_DISMISS_COOLDOWN_MS, not_relevant hides it permanently.
+ */
+export interface ClientActionState {
+  id: string;
+  clientId: string;
+  actionId: string;
+  status: "dismissed" | "not_relevant" | "done";
+  updatedAt: number;
 }
 
 /**

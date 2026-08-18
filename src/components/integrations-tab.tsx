@@ -6,6 +6,7 @@ import { Button, Badge, Input, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { Modal } from "@/components/modal";
 import { cn } from "@/lib/utils";
+import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import {
   saveIntegrationAction,
   deleteIntegrationAction,
@@ -586,7 +587,7 @@ function PlatformCard({
           <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
             <Icon name="Users" className="h-3.5 w-3.5" />
             Manage employee seats
-            {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? 2})`}
+            {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT})`}
           </Button>
         )}
 
@@ -695,8 +696,8 @@ function PlatformCard({
           <LinkedInSeatsWorkspace
             clientId={clientId}
             seats={linkedinSeats ?? []}
-            seatLimit={seatLimit ?? 2}
-            seatCost={seatCost ?? 100}
+            seatLimit={seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
+            seatCost={seatCost ?? CREDIT_COSTS.employeeSeat}
           />
         </Modal>
       )}
@@ -995,8 +996,8 @@ export function IntegrationsTab({
   googleBusinessProfileRequested,
   currentUserRole,
   linkedinSeats = [],
-  seatLimit = 2,
-  seatCost = 100,
+  seatLimit = DEFAULT_LINKEDIN_SEAT_LIMIT,
+  seatCost = CREDIT_COSTS.employeeSeat,
 }: Props) {
   const router = useRouter();
   const isAdmin = currentUserRole === "KAROS_ADMIN";

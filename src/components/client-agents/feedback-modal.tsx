@@ -13,6 +13,7 @@ import {
   updateClientAgentFeedbackAction,
   withdrawClientAgentFeedbackAction,
 } from "@/lib/actions/client-agent-feedback-actions";
+import { markActionDoneAction } from "@/lib/actions/action-list-actions";
 import type { ClientAgentFeedbackRow } from "./types";
 
 /**
@@ -84,6 +85,11 @@ export function ClientAgentFeedbackModal({
       else {
         setText("");
         setCategory("");
+        // Action 14 ("Give us your feedback on a post") — event-tracked, no
+        // live signal answers it (lib/action-list.ts). This is the one
+        // client-facing feedback surface this app has; "one piece of
+        // feedback sent" is satisfied the moment the first one lands.
+        if (viewerIsClient) void markActionDoneAction(clientId, "14");
         router.refresh();
       }
     });

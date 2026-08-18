@@ -24,6 +24,7 @@ export function RefreshTaskMapButton({
   isAiProcessing,
   viewerIsBilled,
   className,
+  label = "Refresh Task Map",
 }: {
   clientId: string;
   /** True while a background AI generation cycle is running - locks the button. */
@@ -31,6 +32,9 @@ export function RefreshTaskMapButton({
   /** `isBillableClientActor()` for this session — decides whether a price is quoted. */
   viewerIsBilled: boolean;
   className?: string;
+  /** Override the button's own words for a call site with different framing (e.g. the
+   *  sparse-calendar banner) — the press still does exactly the same thing. */
+  label?: string;
 }) {
   const router = useRouter();
   const [warRoomOpen, setWarRoomOpen] = useState(false);
@@ -65,7 +69,7 @@ export function RefreshTaskMapButton({
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-neon-soft text-neon">
           <Icon name={locked ? "Loader" : "ListTodo"} className={cn("h-3.5 w-3.5", locked && "animate-spin")} />
         </span>
-        Refresh Task Map
+        {label}
         {price && !locked && <span className="text-xs font-normal text-muted-2">· {price}</span>}
       </button>
 

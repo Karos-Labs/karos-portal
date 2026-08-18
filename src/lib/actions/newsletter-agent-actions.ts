@@ -32,6 +32,7 @@ import {
   getClient,
   getCustomAgentByKey,
   upsertAgentIntake,
+  upsertClientActionState,
 } from "@/lib/data";
 import {
   NEWSLETTER_SETUP_V2_KEY,
@@ -255,6 +256,13 @@ export async function addNewsletterDraftFeedbackAction(input: {
     createdBy: user.uid,
     createdAt: Date.now(),
   });
+  // Action 14 ("give us your feedback on a post") — event-tracked, no live
+  // signal answers it (lib/action-list.ts). Only the client's own feedback
+  // counts, not a staff member logging it on their behalf.
+  if (user.role === "CLIENT_USER") {
+    const feedbackClientId = input.clientId;
+    await upsertClientActionState(feedbackClientId, "14", "done");
+  }
   revalidatePath(`/clients/${input.clientId}/newsletter-agent`);
   revalidatePath(`/clients/${input.clientId}/agents`);
   return {};

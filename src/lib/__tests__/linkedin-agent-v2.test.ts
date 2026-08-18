@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  ADD_SEAT_OPTION_VALUE,
   LINKEDIN_IDENTITY_FIELD_KEY,
   BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
@@ -255,7 +256,10 @@ describe("who is offered as an identity", () => {
   const optionsOf = (p: ReturnType<typeof launchProfileFor>) =>
     p.fields.find((f) => f.key === LINKEDIN_IDENTITY_FIELD_KEY)?.options ?? [];
 
-  it("lists the company page plus every seat whose voice is built", () => {
+  it("lists the company page plus every seat whose voice is built, plus Add a seat", () => {
+    // Portal revamp, Surface 04: "+ Add a seat" is always the trailing option
+    // — a sentinel the run dialog's field handler intercepts and routes to
+    // setup, never a real identity (see ADD_SEAT_OPTION_VALUE's own docstring).
     const withSeats = withLinkedInIdentityOptions(profile, [
       { id: "s1", name: "Albert Kattan", voiceReady: true },
       { id: "s2", name: "Lola Tamman", voiceReady: true },
@@ -264,6 +268,7 @@ describe("who is offered as an identity", () => {
       { value: "company", label: "The company page" },
       { value: linkedInSeatIdentityToken("s1"), label: "Albert Kattan" },
       { value: linkedInSeatIdentityToken("s2"), label: "Lola Tamman" },
+      { value: ADD_SEAT_OPTION_VALUE, label: "+ Add a seat" },
     ]);
   });
 
@@ -276,7 +281,11 @@ describe("who is offered as an identity", () => {
       { id: "s2", name: "Not set up yet", voiceReady: false },
       { id: "s3", name: "No flag at all" },
     ]);
-    expect(optionsOf(partial).map((o) => o.label)).toEqual(["The company page", "Albert Kattan"]);
+    expect(optionsOf(partial).map((o) => o.label)).toEqual([
+      "The company page",
+      "Albert Kattan",
+      "+ Add a seat",
+    ]);
   });
 
   it("leaves a profile with no identity field untouched", () => {

@@ -338,7 +338,8 @@ describe("PDF/report contract: intent taxonomy, answer grid, citations", () => {
   it("classifies prompts into the DISC/COMP/PROB/BRAND/NAV taxonomy", () => {
     expect(classifyIntent("best cafes to work from in Tel Aviv", gaz)).toBe("discovery");
     expect(classifyIntent("best app to find work-friendly cafes", gaz)).toBe("comparison");
-    expect(classifyIntent("Acme Fintech alternative", gaz)).toBe("comparison"); // comparison wins over brand
+    // Names the brand — a guaranteed mention, not earned visibility — so brand wins over comparison wording.
+    expect(classifyIntent("Acme Fintech alternative", gaz)).toBe("brand");
     expect(classifyIntent("where can I work with outlets right now", gaz)).toBe("problem");
     expect(classifyIntent("is Acme Fintech good?", gaz)).toBe("brand");
     expect(classifyIntent("acmefintech.com pricing", gaz)).toBe("navigational");

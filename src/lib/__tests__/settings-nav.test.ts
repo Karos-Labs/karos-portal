@@ -171,8 +171,12 @@ describe("deep links name their tab", () => {
     ["src/app/(app)/clients/[id]/agents/page.tsx", "Manage integrations"],
   ];
 
-  it.each(CHANNELS)("%s links to the channels tab (%s)", (rel) => {
-    expect(source(rel)).toContain("/settings?tab=channels");
+  // Portal revamp: Channels stopped being its own top-level tab — "Settings
+  // becomes a tab inside it" folded Channels/Automation/Team into one generic
+  // Settings tab (Account Center, Surface 06) — so every one of these now
+  // names THAT tab instead.
+  it.each(CHANNELS)("%s links to the settings tab (%s)", (rel) => {
+    expect(source(rel)).toContain("/settings?tab=settings");
   });
 
   it("client-analytics sets it on both the Manage link and the reconnect badge", () => {
@@ -181,7 +185,7 @@ describe("deep links name their tab", () => {
     // third one added later without a tab should fail here.
     const hrefs = src.match(/\/settings[a-z?=]*/g) ?? [];
     expect(hrefs).toHaveLength(2);
-    expect(hrefs.every((h) => h === "/settings?tab=channels")).toBe(true);
+    expect(hrefs.every((h) => h === "/settings?tab=settings")).toBe(true);
   });
 
   it("both credits pills in the client rail open the Credits tab", () => {
@@ -198,7 +202,7 @@ describe("deep links name their tab", () => {
   it("the tab ids used by those links are real tabs on the settings page", () => {
     const page = source(SETTINGS_PAGE);
     expect(page).toContain('{ id: "credits", label: "Credits"');
-    expect(page).toContain('{ id: "channels", label: "Channels"');
+    expect(page).toContain('{ id: "settings", label: "Settings"');
   });
 });
 
@@ -234,17 +238,14 @@ describe("a long client description cannot break the no-scroll rail", () => {
     expect(flat(panel)).toContain('compact && "line-clamp-2"');
   });
 
-  it("passes compact at the no-scroll mounts and not at the scrolling ones", () => {
-    // FOUR mounts now, two per shell. Until V3 the staff shell had only the
-    // one — its desktop rail carried a company chip instead of this panel — so
-    // "which mounts clamp?" had a single answer to give and the rule read as a
-    // property of the client's rail rather than of height-constrained mounts.
-    // Both desktop rails are the no-scroll layout the clamp was written for
-    // (CD-E3); both Company sheets scroll and keep the full text.
-    for (const [rel, src] of [
-      [RAIL, railSrc],
-      [SIDEBAR, sidebarSrc],
-    ] as const) {
+  it("clamps the height-constrained mounts, leaves the sheets and Account Center full", () => {
+    // Reversed after Account Center shipped: explicit direction restored the
+    // full brand card to BOTH rails ("not collapsed into a bare minimal text
+    // link"), so this is no longer "nowhere in the rails" — it is FOUR mounts
+    // now (desktop aside × 2, mobile sheet × 2), on top of Account Center's
+    // own fifth, uncompacted one. `compact` still marks exactly the no-scroll
+    // desktop asides; both Company sheets scroll and keep the full text.
+    for (const [rel, src] of [[RAIL, railSrc], [SIDEBAR, sidebarSrc]] as const) {
       const mounts = [...src.matchAll(/<ClientProfilePanel[\s\S]*?\/>/g)].map((m) => flat(m[0]));
       expect(mounts, `${rel} mounts the panel on its rail and in its sheet`).toHaveLength(2);
       expect(
@@ -252,11 +253,12 @@ describe("a long client description cannot break the no-scroll rail", () => {
         `${rel} clamps the height-constrained mount and only that one`,
       ).toHaveLength(1);
     }
-    // Staff's client-context sheet is the SAME scrolling frame as the client's
-    // own, so it shows the same full text. Clamping only there was a one-word
-    // AF-3 parity break (audit, 6547959).
-    expect(sidebarSrc).toContain("<ClientProfilePanel client={clientCtx.client} />");
-    expect(sidebarSrc).not.toContain("<ClientProfilePanel client={clientCtx.client} compact />");
+    const settingsPageSrc = source(SETTINGS_PAGE);
+    const acMounts = [...settingsPageSrc.matchAll(/<ClientProfilePanel[\s\S]*?\/>/g)].map((m) =>
+      flat(m[0]),
+    );
+    expect(acMounts, "Account Center mounts the panel exactly once").toHaveLength(1);
+    expect(acMounts[0]).not.toMatch(/\bcompact\b/);
   });
 
   it("keeps the clamp on the text, not on the chips beside it", () => {
@@ -360,7 +362,7 @@ describe("a long client description cannot break the no-scroll rail", () => {
 
 /* ── CD-L P1/P2: what the Brand Profile sheet is for ─────────────────────── */
 
-describe("the Brand Profile sheet asks for three things", () => {
+describe("the Brand Profile sheet asks for four things", () => {
   const flat = (t: string) => t.replace(/\s+/g, " ");
   const PANEL = "src/components/client-profile-panel.tsx";
   const ACTIONS = "src/lib/actions/client-actions.ts";
@@ -373,16 +375,19 @@ describe("the Brand Profile sheet asks for three things", () => {
     return flat(src.slice(from, src.indexOf("export function ClientProfilePanel", from)));
   })();
 
-  it("offers Contact Email, Website and About, and nothing else", () => {
-    for (const label of ["Contact Email", "Website", "About"]) {
+  it("offers Contact Email, Website, About and Company picture, and nothing else", () => {
+    for (const label of ["Contact Email", "Website", "About", "Company picture"]) {
       expect(modal, `the sheet no longer asks for ${label}`).toContain(`>${label}<`);
     }
     // The three that left, each for its own reason (see the component's note).
     for (const gone of ["Brand Voice", "Industry", "Meeting Domain"]) {
       expect(modal, `${gone} is still in the sheet`).not.toContain(`>${gone}<`);
     }
-    // Exactly three inputs, so a fourth cannot be added without answering here.
-    expect((modal.match(/<label className=\{labelCls\}>/g) ?? [])).toHaveLength(3);
+    // Company picture (portal revamp, Account Center Profile tab) is the one
+    // deliberate fourth field — a client managing their own logo through the
+    // same fenced route staff always could (see the logo route's own note).
+    // Exactly four inputs, so a fifth cannot be added without answering here.
+    expect((modal.match(/<label className=\{labelCls\}>/g) ?? [])).toHaveLength(4);
   });
 
   it("writes only those three, so the fields it dropped keep their stored values", () => {
