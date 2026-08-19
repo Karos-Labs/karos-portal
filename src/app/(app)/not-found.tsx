@@ -13,7 +13,7 @@ export default function AppNotFound() {
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-surface-2 text-muted-2">
         <Icon name="Compass" className="h-6 w-6" />
       </div>
-      <p className="text-lg font-medium text-foreground">We couldn't find that page</p>
+      <p className="text-lg font-medium text-foreground">We couldn&apos;t find that page</p>
       <p className="mt-2 max-w-sm text-sm text-muted">
         It may have been moved, renamed, or never existed. Check the link, or head back to your dashboard.
       </p>
