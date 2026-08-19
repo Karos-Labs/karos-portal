@@ -102,9 +102,9 @@ const NAV: NavItem[] = [
 // merged into the Workspace's Archive tab (2026-07); staff review drafts via
 // the global Assets page.
 //
-// Portal revamp Surface 01: "Home" replaces "Dashboard" (same destination) and
-// "Downloads" joins the set, matching client-rail.tsx's tabNav. "AI agents"
-// stays a plain link here rather than the client rail's starred-rows +
+// Portal revamp Surface 01: "Home" replaces "Dashboard" (same destination),
+// matching client-rail.tsx's tabNav. "AI agents" stays a plain link here
+// rather than the client rail's starred-rows +
 // dropdown (ClientRailAgentsNav) — this is a staff quick-preview strip, not
 // the client's own nav, so it trades the interactive roster for one row that
 // still reaches the same page. Workspace is gone from both shells — the
@@ -117,7 +117,6 @@ function clientViewNav(clientId: string): NavItem[] {
        page they open — one destination, one spelling (#141). */
     { href: `/clients/${clientId}/agents`, label: "AI agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
-    { href: `/clients/${clientId}/downloads`, label: "Downloads", icon: "Download", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   ];
 }
 

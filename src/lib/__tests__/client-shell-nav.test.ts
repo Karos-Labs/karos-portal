@@ -302,7 +302,7 @@ describe("AF-3 · View-as-Client and the client's own view are the same view", (
     const staff = navLabels(sidebar, "function clientViewNav(");
     // Workspace is gone from both shells (the locked decision list retires
     // it — "The Board is replaced by the action list on Home").
-    expect(client).toEqual(["Home", "Calendar", "Downloads"]);
+    expect(client).toEqual(["Home", "Calendar"]);
     expect(agentsNav).toContain('<span className="flex-1 text-left">AI agents</span>');
     expect(["Home", "AI agents", ...client.slice(1)]).toEqual(staff);
   });

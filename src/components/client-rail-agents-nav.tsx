@@ -113,7 +113,7 @@ function AgentRow({
  * REPOSITIONED, NOT REMOVED (2026-08). Starred rows used to render as their
  * own section ABOVE the "AI agents" trigger — direct instructions moved them
  * to live under that tab instead, so the rail's top level is Home / AI agents
- * / Calendar / Downloads and nothing else competes with that fixed set for
+ * / Calendar and nothing else competes with that fixed set for
  * vertical space. The star still promotes an agent to the FRONT of the list
  * the moment the dropdown opens (a stable sort, so relative order within each
  * group is preserved) — same one-click-away utility, one level down.

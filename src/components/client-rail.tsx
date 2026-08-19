@@ -100,7 +100,6 @@ export function ClientRail({
   const tabNav: NavItem[] = [
     { href: home, label: "Home", icon: "LayoutDashboard", exact: true },
     { href: "/calendar", label: "Calendar", icon: "CalendarClock" },
-    { href: `${home}/downloads`, label: "Downloads", icon: "Download" },
   ];
   /**
    * MEETINGS IS NOT A RAIL DESTINATION (AF-1).
@@ -112,7 +111,7 @@ export function ClientRail({
    * but it is reached FROM SETTINGS, not from the rail. "I like that in the
    * settings."
    *
-   * So the rail and the phone bar render the same four destinations, and the
+   * So the rail and the phone bar render the same three destinations, and the
    * client's route to /transcripts is the Meetings tab on their Settings page,
    * which lists their calls and links to the full page. Nothing about the page
    * or its scoping changed — only which surface offers it.
@@ -177,8 +176,8 @@ export function ClientRail({
 
               PINNED ABOVE THE NAV, NOT BELOW IT (2026-08, client-zero
               feedback, Aug 8): the client's own brand is what a client should
-              see FIRST in their own sidebar, before Home/AI agents/Calendar/
-              Downloads — not three navigation rows down. `hideDescription`
+              see FIRST in their own sidebar, before Home/AI agents/Calendar
+              — not two navigation rows down. `hideDescription`
               drops the inline "about" text the same feedback asked to move:
               it still lives one click away, in the Brand Profile popup this
               panel's own Contact-icon button opens.
@@ -289,7 +288,7 @@ export function ClientRail({
 
       {/* ── Mobile bottom tab bar (last tab = Company sheet) ── */}
       <MobileTabBar
-        /* The same four the desktop rail renders: one nav, two widths. */
+        /* The same three the desktop rail renders: one nav, two widths. */
         items={tabNav}
         companyOpen={companyOpen}
         onOpenCompany={() => setCompanyOpen(true)}
@@ -311,12 +310,12 @@ export function ClientRail({
           hasWebsite={!!client.website}
         />
 
-        {/* "AI agents" has no slot in the 3-icon bottom tab bar (Home, Calendar,
-            Downloads fill it), so the roster + star toggles live here on
-            mobile instead — the one-line mobile decision the SOW asked the
-            build to make explicit. Documents/Competitors/Brand Colors moved
-            to Account Center (Surface 06) — reached via the Account Center
-            row below, same as the desktop rail. */}
+        {/* "AI agents" has no slot in the 2-icon bottom tab bar (Home, Calendar
+            fill it), so the roster + star toggles live here on mobile instead
+            — the one-line mobile decision the SOW asked the build to make
+            explicit. Documents/Competitors/Brand Colors moved to Account
+            Center (Surface 06) — reached via the Account Center row below,
+            same as the desktop rail. */}
         <div className="border-t border-border pt-4">
           <ClientRailAgentsNav
             clientId={client.id}

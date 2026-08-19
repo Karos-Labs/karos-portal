@@ -167,7 +167,7 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     category: "Get into the rhythm",
     label: "Export a day of your content",
     icon: "Download",
-    hrefFor: (id) => `/clients/${id}/downloads`,
+    hrefFor: () => "/calendar",
   },
   // Ids 16-24, added 2026-08 — see the module docstring for the reversed
   // "never worded after a platform" rule this block exists under. `tab=settings`
@@ -246,7 +246,9 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
  * a live signal — see the module docstring. "15" belongs here for the same
  * reason as the other three: a zip download has no queryable trace to
  * compute "done" from after the fact, so completion has to be a row written
- * the moment the real event happens (client-downloads.tsx fires it on click).
+ * the moment the real event happens (the "Download this day's content"
+ * button in run-calendar.tsx's day-detail panel fires it on click — the
+ * standalone Downloads page this used to live on is gone, 2026-08).
  * It was missing from this set entirely until 2026-08 — not just missing a
  * writer like 13/14 briefly were, but absent from computeActionDone too, so
  * action 15 had no path to "done" at all, ever.
