@@ -335,7 +335,9 @@ const UNAUTHENTICATED: Record<string, Bucket> = {
     // this bucket is an allowlist: it changes nothing in Firestore, so a
     // forbidden-verb scan waves it through — while an unauthenticated endpoint
     // that can send mail is exactly the thing worth having looked at.
-    mayCall: ["createClientRequest", "sendEmail"],
+    // `escapeHtml` sanitizes the prospect's fields before they land in that
+    // staff-notification email body — pure string escaping, no I/O.
+    mayCall: ["createClientRequest", "sendEmail", "escapeHtml"],
   },
   // The invitation-key box on the sign-up screen, which has to answer before a
   // session can exist. It resolves a key the caller already holds to the

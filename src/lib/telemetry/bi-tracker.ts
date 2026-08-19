@@ -4,15 +4,16 @@
  * Design contract, mirroring src/services/logger.ts:
  *   • Every track*() call returns void immediately — never awaited by callers.
  *   • Streaming inserts are fire-and-forget; failures are swallowed here and
- *     surfaced through logger.logError so they're visible in errorLogs
- *     instead of vanishing twice over.
+ *     surfaced through logStructured (not logger.logError — logger.ts itself
+ *     calls into this module, and looping back through it would be circular)
+ *     so they're still visible in Cloud Logging instead of vanishing.
  *   • With GOOGLE_CLOUD_PROJECT unset (local dev), biTable() returns null and
  *     every track*() call becomes a no-op — no local BigQuery/ADC required.
  */
 import "server-only";
 
 import { biTable } from "@/lib/telemetry/bigquery-client";
-import { logger } from "@/services/logger";
+import { logStructured } from "@/lib/telemetry/structured-log";
 
 interface UserActionEvent {
   clientId: string | null;
@@ -98,12 +99,9 @@ async function insertRow(tableId: string, operation: string, row: Record<string,
     if (!table) return; // telemetry not configured — silent no-op, matches Logger's contract
     await table.insert([row], { ignoreUnknownValues: true, skipInvalidRows: false });
   } catch (err) {
-    logger.logError({
+    logStructured("WARNING", err instanceof Error ? err.message : String(err), {
       clientId: (row.clientId as string | null | undefined) ?? null,
-      agentId: null,
       operation: `bi_tracker.${operation}`,
-      errorMessage: err instanceof Error ? err.message : String(err),
-      severity: "WARN",
     });
   }
 }
