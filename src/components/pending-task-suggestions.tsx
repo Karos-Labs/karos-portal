@@ -37,48 +37,43 @@ export interface SuggestedTaskView {
   /** Which agent/product would run this — already resolved server-side from metadata. */
   executorLabel: string;
   platform?: string;
+  /**
+   * Inferred target date (lib/calendar-suggestion-placement.ts) — computed
+   * fresh on every render, never stored on the task. Lets this same view
+   * model feed both this flat list AND run-calendar.tsx's date-anchored
+   * "Suggested" placement without a second type.
+   */
+  at: number;
 }
 
 /**
- * The Task Map's `pending` proposals (karos_managed, source "copilot") shown
- * right on the calendar instead of only on the Workspace board — a compact
- * approve/skip list, not the full ticket view (`TaskTicketModal`): these are
- * still `pending`, so none of that modal's review/comments/AI-plan machinery
- * applies yet. Approve and Skip are the SAME `updateTaskStatusAction` /
- * `deleteTaskAction` the board's own cards use — no new action, no new
- * authorization surface.
- *
- * Approving dispatches the run immediately (execution-engine.ts), which
- * creates a `Job`; that job then shows up on the calendar on its own as an
- * in-flight run card (queued/running are already client-visible past-run
- * states, lib/calendar-past-runs.ts) — nothing here has to "slot" it there.
+ * Approve/Skip for a Task-Map suggestion, shared by every surface that
+ * renders one: this flat below-grid list AND run-calendar.tsx's date-anchored
+ * placement. Approve/Skip are the SAME `updateTaskStatusAction` /
+ * `deleteTaskAction` the board's own cards used — no new action, no new
+ * authorization surface. Each mount gets its OWN instance (own optimistic
+ * `removedIds`/error state) rather than a shared store: `router.refresh()` on
+ * success re-fetches the page, so both the flat list and the grid placement
+ * pick up the task's real disappearance from `suggestedTaskViews` on the next
+ * render regardless of which surface the click came from.
  */
-export function PendingTaskSuggestions({
-  clientId,
-  tasks,
-}: {
-  clientId: string;
-  tasks: SuggestedTaskView[];
-}) {
+export function useSuggestionActions(clientId: string) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [expanded, setExpanded] = useState(false);
 
-  const visible = tasks
-    .filter((t) => !removedIds.has(t.id))
-    .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]);
-  // Collapsing back below the cut with a row still open would strand it
-  // off-screen mid-decision, so the toggle only ever changes the SLICE.
-  const shown = expanded ? visible : visible.slice(0, COLLAPSED_COUNT);
-  const hiddenCount = visible.length - shown.length;
-  if (visible.length === 0) return null;
-
-  function approve(taskId: string) {
+  /**
+   * `targetDate` is the suggestion's own inferred placement (`task.at`) — the
+   * caller always has it in hand (it's on the `SuggestedTaskView` being
+   * approved), so it's threaded through here rather than re-inferred, keeping
+   * the approved run's calendar date IDENTICAL to whatever date the client
+   * actually saw and clicked Approve on.
+   */
+  function approve(taskId: string, targetDate?: number) {
     setErrors((prev) => ({ ...prev, [taskId]: "" }));
     startTransition(async () => {
-      const res = await updateTaskStatusAction(taskId, "in_progress", clientId);
+      const res = await updateTaskStatusAction(taskId, "in_progress", clientId, targetDate);
       if (res.ok) {
         setRemovedIds((prev) => new Set(prev).add(taskId));
         router.refresh();
@@ -99,6 +94,98 @@ export function PendingTaskSuggestions({
       }
     });
   }
+
+  return { isPending, removedIds, errors, approve, skip };
+}
+
+/**
+ * One suggestion's interactive card body — extracted so the below-grid list
+ * and run-calendar.tsx's week/day views and day-detail panel render an
+ * IDENTICAL row rather than two copies that can drift apart.
+ */
+export function SuggestionRow({
+  task,
+  isPending,
+  error,
+  onApprove,
+  onSkip,
+}: {
+  task: SuggestedTaskView;
+  isPending: boolean;
+  error?: string;
+  onApprove: () => void;
+  onSkip: () => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+          <Badge tone={PRIORITY_TONE[task.priority]}>{taskPriorityLabel(task.priority)}</Badge>
+          <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-3 px-2 py-0.5 text-[10px] font-medium text-muted">
+            <Icon name="Bot" className="h-2.5 w-2.5" />
+            {task.executorLabel}
+            {task.platform ? ` · ${platformLabel(task.platform)}` : ""}
+          </span>
+        </div>
+        <p className="text-sm font-medium text-foreground">{task.title}</p>
+        {task.description && (
+          <p className="mt-0.5 line-clamp-2 text-xs text-muted-2">{task.description}</p>
+        )}
+        {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={onSkip}
+          disabled={isPending}
+          className="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-40"
+        >
+          Skip
+        </button>
+        <button
+          type="button"
+          onClick={onApprove}
+          disabled={isPending}
+          className="flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-accent-ink transition-opacity disabled:opacity-50"
+        >
+          <Icon name="Play" className="h-3 w-3" />
+          Approve
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The Task Map's `pending` proposals (karos_managed, source "copilot") shown
+ * right on the calendar instead of only on the Workspace board — a compact
+ * approve/skip list, not the full ticket view (`TaskTicketModal`): these are
+ * still `pending`, so none of that modal's review/comments/AI-plan machinery
+ * applies yet.
+ *
+ * Approving dispatches the run immediately (execution-engine.ts), which
+ * creates a `Job`; that job then shows up on the calendar on its own as an
+ * in-flight run card (queued/running are already client-visible past-run
+ * states, lib/calendar-past-runs.ts) — nothing here has to "slot" it there.
+ */
+export function PendingTaskSuggestions({
+  clientId,
+  tasks,
+}: {
+  clientId: string;
+  tasks: SuggestedTaskView[];
+}) {
+  const { isPending, removedIds, errors, approve, skip } = useSuggestionActions(clientId);
+  const [expanded, setExpanded] = useState(false);
+
+  const visible = tasks
+    .filter((t) => !removedIds.has(t.id))
+    .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]);
+  // Collapsing back below the cut with a row still open would strand it
+  // off-screen mid-decision, so the toggle only ever changes the SLICE.
+  const shown = expanded ? visible : visible.slice(0, COLLAPSED_COUNT);
+  const hiddenCount = visible.length - shown.length;
+  if (visible.length === 0) return null;
 
   return (
     <Card className="mb-4">
@@ -131,42 +218,13 @@ export function PendingTaskSuggestions({
       <ul className="space-y-2">
         {shown.map((t) => (
           <li key={t.id} className="rounded-md border border-border bg-surface-2 px-3.5 py-3">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                  <Badge tone={PRIORITY_TONE[t.priority]}>{taskPriorityLabel(t.priority)}</Badge>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-3 px-2 py-0.5 text-[10px] font-medium text-muted">
-                    <Icon name="Bot" className="h-2.5 w-2.5" />
-                    {t.executorLabel}
-                    {t.platform ? ` · ${platformLabel(t.platform)}` : ""}
-                  </span>
-                </div>
-                <p className="text-sm font-medium text-foreground">{t.title}</p>
-                {t.description && (
-                  <p className="mt-0.5 line-clamp-2 text-xs text-muted-2">{t.description}</p>
-                )}
-                {errors[t.id] && <p className="mt-1 text-xs text-danger">{errors[t.id]}</p>}
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => skip(t.id)}
-                  disabled={isPending}
-                  className="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-40"
-                >
-                  Skip
-                </button>
-                <button
-                  type="button"
-                  onClick={() => approve(t.id)}
-                  disabled={isPending}
-                  className="flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-accent-ink transition-opacity disabled:opacity-50"
-                >
-                  <Icon name="Play" className="h-3 w-3" />
-                  Approve
-                </button>
-              </div>
-            </div>
+            <SuggestionRow
+              task={t}
+              isPending={isPending}
+              error={errors[t.id]}
+              onApprove={() => approve(t.id, t.at)}
+              onSkip={() => skip(t.id)}
+            />
           </li>
         ))}
       </ul>

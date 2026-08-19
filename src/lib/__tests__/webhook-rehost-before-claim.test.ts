@@ -49,6 +49,7 @@ vi.mock("@/lib/credit-reconcile", () => ({
 vi.mock("@/lib/task-sync", () => ({
   autoCompleteTasksByTrigger: vi.fn().mockResolvedValue(undefined),
   syncTaskForJobOutcome: vi.fn().mockResolvedValue(undefined),
+  findDispatchingTask: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/job-alerts", () => ({ notifyJobFailure: vi.fn().mockResolvedValue(undefined) }));
 const logUsageMock = vi.fn();

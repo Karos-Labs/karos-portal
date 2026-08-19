@@ -10,9 +10,10 @@ import {
   listClientFollowerSnapshots,
   listClientSeats,
   listClientActionStates,
+  getClientCredits,
 } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { isBillableClientActor } from "@/lib/credits";
+import { isBillableClientActor, CREDIT_DEFAULTS } from "@/lib/credits";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { PageHeader } from "@/components/ui";
@@ -31,7 +32,12 @@ import {
   followerGrowthPct,
 } from "@/lib/follower-tracking";
 import { ActionListWidget } from "@/components/home-action-list";
-import { resolveActionList, toClientActions, type ActionSignals } from "@/lib/action-list";
+import {
+  resolveActionList,
+  toClientActions,
+  shouldStartExpanded,
+  type ActionSignals,
+} from "@/lib/action-list";
 import { computePlatformGaps, gapPlatformNames } from "@/lib/calendar-gaps";
 import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
 import { CalendarPreviewWidget } from "@/components/home-calendar-preview";
@@ -82,6 +88,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     followerSnapshots,
     seats,
     actionStates,
+    credits,
   ] = await Promise.all([
     listAssets({ clientId: id }),
     listJobs({ clientId: id }),
@@ -96,16 +103,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     // viewer would land on the wrong tab of). Staff use the count only.
     listClientTasks({ clientId: id, status: ["pending", "review_pending"], limit: TASK_FEED_LIMIT }),
     listClientCompetitors(id),
-    // The last four feed client-only Home widgets (Recent Agent Activity's
-    // §7.3 join, the KPIs follower chart, the 15-item action list's seat
-    // count and stored dismiss/not-relevant/done rows) — read unconditionally
-    // rather than gated on isClientViewer since all are cheap, indexed,
-    // single-field queries and gating them would just move the branch into
+    // The last five feed client-only Home widgets (Recent Agent Activity's
+    // §7.3 join, the KPIs follower chart, the action list's seat count,
+    // per-platform connection and billing signals, and stored
+    // dismiss/not-relevant/done rows) — read unconditionally rather than
+    // gated on isClientViewer since all are cheap, indexed, single-field (or
+    // single-doc) reads and gating them would just move the branch into
     // every widget that needs them instead of removing a real cost.
     listClientAgents({ clientId: id }),
     listClientFollowerSnapshots(id),
     listClientSeats(id),
     listClientActionStates(id),
+    getClientCredits(id),
   ]);
 
   // `competitors` is read for ONE thing on this page now — the action list's
@@ -206,11 +215,20 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     hasManualCompetitor: competitors.some((c) => c.source === "manual"),
     hasUsableChannel: integrations.some((i) => integrationIsUsable(i)),
     seatCount: seats.length,
+    connectedPlatformIds: integrations.filter((i) => integrationIsUsable(i)).map((i) => i.platform),
+    // Every client gets a default credits doc lazily (getClientCredits), so
+    // "the doc exists" would mark this done for a client nobody has touched
+    // anything for — only a real deviation from CREDIT_DEFAULTS counts.
+    hasBillingConfigured:
+      credits.weeklyLimit !== CREDIT_DEFAULTS.weeklyLimit ||
+      credits.monthlyLimit !== CREDIT_DEFAULTS.monthlyLimit ||
+      credits.balance !== CREDIT_DEFAULTS.startingBalance,
   };
   const actionStatesById = new Map(
     actionStates.map((s) => [s.actionId, { status: s.status, updatedAt: s.updatedAt }]),
   );
   const resolvedActions = resolveActionList(actionSignals, actionStatesById, now);
+  const actionListStartExpanded = shouldStartExpanded(resolvedActions);
 
   // Smart Task Map Fallback (final workflow enhancement) — the same gap math
   // the swarm itself reasons from (lib/calendar-gaps.ts, shared with
@@ -476,6 +494,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               <ActionListWidget
                 clientId={client.id}
                 resolved={toClientActions(resolvedActions, client.id)}
+                startExpanded={actionListStartExpanded}
               />
               <CalendarPreviewWidget upcoming={upcomingAssets} />
             </div>

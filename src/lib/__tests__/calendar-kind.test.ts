@@ -198,23 +198,31 @@ describe("the legend's per-viewer chips", () => {
   it("probes every kind the calendar has, so the derivation below is not narrow", () => {
     // Non-vacuity for the whole describe: the grid must reach EVERY chip kind,
     // or "a client cannot match this one" could be an artefact of a grid that
-    // never built the shape. "review" is the one key that is not an asset kind —
-    // it is a run state — so it is excluded here and asked of its own table
-    // below.
+    // never built the shape. "review" and "suggested" are the two keys that
+    // are not asset kinds at all — a run state and a Task-Map proposal
+    // (lib/calendar-suggestion-placement.ts) respectively, neither derivable
+    // from a `CalendarKindInput` shape — so both are excluded here and asked
+    // of their own tables below.
     const everyKind = kindsFrom(grid());
     expect([...everyKind].sort()).toEqual(
-      ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "review").sort(),
+      ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "review" && k !== "suggested").sort(),
     );
   });
 
   it("offers a client every chip their calendar can hold — drafts included, by reversal", () => {
     const clientKinds = kindsFrom(grid().filter((a) => isClientCalendarStatus(a.status)));
     // "review" comes off the run-visibility table, not off postKind — one home
-    // each, and read here rather than restated.
+    // each, and read here rather than restated. "suggested" is simpler still:
+    // a Task-Map suggestion has never been staff-only (PendingTaskSuggestions
+    // has always rendered for a client's own calendar), so it is matchable for
+    // every viewer, unconditionally — the same answer `calendarFilterKeyMatchable`
+    // gives by NOT listing it in CLIENT_UNMATCHABLE_FILTER_KEYS.
     const clientCanMatch = (key: CalendarFilterKey): boolean =>
       key === "review"
         ? pastRunStatuses({ isClient: true }).has("review")
-        : clientKinds.has(key);
+        : key === "suggested"
+          ? true
+          : clientKinds.has(key);
 
     for (const key of ALL_CALENDAR_FILTER_KEYS) {
       expect(calendarFilterKeyMatchable(key, true), `client chip: ${key}`).toBe(

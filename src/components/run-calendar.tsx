@@ -22,6 +22,11 @@ import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calen
 import { cn, relativeTime } from "@/lib/utils";
 import { sameLocalDay } from "@/lib/scheduling";
 import { ArchiveView } from "@/components/archive-view";
+import {
+  useSuggestionActions,
+  SuggestionRow,
+  type SuggestedTaskView,
+} from "@/components/pending-task-suggestions";
 import type { AssetImage } from "@/lib/asset-images";
 import {
   calendarFilterKeyMatchable,
@@ -31,6 +36,9 @@ import {
   type CalendarFilterKey,
 } from "@/lib/calendar-kind";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
+
+/** The one `useSuggestionActions(clientId)` instance RunCalendar lifts to the top and threads down. */
+type SuggestionActions = ReturnType<typeof useSuggestionActions>;
 
 /* ── Serializable shapes built by the calendar page ──────────────────── */
 
@@ -366,6 +374,36 @@ function PostChip({
       )}
       <span className="truncate">{post.title}</span>
     </button>
+  );
+}
+
+/**
+ * A Task-Map suggestion's compact grid chip — visually distinct from every
+ * real `CalendarAssetKind` on purpose (dashed warning tint, never the rest of
+ * the palette): it is a PROPOSAL placed on an inferred date, not dated
+ * content, and must not read as one more scheduled/draft/placeholder kind.
+ * Clicking it opens the day detail, same as any other chip in a cell — the
+ * Approve/Dismiss controls live there and in the week/day views, where a
+ * suggestion gets the full interactive row (see SuggestionRow).
+ */
+function SuggestionChip({
+  task,
+  size = "cell",
+}: {
+  task: SuggestedTaskView;
+  size?: ChipSize;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-1 rounded border border-dashed border-warning/50 bg-warning/10 text-warning leading-tight truncate",
+        CHIP_SIZE[size],
+      )}
+      title={`Suggested${task.platform ? ` · ${platformLabel(task.platform)}` : ""} · ${task.title}`}
+    >
+      <Icon name="Sparkles" className="h-2.5 w-2.5 shrink-0" />
+      <span className="truncate">{task.title}</span>
+    </div>
   );
 }
 
@@ -1244,23 +1282,28 @@ function WeekView({
   today,
   runsByDay,
   postsByDay,
+  suggestionsByDay,
   selectedKey,
   onSelectDay,
   onOpenAsset,
   viewerIsClient,
   canSchedule,
   onScheduleAt,
+  suggestionActions,
 }: {
   weekDays: Date[];
   today: Date;
   runsByDay: Map<string, CalendarRun[]>;
   postsByDay: Map<string, CalendarPost[]>;
+  suggestionsByDay: Map<string, SuggestedTaskView[]>;
   selectedKey: string | null;
   onSelectDay: (key: string) => void;
   onOpenAsset: (id: string) => void;
   viewerIsClient: boolean;
   canSchedule: boolean;
   onScheduleAt: (at: number) => void;
+  /** Approve/Dismiss for the full rows below — one shared instance, lifted to RunCalendar. */
+  suggestionActions: SuggestionActions;
 }) {
   return (
     <>
@@ -1271,7 +1314,8 @@ function WeekView({
           const isToday = sameLocalDay(d.getTime(), today.getTime());
           const dayRuns = runsByDay.get(key) ?? [];
           const dayPosts = postsByDay.get(key) ?? [];
-          const chipCount = dayRuns.length + dayPosts.length;
+          const daySuggestions = suggestionsByDay.get(key) ?? [];
+          const chipCount = dayRuns.length + dayPosts.length + daySuggestions.length;
           const isSelected = key === selectedKey;
           const canScheduleHere = chipCount === 0 && canSchedule;
           const activate = () => {
@@ -1279,6 +1323,12 @@ function WeekView({
             else if (canScheduleHere) onScheduleAt(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9, 0, 0, 0).getTime());
           };
           const interactive = chipCount > 0 || canScheduleHere;
+          const shownRuns = dayRuns.slice(0, 4);
+          const shownPosts = dayPosts.slice(0, Math.max(0, 4 - shownRuns.length));
+          const shownSuggestions = daySuggestions.slice(
+            0,
+            Math.max(0, 4 - shownRuns.length - shownPosts.length),
+          );
           return (
             <div
               key={key}
@@ -1309,13 +1359,11 @@ function WeekView({
                 </span>
               </p>
               <div className="space-y-1">
-                {dayRuns.slice(0, 4).map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
-                {dayRuns.length < 4 &&
-                  dayPosts
-                    .slice(0, 4 - dayRuns.length)
-                    .map((p) => (
-                      <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
-                    ))}
+                {shownRuns.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
+                {shownPosts.map((p) => (
+                  <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
+                ))}
+                {shownSuggestions.map((s) => <SuggestionChip key={s.id} task={s} size="row" />)}
                 {chipCount > 4 && <p className="pl-1 text-[11px] text-muted-2">+{chipCount - 4} more</p>}
               </div>
             </div>
@@ -1335,6 +1383,8 @@ function WeekView({
           const isToday = sameLocalDay(d.getTime(), today.getTime());
           const dayRuns = runsByDay.get(key) ?? [];
           const dayPosts = postsByDay.get(key) ?? [];
+          const daySuggestions = suggestionsByDay.get(key) ?? [];
+          const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
           return (
             <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
               <button
@@ -1344,17 +1394,26 @@ function WeekView({
               >
                 <span className="text-xs font-semibold">{DAY_LABELS[d.getDay()]} {d.getDate()}</span>
                 <span className="text-[11px] text-muted-2">
-                  {dayRuns.length + dayPosts.length === 0
-                    ? "Nothing yet"
-                    : `${dayRuns.length + dayPosts.length} item${dayRuns.length + dayPosts.length === 1 ? "" : "s"}`}
+                  {dayCount === 0 ? "Nothing yet" : `${dayCount} item${dayCount === 1 ? "" : "s"}`}
                 </span>
                 <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 text-muted-2" />
               </button>
-              {(dayRuns.length > 0 || dayPosts.length > 0) && (
+              {dayCount > 0 && (
                 <div className="space-y-1.5">
                   {dayRuns.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
                   {dayPosts.map((p) => (
                     <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
+                  ))}
+                  {daySuggestions.map((s) => (
+                    <div key={s.id} className="rounded-md border border-dashed border-warning/40 bg-warning/5 px-2.5 py-2">
+                      <SuggestionRow
+                        task={s}
+                        isPending={suggestionActions.isPending}
+                        error={suggestionActions.errors[s.id]}
+                        onApprove={() => suggestionActions.approve(s.id, s.at)}
+                        onSkip={() => suggestionActions.skip(s.id)}
+                      />
+                    </div>
                   ))}
                 </div>
               )}
@@ -1371,21 +1430,25 @@ function DayView({
   isToday,
   runs,
   posts,
+  suggestions,
   onOpenAsset,
   viewerIsClient,
   canSchedule,
   onScheduleAt,
+  suggestionActions,
 }: {
   day: Date;
   isToday: boolean;
   runs: CalendarRun[];
   posts: CalendarPost[];
+  suggestions: SuggestedTaskView[];
   onOpenAsset: (id: string) => void;
   viewerIsClient: boolean;
   canSchedule: boolean;
   onScheduleAt: (at: number) => void;
+  suggestionActions: SuggestionActions;
 }) {
-  const empty = runs.length === 0 && posts.length === 0;
+  const empty = runs.length === 0 && posts.length === 0 && suggestions.length === 0;
   return (
     <div className="p-4">
       <p className="mb-3 flex items-center gap-2 text-sm font-medium">
@@ -1411,6 +1474,17 @@ function DayView({
           {posts.map((p) => (
             <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
           ))}
+          {suggestions.map((s) => (
+            <div key={s.id} className="rounded-md border border-dashed border-warning/40 bg-warning/5 px-2.5 py-2">
+              <SuggestionRow
+                task={s}
+                isPending={suggestionActions.isPending}
+                error={suggestionActions.errors[s.id]}
+                onApprove={() => suggestionActions.approve(s.id, s.at)}
+                onSkip={() => suggestionActions.skip(s.id)}
+              />
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -1433,6 +1507,8 @@ export function RunCalendar({
   defaultClientId,
   archiveAssets,
   agentLabelByAssetId,
+  suggestions = [],
+  suggestionsClientId,
 }: {
   runs: CalendarRun[];
   /**
@@ -1482,6 +1558,20 @@ export function RunCalendar({
   archiveAssets?: Asset[];
   /** assetId → agent label for the rows above (§7.3 identity, contentLabelsByAsset). */
   agentLabelByAssetId?: Record<string, string>;
+  /**
+   * Task-Map proposals (pending, karos_managed/copilot), already carrying an
+   * inferred `at` (lib/calendar-suggestion-placement.ts) — placed on their own
+   * date, distinct from every real `CalendarAssetKind` (see SuggestionChip).
+   * Never derived from `posts`/`assets`: a suggestion is a ClientTask, not an
+   * Asset, and has no asset status for `postKind` to classify.
+   */
+  suggestions?: SuggestedTaskView[];
+  /**
+   * The one client Approve/Dismiss on a suggestion acts against — absent (and
+   * `suggestions` therefore always empty) on the cross-client staff overview,
+   * which has no single client to approve a task for.
+   */
+  suggestionsClientId?: string;
 }) {
   const today = useMemo(() => new Date(), []);
   const [viewYear, setViewYear] = useState(today.getFullYear());
@@ -1539,6 +1629,10 @@ export function RunCalendar({
     () => runs.filter((r) => !(r.jobStatus === "review" && hiddenStatuses.has("review"))),
     [runs, hiddenStatuses],
   );
+  const visibleSuggestions = useMemo(
+    () => (hiddenStatuses.has("suggested") ? [] : suggestions),
+    [suggestions, hiddenStatuses],
+  );
 
   const runsByDay = useMemo(() => {
     const m = new Map<string, CalendarRun[]>();
@@ -1558,6 +1652,23 @@ export function RunCalendar({
     return m;
   }, [visiblePosts]);
 
+  const suggestionsByDay = useMemo(() => {
+    const m = new Map<string, SuggestedTaskView[]>();
+    for (const s of visibleSuggestions) {
+      const k = dayKey(s.at);
+      (m.get(k) ?? m.set(k, []).get(k)!).push(s);
+    }
+    return m;
+  }, [visibleSuggestions]);
+
+  // One shared instance for every Approve/Dismiss control this render tree
+  // offers (week's day-by-day list, day view, day-detail panel) — lifted here
+  // rather than one hook call per surface, so a click in any of them and the
+  // instant optimistic removal it drives are consistent across all three.
+  // `?? ""` is never actually exercised: `suggestions` is only ever non-empty
+  // when calendar-body.tsx also passed a real `suggestionsClientId`.
+  const suggestionActions = useSuggestionActions(suggestionsClientId ?? "");
+
   const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
   const totalCells = Math.ceil((firstDayOfWeek + totalDays) / 7) * 7;
@@ -1573,15 +1684,24 @@ export function RunCalendar({
   // Below `sm` the grid is replaced by this list of days that actually have
   // something on them.
   const agendaDays = useMemo(() => {
-    const out: { key: string; day: number; runs: CalendarRun[]; posts: CalendarPost[] }[] = [];
+    const out: {
+      key: string;
+      day: number;
+      runs: CalendarRun[];
+      posts: CalendarPost[];
+      suggestions: SuggestedTaskView[];
+    }[] = [];
     for (let day = 1; day <= totalDays; day++) {
       const key = `${viewYear}-${viewMonth}-${day}`;
       const dayRuns = runsByDay.get(key) ?? [];
       const dayPosts = postsByDay.get(key) ?? [];
-      if (dayRuns.length + dayPosts.length > 0) out.push({ key, day, runs: dayRuns, posts: dayPosts });
+      const daySuggestions = suggestionsByDay.get(key) ?? [];
+      if (dayRuns.length + dayPosts.length + daySuggestions.length > 0) {
+        out.push({ key, day, runs: dayRuns, posts: dayPosts, suggestions: daySuggestions });
+      }
     }
     return out;
-  }, [totalDays, viewYear, viewMonth, runsByDay, postsByDay]);
+  }, [totalDays, viewYear, viewMonth, runsByDay, postsByDay, suggestionsByDay]);
 
   function prevMonth() {
     setSelectedKey(null);
@@ -1633,6 +1753,7 @@ export function RunCalendar({
 
   const selectedRuns = selectedKey ? (runsByDay.get(selectedKey) ?? []) : [];
   const selectedPosts = selectedKey ? (postsByDay.get(selectedKey) ?? []) : [];
+  const selectedSuggestions = selectedKey ? (suggestionsByDay.get(selectedKey) ?? []) : [];
   const selectedScheduled = selectedRuns.filter((r) => r.kind === "scheduled").sort((a, b) => a.at - b.at);
   const selectedPast = selectedRuns.filter((r) => r.kind === "past").sort((a, b) => b.at - a.at);
 
@@ -1740,7 +1861,8 @@ export function RunCalendar({
             const key = isValid ? `${viewYear}-${viewMonth}-${day}` : "";
             const dayRuns = isValid ? (runsByDay.get(key) ?? []) : [];
             const dayPosts = isValid ? (postsByDay.get(key) ?? []) : [];
-            const chipCount = dayRuns.length + dayPosts.length;
+            const daySuggestions = isValid ? (suggestionsByDay.get(key) ?? []) : [];
+            const chipCount = dayRuns.length + dayPosts.length + daySuggestions.length;
             const isLastCol = (i + 1) % 7 === 0;
             const isSelected = key !== "" && key === selectedKey;
 
@@ -1789,13 +1911,23 @@ export function RunCalendar({
                       {day}
                     </span>
                     <div className="space-y-[3px]">
-                      {dayRuns.slice(0, 3).map((r) => <RunChip key={r.kind + r.id} run={r} />)}
-                    {dayRuns.length < 3 &&
-                      dayPosts
-                        .slice(0, 3 - dayRuns.length)
-                        .map((p) => (
-                          <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} viewerIsClient={viewerIsClient} />
-                        ))}
+                      {(() => {
+                        const shownRuns = dayRuns.slice(0, 3);
+                        const shownPosts = dayPosts.slice(0, Math.max(0, 3 - shownRuns.length));
+                        const shownSuggestions = daySuggestions.slice(
+                          0,
+                          Math.max(0, 3 - shownRuns.length - shownPosts.length),
+                        );
+                        return (
+                          <>
+                            {shownRuns.map((r) => <RunChip key={r.kind + r.id} run={r} />)}
+                            {shownPosts.map((p) => (
+                              <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} viewerIsClient={viewerIsClient} />
+                            ))}
+                            {shownSuggestions.map((s) => <SuggestionChip key={s.id} task={s} />)}
+                          </>
+                        );
+                      })()}
                     {chipCount > 3 && <p className="pl-1 text-[11px] text-muted-2">+{chipCount - 3} more</p>}
                   </div>
                 </>
@@ -1812,8 +1944,9 @@ export function RunCalendar({
               Nothing scheduled in {MONTH_NAMES[viewMonth]}.
             </li>
           ) : (
-            agendaDays.map(({ key, day, runs: dayRuns, posts: dayPosts }) => {
+            agendaDays.map(({ key, day, runs: dayRuns, posts: dayPosts, suggestions: daySuggestions }) => {
               const isToday = isCurrentMonth && day === today.getDate();
+              const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
               return (
                 <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
                   <button
@@ -1825,8 +1958,7 @@ export function RunCalendar({
                       {DAY_LABELS[new Date(viewYear, viewMonth, day).getDay()]} {day}
                     </span>
                     <span className="text-[11px] text-muted-2">
-                      {dayRuns.length + dayPosts.length} item
-                      {dayRuns.length + dayPosts.length === 1 ? "" : "s"}
+                      {dayCount} item{dayCount === 1 ? "" : "s"}
                     </span>
                     <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 text-muted-2" />
                   </button>
@@ -1835,6 +1967,7 @@ export function RunCalendar({
                     {dayPosts.map((p) => (
                       <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} size="row" viewerIsClient={viewerIsClient} />
                     ))}
+                    {daySuggestions.map((s) => <SuggestionChip key={s.id} task={s} size="row" />)}
                   </div>
                 </li>
               );
@@ -1850,6 +1983,7 @@ export function RunCalendar({
             today={today}
             runsByDay={runsByDay}
             postsByDay={postsByDay}
+            suggestionsByDay={suggestionsByDay}
             selectedKey={selectedKey}
             onSelectDay={setSelectedKey}
             onOpenAsset={setOpenAssetId}
@@ -1859,6 +1993,7 @@ export function RunCalendar({
               setSchedulePrefillAt(at);
               setScheduleOpen(true);
             }}
+            suggestionActions={suggestionActions}
           />
         )}
 
@@ -1868,6 +2003,7 @@ export function RunCalendar({
             isToday={sameLocalDay(dayAnchor.getTime(), today.getTime())}
             runs={runsByDay.get(dayKey(dayAnchor.getTime())) ?? []}
             posts={postsByDay.get(dayKey(dayAnchor.getTime())) ?? []}
+            suggestions={suggestionsByDay.get(dayKey(dayAnchor.getTime())) ?? []}
             onOpenAsset={setOpenAssetId}
             viewerIsClient={viewerIsClient}
             canSchedule={canSchedule}
@@ -1875,6 +2011,7 @@ export function RunCalendar({
               setSchedulePrefillAt(at);
               setScheduleOpen(true);
             }}
+            suggestionActions={suggestionActions}
           />
         )}
 
@@ -1932,10 +2069,25 @@ export function RunCalendar({
             </button>
           </div>
 
-          {selectedScheduled.length + selectedPast.length + selectedPosts.length === 0 ? (
+          {selectedScheduled.length + selectedPast.length + selectedPosts.length + selectedSuggestions.length === 0 ? (
             <p className="text-xs text-muted-2">Nothing on this day.</p>
           ) : (
             <div className="space-y-4">
+              {selectedSuggestions.length > 0 && (
+                <Section title="Suggested">
+                  {selectedSuggestions.map((s) => (
+                    <div key={s.id} className="rounded-md border border-dashed border-warning/40 bg-warning/5 px-3.5 py-3">
+                      <SuggestionRow
+                        task={s}
+                        isPending={suggestionActions.isPending}
+                        error={suggestionActions.errors[s.id]}
+                        onApprove={() => suggestionActions.approve(s.id, s.at)}
+                        onSkip={() => suggestionActions.skip(s.id)}
+                      />
+                    </div>
+                  ))}
+                </Section>
+              )}
               {selectedScheduled.length > 0 && (
                 <Section title="Upcoming runs">
                   {selectedScheduled.map((r) => (
@@ -2064,6 +2216,9 @@ const STATUS_FILTER_CHIP_CLASS: Record<CalendarFilterKey, string> = {
   placeholder: POST_CHIP_CLASS.placeholder,
   failed: POST_CHIP_CLASS.failed,
   review: "bg-warning/25",
+  // Same dashed-warning tint as SuggestionChip — a proposal, not a real
+  // asset-status kind, so it deliberately doesn't reuse any of the six above.
+  suggested: "border border-dashed border-warning/50 bg-warning/10",
 };
 
 /** A legend dot that also toggles that status's visibility on the grid - dimmed while hidden. */

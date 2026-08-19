@@ -435,6 +435,7 @@ export default async function ClientSettingsPage({
       intelSchedule={clientIntelSchedule(client)}
       allowInternalFallback={isStaff}
       correctionPricing={correctionPricing}
+      viewerIsClient={isClientViewer}
     />
   );
 

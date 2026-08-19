@@ -2125,6 +2125,13 @@ export interface ClientTask {
    * (task-disable-copy.ts), the one predicate every execution-trigger action
    * refuses on. Set and cleared by exactly one action (`setTaskDisabledAction`),
    * so unlike `noDeliverable` it is a standing decision, not a run outcome.
+   * `suggestedDate` (2026-08) — set only when this task's Approve
+   * (`updateTaskStatusAction`'s `targetDate` param) carried the inferred
+   * calendar placement a Task-Map suggestion was shown on
+   * (lib/calendar-suggestion-placement.ts). Read back by the agent-service
+   * webhook via `findDispatchingTask` and given to the resulting asset as its
+   * `scheduledAt`, so an approved suggestion lands on the calendar day it was
+   * shown on instead of as an undated draft.
    */
   metadata?: Record<string, unknown>;
   /**

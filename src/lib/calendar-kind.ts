@@ -99,15 +99,17 @@ export function postKindLabel(kind: CalendarAssetKind, viewerIsClient: boolean):
 }
 
 /**
- * The legend/filter key domain: every chip kind, plus the one RUN bucket the
- * legend also toggles ("review" is a past run whose `jobStatus` is "review", not
- * an asset kind at all).
+ * The legend/filter key domain: every chip kind, plus two buckets that are not
+ * `CalendarAssetKind` at all — "review" is a past run whose `jobStatus` is
+ * "review", and "suggested" (2026-08) is a Task-Map proposal placed on an
+ * inferred date (lib/calendar-suggestion-placement.ts), a `ClientTask` with no
+ * asset status for `postKind` to classify in the first place.
  *
  * Here rather than in run-calendar because WHO CAN MATCH a key is a fact about
  * `postKind` above and about calendar-past-runs' visibility table — not about
  * the component that paints the dots.
  */
-export type CalendarFilterKey = CalendarAssetKind | "review";
+export type CalendarFilterKey = CalendarAssetKind | "review" | "suggested";
 
 /**
  * Every filter key. Exhaustive by construction — a new `CalendarAssetKind` is a
@@ -122,6 +124,7 @@ const FILTER_KEY_PRESENT: Record<CalendarFilterKey, true> = {
   held: true,
   draft: true,
   review: true,
+  suggested: true,
 };
 
 export const ALL_CALENDAR_FILTER_KEYS = Object.keys(FILTER_KEY_PRESENT) as CalendarFilterKey[];
@@ -264,6 +267,9 @@ const CALENDAR_FILTER_LABEL: Record<CalendarFilterKey, string> = {
   // register. `jobStatusLabel` rather than the map so the ONE fallback applies
   // here too, and so this line cannot outlive a rename of the entry.
   review: jobStatusLabel("review"),
+  // A Task-Map proposal (2026-08) — not a `JobStatus` or an asset status, so it
+  // takes neither of the other two registers; its own word, same for chip and legend.
+  suggested: "Suggested",
 };
 
 /**

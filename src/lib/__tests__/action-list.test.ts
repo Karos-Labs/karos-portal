@@ -5,6 +5,7 @@ import {
   computeActionDone,
   resolveActionList,
   selectTopActions,
+  shouldStartExpanded,
   type ActionSignals,
 } from "../action-list";
 
@@ -22,23 +23,47 @@ function signals(overrides: Partial<ActionSignals> = {}): ActionSignals {
     hasManualCompetitor: false,
     hasUsableChannel: false,
     seatCount: 0,
+    connectedPlatformIds: [],
+    hasBillingConfigured: false,
     ...overrides,
   };
 }
 
 describe("ACTION_DEFINITIONS", () => {
-  it("is exactly fifteen, in the SOW's own order", () => {
-    expect(ACTION_DEFINITIONS).toHaveLength(15);
+  it("is the original fifteen plus the 2026-08 onboarding extension (16-24), in order", () => {
+    // The original 15 were the whole list, ids untouched here on purpose — no
+    // ClientActionState migration for existing clients. 16-24 are the
+    // extension (see the module docstring for the reversed "never worded
+    // after a platform" decision).
+    expect(ACTION_DEFINITIONS).toHaveLength(24);
     expect(ACTION_DEFINITIONS.map((a) => a.id)).toEqual([
       "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13", "14", "15",
+      "16", "17", "18", "19", "20", "21", "22", "23", "24",
     ]);
   });
 
-  it("never names a platform or a single agent in its label", () => {
-    // The locked decision: "never named after a platform or a single agent."
-    const platformWords = /instagram|linkedin|tiktok|facebook|twitter|reddit|newsletter|blog/i;
+  it("ids 16-20 are the only ones naming a platform — REVERSED 2026-08", () => {
+    // This is the inverse of the test that used to stand here
+    // ("never names a platform or a single agent in its label"). That rule
+    // was a locked decision the product owner explicitly reversed: a
+    // mandatory onboarding checklist that cannot say WHICH platform to
+    // connect is not actionable. Kept as a NAMED exemption rather than
+    // deleted outright, so a sixth platform-named row added later without
+    // updating this list still fails here.
+    //
+    // "X" (id 17) is excluded from the generic word-boundary regex below —
+    // a single letter is not a safe pattern to run against arbitrary prose —
+    // and asserted by its own exact label instead.
+    const platformWords = /instagram|linkedin|tiktok|facebook|twitter|reddit|youtube|google business|newsletter|blog/i;
+    const PLATFORM_NAMED_IDS = new Set(["16", "17", "18", "19", "20"]);
+    expect(ACTION_DEFINITIONS.find((a) => a.id === "17")?.label).toBe("Connect X");
     for (const a of ACTION_DEFINITIONS) {
-      expect(a.label, a.id).not.toMatch(platformWords);
+      if (a.id === "17") continue;
+      if (PLATFORM_NAMED_IDS.has(a.id)) {
+        expect(a.label, a.id).toMatch(platformWords);
+      } else {
+        expect(a.label, a.id).not.toMatch(platformWords);
+      }
     }
   });
 
@@ -86,6 +111,29 @@ describe("computeActionDone", () => {
     expect(computeActionDone(signals({ seatCount: 1 }))["11"]).toBe(false);
     expect(computeActionDone(signals({ seatCount: 2 }))["11"]).toBe(true);
   });
+
+  it("16-20 each check their own platform's membership in connectedPlatformIds, not just any connection", () => {
+    const withLinkedin = computeActionDone(signals({ connectedPlatformIds: ["linkedin"] }));
+    expect(withLinkedin["16"]).toBe(true);
+    expect(withLinkedin["17"]).toBe(false);
+    expect(withLinkedin["18"]).toBe(false);
+    expect(withLinkedin["19"]).toBe(false);
+    expect(withLinkedin["20"]).toBe(false);
+
+    const allFive = computeActionDone(
+      signals({ connectedPlatformIds: ["linkedin", "twitter", "instagram", "youtube", "google_business_profile"] }),
+    );
+    expect(allFive["16"]).toBe(true);
+    expect(allFive["17"]).toBe(true);
+    expect(allFive["18"]).toBe(true);
+    expect(allFive["19"]).toBe(true);
+    expect(allFive["20"]).toBe(true);
+  });
+
+  it("24 needs billing actually configured, not just the lazily-created default doc", () => {
+    expect(computeActionDone(signals({ hasBillingConfigured: false }))["24"]).toBe(false);
+    expect(computeActionDone(signals({ hasBillingConfigured: true }))["24"]).toBe(true);
+  });
 });
 
 describe("resolveActionList", () => {
@@ -100,6 +148,17 @@ describe("resolveActionList", () => {
     expect(byId.get("12")).toBe("eligible");
     expect(byId.get("13")).toBe("eligible");
     expect(byId.get("14")).toBe("eligible");
+  });
+
+  it("21/22/23 (brand voice, persona, competitor analysis docs) are event-tracked the same way", () => {
+    const resolved = resolveActionList(signals(), noStates, NOW);
+    const byId = new Map(resolved.map((a) => [a.id, a.status]));
+    expect(byId.get("21")).toBe("eligible");
+    expect(byId.get("22")).toBe("eligible");
+    expect(byId.get("23")).toBe("eligible");
+
+    const opened = new Map([["22", { status: "done" as const, updatedAt: NOW }]]);
+    expect(resolveActionList(signals(), opened, NOW).find((a) => a.id === "22")?.status).toBe("done");
   });
 
   it("reads a stored done row for an event-tracked action", () => {
@@ -157,6 +216,25 @@ describe("selectTopActions", () => {
   it("never returns more than count", () => {
     const resolved = resolveActionList(signals(), new Map(), NOW);
     expect(selectTopActions(resolved, 3)).toHaveLength(3);
-    expect(selectTopActions(resolved, 100).length).toBeLessThanOrEqual(15);
+    expect(selectTopActions(resolved, 100).length).toBeLessThanOrEqual(ACTION_DEFINITIONS.length);
+  });
+});
+
+describe("shouldStartExpanded", () => {
+  it("expands for a client who has barely started", () => {
+    const resolved = resolveActionList(signals(), new Map(), NOW);
+    expect(shouldStartExpanded(resolved)).toBe(true);
+  });
+
+  it("collapses once a client has made real progress", () => {
+    const states = new Map(
+      ACTION_DEFINITIONS.slice(0, 20).map((a) => [a.id, { status: "done" as const, updatedAt: NOW }]),
+    );
+    const resolved = resolveActionList(signals(), states, NOW);
+    expect(shouldStartExpanded(resolved)).toBe(false);
+  });
+
+  it("never throws on an empty list", () => {
+    expect(shouldStartExpanded([])).toBe(false);
   });
 });

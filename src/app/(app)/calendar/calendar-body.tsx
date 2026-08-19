@@ -52,6 +52,7 @@ import { Icon } from "@/components/icon";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
 import { PendingTaskSuggestions, type SuggestedTaskView } from "@/components/pending-task-suggestions";
+import { inferSuggestionDates } from "@/lib/calendar-suggestion-placement";
 import {
   RunCalendar,
   type CalendarClientOption,
@@ -258,23 +259,39 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     .filter((i) => i.platform !== "google" && integrationIsUsable(i))
     .map((i) => i.platform);
   const gapPlatforms = gapPlatformNames(computePlatformGaps(assets, usablePlatforms, gapNow));
-  const suggestedTaskViews: SuggestedTaskView[] = pendingTasksRaw
-    .filter((t) => t.owner === "karos_managed" && t.source === "copilot")
-    .map((t) => {
-      const meta = t.metadata ?? {};
-      const customAgentName = meta.customAgentName as string | undefined;
-      const productType = meta.productType as string | undefined;
-      const platform = meta.platform as string | undefined;
-      return {
-        id: t.id,
-        title: t.title,
-        ...(t.description ? { description: t.description } : {}),
-        priority: t.priority,
-        executorLabel:
-          customAgentName ?? MANAGED_PRODUCTS.find((p) => p.taskType === productType)?.name ?? "Karos AI",
-        ...(platform ? { platform } : {}),
-      };
-    });
+  const pendingSuggestionTasks = pendingTasksRaw.filter(
+    (t) => t.owner === "karos_managed" && t.source === "copilot",
+  );
+  // Inferred, never stored: a suggestion has no date field on the task itself
+  // (it's a proposal, not scheduled content), so its calendar placement is
+  // recomputed fresh against the client's CURRENT booked dates on every
+  // render (lib/calendar-suggestion-placement.ts) rather than going stale
+  // against a calendar that changes underneath a cached value.
+  const suggestionDates = inferSuggestionDates(
+    pendingSuggestionTasks.map((t) => ({
+      id: t.id,
+      platform: t.metadata?.platform as string | undefined,
+      priority: t.priority,
+    })),
+    assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
+    gapNow,
+  );
+  const suggestedTaskViews: SuggestedTaskView[] = pendingSuggestionTasks.map((t) => {
+    const meta = t.metadata ?? {};
+    const customAgentName = meta.customAgentName as string | undefined;
+    const productType = meta.productType as string | undefined;
+    const platform = meta.platform as string | undefined;
+    return {
+      id: t.id,
+      title: t.title,
+      ...(t.description ? { description: t.description } : {}),
+      priority: t.priority,
+      executorLabel:
+        customAgentName ?? MANAGED_PRODUCTS.find((p) => p.taskType === productType)?.name ?? "Karos AI",
+      ...(platform ? { platform } : {}),
+      at: suggestionDates.get(t.id)!,
+    };
+  });
 
   // Agent lookups: by id for scheduled runs, by name for past jobs (jobs store
   // the agent's name, not its id). These stay JOIN keys - what a card PRINTS
@@ -754,6 +771,8 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         runs={runs}
         posts={posts}
         assets={assets}
+        suggestions={suggestedTaskViews}
+        {...(scopedClientId ? { suggestionsClientId: scopedClientId } : {})}
         // Whose vocabulary the detail modal uses. `isClient` and not
         // `!canSchedule`: staff in View as Client keep the staff register, which
         // is the split every other viewer-worded surface on this page already

@@ -1812,6 +1812,24 @@ export async function POST(req: NextRequest) {
       // Only real catalog products get a template chip; "custom" runs have no
       // managed product (getManagedProduct would fall back to the first one).
       const managedProduct = MANAGED_PRODUCTS.find((p) => p.taskType === payload.task_type);
+      // Was this run dispatched from an APPROVED Task-Map suggestion carrying
+      // an inferred calendar placement (metadata.suggestedDate, set by
+      // updateTaskStatusAction's targetDate param)? If so the resulting asset
+      // gets that date as its OWN scheduledAt below, instead of landing as an
+      // undated draft — invisible on the calendar regardless of anything the
+      // grid itself does, since `postKind` never places anything with no
+      // `scheduledAt` on a day cell. Same lookup the zero-deliverable refund
+      // path below already makes for an unrelated reason — never guessed at
+      // from the payload, always OUR record of the dispatch.
+      const dispatchingTask = await findDispatchingTask(
+        job.id,
+        job.clientId,
+        payload.metadata?.karos_task_id,
+      ).catch((e) => {
+        console.error("[webhook] dispatching-task lookup for suggestedDate failed:", e);
+        return null;
+      });
+      const suggestedScheduledAt = dispatchingTask?.metadata?.suggestedDate;
       // The job is already claimed (single delivery, see above), so a write
       // failure here can't fall back to redelivery — a naive throw would 500
       // and strand the run with no asset, no cost/usage log (the after() below
@@ -1871,6 +1889,12 @@ export async function POST(req: NextRequest) {
               : {}),
           orderKey: orderKeyForCreatedAt(now, job.id),
           ...recommendedScheduleFields(assetType, 0, platform),
+          // An approved Task-Map suggestion's inferred date wins over the
+          // generic recommendation above — the client approved a specific day,
+          // and this is what keeps the resulting draft visible on THAT day
+          // instead of vanishing off the calendar entirely (postKind returns
+          // null for anything with no scheduledAt).
+          ...(typeof suggestedScheduledAt === "number" ? { scheduledAt: suggestedScheduledAt } : {}),
           createdBy: "agent-service",
           createdAt: now,
           updatedAt: now,

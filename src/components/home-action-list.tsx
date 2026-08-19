@@ -24,13 +24,21 @@ import type { ClientResolvedAction, ResolvedActionStatus } from "@/lib/action-li
 export function ActionListWidget({
   clientId,
   resolved,
+  startExpanded = false,
 }: {
   clientId: string;
   resolved: ClientResolvedAction[];
+  /**
+   * Open already-expanded rather than collapsed to the usual top 3 — set by
+   * the caller from `shouldStartExpanded` (lib/action-list.ts) for a client
+   * who has barely started the checklist, so the mandatory-onboarding ask is
+   * satisfied by prominence rather than a navigation block.
+   */
+  startExpanded?: boolean;
 }) {
   const [, startTransition] = useTransition();
   const [overrides, setOverrides] = useState<Record<string, ResolvedActionStatus>>({});
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(startExpanded);
 
   const withOverrides = resolved.map((a) => ({ ...a, status: overrides[a.id] ?? a.status }));
   // "Not relevant for me" is the one permanent skip in the portal — it drops

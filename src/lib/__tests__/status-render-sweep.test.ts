@@ -495,10 +495,13 @@ const OTHER_REGISTER_WORDS = new Set<string>([
     calendarFilterLabel(k, true),
     calendarFilterLabel(k, false),
   ]),
-  ...ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "review").flatMap((k) => [
-    postKindLabel(k as CalendarAssetKind, true),
-    postKindLabel(k as CalendarAssetKind, false),
-  ]),
+  // `postKindLabel` is typed over `CalendarAssetKind`, not the wider
+  // `CalendarFilterKey` — "review" (a JobStatus) and "suggested" (a Task-Map
+  // proposal, 2026-08) are both filter keys with no asset status behind them,
+  // so both are excluded here rather than cast through with `as`.
+  ...ALL_CALENDAR_FILTER_KEYS.filter(
+    (k): k is CalendarAssetKind => k !== "review" && k !== "suggested",
+  ).flatMap((k) => [postKindLabel(k, true), postKindLabel(k, false)]),
 ]);
 
 const RUN_STATE_ONLY_WORDS = Object.values(JOB_STATUS_META)

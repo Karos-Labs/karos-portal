@@ -28,9 +28,14 @@ import { jobStatusLabel } from "@/lib/job-status-copy";
  * cover the viewer-aware override and the fallback path.
  */
 
-/** The kinds both registers name. `review` is a JobStatus, not a post kind. */
+/**
+ * The kinds both registers name. `review` is a JobStatus, not a post kind, and
+ * `suggested` (2026-08) is a Task-Map proposal placed on an inferred date —
+ * neither is derivable from an asset's own status, so `postKindLabel` (typed
+ * over `CalendarAssetKind`) has no entry for either and both are excluded here.
+ */
 const SHARED: CalendarAssetKind[] = ALL_CALENDAR_FILTER_KEYS.filter(
-  (k): k is CalendarAssetKind => k !== "review",
+  (k): k is CalendarAssetKind => k !== "review" && k !== "suggested",
 );
 
 /**

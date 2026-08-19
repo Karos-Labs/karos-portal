@@ -74,6 +74,17 @@ export async function updateTaskStatusAction(
   id: string,
   status: TaskStatus,
   clientId: string,
+  /**
+   * Set ONLY when this move is a Task-Map suggestion's Approve, carrying its
+   * inferred calendar placement (lib/calendar-suggestion-placement.ts) —
+   * stashed as `metadata.suggestedDate` so the agent-service webhook can read
+   * it back (via the same `findDispatchingTask` it already calls for other
+   * reasons) and give the resulting asset a real `scheduledAt` instead of
+   * landing as an undated draft, invisible on the calendar (#101-adjacent: an
+   * approved suggestion used to vanish from the calendar entirely, same root
+   * cause — nothing downstream of Approve ever carried a date at all).
+   */
+  targetDate?: number,
 ): Promise<{ ok: boolean; error?: string }> {
   const access = await requireTaskAccess(id, clientId);
   if (!access.ok) return { ok: false, error: access.error };
@@ -167,6 +178,12 @@ export async function updateTaskStatusAction(
     // Re-opening a Done card clears its completion timestamp.
     if (claimed.status === "completed" || claimed.completedAt != null) {
       await updateClientTask(id, { completedAt: null, updatedAt: Date.now() });
+    }
+    if (targetDate != null) {
+      await updateClientTask(id, {
+        metadata: { ...(claimed.metadata ?? {}), suggestedDate: targetDate },
+        updatedAt: Date.now(),
+      });
     }
     after(() => runTaskExecution(clientId, id).catch(console.error));
     revalidatePath(`/clients/${clientId}`);

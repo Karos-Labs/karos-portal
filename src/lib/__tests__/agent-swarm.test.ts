@@ -66,6 +66,8 @@ const input: SwarmInput = {
     gapSummary: "- linkedin: GAP",
     brandingSummary: "Tone: bold",
     benchmarkSummary: "No data",
+    stalenessSummary: "No agent staleness — every granted agent has run recently.",
+    reviewBacklogSummary: "No review backlog.",
     customAgents: [],
   },
 };

@@ -26,9 +26,12 @@ import {
   getClientPerformanceBenchmarks,
   getTaskBoardCapacity,
   createClientTask,
+  listJobs,
+  listPlannedScheduledRuns,
 } from "@/lib/data";
 import { findDuplicateReason, normalizeTitleForDedup, queueCapacitySkipNote } from "@/lib/task-dedup";
 import { computePlatformGaps } from "@/lib/calendar-gaps";
+import { computeAgentStaleness, agentStalenessSummary, reviewBacklogSummary } from "@/lib/agent-staleness";
 import { getClientCustomAgents, type ClientCustomAgentSummary } from "@/lib/agent-roster";
 import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engine";
 import { integrationIsUsable } from "@/lib/integration-status";
@@ -95,6 +98,7 @@ Rules:
 - When an AVAILABLE CUSTOM AGENTS list is provided and one fits the task better, assign it by setting customAgentId to that agent's exact id INSTEAD of a productType — never set both on the same task. Only use ids from that list; never invent one.
 - Set platform to the target channel when relevant. Set weight (0-100) by how critical the underlying gap is (90+ = urgent, 75-89 = high, 50-74 = standard, <50 = optional); priority must agree (>=75 high, 40-74 medium, <40 low).
 - Keep tasks hyper-specific to THIS client. No generic filler. Never exceed 20 tasks in the array; the panel will trim to the best ${MAX_CONSENSUS_TASKS}.
+- When AGENT STALENESS flags an agent as never_run/overdue_schedule/stale_no_cadence, strongly prefer a task that assigns THAT agent's customAgentId over a generic platform-gap task, and name the staleness reason in the task's description. When REVIEW BACKLOG is non-trivial, weigh whether the client is better served by a task that clears the backlog (nudging a review) than by proposing more new volume.
 - Return the COMPLETE array every turn (keep what works, revise what doesn't) — do not return only your deltas.
 - MESSAGE must be under 60 words, specific, and reference concrete tasks/trends. This is the debate line the client watches live.`;
 
@@ -143,6 +147,14 @@ export interface SwarmContext {
   brandingSummary: string;
   /** Top/bottom historical performers for the Data Analyst. */
   benchmarkSummary: string;
+  /**
+   * Which granted agents haven't run recently or have an overdue schedule —
+   * the signal that lets a persona recommend a NAMED agent instead of only a
+   * platform gap (lib/agent-staleness.ts).
+   */
+  stalenessSummary: string;
+  /** How many drafts have sat unreviewed, and for how long — weighed against proposing more new volume. */
+  reviewBacklogSummary: string;
   /** Custom agents assigned to this client — assignable via a task's customAgentId. */
   customAgents: ClientCustomAgentSummary[];
   /**
@@ -233,6 +245,12 @@ ${ctx.brandingSummary}
 
 HISTORICAL PERFORMANCE BENCHMARKS:
 ${ctx.benchmarkSummary}
+
+AGENT STALENESS:
+${ctx.stalenessSummary}
+
+REVIEW BACKLOG:
+${ctx.reviewBacklogSummary}
 
 AVAILABLE CUSTOM AGENTS (assign a task to one via customAgentId):
 ${customAgentsBlock}
@@ -531,12 +549,14 @@ export async function buildSwarmContext(
   clientId: string,
   trendOverride?: string | null,
 ): Promise<{ clientName: string } & SwarmContext> {
-  const [client, assets, integrations, benchmarks, customAgents] = await Promise.all([
+  const [client, assets, integrations, benchmarks, customAgents, jobs, scheduledRuns] = await Promise.all([
     getClient(clientId),
     listAssets({ clientId }),
     listClientIntegrations(clientId),
     getClientPerformanceBenchmarks(clientId),
     getClientCustomAgents(clientId),
+    listJobs({ clientId }),
+    listPlannedScheduledRuns({ clientId }),
   ]);
   if (!client) throw new Error("Client not found");
 
@@ -613,12 +633,27 @@ export async function buildSwarmContext(
     }
   }
 
+  // Which granted agents are stale, and how large the review backlog is —
+  // the two signals every prior version of this context lacked, both feeding
+  // TURN_DISCIPLINE's rule that lets a persona name a specific agent instead
+  // of only reasoning about platform volume (lib/agent-staleness.ts).
+  const staleness = computeAgentStaleness(
+    customAgents.map((a) => ({ id: a.id, name: a.name })),
+    jobs,
+    scheduledRuns,
+    nowMs,
+  );
+  const stalenessSummary = agentStalenessSummary(staleness);
+  const backlogSummary = reviewBacklogSummary(assets, nowMs);
+
   return {
     clientName: client.name,
     category: clientCategoryValue(client),
     gapSummary,
     brandingSummary,
     benchmarkSummary,
+    stalenessSummary,
+    reviewBacklogSummary: backlogSummary,
     customAgents,
     campaignTrend,
   };

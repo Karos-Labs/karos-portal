@@ -16,7 +16,7 @@ import {
   stripHeadingNumber,
   stripPipelineMarkers,
 } from "@/lib/doc-render";
-import { generateDocSummaryAction, generateIntelReportAction } from "@/lib/actions";
+import { generateDocSummaryAction, generateIntelReportAction, markActionDoneAction } from "@/lib/actions";
 import { CorrectInfoModal } from "@/components/correct-info-modal";
 import { docListEmptyLine, docsPipelineState, unavailableDocCopy } from "@/lib/doc-rail-copy";
 import type { IntelScheduleInfo } from "@/lib/intel-schedule";
@@ -783,6 +783,13 @@ function formatDate(ms: number | null): string {
 /* ── Documents list ───────────────────────────────────────────────────── */
 
 
+/** Maps a doc row's open event onto the action-list id it counts toward, when any. */
+const ACTION_ID_BY_DOC_TYPE: Partial<Record<ContextDocType, string>> = {
+  "brand-voice": "21",
+  "target-audience": "22",
+  "competitor-analysis": "23",
+};
+
 export function ClientDocuments({
   contextDocs,
   isAdmin,
@@ -794,6 +801,7 @@ export function ClientDocuments({
   intelSchedule: _intelSchedule,
   allowInternalFallback = false,
   correctionPricing,
+  viewerIsClient = false,
 }: {
   contextDocs: ClientContextDoc[];
   isAdmin?: boolean;
@@ -820,6 +828,13 @@ export function ClientDocuments({
    * whose corrections are agency overhead and cost the client nothing.
    */
   correctionPricing?: { cost: number; blockReason?: string };
+  /**
+   * The REAL client-role flag, not `!isAdmin` — a KAROS_EMPLOYEE viewer also
+   * has `isAdmin: false` but is not a client, and the action-list ids 21/22/23
+   * this component fires on doc-open must only ever be marked done for the
+   * client whose checklist they belong to.
+   */
+  viewerIsClient?: boolean;
 }) {
   const router = useRouter();
   const [openDoc, setOpenDoc] = useState<{ doc: ClientContextDoc; label: string } | null>(null);
@@ -874,12 +889,19 @@ export function ClientDocuments({
             item.pick.kind === "doc" ? (
               <li key={item.docType}>
                 <button
-                  onClick={() =>
+                  onClick={() => {
                     setOpenDoc({
                       doc: (item.pick as { kind: "doc"; doc: ClientContextDoc }).doc,
                       label: item.label,
-                    })
-                  }
+                    });
+                    // Event-tracked action-list ids (21/22/23, lib/action-list.ts) —
+                    // these three docs have nothing to query for "has the client
+                    // looked at this" beyond the moment they open it.
+                    const actionId = ACTION_ID_BY_DOC_TYPE[item.docType];
+                    if (viewerIsClient && clientId && actionId) {
+                      void markActionDoneAction(clientId, actionId);
+                    }
+                  }}
                   /* Compact rows: the rail is a no-scroll fixed layout (CD-E3),
                      and seven of these were its single tallest block. */
                   className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
