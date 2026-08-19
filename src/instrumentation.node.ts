@@ -56,4 +56,14 @@ export async function startNodeTelemetry(): Promise<void> {
     ),
   });
   sdk.start();
+
+  // `BatchSpanProcessor` buffers ~5s of spans before exporting. Without this,
+  // every span from the request that was executing when Cloud Run sends
+  // SIGTERM on scale-down/redeploy — disproportionately the ones worth
+  // having — sits in that buffer and is dropped when the process exits.
+  // `void` because SIGTERM handlers can't block the runtime's own shutdown
+  // sequence on this; shutdown() has its own internal export timeout.
+  process.on("SIGTERM", () => {
+    void sdk.shutdown();
+  });
 }

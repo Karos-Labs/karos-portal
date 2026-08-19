@@ -373,9 +373,22 @@ describe("every exported action in planned-run-actions.ts reaches the fence", ()
   )("%s", (_name, body) => {
     // The CALL, not the mention: the import line carries both identifiers too,
     // which is how a sweep passes over a guard that has been deleted.
+    //
+    // requireClientAccessResult (2026-08, D-77) is the third accepted path,
+    // alongside authorizeClient: `requireClientAccess` itself now runs
+    // `clientAccessRefusal` (see _shared.ts), and this file's two
+    // client-reachable actions call the adapter that lets that throw become
+    // an `{ error }` result instead of a rejected promise. Accepted here only
+    // because the next check proves the adapter really delegates rather than
+    // swallowing the fence.
     const asks =
-      /\bclientAccessRefusal\s*\(/.test(body) || /\bauthorizeClient\s*\(/.test(body);
-    expect(asks, "reaches neither clientAccessRefusal nor this file's authorizeClient").toBe(true);
+      /\bclientAccessRefusal\s*\(/.test(body) ||
+      /\bauthorizeClient\s*\(/.test(body) ||
+      /\brequireClientAccessResult\s*\(/.test(body);
+    expect(
+      asks,
+      "reaches neither clientAccessRefusal, this file's authorizeClient, nor requireClientAccessResult",
+    ).toBe(true);
   });
 
   it("has the file's own authorizer ask the shared rule", () => {
@@ -386,5 +399,23 @@ describe("every exported action in planned-run-actions.ts reaches the fence", ()
     const openBrace = src.indexOf("{", matchingParen(src, openParen));
     const body = src.slice(openBrace, matchingBrace(src, openBrace) + 1);
     expect(body).toMatch(/\bclientAccessRefusal\s*\(/);
+  });
+
+  it("has requireClientAccessResult ask the shared rule too, not just return an error", () => {
+    // The other accepted delegation, checked the same way: requireClientAccessResult
+    // must actually call requireClientAccess (which carries the D-77 fence),
+    // not just pattern-match its name while doing nothing.
+    //
+    // bodyBraceAfter, not `indexOf("{")`: this function is annotated
+    // `Promise<{ user: AppUser } | { error: string }>`, so a naive first-brace
+    // search finds the brace inside that RETURN TYPE, not the function body —
+    // the exact wrong-brace trap `bodyBraceAfter` exists to avoid, above.
+    const m = /function\s+requireClientAccessResult\s*\(/.exec(src);
+    expect(m, "requireClientAccessResult no longer exists under that name").toBeTruthy();
+    const openParen = m!.index + m![0].length - 1;
+    const openBrace = bodyBraceAfter(src, matchingParen(src, openParen));
+    const body = src.slice(openBrace, matchingBrace(src, openBrace) + 1);
+    expect(body.startsWith("{"), "sliced from the wrong brace").toBe(true);
+    expect(body).toMatch(/\brequireClientAccess\s*\(/);
   });
 });

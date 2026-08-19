@@ -15,6 +15,7 @@
 
 import "server-only";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { logStructured } from "@/lib/telemetry/structured-log";
 
 const ALGORITHM = "aes-256-gcm";
 const IV_BYTES = 12;
@@ -53,7 +54,11 @@ export function encryptToken(plaintext: string): string {
 export function decryptToken(stored: string): string {
   if (stored.startsWith(PLAIN_PREFIX)) return stored.slice(PLAIN_PREFIX.length);
   if (!stored.startsWith(ENC_PREFIX)) {
-    // Legacy/plaintext value written before encryption existed — return as-is.
+    // Legacy/plaintext value written before encryption existed — return as-is,
+    // but log it so ops can grep for how much legacy plaintext remains.
+    logStructured("WARNING", "decryptToken: returning un-prefixed legacy plaintext token as-is", {
+      operation: "token-cipher.decryptToken",
+    });
     return stored;
   }
   const key = loadKey();

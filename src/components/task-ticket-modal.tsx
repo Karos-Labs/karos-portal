@@ -40,12 +40,12 @@ const PRIORITY_COLOR: Record<string, string> = {
  * not role-branched: there is no staff-only variant of these labels.
  */
 const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
-  gmail:               { label: "Operational Intel",   color: "#6b9fd4" },
-  competitor_research: { label: "Competitor Research", color: "#FF6B2C" },
-  brand_audit:         { label: "Brand Audit",         color: "#d9a13d" },
-  content_dispatch:    { label: "Content",             color: "#e5484d" },
-  copilot:             { label: "AI Copilot",          color: "#FF6B2C" },
-  manual:              { label: "Manual",              color: "#9c9ca3" },
+  gmail:               { label: "Operational Intel",   color: "var(--info)" },
+  competitor_research: { label: "Competitor Research", color: "var(--neon)" },
+  brand_audit:         { label: "Brand Audit",         color: "var(--warning)" },
+  content_dispatch:    { label: "Content",             color: "var(--danger)" },
+  copilot:             { label: "AI Copilot",          color: "var(--neon)" },
+  manual:              { label: "Manual",              color: "var(--muted)" },
 };
 
 const STATUS_NEXT: Record<TaskStatus, TaskStatus> = {
@@ -279,7 +279,7 @@ function ReviewPanel({
             type="checkbox"
             checked={autoPublish}
             onChange={(e) => setAutoPublish(e.target.checked)}
-            className="mt-0.5 h-3.5 w-3.5 accent-[var(--color-neon,#39d98a)]"
+            className="mt-0.5 h-3.5 w-3.5 accent-[var(--color-neon)]"
           />
           <span className="min-w-0">
             <span className="block text-xs font-medium text-foreground">
@@ -603,6 +603,7 @@ function CommentsSection({
         <button
           type="submit"
           disabled={!text.trim() || isPending}
+          aria-label="Post comment"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-neon text-black transition-opacity disabled:opacity-40"
         >
           {isPending ? (
@@ -794,7 +795,7 @@ export function TaskTicketModal({
       />
 
       {/* Panel */}
-      <div className="relative z-10 flex max-h-[90vh] w-full max-w-[620px] flex-col overflow-hidden rounded-[20px] border border-border bg-surface shadow-2xl">
+      <div className="relative z-10 flex max-h-[90vh] w-full max-w-[620px] flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface shadow-2xl">
 
         {/* Header */}
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border bg-surface-2 px-5 py-4">
@@ -803,7 +804,7 @@ export function TaskTicketModal({
             <div className="mb-2 flex flex-wrap items-center gap-1.5">
               <span
                 className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                style={{ background: src.color + "1f", color: src.color }}
+                style={{ background: `color-mix(in srgb, ${src.color} 12%, transparent)`, color: src.color }}
               >
                 {src.label}
               </span>

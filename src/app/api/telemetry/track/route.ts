@@ -4,6 +4,7 @@ import { trackUserAction } from "@/lib/telemetry/bi-tracker";
 export const runtime = "nodejs";
 
 const MAX_METADATA_KEYS = 20;
+const MAX_METADATA_VALUE_LENGTH = 1000;
 
 /**
  * Generic BI click/UI-event sink for client components. Server actions cover
@@ -27,6 +28,19 @@ export async function POST(req: Request) {
 
   if (!body.eventName || !body.surface) {
     return Response.json({ error: "eventName and surface are required" }, { status: 400 });
+  }
+
+  const oversizedValue =
+    body.metadata &&
+    typeof body.metadata === "object" &&
+    Object.values(body.metadata).some(
+      (value) => typeof value === "string" && value.length > MAX_METADATA_VALUE_LENGTH,
+    );
+  if (oversizedValue) {
+    return Response.json(
+      { error: `metadata string values must be ${MAX_METADATA_VALUE_LENGTH} characters or fewer` },
+      { status: 400 },
+    );
   }
 
   const metadata =

@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { matchingBrace, matchingParen, stripComments } from "./source-scan";
+import { matchingBrace, matchingParen, readSource, stripComments } from "./source-scan";
 
 /**
  * DECISION 6, ASKED OF EACH ACTION RATHER THAN OF THE MODULE.
@@ -49,7 +48,7 @@ const ADMIN_ONLY_ACTIONS = [
  */
 const CLIENT_REACHABLE_ACTIONS = ["runDynamicAgentAction"] as const;
 
-const source = stripComments(readFileSync(ACTIONS_FILE, "utf8"));
+const source = stripComments(readSource(ACTIONS_FILE));
 
 /**
  * The body text of one exported async function, comments already stripped.
@@ -98,7 +97,7 @@ function isAdminFenced(fnName: string, from: string = source): boolean {
 
 describe("the Agent Studio module is a server-action module at all", () => {
   it('begins with "use server", which is what makes its exports network-reachable', () => {
-    const raw = readFileSync(ACTIONS_FILE, "utf8").trimStart();
+    const raw = readSource(ACTIONS_FILE).trimStart();
     expect(raw.startsWith('"use server"') || raw.startsWith("'use server'")).toBe(true);
   });
 
@@ -160,7 +159,7 @@ describe("the Studio's pages are admin-guarded, not just its actions", () => {
 
   for (const page of pages) {
     it(`${page.split("builder")[1]} calls requireUser with KAROS_ADMIN`, () => {
-      const src = stripComments(readFileSync(page, "utf8"));
+      const src = stripComments(readSource(page));
       expect(src).toMatch(/requireUser\s*\(\s*\[\s*["']KAROS_ADMIN["']\s*\]\s*\)/);
       // and not a wider role list that would let an employee in
       expect(src).not.toMatch(/KAROS_EMPLOYEE/);

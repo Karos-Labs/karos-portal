@@ -17,11 +17,11 @@ const KAROS_DOMAIN = "@karoslabs.com";
  *
  * @karoslabs.com invariant: transcripts with no agency participant are dropped silently.
  *
- * Secure it by setting FIREFLIES_WEBHOOK_SECRET and configuring the webhook URL as
- *   /api/ingest/fireflies?secret=YOUR_SECRET
+ * Secure it by setting FIREFLIES_WEBHOOK_SECRET and configuring the webhook with an
+ *   x-webhook-secret: YOUR_SECRET header (query-string secrets leak into access logs).
  */
 export async function POST(req: NextRequest) {
-  const provided = req.nextUrl.searchParams.get("secret") || req.headers.get("x-webhook-secret");
+  const provided = req.headers.get("x-webhook-secret");
   const denied = checkWebhookSecret({ envVar: "FIREFLIES_WEBHOOK_SECRET", provided });
   if (denied) return denied;
 

@@ -10,6 +10,7 @@ import {
   updateEmployeeSeat,
   removeEmployeeSeat,
   chargeClientCredits,
+  creditClientCredits,
 } from "@/lib/data";
 import {
   CreditError,
@@ -84,8 +85,10 @@ export async function addEmployeeSeatAction(
     return { ok: false, gated: true, error: assessment.reason ?? "Seat limit reached." };
   }
 
+  let chargedAt: number | null = null;
   if (assessment.requiresCharge && billable) {
     try {
+      chargedAt = Date.now();
       await chargeClientCredits({
         clientId,
         amount: assessment.cost,
@@ -95,20 +98,46 @@ export async function addEmployeeSeatAction(
         actorName: user.name,
       });
     } catch (e) {
+      chargedAt = null;
       if (e instanceof CreditError) return { ok: false, gated: true, error: e.message };
       throw e;
     }
   }
 
-  const seat = await addEmployeeSeat(clientId, {
-    employeeName: input.employeeName.trim(),
-    employeeEmail: input.employeeEmail.trim(),
-    credentials: input.credentials ?? {},
-    status: "active",
-    resumeUrl: input.resumeUrl ?? null,
-    backgroundContext: input.backgroundContext ?? null,
-    addedBy: user.uid,
-  });
+  // The charge above already landed — if the seat write below throws (missing
+  // LinkedIn integration, Firestore contention), the client must not keep
+  // paying for a seat that was never created. Refund is never-throwing so a
+  // failed refund doesn't mask the original seat-write error.
+  let seat: { id: string };
+  try {
+    seat = await addEmployeeSeat(clientId, {
+      employeeName: input.employeeName.trim(),
+      employeeEmail: input.employeeEmail.trim(),
+      credentials: input.credentials ?? {},
+      status: "active",
+      resumeUrl: input.resumeUrl ?? null,
+      backgroundContext: input.backgroundContext ?? null,
+      addedBy: user.uid,
+    });
+  } catch (e) {
+    if (chargedAt != null) {
+      try {
+        await creditClientCredits({
+          clientId,
+          amount: assessment.cost,
+          kind: "refund",
+          chargedAt,
+          operation: "seat_purchase",
+          reason: `Refund · seat creation failed for ${input.employeeName.trim()}`,
+          actorUid: user.uid,
+          actorName: user.name,
+        });
+      } catch (refundError) {
+        console.error("[seat-actions] refund after failed seat creation failed:", refundError);
+      }
+    }
+    throw e;
+  }
 
   revalidatePath(`/clients/${clientId}/settings`);
   return { ok: true, seatId: seat.id, charged: assessment.requiresCharge ? assessment.cost : 0 };

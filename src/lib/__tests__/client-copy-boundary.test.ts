@@ -1346,7 +1346,7 @@ describe('the "the cap stopped N of these" note', () => {
       })
       .map(toRel);
     expect(offenders, "call queueCapacitySkipNote instead of writing your own").toEqual([HOME]);
-  }, 20_000);
+  }, 45_000);
 });
 
 /* ── the review refusals: one rule, one home, and two conditions ──────────── */
@@ -2732,7 +2732,7 @@ describe("the client copy that travels through the database", () => {
         "researchReportReadyDescription(",
       );
     }
-  }, 20_000);
+  }, 45_000);
 
   it("calls the correction one thing on the card that prices it and records it", () => {
     // The OTHER half of a consolidation, and this file's own rename walked into

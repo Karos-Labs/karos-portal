@@ -161,7 +161,7 @@ export function ClientRail({
               <img
                 src="/brand/kairos-head-disc-dark.svg"
                 alt=""
-                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_var(--border)]"
               />
               <span className="font-serif text-xl font-normal leading-none text-foreground">
                 Karos Labs
@@ -266,7 +266,7 @@ export function ClientRail({
           <img
             src="/brand/kairos-head-disc-dark.svg"
             alt=""
-            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_var(--border)]"
           />
           <span className="font-serif text-xl font-normal leading-none text-foreground">
             Karos Labs

@@ -7,7 +7,10 @@ import { uploadBytes } from "@/lib/storage";
 
 export const maxDuration = 60;
 
-const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"]);
+// SVG excluded: it can carry embedded <script>, a stored-XSS vector if this
+// content is ever served same-origin (currently mitigated by a separate
+// Storage origin, but not guaranteed to stay that way).
+const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
 const MAX_BYTES = 4 * 1024 * 1024;
 
 /**
@@ -36,7 +39,7 @@ export async function POST(req: Request) {
   const rawMime = file.type || "image/png";
   const mimeType = rawMime === "image/jpg" ? "image/jpeg" : rawMime;
   if (!ALLOWED_TYPES.has(mimeType)) {
-    return NextResponse.json({ error: "Only PNG, JPEG, WEBP, and SVG files are accepted" }, { status: 415 });
+    return NextResponse.json({ error: "Only PNG, JPEG, and WEBP files are accepted" }, { status: 415 });
   }
 
   const bytes = Buffer.from(await file.arrayBuffer());

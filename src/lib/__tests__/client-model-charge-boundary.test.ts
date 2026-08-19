@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { readSource } from "./source-scan";
 
 /**
  * NO CLIENT-REACHABLE MODEL CALL WITHOUT A DECISION ABOUT WHO PAYS.
@@ -142,23 +143,50 @@ interface Verdict {
 }
 
 /**
+ * The real, on-disk parse of every file in `FILES`, computed exactly once.
+ *
+ * `analyze()` runs once at module load and again inside each of the ~9
+ * planted-negative tests below, each time with only ONE file's text swapped
+ * for a mutated copy. Re-parsing all ~500 source files with the TypeScript
+ * compiler on every one of those calls (instead of just the single overridden
+ * file) doesn't just waste CPU — it starves every other vitest worker running
+ * concurrently, which is what turned unrelated suites into 5000ms timeouts.
+ * `ts.SourceFile` nodes are read-only from this scan's perspective (nothing
+ * here mutates the AST), so sharing the cached parse across calls is safe.
+ */
+const BASE_SOURCE_FILES = new Map<string, ts.SourceFile>(
+  FILES.map((f) => [
+    f,
+    ts.createSourceFile(
+      f,
+      readSource(f),
+      ts.ScriptTarget.Latest,
+      true,
+      f.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    ),
+  ]),
+);
+
+/**
  * Run the whole analysis. `overrides` replaces a file's SOURCE TEXT — the hook
  * the planted-negative tests use to prove this scan can go red without editing
  * anything on disk.
  */
 function analyze(overrides: Map<string, string> = new Map()): Verdict[] {
-  const sourceOf = (f: string) => overrides.get(f) ?? readFileSync(f, "utf8");
   const sf = new Map<string, ts.SourceFile>(
-    FILES.map((f) => [
-      f,
-      ts.createSourceFile(
+    FILES.map((f) => {
+      if (!overrides.has(f)) return [f, BASE_SOURCE_FILES.get(f)!];
+      return [
         f,
-        sourceOf(f),
-        ts.ScriptTarget.Latest,
-        true,
-        f.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-      ),
-    ]),
+        ts.createSourceFile(
+          f,
+          overrides.get(f)!,
+          ts.ScriptTarget.Latest,
+          true,
+          f.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+        ),
+      ];
+    }),
   );
   const each = (n: ts.Node, fn: (n: ts.Node) => void): void => {
     fn(n);
@@ -477,7 +505,7 @@ describe("the sweep under the loosenings it forbids", () => {
 
   it("goes red when a charged entry stops charging", () => {
     const target = file("lib/actions/x-agent-actions.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     // Strip the charge wrapper's identifier only — the model call stays.
     const planted = original.replace(/withClientModelCharge/g, "runUncharged");
     expect(planted, "the plant did not change anything — has the helper been renamed?").not.toBe(original);
@@ -492,7 +520,7 @@ describe("the sweep under the loosenings it forbids", () => {
     // region is no longer recognisable as a staff gate: the same code, now
     // indistinguishable from an ungated client-triggered model call.
     const target = file("lib/actions/competitor-actions.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     const planted = original.replace(/\bconst isStaff =/, "const wantsAnalysis =").replace(/\bif \(isStaff\) \{/, "if (wantsAnalysis) {");
     expect(planted).not.toBe(original);
 
@@ -504,7 +532,7 @@ describe("the sweep under the loosenings it forbids", () => {
     // Onboarding's AI provisioning is free BECAUSE it cannot be replayed.
     // Remove the gate and it becomes an unlimited free model call again.
     const target = file("lib/actions/onboarding-actions.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     const planted = original.replace(/await requireFirstOnboarding\(user\);/, "");
     expect(planted).not.toBe(original);
 
@@ -520,7 +548,7 @@ describe("the sweep under the loosenings it forbids", () => {
    */
   it("does not accept a comment mentioning cron auth as a gate", () => {
     const target = file("lib/actions/intel-actions.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     const planted = "// Scheduled refreshes come in via lib/cron-auth (requireCronAuth).\n" + original;
 
     const verdicts = analyze(new Map([[target, planted]]));
@@ -537,7 +565,7 @@ describe("the sweep under the loosenings it forbids", () => {
     // pipeline is free because only Cloud Scheduler can fire it; unsigned, it is
     // an anonymous Sonnet pipeline over every scheduled client.
     const target = file("app/api/intel-report-schedule/route.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     const planted = original.replace(
       /const unauthorized = requireCronSecret\(req\);\s*\n\s*if \(unauthorized\) return unauthorized;/,
       "",
@@ -556,7 +584,7 @@ describe("the sweep under the loosenings it forbids", () => {
     // An early return added ABOVE the charge in an already-charged handler: the
     // handler still charges, on a path this request never takes.
     const target = file("app/api/clients/[id]/simulate/route.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     const planted = original.replace(
       "  // ── Charge ──",
       '  if (asset.status === "draft") return Response.json(await generateText({}));\n\n  // ── Charge ──',
@@ -572,7 +600,7 @@ describe("the sweep under the loosenings it forbids", () => {
     // applyGlobalDocCorrection. Add a SECOND model call next to it: the export
     // still "charges", and the new call is still free.
     const target = file("lib/actions/intel-actions.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     const planted = original.replace(
       "    await applyGlobalDocCorrection(clientId, corrections);\n    return { ok: true };",
       "    await applyGlobalDocCorrection(clientId, corrections);\n    await generateText({});\n    return { ok: true };",
@@ -587,7 +615,7 @@ describe("the sweep under the loosenings it forbids", () => {
     // The mirror of the plants above: a change that does NOT loosen the rule
     // must not turn the sweep red, or the guard is just noise.
     const target = file("lib/actions/x-agent-actions.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     const planted = original.replace("const MAX_TEXT = 2_000;", "const MAX_TEXT = 2_048;");
     expect(planted).not.toBe(original);
 
@@ -603,7 +631,7 @@ describe("the sweep under the loosenings it forbids", () => {
     // must not be read as one. `withClientModelCharge` still wraps the model
     // call; this is just another statement after it.
     const target = file("lib/actions/x-agent-actions.ts");
-    const original = readFileSync(target, "utf8");
+    const original = readSource(target);
     const planted = original.replace(
       "  const outcome = await withClientModelCharge(",
       "  void chargeClientModelCall;\n  const outcome = await withClientModelCharge(",

@@ -45,7 +45,7 @@ function textOf(markup: string): string {
 describe("the Task Map's Refresh Task Map button announces its price", () => {
   it("paints the price a billable client will be charged", () => {
     const text = textOf(refreshButtonMarkup(true));
-    // GET /api/tasks/generate-swarm charges CREDIT_COSTS.taskExecution.
+    // POST /api/tasks/generate-swarm charges CREDIT_COSTS.taskExecution.
     expect(text).toContain(creditsLabel(CREDIT_COSTS.taskExecution));
   });
 

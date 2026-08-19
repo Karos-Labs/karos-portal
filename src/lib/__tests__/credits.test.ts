@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { readSource } from "./source-scan";
 
 import {
   CREDIT_BUCKET_LABEL,
@@ -320,7 +320,7 @@ describe("credit ledger presentation", () => {
    * breakdown, so the sweep has to widen by itself.
    */
   const operationsInTheUnion = (): CreditOperation[] => {
-    const src = readFileSync(resolve(__dirname, "..", "types.ts"), "utf8");
+    const src = readSource(resolve(__dirname, "..", "types.ts"));
     const union = /export type CreditOperation =([\s\S]*?);\n/.exec(src);
     expect(union, "CreditOperation is no longer a string-literal union in types.ts").not.toBeNull();
     return [...union![1].matchAll(/\|\s*"([a-z_]+)"/g)].map((m) => m[1] as CreditOperation);

@@ -388,4 +388,10 @@ export async function updatePasswordAction(
   if (!verifyRes.ok) throw new Error("Current password is incorrect.");
 
   await adminAuth().updateUser(user.uid, { password: newPassword });
+  // A password change driven by a suspected compromise must invalidate every
+  // OTHER session too, not just require the new password on the next login —
+  // `karos_session` cookies last up to 14 days, and `verifySessionCookie`
+  // already checks revocation (auth.ts) on every request, so this is the one
+  // call needed to actually end them.
+  await adminAuth().revokeRefreshTokens(user.uid);
 }

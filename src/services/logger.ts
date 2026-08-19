@@ -79,6 +79,22 @@ export function readWebSearchCount(providerMetadata: unknown): number {
   }
 }
 
+const MAX_ERROR_DETAIL_LENGTH = 300;
+
+/**
+ * Provider/upstream error text can echo prompt fragments verbatim, and a raw
+ * `.stack` is multi-line with local file paths — neither belongs in the
+ * structured log line that Cloud Run exports into bi_logs_export. Keep only
+ * the first line (error name + message, no stack frames) and cap its length.
+ */
+function sanitizeErrorDetail(detail: string | null | undefined): string | null {
+  if (!detail) return null;
+  const firstLine = detail.split("\n")[0];
+  return firstLine.length > MAX_ERROR_DETAIL_LENGTH
+    ? `${firstLine.slice(0, MAX_ERROR_DETAIL_LENGTH)}…`
+    : firstLine;
+}
+
 class Logger {
   /* ── Public API ─────────────────────────────────────────────────── */
 
@@ -207,6 +223,12 @@ class Logger {
         status: data.status ?? "success",
         errorDetails: data.errorMessage ?? null,
         timestamp: now,
+        // Discriminator (2026-08) — see trackAgentRun's own doc. Without
+        // `operation`, a dynamic run's run-level row and its own per-step
+        // rows (operation: "managed_job_step") are indistinguishable in BQ.
+        operation: data.operation,
+        jobId: data.jobId ?? null,
+        stepId: data.stepId ?? null,
       });
     } catch {
       // Logging must never throw — silent failure preserves the main path
@@ -219,12 +241,14 @@ class Logger {
     // Structured stdout/stderr line — Cloud Run scrapes this into Cloud
     // Logging, and the Phase 2 sink exports it into bi_logs_export. Fires
     // unconditionally (console calls don't throw), independent of whether
-    // the Firestore write below succeeds.
-    logStructured(data.severity === "WARN" ? "WARNING" : data.severity === "FATAL" ? "CRITICAL" : "ERROR", data.errorMessage, {
+    // the Firestore write below succeeds. Sanitized: provider/upstream error
+    // text can echo prompt fragments, and a raw stack is multi-line with
+    // local file paths — neither belongs in an exported BI sink.
+    logStructured(data.severity === "WARN" ? "WARNING" : data.severity === "FATAL" ? "CRITICAL" : "ERROR", sanitizeErrorDetail(data.errorMessage) ?? "", {
       clientId: data.clientId,
       agentId: data.agentId,
       operation: data.operation,
-      stackTrace: data.stackTrace,
+      stackTrace: sanitizeErrorDetail(data.stackTrace),
     });
     try {
       const db = adminDb();

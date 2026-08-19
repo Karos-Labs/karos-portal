@@ -598,7 +598,7 @@ export function Sidebar({
             alt=""
             width={26}
             height={26}
-            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+            className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_var(--border)]"
             unoptimized
           />
           <span className="font-serif text-xl font-normal leading-none text-foreground">
@@ -780,7 +780,7 @@ export function Sidebar({
                 alt=""
                 width={26}
                 height={26}
-                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_var(--border)]"
                 unoptimized
               />
               <span className="font-serif text-xl font-normal leading-none text-foreground">Karos Labs</span>

@@ -1909,7 +1909,13 @@ export async function POST(req: NextRequest) {
         // document about templates. Test-run output is skipped the same way — it
         // must never get a calendar date until (if ever) promoted out of test.
         if (!isLaunchRun && !isTestRun) {
-          await reflowClientChain(job.clientId).catch(() =>
+          await reflowClientChain(job.clientId, {
+            // A suggestion-dated asset's scheduledAt IS the day the client
+            // saw and approved — reflow must not treat it as a candidate to
+            // relocate. skipIds still lets the day it occupies book normally,
+            // so nothing else can land on it either.
+            ...(typeof suggestedScheduledAt === "number" ? { skipIds: [assetId] } : {}),
+          }).catch(() =>
             events.push({
               at: Date.now(),
               level: "error",

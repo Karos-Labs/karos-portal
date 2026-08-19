@@ -59,14 +59,25 @@ else
 fi
 
 say "Table: agent_runs_bi"
+# operation/jobId/stepId/source (2026-08): without a discriminator, this
+# table cannot tell apart the portal's run-level rows, the portal's per-step
+# rows for the SAME dynamic run (operation="managed_job_step"), and
+# agent-engine's own per-workflow-step rows (source="agent-engine") — all
+# three write here, so SUM(costUsd) double/triple-counted the same spend.
+# All four are nullable additions, so this is safe to apply to a live table:
+# BigQuery allows widening an existing schema with new nullable columns, and
+# `bq update` on an existing table only ever adds — it errors rather than
+# drops a field, so there is no path from this command to data loss.
+AGENT_RUNS_BI_SCHEMA="runId:STRING,clientId:STRING,agentId:STRING,model:STRING,inputTokens:INTEGER,outputTokens:INTEGER,costUsd:FLOAT,durationMs:INTEGER,status:STRING,errorDetails:STRING,timestamp:TIMESTAMP,operation:STRING,jobId:STRING,stepId:STRING,source:STRING"
 if have_table agent_runs_bi; then
-  echo "  already exists"
+  echo "  already exists — widening schema with operation/jobId/stepId/source (no-op if already present)"
+  bq update --project_id="$PROJECT_ID" "${PROJECT_ID}:${DATASET_ID}.agent_runs_bi" "$AGENT_RUNS_BI_SCHEMA"
 else
   bq mk --table --project_id="$PROJECT_ID" \
     --time_partitioning_field=timestamp --time_partitioning_type=DAY \
     --clustering_fields=clientId \
     "${PROJECT_ID}:${DATASET_ID}.agent_runs_bi" \
-    runId:STRING,clientId:STRING,agentId:STRING,model:STRING,inputTokens:INTEGER,outputTokens:INTEGER,costUsd:FLOAT,durationMs:INTEGER,status:STRING,errorDetails:STRING,timestamp:TIMESTAMP
+    "$AGENT_RUNS_BI_SCHEMA"
 fi
 
 say "Table: user_actions_bi"

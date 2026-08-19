@@ -5,6 +5,16 @@ import { createPortal } from "react-dom";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 
+const FOCUSABLE_SELECTOR =
+  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+/** Focusable descendants of `container`, in DOM order, skipping disabled ones. */
+function getFocusable(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (el) => !el.hasAttribute("disabled"),
+  );
+}
+
 /**
  * Dialog shell: a fixed header, a scrolling body, and an optional pinned
  * footer.
@@ -51,8 +61,35 @@ export function Modal({
   const panelRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
+    // Traps Tab/Shift+Tab inside the panel so focus cannot walk out into the
+    // page underneath - a dialog with no trap otherwise lets keyboard focus
+    // continue past its last control straight onto whatever the backdrop covers.
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusable = getFocusable(panel);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        panel.focus({ preventScroll: true });
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !panel.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (active === last || !panel.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
     }
     if (open) {
       document.addEventListener("keydown", onKey);
@@ -67,13 +104,17 @@ export function Modal({
 
   // No caller focuses a field of its own, so without this the control that
   // opened the dialog keeps focus behind the backdrop and the next Tab walks
-  // the page underneath. The panel is the target because it is the one element
-  // every caller has, and focus returns to the opener on the way out.
+  // the page underneath. The first focusable element inside is the target -
+  // the panel itself (tabIndex -1) is only the fallback for a body with
+  // nothing focusable in it - and focus returns to the opener on the way out.
   React.useEffect(() => {
     if (!open) return;
     const panel = panelRef.current;
     const opener = document.activeElement as HTMLElement | null;
-    if (panel && !panel.contains(opener)) panel.focus({ preventScroll: true });
+    if (panel && !panel.contains(opener)) {
+      const first = getFocusable(panel)[0];
+      (first ?? panel).focus({ preventScroll: true });
+    }
     return () => {
       // An opener that unmounted with the dialog simply gets no focus back.
       opener?.focus({ preventScroll: true });

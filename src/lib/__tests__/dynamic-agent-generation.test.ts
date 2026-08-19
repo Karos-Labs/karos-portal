@@ -28,7 +28,9 @@ vi.mock("ai", () => {
   return { generateObject: vi.fn(), NoObjectGeneratedError };
 });
 vi.mock("@ai-sdk/anthropic", () => ({ anthropic: vi.fn((id: string) => id) }));
-vi.mock("@/services/logger", () => ({ logger: { logError: vi.fn(), logUsage: vi.fn() } }));
+vi.mock("@/services/logger", () => ({
+  logger: { logError: vi.fn(), logUsage: vi.fn(), logGenerationFailure: vi.fn() },
+}));
 
 import { generateObject, NoObjectGeneratedError } from "ai";
 

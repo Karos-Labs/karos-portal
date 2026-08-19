@@ -5,3 +5,11 @@
 # LF regardless of the checkout platform's core.autocrlf setting.
 agent-service/config/tinyproxy.conf text eol=lf
 agent-service/config/proxy-filter.txt text eol=lf
+
+# Source-sweeping tests (credits.test.ts, dynamic-agent-studio-rbac.test.ts,
+# client-model-charge-boundary.test.ts, ...) regex-match raw file contents and
+# anchor on a literal "\n". core.autocrlf=true on Windows checkouts rewrites
+# these to CRLF, silently breaking those anchors — pin LF regardless of the
+# checkout platform so the sweeps see the same bytes everywhere.
+*.ts text eol=lf
+*.tsx text eol=lf

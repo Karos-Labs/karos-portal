@@ -108,7 +108,7 @@ function buildProactiveActions(): ProactiveAction[] {
       sublabel: "Brief on a tracked competitor + counter-strategy tasks",
       trigger:
         "Give me an intel brief on one of the competitors in our tracker, built from the tracked competitor data you already hold. Start by asking me which tracked competitor to focus on.",
-      color: "#6b9fd4",
+      color: "var(--info)",
       deep: true,
     },
     {
@@ -118,7 +118,7 @@ function buildProactiveActions(): ProactiveAction[] {
       sublabel: "Surface presence gaps and push optimization tasks",
       trigger:
         "Run a brand visibility and market presence audit. Identify gaps in our brand positioning and generate specific optimization action items.",
-      color: "#d9a13d",
+      color: "var(--warning)",
       deep: true,
     },
     {
@@ -145,7 +145,7 @@ function buildProactiveActions(): ProactiveAction[] {
       sublabel: "Propose this week's content plan as ready-to-run tasks",
       trigger:
         "Propose a content plan for this week using the AI agents actually available on this account, and suggest a concrete plan I can turn into tasks.",
-      color: "#e5484d",
+      color: "var(--danger)",
       deep: true,
     },
   ];

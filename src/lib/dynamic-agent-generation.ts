@@ -172,16 +172,38 @@ function validateDraft(inputSchema: DynamicAgentInputDef[], steps: DynamicAgentS
  */
 const GENERATION_MAX_OUTPUT_TOKENS = DOC_MAX_TOKENS;
 
+/**
+ * The usage-logging metadata for every call this module makes. `clientId` and
+ * `agentId` are null — this is an admin-authored Studio tool, not a
+ * client-billed run — but the spend is real Sonnet spend and belongs in
+ * `usageLogs`/`agent_runs_bi`/the Agent Leaderboard exactly like any other
+ * call, which is the whole point: before this, it was invisible everywhere.
+ */
+const USAGE_META = {
+  clientId: null,
+  agentId: null,
+  agentName: "dynamic_agent_builder",
+  modelName: MODELS.SONNET,
+  operation: "dynamic_agent_draft",
+} as const;
+
 async function generateOnce(description: string, correction?: string): Promise<GeneratedDraft> {
   const prompt = correction
     ? `${description}\n\n---\nYour previous attempt was invalid for these reasons — fix them and return a corrected draft:\n${correction}`
     : description;
-  const { object } = await generateObject({
+  const startedAt = Date.now();
+  const { object, usage } = await generateObject({
     model: anthropic(MODELS.SONNET),
     schema: GENERATION_SCHEMA,
     system: SYSTEM_PROMPT,
     prompt,
     maxOutputTokens: GENERATION_MAX_OUTPUT_TOKENS,
+  });
+  logger.logUsage({
+    ...USAGE_META,
+    inputTokens: usage?.inputTokens ?? 0,
+    outputTokens: usage?.outputTokens ?? 0,
+    durationMs: Date.now() - startedAt,
   });
   return object;
 }
@@ -211,7 +233,15 @@ async function attemptGeneration(
     return { ok: true, draft: await generateOnce(description, correction) };
   } catch (err) {
     const truncation = truncationCorrection(err);
-    if (truncation) return { ok: false, correction: truncation };
+    if (truncation) {
+      // A truncated attempt still spent real tokens (NoObjectGeneratedError
+      // carries the failed attempt's `.usage`) — `generateOnce` never reached
+      // its own logUsage call because generateObject threw, so this attempt
+      // must record itself or the spend is simply absent from every usage
+      // surface, the exact gap this whole module used to have on every path.
+      logger.logGenerationFailure(USAGE_META, err);
+      return { ok: false, correction: truncation };
+    }
     throw err;
   }
 }

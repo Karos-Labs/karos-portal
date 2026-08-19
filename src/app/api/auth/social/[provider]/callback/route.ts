@@ -25,8 +25,10 @@ async function exchangeCode(
   codeVerifier: string | null,
 ): Promise<{ accessToken: string; refreshToken?: string }> {
   const config = OAUTH_CONFIGS[provider]!;
-  const appClientId = process.env[config.envClientId]!;
-  const appClientSecret = process.env[config.envClientSecret]!;
+  const appClientId = process.env[config.envClientId];
+  if (!appClientId) throw new Error(`${config.envClientId} is not configured`);
+  const appClientSecret = process.env[config.envClientSecret];
+  if (!appClientSecret) throw new Error(`${config.envClientSecret} is not configured`);
 
   if (provider === "twitter") {
     const basicAuth = Buffer.from(`${appClientId}:${appClientSecret}`).toString("base64");

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getCurrentUser } from "@/lib/auth";
-import { createActivityLog, getClientTask } from "@/lib/data";
+import { createActivityLog, getClient, getClientTask } from "@/lib/data";
 import { canViewClient } from "@/lib/client-visibility";
 import { unmetCampaignDependencyTitles } from "@/lib/campaign-engine";
 import type { ActivityLog, AppUser, Client, ClientTask } from "@/lib/types";
@@ -147,16 +147,21 @@ export async function requireFirstOnboarding(user: AppUser): Promise<void> {
 }
 
 /**
- * Allows both staff (any client) and a CLIENT_USER (own client only).
+ * Allows both staff (assigned to this client) and a CLIENT_USER (own client
+ * only).
  *
- * "ANY CLIENT" IS THE WHOLE ROLE ANSWER AND NOT THE WHOLE RULE. An employee
- * assigned to nobody passes this for every client in the system, while the
- * `/clients/[id]` pages `notFound()` them and every `/api/clients/[id]` route
- * refuses them. `clientAccessRefusal` below is the missing half; planned-run
- * actions pair the two, at 2 of this function's 30 call sites. The other 28 do
- * not — folding the pairing into this function would close them all at once and
- * is a decision about blast radius, not about this file, so it is Daniel's
- * (D-77) rather than something to slip in here.
+ * D-77 (2026-08): "ANY CLIENT" USED TO BE THE WHOLE ROLE ANSWER, NOT THE
+ * WHOLE RULE. An employee assigned to nobody passed this for every client in
+ * the system, while the `/clients/[id]` pages `notFound()`ed them and every
+ * `/api/clients/[id]` route refused them — the exact gap `clientAccessRefusal`
+ * exists to close, previously paired in by hand at only 2 of this function's
+ * ~30 call sites (planned-run-actions.ts). Folding the pairing in here closes
+ * all of them at once, which is the point: a caller cannot forget a check it
+ * never had to remember to make.
+ *
+ * The extra `getClient` read only runs on the STAFF branch — a CLIENT_USER's
+ * own-client check needs no document, same as before this change, so that
+ * path's cost and behavior are unchanged.
  */
 export async function requireClientAccess(clientId: string): Promise<AppUser> {
   const user = await getCurrentUser();
@@ -164,7 +169,11 @@ export async function requireClientAccess(clientId: string): Promise<AppUser> {
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
   if (!isStaff) {
     if (user.role !== "CLIENT_USER" || user.clientId !== clientId) throw new Error("Forbidden");
+    return user;
   }
+  const client = await getClient(clientId);
+  const refusal = clientAccessRefusal(user, client);
+  if (refusal) throw new Error(refusal);
   return user;
 }
 

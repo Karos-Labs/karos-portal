@@ -78,6 +78,7 @@ export function useSuggestionActions(clientId: string) {
       const res = await deleteTaskAction(taskId, clientId);
       if (res.ok) {
         setRemovedIds((prev) => new Set(prev).add(taskId));
+        router.refresh();
       } else {
         setErrors((prev) => ({ ...prev, [taskId]: res.error ?? "Could not skip this task." }));
       }
@@ -135,7 +136,7 @@ export function SuggestionRow({
           type="button"
           onClick={onApprove}
           disabled={isPending}
-          className="flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-accent-ink transition-opacity disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_color-mix(in_srgb,var(--neon)_55%,transparent)] disabled:pointer-events-none disabled:opacity-50"
         >
           <Icon name="Play" className="h-3 w-3" />
           Approve

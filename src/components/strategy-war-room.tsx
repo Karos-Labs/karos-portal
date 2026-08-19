@@ -121,7 +121,10 @@ export function StrategyWarRoom({
   const stream = useCallback(
     async (controller: AbortController) => {
       try {
-        const res = await fetch(`/api/tasks/generate-swarm?clientId=${encodeURIComponent(clientId)}`, {
+        const res = await fetch(`/api/tasks/generate-swarm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientId }),
           signal: controller.signal,
         });
         if (!res.ok || !res.body) {

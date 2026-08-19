@@ -2806,6 +2806,9 @@ type CreditEntryMeta = {
 export async function chargeClientCredits(
   args: CreditEntryMeta & { amount: number },
 ): Promise<{ balance: number }> {
+  if (!Number.isSafeInteger(args.amount)) {
+    throw new Error("Credit amount must be a finite integer");
+  }
   const ref = col.clientCredits().doc(args.clientId);
   const result = await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -2861,6 +2864,9 @@ export async function creditClientCredits(
     chargedAt?: number;
   },
 ): Promise<{ balance: number }> {
+  if (!Number.isSafeInteger(args.amount)) {
+    throw new Error("Credit amount must be a finite integer");
+  }
   if (args.amount === 0) throw new Error("Amount must be non-zero");
   if (args.amount < 0 && args.kind !== "adjustment") {
     throw new Error("Only adjustments may deduct credits");

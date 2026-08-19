@@ -74,7 +74,7 @@ export function AiInsights({
           setText(accumulated);
         }
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
+        if (e instanceof DOMException && e.name === "AbortError") return;
         setError(e instanceof Error ? e.message : "Couldn't load insights.");
       } finally {
         setLoading(false);

@@ -21,6 +21,7 @@ import { markActionDoneAction } from "@/lib/actions/action-list-actions";
 import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calendar-past-runs";
 import { cn, relativeTime } from "@/lib/utils";
 import { sameLocalDay } from "@/lib/scheduling";
+import { formatDayLong } from "@/lib/date-format";
 import { ArchiveView } from "@/components/archive-view";
 import {
   useSuggestionActions,
@@ -309,7 +310,10 @@ const POST_CHIP_CLASS: Record<CalendarPost["kind"], string> = {
   // Solid border against placeholder's dashed one, and no danger tint: a held
   // post is real, dated work that is simply next in line.
   held: "border border-muted-2/60 bg-foreground/[0.06] text-foreground/70",
-  draft: "border border-dashed border-muted-2/40 bg-foreground/[0.02] text-muted-2",
+  // Neon tint, not the same dashed grey as placeholder: a draft is unapproved
+  // content awaiting review, the same fact notification-bell's "review_pending"
+  // task row already marks with neon rather than a neutral tone.
+  draft: "border border-dashed border-neon/40 bg-neon/[0.05] text-neon",
 };
 
 
@@ -1629,9 +1633,24 @@ export function RunCalendar({
     () => runs.filter((r) => !(r.jobStatus === "review" && hiddenStatuses.has("review"))),
     [runs, hiddenStatuses],
   );
+  // One shared instance for every Approve/Skip control this render tree offers
+  // (week's day-by-day list, day view, day-detail panel) — lifted here rather
+  // than one hook call per surface, so a click in any of them and the instant
+  // optimistic removal it drives are consistent across all three. Declared
+  // ABOVE `visibleSuggestions` so that memo can actually filter on
+  // `removedIds` — a skipped/approved suggestion's task doc is gone the
+  // moment the action resolves, so it must stop rendering immediately rather
+  // than waiting for the next full `suggestions` prop refresh.
+  // `?? ""` is never actually exercised: `suggestions` is only ever non-empty
+  // when calendar-body.tsx also passed a real `suggestionsClientId`.
+  const suggestionActions = useSuggestionActions(suggestionsClientId ?? "");
+
   const visibleSuggestions = useMemo(
-    () => (hiddenStatuses.has("suggested") ? [] : suggestions),
-    [suggestions, hiddenStatuses],
+    () =>
+      hiddenStatuses.has("suggested")
+        ? []
+        : suggestions.filter((s) => !suggestionActions.removedIds.has(s.id)),
+    [suggestions, hiddenStatuses, suggestionActions.removedIds],
   );
 
   const runsByDay = useMemo(() => {
@@ -1660,14 +1679,6 @@ export function RunCalendar({
     }
     return m;
   }, [visibleSuggestions]);
-
-  // One shared instance for every Approve/Dismiss control this render tree
-  // offers (week's day-by-day list, day view, day-detail panel) — lifted here
-  // rather than one hook call per surface, so a click in any of them and the
-  // instant optimistic removal it drives are consistent across all three.
-  // `?? ""` is never actually exercised: `suggestions` is only ever non-empty
-  // when calendar-body.tsx also passed a real `suggestionsClientId`.
-  const suggestionActions = useSuggestionActions(suggestionsClientId ?? "");
 
   const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
@@ -1748,7 +1759,7 @@ export function RunCalendar({
               : `${MONTH_NAMES[weekAnchor.getMonth()].slice(0, 3)} ${weekAnchor.getDate()} – ${MONTH_NAMES[end.getMonth()].slice(0, 3)} ${end.getDate()}`;
           })()
         : viewMode === "day"
-          ? dayAnchor.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+          ? formatDayLong(dayAnchor.getTime())
           : "Archive";
 
   const selectedRuns = selectedKey ? (runsByDay.get(selectedKey) ?? []) : [];
@@ -1809,11 +1820,19 @@ export function RunCalendar({
             )}
             {viewMode !== "archive" && (
               <div className="flex items-center gap-1">
-                <button onClick={goPrev} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+                <button
+                  onClick={goPrev}
+                  aria-label={`Previous ${viewMode}`}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                >
                   <Icon name="ChevronLeft" className="h-4 w-4" />
                 </button>
                 <span className="w-[150px] shrink-0 whitespace-nowrap text-center text-sm font-medium">{rangeLabel}</span>
-                <button onClick={goNext} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
+                <button
+                  onClick={goNext}
+                  aria-label={`Next ${viewMode}`}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                >
                   <Icon name="ChevronRight" className="h-4 w-4" />
                 </button>
               </div>
@@ -1879,37 +1898,47 @@ export function RunCalendar({
             };
             const interactive = isValid && (chipCount > 0 || canScheduleHere);
 
+            // The day-number is the one focusable control for this cell (below) -
+            // the cell div itself no longer carries role/tabIndex/onClick, which
+            // is what used to nest it around PostChip's own <button> (invalid
+            // nested-interactive HTML).
             return (
               <div
                 key={i}
-                onClick={activate}
-                role={interactive ? "button" : undefined}
-                tabIndex={interactive ? 0 : -1}
-                aria-label={canScheduleHere ? `Schedule a run on ${MONTH_NAMES[viewMonth]} ${day}` : undefined}
-                onKeyDown={(event) => {
-                  if (!interactive) return;
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    activate();
-                  }
-                }}
                 className={cn(
                   "min-h-[84px] border-b border-r border-border p-1 text-left align-top transition-colors",
                   !isValid && "bg-surface-deep",
                   isToday && "bg-foreground/[0.04]",
                   isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
-                  interactive && "cursor-pointer hover:bg-surface-2",
                   isLastCol && "border-r-0",
                 )}
               >
                 {isValid && (
                   <>
-                    <span className={cn(
-                      "mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium leading-none",
-                      isToday ? "bg-primary text-primary-foreground font-bold" : "text-muted-2",
-                    )}>
-                      {day}
-                    </span>
+                    {interactive ? (
+                      <button
+                        type="button"
+                        onClick={activate}
+                        aria-label={
+                          canScheduleHere
+                            ? `Schedule a run on ${MONTH_NAMES[viewMonth]} ${day}`
+                            : `${MONTH_NAMES[viewMonth]} ${day}, ${viewYear} · ${chipCount} items`
+                        }
+                        className={cn(
+                          "mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium leading-none transition-colors hover:bg-surface-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-neon/50",
+                          isToday ? "bg-primary text-primary-foreground font-bold" : "text-muted-2",
+                        )}
+                      >
+                        {day}
+                      </button>
+                    ) : (
+                      <span className={cn(
+                        "mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium leading-none",
+                        isToday ? "bg-primary text-primary-foreground font-bold" : "text-muted-2",
+                      )}>
+                        {day}
+                      </span>
+                    )}
                     <div className="space-y-[3px]">
                       {(() => {
                         const shownRuns = dayRuns.slice(0, 3);
@@ -2032,7 +2061,7 @@ export function RunCalendar({
         {/* Legend + status filter - each chip toggles that status's visibility on the grid above. */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
           <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
-          <LegendDot className="bg-foreground/25" label="Completed run" />
+          <LegendDot className="bg-foreground/[0.07]" label="Completed run" />
           {(Object.keys(STATUS_FILTER_CHIP_CLASS) as CalendarFilterKey[])
             // A filter this viewer's calendar can never make dim anything is not
             // offered at all — see calendarFilterKeyMatchable for which those are

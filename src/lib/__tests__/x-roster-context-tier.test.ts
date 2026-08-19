@@ -113,7 +113,15 @@ const docTypesAsked = () =>
  * the caller named that tier.
  */
 function labImportedClient() {
-  vi.mocked(data.getClient).mockResolvedValue({ id: "c1", name: "Acme" } as any);
+  // assignedEmployeeIds: ["u-emp"] — EMPLOYEE must clear requireClientAccess's
+  // D-77 assignment fence (2026-08) before this file's actual subject (which
+  // tier its proposal draws from) is ever reached; this file isn't testing
+  // tenancy, so the fixture just needs to be a legitimately-assigned employee.
+  vi.mocked(data.getClient).mockResolvedValue({
+    id: "c1",
+    name: "Acme",
+    assignedEmployeeIds: ["u-emp"],
+  } as any);
   vi.mocked(data.getClientContextDocInTierOrder).mockImplementation(
     async (_clientId, docType, tiers) =>
       tiers.includes("internal")
@@ -128,10 +136,12 @@ beforeEach(() => {
   vi.mocked(data.creditClientCredits).mockResolvedValue({ balance: 100 } as any);
   // A brief on the client record keeps the tier-selection cases off the refusal
   // path, so those tests are about the tiers and nothing else.
+  // assignedEmployeeIds: ["u-emp"] — same reason as labImportedClient() above.
   vi.mocked(data.getClient).mockResolvedValue({
     id: "c1",
     name: "Acme",
     brief: "We sell things.",
+    assignedEmployeeIds: ["u-emp"],
   } as any);
   vi.mocked(data.getClientContextDocInTierOrder).mockResolvedValue(null as any);
   vi.mocked(generateText).mockResolvedValue({ text: ROSTER } as any);
@@ -181,6 +191,7 @@ describe("proposeXRosterAction — the tiers each actor's context may come from"
         id: "c1",
         name: "Acme",
         brief: "We sell things.",
+        assignedEmployeeIds: ["u-emp"],
       } as any);
       vi.mocked(getCurrentUser).mockResolvedValue(actor as any);
 

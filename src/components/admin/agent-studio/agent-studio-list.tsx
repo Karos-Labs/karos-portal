@@ -118,7 +118,13 @@ export function AgentStudioList({
                   <Button size="sm" variant="outline" disabled={pending} onClick={() => handleToggleActive(spec)}>
                     {spec.active ? "Deactivate" : "Activate"}
                   </Button>
-                  <Button size="sm" variant="ghost" disabled={pending} onClick={() => handleDelete(spec)}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => handleDelete(spec)}
+                    aria-label={`Delete agent spec "${spec.name || "Untitled agent"}"`}
+                  >
                     <Icon name="Trash2" className="h-3.5 w-3.5" />
                   </Button>
                 </div>

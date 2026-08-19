@@ -136,7 +136,18 @@ export function AgentStudioEditor({
         </p>
       ) : null}
 
-      {tab === "general" ? (
+      {/*
+       * All four panels stay MOUNTED — `hidden` toggles visibility rather than
+       * conditional rendering unmounting the inactive ones. InputSchemaBuilder
+       * and StepPipelineBuilder each hold their own in-progress edits in local
+       * `useState` seeded from `initial` on mount, by design (a server prop
+       * refresh must never clobber an admin's unsaved edits) — which means an
+       * unmount is indistinguishable from a deliberate discard. Before this,
+       * clicking any other tab did exactly that: unmounted the builder and
+       * silently destroyed everything typed since the last save, including a
+       * long AI-step prompt, with no warning.
+       */}
+      <div className={tab === "general" ? undefined : "hidden"}>
         <GeneralSettingsForm
           initial={{
             name: spec.name,
@@ -155,13 +166,13 @@ export function AgentStudioEditor({
           error={error}
           onSubmit={saveGeneral}
         />
-      ) : null}
+      </div>
 
-      {tab === "inputs" ? (
+      <div className={tab === "inputs" ? undefined : "hidden"}>
         <InputSchemaBuilder key={draftKey} initial={inputSchema} pending={pending} error={error} onSave={saveInputSchema} />
-      ) : null}
+      </div>
 
-      {tab === "pipeline" ? (
+      <div className={tab === "pipeline" ? undefined : "hidden"}>
         <StepPipelineBuilder
           key={draftKey}
           initial={steps}
@@ -171,14 +182,14 @@ export function AgentStudioEditor({
           error={error}
           onSave={saveSteps}
         />
-      ) : null}
+      </div>
 
-      {tab === "generate" ? (
+      <div className={tab === "generate" ? undefined : "hidden"}>
         <GenerateFromTextPanel
           hasExistingContent={inputSchema.length > 0 || steps.length > 0}
           onApply={applyGeneratedDraft}
         />
-      ) : null}
+      </div>
     </Card>
   );
 }

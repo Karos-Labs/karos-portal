@@ -19,9 +19,9 @@ import type { AgentReviewNotification } from "@/lib/types";
 /* ── Priority colours for task alerts ───────────────────────────── */
 
 const PRIORITY_COLOR: Record<string, string> = {
-  high:   "#e5484d",
-  medium: "#d9a13d",
-  low:    "#9c9ca3",
+  high:   "var(--danger)",
+  medium: "var(--warning)",
+  low:    "var(--muted)",
 };
 
 /**
@@ -582,12 +582,12 @@ function TaskAlertRow({ task, now }: { task: TaskAlert; now: number }) {
     >
       <div
         className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-        style={{ background: (isReview ? "#FF6B2C" : prioColor) + "1a" }}
+        style={{ background: `color-mix(in srgb, ${isReview ? "var(--neon)" : prioColor} 10%, transparent)` }}
       >
         <Icon
           name={isReview ? "Eye" : "Circle"}
           className="h-3.5 w-3.5"
-          style={{ color: isReview ? "#FF6B2C" : prioColor }}
+          style={{ color: isReview ? "var(--neon)" : prioColor }}
         />
       </div>
       <div className="min-w-0 flex-1">

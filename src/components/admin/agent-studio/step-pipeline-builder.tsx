@@ -149,7 +149,7 @@ export function StepPipelineBuilder({
 
       <div className="space-y-3">
         {steps.map((step, index) => (
-          <div key={index} className="rounded-md border border-border bg-surface-2 p-3">
+          <div key={step.id} className="rounded-md border border-border bg-surface-2 p-3">
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Badge tone={step.type === "ai" ? "info" : "warning"}>{step.type === "ai" ? "AI step" : "Code step"}</Badge>

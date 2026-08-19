@@ -71,6 +71,12 @@ beforeEach(() => {
     name: "Instagram agent",
     enabled: true,
   });
+  // setPlannedRunStatusAction reads the client doc itself (for the §2 guard
+  // rail's unfireableScheduleReason check) — needed for real now that
+  // clientAccessRefusal no longer runs mocked-into-a-no-op ahead of it (D-77,
+  // 2026-08): requireClientAccess itself carries that check now, and this
+  // second getClient call is only for the rest of the function's own logic.
+  (data.getClient as any).mockResolvedValue({ id: "c1", customAgentIds: [CUSTOM_AGENT_ID] });
 });
 
 describe("D2 — setPlannedRunStatusAction honors the §2 guard rail", () => {
