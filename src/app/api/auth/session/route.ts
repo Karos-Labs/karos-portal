@@ -8,6 +8,7 @@ import {
   isEmailUnverified,
   type SignupIntent,
 } from "@/lib/auth";
+import { trackUserAction } from "@/lib/telemetry/bi-tracker";
 
 export async function POST(req: NextRequest) {
   try {
@@ -71,6 +72,12 @@ export async function POST(req: NextRequest) {
           // silent — login log must never block auth
         }
       })();
+      trackUserAction({
+        clientId: user.clientId ?? null,
+        userId: user.uid,
+        eventName: "login",
+        surface: "auth",
+      });
     }
 
     return NextResponse.json({

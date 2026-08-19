@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { adminDb } from "@/lib/firebase/admin";
+import { trackCreditUsage } from "@/lib/telemetry/bi-tracker";
 import type {
   AccessToken,
   ActionItem,
@@ -2806,7 +2807,7 @@ export async function chargeClientCredits(
   args: CreditEntryMeta & { amount: number },
 ): Promise<{ balance: number }> {
   const ref = col.clientCredits().doc(args.clientId);
-  return adminDb().runTransaction(async (tx) => {
+  const result = await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const now = Date.now();
     const current = snap.exists
@@ -2835,6 +2836,16 @@ export async function chargeClientCredits(
     } satisfies CreditLedgerEntry);
     return { balance: assessed.next.balance };
   });
+  if (args.amount > 0) {
+    trackCreditUsage({
+      clientId: args.clientId,
+      amount: -args.amount,
+      balanceAfter: result.balance,
+      reason: args.reason,
+      source: args.operation,
+    });
+  }
+  return result;
 }
 
 /**
@@ -2855,7 +2866,7 @@ export async function creditClientCredits(
     throw new Error("Only adjustments may deduct credits");
   }
   const ref = col.clientCredits().doc(args.clientId);
-  return adminDb().runTransaction(async (tx) => {
+  const result = await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const now = Date.now();
     const current = snap.exists
@@ -2881,6 +2892,14 @@ export async function creditClientCredits(
     } satisfies CreditLedgerEntry);
     return { balance: next.balance };
   });
+  trackCreditUsage({
+    clientId: args.clientId,
+    amount: args.amount,
+    balanceAfter: result.balance,
+    reason: args.reason,
+    source: args.operation,
+  });
+  return result;
 }
 
 /** Set the weekly/monthly spend caps (null = uncapped). Creates the doc with defaults if missing. */

@@ -21,6 +21,7 @@ import {
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { requireStaff } from "./_shared";
+import { trackUserAction } from "@/lib/telemetry/bi-tracker";
 import {
   TokenExpiredError,
   inferPlatform,
@@ -294,7 +295,7 @@ export async function approveAssetAction(
 ): Promise<void> {
   // Approval is a staff-only gate: requireAssetAccess alone would let a client
   // approve their own asset (and via opts.platform arm auto-publish).
-  await requireStaff();
+  const staffUser = await requireStaff();
   const asset = await requireAssetAccess(id);
   // A Test Run has its own graduation path (promoteTestAssetAction, which also
   // reflows the chain) — approving it here directly would flip it out of
@@ -377,6 +378,13 @@ export async function approveAssetAction(
 
   await updateAsset(id, approvalPatch);
   await closeProducingJobIfReviewed(asset);
+  trackUserAction({
+    clientId: asset.clientId,
+    userId: staffUser.uid,
+    eventName: "asset_approved",
+    surface: "assets",
+    targetId: id,
+  });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
   revalidatePath(`/clients/${asset.clientId}/agents`);

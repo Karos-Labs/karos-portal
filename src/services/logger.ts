@@ -19,6 +19,8 @@ import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
 import { computeCostUsd, providerForModel, sanitizeModelKey } from "@/lib/models/usage-log";
 import type { ProviderId, UsageLog, ErrorLog } from "@/lib/models/usage-log";
+import { trackAgentRun } from "@/lib/telemetry/bi-tracker";
+import { logStructured } from "@/lib/telemetry/structured-log";
 
 /** Minimal shape of an AI SDK streamText/generateText usage object. */
 interface SdkUsage {
@@ -190,6 +192,22 @@ class Logger {
         batch.set(snaps.doc(`client_${data.clientId}`), increments, { merge: true });
       }
       await batch.commit();
+
+      // BI seam: every usage log also feeds the BigQuery agent_runs_bi table.
+      // No-ops when GOOGLE_CLOUD_PROJECT is unset (see bigquery-client.ts).
+      trackAgentRun({
+        runId: logRef.id,
+        clientId: data.clientId,
+        agentId: data.agentId,
+        model: data.modelName,
+        inputTokens: data.inputTokens,
+        outputTokens: data.outputTokens,
+        costUsd: data.estimatedCostUsd,
+        durationMs: data.durationMs ?? null,
+        status: data.status ?? "success",
+        errorDetails: data.errorMessage ?? null,
+        timestamp: now,
+      });
     } catch {
       // Logging must never throw — silent failure preserves the main path
     }
@@ -198,6 +216,16 @@ class Logger {
   private async _writeError(
     data: Omit<ErrorLog, "id"> & { timestamp: number },
   ): Promise<void> {
+    // Structured stdout/stderr line — Cloud Run scrapes this into Cloud
+    // Logging, and the Phase 2 sink exports it into bi_logs_export. Fires
+    // unconditionally (console calls don't throw), independent of whether
+    // the Firestore write below succeeds.
+    logStructured(data.severity === "WARN" ? "WARNING" : data.severity === "FATAL" ? "CRITICAL" : "ERROR", data.errorMessage, {
+      clientId: data.clientId,
+      agentId: data.agentId,
+      operation: data.operation,
+      stackTrace: data.stackTrace,
+    });
     try {
       const db = adminDb();
       const { FieldValue } = await import("firebase-admin/firestore");

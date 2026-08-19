@@ -11,14 +11,20 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.85",
+    "@google-cloud/bigquery": "^9.0.2",
+    "@google-cloud/opentelemetry-cloud-trace-exporter": "^3.1.0",
     "@google-cloud/storage": "^7.16.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/resources": "^2.10.0",
+    "@opentelemetry/sdk-node": "^0.221.0",
+    "@opentelemetry/sdk-trace-node": "^2.10.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
     "ai": "^6.0.208",
     "clsx": "^2.1.1",
     "firebase": "^12.15.0",
     "firebase-admin": "^14.0.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.21.0",
-    "nanoid": "^5.1.11",
     "next": "16.2.9",
     "next-themes": "^0.4.6",
     "react": "19.2.4",
@@ -38,7 +44,6 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^5",
-    "vitest": "^4.1.9",
-    "yaml": "^2.9.0"
+    "vitest": "^4.1.9"
   }
 }
