@@ -51,6 +51,7 @@ import { PageHeader, EmptyState, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
+import { ClientDownloads } from "@/components/client-downloads";
 import type { SuggestedTaskView } from "@/components/pending-task-suggestions";
 import { inferSuggestionDates } from "@/lib/calendar-suggestion-placement";
 import {
@@ -789,6 +790,15 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         {...(archiveAssets ? { archiveAssets } : {})}
         {...(archiveAgentLabelByAssetId ? { agentLabelByAssetId: archiveAgentLabelByAssetId } : {})}
       />
+      {/* Persistent, always-visible — not tucked inside a day's own detail
+          panel, which a client reported not being able to find (2026-08).
+          Same zip route the retired standalone Downloads page used. No cross-
+          client equivalent: there is no single client's day to bundle. */}
+      {scopedClientId && (
+        <div className="mt-4">
+          <ClientDownloads clientId={scopedClientId} viewerIsClient={isClient} />
+        </div>
+      )}
     </>
   );
 }

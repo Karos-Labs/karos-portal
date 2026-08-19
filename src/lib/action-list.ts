@@ -246,9 +246,10 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
  * a live signal — see the module docstring. "15" belongs here for the same
  * reason as the other three: a zip download has no queryable trace to
  * compute "done" from after the fact, so completion has to be a row written
- * the moment the real event happens (the "Download this day's content"
- * button in run-calendar.tsx's day-detail panel fires it on click — the
- * standalone Downloads page this used to live on is gone, 2026-08).
+ * the moment the real event happens (client-downloads.tsx fires it on
+ * click — moved 2026-08 from its own standalone Downloads page onto a
+ * persistent card at the bottom of the Calendar page; same component, same
+ * click site, only the page it's mounted on changed).
  * It was missing from this set entirely until 2026-08 — not just missing a
  * writer like 13/14 briefly were, but absent from computeActionDone too, so
  * action 15 had no path to "done" at all, ever.

@@ -1757,23 +1757,12 @@ export function RunCalendar({
   const selectedScheduled = selectedRuns.filter((r) => r.kind === "scheduled").sort((a, b) => a.at - b.at);
   const selectedPast = selectedRuns.filter((r) => r.kind === "past").sort((a, b) => b.at - a.at);
 
-  const selectedDate = selectedKey
+  const selectedLabel = selectedKey
     ? (() => {
         const [y, m, d] = selectedKey.split("-").map(Number);
-        return new Date(y, m, d);
+        return new Date(y, m, d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
       })()
-    : null;
-  const selectedLabel = selectedDate
-    ? selectedDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
     : "";
-  const selectedIsoDate = selectedDate
-    ? `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, "0")}-${String(selectedDate.getDate()).padStart(2, "0")}`
-    : "";
-  // Same rule the zip route enforces server-side (a day that hasn't happened
-  // yet has nothing to bundle) and the same content the route bundles: every
-  // Asset the day's "Posts" section already lists, never runs or suggestions.
-  const canDownloadSelectedDay =
-    !!defaultClientId && !!selectedDate && selectedDate.getTime() <= today.getTime() && selectedPosts.length > 0;
 
   const openLightbox = (images: AssetImage[], index: number) => setLightbox({ images, index });
 
@@ -2079,31 +2068,6 @@ export function RunCalendar({
               <Icon name="X" className="h-4 w-4" />
             </button>
           </div>
-
-          {/* Replaces the old standalone Downloads page (Surface 07) — same
-              zip route, same "one button, one day, one zip" idea, moved to
-              live right next to the day it's for instead of behind a picker
-              on its own page. */}
-          {canDownloadSelectedDay && (
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-2/60 px-3.5 py-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">Download this day&apos;s content</p>
-                <p className="text-xs text-muted-2">
-                  Every post generated, scheduled or published on {selectedLabel}, bundled into one zip.
-                </p>
-              </div>
-              <a
-                href={`/api/clients/${defaultClientId}/downloads?date=${selectedIsoDate}`}
-                onClick={() => {
-                  if (viewerIsClient) void markActionDoneAction(defaultClientId!, "15");
-                }}
-                className="flex shrink-0 items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5"
-              >
-                <Icon name="Download" className="h-3.5 w-3.5" />
-                Download .zip
-              </a>
-            </div>
-          )}
 
           {selectedScheduled.length + selectedPast.length + selectedPosts.length + selectedSuggestions.length === 0 ? (
             <p className="text-xs text-muted-2">Nothing on this day.</p>
