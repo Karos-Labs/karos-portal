@@ -213,10 +213,11 @@ describe("the legend's per-viewer chips", () => {
     const clientKinds = kindsFrom(grid().filter((a) => isClientCalendarStatus(a.status)));
     // "review" comes off the run-visibility table, not off postKind — one home
     // each, and read here rather than restated. "suggested" is simpler still:
-    // a Task-Map suggestion has never been staff-only (PendingTaskSuggestions
-    // has always rendered for a client's own calendar), so it is matchable for
-    // every viewer, unconditionally — the same answer `calendarFilterKeyMatchable`
-    // gives by NOT listing it in CLIENT_UNMATCHABLE_FILTER_KEYS.
+    // a Task-Map suggestion has never been staff-only (its grid placement in
+    // run-calendar.tsx has always rendered for a client's own calendar), so it
+    // is matchable for every viewer, unconditionally — the same answer
+    // `calendarFilterKeyMatchable` gives by NOT listing it in
+    // CLIENT_UNMATCHABLE_FILTER_KEYS.
     const clientCanMatch = (key: CalendarFilterKey): boolean =>
       key === "review"
         ? pastRunStatuses({ isClient: true }).has("review")

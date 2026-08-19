@@ -51,7 +51,7 @@ import { PageHeader, EmptyState, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
-import { PendingTaskSuggestions, type SuggestedTaskView } from "@/components/pending-task-suggestions";
+import type { SuggestedTaskView } from "@/components/pending-task-suggestions";
 import { inferSuggestionDates } from "@/lib/calendar-suggestion-placement";
 import {
   RunCalendar,
@@ -756,16 +756,13 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
           `isEmpty` is showing its own "set up an agent schedule" CTA above,
           which already covers "nothing is configured at all". */}
       {!isEmpty && scopedClientId && (
-        <>
-          <CalendarSparseBanner
-            clientId={scopedClientId}
-            gapPlatforms={gapPlatforms}
-            pendingSuggestionCount={suggestedTaskViews.length}
-            isAiProcessing={isAiProcessing}
-            viewerIsBilled={viewerIsBilled}
-          />
-          <PendingTaskSuggestions clientId={scopedClientId} tasks={suggestedTaskViews} />
-        </>
+        <CalendarSparseBanner
+          clientId={scopedClientId}
+          gapPlatforms={gapPlatforms}
+          pendingSuggestionCount={suggestedTaskViews.length}
+          isAiProcessing={isAiProcessing}
+          viewerIsBilled={viewerIsBilled}
+        />
       )}
       <RunCalendar
         runs={runs}
