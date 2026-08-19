@@ -38,15 +38,36 @@ function nominalAssetType(platform: string | undefined): AssetType {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** First day with nothing booked at all, 10:00 local — the fallback for a platform with no known engagement window. */
+/** Hard safety bound on how far out placement will ever search — not a target, just a loop guard. */
+const MAX_SEARCH_DAYS = 120;
+
+/**
+ * First day with nothing booked at all, 10:00 local — the fallback for a
+ * platform with no known engagement window, and for a density search that
+ * exhausted its own candidates.
+ *
+ * Prefers a day inside the horizon, but a fully-booked horizon (a client
+ * whose chain already schedules every weekday for weeks out — entirely
+ * realistic for an active client) must NOT collapse every overflowing
+ * suggestion onto the identical `horizonMs` instant: that just moves the
+ * "all on one day" bug from `base`'s fixed slot to the horizon boundary
+ * instead of fixing it. So once the horizon is exhausted this keeps walking
+ * for the first genuinely open day beyond it — still distinct per
+ * suggestion, since `booked` (the caller's `working` array) grows with each
+ * prior assignment — bounded only by MAX_SEARCH_DAYS so a calendar booked
+ * solid for the full search window can't loop forever.
+ */
 function firstOpenDay(booked: readonly number[], now: number, horizonMs: number): number {
-  for (let dayOffset = 0; ; dayOffset++) {
+  let pastHorizonFallback: number | null = null;
+  for (let dayOffset = 0; dayOffset <= MAX_SEARCH_DAYS; dayOffset++) {
     const day = new Date(now + dayOffset * DAY_MS);
     day.setHours(10, 0, 0, 0);
     if (day.getTime() < now) continue;
-    if (day.getTime() > horizonMs) return horizonMs;
-    if (!booked.some((b) => sameLocalDay(b, day.getTime()))) return day.getTime();
+    if (booked.some((b) => sameLocalDay(b, day.getTime()))) continue;
+    if (day.getTime() <= horizonMs) return day.getTime();
+    if (pastHorizonFallback === null) pastHorizonFallback = day.getTime();
   }
+  return pastHorizonFallback ?? horizonMs;
 }
 
 /**
@@ -73,7 +94,15 @@ export function inferSuggestionDates(
       scheduled: working,
       from: now,
     });
-    const at = rec && rec.at <= horizonMs ? rec.at : firstOpenDay(working, now, horizonMs);
+    // recommendPublishTimeWithDensity falls back to its OWN plain, non-density
+    // slot (always the same fixed instant) once its internal 90-candidate walk
+    // is exhausted — which a busy client's calendar hits easily. Trusting that
+    // fallback here would pile every remaining suggestion onto that one identical
+    // day, worse with each one added (it only ever grows `working`). Treat a
+    // day `working` already holds as untrustworthy and re-derive an actually
+    // open day ourselves instead of believing the density search's word for it.
+    const day = (t: number) => working.some((b) => sameLocalDay(b, t));
+    const at = rec && rec.at <= horizonMs && !day(rec.at) ? rec.at : firstOpenDay(working, now, horizonMs);
     out.set(s.id, at);
     working.push(at);
   }
