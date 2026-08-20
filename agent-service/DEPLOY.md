@@ -136,6 +136,15 @@ gcloud scheduler jobs create http runway --location="$LOCATION" \
 gcloud scheduler jobs create http daily-digest --location="$LOCATION" \
   --schedule="0 * * * *" --uri="<platform-url>/api/daily-digest" \
   --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
+
+# Task Map autopilot — daily sweep that generates recommended tasks for a
+# sparse client nobody has manually pressed "Refresh Task Map" for. Each
+# eligible client runs a full swarm debate (bounded by TASKMAP_AUTOGEN_SWEEP_CAP
+# per invocation), so daily is the intent; more often just works through any
+# backlog faster.
+gcloud scheduler jobs create http tasks-auto-generate --location="$LOCATION" \
+  --schedule="0 9 * * *" --uri="<platform-url>/api/tasks/auto-generate" \
+  --http-method=GET --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret CRON_SECRET)"
 ```
 
 To check whether a job already exists rather than re-create it:
@@ -143,10 +152,10 @@ To check whether a job already exists rather than re-create it:
 
 (`publish` every 5 min, `cleanup-logs` daily, `scheduler` every ~15 min,
 `run-scheduled` every ~10 min, both `reconcile`s every ~10 min, `analytics/sync`
-daily, `runway` weekly (Mon 08:00), `daily-digest` hourly — adjust schedules to
-taste, EXCEPT `daily-digest`, which must stay hourly: its send time is a local
-hour per client, so a coarser schedule silently skips whichever zones fall
-between ticks.)
+daily, `runway` weekly (Mon 08:00), `daily-digest` hourly, `tasks/auto-generate`
+daily (09:00) — adjust schedules to taste, EXCEPT `daily-digest`, which must
+stay hourly: its send time is a local hour per client, so a coarser schedule
+silently skips whichever zones fall between ticks.)
 
 **Before wiring `daily-digest`, dry-run it.** It mails real clients, so it takes
 the same flag `/api/runway` does and reports what it would send without sending
@@ -195,6 +204,26 @@ family auto-fires (no required brief). `email` and `article` are both reported
 and never auto-filled: on 2026-08-06 the newsletter and the blog each became a
 per-client custom agent behind an intake gate and a setup gate — an unattended fire would be refused for most
 clients and would claim issue numbers in a real mailing list unwatched.
+
+**Task Map autopilot env flags** (set on the platform Cloud Run service):
+- `TASKMAP_AUTOGEN_ENABLED=1` — master switch. Unset ⇒ the cron only
+  *measures* eligibility (which clients are sparse, which already have pending
+  suggestions) and reports it — no swarm runs. Deploy it off first, hit
+  `GET /api/tasks/auto-generate?dryRun=1` to review the plan, then flip it on.
+- `TASKMAP_AUTOGEN_SWEEP_CAP` — how many clients one sweep may actually run
+  the swarm debate for (default **3**). Each run is a full multi-round debate
+  (up to ~120s, same as a manual "Refresh Task Map" press), so this bounds the
+  route's own request duration rather than overall coverage — a client not
+  reached this round is eligible again on the next scheduled sweep.
+- Free, always: this calls `runSwarmToCompletion` (agent-swarm.ts) directly,
+  never the `/api/tasks/generate-swarm` route, so the route's own credit charge
+  is never reached — a client is never billed for a recommendation it never
+  asked for, same as runway's system-actor dispatches above.
+- Eligibility, all of which must hold: `client.status === "active"`;
+  onboarding not `pending`/`running`; zero existing pending
+  karos_managed/copilot tasks (a client already sitting on unreviewed
+  suggestions gets nothing piled on top); calendar sparse per the same gap math
+  the swarm itself reasons from and the calendar's own nudge banner reads.
 
 `intel-report-schedule` drives the admin-configurable recurring Intel Report +
 SEO/GEO regeneration (Schedule button on each client's dashboard). Ticking

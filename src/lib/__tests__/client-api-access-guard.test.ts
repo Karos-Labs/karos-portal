@@ -677,6 +677,7 @@ describe("every API route that takes a client id asks the fence", () => {
     "run-scheduled": "cron",
     runway: "cron",
     scheduler: "cron",
+    "tasks/auto-generate": "cron",
     "tasks/generate-swarm": "fenced",
     "telemetry/track": "self",
     "users/avatar": "self",
