@@ -535,6 +535,14 @@ const PINNED_DERIVATIONS: Readonly<Record<string, string>> = {
   // just below.
   '(productType && PRODUCT_ASSET_TYPE[productType]) ?? "note"':
     "task approval → PRODUCT_ASSET_TYPE, keyed by the managed catalog",
+  // agent-engine's own reverse-completion materialization (Task 3) — THE FOURTH
+  // RUNTIME DERIVATION. Routes through the same shared `deliverableAssetType` the
+  // webhook and MCP paths use rather than inventing its own mapping; the
+  // WIRE_TASK_TYPE_BY_PRODUCT lookup only ever produces "social_post"/"landing_page",
+  // neither a Reddit product, but the fence is applied unconditionally regardless
+  // (same rationale as the task-approval pin above).
+  "deliverableAssetType({ taskType: WIRE_TASK_TYPE_BY_PRODUCT[job.agentEngineProductId]!, content: materialization.content, identity: [job.agentEngineProductId], })":
+    "agent-engine materialize → deliverableAssetType",
 };
 
 /**
@@ -554,6 +562,8 @@ const PINNED_OPAQUE_PAYLOADS: Readonly<Record<string, string>> = {
     "webhook → recommendedScheduleFields, two declared fields",
   "...(chainFamily ? {} : recommendedScheduleFields(assetType, created))":
     "lab import → the same two declared fields, or nothing",
+  "...recommendedScheduleFields(assetType, 0, materialization.channels?.[0])":
+    "agent-engine materialize → recommendedScheduleFields, same two declared fields",
   // approveAssetAction's own patch, declared `Omit<Partial<Asset>, "type">` — the
   // compiler refuses a type on it. Named for that one action precisely so this pin
   // cannot spread its exemption over anything else's `patch`.

@@ -1,5 +1,6 @@
 import "server-only";
 import { updateJob } from "@/lib/data";
+import { materializeAgentEngineDeliverable } from "./materialize";
 import { readAgentEngineRun, type AgentEngineRunRecord, type AgentEngineRunView } from "./read-run";
 import type { Job } from "@/lib/types";
 
@@ -71,6 +72,18 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   if (!update) return job; // still in flight — job.status already correctly says so
   if (job.status === update.status && job.error === update.error) return job; // already synced
 
-  await updateJob(job.id, { ...update, updatedAt: Date.now() });
-  return { ...job, ...update };
+  // Task 3: materialize BEFORE the status write, not after — so a crash between the two
+  // leaves `assetIds` populated but `status` still stale, and the next reconcile call's own
+  // "already has an asset" idempotency check correctly skips re-materializing rather than
+  // silently losing track of it. Only attempted on the transition INTO "review" (a genuine
+  // agent-engine `completed`) — `terminalJobUpdate` never maps `failed`/`degraded`/`held`/
+  // `blocked_intake` there, so there's nothing to materialize for any other update.
+  let assetIds = job.assetIds;
+  if (update.status === "review") {
+    const assetId = await materializeAgentEngineDeliverable(job);
+    if (assetId) assetIds = [...job.assetIds, assetId];
+  }
+
+  await updateJob(job.id, { ...update, ...(assetIds !== job.assetIds ? { assetIds } : {}), updatedAt: Date.now() });
+  return { ...job, ...update, assetIds };
 }

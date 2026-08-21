@@ -30,18 +30,21 @@ export interface AgentEngineRunRecord {
   failureReason?: string | null;
   pendingGateId?: string | null;
   reason?: string | null;
+  /** The step currently executing — real-time progress reporting (agent-engine's `markStepRunning`). Absent on a run from before this field existed, or one with no steps recorded yet. */
+  currentStepId?: string | null;
 }
 
 export interface AgentEngineStepRecord {
   stepId: string;
   kind: "code" | "agent";
-  status: "completed" | "failed";
-  /** Arbitrary — either the step's real (possibly-summarized) output, or `{archived:true, gcsUri, sizeBytes}` for an oversized output offloaded to GCS (agent-engine's own dual-storage archive). */
-  output: unknown;
-  costUsd: number;
-  durationMs: number;
+  /** `"running"`: the step's checkpoint exists but hasn't reached a terminal state yet — no `completedAt`/`costUsd`/`durationMs`/`output` yet. */
+  status: "running" | "completed" | "failed";
+  /** Arbitrary — either the step's real (possibly-summarized) output, or `{archived:true, gcsUri, sizeBytes}` for an oversized output offloaded to GCS (agent-engine's own dual-storage archive). Absent while `status === "running"`. */
+  output?: unknown;
+  costUsd?: number;
+  durationMs?: number;
   startedAt: number;
-  completedAt: number;
+  completedAt?: number;
   error?: string;
 }
 
@@ -66,7 +69,7 @@ function isArchivedOutput(output: unknown): output is { archived: true; gcsUri: 
 
 /** Total cost across every step actually recorded so far — real-time, updates as steps land, not just at run completion. */
 export function totalStepCostUsd(steps: readonly AgentEngineStepRecord[]): number {
-  return steps.reduce((sum, step) => sum + (Number.isFinite(step.costUsd) ? step.costUsd : 0), 0);
+  return steps.reduce((sum, step) => sum + (typeof step.costUsd === "number" && Number.isFinite(step.costUsd) ? step.costUsd : 0), 0);
 }
 
 export { isArchivedOutput };

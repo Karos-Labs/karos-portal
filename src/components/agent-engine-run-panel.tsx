@@ -66,20 +66,22 @@ export function AgentEngineRunPanel({ jobId, view }: { jobId: string; view: Agen
           </thead>
           <tbody>
             {steps.map((step) => (
-              <tr key={step.stepId} className="border-t border-border">
+              <tr key={step.stepId} className={`border-t border-border ${step.stepId === run.currentStepId && step.status === "running" ? "bg-info/5" : ""}`}>
                 <td className="max-w-[220px] truncate py-2 pr-3">
                   {step.stepId}
                   {step.kind === "agent" && <Badge tone="neutral" className="ml-2">ai</Badge>}
                 </td>
                 <td className="py-2 pr-3">
-                  {step.status === "completed" ? (
+                  {step.status === "running" ? (
+                    <Badge tone="info">Running…</Badge>
+                  ) : step.status === "completed" ? (
                     <Badge tone="success">Done</Badge>
                   ) : (
                     <Badge tone="danger">{step.error ?? "Failed"}</Badge>
                   )}
                 </td>
-                <td className="py-2 pr-3 text-right text-xs">{fmtCost(step.costUsd)}</td>
-                <td className="py-2 text-right text-xs text-muted-2">{(step.durationMs / 1000).toFixed(1)}s</td>
+                <td className="py-2 pr-3 text-right text-xs">{step.costUsd !== undefined ? fmtCost(step.costUsd) : "—"}</td>
+                <td className="py-2 text-right text-xs text-muted-2">{step.durationMs !== undefined ? `${(step.durationMs / 1000).toFixed(1)}s` : "—"}</td>
               </tr>
             ))}
             {steps.length === 0 && (
