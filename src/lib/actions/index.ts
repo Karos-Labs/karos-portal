@@ -23,6 +23,7 @@ export * from "./execution-actions";
 export * from "./campaign-run-actions";
 export * from "./job-actions";
 export * from "./external-job-actions";
+export * from "./agent-engine-actions";
 export * from "./custom-agent-actions";
 export * from "./dynamic-agent-actions";
 export * from "./scheduled-run-actions";

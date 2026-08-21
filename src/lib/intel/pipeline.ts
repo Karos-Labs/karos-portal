@@ -13,6 +13,8 @@ import {
   listTranscripts,
   upsertClientSeoGeo,
 } from "@/lib/data";
+import { isAgentEngineDispatchEnabled } from "@/lib/agent-engine/dispatch";
+import { dispatchOnboardingResearchAgents } from "@/lib/agent-engine/dispatch-research-agents";
 import { RESEARCH_ENGINE_RULES, METRICS_RULES } from "./brain";
 import { TEMPLATES } from "./templates";
 import { condenseDocs } from "./condense";
@@ -788,6 +790,16 @@ export async function runOnboardPipeline(clientId: string, runSpecificContext = 
     }),
   ]);
   if (!client) throw new Error(`Client not found: ${clientId}`);
+
+  // Task 1's "independent, observable steps": ALSO dispatch seo-geo-agent/intel-report-agent
+  // through agent-engine, purely additive — their output does not feed anything below, and a
+  // dispatch failure here never blocks or fails this pipeline. See dispatch-research-agents.ts's
+  // own doc comment for why this doesn't (yet) write into upsertClientSeoGeo/upsertClientReport.
+  if (isAgentEngineDispatchEnabled()) {
+    void dispatchOnboardingResearchAgents(client).catch((err: unknown) => {
+      console.error("[onboard] agent-engine observability dispatch failed (non-fatal):", err);
+    });
+  }
 
   const allCorrections: DocCorrection[] = storedCorrections.map((f) => ({
     text: f.feedbackText,

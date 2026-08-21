@@ -2242,6 +2242,10 @@ const NOT_TEXT: readonly string[] = [
   "createCustomAgent.color",
   "createCustomAgent.icon",
   "createJob.agentId",
+  // "system" for an internally-triggered dispatch (onboarding's observable agent-engine
+  // steps, dispatch-research-agents.ts) vs. a real user id otherwise — an internal
+  // provenance marker, never rendered as prose on any client screen.
+  "createJob.createdBy",
   "createJob.events[].level",
   "createJob.status",
   "createPlannedScheduledRun.status",

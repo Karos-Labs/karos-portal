@@ -1067,6 +1067,26 @@ export interface Job {
   currentStepId?: string | null;
   currentStepName?: string | null;
   completedStepIds?: string[];
+  /**
+   * Present only for a job dispatched through agent-engine's Pub/Sub path
+   * (`src/lib/jobs/submit-managed.ts`) instead of the legacy agent-service
+   * HTTP call. `agentEngineRunId` is `agentEngineRuns/{runId}`'s own doc id
+   * (`\`pubsub-${messageId}\``, computed at publish time — see
+   * `src/lib/agent-engine/pubsub-client.ts`). Deliberately NOT nested under
+   * `external` (`ExternalJobInfo.serviceJobId`): every legacy cancel/retry/
+   * reconcile code path branches on `job.external?.serviceJobId` alone,
+   * with no `agentId` check, so setting it here would make "Retry"/"Cancel"
+   * on an agent-engine job silently call the WRONG backend (agent-service)
+   * with agent-engine's runId. `job.external` stays unset for this path.
+   *
+   * This job's real, authoritative status lives at `agentEngineRuns/
+   * {agentEngineRunId}` in Firestore, not on `status`/`dynamicRun` above —
+   * nothing updates those fields for an agent-engine-dispatched job today
+   * (there is no reverse completion webhook yet; see `AgentEngineRunPanel`,
+   * which reads `agentEngineRunId` directly instead).
+   */
+  agentEngineRunId?: string;
+  agentEngineProductId?: string;
   /** See JobRunType. Absent on jobs written before run-type tracking existed. */
   runType?: JobRunType;
   /** The client-agent umbrella (clientAgents doc id) this run belongs to, when one exists. */

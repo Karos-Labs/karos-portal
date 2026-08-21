@@ -19,6 +19,9 @@ import { JobResumeButton } from "@/components/job-resume";
 import { JobStepCostTable } from "@/components/job-step-cost-table";
 import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
 import { fetchJobTranscript } from "@/lib/agent-service/transcript";
+import { AgentEngineRunPanel } from "@/components/agent-engine-run-panel";
+import { readAgentEngineRun } from "@/lib/agent-engine/read-run";
+import { syncAgentEngineJobStatusFromView } from "@/lib/agent-engine/reconcile";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
 import { normalizeDashes } from "@/lib/text-utils";
@@ -28,15 +31,32 @@ import { formatDateTime } from "@/lib/utils";
 export default async function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const { id } = await params;
-  const job = await getJob(id);
+  let job = await getJob(id);
   if (!job) notFound();
+
+  // A job dispatched through agent-engine (Task 2/3) has no reverse-webhook completion path
+  // — this view (and the periodic sweep at /api/agent-engine/reconcile) IS the completion
+  // channel. Reads agentEngineRuns/{runId} once and, if it's reached a real terminal state,
+  // writes job.status here so this page load is also the moment the job's status catches up
+  // — see reconcile.ts's own doc comment.
+  const agentEngineView = job.agentEngineRunId ? await readAgentEngineRun(job.agentEngineRunId) : undefined;
+  if (agentEngineView) {
+    job = await syncAgentEngineJobStatusFromView(job, agentEngineView);
+  }
+
   const [client, ...assets] = await Promise.all([
     getClient(job.clientId),
     ...job.assetIds.map((aid) => getAsset(aid)),
   ]);
   const realAssets = assets.filter((a) => !!a);
-  const inProgress = job.status === "running" || job.status === "queued";
   const classifiedError = classifyJobError(job.error);
+
+  const agentEngineTerminal =
+    agentEngineView !== undefined &&
+    ["completed", "failed", "degraded", "held", "blocked_intake"].includes(agentEngineView.run.status);
+  const inProgress = job.agentEngineRunId
+    ? !agentEngineTerminal
+    : job.status === "running" || job.status === "queued";
 
   // F107 - without this the deliverables here rendered with no connectedPlatforms,
   // so Publish Now never appeared on the job page even for an approved post whose
@@ -107,6 +127,8 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
       ) : (
         job.external && <ManagedJobProgress status={job.status} />
       )}
+
+      {agentEngineView && <AgentEngineRunPanel jobId={job.id} view={agentEngineView} />}
 
       {/* Topic-guardrail and repetition findings for a dynamic run. Staff-only
           material (it names a restricted topic and quotes the draft), and this

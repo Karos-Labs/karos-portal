@@ -321,7 +321,16 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       href: `/clients/${id}/assets`,
       warnWhenNonZero: true,
     },
-    { label: "Scheduled", value: assets.filter(isUpcoming).length, href: "/calendar" },
+    {
+      label: "Scheduled",
+      value: assets.filter(isUpcoming).length,
+      // Staff-only strip (see HomeOpsStrip below) — scoped to this client's
+      // own calendar, not the flat /calendar route, which resolves to the
+      // cross-client overview for a staff viewer (calendar-body.tsx's
+      // `isClient` branch is the only one that scopes the flat route, and it
+      // keys off `user.clientId`, which a staff viewer here doesn't have).
+      href: `/clients/${id}/calendar`,
+    },
     {
       label: "Published",
       value: assets.filter((a) => a.status === "published").length,
@@ -343,7 +352,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       pendingSuggestionCount={pendingSuggestedTaskCount}
       isAiProcessing={isAiProcessingLockActive(client)}
       viewerIsBilled={viewerIsBilled}
-      reviewHref="/calendar"
+      // This element is reused for both branches below (real CLIENT_USER and
+      // staff). The flat /calendar route only resolves to THIS client for a
+      // real CLIENT_USER (calendar-body.tsx's `isClient` branch scopes it via
+      // `user.clientId`); a staff viewer — including "View as client" — lands
+      // on the cross-client overview there instead, so the review link must
+      // carry the scoped route explicitly for them.
+      reviewHref={isClientViewer ? "/calendar" : `/clients/${id}/calendar`}
     />
   );
 
@@ -407,7 +422,10 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           <section className="@container space-y-6">
             {calendarBanner}
             <div className="grid gap-6 @4xl:grid-cols-2">
-              <CalendarPreviewWidget upcoming={upcomingStaffAssets} />
+              <CalendarPreviewWidget
+                upcoming={upcomingStaffAssets}
+                calendarHref={`/clients/${id}/calendar`}
+              />
               {/* `tasks` is deliberately empty here — see the fetch above and
                   this component's own note on `clientId`: its attention rows
                   link to an owner-scoped board that a staff viewer lands on the

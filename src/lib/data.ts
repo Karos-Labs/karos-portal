@@ -631,6 +631,29 @@ export async function getJobByExternalServiceId(serviceJobId: string): Promise<J
 }
 
 /**
+ * Jobs dispatched through agent-engine (`agentId === "agent-engine"`,
+ * `src/lib/jobs/submit-managed.ts`) still non-terminal — candidates for the
+ * Task 2 reverse-completion sweep (`src/lib/agent-engine/reconcile.ts`,
+ * `src/app/api/agent-engine/reconcile/route.ts`). Mirrors
+ * `listStuckManagedJobs` exactly, minus its staleness filter: unlike the
+ * legacy webhook (which might just never arrive), agent-engine's own
+ * Firestore doc IS the source of truth here, so every in-flight job is a
+ * legitimate candidate to re-check, not only ones stuck past a threshold.
+ */
+export async function listInFlightAgentEngineJobs(limit = 25): Promise<Job[]> {
+  const snap = await col
+    .jobs()
+    .where("agentId", "==", "agent-engine")
+    .where("status", "in", IN_FLIGHT_JOB_STATUSES)
+    .get();
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    .filter((j) => j.agentEngineRunId)
+    .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
+    .slice(0, limit);
+}
+
+/**
  * The non-terminal job statuses — the single home for this set.
  *
  * It answers one question in two shapes: the array feeds Firestore

@@ -641,6 +641,7 @@ describe("every API route that takes a client id asks the fence", () => {
   const API_ROOT = join(process.cwd(), "src/app/api");
 
   const CLASSIFIED: Record<string, "fenced" | "cron" | "signed" | "self"> = {
+    "agent-engine/reconcile": "cron",
     "agent-service/reconcile": "cron",
     "agent-service/webhook": "signed",
     "analytics/sync": "cron",

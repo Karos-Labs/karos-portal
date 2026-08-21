@@ -21,9 +21,19 @@ function dayLabel(ms: number): string {
  */
 export function CalendarPreviewWidget({
   upcoming,
+  calendarHref = "/calendar",
 }: {
   /** Future-dated, status "scheduled" assets, any order — this widget sorts and caps them. */
   upcoming: Asset[];
+  /**
+   * Where "Open calendar" links to. Defaults to the flat /calendar route,
+   * which only resolves to this one client's own calendar for a real
+   * CLIENT_USER (its `isClient` branch scopes by `user.clientId`). A staff
+   * viewer hits the cross-client overview there instead, so callers
+   * rendering this widget for staff must pass the scoped
+   * `/clients/[id]/calendar` route explicitly.
+   */
+  calendarHref?: string;
 }) {
   const next = [...upcoming]
     .filter((a) => typeof a.scheduledAt === "number")
@@ -35,7 +45,7 @@ export function CalendarPreviewWidget({
       <div className="mb-3 flex items-center justify-between gap-2">
         <CardTitle className="min-w-0 truncate">Calendar</CardTitle>
         <Link
-          href="/calendar"
+          href={calendarHref}
           className="shrink-0 whitespace-nowrap text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
         >
           Open calendar

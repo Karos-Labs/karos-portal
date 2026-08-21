@@ -802,7 +802,10 @@ export function AssetCard({
             )}
 
             <div className="ml-auto flex gap-1.5">
-              {canApprove && !editing && (
+              {/* A draft gets its own labeled Edit button paired with Approve
+                  below — rendering this one too just duplicated it (same
+                  handler, same icon) right next to it. */}
+              {canApprove && !editing && asset.status !== "draft" && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -811,6 +814,7 @@ export function AssetCard({
                     setEditing(true);
                     setApproving(false);
                   }}
+                  title="Edit"
                 >
                   <Icon name="Pencil" className="h-3.5 w-3.5" />
                 </Button>

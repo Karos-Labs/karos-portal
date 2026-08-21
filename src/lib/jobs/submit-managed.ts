@@ -12,6 +12,9 @@ import type { AppUser, ManagedTaskType } from "@/lib/types";
 import { logActivity } from "@/lib/actions/_shared";
 import { managedRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
+import { resolveAgentEngineProductId } from "@/lib/agent-engine/product-mapping";
+import { isAgentEnginePubSubConfigured } from "@/lib/agent-engine/pubsub-client";
+import { dispatchAgentEngineRun, isAgentEngineDispatchEnabled } from "@/lib/agent-engine/dispatch";
 
 /**
  * Shared core for submitting a managed (catalog) job to the external agent
@@ -66,9 +69,6 @@ export async function submitManagedJob(
   user: AppUser,
   input: SubmitManagedJobInput,
 ): Promise<{ jobId?: string; error?: string }> {
-  if (!isAgentServiceConfigured()) {
-    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
-  }
   if (input.taskType === "custom") {
     return { error: "Custom agents run through the custom-agents flow, not the product catalog." };
   }
@@ -80,6 +80,60 @@ export async function submitManagedJob(
     return value === undefined || value === null || String(value).trim() === "";
   });
   if (missing.length > 0) return { error: `Missing required field: ${missing.join(", ")}` };
+
+  const now = Date.now();
+  const label = MANAGED_TASK_LABELS[input.taskType];
+  const inputSummary = Object.fromEntries(
+    Object.entries(input.brief)
+      .filter(([, v]) => v !== undefined && v !== null && v !== "")
+      .map(([k, v]) => [k, Array.isArray(v) ? v.join("; ") : String(v)]),
+  );
+
+  // --- Task 2: agent-engine Pub/Sub dispatch, when this deployment has opted in AND this
+  // specific task/brief maps onto one of agent-engine's known products. Every job this
+  // doesn't cover — every "custom"/dynamic-agent job (a different file entirely), and any
+  // "social_post" with no recognized brief.platform — stays on the legacy path below
+  // unchanged. See resolveAgentEngineProductId's own doc comment for the exact mapping.
+  const agentEngineProductId = isAgentEngineDispatchEnabled() ? resolveAgentEngineProductId(input.taskType, input.brief) : undefined;
+  if (agentEngineProductId) {
+    if (!client.agentsRepoSlug) {
+      return { error: "Client has no agentsRepoSlug configured — required to dispatch through agent-engine." };
+    }
+    if (!isAgentEnginePubSubConfigured()) {
+      return { error: "AGENT_ENGINE_DISPATCH_ENABLED is set but AGENT_ENGINE_PUBSUB_TOPIC (or the Pub/Sub emulator) is not configured." };
+    }
+
+    const dispatched = await dispatchAgentEngineRun({
+      clientId: input.clientId,
+      clientSlug: client.agentsRepoSlug,
+      productId: agentEngineProductId,
+      runKind: "recurring",
+      agentName: label,
+      title: jobTitleForClient(label, client.name),
+      inputs: input.brief,
+      inputSummary,
+      createdBy: user.uid,
+    });
+    if ("error" in dispatched) {
+      return "jobId" in dispatched ? { jobId: dispatched.jobId, error: dispatched.error } : { error: dispatched.error };
+    }
+
+    void logActivity({
+      clientId: input.clientId,
+      timestamp: Date.now(),
+      type: "CAMPAIGN_CREATED",
+      title: managedRunStartedTitle(label),
+      actor: user.name,
+      actorRole: "staff",
+      metadata: { jobId: dispatched.jobId, taskType: input.taskType },
+    });
+    return { jobId: dispatched.jobId };
+  }
+
+  // --- legacy agent-service path (unchanged) ---
+  if (!isAgentServiceConfigured()) {
+    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
+  }
 
   // Prefer a dedicated runtime var (plain env vars are readable at runtime on
   // Cloud Run; NEXT_PUBLIC_* can get inlined at build) and don't overload the
@@ -104,13 +158,6 @@ export async function submitManagedJob(
     });
   }
 
-  const now = Date.now();
-  const label = MANAGED_TASK_LABELS[input.taskType];
-  const inputSummary = Object.fromEntries(
-    Object.entries(input.brief)
-      .filter(([, v]) => v !== undefined && v !== null && v !== "")
-      .map(([k, v]) => [k, Array.isArray(v) ? v.join("; ") : String(v)]),
-  );
   const jobId = await createJob({
     clientId: input.clientId,
     agentId: "agent-service",
