@@ -32,8 +32,7 @@ import "server-only";
  * had already written a run record.
  */
 
-const METADATA_URL =
-  "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
+import { middlewareBaseUrl, middlewareIdToken } from "./middleware-http";
 
 /** Comfortably above the middleware's own 10s publish timeout — see the header note. */
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -57,10 +56,7 @@ export interface MiddlewareDispatchResult {
   middlewareRunId: string;
 }
 
-function baseUrl(env: Record<string, string | undefined> = process.env): string | undefined {
-  const url = env.AGENT_MIDDLEWARE_URL;
-  return url && url.length > 0 ? url.replace(/\/$/, "") : undefined;
-}
+const baseUrl = middlewareBaseUrl;
 
 /**
  * Whether dispatch should go through the control plane at all.
@@ -77,39 +73,8 @@ export function isMiddlewareDispatchEnabled(
   return env.AGENT_MIDDLEWARE_DISPATCH_ENABLED === "true" && baseUrl(env) !== undefined;
 }
 
-let idTokenCache: { audience: string; token: string; expiresAt: number } | null = null;
-
-/**
- * Google-signed ID token for the IAM-protected middleware, from the Cloud Run
- * metadata server. Same pattern as `client.ts`'s own `iamIdToken`.
- *
- * `AGENT_MIDDLEWARE_AUDIENCE` unset means local development with no IAM in
- * front, so no token is sent; the middleware's `AUTH_ENABLED=false` or its dev
- * bearer token covers that case.
- */
-async function iamIdToken(): Promise<string | undefined> {
-  const audience = process.env.AGENT_MIDDLEWARE_AUDIENCE;
-  if (!audience) return undefined;
-
-  const now = Date.now();
-  if (idTokenCache && idTokenCache.audience === audience && idTokenCache.expiresAt > now + 60_000) {
-    return idTokenCache.token;
-  }
-  try {
-    const res = await fetch(`${METADATA_URL}?audience=${encodeURIComponent(audience)}`, {
-      headers: { "Metadata-Flavor": "Google" },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return undefined;
-    const token = (await res.text()).trim();
-    if (!token) return undefined;
-    // Google mints these with a 1h life; refresh a little early.
-    idTokenCache = { audience, token, expiresAt: now + 55 * 60 * 1000 };
-    return token;
-  } catch {
-    return undefined;
-  }
-}
+/** Shared with the admin client so both mint against the same audience and share one token cache. */
+const iamIdToken = middlewareIdToken;
 
 interface DispatchResponseBody {
   run: { id: string };
