@@ -69,14 +69,19 @@ substitutions:
   # turned it off — --set-env-vars replaces the entire set, the same shape as
   # the 2026-07-31 incident noted above.
   _AGENT_ENGINE_DISPATCH_ENABLED: "true"
-  # Control-plane dispatch: OFF in production until agent-middleware is
-  # provisioned in karoscmo. Point these at PRODUCTION's own middleware when it
-  # is — never prep's, which resolves prompts and templates from prep's
-  # Firestore. With the flag empty, dispatch.ts publishes straight to Pub/Sub,
-  # which is what production does today.
-  _AGENT_MIDDLEWARE_DISPATCH_ENABLED: ""
-  _AGENT_MIDDLEWARE_URL: ""
-  _AGENT_MIDDLEWARE_AUDIENCE: ""
+  # Control-plane dispatch, now that agent-middleware is deployed in karoscmo
+  # (europe-west1). These are PRODUCTION's own middleware and must never be
+  # pointed at prep's, which resolves prompts and templates from prep's
+  # Firestore — a production job answered by prep's control plane would run
+  # against prompts nobody reviewed for production.
+  #
+  # The audience is the project-number URL form because that is exactly what
+  # the service's own AUTH_AUDIENCE is set to. Cloud Run answers on two URL
+  # forms and the middleware accepts a token minted for only one of them, so
+  # these two strings have to stay character-identical.
+  _AGENT_MIDDLEWARE_DISPATCH_ENABLED: "true"
+  _AGENT_MIDDLEWARE_URL: "https://agent-middleware-42999994788.europe-west1.run.app"
+  _AGENT_MIDDLEWARE_AUDIENCE: "https://agent-middleware-42999994788.europe-west1.run.app"
 
 options:
   logging: CLOUD_LOGGING_ONLY
