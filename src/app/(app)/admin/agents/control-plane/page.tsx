@@ -6,9 +6,11 @@ import {
   getActivePrompt,
   listAgents,
   listFeedback,
+  listModels,
   listTemplates,
   type MiddlewareAgent,
   type MiddlewareFeedback,
+  type MiddlewareModel,
   type MiddlewarePrompt,
   type MiddlewareTemplate,
 } from "@/lib/agent-engine/middleware-admin";
@@ -55,12 +57,18 @@ export default async function ControlPlanePage({
 
   let agents: MiddlewareAgent[] = [];
   let templates: MiddlewareTemplate[] = [];
+  let models: MiddlewareModel[] = [];
   let loadError: string | null = null;
 
   try {
-    const [agentPage, templatePage] = await Promise.all([listAgents({ limit: 100 }), listTemplates({ limit: 100 })]);
+    const [agentPage, templatePage, modelPage] = await Promise.all([
+      listAgents({ limit: 100 }),
+      listTemplates({ limit: 100 }),
+      listModels({ limit: 200 }),
+    ]);
     agents = agentPage.items;
     templates = templatePage.items;
+    models = modelPage.items;
   } catch (error) {
     // A reachable-but-broken control plane should say so, not render an empty
     // console that looks like "you have no agents".
@@ -101,6 +109,7 @@ export default async function ControlPlanePage({
       <ControlPlaneConsole
         agents={agents}
         templates={templates}
+        models={models}
         selectedSlug={selected?.slug ?? null}
         activePrompt={activePrompt}
         feedback={feedback}

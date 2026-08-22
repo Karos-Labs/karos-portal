@@ -6,7 +6,9 @@ import {
   activatePromptVersionAction,
   bindTemplateAction,
   promoteFeedbackAction,
+  requestModelAccessAction,
   savePromptVersionAction,
+  setAgentModelAction,
   setAgentStatusAction,
   submitFeedbackAction,
 } from "@/lib/actions/control-plane-actions";
@@ -14,6 +16,7 @@ import { feedbackStatusLabel } from "@/lib/feedback-status-copy";
 import type {
   MiddlewareAgent,
   MiddlewareFeedback,
+  MiddlewareModel,
   MiddlewarePrompt,
   MiddlewareTemplate,
 } from "@/lib/agent-engine/middleware-admin";
@@ -21,6 +24,7 @@ import type {
 interface Props {
   agents: MiddlewareAgent[];
   templates: MiddlewareTemplate[];
+  models: MiddlewareModel[];
   selectedSlug: string | null;
   activePrompt: MiddlewarePrompt | null;
   feedback: MiddlewareFeedback[];
@@ -37,7 +41,7 @@ type Notice = { kind: "ok" | "error"; text: string } | null;
  * here falls back when the control plane is down. An admin edit either landed
  * or it did not, and saying otherwise would be worse than the failure.
  */
-export function ControlPlaneConsole({ agents, templates, selectedSlug, activePrompt, feedback, loadError }: Props) {
+export function ControlPlaneConsole({ agents, templates, models, selectedSlug, activePrompt, feedback, loadError }: Props) {
   const [notice, setNotice] = useState<Notice>(null);
   const [pending, startTransition] = useTransition();
 
@@ -89,6 +93,7 @@ export function ControlPlaneConsole({ agents, templates, selectedSlug, activePro
 
       {selected && (
         <>
+          <ModelPanel agent={selected} models={models} pending={pending} apply={apply} />
           <PromptPanel agent={selected} activePrompt={activePrompt} pending={pending} apply={apply} />
           <TemplatePanel agent={selected} templates={templates} pending={pending} apply={apply} />
           <FeedbackPanel agent={selected} feedback={feedback} pending={pending} apply={apply} />
@@ -145,6 +150,109 @@ function AgentPanel({
           </div>
         ))}
       </div>
+    </Card>
+  );
+}
+
+/**
+ * The model dropdown, backed by the normalized catalog.
+ *
+ * Models this deployment does not route are listed and disabled rather than
+ * hidden. A dropdown showing only what works reads as the whole of what Vertex
+ * offers, and someone concludes a model is unavailable when it is one config
+ * change away — so they appear, greyed, with a way to ask for them.
+ */
+function ModelPanel({
+  agent,
+  models,
+  pending,
+  apply,
+}: {
+  agent: MiddlewareAgent;
+  models: MiddlewareModel[];
+  pending: boolean;
+  apply: Apply;
+}) {
+  const [modelId, setModelId] = useState(agent.model ?? models.find((m) => m.availability === "available")?.modelId ?? "");
+  const [reason, setReason] = useState("");
+
+  const chosen = models.find((m) => m.modelId === modelId);
+  const needsAccess = chosen !== undefined && chosen.availability === "not_enabled";
+
+  if (models.length === 0) {
+    return (
+      <Card className="p-6">
+        <CardTitle>Model</CardTitle>
+        <p className="mt-2 text-sm opacity-70">
+          The model catalog is empty. Seed it with agent-middleware&apos;s scripts/seed_models.py.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-6">
+      <CardTitle>Model</CardTitle>
+      <p className="mt-1 text-sm opacity-70">
+        Stages reference a normalized model id, so what an agent runs on is a lookup rather than a spelling.
+      </p>
+
+      <div className="mt-4 flex flex-wrap items-end gap-3">
+        <div className="min-w-64 flex-1">
+          <Label htmlFor="model-id">Model</Label>
+          <Select id="model-id" value={modelId} onChange={(e) => setModelId(e.target.value)}>
+            {models.map((m) => (
+              <option key={m.modelId} value={m.modelId} disabled={m.availability !== "available"}>
+                {m.displayName}
+                {m.availability === "not_enabled" ? " — not enabled here" : ""}
+                {m.availability === "retired" ? " — retired" : ""}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <Button
+          disabled={pending || !modelId || needsAccess || modelId === agent.model}
+          onClick={() => apply(() => setAgentModelAction(agent.slug, modelId), `${agent.name} now runs on ${chosen?.displayName ?? modelId}.`)}
+        >
+          Save model
+        </Button>
+      </div>
+
+      {chosen && (
+        <p className="mt-3 text-xs opacity-60">
+          {chosen.vendor} · sends <code>{chosen.providerModelName}</code>
+          {chosen.region ? ` · ${chosen.region}` : ""}
+          {chosen.supportsTools ? "" : " · no tool support"}
+          {chosen.notes ? ` — ${chosen.notes}` : ""}
+        </p>
+      )}
+
+      {needsAccess && (
+        <div className="mt-4 rounded-lg border border-white/10 p-4">
+          <p className="text-sm">
+            {chosen?.displayName} is available in Vertex but not routed in this environment. Requesting it records
+            the ask; enabling it is a deployment decision someone makes separately.
+          </p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div className="min-w-64 flex-1">
+              <Label htmlFor="model-reason">Why this agent needs it</Label>
+              <Input id="model-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+            </div>
+            <Button
+              variant="ghost"
+              disabled={pending}
+              onClick={() =>
+                apply(
+                  () => requestModelAccessAction(modelId, { reason, agentId: agent.slug }),
+                  "Request recorded. Nothing changed yet — someone has to enable it.",
+                )
+              }
+            >
+              Request access
+            </Button>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

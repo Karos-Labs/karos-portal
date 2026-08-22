@@ -832,8 +832,16 @@ export function CustomAgentsHub({
   isAdmin,
   importConfigured,
   serviceConfigured,
+  controlPlane,
 }: {
   agents: CustomAgent[];
+  /**
+   * Control-plane facts for the agents agent-middleware knows, keyed by
+   * `CustomAgent.key`. Enrichment only: an agent absent from this map renders
+   * exactly as it did before, which is what keeps the unmigrated majority of
+   * the library visible and runnable.
+   */
+  controlPlane?: ReadonlyMap<string, { agentId: string; activePromptVersion: number | null; status: string }>;
   /**
    * The lab-repo slug rides along because the hub is the one surface that pairs
    * an ARBITRARY agent with an arbitrary client: a per-client instance runs an
@@ -971,6 +979,23 @@ export function CustomAgentsHub({
                       baked under one client's lab folder, so this is a property
                       of the agent, not of whoever is looking at it. */}
                   {boundTo && <Badge tone="neutral">{boundTo} only</Badge>}
+                  {/* Control-plane lineage, for the agents that have one. An
+                      agent with a recorded prompt version runs on agent-engine
+                      with that version attached to every run; one without this
+                      badge runs on agent-service, which is most of them and is
+                      not a defect. Absent enrichment renders nothing at all,
+                      so a control plane that is down costs a badge, not a row. */}
+                  {(() => {
+                    const facts = controlPlane?.get(agent.key);
+                    if (!facts) return null;
+                    return (
+                      <Badge tone={facts.status === "active" ? "info" : "warning"}>
+                        {facts.activePromptVersion === null
+                          ? "Control plane · no prompt"
+                          : `Control plane · prompt v${facts.activePromptVersion}`}
+                      </Badge>
+                    );
+                  })()}
                   {/* No client blurb ⇒ every client surface for this agent is
                       reading the keyed fallback rather than a line somebody
                       wrote for it. NOT the manifest below — `agentBlurb` took

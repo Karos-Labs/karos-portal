@@ -455,3 +455,70 @@ export async function listExamples(
 ): Promise<Page<MiddlewareExample>> {
   return toPage(await middlewareFetch(`/agents/${ref(agentRef)}/examples${listQuery(options)}`), toExample);
 }
+
+// ── models ───────────────────────────────────────────────────────────────
+
+export type ModelAvailability = "available" | "not_enabled" | "retired";
+
+export interface MiddlewareModel {
+  id: string;
+  modelId: string;
+  displayName: string;
+  vendor: string;
+  availability: ModelAvailability;
+  /** What the vendor's API expects — not always the id, e.g. Claude on Vertex. */
+  providerModelName: string;
+  region: string | null;
+  description: string | null;
+  contextWindow: number | null;
+  supportsTools: boolean;
+  tiers: string[];
+  notes: string | null;
+}
+
+function toModel(row: Row): MiddlewareModel {
+  const availability = str(row.availability);
+  return {
+    id: str(row.id),
+    modelId: str(row.model_id),
+    displayName: str(row.display_name),
+    vendor: str(row.vendor),
+    availability:
+      availability === "not_enabled" || availability === "retired" ? availability : "available",
+    providerModelName: str(row.provider_model_name),
+    region: strOrNull(row.region),
+    description: strOrNull(row.description),
+    contextWindow: typeof row.context_window === "number" ? row.context_window : null,
+    supportsTools: row.supports_tools !== false,
+    tiers: strList(row.tiers),
+    notes: strOrNull(row.notes),
+  };
+}
+
+/**
+ * The model catalog a Studio dropdown renders.
+ *
+ * Returns unselectable models too. A dropdown showing only what works reads as
+ * the whole of what Vertex offers, which is how someone concludes a model is
+ * unavailable when it is one config change away — so `not_enabled` rows are
+ * rendered disabled with a way to ask for them, not filtered out.
+ */
+export async function listModels(options: { limit?: number } = {}): Promise<Page<MiddlewareModel>> {
+  return toPage(await middlewareFetch(`/models${listQuery({ limit: options.limit ?? 100 })}`), toModel);
+}
+
+/**
+ * Records a request for a model this deployment does not route. Does not
+ * enable anything — the middleware stores the ask and a human does the rest.
+ */
+export async function requestModelAccess(
+  modelRef: string,
+  input: { requestedBy: string; reason?: string; agentId?: string },
+): Promise<{ id: string; status: string }> {
+  const body: Row = { requested_by: input.requestedBy };
+  if (input.reason) body.reason = input.reason;
+  if (input.agentId) body.agent_id = input.agentId;
+
+  const result = obj(await middlewareFetch(`/models/${ref(modelRef)}/access-request`, { method: "POST", body }));
+  return { id: str(result.id), status: str(result.status) };
+}

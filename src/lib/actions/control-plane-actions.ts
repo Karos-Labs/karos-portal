@@ -3,10 +3,12 @@
 import { revalidatePath } from "next/cache";
 import {
   MiddlewareRequestError,
+  listModels,
   activatePromptVersion,
   bindTemplate,
   createPromptVersion,
   promoteFeedback,
+  requestModelAccess,
   setAgentStatus,
   submitFeedback,
   updateAgent,
@@ -219,5 +221,56 @@ export async function promoteFeedbackAction(
       ...(options.assistantOutput ? { assistantOutput: options.assistantOutput } : {}),
     });
     return { exampleId: example.id };
+  });
+}
+
+/* ─────────────────────────── models ─────────────────────────── */
+
+/**
+ * Sets which model an agent runs on, by normalized id.
+ *
+ * Refuses a model the catalog does not mark selectable. The dropdown already
+ * disables those, but a disabled option is a UI affordance and this is the
+ * fence: a `not_enabled` model is one the engine's router will not serve, so
+ * storing it would produce an agent that fails at dispatch instead of at the
+ * moment someone chose it.
+ */
+export async function setAgentModelAction(
+  agentRef: string,
+  modelId: string,
+): Promise<Result<{ model: string }>> {
+  return run(async () => {
+    const catalog = await listModels({ limit: 200 });
+    const chosen = catalog.items.find((m) => m.modelId === modelId);
+    if (!chosen) throw new Error(`"${modelId}" is not in the model catalog.`);
+    if (chosen.availability !== "available") {
+      throw new Error(
+        `${chosen.displayName} is not enabled in this environment. Use "Request access" instead of selecting it.`,
+      );
+    }
+    const agent = await updateAgent(agentRef, { model: chosen.modelId });
+    return { model: agent.model ?? chosen.modelId };
+  });
+}
+
+/**
+ * Records a request for a model this deployment does not route.
+ *
+ * Deliberately does not enable anything: the engine has to route it and
+ * someone has to accept its cost, so the middleware stores who asked and a
+ * human decides.
+ */
+export async function requestModelAccessAction(
+  modelId: string,
+  options: { reason?: string; agentId?: string } = {},
+): Promise<Result<{ requestId: string }>> {
+  return run(async () => {
+    const admin = await requireAdmin();
+    const created = await requestModelAccess(modelId, {
+      requestedBy: admin.email,
+      ...(options.reason ? { reason: options.reason } : {}),
+      ...(options.agentId ? { agentId: options.agentId } : {}),
+    });
+    return { requestId: created.id };
   });
 }

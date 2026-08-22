@@ -6,11 +6,19 @@ import { Icon } from "@/components/icon";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { isCustomAgentImportConfigured } from "@/lib/agent-service/custom-agent-import";
 import { CustomAgentsHub } from "@/components/custom-agents";
+import { loadControlPlaneFacts } from "@/lib/agent-engine/control-plane-enrichment";
 
 /**
  * Staff entry point for running agents: a client picker (agents always run
  * against a client's context) plus the custom-agents library (stored system
  * prompts, importable from the repo catalog, runnable with a plain prompt).
+ *
+ * MERGED, not replaced: `customAgents` stays the spine of this list. The
+ * control plane knows a handful of agents and this library holds every one a
+ * client can actually run, so sourcing the catalog from `GET /agents` would
+ * make agents people use today vanish from their own portal. The middleware
+ * layers on what it genuinely knows — which prompt version an agent is on —
+ * and every agent it has never heard of renders exactly as before.
  */
 export default async function AgentsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
@@ -19,6 +27,10 @@ export default async function AgentsPage() {
     listCustomAgents(),
   ]);
   const activeClients = clients.filter((c) => c.status === "active");
+
+  // Enrichment only. Returns an empty index when the control plane is off,
+  // unreachable or slow, so this page never depends on it being up.
+  const controlPlane = await loadControlPlaneFacts(customAgents.map((a) => a.key));
 
   return (
     <>
@@ -73,6 +85,7 @@ export default async function AgentsPage() {
 
       <CustomAgentsHub
         agents={customAgents}
+        controlPlane={controlPlane}
         // The lab slug rides along so the hub can tell which agents may run for
         // which client - a per-client instance is refused by both submit cores
         // for anyone else, and the hub is where that pair gets assembled (F38).
