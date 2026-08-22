@@ -143,6 +143,27 @@ substitutions:
   # service (independent of _APP_URL/any custom domain). Set once this
   # environment's own agent-service is deployed.
   _AGENT_SERVICE_CALLBACK_URL: ""
+  # agent-engine dispatch (src/lib/agent-engine/dispatch.ts). Production has
+  # been running with this on since 2026-08; it lived only on the running
+  # revision, so the next promote would have silently switched it back off —
+  # --set-env-vars replaces the whole set. It belongs here for that reason.
+  _AGENT_ENGINE_DISPATCH_ENABLED: "true"
+  # Route dispatch through the agent-middleware control plane instead of
+  # publishing straight to Pub/Sub. Deliberately EMPTY here (= off), because
+  # cloudbuild.yaml's defaults are production's and agent-middleware is not
+  # provisioned in karoscmo yet. deploy-prep.yml overrides all three for prep.
+  #
+  # These are per-environment and must never be crossed: the middleware
+  # resolves prompt and template versions out of its own environment's
+  # Firestore, so a production job pointed at prep's control plane would run
+  # against prep's unreviewed prompts. When prod is provisioned, set these to
+  # prod's own service URL, not prep's.
+  _AGENT_MIDDLEWARE_DISPATCH_ENABLED: ""
+  _AGENT_MIDDLEWARE_URL: ""
+  # The OIDC audience the caller mints its token for. Must equal the receiving
+  # service's AUTH_AUDIENCE exactly — Cloud Run publishes a service on two URL
+  # forms and the middleware only accepts the one it was configured with.
+  _AGENT_MIDDLEWARE_AUDIENCE: ""
   # Full production/prep parity — the rest of these were previously only in
   # cloudbuild.promote.yaml (production). Same secret NAMES everywhere, own
   # VALUES per project's Secret Manager (see DEPLOY_ENVIRONMENTS.md).
@@ -236,7 +257,7 @@ steps:
           --timeout=300 \
           --concurrency=80 \
           --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,SEGMIND_API_KEY=SEGMIND_API_KEY:latest,NEXT_PUBLIC_FIREBASE_API_KEY=NEXT_PUBLIC_FIREBASE_API_KEY:latest,NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:latest,NEXT_PUBLIC_FIREBASE_PROJECT_ID=NEXT_PUBLIC_FIREBASE_PROJECT_ID:latest,NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:latest,NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:latest,NEXT_PUBLIC_FIREBASE_APP_ID=NEXT_PUBLIC_FIREBASE_APP_ID:latest,AGENTS_REPO_GITHUB_TOKEN=github-token:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,OAUTH_STATE_SECRET=OAUTH_STATE_SECRET:latest,LINKEDIN_CLIENT_ID=LINKEDIN_CLIENT_ID:latest,LINKEDIN_CLIENT_SECRET=LINKEDIN_CLIENT_SECRET:latest,TWITTER_CLIENT_ID=TWITTER_CLIENT_ID:latest,TWITTER_CLIENT_SECRET=TWITTER_CLIENT_SECRET:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,LINKEDIN_COMMUNITY_CLIENT_SECRET=LINKEDIN_COMMUNITY_CLIENT_SECRET:latest,LINKEDIN_COMMUNITY_CLIENT_ID=LINKEDIN_COMMUNITY_CLIENT_ID:latest \
-          --set-env-vars="EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},ADMIN_EMAILS=${_ADMIN_EMAILS},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},AGENT_SERVICE_CALLBACK_URL=${_AGENT_SERVICE_CALLBACK_URL},APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT},TASKMAP_AUTOGEN_ENABLED=${_TASKMAP_AUTOGEN_ENABLED},TASKMAP_AUTOGEN_SWEEP_CAP=${_TASKMAP_AUTOGEN_SWEEP_CAP},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},ANALYTICS_LIVE_INGEST=${_ANALYTICS_LIVE_INGEST},GOOGLE_CLOUD_PROJECT=$PROJECT_ID"
+          --set-env-vars="EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},ADMIN_EMAILS=${_ADMIN_EMAILS},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},AGENT_SERVICE_CALLBACK_URL=${_AGENT_SERVICE_CALLBACK_URL},APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT},TASKMAP_AUTOGEN_ENABLED=${_TASKMAP_AUTOGEN_ENABLED},TASKMAP_AUTOGEN_SWEEP_CAP=${_TASKMAP_AUTOGEN_SWEEP_CAP},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},ANALYTICS_LIVE_INGEST=${_ANALYTICS_LIVE_INGEST},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,AGENT_ENGINE_DISPATCH_ENABLED=${_AGENT_ENGINE_DISPATCH_ENABLED},AGENT_MIDDLEWARE_DISPATCH_ENABLED=${_AGENT_MIDDLEWARE_DISPATCH_ENABLED},AGENT_MIDDLEWARE_URL=${_AGENT_MIDDLEWARE_URL},AGENT_MIDDLEWARE_AUDIENCE=${_AGENT_MIDDLEWARE_AUDIENCE}"
     waitFor: [docker-push]
 
 images:
