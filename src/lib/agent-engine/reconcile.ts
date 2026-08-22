@@ -1,5 +1,6 @@
 import "server-only";
 import { updateJob } from "@/lib/data";
+import { refundJobCharge } from "@/lib/credit-reconcile";
 import { materializeAgentEngineDeliverable } from "./materialize";
 import { readAgentEngineRun, type AgentEngineRunRecord, type AgentEngineRunView } from "./read-run";
 import type { Job } from "@/lib/types";
@@ -85,5 +86,23 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   }
 
   await updateJob(job.id, { ...update, ...(assetIds !== job.assetIds ? { assetIds } : {}), updatedAt: Date.now() });
+
+  // A failed engine run refunds, exactly like a failed agent-service one.
+  //
+  // This path never did. It did not matter while agent-engine only ran the
+  // managed catalog, which does not charge per run; it started mattering the
+  // moment custom agents began routing here, because those charge credits at
+  // submission and the legacy path refunds every non-"done" outcome. A client
+  // whose run was blocked -- by a topic guardrail, say -- would otherwise keep
+  // paying for output they never received.
+  //
+  // After the status write, not before: refundJobCharge is idempotent per job,
+  // and a crash between the two leaves a job correctly marked failed that the
+  // next reconcile will refund, rather than a refunded job still showing as
+  // running.
+  if (update.status === "failed") {
+    await refundJobCharge(job.id, `Auto-refund · agent-engine run ${view.run.status} · ${job.agentName}`.slice(0, 120));
+  }
+
   return { ...job, ...update, assetIds };
 }

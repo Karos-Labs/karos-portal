@@ -1,9 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { updateJobMock } = vi.hoisted(() => ({ updateJobMock: vi.fn() }));
+const { updateJobMock, refundJobChargeMock } = vi.hoisted(() => ({
+  updateJobMock: vi.fn(),
+  refundJobChargeMock: vi.fn(),
+}));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/data", () => ({ updateJob: updateJobMock }));
+vi.mock("@/lib/credit-reconcile", () => ({ refundJobCharge: refundJobChargeMock }));
 
 import { syncAgentEngineJobStatusFromView } from "../reconcile";
 import type { AgentEngineRunView } from "../read-run";
@@ -47,6 +51,7 @@ function view(status: AgentEngineRunView["run"]["status"], overrides: Partial<Ag
 describe("syncAgentEngineJobStatusFromView", () => {
   beforeEach(() => {
     updateJobMock.mockReset();
+    refundJobChargeMock.mockReset();
   });
 
   it("maps completed -> review, matching the legacy webhook's done -> review precedent", async () => {
@@ -93,5 +98,54 @@ describe("syncAgentEngineJobStatusFromView", () => {
   it("is idempotent — a job already synced to the run's outcome triggers no further write", async () => {
     await syncAgentEngineJobStatusFromView(job({ status: "review" }), view("completed"));
     expect(updateJobMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("refunds on a failed agent-engine run", () => {
+  beforeEach(() => {
+    updateJobMock.mockReset();
+    refundJobChargeMock.mockReset();
+  });
+
+  it("refunds a failed run, the way the legacy path always did", async () => {
+    // Custom agents charge credits at submission. Until they began routing
+    // here this path never refunded, so a blocked run — a topic-guardrail
+    // violation, say — left the client paying for output they never received.
+    await syncAgentEngineJobStatusFromView(job({ status: "running" }), {
+      run: { runId: "r1", status: "failed", failureReason: "Blocked by topic guardrail: draft engaged with crypto" },
+    } as unknown as AgentEngineRunView);
+
+    expect(refundJobChargeMock).toHaveBeenCalledTimes(1);
+    expect(String(refundJobChargeMock.mock.calls[0]![1])).toMatch(/Auto-refund/);
+  });
+
+  it("refunds a held and a blocked_intake run too — both map to failed", async () => {
+    for (const status of ["degraded", "held", "blocked_intake"] as const) {
+      refundJobChargeMock.mockReset();
+      await syncAgentEngineJobStatusFromView(job({ status: "running" }), {
+        run: { runId: "r1", status, failureReason: "x", reason: "x" },
+      } as unknown as AgentEngineRunView);
+      expect(refundJobChargeMock, `${status} should refund`).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("never refunds a successful run", async () => {
+    await syncAgentEngineJobStatusFromView(job({ status: "running" }), {
+      run: { runId: "r1", status: "completed" },
+      deliverable: undefined,
+    } as unknown as AgentEngineRunView);
+
+    expect(refundJobChargeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not refund again once the job is already marked failed", async () => {
+    // The early-return on an already-synced job is what keeps a repeated
+    // reconcile from issuing a second refund.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "failed", error: "agent-engine run failed" }),
+      { run: { runId: "r1", status: "failed" } } as unknown as AgentEngineRunView,
+    );
+
+    expect(refundJobChargeMock).not.toHaveBeenCalled();
   });
 });
