@@ -16,6 +16,22 @@ export interface DispatchAgentEngineRunInput {
   inputSummary?: Record<string, string>;
   /** `Job.createdBy` — a real user id for a staff/client-triggered dispatch, "system" (the default) for one an internal pipeline (onboarding) triggers on nobody's behalf. */
   createdBy?: string;
+  /**
+   * Dispatch against a job doc the caller already created, instead of
+   * creating one here.
+   *
+   * `submit-custom.ts` needs this: a custom-agent job carries fields this
+   * function knows nothing about (`customAgentId`, `runLabel`,
+   * `clientAgentId`, `templateKey`) and the portal renders from them, and it
+   * charges credits against the job id before anything is dispatched. Having
+   * it create a second job would orphan the charge and hide the run from
+   * every surface that looks it up by custom agent.
+   *
+   * The publish/fallback/record sequence stays here either way, which is the
+   * point — a second copy of the middleware fallback is exactly what this
+   * function exists to prevent.
+   */
+  existingJobId?: string;
 }
 
 export type DispatchAgentEngineRunResult = { jobId: string; agentEngineRunId: string } | { jobId: string; error: string } | { error: string };
@@ -53,19 +69,21 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
   }
 
   const now = Date.now();
-  const jobId = await createJob({
-    clientId: input.clientId,
-    agentId: "agent-engine",
-    agentName: input.agentName,
-    title: input.title,
-    status: "queued",
-    input: input.inputSummary ?? {},
-    assetIds: [],
-    events: [{ at: now, level: "info", message: "Dispatched to agent-engine" }],
-    createdBy: input.createdBy ?? "system",
-    createdAt: now,
-    updatedAt: now,
-  });
+  const jobId =
+    input.existingJobId ??
+    (await createJob({
+      clientId: input.clientId,
+      agentId: "agent-engine",
+      agentName: input.agentName,
+      title: input.title,
+      status: "queued",
+      input: input.inputSummary ?? {},
+      assetIds: [],
+      events: [{ at: now, level: "info", message: "Dispatched to agent-engine" }],
+      createdBy: input.createdBy ?? "system",
+      createdAt: now,
+      updatedAt: now,
+    }));
 
   const publishDirect = async (): Promise<string> =>
     (

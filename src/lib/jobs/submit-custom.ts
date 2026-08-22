@@ -1,5 +1,10 @@
 import "server-only";
 import { jobTitleForClient } from "@/lib/job-title";
+import { isAgentEngineDispatchEnabled, dispatchAgentEngineRun } from "@/lib/agent-engine/dispatch";
+import {
+  resolveAgentEngineProductIdForCustomAgent,
+  toEngineRunInput,
+} from "@/lib/agent-engine/product-mapping";
 import { normalizeDashes } from "@/lib/text-utils";
 
 import {
@@ -250,10 +255,6 @@ export async function submitCustomAgentJob(
   user: AppUser,
   input: SubmitCustomAgentInput,
 ): Promise<{ jobId?: string; error?: string }> {
-  if (!isAgentServiceConfigured()) {
-    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
-  }
-
   const agent = await getCustomAgent(input.agentId);
   if (!agent || !agent.enabled) return { error: "Agent not found." };
   const client = await getClient(input.clientId);
@@ -555,10 +556,30 @@ export async function submitCustomAgentJob(
       ? `${requestChars.slice(0, 63).join("").trimEnd()}…`
       : requestChars.join("");
 
+  // Which executor runs this agent. Part of the staged cutover: three custom
+  // agents have real agent-engine workflows now, everything else stays on
+  // agent-service. Decided before the job doc is written so the doc records
+  // the truth from the start — a job that says "agent-service" and was handed
+  // to the engine is unreconcilable by every surface that reads agentId.
+  const engineProductId =
+    isAgentEngineDispatchEnabled() && client.agentsRepoSlug
+      ? resolveAgentEngineProductIdForCustomAgent(agent.key)
+      : undefined;
+
+  // Checked here rather than at the top of the function, which is where it
+  // used to live: an agent routed to agent-engine has no use for
+  // AGENT_SERVICE_URL, and requiring it would tie the new path to the very
+  // service this cutover exists to drain. Still ahead of the job doc and the
+  // credit charge, so a misconfigured legacy deployment fails with nothing
+  // written and nothing billed, exactly as before.
+  if (!engineProductId && !isAgentServiceConfigured()) {
+    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
+  }
+
   const now = Date.now();
   const jobId = await createJob({
     clientId: input.clientId,
-    agentId: "agent-service",
+    agentId: engineProductId ? "agent-engine" : "agent-service",
     customAgentId: agent.id,
     ...(input.runType ? { runType: input.runType } : {}),
     ...(input.clientAgentId ? { clientAgentId: input.clientAgentId } : {}),
@@ -569,7 +590,13 @@ export async function submitCustomAgentJob(
     status: "queued",
     input: { agent: agent.name, prompt },
     assetIds: [],
-    events: [{ at: now, level: "info", message: "Submitted to agent service" }],
+    events: [
+      {
+        at: now,
+        level: "info",
+        message: engineProductId ? "Submitted to agent-engine" : "Submitted to agent service",
+      },
+    ],
     createdBy: user.uid,
     createdAt: now,
     updatedAt: now,
@@ -635,6 +662,42 @@ export async function submitCustomAgentJob(
     }
   }
 
+  // --- agent-engine path, for the custom agents that have a workflow there ---
+  //
+  // Placed after the credit charge, not before it: the charge is what makes a
+  // failed dispatch refundable, and dispatchAgentEngineRun marks this job
+  // failed rather than deleting it, so the existing refund path still applies.
+  //
+  // No agent-service job token is minted here. That credential exists so the
+  // legacy runner can call back into /api/mcp mid-run; agent-engine reads the
+  // client's context straight from its own workspace store and has no use for
+  // it, and minting one anyway would hand out a callback credential nothing
+  // is going to use.
+  if (engineProductId) {
+    const dispatched = await dispatchAgentEngineRun({
+      existingJobId: jobId,
+      clientId: input.clientId,
+      clientSlug: client.agentsRepoSlug!,
+      productId: engineProductId,
+      runKind: "recurring",
+      agentName: agent.name,
+      title: jobTitleForClient(agent.name, client.name),
+      // What the person actually asked for, allow-listed down to the keys the
+      // engine understands as a per-run request.
+      inputs: toEngineRunInput(input.briefValues),
+      createdBy: user.uid,
+    });
+    if ("error" in dispatched) {
+      // The job doc already exists and dispatchAgentEngineRun has marked it
+      // failed, so the caller gets the id and can show the failure rather than
+      // losing the run entirely.
+      return "jobId" in dispatched ? { jobId: dispatched.jobId, error: dispatched.error } : { error: dispatched.error };
+    }
+    return { jobId };
+  }
+
+  // --- legacy agent-service path (unchanged) ---
+  //
   // Job-scoped credential so the runner can call back into the MCP server
   // (`/api/mcp`) for this client's data / to upload artifacts mid-run. Null when
   // signing isn't configured — the run just proceeds without callback access.
