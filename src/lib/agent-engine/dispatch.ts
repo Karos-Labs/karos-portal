@@ -1,5 +1,6 @@
 import "server-only";
 import { createJob, updateJob } from "@/lib/data";
+import { dispatchViaMiddleware, isMiddlewareDispatchEnabled } from "./middleware-client";
 import { agentEngineRunIdFromMessageId, isAgentEnginePubSubConfigured, publishAgentEngineRun } from "./pubsub-client";
 
 export interface DispatchAgentEngineRunInput {
@@ -41,7 +42,13 @@ export function isAgentEngineDispatchEnabled(): boolean {
  * between the three callers.
  */
 export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput): Promise<DispatchAgentEngineRunResult> {
-  if (!isAgentEnginePubSubConfigured()) {
+  // Two transports, one downstream contract. Going through the control plane
+  // means the run carries a resolved prompt/template version; publishing
+  // directly means the engine uses whatever is baked into its image. Either
+  // way the job ends up on the same topic and the run id is derived the same
+  // way, so everything after this function is unchanged.
+  const viaMiddleware = isMiddlewareDispatchEnabled();
+  if (!viaMiddleware && !isAgentEnginePubSubConfigured()) {
     return { error: "AGENT_ENGINE_PUBSUB_TOPIC (or the Pub/Sub emulator) is not configured." };
   }
 
@@ -61,14 +68,30 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
   });
 
   try {
-    const { messageId } = await publishAgentEngineRun({
-      clientSlug: input.clientSlug,
-      productId: input.productId,
-      runKind: input.runKind,
-      ...(input.inputs && Object.keys(input.inputs).length > 0 ? { inputs: input.inputs } : {}),
-      idempotencyKey: jobId,
-      correlationId: jobId,
-    });
+    const messageId = viaMiddleware
+      ? (
+          await dispatchViaMiddleware({
+            productId: input.productId,
+            clientSlug: input.clientSlug,
+            runKind: input.runKind,
+            ...(input.inputs && Object.keys(input.inputs).length > 0 ? { inputs: input.inputs } : {}),
+            correlationId: jobId,
+            ...(input.createdBy ? { requestedBy: input.createdBy } : {}),
+          })
+        ).pubsubMessageId
+      : (
+          await publishAgentEngineRun({
+            clientSlug: input.clientSlug,
+            productId: input.productId,
+            runKind: input.runKind,
+            ...(input.inputs && Object.keys(input.inputs).length > 0 ? { inputs: input.inputs } : {}),
+            idempotencyKey: jobId,
+            correlationId: jobId,
+          })
+        ).messageId;
+
+    // Same derivation either way: the middleware returns the id of the message
+    // it published, and agent-engine's consumer keys the run off that same id.
     const agentEngineRunId = agentEngineRunIdFromMessageId(messageId);
     await updateJob(jobId, { agentEngineRunId, agentEngineProductId: input.productId, updatedAt: Date.now() });
     return { jobId, agentEngineRunId };
