@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isClientEnabledForEngineCustomAgents,
   resolveAgentEngineProductId,
   resolveAgentEngineProductIdForCustomAgent,
   toEngineRunInput,
@@ -110,5 +111,43 @@ describe("toEngineRunInput", () => {
 
   it("returns an empty object for no brief at all", () => {
     expect(toEngineRunInput(undefined)).toEqual({});
+  });
+});
+
+describe("isClientEnabledForEngineCustomAgents", () => {
+  it("routes nobody when unset, so shipping the code is not the cutover", () => {
+    // Production has all seven clients granted the X agent and engine context
+    // for one. Deploying the routing must change nothing until a human names
+    // a client.
+    expect(isClientEnabledForEngineCustomAgents("karoslabs", {})).toBe(false);
+    expect(isClientEnabledForEngineCustomAgents("karoslabs", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "" })).toBe(false);
+    expect(isClientEnabledForEngineCustomAgents("karoslabs", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "   " })).toBe(false);
+  });
+
+  it("routes only the named clients", () => {
+    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "karoslabs,geektime" };
+    expect(isClientEnabledForEngineCustomAgents("karoslabs", env)).toBe(true);
+    expect(isClientEnabledForEngineCustomAgents("geektime", env)).toBe(true);
+    expect(isClientEnabledForEngineCustomAgents("sitti", env)).toBe(false);
+  });
+
+  it("tolerates spacing in the list", () => {
+    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: " karoslabs , geektime " };
+    expect(isClientEnabledForEngineCustomAgents("geektime", env)).toBe(true);
+  });
+
+  it("supports * once every client is ready", () => {
+    expect(isClientEnabledForEngineCustomAgents("anyone", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "*" })).toBe(true);
+  });
+
+  it("never routes a client with no slug", () => {
+    // agentsRepoSlug is what the engine resolves its workspace against; without
+    // one there is no tenant to run as.
+    expect(isClientEnabledForEngineCustomAgents(undefined, { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "*" })).toBe(false);
+  });
+
+  it("does not match on a prefix", () => {
+    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "karos" };
+    expect(isClientEnabledForEngineCustomAgents("karoslabs", env)).toBe(false);
   });
 });

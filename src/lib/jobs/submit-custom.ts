@@ -2,6 +2,7 @@ import "server-only";
 import { jobTitleForClient } from "@/lib/job-title";
 import { isAgentEngineDispatchEnabled, dispatchAgentEngineRun } from "@/lib/agent-engine/dispatch";
 import {
+  isClientEnabledForEngineCustomAgents,
   resolveAgentEngineProductIdForCustomAgent,
   toEngineRunInput,
 } from "@/lib/agent-engine/product-mapping";
@@ -562,7 +563,9 @@ export async function submitCustomAgentJob(
   // the truth from the start — a job that says "agent-service" and was handed
   // to the engine is unreconcilable by every surface that reads agentId.
   const engineProductId =
-    isAgentEngineDispatchEnabled() && client.agentsRepoSlug
+    isAgentEngineDispatchEnabled() &&
+    client.agentsRepoSlug &&
+    isClientEnabledForEngineCustomAgents(client.agentsRepoSlug)
       ? resolveAgentEngineProductIdForCustomAgent(agent.key)
       : undefined;
 

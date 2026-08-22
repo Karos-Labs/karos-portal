@@ -91,3 +91,36 @@ export function toEngineRunInput(briefValues: Record<string, string> | undefined
   }
   return input;
 }
+
+/**
+ * Which clients may have their custom-agent jobs routed to agent-engine.
+ *
+ * Per-agent routing alone is not enough to cut over safely, and production
+ * shows why: all seven clients are granted the X agent, but only one has an
+ * `xHandle` in the engine's workspace store. Routing on the agent key alone
+ * would send six clients' X jobs to `blocked_intake` — work that succeeds on
+ * agent-service today.
+ *
+ * `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS` is a comma-separated list of
+ * `agentsRepoSlug` values, or `*` for all. Unset means NOBODY, so deploying
+ * this code changes nothing until someone names a client — which is what lets
+ * the build ship to production ahead of the cutover decision.
+ *
+ * A client is added once its engine-side context is in place and one real run
+ * has been verified. That is the unit of this drain: not "the X agent is
+ * migrated" but "this client's X agent is migrated".
+ */
+export function isClientEnabledForEngineCustomAgents(
+  clientSlug: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (!clientSlug) return false;
+  const raw = env.AGENT_ENGINE_CUSTOM_AGENT_CLIENTS?.trim();
+  if (!raw) return false;
+  if (raw === "*") return true;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes(clientSlug);
+}
