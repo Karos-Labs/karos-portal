@@ -23,11 +23,16 @@ vi.mock("../pubsub-client", () => ({
   publishAgentEngineRun: publishAgentEngineRunMock,
   agentEngineRunIdFromMessageId: (messageId: string) => `pubsub-${messageId}`,
 }));
-vi.mock("../middleware-client", () => ({
+// The error class is kept REAL: the fallback decision reads `shouldFallBack`
+// off it, so a stubbed stand-in would let the behaviour under test drift from
+// the class that actually ships.
+vi.mock("../middleware-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../middleware-client")>()),
   isMiddlewareDispatchEnabled: middlewareEnabledMock,
   dispatchViaMiddleware: dispatchViaMiddlewareMock,
 }));
 
+import { MiddlewareDispatchError } from "../middleware-client";
 import { dispatchAgentEngineRun } from "../dispatch";
 import { dispatchOnboardingResearchAgents } from "../dispatch-research-agents";
 
@@ -179,5 +184,112 @@ describe("dispatchAgentEngineRun transport selection", () => {
     const result = await dispatchAgentEngineRun(base);
 
     expect(result).toEqual({ jobId: "job_1", agentEngineRunId: "pubsub-msg_mw" });
+  });
+});
+
+describe("dispatchAgentEngineRun middleware fallback", () => {
+  beforeEach(() => {
+    createJobMock.mockReset().mockResolvedValue("job_1");
+    updateJobMock.mockReset();
+    publishAgentEngineRunMock.mockReset().mockResolvedValue({ messageId: "msg_direct" });
+    dispatchViaMiddlewareMock.mockReset();
+    middlewareEnabledMock.mockReset().mockReturnValue(true);
+    pubsubConfiguredMock.mockReset().mockReturnValue(true);
+  });
+
+  const base = {
+    clientId: "client_1",
+    clientSlug: "acme",
+    productId: "landing-builder-agent",
+    runKind: "recurring" as const,
+    agentName: "Landing",
+    title: "Test",
+  };
+
+  function middlewareFailure(status: number | undefined, shouldFallBack: boolean) {
+    return new MiddlewareDispatchError(`boom (${status ?? "network"})`, { ...(status !== undefined ? { status } : {}), shouldFallBack });
+  }
+
+  it.each([
+    ["network error", undefined],
+    ["401 unauthenticated", 401],
+    ["403 forbidden", 403],
+    ["404 agent not seeded", 404],
+    ["429 rate limited", 429],
+    ["500 middleware broken", 500],
+    ["503 middleware restarting", 503],
+  ])("falls back to direct publish on %s so the job is never orphaned", async (_label, status) => {
+    dispatchViaMiddlewareMock.mockRejectedValue(middlewareFailure(status, true));
+
+    const result = await dispatchAgentEngineRun(base);
+
+    expect(result).toEqual({ jobId: "job_1", agentEngineRunId: "pubsub-msg_direct" });
+    expect(publishAgentEngineRunMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["409 duplicate run — publishing again would run the job twice", 409],
+    ["422 agent has no active prompt — the exact thing the control plane catches", 422],
+    ["400 malformed request", 400],
+  ])("does NOT fall back on %s", async (_label, status) => {
+    dispatchViaMiddlewareMock.mockRejectedValue(middlewareFailure(status, false));
+
+    const result = await dispatchAgentEngineRun(base);
+
+    expect(publishAgentEngineRunMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ jobId: "job_1" });
+    expect(result).toHaveProperty("error");
+    expect(updateJobMock).toHaveBeenCalledWith("job_1", expect.objectContaining({ status: "failed" }));
+  });
+
+  it("records the degradation on the job, not just in the log", async () => {
+    dispatchViaMiddlewareMock.mockRejectedValue(middlewareFailure(503, true));
+
+    await dispatchAgentEngineRun(base);
+
+    const patch = updateJobMock.mock.calls.at(-1)![1];
+    expect(patch.agentEngineRunId).toBe("pubsub-msg_direct");
+    // Whoever reviews the output needs to know it ran without a resolved
+    // prompt version; a log line alone would not reach them.
+    expect(JSON.stringify(patch.events)).toContain("Degraded dispatch");
+  });
+
+  it("emits a structured warning a log-based metric can count", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    dispatchViaMiddlewareMock.mockRejectedValue(middlewareFailure(500, true));
+
+    await dispatchAgentEngineRun(base);
+
+    const logged = JSON.parse(String(warn.mock.calls[0]![0]));
+    expect(logged).toMatchObject({
+      severity: "WARNING",
+      message: "agent-engine dispatch fell back to direct Pub/Sub",
+      status: 500,
+      jobId: "job_1",
+      clientSlug: "acme",
+      productId: "landing-builder-agent",
+    });
+    warn.mockRestore();
+  });
+
+  it("fails cleanly when neither transport is available", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    dispatchViaMiddlewareMock.mockRejectedValue(middlewareFailure(503, true));
+    pubsubConfiguredMock.mockReturnValue(false);
+
+    const result = await dispatchAgentEngineRun(base);
+
+    expect(publishAgentEngineRunMock).not.toHaveBeenCalled();
+    expect(result).toHaveProperty("error");
+  });
+
+  it("does not fall back on a plain non-middleware error", async () => {
+    // A bug in our own code must not be misread as "the control plane is down".
+    dispatchViaMiddlewareMock.mockRejectedValue(new TypeError("undefined is not a function"));
+
+    const result = await dispatchAgentEngineRun(base);
+
+    expect(publishAgentEngineRunMock).not.toHaveBeenCalled();
+    expect(result).toHaveProperty("error");
   });
 });

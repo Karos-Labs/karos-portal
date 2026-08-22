@@ -118,6 +118,46 @@ interface DispatchResponseBody {
 }
 
 /**
+ * A middleware dispatch that failed, carrying whether falling back to direct
+ * Pub/Sub is the right response.
+ *
+ * The distinction is the whole point. "The control plane could not service
+ * this request" (unreachable, unauthenticated, broken, missing agent) should
+ * never orphan a client's job — direct publishing is exactly what this repo
+ * did until recently and still works. But "the request itself is wrong"
+ * (duplicate run id, malformed body, agent misconfigured) must NOT fall back:
+ *
+ *   - 409 means a run with this id already exists. Publishing anyway would
+ *     dispatch the same job twice and bill the client twice.
+ *   - 422 means the agent has no active prompt. Falling back would produce a
+ *     run with no resolved prompt version, which is the precise failure the
+ *     control plane exists to catch, silently papered over.
+ */
+export class MiddlewareDispatchError extends Error {
+  readonly status: number | undefined;
+  readonly shouldFallBack: boolean;
+
+  constructor(message: string, options: { status?: number; shouldFallBack: boolean; cause?: unknown }) {
+    super(message, options.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = "MiddlewareDispatchError";
+    this.status = options.status;
+    this.shouldFallBack = options.shouldFallBack;
+  }
+}
+
+/** HTTP statuses that mean "the middleware could not service this", not "your request is wrong". */
+function statusIsRecoverable(status: number): boolean {
+  if (status >= 500) return true; // middleware broken or restarting
+  return (
+    status === 401 || // no/expired identity token — a config problem, not the job's fault
+    status === 403 || // caller not permitted — likewise
+    status === 404 || // agent not seeded in the control plane yet
+    status === 408 || // upstream timeout
+    status === 429 //   rate limited
+  );
+}
+
+/**
  * `POST /agents/{productId}/jobs`.
  *
  * Throws on any non-2xx. The caller (`dispatch.ts`) already turns a throw into
@@ -149,26 +189,41 @@ export async function dispatchViaMiddleware(
     attributes: { correlationId: input.correlationId },
   };
 
-  const res = await fetch(`${url}/agents/${encodeURIComponent(input.productId)}/jobs`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${url}/agents/${encodeURIComponent(input.productId)}/jobs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (cause) {
+    // DNS failure, connection refused, TLS problem, or our own 30s timeout.
+    // Nothing was dispatched, so retrying via Pub/Sub cannot double-run.
+    throw new MiddlewareDispatchError(
+      `Agent middleware is unreachable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { shouldFallBack: true, cause },
+    );
+  }
 
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    console.error(
-      `[agent-middleware] dispatch failed (${res.status}) for ${input.productId}: ${detail.slice(0, 500)}`,
+    const detail = (await res.text().catch(() => "")).slice(0, 500);
+    throw new MiddlewareDispatchError(
+      `Agent middleware dispatch failed (${res.status})${detail ? `: ${detail}` : ""}`,
+      { status: res.status, shouldFallBack: statusIsRecoverable(res.status) },
     );
-    throw new Error(`Agent middleware dispatch failed (${res.status}).`);
   }
 
   const payload = (await res.json()) as DispatchResponseBody;
   if (!payload?.pubsub_message_id) {
-    // Without this we cannot derive the agentEngineRuns doc id, so the job
-    // would run but never be reconcilable. Better to fail the dispatch.
-    throw new Error("Agent middleware returned no pubsub_message_id; cannot track this run.");
+    // A 2xx without a message id means the middleware believes it published.
+    // We cannot derive the agentEngineRuns doc id, so we could not reconcile
+    // the run — but re-publishing would risk running the job twice. Fail
+    // rather than guess.
+    throw new MiddlewareDispatchError(
+      "Agent middleware returned no pubsub_message_id; cannot track this run.",
+      { status: res.status, shouldFallBack: false },
+    );
   }
 
   return {

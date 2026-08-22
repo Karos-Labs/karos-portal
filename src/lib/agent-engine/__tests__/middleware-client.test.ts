@@ -223,3 +223,64 @@ describe("dispatchViaMiddleware", () => {
     ).rejects.toThrow(/AGENT_MIDDLEWARE_URL/);
   });
 });
+
+describe("MiddlewareDispatchError classification", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.AGENT_MIDDLEWARE_URL = BASE;
+    delete process.env.AGENT_MIDDLEWARE_AUDIENCE;
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  const call = () =>
+    dispatchViaMiddleware({
+      productId: "x-agent",
+      clientSlug: "acme",
+      runKind: "recurring",
+      correlationId: "job_1",
+    });
+
+  it.each([401, 403, 404, 408, 429, 500, 502, 503])(
+    "marks %i as recoverable — the middleware could not service the request",
+    async (status) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status }));
+
+      await expect(call()).rejects.toMatchObject({ status, shouldFallBack: true });
+    },
+  );
+
+  it.each([400, 409, 422])(
+    "marks %i as NOT recoverable — the request itself is the problem",
+    async (status) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status }));
+
+      await expect(call()).rejects.toMatchObject({ status, shouldFallBack: false });
+    },
+  );
+
+  it("treats an unreachable middleware as recoverable", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    await expect(call()).rejects.toMatchObject({ shouldFallBack: true, status: undefined });
+  });
+
+  it("treats a timeout as recoverable — nothing was dispatched to double-run", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }),
+    );
+
+    await expect(call()).rejects.toMatchObject({ shouldFallBack: true });
+  });
+
+  it("does NOT fall back on a 2xx with no message id", async () => {
+    // The middleware thinks it published. Publishing again could run it twice.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(okResponse({ run: { id: "r" }, topic: "t" }));
+
+    await expect(call()).rejects.toMatchObject({ shouldFallBack: false });
+  });
+})

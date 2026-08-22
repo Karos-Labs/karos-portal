@@ -1,6 +1,6 @@
 import "server-only";
 import { createJob, updateJob } from "@/lib/data";
-import { dispatchViaMiddleware, isMiddlewareDispatchEnabled } from "./middleware-client";
+import { MiddlewareDispatchError, dispatchViaMiddleware, isMiddlewareDispatchEnabled } from "./middleware-client";
 import { agentEngineRunIdFromMessageId, isAgentEnginePubSubConfigured, publishAgentEngineRun } from "./pubsub-client";
 
 export interface DispatchAgentEngineRunInput {
@@ -67,9 +67,27 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
     updatedAt: now,
   });
 
+  const publishDirect = async (): Promise<string> =>
+    (
+      await publishAgentEngineRun({
+        clientSlug: input.clientSlug,
+        productId: input.productId,
+        runKind: input.runKind,
+        ...(input.inputs && Object.keys(input.inputs).length > 0 ? { inputs: input.inputs } : {}),
+        idempotencyKey: jobId,
+        correlationId: jobId,
+      })
+    ).messageId;
+
   try {
-    const messageId = viaMiddleware
-      ? (
+    let messageId: string;
+    let fellBack = false;
+
+    if (!viaMiddleware) {
+      messageId = await publishDirect();
+    } else {
+      try {
+        messageId = (
           await dispatchViaMiddleware({
             productId: input.productId,
             clientSlug: input.clientSlug,
@@ -78,22 +96,67 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
             correlationId: jobId,
             ...(input.createdBy ? { requestedBy: input.createdBy } : {}),
           })
-        ).pubsubMessageId
-      : (
-          await publishAgentEngineRun({
+        ).pubsubMessageId;
+      } catch (middlewareError) {
+        // Only fall back when the control plane could not service the request.
+        // A 409 (duplicate run) or 422 (agent misconfigured) is re-raised: see
+        // MiddlewareDispatchError's own doc comment for why publishing anyway
+        // would double-run a job or silently discard the resolved prompt.
+        const recoverable =
+          middlewareError instanceof MiddlewareDispatchError && middlewareError.shouldFallBack;
+        if (!recoverable) throw middlewareError;
+
+        // Structured so a log-based metric can count degraded dispatches —
+        // this path still produces a working job, so nothing else would ever
+        // surface that the control plane is down.
+        console.warn(
+          JSON.stringify({
+            severity: "WARNING",
+            message: "agent-engine dispatch fell back to direct Pub/Sub",
+            reason: middlewareError.message,
+            status: middlewareError.status ?? null,
+            jobId,
             clientSlug: input.clientSlug,
             productId: input.productId,
-            runKind: input.runKind,
-            ...(input.inputs && Object.keys(input.inputs).length > 0 ? { inputs: input.inputs } : {}),
-            idempotencyKey: jobId,
-            correlationId: jobId,
-          })
-        ).messageId;
+          }),
+        );
+        if (!isAgentEnginePubSubConfigured()) {
+          // No fallback transport available either — nothing left to try.
+          throw middlewareError;
+        }
+        messageId = await publishDirect();
+        fellBack = true;
+      }
+    }
 
     // Same derivation either way: the middleware returns the id of the message
     // it published, and agent-engine's consumer keys the run off that same id.
     const agentEngineRunId = agentEngineRunIdFromMessageId(messageId);
-    await updateJob(jobId, { agentEngineRunId, agentEngineProductId: input.productId, updatedAt: Date.now() });
+    await updateJob(jobId, {
+      agentEngineRunId,
+      agentEngineProductId: input.productId,
+      // Recorded on the job, not just in logs: a run dispatched this way has
+      // no resolved prompt/template version attached to it, and whoever
+      // reviews the output later needs to be able to tell.
+      ...(fellBack
+        ? {
+            events: [
+              { at: now, level: "info" as const, message: "Dispatched to agent-engine" },
+              {
+                // "info", not "error": the job really was dispatched and will
+                // run. JobRunEvent has no "warn" level, so the degradation
+                // lives in the message text.
+                at: Date.now(),
+                level: "info" as const,
+                message:
+                  "Degraded dispatch: the control plane was unavailable, so this run went " +
+                  "straight to agent-engine without a resolved prompt/template version.",
+              },
+            ],
+          }
+        : {}),
+      updatedAt: Date.now(),
+    });
     return { jobId, agentEngineRunId };
   } catch (e) {
     const message = e instanceof Error ? e.message : "Agent engine dispatch failed";
