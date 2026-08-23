@@ -25,6 +25,13 @@ function mw(slug: string, overrides: Partial<MiddlewareAgent> = {}): MiddlewareA
     tags: [],
     createdAt: "",
     updatedAt: "",
+    icon: null,
+    category: null,
+    creditCost: null,
+    isPublic: true,
+    requiredInputs: [],
+    stages: [],
+    stagesReadOnly: true,
     ...overrides,
   };
 }

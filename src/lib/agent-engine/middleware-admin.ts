@@ -38,6 +38,24 @@ export interface Page<T> {
   total: number | null;
 }
 
+export interface AgentStage {
+  id: string;
+  label: string;
+  description: string | null;
+  /** A gate pauses for a human — the difference between finishing and waiting. */
+  isGate: boolean;
+}
+
+export interface AgentInputDef {
+  key: string;
+  type: string;
+  label: string;
+  helpText: string | null;
+  required: boolean;
+  placeholder: string | null;
+  options: string[];
+}
+
 export interface MiddlewareAgent {
   id: string;
   slug: string;
@@ -51,6 +69,16 @@ export interface MiddlewareAgent {
   tags: string[];
   createdAt: string;
   updatedAt: string;
+  // --- catalog / Studio presentation ---
+  icon: string | null;
+  category: string | null;
+  /** Null means "platform default", not free. */
+  creditCost: number | null;
+  isPublic: boolean;
+  requiredInputs: AgentInputDef[];
+  /** For hand-written engine workflows these describe code, hence read-only. */
+  stages: AgentStage[];
+  stagesReadOnly: boolean;
 }
 
 export interface MiddlewarePrompt {
@@ -153,6 +181,36 @@ function toAgent(row: Row): MiddlewareAgent {
     tags: strList(row.tags),
     createdAt: str(row.created_at),
     updatedAt: str(row.updated_at),
+    icon: strOrNull(row.icon),
+    category: strOrNull(row.category),
+    creditCost: typeof row.credit_cost === "number" ? row.credit_cost : null,
+    isPublic: row.is_public !== false,
+    requiredInputs: Array.isArray(row.required_inputs)
+      ? row.required_inputs.map((i) => {
+          const f = obj(i);
+          return {
+            key: str(f.key),
+            type: str(f.type) || "text",
+            label: str(f.label),
+            helpText: strOrNull(f.help_text),
+            required: f.required === true,
+            placeholder: strOrNull(f.placeholder),
+            options: strList(f.options),
+          };
+        })
+      : [],
+    stages: Array.isArray(row.stages)
+      ? row.stages.map((x) => {
+          const f = obj(x);
+          return {
+            id: str(f.id),
+            label: str(f.label),
+            description: strOrNull(f.description),
+            isGate: f.is_gate === true,
+          };
+        })
+      : [],
+    stagesReadOnly: row.stages_read_only !== false,
   };
 }
 

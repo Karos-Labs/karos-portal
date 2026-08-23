@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import {
   MiddlewareRequestError,
+  getAgent,
   listModels,
   activatePromptVersion,
   bindTemplate,
@@ -14,6 +15,9 @@ import {
   updateAgent,
 } from "@/lib/agent-engine/middleware-admin";
 import { isMiddlewareDispatchEnabled } from "@/lib/agent-engine/middleware-client";
+import { dispatchAgentEngineRun } from "@/lib/agent-engine/dispatch";
+import { getClient } from "@/lib/data";
+import { jobTitleForClient } from "@/lib/job-title";
 import { requireAdmin } from "./_shared";
 
 /**
@@ -273,4 +277,66 @@ export async function requestModelAccessAction(
     });
     return { requestId: created.id };
   });
+}
+
+/* ─────────────────────── dispatch an engine agent ─────────────────────── */
+
+/**
+ * Runs a control-plane agent for a client.
+ *
+ * Separate from `submitCustomAgentJob` because these agents have no lab-repo
+ * row: no `entrySkillDir`, no `instructions`, no skill roots. That function's
+ * legacy branch needs all three, so routing them through it would submit an
+ * agent-service job the runner cannot build the moment a client falls outside
+ * the engine gate. These agents only ever run on agent-engine, so this path
+ * only ever dispatches there.
+ *
+ * The credit cost comes from the agent's own record rather than from a
+ * constant here: pricing belongs where pricing is set, and a second default in
+ * the dispatcher is how two prices for one agent start disagreeing.
+ */
+export async function dispatchControlPlaneAgentAction(
+  agentRef: string,
+  input: { clientId: string; inputs?: Record<string, string> },
+): Promise<Result<{ jobId: string }>> {
+  const admin = await requireAdmin();
+  if (!isMiddlewareDispatchEnabled()) {
+    return { ok: false, error: "The control plane is not enabled in this environment." };
+  }
+
+  const client = await getClient(input.clientId);
+  if (!client) return { ok: false, error: "Client not found." };
+  if (!client.agentsRepoSlug) {
+    return { ok: false, error: `${client.name} has no lab repo slug, which agent-engine resolves its workspace against.` };
+  }
+
+  let agent;
+  try {
+    agent = await getAgent(agentRef);
+  } catch (error) {
+    return toError(error);
+  }
+  if (agent.status !== "active") {
+    return { ok: false, error: `${agent.name} is ${agent.status} in the control plane.` };
+  }
+
+  const dispatched = await dispatchAgentEngineRun({
+    clientId: input.clientId,
+    clientSlug: client.agentsRepoSlug,
+    productId: agent.slug,
+    runKind: "recurring",
+    agentName: agent.name,
+    title: jobTitleForClient(agent.name, client.name),
+    ...(input.inputs && Object.keys(input.inputs).length > 0 ? { inputs: input.inputs } : {}),
+    createdBy: admin.uid,
+  });
+  if ("error" in dispatched) {
+    return "jobId" in dispatched
+      ? { ok: false, error: `${dispatched.error} (job ${dispatched.jobId})` }
+      : { ok: false, error: dispatched.error };
+  }
+
+  revalidatePath(CONSOLE_PATH);
+  revalidatePath("/agents");
+  return { ok: true, jobId: dispatched.jobId };
 }

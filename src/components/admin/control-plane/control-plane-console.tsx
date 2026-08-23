@@ -93,6 +93,7 @@ export function ControlPlaneConsole({ agents, templates, models, selectedSlug, a
 
       {selected && (
         <>
+          <StagesPanel agent={selected} />
           <ModelPanel agent={selected} models={models} pending={pending} apply={apply} />
           <PromptPanel agent={selected} activePrompt={activePrompt} pending={pending} apply={apply} />
           <TemplatePanel agent={selected} templates={templates} pending={pending} apply={apply} />
@@ -150,6 +151,54 @@ function AgentPanel({
           </div>
         ))}
       </div>
+    </Card>
+  );
+}
+
+/**
+ * What the workflow actually runs, in order.
+ *
+ * Read-only, and labelled as such. These stages are TypeScript in
+ * agent-engine, extracted from its own sources rather than typed in beside it
+ * — a hand-maintained stage list next to a workflow that changes is how a
+ * Studio ends up describing a program that no longer exists. Showing them as
+ * editable would offer a change that edits a page and not a program.
+ *
+ * The ids match the step ids in a run's trace on purpose: comparing the two is
+ * how someone works out where a run stopped.
+ */
+function StagesPanel({ agent }: { agent: MiddlewareAgent }) {
+  if (agent.stages.length === 0) {
+    return (
+      <Card className="p-6">
+        <CardTitle>Stages</CardTitle>
+        <p className="mt-2 text-sm opacity-70">
+          No stages recorded. Re-run agent-middleware&apos;s scripts/seed_all_agents.py, which reads them from
+          agent-engine&apos;s workflow sources.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-6">
+      <CardTitle>
+        Stages
+        <span className="ml-2 text-sm opacity-60">
+          {agent.stages.length}
+          {agent.stagesReadOnly ? " · read-only (compiled workflow)" : ""}
+        </span>
+      </CardTitle>
+      <ol className="mt-4 space-y-1">
+        {agent.stages.map((stage, i) => (
+          <li key={stage.id} className="flex flex-wrap items-center gap-2 rounded border border-white/10 px-3 py-2">
+            <span className="w-6 text-xs opacity-50">{i + 1}</span>
+            <span className="text-sm">{stage.label}</span>
+            <code className="text-xs opacity-50">{stage.id}</code>
+            {stage.isGate && <Badge tone="warning">waits for a human</Badge>}
+          </li>
+        ))}
+      </ol>
     </Card>
   );
 }

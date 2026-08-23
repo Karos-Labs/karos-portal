@@ -43,6 +43,13 @@ export interface ControlPlaneOnlyAgent {
   status: MiddlewareAgent["status"];
   model: string | null;
   tags: string[];
+  /** lucide icon name; the card falls back when absent. */
+  icon: string | null;
+  category: string | null;
+  /** Null means "platform default", not free. */
+  creditCost: number | null;
+  /** How many steps the workflow runs — shown so a card conveys scale. */
+  stageCount: number;
 }
 
 export interface AgentCatalogUnion<TLibraryAgent> {
@@ -51,12 +58,15 @@ export interface AgentCatalogUnion<TLibraryAgent> {
   /**
    * Agents the control plane holds that no library row corresponds to.
    *
-   * Rendered as their own cards. They deliberately do NOT offer the library's
-   * run action: that path needs `entrySkillDir`, `instructions` and a credit
-   * cost this agent has no source for, and a button that submits a job the
-   * runner cannot build is worse than no button. Their card opens the Studio
-   * detail view instead, which is where their prompts, model and template
-   * bindings actually live.
+   * Rendered as their own first-class cards, with a working Run and an Edit in
+   * Studio.
+   *
+   * Run does NOT go through the library's submit path. That path needs
+   * `entrySkillDir`, `instructions` and skill roots these agents have no source
+   * for, so the moment a client fell outside the engine gate it would submit an
+   * agent-service job the runner cannot build. They dispatch straight to
+   * agent-engine instead — see `dispatchControlPlaneAgentAction` — which is the
+   * only executor they have.
    */
   controlPlaneOnly: ControlPlaneOnlyAgent[];
 }
@@ -91,6 +101,10 @@ export function buildAgentCatalogUnion<TLibraryAgent extends { key: string }>(
       status: agent.status,
       model: agent.model,
       tags: agent.tags,
+      icon: agent.icon,
+      category: agent.category,
+      creditCost: agent.creditCost,
+      stageCount: agent.stages.length,
     });
   }
 
