@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { loadControlPlaneFacts } from "../control-plane-enrichment";
+import { loadControlPlane, loadControlPlaneFacts } from "../control-plane-enrichment";
 import { __resetMiddlewareTokenCache } from "../middleware-http";
 
 const BASE = "https://agent-middleware-abc-uc.a.run.app";
@@ -67,12 +67,17 @@ describe("loadControlPlaneFacts", () => {
     expect(index.size).toBe(0);
   });
 
-  it("makes no network call at all when nothing could be enriched", async () => {
-    const mock = routeFetch([]);
+  it("still lists the control plane when no library key maps, because the union needs it", async () => {
+    // This used to assert no call at all. That was right while enrichment was
+    // the only consumer; the catalog union also needs agents the library has
+    // NO key for (intel-report-agent), and short-circuiting here would hide
+    // exactly the rows the union exists to surface. Enrichment is still empty.
+    const mock = routeFetch([agentRow("intel-report-agent")]);
 
-    await loadControlPlaneFacts(["karos-newsletter-writer-v2", "karos-blog-writer-v2"]);
+    const index = await loadControlPlaneFacts(["karos-newsletter-writer-v2", "karos-blog-writer-v2"]);
 
-    expect(mock).not.toHaveBeenCalled();
+    expect(index.size).toBe(0);
+    expect(mock).toHaveBeenCalled();
   });
 
   it("returns an agent with no prompt yet, rather than dropping it", async () => {
@@ -121,5 +126,27 @@ describe("loadControlPlaneFacts", () => {
     const index = await loadControlPlaneFacts(["karos-x-agent-v2"]);
 
     expect(index.get("karos-x-agent-v2")?.status).toBe("disabled");
+  });
+});
+
+describe("loadControlPlane (snapshot)", () => {
+  it("returns every control-plane agent, not just the enriched ones", async () => {
+    routeFetch([agentRow("x-agent"), agentRow("intel-report-agent")], {
+      "x-agent": { id: "p1", agent_id: "x-agent", version: 1, content: "c", is_active: true },
+    });
+
+    const snapshot = await loadControlPlane(["karos-x-agent-v2"]);
+
+    expect(snapshot.agents.map((a) => a.slug).sort()).toEqual(["intel-report-agent", "x-agent"]);
+    expect(snapshot.facts.size).toBe(1);
+  });
+
+  it("returns an empty snapshot when the control plane is unreachable", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const snapshot = await loadControlPlane(["karos-x-agent-v2"]);
+
+    expect(snapshot.agents).toEqual([]);
+    expect(snapshot.facts.size).toBe(0);
   });
 });

@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { listClients, listCustomAgents } from "@/lib/data";
-import { Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
+import { Badge, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { isCustomAgentImportConfigured } from "@/lib/agent-service/custom-agent-import";
 import { CustomAgentsHub } from "@/components/custom-agents";
-import { loadControlPlaneFacts } from "@/lib/agent-engine/control-plane-enrichment";
+import { loadControlPlane } from "@/lib/agent-engine/control-plane-enrichment";
+import { buildAgentCatalogUnion, controlPlaneAgentHref } from "@/lib/agent-engine/catalog-union";
 
 /**
  * Staff entry point for running agents: a client picker (agents always run
@@ -28,9 +29,12 @@ export default async function AgentsPage() {
   ]);
   const activeClients = clients.filter((c) => c.status === "active");
 
-  // Enrichment only. Returns an empty index when the control plane is off,
-  // unreachable or slow, so this page never depends on it being up.
-  const controlPlane = await loadControlPlaneFacts(customAgents.map((a) => a.key));
+  // One control-plane round trip serving both halves of the union: the
+  // per-agent enrichment below, and the agents the library has no row for.
+  // Returns empty when the control plane is off, unreachable or slow, so
+  // this page never depends on it being up.
+  const snapshot = await loadControlPlane(customAgents.map((a) => a.key));
+  const { controlPlaneOnly } = buildAgentCatalogUnion(customAgents, snapshot.agents);
 
   return (
     <>
@@ -83,9 +87,36 @@ export default async function AgentsPage() {
         </Card>
       ) : null}
 
+      {controlPlaneOnly.length > 0 && (
+        <Card className="mb-6">
+          <CardTitle className="mb-1">Control-plane agents</CardTitle>
+          <p className="mb-4 text-xs text-muted">
+            Managed in agent-middleware with versioned prompts, a model and template bindings. They have no lab-repo
+            entry, so they are configured from the control plane rather than run from this library.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {controlPlaneOnly.map((agent) => (
+              <Link
+                key={agent.slug}
+                href={controlPlaneAgentHref(agent.slug)}
+                className="rounded-lg border border-white/10 p-4 transition hover:border-neon/50"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{agent.name}</span>
+                  <Badge tone={agent.status === "active" ? "success" : "neutral"}>{agent.status}</Badge>
+                </div>
+                <code className="mt-1 block text-xs opacity-60">{agent.slug}</code>
+                {agent.description && <p className="mt-2 text-xs text-muted">{agent.description}</p>}
+                {agent.model && <p className="mt-2 text-xs opacity-60">{agent.model}</p>}
+              </Link>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <CustomAgentsHub
         agents={customAgents}
-        controlPlane={controlPlane}
+        controlPlane={snapshot.facts}
         // The lab slug rides along so the hub can tell which agents may run for
         // which client - a per-client instance is refused by both submit cores
         // for anyone else, and the hub is where that pair gets assembled (F38).

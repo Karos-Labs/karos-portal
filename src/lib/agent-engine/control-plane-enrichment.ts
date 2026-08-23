@@ -54,21 +54,43 @@ export const EMPTY_CONTROL_PLANE: ControlPlaneIndex = new Map();
  * That is a handful of requests on an admin page, not per catalog row.
  */
 export async function loadControlPlaneFacts(agentKeys: readonly string[]): Promise<ControlPlaneIndex> {
-  if (!isMiddlewareDispatchEnabled()) return EMPTY_CONTROL_PLANE;
+  return (await loadControlPlane(agentKeys)).facts;
+}
+
+export interface ControlPlaneSnapshot {
+  /** Per-key enrichment for library agents the control plane also knows. */
+  facts: ControlPlaneIndex;
+  /**
+   * Every agent the control plane holds, for the catalog union.
+   *
+   * Returned alongside the enrichment rather than fetched twice: the union
+   * needs agents the library has NO key for, so filtering to the requested
+   * keys before returning would hide exactly the rows the union exists to
+   * surface.
+   */
+  agents: MiddlewareAgent[];
+}
+
+export const EMPTY_SNAPSHOT: ControlPlaneSnapshot = { facts: EMPTY_CONTROL_PLANE, agents: [] };
+
+/** One control-plane round trip serving both the union and the enrichment. */
+export async function loadControlPlane(agentKeys: readonly string[]): Promise<ControlPlaneSnapshot> {
+  if (!isMiddlewareDispatchEnabled()) return EMPTY_SNAPSHOT;
 
   const wanted = new Map<string, string>(); // engine product id -> customAgents.key
   for (const key of agentKeys) {
     const productId = resolveAgentEngineProductIdForCustomAgent(key);
     if (productId) wanted.set(productId, key);
   }
-  if (wanted.size === 0) return EMPTY_CONTROL_PLANE;
 
+  // Always listed, even when no library key maps: the union needs agents
+  // the library has no row for, which is the case this exists to cover.
   let agents: MiddlewareAgent[];
   try {
     agents = (await listAgents({ limit: 100 })).items;
   } catch (error) {
     warn("could not list control-plane agents", error);
-    return EMPTY_CONTROL_PLANE;
+    return EMPTY_SNAPSHOT;
   }
 
   const index = new Map<string, ControlPlaneFacts>();
@@ -92,7 +114,7 @@ export async function loadControlPlaneFacts(agentKeys: readonly string[]): Promi
         });
       }),
   );
-  return index;
+  return { facts: index, agents };
 }
 
 /**
