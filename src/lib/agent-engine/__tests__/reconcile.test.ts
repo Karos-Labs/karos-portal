@@ -132,9 +132,44 @@ describe("syncAgentEngineJobStatusFromView", () => {
     expect(updateJobMock).not.toHaveBeenCalled();
   });
 
-  it("is idempotent — a job already synced to the run's outcome triggers no further write", async () => {
-    await syncAgentEngineJobStatusFromView(job({ status: "review" }), view("completed"));
+  it("is idempotent — a job already synced with its asset attached triggers no further write", async () => {
+    materializeMock.mockResolvedValue(undefined); // nothing new to attach
+    await syncAgentEngineJobStatusFromView(job({ status: "review", assetIds: ["asset_1"] }), view("completed"));
     expect(updateJobMock).not.toHaveBeenCalled();
+  });
+
+  it("materializes a job that is ALREADY at review but has no asset, and attaches it", async () => {
+    // The gap that made the materialize.ts fix heal nothing already on disk.
+    // This function returned early the moment `job.status` matched, so every
+    // engine job that reached "review" back when its product had no
+    // materializer was permanently asset-less — prep's own x-agent and
+    // linkedin-agent runs were all in that state, with no path back.
+    materializeMock.mockResolvedValue("asset_new");
+    const result = await syncAgentEngineJobStatusFromView(job({ status: "review", assetIds: [] }), view("completed"));
+
+    expect(materializeMock).toHaveBeenCalledTimes(1);
+    expect(result.assetIds).toEqual(["asset_new"]);
+    // Only `assetIds` is written — the status already said the right thing.
+    const patch = updateJobMock.mock.calls[0]![1] as Record<string, unknown>;
+    expect(patch).toMatchObject({ assetIds: ["asset_new"] });
+    expect(patch).not.toHaveProperty("status");
+  });
+
+  it("does not re-attempt the refund on every view of an already-failed job", async () => {
+    // The flip side of dropping the early return: without gating the refund on
+    // the status transition, a staff member opening a failed job would open a
+    // Firestore transaction each time.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "failed", error: "step 09 crashed" }),
+      view("failed", { failureReason: "step 09 crashed" }),
+    );
+    expect(refundJobChargeMock).not.toHaveBeenCalled();
+    expect(updateJobMock).not.toHaveBeenCalled();
+  });
+
+  it("does not ask for a deliverable for a run that did not complete", async () => {
+    await syncAgentEngineJobStatusFromView(job(), view("held", { reason: "cap reached" }));
+    expect(materializeMock).not.toHaveBeenCalled();
   });
 });
 

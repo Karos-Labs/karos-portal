@@ -111,34 +111,55 @@ export async function syncAgentEngineJobStatus(job: Job): Promise<Job> {
 export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngineRunView): Promise<Job> {
   const update = terminalJobUpdate(view.run);
   if (!update) return job; // still in flight — job.status already correctly says so
-  // The idempotency check reads every field the transition writes. It compared
-  // `job.error` alone, which was total only while every terminal outcome wrote
-  // `error`; with `held` writing `heldReason` instead, an error-only comparison
-  // would call a held job "already synced" the moment its status matched and
-  // never store the reason at all. `?? null` on the job side because an
-  // untouched doc has the field ABSENT while a transition writes an explicit
-  // `null` — the same value, two spellings, and only one of them compares equal.
-  if (
+
+  // Whether the STATUS write is still needed. Reads every field the transition
+  // writes: it compared `job.error` alone, which was total only while every
+  // terminal outcome wrote `error`; with `held` writing `heldReason` instead, an
+  // error-only comparison would call a held job "already synced" the moment its
+  // status matched and never store the reason at all. `?? null` on the job side
+  // because an untouched doc has the field ABSENT while a transition writes an
+  // explicit `null` — the same value, two spellings, and only one of them
+  // compares equal.
+  const statusChanged = !(
     job.status === update.status &&
     (job.error ?? null) === update.error &&
     (job.heldReason ?? null) === update.heldReason
-  ) {
-    return job; // already synced
-  }
+  );
 
-  // Task 3: materialize BEFORE the status write, not after — so a crash between the two
-  // leaves `assetIds` populated but `status` still stale, and the next reconcile call's own
-  // "already has an asset" idempotency check correctly skips re-materializing rather than
-  // silently losing track of it. Only attempted on the transition INTO "review" (a genuine
-  // agent-engine `completed`) — `terminalJobUpdate` never maps `failed`/`degraded`/`held`/
-  // `blocked_intake` there, so there's nothing to materialize for any other update.
+  // MATERIALIZATION IS NOT GATED ON THAT TRANSITION, and it used to be — which
+  // is why the fix to `materialize.ts` would have healed nothing already on
+  // disk. This function returned early the moment `job.status` matched, so a
+  // job that reached `"review"` back when its product had no materializer was
+  // permanently asset-less: every later page view and every reconcile sweep hit
+  // the early return and never asked for the deliverable again. Prep's own
+  // x-agent and linkedin-agent runs were all in exactly that state — completed,
+  // "In review", nothing attached, and no path back.
+  //
+  // Asked as "the run completed and this job still has nothing" instead. Cheap
+  // to re-ask: `materializeAgentEngineDeliverable` returns immediately for a job
+  // that already has an asset or a product with no known deliverable shape, so
+  // the only repeated work is for a completed run whose deliverable genuinely
+  // cannot be fetched — one HTTP call per view of that job, which is the same
+  // cost the transition path already paid.
+  //
+  // Still BEFORE the status write, for the original reason: a crash between the
+  // two leaves `assetIds` populated and `status` stale, which the next call
+  // recovers from, rather than a synced status with a deliverable nobody will
+  // ever ask for again.
   let assetIds = job.assetIds;
   if (update.status === "review") {
     const assetId = await materializeAgentEngineDeliverable(job);
     if (assetId) assetIds = [...job.assetIds, assetId];
   }
+  const assetsChanged = assetIds !== job.assetIds;
 
-  await updateJob(job.id, { ...update, ...(assetIds !== job.assetIds ? { assetIds } : {}), updatedAt: Date.now() });
+  if (!statusChanged && !assetsChanged) return job; // already synced, nothing left to attach
+
+  await updateJob(job.id, {
+    ...(statusChanged ? update : {}),
+    ...(assetsChanged ? { assetIds } : {}),
+    updatedAt: Date.now(),
+  });
 
   // A failed engine run refunds, exactly like a failed agent-service one.
   //
@@ -161,7 +182,12 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   // and a crash between the two leaves a job correctly marked failed that the
   // next reconcile will refund, rather than a refunded job still showing as
   // running.
-  if (update.status === "failed") {
+  //
+  // `statusChanged &&` is load-bearing now that this function no longer returns
+  // early on an already-synced job: without it, every page view of a failed job
+  // would re-attempt the refund. It is idempotent per job so nothing would be
+  // double-credited, but it would mean a Firestore transaction on every view.
+  if (statusChanged && update.status === "failed") {
     await refundJobCharge(job.id, `Auto-refund · agent-engine run ${view.run.status} · ${job.agentName}`.slice(0, 120));
   }
 
