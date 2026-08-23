@@ -35,6 +35,8 @@ export interface JobListRow {
   customAgentId?: string;
   /** Raw failure text, classified inline via job-error-taxonomy.ts. */
   error?: string | null;
+  /** Why a `held` run shipped nothing. Never classified and never painted red — see `Job.heldReason`. */
+  heldReason?: string | null;
 }
 
 /**
@@ -245,6 +247,19 @@ export function JobsList({ jobs, isAdmin }: { jobs: JobListRow[]; isAdmin: boole
                           {classifiedError.label}
                         </p>
                         {job.customAgentId && <RetryButton jobId={job.id} />}
+                      </div>
+                    )}
+                    {/* The same strip for a held run, in the neutral surface tone
+                        and with no Retry beside it: a hold is a rule declining,
+                        not a breakage to re-attempt, and the reason is the whole
+                        message (unclassified — see `Job.heldReason`). Without it
+                        a held row showed a "Held" badge and no way to learn why
+                        short of opening the run. */}
+                    {job.status === "held" && job.heldReason && (
+                      <div className="border-t border-border bg-surface-2/60 px-5 py-2">
+                        <p className="truncate text-xs text-muted" title={job.heldReason}>
+                          {job.heldReason}
+                        </p>
                       </div>
                     )}
                   </li>

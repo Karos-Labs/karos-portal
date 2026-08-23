@@ -74,6 +74,23 @@ const PAST_RUN_VISIBILITY: Record<JobStatus, { staff: boolean; client: boolean }
   delivered: { staff: true, client: true },
   failed: { staff: true, client: false },
   cancelled: { staff: true, client: false },
+  /**
+   * Staff only, same as the two above it, and for the middle reason rather than
+   * either of theirs: a held run is neither an internal breakage the client
+   * should be told about by us first, nor a deliberate stop somebody owes them
+   * an explanation for — it is a run that produced nothing. A client's calendar
+   * narrates what they got; a card reading "Held · engagement lane daily cap
+   * reached" narrates our cadence machinery at them, which is the same thing
+   * the locked "In review is removed" decision above forbids for `review`.
+   *
+   * NOT refunded, unlike `failed`/`cancelled` (see `JobStatus`'s `"held"`
+   * note), so the sentence three paragraphs up — "failed/cancelled are refunded
+   * outcomes, which is why the Workspace timeline withholds them as well" —
+   * does not extend its REASONING to this row even though the verdict matches.
+   * This one is withheld because there is nothing to show, not because nothing
+   * was charged.
+   */
+  held: { staff: true, client: false },
 };
 
 /**

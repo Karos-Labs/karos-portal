@@ -1,0 +1,430 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+const { createAssetMock, updateJobMock, getDeliverableMock, generateTitleMock, reflowMock, uploadBytesMock } = vi.hoisted(() => ({
+  createAssetMock: vi.fn(),
+  updateJobMock: vi.fn(),
+  getDeliverableMock: vi.fn(),
+  generateTitleMock: vi.fn(),
+  reflowMock: vi.fn(),
+  uploadBytesMock: vi.fn(),
+}));
+
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/data", () => ({ createAsset: createAssetMock, updateJob: updateJobMock }));
+vi.mock("@/lib/storage", () => ({ uploadBytes: uploadBytesMock }));
+vi.mock("@/lib/chain", () => ({ reflowClientChain: reflowMock }));
+// The titler is a live Haiku call in production. Mocked to null by default so
+// every assertion below reads the DETERMINISTIC field-derived title — which is
+// also the fallback the real path uses whenever that call fails, so this is the
+// branch that has to be right.
+vi.mock("@/lib/asset-titles", () => ({ generateAssetTitle: generateTitleMock }));
+vi.mock("../client", () => ({ getAgentEngineDeliverable: getDeliverableMock }));
+
+import { materializeAgentEngineDeliverable, PRODUCT_DELIVERABLE_KINDS } from "../materialize";
+import { parseXDrafts } from "@/lib/x-drafts";
+import { parseLiDrafts } from "@/lib/li-drafts";
+import { parseRedditDrafts } from "@/lib/reddit-drafts";
+import type { Asset, Job } from "@/lib/types";
+
+function job(productId: string, overrides: Partial<Job> = {}): Job {
+  return {
+    id: "job_1",
+    clientId: "client_1",
+    agentId: "agent-engine",
+    agentName: "X / Twitter Content Specialist",
+    title: "Test job",
+    status: "review",
+    input: {},
+    assetIds: [],
+    events: [],
+    createdBy: "user_1",
+    createdAt: 1000,
+    updatedAt: 1000,
+    agentEngineRunId: "pubsub-1",
+    agentEngineProductId: productId,
+    ...overrides,
+  } as Job;
+}
+
+/** The asset payload the one `createAsset` call was given. */
+function createdAsset(): Omit<Asset, "id"> {
+  expect(createAssetMock).toHaveBeenCalledTimes(1);
+  return createAssetMock.mock.calls[0]![0] as Omit<Asset, "id">;
+}
+
+async function materialize(productId: string, deliverable: unknown, overrides: Partial<Job> = {}) {
+  getDeliverableMock.mockResolvedValue(deliverable);
+  return materializeAgentEngineDeliverable(job(productId, overrides));
+}
+
+beforeEach(() => {
+  createAssetMock.mockReset().mockResolvedValue("asset_1");
+  updateJobMock.mockReset();
+  getDeliverableMock.mockReset();
+  generateTitleMock.mockReset().mockResolvedValue(null);
+  reflowMock.mockReset().mockResolvedValue(undefined);
+  uploadBytesMock.mockReset().mockResolvedValue({ url: "https://karos.example/rehosted.png" });
+});
+
+/**
+ * agent-engine's own product catalog and the `kind` each one passes to
+ * `ledger.writeDeliverable`, transcribed from the eleven workflows themselves
+ * (`agent-engine/agents/*​/src/workflow/create-*-workflow.ts`, each one's
+ * persist step).
+ *
+ * WRITTEN OUT RATHER THAN DERIVED, deliberately — deriving it from the module
+ * under test would make this assertion "the map equals itself". agent-engine is
+ * a separate deployable with its own release cycle, the same reason `read-run.ts`
+ * duplicates its Firestore record shapes instead of importing them, so this is a
+ * point-in-time transcription: a product added over there does not fail here
+ * until someone re-transcribes. What it DOES catch is the failure that actually
+ * shipped — a product dropped from, or misspelled in, karosCMO's own map, which
+ * silently produced a job at "In review" with nothing attached.
+ */
+const ENGINE_CATALOG: Readonly<Record<string, string>> = {
+  "x-agent": "x-post",
+  "linkedin-agent": "linkedin-post",
+  "instagram-agent": "instagram-carousel",
+  "branded-shorts-agent": "branded-shorts-video",
+  "reddit-agent": "reddit-reply",
+  "blog-agent": "blog-post",
+  "newsletter-agent": "newsletter-edition",
+  "landing-builder-agent": "landing-page-site",
+  "intel-report-agent": "intel-report",
+  "seo-geo-agent": "seo-geo-report",
+  "campaign-orchestrator": "campaign-bundle",
+};
+
+describe("the product catalog is covered end to end", () => {
+  it("maps every one of the eleven engine products, by the kind its workflow actually writes", () => {
+    expect(PRODUCT_DELIVERABLE_KINDS).toEqual(ENGINE_CATALOG);
+    expect(Object.keys(PRODUCT_DELIVERABLE_KINDS)).toHaveLength(11);
+  });
+
+  it("fetches each product's deliverable by that exact kind — a mismatch 404s and silently delivers nothing", async () => {
+    for (const [productId, kind] of Object.entries(ENGINE_CATALOG)) {
+      getDeliverableMock.mockReset().mockResolvedValue({ text: "something" });
+      createAssetMock.mockReset().mockResolvedValue("asset_1");
+      await materializeAgentEngineDeliverable(job(productId));
+      expect(getDeliverableMock, productId).toHaveBeenCalledWith("pubsub-1", kind);
+    }
+  });
+
+  it("produces an asset for every product, never a silent no-op", async () => {
+    // The regression in one line: eight of eleven products used to fall through
+    // `DELIVERABLE_KIND_BY_PRODUCT` and return undefined here.
+    for (const productId of Object.keys(ENGINE_CATALOG)) {
+      createAssetMock.mockReset().mockResolvedValue(`asset_${productId}`);
+      const assetId = await materialize(productId, { text: "body text", topic: "a topic" });
+      expect(assetId, productId).toBe(`asset_${productId}`);
+    }
+  });
+});
+
+describe("the three draft-batch channels hand their reader-shaped string straight through", () => {
+  // Copied from the renderers' real output — the same fixtures
+  // `agent-engine-drafts-compat.test.ts` pins the parsers against.
+  const xMarkdown = [
+    "# Account 1 · @getkaros",
+    "",
+    "## Avenue 1 · Build-in-public",
+    "*trend-observation*",
+    "",
+    "> We shipped the drafts reader today, and the whole batch now reads on one page.",
+    "",
+    "`78 chars`",
+    "",
+    "- **Hook:** shipping notes",
+    "",
+  ].join("\n");
+
+  it("x-agent: content is draftsMarkdown, outer whitespace aside, and this portal's own parser reads it", async () => {
+    await materialize("x-agent", {
+      draftsMarkdown: xMarkdown,
+      text: "the raw text, which must NOT win over draftsMarkdown",
+      hook: "shipping notes",
+      lane: "build-in-public",
+      angle: "trend-observation",
+      targetHandle: "getkaros",
+    });
+    const asset = createdAsset();
+    // The outer trim is the ONLY mutation — asserted as such rather than as
+    // `toBe(xMarkdown)`, which passed only until the fixture grew a trailing
+    // newline. Trimming both sides is what makes the two comparable; anything
+    // rewritten INSIDE the string would break the parser contract.
+    expect(asset.content).toBe(xMarkdown.trim());
+    expect(xMarkdown).toContain(asset.content);
+    // The point of passing it through unrewritten: the AssetCard's drafts reader renders it.
+    expect(parseXDrafts(asset.content)).not.toBeNull();
+    expect(asset.type).toBe("social_post");
+    expect(asset.channels).toEqual(["twitter"]);
+    expect(asset.title).toBe("shipping notes");
+    expect(asset.meta).toMatchObject({ lane: "build-in-public", angle: "trend-observation", targetHandle: "getkaros" });
+  });
+
+  it("linkedin-agent: same, with hashtags left on the exact meta key the card reads", async () => {
+    const markdown = [
+      "# LinkedIn drafts",
+      "",
+      "## Account 1 · Karos Labs — Company page",
+      "",
+      "### Post 1 · Teardown framework",
+      "",
+      "> Most agencies lose a day to review cycles.",
+      "",
+      "`42 chars`",
+      "",
+      "- **Topic:** How we cut client review time in half",
+    ].join("\n");
+    await materialize("linkedin-agent", {
+      draftsMarkdown: markdown,
+      text: "raw",
+      headline: "The brief matters more than the volume",
+      archetype: "lesson-learned",
+      hashtags: ["#AIMarketing", "#ContentStrategy"],
+    });
+    const asset = createdAsset();
+    expect(asset.content).toBe(markdown);
+    expect(parseLiDrafts(asset.content)).not.toBeNull();
+    expect(asset.channels).toEqual(["linkedin"]);
+    expect(asset.title).toBe("The brief matters more than the volume");
+    expect(asset.meta?.hashtags).toEqual(["#AIMarketing", "#ContentStrategy"]);
+  });
+
+  it("reddit-agent: the v2 envelope, fenced to a draft-only note with NO publish channel", async () => {
+    const envelope = JSON.stringify({
+      kind: "reddit-drafts-v2",
+      outcome: "delivered",
+      threads: [
+        {
+          folder: "01-answer",
+          threadTitle: "How do you handle client review cycles?",
+          threadUrl: "https://reddit.com/r/agency/comments/abc",
+          subreddit: "r/agency",
+          approaches: [{ id: "approach-1", text: "We moved review to the brief stage." }],
+        },
+      ],
+    });
+    await materialize("reddit-agent", {
+      draftsEnvelope: envelope,
+      replyBody: "We moved review to the brief stage.",
+      targetThreadTitle: "How do you handle client review cycles?",
+      targetSubreddit: "agency",
+      disclosureIncluded: true,
+    });
+    const asset = createdAsset();
+    expect(asset.content).toBe(envelope);
+    expect(parseRedditDrafts(asset.content)).not.toBeNull();
+    // THE FENCE. `social_post` would offer a reply written for one thread to
+    // twitter/linkedin/facebook/tiktok; `note` has no publish targets at all.
+    expect(asset.type).toBe("note");
+    expect(asset.channels).toBeUndefined();
+    expect(asset.meta).toMatchObject({ targetSubreddit: "agency", disclosureIncluded: true });
+  });
+
+  it("falls back to the raw text when a deliverable predates the reader-shaped field", async () => {
+    await materialize("x-agent", { text: "Just the post text.", hook: "a hook" });
+    expect(createdAsset().content).toBe("Just the post text.");
+  });
+});
+
+describe("the long-form products land on the asset type their content actually is", () => {
+  it("blog-agent: the markdown body, typed article — via custom + a hint, never the RETIRED blog_article task type", async () => {
+    await materialize("blog-agent", {
+      title: "Why your AI content reads as noise",
+      bodyMarkdown: "## The brief is the decision\n\nBody here.",
+      text: "flattened text",
+      slug: "ai-content-noise",
+      metaDescription: "A short description.",
+      jsonLd: { "@type": "BlogPosting" },
+    });
+    const asset = createdAsset();
+    expect(asset.type).toBe("article");
+    expect(asset.content).toBe("## The brief is the decision\n\nBody here.");
+    expect(asset.title).toBe("Why your AI content reads as noise");
+    expect(asset.meta).toMatchObject({ slug: "ai-content-noise", jsonLd: { "@type": "BlogPosting" } });
+  });
+
+  it("newsletter-agent: typed email, titled by its subject line", async () => {
+    await materialize("newsletter-agent", {
+      subjectLine: "The brief is the decision",
+      previewText: "Why more output made things worse",
+      text: "Full assembled edition body.",
+    });
+    const asset = createdAsset();
+    expect(asset.type).toBe("email");
+    expect(asset.title).toBe("The brief is the decision");
+    expect(asset.content).toBe("Full assembled edition body.");
+  });
+
+  it("newsletter-agent: stitches intro/sections/signoff when the agent recorded no assembled text", async () => {
+    // An empty asset with the real content hidden in meta is the failure mode
+    // this branch exists to avoid.
+    await materialize("newsletter-agent", {
+      subjectLine: "Subject",
+      intro: "Hello there.",
+      sections: [
+        { heading: "First story", body: "What happened." },
+        { heading: "Second story", body: "What else." },
+      ],
+      signoff: "Until next week.",
+    });
+    const content = createdAsset().content;
+    expect(content).toContain("Hello there.");
+    expect(content).toContain("## First story");
+    expect(content).toContain("What else.");
+    expect(content).toContain("Until next week.");
+  });
+});
+
+describe("the report and bundle products render to something a reviewer can read", () => {
+  it("intel-report: prose sections and the SWOT, not a wall of JSON", async () => {
+    await materialize("intel-report-agent", {
+      overallScore: 72,
+      overallGrade: "B",
+      dimensionScores: [
+        { key: "content", score: 80 },
+        { key: "seo", score: 64 },
+      ],
+      contentAnalysis: "The content library is broad but undifferentiated.",
+      seoAnalysis: "Technical SEO is sound.",
+      brandSynchronizationUpdate: "Tighten the positioning line.",
+      swot: { strengths: ["Fast delivery"], weaknesses: ["Thin case studies"], opportunities: [], threats: ["Two funded entrants"] },
+      recommendations: [{ id: "r1" }],
+    });
+    const asset = createdAsset();
+    expect(asset.type).toBe("note");
+    expect(asset.title).toBe("Competitive intelligence report (B)");
+    expect(asset.content).toContain("**Overall: 72/100 (B)**");
+    expect(asset.content).toContain("- content: 80/100");
+    expect(asset.content).toContain("## Content");
+    expect(asset.content).toContain("The content library is broad but undifferentiated.");
+    expect(asset.content).toContain("**Strengths**\n- Fast delivery");
+    // An empty SWOT arm contributes no empty heading.
+    expect(asset.content).not.toContain("**Opportunities**");
+    // The structure still travels, so a real report viewer can be built later
+    // without re-delivering the run.
+    expect(asset.meta).toMatchObject({ overallScore: 72, recommendations: [{ id: "r1" }] });
+  });
+
+  it("seo-geo-report: the narrative leads, with both canonical scores above it", async () => {
+    await materialize("seo-geo-agent", {
+      seoScore: { score: 61 },
+      geoReadiness: { score: 44 },
+      narrative: "Visibility is concentrated in two prompts.",
+      firedRecommendations: [{ recId: "a", recommendation: "Add FAQ schema" }, { recId: "b", title: "Fix canonical tags" }],
+      promptSet: { promptSetHash: "abc123" },
+    });
+    const asset = createdAsset();
+    expect(asset.content).toContain("**SEO 61 · GEO readiness 44**");
+    expect(asset.content).toContain("Visibility is concentrated in two prompts.");
+    expect(asset.content).toContain("## Recommendations (2)");
+    expect(asset.content).toContain("- Add FAQ schema");
+    expect(asset.content).toContain("- Fix canonical tags");
+  });
+
+  it("campaign-bundle: an index over the channel slots, not a copy of their drafts", async () => {
+    await materialize("campaign-orchestrator", {
+      campaignName: "Q4 authority push",
+      theme: "AI-first operations",
+      targetPillars: ["Positioning", "Proof"],
+      channelResults: [
+        { channel: "x", status: "completed", topic: "Two camps" },
+        { channel: "linkedin", status: "held" },
+      ],
+    });
+    const asset = createdAsset();
+    expect(asset.title).toBe("Q4 authority push");
+    expect(asset.content).toContain("**Theme:** AI-first operations");
+    expect(asset.content).toContain("**Pillars:** Positioning, Proof");
+    expect(asset.content).toContain("- **x** · completed — Two camps");
+    expect(asset.content).toContain("- **linkedin** · held");
+  });
+});
+
+describe("the three products that already worked keep working", () => {
+  it("instagram-carousel rehosts its first rendered slide", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    await materialize("instagram-agent", {
+      topic: "Three ways to brief an AI",
+      rendered: [{ n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" }],
+    });
+    const asset = createdAsset();
+    expect(asset.type).toBe("social_post");
+    expect(asset.imageUrl).toBe("https://karos.example/rehosted.png");
+    expect(asset.channels).toEqual(["instagram"]);
+  });
+
+  it("landing-page-site names where the reviewed source tree lives", async () => {
+    await materialize("landing-builder-agent", { gcsPrefix: "gs://bucket/sites/acme", fileCount: 12, status: "ok" });
+    const asset = createdAsset();
+    expect(asset.type).toBe("note");
+    expect(asset.content).toContain("gs://bucket/sites/acme");
+  });
+});
+
+describe("what it deliberately does not do", () => {
+  it("no-ops for a product id it has never heard of, without reaching the engine", async () => {
+    const assetId = await materializeAgentEngineDeliverable(job("some-future-agent"));
+    expect(assetId).toBeUndefined();
+    expect(getDeliverableMock).not.toHaveBeenCalled();
+    expect(createAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("no-ops for a job that already has an asset — the idempotency convention", async () => {
+    const assetId = await materialize("x-agent", { text: "x" }, { assetIds: ["asset_existing"] });
+    expect(assetId).toBeUndefined();
+    expect(createAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("no-ops when the deliverable is not written yet (a 404 reads as undefined)", async () => {
+    getDeliverableMock.mockResolvedValue(undefined);
+    expect(await materializeAgentEngineDeliverable(job("x-agent"))).toBeUndefined();
+    expect(createAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows a materialization failure rather than blocking the job from reaching review", async () => {
+    getDeliverableMock.mockRejectedValue(new Error("engine unreachable"));
+    expect(await materializeAgentEngineDeliverable(job("x-agent"))).toBeUndefined();
+  });
+
+  it("survives a deliverable whose shape drifted, with a thinner asset rather than a throw", async () => {
+    // Every field read defensively — the alternative is an exception this module
+    // swallows, which lands the job right back at "review with nothing attached".
+    const assetId = await materialize("linkedin-agent", { archetype: 42, hashtags: "not-an-array", text: null });
+    expect(assetId).toBe("asset_1");
+    const asset = createdAsset();
+    expect(asset.content).toBe("");
+    expect(asset.title).toBe("LinkedIn post");
+  });
+});
+
+describe("titling", () => {
+  it("prefers the shared titler, so both delivery paths name assets under one contract", async () => {
+    generateTitleMock.mockResolvedValue("Two camps in marketing automation");
+    await materialize("x-agent", { text: "Some post text.", hook: "a hook" });
+    expect(createdAsset().title).toBe("Two camps in marketing automation");
+    expect(generateTitleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Some post text.", clientId: "client_1" }),
+    );
+  });
+
+  it("does not spend the call on an empty-content deliverable", async () => {
+    await materialize("branded-shorts-agent", { durationSeconds: 30 });
+    expect(generateTitleMock).not.toHaveBeenCalled();
+    expect(createdAsset().title).toBe("TikTok video");
+  });
+});
+
+describe("the job is wired to its new asset", () => {
+  it("attaches the asset id and reflows the client's calendar chain", async () => {
+    await materialize("x-agent", { text: "post" });
+    expect(updateJobMock).toHaveBeenCalledWith("job_1", expect.objectContaining({ assetIds: ["asset_1"] }));
+    expect(reflowMock).toHaveBeenCalledWith("client_1");
+  });
+
+  it("stamps the run and product onto the asset's meta for traceability", async () => {
+    await materialize("x-agent", { text: "post" });
+    expect(createdAsset().meta).toMatchObject({ agentEngineRunId: "pubsub-1", agentEngineProductId: "x-agent" });
+  });
+});

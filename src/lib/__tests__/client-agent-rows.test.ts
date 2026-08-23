@@ -537,6 +537,7 @@ describe("toRunRows — the run-history projection", () => {
     delivered: true,
     failed: true,
     cancelled: true,
+    held: true,
   };
 
   it("for every JobStatus, a client's row is a field-wise subset of staff's", () => {
@@ -1126,6 +1127,8 @@ describe("toClientAgentRows — the card projection", () => {
     delivered: false,
     failed: false,
     cancelled: false,
+    // Terminal: the run finished, it just produced nothing. Not in flight.
+    held: false,
   };
 
   it.each(Object.keys(ACTIVE_RUN_STATUSES) as JobStatus[])(

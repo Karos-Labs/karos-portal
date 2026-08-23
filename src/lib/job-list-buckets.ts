@@ -41,6 +41,13 @@ export type JobBucket = "active" | "review" | "completed" | "failed";
  * stays reachable through the per-status dropdown beside the chips. Writing it as
  * `null` rather than leaving it out means the next status added has to say which
  * it is.
+ *
+ * `held` is `null` for exactly that reason, asked and answered rather than
+ * defaulted. A guardrail declining to ship is not `failed` — counting it there
+ * is the misclassification the state was added to end, and it would put holds
+ * back in the one number staff read to decide whether something is broken. It is
+ * equally not `completed`: nothing was produced. And it is terminal, so not
+ * `active`. Same shape as `cancelled`: no chip, still filterable by name.
  */
 const BUCKET_OF: Record<JobStatus, JobBucket | null> = {
   queued: "active",
@@ -50,6 +57,7 @@ const BUCKET_OF: Record<JobStatus, JobBucket | null> = {
   delivered: "completed",
   failed: "failed",
   cancelled: null,
+  held: null,
 };
 
 /**

@@ -537,11 +537,19 @@ const PINNED_DERIVATIONS: Readonly<Record<string, string>> = {
     "task approval → PRODUCT_ASSET_TYPE, keyed by the managed catalog",
   // agent-engine's own reverse-completion materialization (Task 3) — THE FOURTH
   // RUNTIME DERIVATION. Routes through the same shared `deliverableAssetType` the
-  // webhook and MCP paths use rather than inventing its own mapping; the
-  // WIRE_TASK_TYPE_BY_PRODUCT lookup only ever produces "social_post"/"landing_page",
-  // neither a Reddit product, but the fence is applied unconditionally regardless
-  // (same rationale as the task-approval pin above).
-  "deliverableAssetType({ taskType: WIRE_TASK_TYPE_BY_PRODUCT[job.agentEngineProductId]!, content: materialization.content, identity: [job.agentEngineProductId], })":
+  // webhook and MCP paths use rather than inventing its own mapping.
+  //
+  // THE FENCE HERE IS NO LONGER THEORETICAL, and that is why this pin changed.
+  // The old expression read the task type out of `WIRE_TASK_TYPE_BY_PRODUCT`, a
+  // three-product map holding only "social_post"/"landing_page" — so the note
+  // here could say "neither a Reddit product" and mean it. `PRODUCT_DELIVERABLES`
+  // now covers the whole engine catalog, `reddit-agent` included, and a Reddit
+  // reply's `social_post` base is fenced down to `note` by this very call. The
+  // `hint` is new too (`custom` + a whitelisted hint is how blog/newsletter reach
+  // `article`/`email` without minting a RETIRED task type) and it is fenced by the
+  // same rule: `deliverableAssetType` applies the fence to its RESULT, never to
+  // the argument that produced it, so a hint cannot route around it.
+  "deliverableAssetType({ taskType: spec.taskType, hint: spec.assetTypeHint ?? null, content: materialization.content, identity: [job.agentEngineProductId], })":
     "agent-engine materialize → deliverableAssetType",
 };
 

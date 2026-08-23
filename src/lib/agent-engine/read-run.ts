@@ -36,8 +36,17 @@ export interface AgentEngineRunRecord {
 
 export interface AgentEngineStepRecord {
   stepId: string;
-  kind: "code" | "agent";
-  /** `"running"`: the step's checkpoint exists but hasn't reached a terminal state yet — no `completedAt`/`costUsd`/`durationMs`/`output` yet. */
+  /**
+   * `"gate"` is a human-approval step. It only started appearing once
+   * agent-engine's `runStepGate` began writing a checkpoint of its own — before
+   * that, a gate registered its `agentEngineGates/{gateId}` record and threw,
+   * leaving NO step record at all, so the step table skipped straight from 14
+   * to 16 on every x-agent run that paused for review. A record from before
+   * that change simply isn't there; nothing here needs to special-case its
+   * absence beyond what a missing step already implies.
+   */
+  kind: "code" | "agent" | "gate";
+  /** `"running"`: the step's checkpoint exists but hasn't reached a terminal state yet — no `completedAt`/`costUsd`/`durationMs`/`output` yet. For a `"gate"` step this is the genuine "registered, still waiting on a human" state, which can last as long as the gate's own timeout. */
   status: "running" | "completed" | "failed";
   /** Arbitrary — either the step's real (possibly-summarized) output, or `{archived:true, gcsUri, sizeBytes}` for an oversized output offloaded to GCS (agent-engine's own dual-storage archive). Absent while `status === "running"`. */
   output?: unknown;

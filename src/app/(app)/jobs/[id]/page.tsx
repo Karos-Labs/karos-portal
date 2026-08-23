@@ -171,6 +171,22 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
             </Card>
           )}
 
+          {/* A held run: finished, produced nothing, and nothing broke. Its own
+              card rather than the danger one above, because this text is a
+              product rule speaking ("engagement lane daily cap reached",
+              "topics catalog floor breached") and reading it in red told staff a
+              working guardrail was an outage. No error taxonomy is run over it
+              either — `classifyJobError` classifies FAILURES, and there is
+              nothing here to classify. */}
+          {job.status === "held" && (
+            <Card>
+              <CardTitle className="mb-1">Held — nothing to deliver</CardTitle>
+              <p className="text-sm text-muted">
+                {job.heldReason ?? "This run stopped before producing a deliverable. Nothing failed."}
+              </p>
+            </Card>
+          )}
+
           {job.rawOutput && (
             <Card>
               <CardTitle className="mb-2">Raw model output</CardTitle>

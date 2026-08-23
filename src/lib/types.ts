@@ -329,7 +329,38 @@ export type JobStatus =
    * who pressed Cancel unsure whether it had worked. Credits are refunded for
    * this outcome exactly as for a failure.
    */
-  | "cancelled";
+  | "cancelled"
+  /**
+   * The run finished without producing anything, and nothing broke.
+   *
+   * agent-engine has carried this outcome from the start — `held` is one of its
+   * two DOMAIN outcomes (RFC-01 §16.2: "a legitimate, non-failure empty
+   * result"), raised by a workflow author throwing `WorkflowHeld` when a real
+   * product rule declines to ship: an engagement-lane daily cap already met, a
+   * post over the character limit, a topic catalog with nothing unused left in
+   * the requested lane, a reviewer who pressed Reject. Its own type comment
+   * over there says the conflation with `failed` "is exactly the bug this
+   * taxonomy exists to prevent" — and this portal then performed that
+   * conflation on arrival, mapping it to `failed` for want of a word of its
+   * own. A staff member opening such a run got a red Error card reading
+   * "topics catalog floor breached", which describes a working guardrail as a
+   * broken system.
+   *
+   * WHY IT IS NOT REFUNDED, unlike "failed"/"cancelled", and this is the part
+   * to revisit if the product decides otherwise: a held run is RE-ENTRANT on
+   * agent-engine's side (`RESUMABLE_FROM_STATUSES` in its own
+   * `workflow-engine.ts` lists `held`, and every step it did complete is
+   * checkpointed), so the same run can be resumed and still deliver once
+   * whatever held it is resolved — topping the lane up, waiting out the cap.
+   * Refunding on the hold and then delivering on the resume would credit the
+   * client for work they received. The residual is real and worth naming: a
+   * hold nobody ever resumes leaves the charge standing, and `held` runs do not
+   * expire themselves. Managed-catalog products don't charge per run at all, so
+   * today this only bites a CUSTOM agent routed to the engine.
+   *
+   * Reason text lives on `heldReason`, never on `error` — see that field.
+   */
+  | "held";
 
 export interface JobRunEvent {
   at: number;
@@ -1116,6 +1147,21 @@ export interface Job {
   emailedTo?: string | null;
   events: JobRunEvent[];
   error?: string | null;
+  /**
+   * Why a `held` run shipped nothing — a product rule declining, never a
+   * breakage. See `JobStatus`'s own `"held"` note for what raises it.
+   *
+   * A SEPARATE FIELD RATHER THAN `error`, and the reason is what reads the two.
+   * `error` is not just a string that happens to be shown in red: it is what
+   * `classifyJobError` runs its taxonomy over, what the failure alert email
+   * prints under the heading "Raw error", what the MCP job-status tool hands a
+   * running agent as that job's error, and what the Job page's danger card is
+   * gated on — gated on the FIELD, not on the status, so putting a hold reason
+   * there paints "topics catalog floor breached" red on a run that behaved
+   * correctly. Every one of those readers is asking "did this break", and a
+   * hold's answer is no. One field, one question.
+   */
+  heldReason?: string | null;
   /** Present when this job runs on the external agent service. */
   external?: ExternalJobInfo;
   createdBy: string;

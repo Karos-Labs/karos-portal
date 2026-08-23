@@ -6,33 +6,73 @@ import { readAgentEngineRun, type AgentEngineRunRecord, type AgentEngineRunView 
 import type { Job } from "@/lib/types";
 
 /**
+ * The fields a terminal transition writes — spelled out so `held`'s
+ * `heldReason` and a failure's `error` can never be the same slot by accident.
+ *
+ * BOTH ARE ALWAYS WRITTEN, one of them as `null`, and that is deliberate rather
+ * than tidy. `updateJob` is `set(..., { merge: true })`, and an agent-engine run
+ * is genuinely re-enterable — `RESUMABLE_FROM_STATUSES` over there admits
+ * `held`, `failed` and `degraded` — so a run that was held, resumed and then
+ * completed passes through this function two or three times. Writing only the
+ * field that applies would leave the previous transition's text sitting on the
+ * doc forever: a delivered job still carrying "topics catalog floor breached",
+ * with the Job page's danger card gated on the FIELD rather than the status and
+ * therefore still painting it. This mirrors, on purpose, the exact discipline
+ * `WorkflowEngine.terminalPatch` already applies to `failureReason`/`reason`/
+ * `pendingGateId` on the run record for the same reason.
+ */
+interface TerminalJobUpdate {
+  status: Job["status"];
+  error: string | null;
+  heldReason: string | null;
+}
+
+/**
  * agent-engine's own run status → karosCMO's `JobStatus`, mirroring
  * `src/app/api/agent-service/webhook/route.ts`'s own `STATUS_MAP` exactly
  * where a precedent exists (`completed` → `"review"` — output ready,
  * awaiting employee/client review, same as the legacy webhook's `done`;
  * `failed`/`degraded` → `"failed"`, same as the legacy webhook's
- * `failed`/`dead_letter`). `held`/`blocked_intake` have no legacy
- * precedent (agent-service has no equivalent concept) — folded into
- * `"failed"` with a distinguishing `job.error`, matching the codebase's own
- * existing convention of folding "produced no real deliverable" outcomes
- * into `"failed"` rather than inventing a new `JobStatus` value (see that
- * same webhook route's own comment on a wall-clock-killed run: "this sat in
- * the same queue as a genuine [failure]... status = 'failed'"). `running`
- * and `awaiting_gate` both stay in-flight from the portal's `job.status`
- * point of view — `awaiting_gate`'s pending-approval UI is a job of
- * `AgentEngineRunPanel`/`AgentEngineGateApproval`, not `job.status` itself.
+ * `failed`/`dead_letter`).
+ *
+ * `held` NOW MAPS TO ITS OWN `"held"` STATUS, and the note that used to stand
+ * here is worth quoting because it was the defect: it said `held` had "no
+ * legacy precedent (agent-service has no equivalent concept)" and was
+ * therefore "folded into `failed` with a distinguishing `job.error`, matching
+ * the codebase's own existing convention". Both halves were true and the
+ * conclusion still came out wrong. agent-engine's own outcome taxonomy calls
+ * `held` "a legitimate, non-failure empty result" and says in as many words
+ * that conflating it with `failed` "is exactly the bug this taxonomy exists to
+ * prevent" — so the absence of a legacy precedent was an argument for a new
+ * `JobStatus` value, not against one. What shipped instead: a working
+ * guardrail ("topics catalog floor breached", "engagement lane daily cap
+ * reached") rendered as a red Error card, counted in the staff Jobs list's
+ * failure chip, and auto-refunded as a breakage.
+ *
+ * `blocked_intake` deliberately STAYS on `failed`. It is not the same kind of
+ * outcome: a run that never started because the client hasn't supplied their
+ * profile is a real blockage somebody must act on, and it has no
+ * agent-engine-side resume that fixes itself. Giving it a soft badge would
+ * bury it. That is a separate decision from this one, and left where it was.
+ *
+ * `running` and `awaiting_gate` both stay in-flight from the portal's
+ * `job.status` point of view — `awaiting_gate`'s pending-approval UI is a job
+ * of `AgentEngineRunPanel`/`AgentEngineGateApproval`, not `job.status` itself.
  */
-function terminalJobUpdate(run: AgentEngineRunRecord): { status: Job["status"]; error?: string } | undefined {
+function terminalJobUpdate(run: AgentEngineRunRecord): TerminalJobUpdate | undefined {
   switch (run.status) {
     case "completed":
-      return { status: "review" };
+      return { status: "review", error: null, heldReason: null };
     case "failed":
     case "degraded":
-      return { status: "failed", error: run.failureReason ?? `agent-engine run ${run.status}` };
+      return { status: "failed", error: run.failureReason ?? `agent-engine run ${run.status}`, heldReason: null };
     case "held":
-      return { status: "failed", error: run.reason ?? "Run held — nothing cleared the delivery gates." };
+      // `reason`, not `failureReason` — the run record keeps those two apart for
+      // this exact reason (see `RunRecord`'s own note), and only one of them is
+      // a failure.
+      return { status: "held", heldReason: run.reason ?? "Run held — nothing cleared the delivery gates.", error: null };
     case "blocked_intake":
-      return { status: "failed", error: run.reason ?? "Run blocked — missing client input." };
+      return { status: "failed", error: run.reason ?? "Run blocked — missing client input.", heldReason: null };
     case "running":
     case "awaiting_gate":
       return undefined;
@@ -71,7 +111,20 @@ export async function syncAgentEngineJobStatus(job: Job): Promise<Job> {
 export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngineRunView): Promise<Job> {
   const update = terminalJobUpdate(view.run);
   if (!update) return job; // still in flight — job.status already correctly says so
-  if (job.status === update.status && job.error === update.error) return job; // already synced
+  // The idempotency check reads every field the transition writes. It compared
+  // `job.error` alone, which was total only while every terminal outcome wrote
+  // `error`; with `held` writing `heldReason` instead, an error-only comparison
+  // would call a held job "already synced" the moment its status matched and
+  // never store the reason at all. `?? null` on the job side because an
+  // untouched doc has the field ABSENT while a transition writes an explicit
+  // `null` — the same value, two spellings, and only one of them compares equal.
+  if (
+    job.status === update.status &&
+    (job.error ?? null) === update.error &&
+    (job.heldReason ?? null) === update.heldReason
+  ) {
+    return job; // already synced
+  }
 
   // Task 3: materialize BEFORE the status write, not after — so a crash between the two
   // leaves `assetIds` populated but `status` still stale, and the next reconcile call's own
@@ -95,6 +148,14 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   // submission and the legacy path refunds every non-"done" outcome. A client
   // whose run was blocked -- by a topic guardrail, say -- would otherwise keep
   // paying for output they never received.
+  //
+  // `update.status`, NOT `view.run.status`, is the test — and now that `held`
+  // has its own portal status they are no longer interchangeable. A held run
+  // does not refund: it is re-entrant on agent-engine's side and can still
+  // deliver on a resume, so refunding the hold and then delivering would credit
+  // work the client received. `JobStatus`'s own `"held"` note carries that
+  // decision and states its residual (a hold nobody resumes leaves the charge
+  // standing); `blocked_intake` still maps to `failed` and so still refunds.
   //
   // After the status write, not before: refundJobCharge is idempotent per job,
   // and a crash between the two leaves a job correctly marked failed that the

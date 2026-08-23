@@ -1,13 +1,21 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { updateJobMock, refundJobChargeMock } = vi.hoisted(() => ({
+const { updateJobMock, refundJobChargeMock, materializeMock } = vi.hoisted(() => ({
   updateJobMock: vi.fn(),
   refundJobChargeMock: vi.fn(),
+  materializeMock: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/data", () => ({ updateJob: updateJobMock }));
 vi.mock("@/lib/credit-reconcile", () => ({ refundJobCharge: refundJobChargeMock }));
+// Mocked EXPLICITLY rather than left to run for real against a half-mocked
+// `@/lib/data`. It happened to no-op before (the fixtures carry no
+// `agentEngineProductId`, so it returned early), which meant this suite's
+// coverage of "materialize is attempted only on the transition into review" was
+// accidental — and materialize.ts now pulls in the asset titler and the storage
+// client, so the accident was also getting more expensive.
+vi.mock("../materialize", () => ({ materializeAgentEngineDeliverable: materializeMock }));
 
 import { syncAgentEngineJobStatusFromView } from "../reconcile";
 import type { AgentEngineRunView } from "../read-run";
@@ -52,6 +60,7 @@ describe("syncAgentEngineJobStatusFromView", () => {
   beforeEach(() => {
     updateJobMock.mockReset();
     refundJobChargeMock.mockReset();
+    materializeMock.mockReset();
   });
 
   it("maps completed -> review, matching the legacy webhook's done -> review precedent", async () => {
@@ -71,10 +80,38 @@ describe("syncAgentEngineJobStatusFromView", () => {
     expect(result.status).toBe("failed");
   });
 
-  it("maps held -> failed with a distinguishing message, not a real deliverable", async () => {
+  it("maps held -> its own held status, with the reason on heldReason and NOT on error", async () => {
+    // The whole point of the state. `held` is agent-engine's non-failure "nothing
+    // honestly cleared the gates" outcome, and this used to land on `failed` with
+    // the reason in `job.error` — which put a working guardrail behind a red
+    // Error card, in the Jobs list's failure chip, and through an auto-refund.
     const result = await syncAgentEngineJobStatusFromView(job(), view("held", { reason: "nothing cleared the gates" }));
-    expect(result.status).toBe("failed");
-    expect(result.error).toBe("nothing cleared the gates");
+    expect(result.status).toBe("held");
+    expect(result.heldReason).toBe("nothing cleared the gates");
+    // `error` is what classifyJobError / the failure alert / the danger card all
+    // read, so a hold reason landing there is the defect, not a detail.
+    expect(result.error).toBeNull();
+  });
+
+  it("falls back to a plain held message when the run recorded no reason", async () => {
+    const result = await syncAgentEngineJobStatusFromView(job(), view("held"));
+    expect(result.status).toBe("held");
+    expect(result.heldReason).toMatch(/held/i);
+  });
+
+  it("clears a stale heldReason when a resumed run later completes", async () => {
+    // agent-engine's own RESUMABLE_FROM_STATUSES admits `held`, so held -> resumed
+    // -> completed is a real path through this function, and `updateJob` is
+    // set(merge:true) — a transition that wrote only the field it cared about
+    // would leave "nothing cleared the gates" on a delivered job forever.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "held", heldReason: "nothing cleared the gates" }),
+      view("completed"),
+    );
+    expect(updateJobMock).toHaveBeenCalledWith(
+      "job_1",
+      expect.objectContaining({ status: "review", heldReason: null, error: null }),
+    );
   });
 
   it("maps blocked_intake -> failed with a distinguishing message", async () => {
@@ -105,6 +142,7 @@ describe("refunds on a failed agent-engine run", () => {
   beforeEach(() => {
     updateJobMock.mockReset();
     refundJobChargeMock.mockReset();
+    materializeMock.mockReset();
   });
 
   it("refunds a failed run, the way the legacy path always did", async () => {
@@ -119,14 +157,28 @@ describe("refunds on a failed agent-engine run", () => {
     expect(String(refundJobChargeMock.mock.calls[0]![1])).toMatch(/Auto-refund/);
   });
 
-  it("refunds a held and a blocked_intake run too — both map to failed", async () => {
-    for (const status of ["degraded", "held", "blocked_intake"] as const) {
+  it("refunds a degraded and a blocked_intake run too — both still map to failed", async () => {
+    for (const status of ["degraded", "blocked_intake"] as const) {
       refundJobChargeMock.mockReset();
       await syncAgentEngineJobStatusFromView(job({ status: "running" }), {
         run: { runId: "r1", status, failureReason: "x", reason: "x" },
       } as unknown as AgentEngineRunView);
       expect(refundJobChargeMock, `${status} should refund`).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("does NOT refund a held run", async () => {
+    // A held run is re-entrant on agent-engine's side (its own
+    // RESUMABLE_FROM_STATUSES lists `held`, and every completed step is
+    // checkpointed), so it can still deliver on a resume — refunding the hold and
+    // then delivering would credit the client for work they received. See
+    // JobStatus's own "held" note, which also states the residual: a hold nobody
+    // ever resumes leaves the charge standing.
+    await syncAgentEngineJobStatusFromView(job({ status: "running" }), {
+      run: { runId: "r1", status: "held", reason: "engagement lane daily cap reached" },
+    } as unknown as AgentEngineRunView);
+
+    expect(refundJobChargeMock).not.toHaveBeenCalled();
   });
 
   it("never refunds a successful run", async () => {
