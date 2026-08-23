@@ -4,7 +4,6 @@ import { listClients, listCustomAgents } from "@/lib/data";
 import { Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
-import { isCustomAgentImportConfigured } from "@/lib/agent-service/custom-agent-import";
 import { CustomAgentsHub } from "@/components/custom-agents";
 import { loadControlPlane } from "@/lib/agent-engine/control-plane-enrichment";
 import { buildEngineAgentCards } from "@/lib/agent-engine/catalog-union";
@@ -119,7 +118,6 @@ export default async function AgentsPage() {
           agentsRepoSlug: c.agentsRepoSlug ?? null,
         }))}
         isAdmin={user.role === "KAROS_ADMIN"}
-        importConfigured={isCustomAgentImportConfigured()}
         serviceConfigured={isAgentServiceConfigured()}
       />
     </>

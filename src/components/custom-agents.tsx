@@ -26,8 +26,6 @@ import { ManagedJobProgress } from "@/components/managed-job-progress";
 import {
   createCustomAgentAction,
   deleteCustomAgentAction,
-  importCustomAgentsAction,
-  listCustomAgentImportCandidatesAction,
   runCustomAgentAction,
   runCustomAgentTestAction,
   setClientCustomAgentsAction,
@@ -830,7 +828,6 @@ export function CustomAgentsHub({
   agents,
   clients,
   isAdmin,
-  importConfigured,
   serviceConfigured,
   controlPlane,
 }: {
@@ -851,13 +848,11 @@ export function CustomAgentsHub({
    */
   clients: Array<{ id: string; name: string; agentsRepoSlug?: string | null }>;
   isAdmin: boolean;
-  importConfigured: boolean;
   serviceConfigured: boolean;
 }) {
   const [runAgent, setRunAgent] = useState<CustomAgent | null>(null);
   const [editAgent, setEditAgent] = useState<CustomAgent | null>(null);
   const [creating, setCreating] = useState(false);
-  const [importing, setImporting] = useState(false);
 
   // Parents carrying their own steps, then any orphan as its own card so a
   // mistyped parentKey is visible instead of swallowed.
@@ -894,15 +889,6 @@ export function CustomAgentsHub({
             <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
               <Icon name="Plus" className="h-3.5 w-3.5" /> New agent
             </Button>
-            <Button
-              size="sm"
-              variant="accent"
-              onClick={() => setImporting(true)}
-              disabled={!importConfigured}
-              title={importConfigured ? undefined : "Set AGENTS_REPO_GITHUB_TOKEN to import"}
-            >
-              <Icon name="Download" className="h-3.5 w-3.5" /> Import from repo
-            </Button>
           </div>
         )}
       </div>
@@ -912,7 +898,7 @@ export function CustomAgentsHub({
           <p className="text-sm text-foreground">No custom agents yet</p>
           <p className="mt-1 text-xs text-muted">
             {isAdmin
-              ? "Import agents from the karos-agents repo or write one from scratch."
+              ? "Create one in Agent Studio."
               : "An admin can import agents from the karos-agents repo."}
           </p>
         </div>
@@ -1170,7 +1156,6 @@ export function CustomAgentsHub({
           }}
         />
       )}
-      {importing && <ImportAgentsModal onClose={() => setImporting(false)} />}
     </section>
   );
 }
@@ -3099,164 +3084,6 @@ function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClo
     </Modal>
   );
 }
-
-/* ═══════════════════════ import (admin) ═══════════════════════ */
-
-type Candidate = {
-  key: string;
-  name: string;
-  description: string;
-  entrySkillDir: string;
-  group: string;
-  status: string;
-  blockedReason?: string;
-  imported: boolean;
-};
-
-function ImportAgentsModal({ onClose }: { onClose: () => void }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void listCustomAgentImportCandidatesAction().then((result) => {
-      if (cancelled) return;
-      if (result.error) setError(result.error);
-      else setCandidates(result.candidates ?? []);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const groups = useMemo(() => {
-    const map = new Map<string, Candidate[]>();
-    for (const c of candidates ?? []) {
-      const list = map.get(c.group) ?? [];
-      list.push(c);
-      map.set(c.group, list);
-    }
-    return [...map.entries()];
-  }, [candidates]);
-
-  function toggle(key: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
-
-  function selectAllReady() {
-    setSelected(
-      new Set((candidates ?? []).filter((c) => !c.imported && c.status === "ready").map((c) => c.key)),
-    );
-  }
-
-  function runImport() {
-    setError(null);
-    startTransition(async () => {
-      const result = await importCustomAgentsAction([...selected]);
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      router.refresh();
-      onClose();
-    });
-  }
-
-  const statusTone = (status: string) =>
-    status === "ready" ? "success" : status === "blocked" ? "danger" : "warning";
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Import agents from karos-agents"
-      description="Scanned from the repo's runtime catalog. Blocked agents import disabled until you review them."
-      className="max-w-2xl"
-    >
-      <div className="mt-4 space-y-4">
-        {!candidates && !error && (
-          <p className="py-8 text-center text-sm text-muted">
-            <Icon name="LoaderCircle" className="mr-2 inline h-4 w-4 animate-spin" />
-            Scanning the repo catalog…
-          </p>
-        )}
-
-        {candidates && (
-          <>
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-muted">
-                {candidates.filter((c) => !c.imported).length} importable · {selected.size} selected
-              </p>
-              <Button size="sm" variant="ghost" onClick={selectAllReady}>
-                Select all ready
-              </Button>
-            </div>
-            <div className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
-              {groups.map(([group, items]) => (
-                <div key={group}>
-                  <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                    {group}
-                  </p>
-                  <div className="overflow-hidden rounded-md border border-border">
-                    {items.map((c, i) => (
-                      <label
-                        key={c.key}
-                        className={cn(
-                          "flex cursor-pointer items-center gap-2.5 px-3 py-2 text-xs transition-colors hover:bg-surface-2",
-                          i > 0 && "border-t border-border",
-                          c.imported && "cursor-default opacity-50",
-                        )}
-                        title={c.blockedReason ?? c.description}
-                      >
-                        <input
-                          type="checkbox"
-                          disabled={c.imported}
-                          checked={selected.has(c.key)}
-                          onChange={() => toggle(c.key)}
-                          className="accent-neon"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-foreground">{c.name}</p>
-                          <p className="truncate font-mono text-[10px] text-muted-2">{c.entrySkillDir}</p>
-                        </div>
-                        {c.imported ? (
-                          <Badge tone="neutral">Imported</Badge>
-                        ) : (
-                          <Badge tone={statusTone(c.status)}>{c.status}</Badge>
-                        )}
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-
-        {error && <p className="text-xs text-danger">{error}</p>}
-
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="accent" onClick={runImport} loading={pending} disabled={selected.size === 0}>
-            {pending ? "Importing…" : `Import ${selected.size || ""}`.trim()}
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-/* ═══════════════ client settings: agent access (admin) ═══════════════ */
 
 export function ClientAgentAccessCard({
   clientId,

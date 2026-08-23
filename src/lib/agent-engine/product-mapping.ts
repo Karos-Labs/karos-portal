@@ -14,11 +14,20 @@ import type { ManagedTaskType } from "@/lib/types";
  *     "instagram" vs "tiktok" keyword match) to know which: `"instagram"` →
  *     `instagram-agent`, `"tiktok"` → `branded-shorts-agent`.
  *
+ * That last pairing is deliberately UNCHANGED now that a `tiktok-agent`
+ * exists, because the two products want different inputs and a managed
+ * "social_post" brief carries neither on its own: branded-shorts renders one
+ * uploaded talking-head video, while tiktok-agent clips a moment out of a
+ * long-form episode it is pointed at. Which one a managed TikTok post should
+ * mean is a product decision, not a mapping detail, so it stays where it has
+ * always been until someone makes it. The custom-agent route below is where
+ * `karos-tiktok-agent` reaches the clip system.
+ *
  * Returns `undefined` — never a guess — for `"custom"` (see
- * `resolveAgentEngineProductIdForCustomAgent` below, which routes the three
- * custom agents agent-engine now has real workflows for) or when a
- * "social_post" brief has no recognized `platform`. Every caller must treat
- * `undefined` as "stay on the legacy agent-service path," not as an error.
+ * `resolveAgentEngineProductIdForCustomAgent` below, which routes every custom
+ * agent agent-engine now has a real workflow for) or when a "social_post"
+ * brief has no recognized `platform`. Every caller must treat `undefined` as
+ * "stay on the legacy agent-service path," not as an error.
  */
 export function resolveAgentEngineProductId(taskType: ManagedTaskType, brief: Record<string, unknown>): string | undefined {
   if (taskType === "landing_page") {
@@ -96,15 +105,14 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, string>> = {
   // implementations depending on which surface they came through. Both now
   // land on the same workflow.
   "seo-geo-agent-v2": "seo-geo-agent",
-  //
-  // karos-tiktok-agent is deliberately NOT here. There is no `tiktok-agent`
-  // product id -- mapping to one would make every TikTok job fail on an
-  // unresolvable product instead of running where it works today. And it is
-  // not branded-shorts wearing another name: branded-shorts is e18, one
-  // talking-head video into one vertical short, while the TikTok agent is the
-  // podcast/commentary CLIP system. Pointing it at branded-shorts-agent would
-  // quietly run a different product for the client. It needs its own
-  // workflow.
+  // The clip system, now that agent-engine has a workflow for it. It is its
+  // own product and not branded-shorts under another name: branded-shorts
+  // turns ONE talking-head video into one vertical short, while this finds a
+  // moment inside someone else's long-form episode and puts the client's
+  // commentary on it. Routing it at branded-shorts-agent, which was the
+  // tempting shortcut while no tiktok-agent existed, would have quietly run a
+  // different product for the client.
+  "karos-tiktok-agent": "tiktok-agent",
 };
 
 export function resolveAgentEngineProductIdForCustomAgent(agentKey: string): string | undefined {

@@ -16,14 +16,7 @@ import {
 } from "@/lib/data";
 import { listClientAgents, updateClientAgent } from "@/lib/data-client-agents";
 import type { PlannedScheduledRun } from "@/lib/types";
-import {
-  containsLabJargon,
-  defaultInstructionsFor,
-  fetchSkillFrontmatter,
-  isCustomAgentImportConfigured,
-  listCustomAgentImportCandidates,
-  type CustomAgentImportCandidate,
-} from "@/lib/agent-service/custom-agent-import";
+import { containsLabJargon } from "@/lib/agent-copy-rules";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
@@ -316,125 +309,6 @@ export async function deleteCustomAgentAction(id: string): Promise<{ error?: str
 }
 
 /* ─────────────────────────── import flow ────────────────────────── */
-
-export async function listCustomAgentImportCandidatesAction(): Promise<{
-  candidates?: Array<CustomAgentImportCandidate & { imported: boolean }>;
-  repoSha?: string;
-  error?: string;
-}> {
-  await requireAdmin();
-  if (!isCustomAgentImportConfigured()) {
-    return { error: "Set AGENTS_REPO_GITHUB_TOKEN to import agents from the karos-agents repo." };
-  }
-  try {
-    const [{ candidates, repoSha }, existing] = await Promise.all([
-      listCustomAgentImportCandidates(),
-      listCustomAgents(),
-    ]);
-    const importedKeys = new Set(existing.map((a) => a.key));
-    return {
-      ...(repoSha ? { repoSha } : {}),
-      candidates: candidates.map((c) => ({ ...c, imported: importedKeys.has(c.key) })),
-    };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Could not scan the agents repo." };
-  }
-}
-
-export async function importCustomAgentsAction(
-  keys: string[],
-): Promise<{ imported?: number; skipped?: number; flagged?: number; error?: string }> {
-  const user = await requireAdmin();
-  if (!isCustomAgentImportConfigured()) {
-    return { error: "Set AGENTS_REPO_GITHUB_TOKEN to import agents from the karos-agents repo." };
-  }
-  if (keys.length === 0) return { error: "Pick at least one agent to import." };
-
-  let candidates: CustomAgentImportCandidate[];
-  let repoSha: string | undefined;
-  try {
-    const scan = await listCustomAgentImportCandidates();
-    candidates = scan.candidates;
-    repoSha = scan.repoSha;
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Could not scan the agents repo." };
-  }
-  const byKey = new Map(candidates.map((c) => [c.key, c]));
-
-  let imported = 0;
-  let skipped = 0;
-  let flagged = 0;
-  for (const key of keys) {
-    const candidate = byKey.get(key);
-    if (!candidate) {
-      skipped++;
-      continue;
-    }
-    // The catalog is hand-maintained — never trust a path from it further than
-    // one we'd accept from the editor form.
-    if (
-      !SKILL_DIR_RE.test(candidate.entrySkillDir) ||
-      candidate.entrySkillDir.length > MAX_SKILL_DIR_CHARS ||
-      candidate.key.length > MAX_KEY_CHARS
-    ) {
-      skipped++;
-      continue;
-    }
-    if (await getCustomAgentByKey(key)) {
-      skipped++; // already imported — edit the existing agent instead of overwriting
-      continue;
-    }
-    // SKILL.md frontmatter gives the richest description; the catalog is the fallback.
-    const frontmatter = await fetchSkillFrontmatter(candidate.entrySkillDir);
-    const appearance = GROUP_APPEARANCE[candidate.group] ?? GROUP_APPEARANCE.Other;
-    const now = Date.now();
-    const description = (frontmatter.description || candidate.description).slice(0, 600);
-    // A manifest blurb is NEVER promoted to the client-facing one, however clean
-    // it looks. LAB_JARGON_RE is allow-by-default — five patterns cannot decide
-    // whether prose was written for a client, and the strings this finding was
-    // raised over ("parameterized clone of the proven reference engine",
-    // "pixel-verifiable and gated") sail through it. Promoting on a clean scan
-    // would also clear the "No client blurb" badge, so nobody would ever be
-    // prompted to rewrite them. Every import lands flagged; an admin writes the
-    // blurb in the editor, where the jargon guard does apply to what they type.
-    flagged++;
-    await createCustomAgent({
-      key: candidate.key,
-      name: candidate.name.slice(0, MAX_NAME_CHARS),
-      description,
-      clientBlurb: null,
-      icon: appearance.icon,
-      color: appearance.color,
-      entrySkillDir: candidate.entrySkillDir,
-      skillRoots: [],
-      includeClientSkills: true,
-      instructions: defaultInstructionsFor(candidate, frontmatter.description),
-      creditCost: null,
-      // Blocked/unreviewed skills import disabled so nobody fires them by accident;
-      // an admin flips the switch after reviewing the blocked_reason.
-      enabled: candidate.status === "ready",
-      source: {
-        path: candidate.entrySkillDir,
-        status: candidate.status,
-        // The candidate carries it camelCased (the scan maps the manifest's
-        // `blocked_reason` in custom-agent-import.ts); the stored field keeps the
-        // manifest's own spelling. Without this the UI can only say "blocked",
-        // which reads as a broken build when it usually means an egress
-        // constraint or an unrun pilot.
-        ...(candidate.blockedReason ? { blocked_reason: candidate.blockedReason } : {}),
-        ...(repoSha ? { repoSha } : {}),
-      },
-      createdBy: user.uid,
-      createdAt: now,
-      updatedAt: now,
-    });
-    imported++;
-  }
-  revalidatePath("/agents");
-  return { imported, skipped, flagged };
-}
-
-/* ───────────────────── per-client agent access ──────────────────── */
 
 export async function setClientCustomAgentsAction(
   clientId: string,

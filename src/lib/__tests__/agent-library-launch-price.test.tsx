@@ -28,8 +28,6 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/actions", () => ({
   createCustomAgentAction: vi.fn(),
   deleteCustomAgentAction: vi.fn(),
-  importCustomAgentsAction: vi.fn(),
-  listCustomAgentImportCandidatesAction: vi.fn(),
   runCustomAgentAction: vi.fn(),
   runCustomAgentTestAction: vi.fn(),
   setClientCustomAgentsAction: vi.fn(),
@@ -81,8 +79,7 @@ function libraryMarkup(agents: CustomAgent[]): string {
       agents={agents}
       clients={[{ id: "c1", name: "Acme", agentsRepoSlug: "acme" }]}
       isAdmin
-      importConfigured
-      serviceConfigured
+            serviceConfigured
     />,
   );
 }

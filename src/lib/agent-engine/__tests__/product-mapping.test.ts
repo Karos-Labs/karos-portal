@@ -50,15 +50,6 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
     expect(resolveAgentEngineProductIdForCustomAgent("branded-shorts")).toBe("branded-shorts-agent");
   });
 
-  it("does NOT route the TikTok agent anywhere", () => {
-    // There is no `tiktok-agent` product id, so mapping to one would make
-    // every TikTok job fail on an unresolvable product instead of running
-    // where it works today. And it is not branded-shorts under another name:
-    // branded-shorts is e18 (one talking-head video into one vertical short),
-    // the TikTok agent is the podcast/commentary clip system. Pointing it at
-    // branded-shorts-agent would quietly run a different product.
-    expect(resolveAgentEngineProductIdForCustomAgent("karos-tiktok-agent")).toBeUndefined();
-  });
 
   it("only ever maps to a product id the engine can resolve", () => {
     // The guard against the whole class of mistake above. Mirrors
@@ -67,12 +58,14 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "x-agent", "instagram-agent", "linkedin-agent", "reddit-agent", "blog-agent",
       "newsletter-agent", "campaign-orchestrator", "landing-builder-agent",
       "branded-shorts-agent", "reputation-agent", "seo-geo-agent", "intel-report-agent",
-      "linkedin-setup-agent", "reddit-setup-agent",
+      "linkedin-setup-agent", "reddit-setup-agent", "tiktok-agent",
     ]);
     for (const key of [
       "karos-x-agent-v2", "karos-linkedin-writer-v2", "karos-reddit-runner",
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
-      "landing-builder", "branded-shorts",
+      "landing-builder", "branded-shorts", "karos-blog-writer-v2",
+      "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
+      "karos-tiktok-agent",
     ]) {
       const productId = resolveAgentEngineProductIdForCustomAgent(key);
       expect(KNOWN.has(productId!), `${key} -> ${productId}`).toBe(true);
@@ -100,6 +93,15 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
     expect(resolveAgentEngineProductIdForCustomAgent("seo-geo-agent-v2")).toBe("seo-geo-agent");
   });
 
+  it("routes the TikTok agent to its own clip workflow, never to branded-shorts", () => {
+    // The two are different products: branded-shorts turns one talking-head
+    // video into one short, tiktok-agent clips a moment out of someone else's
+    // long-form episode. Pointing this at branded-shorts-agent was the
+    // tempting shortcut while no tiktok-agent existed.
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-tiktok-agent")).toBe("tiktok-agent");
+    expect(resolveAgentEngineProductIdForCustomAgent("branded-shorts")).toBe("branded-shorts-agent");
+  });
+
   it("leaves the manager variants and the agents with no engine workflow on agent-service", () => {
     // The managers are the structural blocker, not an oversight:
     // karos-linkedin-manager-v2 runs on two clocks and rewrites the
@@ -117,7 +119,6 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "karos-newsletter-setup-v2",
       "karos-reputation-setup",
       "karos-compliance-lock-v2",
-      "karos-tiktok-agent",
     ]) {
       expect(resolveAgentEngineProductIdForCustomAgent(key), key).toBeUndefined();
     }
