@@ -4,6 +4,7 @@ import { isAgentEngineDispatchEnabled, dispatchAgentEngineRun } from "@/lib/agen
 import {
   isClientEnabledForEngineCustomAgents,
   resolveAgentEngineProductIdForCustomAgent,
+  resolveAgentEngineRunKind,
   toEngineRunInput,
 } from "@/lib/agent-engine/product-mapping";
 import { normalizeDashes } from "@/lib/text-utils";
@@ -682,7 +683,7 @@ export async function submitCustomAgentJob(
       clientId: input.clientId,
       clientSlug: client.agentsRepoSlug!,
       productId: engineProductId,
-      runKind: "recurring",
+      runKind: resolveAgentEngineRunKind(engineProductId),
       agentName: agent.name,
       title: jobTitleForClient(agent.name, client.name),
       // What the person actually asked for, allow-listed down to the keys the

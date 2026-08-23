@@ -3,6 +3,7 @@ import {
   isClientEnabledForEngineCustomAgents,
   resolveAgentEngineProductId,
   resolveAgentEngineProductIdForCustomAgent,
+  resolveAgentEngineRunKind,
   toEngineRunInput,
 } from "../product-mapping";
 
@@ -190,4 +191,21 @@ describe("isClientEnabledForEngineCustomAgents", () => {
     const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "karos" };
     expect(isClientEnabledForEngineCustomAgents("karoslabs", env)).toBe(false);
   });
+});
+
+describe("resolveAgentEngineRunKind", () => {
+  it("sends landing-builder a first build, not a rebuild", () => {
+    // agent-engine's landing-builder reads runKind "recurring" as MODE=rebuild
+    // and blocks on a feedback round. Verified in prep: the same brief resolves
+    // to blocked_intake as "recurring" and reaches the copy/compose stages as
+    // "setup".
+    expect(resolveAgentEngineRunKind("landing-builder-agent")).toBe("setup");
+  });
+
+  it("leaves every other product on recurring", () => {
+    for (const productId of ["x-agent", "instagram-agent", "branded-shorts-agent", "linkedin-agent", "reddit-agent"]) {
+      expect(resolveAgentEngineRunKind(productId), productId).toBe("recurring");
+    }
+  });
+
 });

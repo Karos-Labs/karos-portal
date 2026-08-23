@@ -96,6 +96,34 @@ export function resolveAgentEngineProductIdForCustomAgent(agentKey: string): str
 }
 
 /**
+ * Which `runKind` a dispatch to this product should carry.
+ *
+ * `"recurring"` for everything, with one exception that is not cosmetic:
+ * `landing-builder-agent` treats `runKind === "recurring"` as MODE=rebuild —
+ * "apply the one feedback delta" — and its own doc comment says so outright.
+ * A rebuild needs a `feedback-round.json` for the next round number, and if
+ * one isn't in the bundle the run resolves to `blocked_intake`.
+ *
+ * This portal has no feedback-round concept anywhere in it, so the only thing
+ * a landing-page job here can possibly mean is a fresh build. Sending
+ * `"recurring"` meant every landing job blocked on a feedback round that
+ * nothing in this codebase can produce — and because the first build never
+ * happened, no later run could ever have a prior site to rebuild either.
+ * Verified both directions against prep: the same brief blocks as
+ * `"recurring"` and proceeds to the copy/compose stages as `"setup"`.
+ *
+ * Only `landing-builder-agent` and `seo-geo-agent` branch on `runKind` engine-
+ * side at all, and seo-geo is not reachable from either submit path, so this
+ * changes nothing else.
+ *
+ * When the portal grows a real "here is my feedback on round N" surface, this
+ * is the function that should start returning `"recurring"` for it.
+ */
+export function resolveAgentEngineRunKind(productId: string): "setup" | "recurring" {
+  return productId === "landing-builder-agent" ? "setup" : "recurring";
+}
+
+/**
  * The subset of a custom agent's brief that agent-engine understands as a
  * per-run request (`WorkflowContext.input`).
  *

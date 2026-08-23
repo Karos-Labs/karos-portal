@@ -12,7 +12,7 @@ import type { AppUser, ManagedTaskType } from "@/lib/types";
 import { logActivity } from "@/lib/actions/_shared";
 import { managedRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
-import { resolveAgentEngineProductId } from "@/lib/agent-engine/product-mapping";
+import { resolveAgentEngineProductId, resolveAgentEngineRunKind } from "@/lib/agent-engine/product-mapping";
 import { isAgentEnginePubSubConfigured } from "@/lib/agent-engine/pubsub-client";
 import { dispatchAgentEngineRun, isAgentEngineDispatchEnabled } from "@/lib/agent-engine/dispatch";
 
@@ -107,7 +107,7 @@ export async function submitManagedJob(
       clientId: input.clientId,
       clientSlug: client.agentsRepoSlug,
       productId: agentEngineProductId,
-      runKind: "recurring",
+      runKind: resolveAgentEngineRunKind(agentEngineProductId),
       agentName: label,
       title: jobTitleForClient(label, client.name),
       inputs: input.brief,
