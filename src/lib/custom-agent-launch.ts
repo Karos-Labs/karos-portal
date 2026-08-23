@@ -1400,6 +1400,63 @@ export function groupAgentsByParent<T extends AgentListingFields & { name: strin
  */
 export const ADD_SEAT_OPTION_VALUE = "__add_seat__";
 
+/** The run-dialog key carrying the person's own direction for this run. */
+export const CUSTOM_PROMPT_FIELD_KEY = "customPrompt";
+/** The run-dialog key carrying attached source media, as a JSON array. */
+export const MEDIA_ASSETS_FIELD_KEY = "mediaAssets";
+
+/**
+ * Which engine products work FROM a piece of media rather than producing one.
+ *
+ * Only these get the attachment field, because for everything else there is no
+ * slot to put a video in and offering one would be offering a control that
+ * silently does nothing.
+ */
+const MEDIA_DEPENDENT_PRODUCTS = new Set(["instagram-agent", "branded-shorts-agent", "tiktok-agent"]);
+
+/**
+ * Adds the two run-scoped inputs agent-engine understands from any agent: a
+ * free-text direction, and — for the media products — the source asset.
+ *
+ * Appended at dialog-build time rather than written into each profile for the
+ * same reason `withLinkedInIdentityOptions` exists: the fields depend on
+ * something the profile does not know (which engine product this agent routes
+ * to), and thirteen copies of the same two fields is thirteen chances for one
+ * to drift.
+ *
+ * `customPrompt` is never `required`. Blank means "use the client's standing
+ * strategy", which is the normal case and the only sane default for a
+ * scheduled run that has nobody typing at it.
+ */
+export function withEngineRunFields(
+  profile: AgentLaunchProfile,
+  engineProductId: string | undefined,
+): AgentLaunchProfile {
+  if (!engineProductId) return profile;
+
+  const extra: AgentBriefField[] = [];
+  if (!profile.fields.some((f) => f.key === CUSTOM_PROMPT_FIELD_KEY)) {
+    extra.push({
+      key: CUSTOM_PROMPT_FIELD_KEY,
+      label: "Direction for this run (optional)",
+      type: "textarea",
+      placeholder: "Leave blank to follow this client's saved strategy.",
+      helper: "How to treat the topic this time — an angle to take, something to avoid, a tone to hit.",
+    });
+  }
+  if (MEDIA_DEPENDENT_PRODUCTS.has(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
+    extra.push({
+      key: MEDIA_ASSETS_FIELD_KEY,
+      label: "Source media",
+      type: "textarea",
+      placeholder: '[{"uri": "gs://bucket/episode.mp4", "role": "source"}]',
+      helper: "A gs:// or https:// URI per asset. This agent works from media rather than producing it.",
+    });
+  }
+  if (extra.length === 0) return profile;
+  return { ...profile, fields: [...profile.fields, ...extra] };
+}
+
 export function withLinkedInIdentityOptions(
   profile: AgentLaunchProfile,
   // `voiceReady` optional because the intake view's own field is: props built

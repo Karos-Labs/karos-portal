@@ -162,18 +162,70 @@ export function resolveAgentEngineRunKind(productId: string): "setup" | "recurri
  * that has one (generic, X, LinkedIn, Reddit — see `submit-custom.ts`'s
  * `runLabel`), and it becomes the run's requested topic.
  */
-export function toEngineRunInput(briefValues: Record<string, string> | undefined): Record<string, string> {
+export function toEngineRunInput(briefValues: Record<string, string> | undefined): Record<string, unknown> {
   if (!briefValues) return {};
 
-  const input: Record<string, string> = {};
+  const input: Record<string, unknown> = {};
   const request = briefValues["request"]?.trim();
   if (request) input.requestedTopic = request;
+
+  // The run's own direction, in the person's words. Distinct from `request`,
+  // which is the topic: this is how to treat it. Left blank it is absent
+  // rather than empty, because an agent handed "" would have to decide for
+  // itself whether that meant "no direction" or "no strategy", and the answer
+  // is always the first.
+  const customPrompt = briefValues["customPrompt"]?.trim();
+  if (customPrompt) input.customPrompt = customPrompt;
+
+  // Attachments arrive as a JSON array from the dialog, because a form field
+  // carries strings. Parsed and re-validated here rather than forwarded raw:
+  // a malformed attachment should be dropped at the boundary, not become an
+  // engine-side surprise on a run someone is waiting for.
+  const mediaAssets = parseMediaAssets(briefValues["mediaAssets"]);
+  if (mediaAssets.length > 0) input.mediaAssets = mediaAssets;
 
   for (const key of ["requestedLane", "requestedArchetype", "requestedSubreddit", "requestedThreadUrl", "requestedThreadTitle"] as const) {
     const value = briefValues[key]?.trim();
     if (value) input[key] = value;
   }
   return input;
+}
+
+/** The asset roles agent-engine understands (`MediaAssetSchema` in its core package). */
+const MEDIA_ROLES = new Set(["source", "reference", "logo", "overlay"]);
+
+/**
+ * Attachments the engine will accept, and nothing else.
+ *
+ * Only `gs://` and `https://` are allowed through. A local path would be
+ * meaningless to a container that has never seen this machine's disk, and
+ * anything else is a caller sending something we have no reason to forward.
+ */
+export function parseMediaAssets(raw: string | undefined): Array<Record<string, string>> {
+  if (!raw?.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  const out: Array<Record<string, string>> = [];
+  for (const candidate of parsed) {
+    if (typeof candidate !== "object" || candidate === null) continue;
+    const entry = candidate as Record<string, unknown>;
+    const uri = typeof entry.uri === "string" ? entry.uri.trim() : "";
+    if (!uri.startsWith("gs://") && !uri.startsWith("https://")) continue;
+    const role = typeof entry.role === "string" && MEDIA_ROLES.has(entry.role) ? entry.role : "source";
+    out.push({
+      uri,
+      role,
+      ...(typeof entry.contentType === "string" && entry.contentType ? { contentType: entry.contentType } : {}),
+      ...(typeof entry.label === "string" && entry.label ? { label: entry.label } : {}),
+    });
+  }
+  return out;
 }
 
 /**

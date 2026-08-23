@@ -44,6 +44,18 @@ export interface AgentStage {
   description: string | null;
   /** A gate pauses for a human — the difference between finishing and waiting. */
   isGate: boolean;
+  /** Only an `"ai"` stage calls a model, so only an `"ai"` stage can carry a `modelId`. */
+  kind: "ai" | "code" | "gate";
+  /**
+   * A model id from the normalized catalog, overriding what this stage is
+   * compiled to use. Null means "leave the stage alone".
+   *
+   * Settable even when `stagesReadOnly` is true, and the distinction matters:
+   * the stage LIST is compiled TypeScript and editing it here would describe a
+   * program that does not exist, but which model a stage runs on is
+   * configuration the engine reads per run.
+   */
+  modelId: string | null;
 }
 
 export interface AgentInputDef {
@@ -207,6 +219,8 @@ function toAgent(row: Row): MiddlewareAgent {
             label: str(f.label),
             description: strOrNull(f.description),
             isGate: f.is_gate === true,
+            kind: f.kind === "ai" || f.kind === "gate" ? f.kind : "code",
+            modelId: typeof f.model_id === "string" ? f.model_id : null,
           };
         })
       : [],
@@ -343,6 +357,8 @@ export interface AgentPatch {
   modelParams?: Record<string, unknown>;
   config?: Record<string, unknown>;
   tags?: string[];
+  /** The whole stage list. PATCH replaces it, so a caller sends every stage, not a delta. */
+  stages?: AgentStage[];
 }
 
 /**
@@ -360,6 +376,16 @@ export async function updateAgent(agentRef: string, patch: AgentPatch): Promise<
   if (patch.modelParams !== undefined) body.model_params = patch.modelParams;
   if (patch.config !== undefined) body.config = patch.config;
   if (patch.tags !== undefined) body.tags = patch.tags;
+  if (patch.stages !== undefined) {
+    body.stages = patch.stages.map((stage) => ({
+      id: stage.id,
+      label: stage.label,
+      description: stage.description,
+      is_gate: stage.isGate,
+      kind: stage.kind,
+      model_id: stage.modelId,
+    }));
+  }
 
   return toAgent(obj(await middlewareFetch(`/agents/${ref(agentRef)}`, { method: "PATCH", body })));
 }

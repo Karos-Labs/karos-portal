@@ -239,6 +239,51 @@ export async function promoteFeedbackAction(
  * storing it would produce an agent that fails at dispatch instead of at the
  * moment someone chose it.
  */
+/**
+ * Point ONE stage at its own model, or clear it back to the stage's default.
+ *
+ * Separate from `setAgentModelAction` because they answer different questions.
+ * The agent-level model is what the whole workflow runs on; this is a stage
+ * that wants something else — a classification step that does not need the
+ * expensive model, or a drafting step that does.
+ *
+ * Sends the whole stage list because the middleware PATCH replaces it rather
+ * than merging, so a partial list would silently delete the stages it omitted.
+ * The list comes from the agent as it is right now, edited in one place.
+ */
+export async function setStageModelAction(
+  agentRef: string,
+  stageId: string,
+  modelId: string | null,
+): Promise<Result<{ stageId: string; modelId: string | null }>> {
+  return run(async () => {
+    const agent = await getAgent(agentRef);
+    const stage = agent.stages.find((s) => s.id === stageId);
+    if (!stage) throw new Error(`"${stageId}" is not a stage of this agent.`);
+    if (stage.kind !== "ai") {
+      // Offering the control on a code step would be offering a setting that
+      // does nothing, which is worse than not offering it.
+      throw new Error(`"${stage.label}" does not call a model, so it has no model to set.`);
+    }
+
+    if (modelId !== null) {
+      const catalog = await listModels({ limit: 200 });
+      const chosen = catalog.items.find((m) => m.modelId === modelId);
+      if (!chosen) throw new Error(`"${modelId}" is not in the model catalog.`);
+      if (chosen.availability !== "available") {
+        throw new Error(
+          `${chosen.displayName} is not enabled in this environment. Use "Request access" instead of selecting it.`,
+        );
+      }
+    }
+
+    const stages = agent.stages.map((s) => (s.id === stageId ? { ...s, modelId } : s));
+    const updated = await updateAgent(agentRef, { stages });
+    const saved = updated.stages.find((s) => s.id === stageId);
+    return { stageId, modelId: saved?.modelId ?? null };
+  });
+}
+
 export async function setAgentModelAction(
   agentRef: string,
   modelId: string,

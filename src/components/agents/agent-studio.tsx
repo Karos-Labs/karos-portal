@@ -9,6 +9,7 @@ import {
   requestModelAccessAction,
   savePromptVersionAction,
   setAgentModelAction,
+  setStageModelAction,
   setAgentStatusAction,
 } from "@/lib/actions/control-plane-actions";
 import { feedbackStatusLabel } from "@/lib/feedback-status-copy";
@@ -96,7 +97,7 @@ export function AgentStudio({
         </div>
       </Card>
 
-      <StagesPanel agent={agent} />
+      <StagesPanel agent={agent} models={models} pending={pending} apply={apply} />
       <ModelPanel agent={agent} models={models} pending={pending} apply={apply} />
       <PromptPanel agent={agent} activePrompt={activePrompt} history={promptHistory} pending={pending} apply={apply} />
       <TemplatePanel agent={agent} templates={templates} pending={pending} apply={apply} />
@@ -117,7 +118,17 @@ export function AgentStudio({
  * The ids match a run's step trace on purpose: comparing the two is how
  * someone finds where a run stopped.
  */
-function StagesPanel({ agent }: { agent: MiddlewareAgent }) {
+function StagesPanel({
+  agent,
+  models,
+  pending,
+  apply,
+}: {
+  agent: MiddlewareAgent;
+  models: MiddlewareModel[];
+  pending: boolean;
+  apply: Apply;
+}) {
   if (agent.stages.length === 0) {
     return (
       <Card className="p-6">
@@ -146,10 +157,71 @@ function StagesPanel({ agent }: { agent: MiddlewareAgent }) {
             <span className="text-sm">{stage.label}</span>
             <code className="text-xs opacity-50">{stage.id}</code>
             {stage.isGate && <Badge tone="warning">waits for a human</Badge>}
+            {stage.kind === "ai" && (
+              <StageModelPicker agent={agent} stage={stage} models={models} pending={pending} apply={apply} />
+            )}
           </li>
         ))}
       </ol>
     </Card>
+  );
+}
+
+/**
+ * One stage's own model.
+ *
+ * Rendered only on `"ai"` stages, because a code step has no model to set and
+ * a disabled control that explains itself is still a control someone has to
+ * read past.
+ *
+ * "Agent default" is the empty option rather than a repeat of the agent-level
+ * model id: the point of leaving a stage unset is that it FOLLOWS the agent,
+ * so naming the current default here would make it look pinned, and it would
+ * go stale the moment the agent-level model changed.
+ *
+ * The stage list is read-only above and this is not, which looks like a
+ * contradiction and is not: the list is compiled TypeScript, and editing it
+ * here would describe a program that does not exist. Which model a stage runs
+ * on is configuration the engine reads per run.
+ */
+function StageModelPicker({
+  agent,
+  stage,
+  models,
+  pending,
+  apply,
+}: {
+  agent: MiddlewareAgent;
+  stage: MiddlewareAgent["stages"][number];
+  models: MiddlewareModel[];
+  pending: boolean;
+  apply: Apply;
+}) {
+  return (
+    <label className="ml-auto flex items-center gap-2">
+      <span className="text-xs opacity-60">Model</span>
+      <Select
+        aria-label={`Model for ${stage.label}`}
+        value={stage.modelId ?? ""}
+        disabled={pending}
+        onChange={(e) => {
+          const next = e.target.value === "" ? null : e.target.value;
+          apply(
+            () => setStageModelAction(agent.slug, stage.id, next),
+            next === null ? `${stage.label} follows the agent default again` : `${stage.label} now runs on ${next}`,
+          );
+        }}
+      >
+        <option value="">Agent default</option>
+        {models.map((m) => (
+          <option key={m.modelId} value={m.modelId} disabled={m.availability !== "available"}>
+            {m.displayName}
+            {m.availability === "not_enabled" ? " — not enabled here" : ""}
+            {m.availability === "retired" ? " — retired" : ""}
+          </option>
+        ))}
+      </Select>
+    </label>
   );
 }
 

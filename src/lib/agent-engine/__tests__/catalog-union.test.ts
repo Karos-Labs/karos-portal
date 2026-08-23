@@ -78,8 +78,8 @@ describe("buildEngineAgentCards", () => {
         creditCost: 6,
         model: "claude-sonnet-4-6-on-vertex",
         stages: [
-          { id: "00-intake-check", label: "Intake check", description: null, isGate: false },
-          { id: "15-batch-review", label: "Human review", description: null, isGate: true },
+          { id: "00-intake-check", label: "Intake check", description: null, isGate: false, kind: "ai" as const, modelId: null },
+          { id: "15-batch-review", label: "Human review", description: null, isGate: true, kind: "gate" as const, modelId: null },
         ],
       }),
     ]);

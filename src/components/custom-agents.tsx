@@ -1,4 +1,5 @@
 "use client";
+import { resolveAgentEngineProductIdForCustomAgent } from "@/lib/agent-engine/product-mapping";
 
 import { type ComponentProps, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
@@ -61,6 +62,7 @@ import {
   isLinkedInAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
+  withEngineRunFields,
   perClientAgentSlug,
   withLinkedInIdentityOptions,
   ADD_SEAT_OPTION_VALUE,
@@ -2225,10 +2227,14 @@ export function RunCustomAgentModal({
   // rather than a fixed list, so the profile is specialized before anything
   // renders or seeds from it. A no-op for every other agent: the helper returns
   // the profile untouched when it carries no identity field.
-  const profile =
+  // Two layers of the same idea: a profile is the agent's own brief shape,
+  // then extended with fields that depend on things the profile cannot know —
+  // this client's LinkedIn seats, and which engine product the agent routes to.
+  const baseProfile =
     setup?.kind === "linkedin"
       ? withLinkedInIdentityOptions(launchProfileFor(agent), setup.data.seats)
       : launchProfileFor(agent);
+  const profile = withEngineRunFields(baseProfile, resolveAgentEngineProductIdForCustomAgent(agent.key));
   const [fields, setFields] = useState<Record<string, string>>(() => initialAgentBrief(profile));
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   // Has anyone put work into the brief that a stray click would throw away?

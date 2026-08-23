@@ -130,6 +130,66 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
   });
 });
 
+describe("toEngineRunInput — custom prompt and media", () => {
+  it("carries a typed direction through as customPrompt", () => {
+    expect(toEngineRunInput({ customPrompt: "  lean harder on the counterpoint  " })).toEqual({
+      customPrompt: "lean harder on the counterpoint",
+    });
+  });
+
+  it("omits a blank direction entirely rather than sending an empty string", () => {
+    // An agent handed "" would have to decide whether that means "no
+    // direction" or "no strategy". Absent means the first, unambiguously.
+    expect(toEngineRunInput({ customPrompt: "   " })).toEqual({});
+  });
+
+  it("parses attached media and defaults the role to source", () => {
+    const out = toEngineRunInput({
+      mediaAssets: JSON.stringify([{ uri: "gs://bucket/ep12.mp4" }]),
+    });
+    expect(out.mediaAssets).toEqual([{ uri: "gs://bucket/ep12.mp4", role: "source" }]);
+  });
+
+  it("keeps a recognized role, contentType and label", () => {
+    const out = toEngineRunInput({
+      mediaAssets: JSON.stringify([
+        { uri: "https://cdn.example.com/logo.png", role: "logo", contentType: "image/png", label: "Primary mark" },
+      ]),
+    });
+    expect(out.mediaAssets).toEqual([
+      { uri: "https://cdn.example.com/logo.png", role: "logo", contentType: "image/png", label: "Primary mark" },
+    ]);
+  });
+
+  it("drops anything that is not a gs:// or https:// asset", () => {
+    // A local path is meaningless to a container that has never seen this
+    // machine's disk, and the rest is a caller sending something we have no
+    // reason to forward.
+    const out = toEngineRunInput({
+      mediaAssets: JSON.stringify([
+        { uri: "/tmp/local.mp4" },
+        { uri: "file:///etc/passwd" },
+        { role: "source" },
+        "not-an-object",
+        { uri: "gs://bucket/keep.mp4" },
+      ]),
+    });
+    expect(out.mediaAssets).toEqual([{ uri: "gs://bucket/keep.mp4", role: "source" }]);
+  });
+
+  it("falls back to an unknown role rather than forwarding it", () => {
+    const out = toEngineRunInput({
+      mediaAssets: JSON.stringify([{ uri: "gs://b/x.mp4", role: "wallpaper" }]),
+    });
+    expect(out.mediaAssets).toEqual([{ uri: "gs://b/x.mp4", role: "source" }]);
+  });
+
+  it("survives malformed JSON without failing the dispatch", () => {
+    expect(toEngineRunInput({ mediaAssets: "{not json" })).toEqual({});
+    expect(toEngineRunInput({ mediaAssets: '"a string"' })).toEqual({});
+  });
+});
+
 describe("toEngineRunInput", () => {
   it("carries the portal's primary brief field through as the requested topic", () => {
     expect(toEngineRunInput({ request: "post about our pricing change" })).toEqual({
