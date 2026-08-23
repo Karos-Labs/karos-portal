@@ -104,8 +104,23 @@ substitutions:
   # being migrated and a CLIENT being ready are different facts. Every
   # production client is granted the X agent; only the ones with engine-side
   # context (an xHandle, a strategy document) can actually run there, and the
-  # rest must keep working on agent-service. Empty = nobody (production: empty until a client is deliberately cut over).
-  _AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: ""
+  # rest must keep working on agent-service.
+  #
+  # This default IS the production value, and it is here rather than passed in
+  # from a workflow variable on purpose. It used to default to "" while the
+  # real value was set by hand on the Cloud Run revision, so every promote
+  # silently reset the cutover to nobody: on 2026-08-23 a promote did exactly
+  # that, taking karoslabs off agent-engine without failing anything. Empty is
+  # a legal value meaning "nobody", so nothing could detect the difference
+  # between "wiped" and "deliberately off" — which is why the value lives in
+  # version control now, where changing who is cut over is a reviewable diff.
+  #
+  # Add a client here only once its engine-side context exists (client/config
+  # with the channel identity its agents read, and any strategy documents).
+  # Comma-separated agentsRepoSlug values, or "*" for every client -- note "*",
+  # not "all": any other literal is read as a one-entry client list and matches
+  # nobody.
+  _AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "karoslabs"
 
 options:
   logging: CLOUD_LOGGING_ONLY

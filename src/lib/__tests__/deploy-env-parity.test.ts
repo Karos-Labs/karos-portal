@@ -88,4 +88,27 @@ describe("deploy config env parity", () => {
       expect(undeclared, `${file} references undeclared substitutions`).toEqual([]);
     }
   });
+
+  it("the promote carries a real value for every var whose empty value silently disables something", () => {
+    // A THIRD failure mode, distinct from the two above. The variable name is
+    // present in --set-env-vars, so the parity check passes; what is empty is
+    // the SUBSTITUTION DEFAULT behind it, and the promote passes no value for
+    // it, so production gets the name bound to "".
+    //
+    // On 2026-08-23 that took karoslabs off agent-engine during a routine
+    // promote. Nothing failed: empty is a legal value for this variable
+    // meaning "no client is cut over", so the fleet quietly reverted to
+    // agent-service and every health check stayed green.
+    //
+    // Only variables where empty means "off" belong here. A variable that is
+    // genuinely optional, or whose value truly differs per deploy, does not.
+    const mustNotBeEmpty = ["_AGENT_ENGINE_CUSTOM_AGENT_CLIENTS"];
+    const text = readFileSync(resolve(process.cwd(), "cloudbuild.promote.yaml"), "utf8");
+    for (const key of mustNotBeEmpty) {
+      const match = text.match(new RegExp(`^ {2}${key}: *(.*)$`, "m"));
+      expect(match, `cloudbuild.promote.yaml must declare ${key}`).not.toBeNull();
+      const value = match![1]!.trim().replace(/^["']|["']$/g, "");
+      expect(value, `${key} must not default to empty — empty silently disables it in production`).not.toBe("");
+    }
+  });
 });
