@@ -989,11 +989,24 @@ export function CustomAgentsHub({
                     const facts = controlPlane?.get(agent.key);
                     if (!facts) return null;
                     return (
-                      <Badge tone={facts.status === "active" ? "info" : "warning"}>
-                        {facts.activePromptVersion === null
-                          ? "Control plane · no prompt"
-                          : `Control plane · prompt v${facts.activePromptVersion}`}
-                      </Badge>
+                      <>
+                        <Badge tone={facts.status === "active" ? "info" : "warning"}>
+                          {facts.activePromptVersion === null
+                            ? "Control plane · no prompt"
+                            : `Control plane · prompt v${facts.activePromptVersion}`}
+                        </Badge>
+                        {/* The same destination an engine-only agent's card
+                            offers. A library agent with a control-plane twin
+                            has prompt versions, a model and template bindings
+                            too; without this the only way to reach them was to
+                            know the console's URL. */}
+                        <Link
+                          href={`/admin/agents/control-plane?agent=${encodeURIComponent(facts.agentId)}`}
+                          className="text-xs underline decoration-dotted opacity-70 hover:text-neon hover:opacity-100"
+                        >
+                          Edit in Studio
+                        </Link>
+                      </>
                     );
                   })()}
                   {/* No client blurb ⇒ every client surface for this agent is
