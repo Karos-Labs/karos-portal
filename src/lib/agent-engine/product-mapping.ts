@@ -70,16 +70,32 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, string>> = {
   "karos-reddit-setup": "reddit-setup-agent",
   // Three more whose engine workflows already exist.
   //
-  // instagram-agent and branded-shorts-agent route correctly but cannot
-  // finish yet: the first holds at image vetting until UNSPLASH_ACCESS_KEY is
-  // provisioned, and the second needs BRANDED_SHORTS_ENGINE_DIR for its video
-  // tools. Both fail honestly rather than wrongly, and the per-client gate
-  // means neither routes for any client until someone opts that client in --
-  // so this is the mapping landing ahead of the prerequisites, not instead of
-  // them.
+  // instagram-agent and branded-shorts-agent route correctly but do not finish
+  // for a client whose engine-side workspace is not populated: verified in
+  // prep, instagram-agent `held` at 03-claim-topic on an empty topics catalog
+  // and branded-shorts-agent `blocked_intake` at 00-brand-resolve with no
+  // brandedShortsProfilePath on file. (Both stop there BEFORE reaching the
+  // unprovisioned UNSPLASH_ACCESS_KEY / BRANDED_SHORTS_ENGINE_DIR, so those
+  // are still missing but are not the current blocker.) Both fail honestly
+  // rather than wrongly, and the per-client gate means neither routes for
+  // anyone until that client is opted in -- so this is the mapping landing
+  // ahead of the per-client data, not instead of it.
   "karos-instagram-agent": "instagram-agent",
   "landing-builder": "landing-builder-agent",
   "branded-shorts": "branded-shorts-agent",
+  // The three remaining drafting agents whose engine workflows were built and
+  // sitting idle. Same shape as the writers above: one portal agent, one
+  // engine product, drafting only.
+  "karos-blog-writer-v2": "blog-agent",
+  "karos-newsletter-writer-v2": "newsletter-agent",
+  "karos-reputation-runner": "reputation-agent",
+  // seo-geo-agent-v2 closes a split rather than opening a new route: the
+  // engine's seo-geo-agent was ALREADY running in production, dispatched from
+  // dispatch-research-agents.ts, while this custom agent went on running the
+  // agent-service implementation. One client could get two different
+  // implementations depending on which surface they came through. Both now
+  // land on the same workflow.
+  "seo-geo-agent-v2": "seo-geo-agent",
   //
   // karos-tiktok-agent is deliberately NOT here. There is no `tiktok-agent`
   // product id -- mapping to one would make every TikTok job fail on an

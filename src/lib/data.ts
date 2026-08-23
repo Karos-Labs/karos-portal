@@ -654,6 +654,50 @@ export async function listInFlightAgentEngineJobs(limit = 25): Promise<Job[]> {
 }
 
 /**
+ * Engine jobs that reached `"review"` and have NOTHING ATTACHED — a completed
+ * run whose deliverable was never turned into an asset.
+ *
+ * A SECOND KIND OF INCOMPLETENESS, and the reason the sweep above cannot cover
+ * it: that one asks "has `job.status` caught up with the run?", and for these
+ * jobs the answer is yes. The status is correct and the deliverable is missing,
+ * so they are terminal, invisible to an `IN_FLIGHT_JOB_STATUSES` query, and
+ * were only ever healed if a human happened to open the Job page. That is how
+ * every engine job delivered before its product had a materializer became
+ * permanently asset-less: complete, "In review", nothing to review.
+ *
+ * `assetIds == []` IS A REAL SERVER-SIDE FILTER, not a convenience — Firestore
+ * compares the whole array, and it is what keeps this query proportional to the
+ * BACKLOG rather than to the review queue. Fetching every `review` job and
+ * filtering in memory would read a set that grows with every delivered job and
+ * never shrinks; this one returns only jobs that still need work, so it goes to
+ * zero once the backlog clears and stays there. Verified against prep: three
+ * equality filters, no composite index needed (Firestore merges single-field
+ * indexes for multiple `==`).
+ *
+ * It matches an EMPTY array, not an absent field. Nothing writes a job without
+ * `assetIds` (`Job` requires it and `dispatchAgentEngineRun` seeds `[]`), so
+ * that is a distinction with no cases today rather than a hole — worth knowing
+ * only because a hand-written doc would slip past this.
+ *
+ * Oldest-first and capped, same as the sweep above: a backlog that cannot be
+ * materialized at all (a product whose deliverable genuinely never landed) is
+ * re-read on every tick, and the cap is what bounds that.
+ */
+export async function listUnmaterializedAgentEngineJobs(limit = 25): Promise<Job[]> {
+  const snap = await col
+    .jobs()
+    .where("agentId", "==", "agent-engine")
+    .where("status", "==", "review")
+    .where("assetIds", "==", [])
+    .get();
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    .filter((j) => j.agentEngineRunId)
+    .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
+    .slice(0, limit);
+}
+
+/**
  * The non-terminal job statuses — the single home for this set.
  *
  * It answers one question in two shapes: the array feeds Firestore

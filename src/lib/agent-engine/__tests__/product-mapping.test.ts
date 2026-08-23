@@ -86,16 +86,40 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
     expect(resolveAgentEngineProductIdForCustomAgent("karos-reddit-setup")).toBe("reddit-setup-agent");
   });
 
-  it("leaves the manager variant and unmigrated agents on agent-service", () => {
+  it("routes the three drafting agents whose engine workflows were built but idle", () => {
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-blog-writer-v2")).toBe("blog-agent");
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-newsletter-writer-v2")).toBe("newsletter-agent");
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-reputation-runner")).toBe("reputation-agent");
+  });
+
+  it("routes seo-geo-agent-v2 to the same workflow the research dispatch already uses", () => {
+    // This one closes a split rather than opening a route: seo-geo-agent was
+    // already live in production via dispatch-research-agents.ts while this
+    // custom agent still ran the agent-service implementation, so a client
+    // could get either depending on which surface they came through.
+    expect(resolveAgentEngineProductIdForCustomAgent("seo-geo-agent-v2")).toBe("seo-geo-agent");
+  });
+
+  it("leaves the manager variants and the agents with no engine workflow on agent-service", () => {
+    // The managers are the structural blocker, not an oversight:
     // karos-linkedin-manager-v2 runs on two clocks and rewrites the
-    // generators' inputs; agent-engine has neither a scheduler nor a write
-    // path for that.
+    // generators' inputs, and agent-engine has neither a scheduler nor a write
+    // path for that. The rest simply have no engine product built yet.
     for (const key of [
       "karos-linkedin-manager-v2",
-      "karos-newsletter-writer-v2",
-      "karos-blog-writer-v2",
+      "karos-blog-manager-v2",
+      "karos-newsletter-manager-v2",
+      "karos-reputation-manager",
+      "karos-carousel-manager",
+      "karos-carousel-runner",
+      "karos-carousel-setup",
+      "karos-blog-setup-v2",
+      "karos-newsletter-setup-v2",
+      "karos-reputation-setup",
+      "karos-compliance-lock-v2",
+      "karos-tiktok-agent",
     ]) {
-      expect(resolveAgentEngineProductIdForCustomAgent(key)).toBeUndefined();
+      expect(resolveAgentEngineProductIdForCustomAgent(key), key).toBeUndefined();
     }
   });
 
