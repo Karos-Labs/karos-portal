@@ -68,6 +68,27 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, string>> = {
   // has neither a scheduler nor a write path for that.
   "karos-linkedin-setup-v2": "linkedin-setup-agent",
   "karos-reddit-setup": "reddit-setup-agent",
+  // Three more whose engine workflows already exist.
+  //
+  // instagram-agent and branded-shorts-agent route correctly but cannot
+  // finish yet: the first holds at image vetting until UNSPLASH_ACCESS_KEY is
+  // provisioned, and the second needs BRANDED_SHORTS_ENGINE_DIR for its video
+  // tools. Both fail honestly rather than wrongly, and the per-client gate
+  // means neither routes for any client until someone opts that client in --
+  // so this is the mapping landing ahead of the prerequisites, not instead of
+  // them.
+  "karos-instagram-agent": "instagram-agent",
+  "landing-builder": "landing-builder-agent",
+  "branded-shorts": "branded-shorts-agent",
+  //
+  // karos-tiktok-agent is deliberately NOT here. There is no `tiktok-agent`
+  // product id -- mapping to one would make every TikTok job fail on an
+  // unresolvable product instead of running where it works today. And it is
+  // not branded-shorts wearing another name: branded-shorts is e18, one
+  // talking-head video into one vertical short, while the TikTok agent is the
+  // podcast/commentary CLIP system. Pointing it at branded-shorts-agent would
+  // quietly run a different product for the client. It needs its own
+  // workflow.
 };
 
 export function resolveAgentEngineProductIdForCustomAgent(agentKey: string): string | undefined {

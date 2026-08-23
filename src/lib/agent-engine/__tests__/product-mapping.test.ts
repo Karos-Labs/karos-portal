@@ -43,6 +43,41 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
     expect(resolveAgentEngineProductIdForCustomAgent("karos-reddit-runner")).toBe("reddit-agent");
   });
 
+  it("routes the three agents whose engine workflows already existed", () => {
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-instagram-agent")).toBe("instagram-agent");
+    expect(resolveAgentEngineProductIdForCustomAgent("landing-builder")).toBe("landing-builder-agent");
+    expect(resolveAgentEngineProductIdForCustomAgent("branded-shorts")).toBe("branded-shorts-agent");
+  });
+
+  it("does NOT route the TikTok agent anywhere", () => {
+    // There is no `tiktok-agent` product id, so mapping to one would make
+    // every TikTok job fail on an unresolvable product instead of running
+    // where it works today. And it is not branded-shorts under another name:
+    // branded-shorts is e18 (one talking-head video into one vertical short),
+    // the TikTok agent is the podcast/commentary clip system. Pointing it at
+    // branded-shorts-agent would quietly run a different product.
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-tiktok-agent")).toBeUndefined();
+  });
+
+  it("only ever maps to a product id the engine can resolve", () => {
+    // The guard against the whole class of mistake above. Mirrors
+    // KNOWN_PRODUCT_IDS in apps/agent-server/src/wiring/workflows.ts.
+    const KNOWN = new Set([
+      "x-agent", "instagram-agent", "linkedin-agent", "reddit-agent", "blog-agent",
+      "newsletter-agent", "campaign-orchestrator", "landing-builder-agent",
+      "branded-shorts-agent", "reputation-agent", "seo-geo-agent", "intel-report-agent",
+      "linkedin-setup-agent", "reddit-setup-agent",
+    ]);
+    for (const key of [
+      "karos-x-agent-v2", "karos-linkedin-writer-v2", "karos-reddit-runner",
+      "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
+      "landing-builder", "branded-shorts",
+    ]) {
+      const productId = resolveAgentEngineProductIdForCustomAgent(key);
+      expect(KNOWN.has(productId!), `${key} -> ${productId}`).toBe(true);
+    }
+  });
+
   it("routes the two setup agents to their own onboarding workflows", () => {
     // Not the drafting workflows: a setup run records a filled form, and a
     // prefix match would have fed an onboarding interview into a post writer.
