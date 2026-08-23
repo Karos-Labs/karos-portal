@@ -43,14 +43,19 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
     expect(resolveAgentEngineProductIdForCustomAgent("karos-reddit-runner")).toBe("reddit-agent");
   });
 
-  it("leaves setup and manager variants on agent-service", () => {
-    // These are different products — onboarding interviews and account
-    // management — with no engine workflow behind them. A prefix match would
-    // route an onboarding interview into a post-drafting workflow.
+  it("routes the two setup agents to their own onboarding workflows", () => {
+    // Not the drafting workflows: a setup run records a filled form, and a
+    // prefix match would have fed an onboarding interview into a post writer.
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-linkedin-setup-v2")).toBe("linkedin-setup-agent");
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-reddit-setup")).toBe("reddit-setup-agent");
+  });
+
+  it("leaves the manager variant and unmigrated agents on agent-service", () => {
+    // karos-linkedin-manager-v2 runs on two clocks and rewrites the
+    // generators' inputs; agent-engine has neither a scheduler nor a write
+    // path for that.
     for (const key of [
-      "karos-linkedin-setup-v2",
       "karos-linkedin-manager-v2",
-      "karos-reddit-setup",
       "karos-newsletter-writer-v2",
       "karos-blog-writer-v2",
     ]) {

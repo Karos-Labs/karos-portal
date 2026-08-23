@@ -41,13 +41,15 @@ export function resolveAgentEngineProductId(taskType: ManagedTaskType, brief: Re
  * name is admin-editable and a rename must not silently reroute a client's
  * traffic to a different execution engine.
  *
- * Only the three DRAFTING agents are listed. The lab repo also ships
- * setup and manager variants (`karos-linkedin-setup-v2`,
- * `karos-linkedin-manager-v2`, `karos-reddit-setup`, ...) and those are
- * different products doing different work — onboarding interviews, account
- * management — that agent-engine has no workflow for. Routing them by a
- * `startsWith("karos-linkedin")` shortcut would send an onboarding interview
- * into a post-drafting workflow, so the map is exact and explicit.
+ * The map is exact rather than a prefix match, and that is the important part.
+ * A setup agent and a drafting agent for the same channel share a name prefix
+ * and do entirely different work, so a `startsWith("karos-linkedin")` shortcut
+ * would feed an onboarding form into a post-drafting workflow. Each pairing is
+ * written out because each was checked.
+ *
+ * `karos-linkedin-manager-v2` is deliberately still absent: it runs on two
+ * clocks and rewrites the generators' inputs, and agent-engine has neither a
+ * scheduler nor a write path for that. It stays on agent-service until it does.
  *
  * Everything absent from this map stays on agent-service, which is still the
  * executor for the overwhelming majority of production jobs. This is a
@@ -57,6 +59,15 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, string>> = {
   "karos-x-agent-v2": "x-agent",
   "karos-linkedin-writer-v2": "linkedin-agent",
   "karos-reddit-runner": "reddit-agent",
+  // Onboarding, now that agent-engine has workflows for them. They record a
+  // filled form as the charter the drafting agents above read, so a client
+  // set up here is a client those agents can then run for.
+  //
+  // The manager variants stay absent on purpose: karos-linkedin-manager-v2
+  // runs on two clocks and rewrites the generators' inputs, and agent-engine
+  // has neither a scheduler nor a write path for that.
+  "karos-linkedin-setup-v2": "linkedin-setup-agent",
+  "karos-reddit-setup": "reddit-setup-agent",
 };
 
 export function resolveAgentEngineProductIdForCustomAgent(agentKey: string): string | undefined {
