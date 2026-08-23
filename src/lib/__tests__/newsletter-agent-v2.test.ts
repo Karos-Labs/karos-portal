@@ -173,28 +173,11 @@ describe("the deliverable envelope", () => {
   });
 });
 
-describe("the runner gets the credential the scan actually reads", () => {
-  it("aliases CLAUDE_API_KEY from the Anthropic key, and allowlists it", () => {
-    // The scan reads process.env.CLAUDE_API_KEY for its ranking call and DEGRADES
-    // SILENTLY without it — a quietly worse issue, not an error anyone sees. It is
-    // the same Anthropic credential, so it is aliased rather than given a second
-    // secret to rotate and forget.
-    const worker = readFileSync(
-      join(process.cwd(), "agent-service/src/queue/worker.ts"),
-      "utf8",
-    );
-    expect(worker).toContain("env.CLAUDE_API_KEY = config.anthropicApiKey");
-    // The allowlist itself now lives in sdk-options.ts (moved out of main.ts so
-    // the Dynamic Agent Studio step runner can reuse the same plumbing without
-    // importing a module that ends in `void main()`).
-    const sdkOptions = readFileSync(
-      join(process.cwd(), "agent-service/runner/src/sdk-options.ts"),
-      "utf8",
-    );
-    // Present in the sandbox allowlist, or the worker setting it changes nothing.
-    expect(sdkOptions).toContain('"CLAUDE_API_KEY"');
-  });
-});
+// The runner's CLAUDE_API_KEY aliasing and sandbox allowlist were asserted
+// here by reading agent-service/src/queue/worker.ts and runner/sdk-options.ts.
+// That directory was removed with the service's deploy workflows, so the
+// credential plumbing is frozen at the revisions currently serving production.
+// Recoverable at 942218f.
 
 describe("the fourth intake family", () => {
   const views = readFileSync(join(process.cwd(), "src/lib/agent-intake-views.ts"), "utf8");

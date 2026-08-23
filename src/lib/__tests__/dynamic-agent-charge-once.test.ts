@@ -166,50 +166,18 @@ describe("DECISION 3: a retry never re-charges — source 1, the Portal's retry/
   });
 });
 
-describe("DECISION 3: a retry never re-charges — source 2, the runner's own AI-step retry", () => {
-  const dynamicDir = join(__dirname, "..", "..", "..", "agent-service", "runner", "src", "dynamic");
-  const modules = [
-    "step-runner.ts",
-    "run-dynamic-job.ts",
-    "context-store.ts",
-    "code-sandbox.ts",
-    "text-normalize.ts",
-    "sandbox-guards.ts",
-  ];
+// DECISION 3's sources 2 and 3 were asserted here by reading the runner's own
+// modules: that no dynamic-runner module references a billing symbol, that its
+// retry re-invokes one step rather than resubmitting a job, and that the queue
+// worker never asks the Portal to create another. agent-service was removed
+// from this repo along with its deploy workflows, so that code is frozen at
+// the revisions currently serving production and can no longer drift.
+//
+// The half that CAN still change is kept below: the Portal's own webhook
+// handler, which refunds on failure and must never charge.
+// Recoverable at 942218f.
 
-  it("no dynamic runner module can reach a charge at all — it has no billing surface to call", () => {
-    for (const name of modules) {
-      const src = stripComments(readFileSync(join(dynamicDir, name), "utf8"));
-      for (const forbidden of ["chargeClientCredits", "creditLedger", "clientCredits", "refundJobCharge"]) {
-        expect(src, `${name} references ${forbidden}`).not.toContain(forbidden);
-      }
-    }
-  });
-
-  it("the retry is a re-invocation of ONE step, not a re-submission of the job", () => {
-    const src = stripComments(readFileSync(join(dynamicDir, "step-runner.ts"), "utf8"));
-    // runOneStepWithRetry re-runs runOneStep (twice: the first attempt, and —
-    // only for a transient AI-step failure — the retry, whose usage then
-    // merges with the first attempt's before either result is returned).
-    // Nothing in this module creates or resubmits a job, which is the only
-    // thing that could bill.
-    expect(src).toMatch(/await runOneStep\(/);
-    expect(src).not.toContain("createJob");
-    expect(src).not.toContain("submitAgentServiceJob");
-  });
-});
-
-describe("DECISION 3: a retry never re-charges — source 3, the queue worker's whole-job retry", () => {
-  it("the worker retries by re-running the same job record, never by asking the Portal to create another", () => {
-    const worker = stripComments(
-      readFileSync(join(__dirname, "..", "..", "..", "agent-service", "src", "queue", "worker.ts"), "utf8"),
-    );
-    // The worker's only outbound call to the Portal is the completion webhook.
-    // It has no create-job call, so an attempt-2 run reuses the attempt-1 charge.
-    expect(worker).not.toContain("createJob");
-    expect(worker).toContain("buildWebhookPayload");
-  });
-
+describe("DECISION 3: a retry never re-charges — the Portal side", () => {
   it("the Portal's webhook handler refunds on failure but never charges", () => {
     const handler = stripComments(
       readFileSync(join(__dirname, "..", "..", "app", "api", "agent-service", "webhook", "route.ts"), "utf8"),

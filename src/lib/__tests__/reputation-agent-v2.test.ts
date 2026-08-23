@@ -224,17 +224,6 @@ describe("the wiring that has to agree across modules", () => {
     join(process.cwd(), "src/lib/actions/reputation-agent-actions.ts"),
     "utf8",
   );
-  const allowlist = JSON.parse(
-    readFileSync(join(process.cwd(), "agent-service/config/egress-allowlist.json"), "utf8"),
-  ) as { groups: Record<string, string[]> };
-  const filter = readFileSync(
-    join(process.cwd(), "agent-service/config/proxy-filter.txt"),
-    "utf8",
-  );
-  const taskTypes = readFileSync(
-    join(process.cwd(), "agent-service/src/task-types.ts"),
-    "utf8",
-  );
 
   it("gates on the intake AND on setup having produced a roster", () => {
     expect(core).toContain("hasReputationAgentIntake(input.clientId)");
@@ -266,24 +255,9 @@ describe("the wiring that has to agree across modules", () => {
     expect(actions).toContain("clearAgentIntakeFields(existing.id, drop)");
   });
 
-  it("opens the five review platforms, and says the widening is shared", () => {
-    const group = allowlist.groups.review_platforms ?? [];
-    for (const host of [
-      "mybusiness.googleapis.com",
-      "api.yelp.com",
-      "itunes.apple.com",
-      "api.trustpilot.com",
-      "graph.facebook.com",
-    ]) {
-      expect(group, host).toContain(host);
-      // The GENERATED filter is what tinyproxy actually reads; an edit to the
-      // allowlist that was never regenerated grants nothing.
-      expect(filter, `${host} missing from the generated filter`).toContain(
-        `^${host.replace(/\./g, "\\.")}$`,
-      );
-    }
-    // `custom` is ONE task type shared by every custom agent, so this group is
-    // granted to all of them. Pinned so the widening cannot be forgotten.
-    expect(taskTypes).toContain('"review_platforms"');
-  });
+  // The egress allowlist / tinyproxy filter / task-type grant for the five
+  // review platforms was asserted here, reading agent-service/config. That
+  // directory was removed along with the service's deploy workflows, so its
+  // proxy configuration is frozen at whatever the running revisions were built
+  // with and this can no longer drift. Recoverable at 942218f.
 });

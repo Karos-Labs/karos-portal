@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 
@@ -17,11 +15,25 @@ import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
  * it is NOT a MANAGED_PRODUCT (custom agents are dynamic, per-client), so the
  * platform's managed set is the service set minus "custom".
  */
+/**
+ * agent-service's task types, frozen.
+ *
+ * This used to be read out of `agent-service/src/types.ts`, which is the
+ * better shape when the file exists: the guard could not go stale because it
+ * re-derived the truth every run. That directory is gone from this repo, and
+ * with the deploy workflows gone too the service can no longer change — the
+ * revisions serving production are the last ones there will be. A frozen
+ * literal is therefore accurate, and keeping the check is worth more than
+ * deleting it because the platform side CAN still change: this is what stops
+ * someone adding a managed product that maps to a task type nothing executes.
+ *
+ * Recovered from agent-service/src/types.ts at 942218f, the commit before the
+ * directory was removed.
+ */
+const SERVICE_TASK_TYPES = ["social_post", "landing_page", "custom"] as const;
+
 function serviceTaskTypes(): string[] {
-  const src = readFileSync(join(process.cwd(), "agent-service", "src", "types.ts"), "utf8");
-  const match = src.match(/export const TASK_TYPES\s*=\s*\[([^\]]*)\]\s*as const/);
-  if (!match) throw new Error("Could not locate TASK_TYPES tuple in agent-service/src/types.ts");
-  return [...match[1].matchAll(/["']([a-z_]+)["']/g)].map((m) => m[1]);
+  return [...SERVICE_TASK_TYPES];
 }
 
 const GENERIC_RUNNER = "custom";

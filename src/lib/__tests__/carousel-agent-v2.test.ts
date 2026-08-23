@@ -31,46 +31,12 @@ import {
 
 const RUN = "clients/xodigital/outputs/carousel-agent-v2/2026-08-11-post-004";
 
-describe("the runner Dockerfile's ESM fix", () => {
-  const dockerfile = readFileSync(
-    join(process.cwd(), "agent-service/runner/Dockerfile"),
-    "utf8",
-  );
-
-  it("symlinks /node_modules so an .mjs engine can resolve playwright", () => {
-    // NODE_PATH is a CommonJS-only mechanism and Node's ESM loader ignores it
-    // entirely. The ESM resolver finds a bare specifier by walking UP from the
-    // importing file, so a link at the filesystem root is reachable from
-    // /opt/karos-agents/products/**/engine/*.mjs where the renderers live.
-    expect(dockerfile).toContain("ln -s /usr/local/lib/node_modules /node_modules");
-    // NODE_PATH stays: it is what CommonJS `require('playwright')` still uses,
-    // and removing it would fix ESM by breaking CJS.
-    expect(dockerfile).toContain("ENV NODE_PATH=/usr/local/lib/node_modules");
-  });
-
-  it("creates the link BEFORE dropping to the unprivileged user", () => {
-    // The root filesystem is not writable by `agent`. A symlink placed after
-    // USER would fail the build, which is at least loud — but placing it before
-    // is the only ordering that works, so it is pinned.
-    // Anchored to the DIRECTIVE at the start of a line, not to the string
-    // anywhere: the comment above the symlink says "before `USER agent` below",
-    // so a bare indexOf finds the prose first and compares the link against its
-    // own explanation.
-    const link = dockerfile.indexOf("ln -s /usr/local/lib/node_modules");
-    const dropUser = dockerfile.search(/^USER agent$/m);
-    expect(link).toBeGreaterThan(-1);
-    expect(dropUser).toBeGreaterThan(-1);
-    expect(link).toBeLessThan(dropUser);
-  });
-
-  it("says WHY in the comment, because the failure is silent", () => {
-    // A renderer that cannot start is indistinguishable from one that rendered
-    // nothing: the run ships blank slides rather than failing loudly. Someone
-    // tidying this Dockerfile needs to know that before deleting a line.
-    expect(dockerfile).toMatch(/ESM loader IGNORES IT|Node's ESM loader/);
-    expect(dockerfile).toMatch(/ERR_MODULE_NOT_FOUND/);
-  });
-});
+// The runner Dockerfile's ESM fix was asserted here, reading
+// agent-service/runner/Dockerfile. That directory was removed and the
+// service's deploy workflows with it, so the image serving production is the
+// last one that will ever be built from this repo and the assertion can no
+// longer fail meaningfully. Recoverable at 942218f if the service is ever
+// restored.
 
 describe("the carousel v2 keys", () => {
   it("names the RUNNER as the agent and the other two as its steps", () => {
