@@ -7,8 +7,8 @@ import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { isCustomAgentImportConfigured } from "@/lib/agent-service/custom-agent-import";
 import { CustomAgentsHub } from "@/components/custom-agents";
 import { loadControlPlane } from "@/lib/agent-engine/control-plane-enrichment";
-import { buildAgentCatalogUnion } from "@/lib/agent-engine/catalog-union";
-import { EngineAgentCard } from "@/components/admin/control-plane/engine-agent-card";
+import { buildEngineAgentCards } from "@/lib/agent-engine/catalog-union";
+import { EngineAgentCard } from "@/components/agents/engine-agent-card";
 
 /**
  * Staff entry point for running agents: a client picker (agents always run
@@ -35,7 +35,7 @@ export default async function AgentsPage() {
   // Returns empty when the control plane is off, unreachable or slow, so
   // this page never depends on it being up.
   const snapshot = await loadControlPlane(customAgents.map((a) => a.key));
-  const { controlPlaneOnly } = buildAgentCatalogUnion(customAgents, snapshot.agents);
+  const engineAgents = buildEngineAgentCards(snapshot.agents);
 
   return (
     <>
@@ -88,15 +88,15 @@ export default async function AgentsPage() {
         </Card>
       ) : null}
 
-      {controlPlaneOnly.length > 0 && (
+      {engineAgents.length > 0 && (
         <Card className="mb-6">
-          <CardTitle className="mb-1">Agent-engine agents</CardTitle>
+          <CardTitle className="mb-1">Agents</CardTitle>
           <p className="mb-4 text-xs text-muted">
-            Managed in the control plane with versioned prompts, a model and template bindings. They run on
-            agent-engine and have no lab-repo entry, so they are configured from the Studio rather than imported.
+            Every agent-engine workflow, with versioned prompts, a model and template bindings. Run one against any
+            client, or open it in the Studio to change how it works.
           </p>
           <div className="grid gap-3 lg:grid-cols-2">
-            {controlPlaneOnly.map((agent) => (
+            {engineAgents.map((agent) => (
               <EngineAgentCard
                 key={agent.slug}
                 agent={agent}

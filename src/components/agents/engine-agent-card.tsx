@@ -5,16 +5,16 @@ import Link from "next/link";
 import { Badge, Button, Label, Select } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { dispatchControlPlaneAgentAction } from "@/lib/actions/control-plane-actions";
-import type { ControlPlaneOnlyAgent } from "@/lib/agent-engine/catalog-union";
-import { controlPlaneAgentHref } from "@/lib/agent-engine/catalog-union";
+import { agentStudioHref, type EngineAgentCardModel } from "@/lib/agent-engine/catalog-union";
 
 /**
- * A catalog card for an agent that lives only in the control plane.
+ * A catalog card for one of the eleven agent-engine workflows.
  *
  * Two actions, both real. Run dispatches straight to agent-engine — these
  * agents have no lab-repo row, so the legacy submit path could not build a job
- * for them even if it were offered. Edit in Studio opens the console at this
- * agent, where its prompt versions, model and template bindings are.
+ * for them even if it were offered. Edit in Studio opens the agent's own
+ * Studio page, where its stages, prompt versions, model and template bindings
+ * are.
  *
  * The client picker is on the card rather than behind a dialog because an
  * agent always runs against a client's context, and a Run button that opens a
@@ -24,7 +24,7 @@ export function EngineAgentCard({
   agent,
   clients,
 }: {
-  agent: ControlPlaneOnlyAgent;
+  agent: EngineAgentCardModel;
   clients: Array<{ id: string; name: string }>;
 }) {
   const [clientId, setClientId] = useState(clients[0]?.id ?? "");
@@ -80,7 +80,7 @@ export function EngineAgentCard({
             <button> with no asChild escape hatch, and nesting an anchor inside
             one is invalid markup that breaks keyboard activation. */}
         <Link
-          href={controlPlaneAgentHref(agent.slug)}
+          href={agentStudioHref(agent.slug)}
           className="rounded-md border border-white/15 px-3 py-2 text-sm transition hover:border-neon/50"
         >
           Edit in Studio

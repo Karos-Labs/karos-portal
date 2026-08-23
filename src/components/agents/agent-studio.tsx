@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Badge, Button, Card, CardTitle, EmptyState, Input, Label, Select, Textarea } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import {
   activatePromptVersionAction,
   bindTemplateAction,
@@ -10,7 +10,6 @@ import {
   savePromptVersionAction,
   setAgentModelAction,
   setAgentStatusAction,
-  submitFeedbackAction,
 } from "@/lib/actions/control-plane-actions";
 import { feedbackStatusLabel } from "@/lib/feedback-status-copy";
 import type {
@@ -21,58 +20,44 @@ import type {
   MiddlewareTemplate,
 } from "@/lib/agent-engine/middleware-admin";
 
-interface Props {
-  agents: MiddlewareAgent[];
-  templates: MiddlewareTemplate[];
-  models: MiddlewareModel[];
-  selectedSlug: string | null;
-  activePrompt: MiddlewarePrompt | null;
-  feedback: MiddlewareFeedback[];
-  loadError: string | null;
-}
-
-type Notice = { kind: "ok" | "error"; text: string } | null;
-
 /**
- * The control-plane console.
+ * Everything about one agent, in one place.
  *
  * Every mutation goes through a server action that re-checks `requireAdmin()`
- * and talks to `agent-middleware` — nothing here writes Firestore, and nothing
- * here falls back when the control plane is down. An admin edit either landed
- * or it did not, and saying otherwise would be worse than the failure.
+ * — the page itself admits employees so they can read what an agent does, and
+ * the write fence is server-side because hiding a button is not a permission.
+ *
+ * Nothing here falls back when the control plane is down. An edit either
+ * landed or it did not, and reporting a save that did not happen is worse than
+ * reporting the failure.
  */
-export function ControlPlaneConsole({ agents, templates, models, selectedSlug, activePrompt, feedback, loadError }: Props) {
-  const [notice, setNotice] = useState<Notice>(null);
+type Result = { ok: true } | { ok: false; error: string };
+type Apply = (run: () => Promise<Result>, success: string) => void;
+
+export function AgentStudio({
+  agent,
+  activePrompt,
+  promptHistory,
+  templates,
+  models,
+  feedback,
+}: {
+  agent: MiddlewareAgent;
+  activePrompt: MiddlewarePrompt | null;
+  promptHistory: MiddlewarePrompt[];
+  templates: MiddlewareTemplate[];
+  models: MiddlewareModel[];
+  feedback: MiddlewareFeedback[];
+}) {
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const selected = agents.find((a) => a.slug === selectedSlug) ?? null;
-
-  /** One place that turns an action result into a notice, so no call site invents its own. */
-  function apply(run: () => Promise<{ ok: true } | { ok: false; error: string }>, success: string) {
+  const apply: Apply = (run, success) => {
     startTransition(async () => {
       const result = await run();
-      setNotice(result.ok ? { kind: "ok", text: success } : { kind: "error", text: result.error });
+      setNotice(result.ok ? { ok: true, text: success } : { ok: false, text: result.error });
     });
-  }
-
-  if (loadError) {
-    return (
-      <Card className="p-6">
-        <EmptyState title="Could not reach the control plane" description={loadError} />
-      </Card>
-    );
-  }
-
-  if (agents.length === 0) {
-    return (
-      <Card className="p-6">
-        <EmptyState
-          title="No agents in the control plane"
-          description="Seed them with agent-middleware's scripts/seed_legacy_agents.py, then reload."
-        />
-      </Card>
-    );
-  }
+  };
 
   return (
     <div className="space-y-6">
@@ -80,7 +65,7 @@ export function ControlPlaneConsole({ agents, templates, models, selectedSlug, a
         <div
           role="status"
           className={`rounded-lg border px-4 py-3 text-sm ${
-            notice.kind === "ok"
+            notice.ok
               ? "border-neon/40 bg-neon/10 text-neon"
               : "border-red-500/40 bg-red-500/10 text-red-400"
           }`}
@@ -89,83 +74,48 @@ export function ControlPlaneConsole({ agents, templates, models, selectedSlug, a
         </div>
       )}
 
-      <AgentPanel agents={agents} selected={selected} pending={pending} apply={apply} />
-
-      {selected && (
-        <>
-          <StagesPanel agent={selected} />
-          <ModelPanel agent={selected} models={models} pending={pending} apply={apply} />
-          <PromptPanel agent={selected} activePrompt={activePrompt} pending={pending} apply={apply} />
-          <TemplatePanel agent={selected} templates={templates} pending={pending} apply={apply} />
-          <FeedbackPanel agent={selected} feedback={feedback} pending={pending} apply={apply} />
-        </>
-      )}
-    </div>
-  );
-}
-
-type Apply = (run: () => Promise<{ ok: true } | { ok: false; error: string }>, success: string) => void;
-
-function AgentPanel({
-  agents,
-  selected,
-  pending,
-  apply,
-}: {
-  agents: MiddlewareAgent[];
-  selected: MiddlewareAgent | null;
-  pending: boolean;
-  apply: Apply;
-}) {
-  return (
-    <Card className="p-6">
-      <CardTitle>Agents</CardTitle>
-      <div className="mt-4 space-y-2">
-        {agents.map((agent) => (
-          <div
-            key={agent.id}
-            className={`flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3 ${
-              agent.slug === selected?.slug ? "border-neon/50 bg-neon/5" : "border-white/10"
-            }`}
+      <Card className="p-6">
+        <CardTitle>Overview</CardTitle>
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+          <code className="text-xs opacity-60">{agent.slug}</code>
+          <Badge tone={agent.status === "active" ? "success" : "neutral"}>{agent.status}</Badge>
+          {agent.category && <Badge tone="neutral">{agent.category}</Badge>}
+          {agent.creditCost !== null && <span className="text-xs opacity-70">{agent.creditCost} credits per run</span>}
+          <Button
+            variant="ghost"
+            disabled={pending}
+            onClick={() =>
+              apply(
+                () => setAgentStatusAction(agent.slug, agent.status === "active" ? "disabled" : "active"),
+                `${agent.name} is now ${agent.status === "active" ? "disabled" : "active"}.`,
+              )
+            }
           >
-            <a href={`?agent=${encodeURIComponent(agent.slug)}`} className="font-medium hover:text-neon">
-              {agent.name}
-            </a>
-            <code className="text-xs opacity-60">{agent.slug}</code>
-            <Badge tone={agent.status === "active" ? "success" : "neutral"}>{agent.status}</Badge>
-            {agent.model && <span className="text-xs opacity-60">{agent.model}</span>}
-            <div className="ml-auto">
-              <Button
-                variant="ghost"
-                disabled={pending}
-                onClick={() =>
-                  apply(
-                    () => setAgentStatusAction(agent.slug, agent.status === "active" ? "disabled" : "active"),
-                    `${agent.name} is now ${agent.status === "active" ? "disabled" : "active"}.`,
-                  )
-                }
-              >
-                {agent.status === "active" ? "Disable" : "Enable"}
-              </Button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </Card>
+            {agent.status === "active" ? "Disable" : "Enable"}
+          </Button>
+        </div>
+      </Card>
+
+      <StagesPanel agent={agent} />
+      <ModelPanel agent={agent} models={models} pending={pending} apply={apply} />
+      <PromptPanel agent={agent} activePrompt={activePrompt} history={promptHistory} pending={pending} apply={apply} />
+      <TemplatePanel agent={agent} templates={templates} pending={pending} apply={apply} />
+      <FeedbackPanel agent={agent} feedback={feedback} pending={pending} apply={apply} />
+    </div>
   );
 }
 
 /**
  * What the workflow actually runs, in order.
  *
- * Read-only, and labelled as such. These stages are TypeScript in
- * agent-engine, extracted from its own sources rather than typed in beside it
- * — a hand-maintained stage list next to a workflow that changes is how a
- * Studio ends up describing a program that no longer exists. Showing them as
- * editable would offer a change that edits a page and not a program.
+ * Read-only, and labelled so. These stages are TypeScript in agent-engine,
+ * extracted from its own sources rather than typed in beside it — a
+ * hand-maintained list next to a workflow that changes is how a Studio ends up
+ * describing a program that no longer exists. Offering an edit here would
+ * change a page and not a program.
  *
- * The ids match the step ids in a run's trace on purpose: comparing the two is
- * how someone works out where a run stopped.
+ * The ids match a run's step trace on purpose: comparing the two is how
+ * someone finds where a run stopped.
  */
 function StagesPanel({ agent }: { agent: MiddlewareAgent }) {
   if (agent.stages.length === 0) {
@@ -204,12 +154,12 @@ function StagesPanel({ agent }: { agent: MiddlewareAgent }) {
 }
 
 /**
- * The model dropdown, backed by the normalized catalog.
+ * The model dropdown, from the normalized catalog.
  *
- * Models this deployment does not route are listed and disabled rather than
- * hidden. A dropdown showing only what works reads as the whole of what Vertex
- * offers, and someone concludes a model is unavailable when it is one config
- * change away — so they appear, greyed, with a way to ask for them.
+ * Models this deployment does not route are listed and DISABLED rather than
+ * hidden: a dropdown showing only what works reads as the whole of what Vertex
+ * offers, and that is how someone concludes a model is unavailable when it is
+ * one config change away.
  */
 function ModelPanel({
   agent,
@@ -222,11 +172,13 @@ function ModelPanel({
   pending: boolean;
   apply: Apply;
 }) {
-  const [modelId, setModelId] = useState(agent.model ?? models.find((m) => m.availability === "available")?.modelId ?? "");
+  const [modelId, setModelId] = useState(
+    agent.model ?? models.find((m) => m.availability === "available")?.modelId ?? "",
+  );
   const [reason, setReason] = useState("");
 
   const chosen = models.find((m) => m.modelId === modelId);
-  const needsAccess = chosen !== undefined && chosen.availability === "not_enabled";
+  const needsAccess = chosen?.availability === "not_enabled";
 
   if (models.length === 0) {
     return (
@@ -243,7 +195,7 @@ function ModelPanel({
     <Card className="p-6">
       <CardTitle>Model</CardTitle>
       <p className="mt-1 text-sm opacity-70">
-        Stages reference a normalized model id, so what an agent runs on is a lookup rather than a spelling.
+        A normalized model id, so what this agent runs on is a lookup rather than a spelling.
       </p>
 
       <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -261,7 +213,12 @@ function ModelPanel({
         </div>
         <Button
           disabled={pending || !modelId || needsAccess || modelId === agent.model}
-          onClick={() => apply(() => setAgentModelAction(agent.slug, modelId), `${agent.name} now runs on ${chosen?.displayName ?? modelId}.`)}
+          onClick={() =>
+            apply(
+              () => setAgentModelAction(agent.slug, modelId),
+              `${agent.name} now runs on ${chosen?.displayName ?? modelId}.`,
+            )
+          }
         >
           Save model
         </Button>
@@ -279,8 +236,8 @@ function ModelPanel({
       {needsAccess && (
         <div className="mt-4 rounded-lg border border-white/10 p-4">
           <p className="text-sm">
-            {chosen?.displayName} is available in Vertex but not routed in this environment. Requesting it records
-            the ask; enabling it is a deployment decision someone makes separately.
+            {chosen?.displayName} is available in Vertex but not routed here. Requesting it records the ask; enabling
+            it is a deployment decision someone makes separately.
           </p>
           <div className="mt-3 flex flex-wrap items-end gap-3">
             <div className="min-w-64 flex-1">
@@ -306,14 +263,23 @@ function ModelPanel({
   );
 }
 
+/**
+ * The prompt editor and its version history.
+ *
+ * Saving always creates a NEW version — the control plane makes existing ones
+ * immutable, which is what lets the version recorded on a run six weeks ago
+ * still mean something. `activate: false` stages one without making it live.
+ */
 function PromptPanel({
   agent,
   activePrompt,
+  history,
   pending,
   apply,
 }: {
   agent: MiddlewareAgent;
   activePrompt: MiddlewarePrompt | null;
+  history: MiddlewarePrompt[];
   pending: boolean;
   apply: Apply;
 }) {
@@ -321,15 +287,21 @@ function PromptPanel({
   const [notes, setNotes] = useState("");
   const [activate, setActivate] = useState(true);
 
+  const versions = [...history].sort((a, b) => b.version - a.version);
+
   return (
     <Card className="p-6">
       <CardTitle>
         System prompt
-        {activePrompt && <span className="ml-2 text-sm opacity-60">active: v{activePrompt.version}</span>}
+        {activePrompt ? (
+          <span className="ml-2 text-sm opacity-60">active: v{activePrompt.version}</span>
+        ) : (
+          <span className="ml-2 text-sm opacity-60">no prompt yet</span>
+        )}
       </CardTitle>
       <p className="mt-1 text-sm opacity-70">
-        Saving creates a new version. Existing versions are immutable in the control plane, which is what keeps the
-        version recorded on a past run meaningful.
+        Saving creates a new version. Existing versions are immutable, which is what keeps the version recorded on a
+        past run meaningful.
       </p>
 
       <div className="mt-4 space-y-4">
@@ -337,7 +309,7 @@ function PromptPanel({
           <Label htmlFor="prompt-content">Prompt body</Label>
           <Textarea
             id="prompt-content"
-            rows={14}
+            rows={16}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             className="font-mono text-sm"
@@ -361,7 +333,7 @@ function PromptPanel({
           onClick={() =>
             apply(
               () => savePromptVersionAction(agent.slug, { content, notes, activate }),
-              activate ? "Saved and activated a new prompt version." : "Saved a new prompt version without activating it.",
+              activate ? "Saved and activated a new version." : "Saved a new version without activating it.",
             )
           }
         >
@@ -369,17 +341,34 @@ function PromptPanel({
         </Button>
       </div>
 
-      {activePrompt && !activePrompt.isActive && (
-        <div className="mt-4">
-          <Button
-            variant="ghost"
-            disabled={pending}
-            onClick={() =>
-              apply(() => activatePromptVersionAction(agent.slug, activePrompt.id), `Activated v${activePrompt.version}.`)
-            }
-          >
-            Activate v{activePrompt.version}
-          </Button>
+      {versions.length > 0 && (
+        <div className="mt-6">
+          <p className="mb-2 text-xs uppercase tracking-wide opacity-50">Version history</p>
+          <div className="space-y-1">
+            {versions.map((v) => (
+              <div key={v.id} className="flex flex-wrap items-center gap-3 rounded border border-white/10 px-3 py-2">
+                <span className="text-sm">v{v.version}</span>
+                {v.isActive && <Badge tone="success">active</Badge>}
+                <span className="text-xs opacity-60">{v.content.length.toLocaleString()} chars</span>
+                {v.notes && <span className="text-xs opacity-70">{v.notes}</span>}
+                {v.createdBy && <span className="text-xs opacity-50">{v.createdBy}</span>}
+                <div className="ml-auto flex gap-2">
+                  <Button variant="ghost" disabled={pending} onClick={() => setContent(v.content)}>
+                    Load
+                  </Button>
+                  {!v.isActive && (
+                    <Button
+                      variant="ghost"
+                      disabled={pending}
+                      onClick={() => apply(() => activatePromptVersionAction(agent.slug, v.id), `Activated v${v.version}.`)}
+                    >
+                      Activate
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </Card>
@@ -404,8 +393,7 @@ function TemplatePanel({
     <Card className="p-6">
       <CardTitle>Templates</CardTitle>
       <p className="mt-1 text-sm opacity-70">
-        An agent uses one template per purpose — the purpose is the binding&apos;s id, so re-binding replaces rather
-        than duplicates.
+        One template per purpose — the purpose is the binding&apos;s id, so re-binding replaces rather than duplicates.
       </p>
 
       <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -444,12 +432,11 @@ function TemplatePanel({
 }
 
 /**
- * The two tiers are deliberately two separate controls.
+ * Reviewer feedback, and the one action that changes what the agent does next.
  *
- * Recording a verdict and changing what the agent does next are different
- * decisions. If a rejection promoted itself, every reviewer reaction would
- * silently rewrite the agent, and nobody could reject something without
- * teaching the model from it.
+ * Recording a verdict and teaching from it stay two clicks. If a rejection
+ * promoted itself, every reaction would silently rewrite the agent and nobody
+ * could reject something without also teaching from it.
  */
 function FeedbackPanel({
   agent,
@@ -462,82 +449,10 @@ function FeedbackPanel({
   pending: boolean;
   apply: Apply;
 }) {
-  const [runId, setRunId] = useState("");
-  const [rating, setRating] = useState(3);
-  const [status, setStatus] = useState<"approved" | "rejected" | "needs_changes">("needs_changes");
-  const [correctionNotes, setCorrectionNotes] = useState("");
-  const [correctedOutput, setCorrectedOutput] = useState("");
-
   return (
     <Card className="p-6">
       <CardTitle>Review feedback</CardTitle>
-
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <div>
-          <Label htmlFor="fb-run">Run id</Label>
-          <Input id="fb-run" value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="control-plane run id" />
-        </div>
-        <div className="flex gap-3">
-          <div className="flex-1">
-            <Label htmlFor="fb-rating">Rating</Label>
-            <Select id="fb-rating" value={String(rating)} onChange={(e) => setRating(Number(e.target.value))}>
-              {[1, 2, 3, 4, 5].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="flex-1">
-            <Label htmlFor="fb-status">Verdict</Label>
-            <Select
-              id="fb-status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value as typeof status)}
-            >
-              <option value="approved">Approve</option>
-              <option value="needs_changes">Needs changes</option>
-              <option value="rejected">Reject</option>
-            </Select>
-          </div>
-        </div>
-        <div className="md:col-span-2">
-          <Label htmlFor="fb-notes">What should change</Label>
-          <Input id="fb-notes" value={correctionNotes} onChange={(e) => setCorrectionNotes(e.target.value)} />
-        </div>
-        <div className="md:col-span-2">
-          <Label htmlFor="fb-output">Corrected output (this is what promotion turns into an example)</Label>
-          <Textarea
-            id="fb-output"
-            rows={6}
-            value={correctedOutput}
-            onChange={(e) => setCorrectedOutput(e.target.value)}
-            className="font-mono text-sm"
-          />
-        </div>
-      </div>
-
-      <div className="mt-4">
-        <Button
-          disabled={pending || !runId.trim()}
-          onClick={() =>
-            apply(
-              () =>
-                submitFeedbackAction(agent.slug, runId.trim(), {
-                  rating,
-                  status,
-                  correctionNotes,
-                  correctedOutput,
-                }),
-              "Recorded the verdict. Promote it to change what the agent does next.",
-            )
-          }
-        >
-          Record verdict
-        </Button>
-      </div>
-
-      <div className="mt-6 space-y-2">
+      <div className="mt-4 space-y-2">
         {feedback.length === 0 && <p className="text-sm opacity-60">No feedback recorded for this agent yet.</p>}
         {feedback.map((item) => (
           <div key={item.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 px-4 py-3">

@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildAgentCatalogUnion,
-  controlPlaneAgentHref,
-  customAgentKeyForMiddlewareSlug,
-} from "../catalog-union";
+import { agentStudioHref, buildEngineAgentCards } from "../catalog-union";
 import type { MiddlewareAgent } from "../middleware-admin";
 
 /**
- * Neither collection is a superset of the other, which is the whole reason
- * this is a union: the library holds agents the control plane never heard of
- * (most of them), and the control plane holds agents the library never had.
+ * Every agent-engine workflow renders, uniformly.
+ *
+ * This replaced a de-duplication against the lab-imported library that hid
+ * five of the eleven behind legacy cards — they lost their stages, credit
+ * cost, model and Studio link because a `customAgents` row happened to share
+ * their product. The twin runs on a different executor, so "the same product"
+ * was never quite true, and hiding a first-class agent to avoid showing two
+ * cards traded a small duplication for a real omission.
  */
 function mw(slug: string, overrides: Partial<MiddlewareAgent> = {}): MiddlewareAgent {
   return {
@@ -36,107 +37,97 @@ function mw(slug: string, overrides: Partial<MiddlewareAgent> = {}): MiddlewareA
   };
 }
 
-const lib = (key: string) => ({ key });
+const ELEVEN = [
+  "instagram-agent",
+  "landing-builder-agent",
+  "x-agent",
+  "linkedin-agent",
+  "reddit-agent",
+  "branded-shorts-agent",
+  "intel-report-agent",
+  "blog-agent",
+  "newsletter-agent",
+  "reputation-agent",
+  "seo-geo-agent",
+];
 
-describe("buildAgentCatalogUnion", () => {
-  it("adds a control-plane agent the library never had", () => {
-    // The case that motivated this: intel-report-agent is managed in the
-    // control plane and has no customAgents row, so a library-only catalog
-    // rendered nothing for it at all.
-    const union = buildAgentCatalogUnion([lib("karos-x-agent-v2")], [mw("x-agent"), mw("intel-report-agent")]);
+describe("buildEngineAgentCards", () => {
+  it("renders every agent, including the five that used to be hidden", () => {
+    const cards = buildEngineAgentCards(ELEVEN.map((s) => mw(s)));
 
-    expect(union.controlPlaneOnly.map((a) => a.slug)).toEqual(["intel-report-agent"]);
+    expect(cards).toHaveLength(11);
+    for (const slug of ELEVEN) {
+      expect(cards.some((c) => c.slug === slug), `${slug} must render`).toBe(true);
+    }
   });
 
-  it("does not double-render an agent that exists in both", () => {
-    const union = buildAgentCatalogUnion(
-      [lib("karos-x-agent-v2"), lib("karos-instagram-agent"), lib("landing-builder")],
-      [mw("x-agent"), mw("instagram-agent"), mw("landing-builder-agent")],
-    );
+  it("does not hide an agent because a lab-library twin exists", () => {
+    // The regression this replaced: x-agent disappeared whenever
+    // karos-x-agent-v2 was present, taking its stages and Studio link with it.
+    const cards = buildEngineAgentCards([mw("x-agent"), mw("instagram-agent")]);
 
-    expect(union.controlPlaneOnly).toEqual([]);
+    expect(cards.map((c) => c.slug).sort()).toEqual(["instagram-agent", "x-agent"]);
   });
 
-  it("passes the library through untouched, in its original order", () => {
-    // This must never remove or reorder an agent someone already runs.
-    const library = [lib("b-agent"), lib("a-agent"), lib("c-agent")];
-    const union = buildAgentCatalogUnion(library, [mw("x-agent")]);
+  it("carries the presentation fields a card needs", () => {
+    const cards = buildEngineAgentCards([
+      mw("x-agent", {
+        name: "X / Twitter Content Specialist",
+        icon: "AtSign",
+        category: "social",
+        creditCost: 6,
+        model: "claude-sonnet-4-6-on-vertex",
+        stages: [
+          { id: "00-intake-check", label: "Intake check", description: null, isGate: false },
+          { id: "15-batch-review", label: "Human review", description: null, isGate: true },
+        ],
+      }),
+    ]);
 
-    expect(union.library.map((a) => a.key)).toEqual(["b-agent", "a-agent", "c-agent"]);
-  });
-
-  it("renders a mapped agent whose library row is missing", () => {
-    // Mapped and absent are different: an importer that has not run yet leaves
-    // the pairing valid but the library row missing, and hiding the agent
-    // would be wrong.
-    const union = buildAgentCatalogUnion([], [mw("x-agent")]);
-
-    expect(union.controlPlaneOnly.map((a) => a.slug)).toEqual(["x-agent"]);
+    expect(cards[0]).toMatchObject({
+      name: "X / Twitter Content Specialist",
+      icon: "AtSign",
+      creditCost: 6,
+      stageCount: 2,
+      model: "claude-sonnet-4-6-on-vertex",
+    });
   });
 
   it("skips a row the middleware could not parse a slug from", () => {
-    // Prep's agents/ collection shares a name with karosCMO's since-removed
-    // in-app engine, and still holds two of its documents.
-    const union = buildAgentCatalogUnion([], [mw("", { id: "FcVYdiTM9RHrsap0Y6aQ", name: "Ghost" })]);
+    // prep's agents/ collection shares its name with karosCMO's since-removed
+    // in-app engine and still holds one of its documents.
+    const cards = buildEngineAgentCards([mw("", { id: "FcVYdiTM9RHrsap0Y6aQ", name: "Ghost" })]);
 
-    expect(union.controlPlaneOnly).toEqual([]);
+    expect(cards).toEqual([]);
   });
 
-  it("sorts the new cards by name so the list is stable between loads", () => {
-    const union = buildAgentCatalogUnion(
-      [],
-      [mw("zebra", { name: "Zebra" }), mw("alpha", { name: "Alpha" })],
-    );
+  it("sorts by name so the catalog is stable between loads", () => {
+    const cards = buildEngineAgentCards([mw("z", { name: "Zebra" }), mw("a", { name: "Alpha" })]);
 
-    expect(union.controlPlaneOnly.map((a) => a.name)).toEqual(["Alpha", "Zebra"]);
+    expect(cards.map((c) => c.name)).toEqual(["Alpha", "Zebra"]);
   });
 
   it("falls back to the slug when an agent has no name", () => {
-    const union = buildAgentCatalogUnion([], [mw("nameless", { name: "" })]);
-
-    expect(union.controlPlaneOnly[0]!.name).toBe("nameless");
+    expect(buildEngineAgentCards([mw("nameless", { name: "" })])[0]!.name).toBe("nameless");
   });
 
-  it("carries status through, so a disabled control-plane agent shows as one", () => {
-    const union = buildAgentCatalogUnion([], [mw("x-agent", { status: "disabled" })]);
-
-    expect(union.controlPlaneOnly[0]!.status).toBe("disabled");
+  it("carries status through, so a disabled agent renders as one", () => {
+    expect(buildEngineAgentCards([mw("x-agent", { status: "disabled" })])[0]!.status).toBe("disabled");
   });
 
-  it("produces no new cards when the middleware is empty", () => {
-    // The degraded path: enrichment failed, the catalog is exactly what it was.
-    const union = buildAgentCatalogUnion([lib("karos-x-agent-v2")], []);
-
-    expect(union.controlPlaneOnly).toEqual([]);
-    expect(union.library).toHaveLength(1);
+  it("renders nothing when the control plane returned nothing", () => {
+    // The degraded path: the catalog keeps its library section and loses only
+    // the engine cards.
+    expect(buildEngineAgentCards([])).toEqual([]);
   });
 });
 
-describe("customAgentKeyForMiddlewareSlug", () => {
-  it("maps every control-plane agent that has a library twin", () => {
-    expect(customAgentKeyForMiddlewareSlug("x-agent")).toBe("karos-x-agent-v2");
-    expect(customAgentKeyForMiddlewareSlug("instagram-agent")).toBe("karos-instagram-agent");
-    expect(customAgentKeyForMiddlewareSlug("landing-builder-agent")).toBe("landing-builder");
+describe("agentStudioHref", () => {
+  it("points at the agent's own Studio page, not an admin subpage", () => {
+    expect(agentStudioHref("x-agent")).toBe("/agents/x-agent/studio");
   });
 
-  it("covers agents routing does not, because the two answer different questions", () => {
-    // Routing knows only the three agents cut over to agent-engine. Display
-    // has to know every correspondence or the catalog shows instagram-agent
-    // twice.
-    expect(customAgentKeyForMiddlewareSlug("instagram-agent")).toBeDefined();
-  });
-
-  it("returns undefined for an agent with no library twin", () => {
-    expect(customAgentKeyForMiddlewareSlug("intel-report-agent")).toBeUndefined();
-  });
-});
-
-describe("controlPlaneAgentHref", () => {
-  it("points at the console, selecting the agent", () => {
-    expect(controlPlaneAgentHref("x-agent")).toBe("/admin/agents/control-plane?agent=x-agent");
-  });
-
-  it("encodes a slug that would otherwise break the query", () => {
-    expect(controlPlaneAgentHref("weird/slug")).toContain("weird%2Fslug");
+  it("encodes a slug that would otherwise break the path", () => {
+    expect(agentStudioHref("weird/slug")).toBe("/agents/weird%2Fslug/studio");
   });
 });
