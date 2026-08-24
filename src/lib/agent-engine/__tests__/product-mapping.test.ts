@@ -58,7 +58,7 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "x-agent", "instagram-agent", "linkedin-agent", "reddit-agent", "blog-agent",
       "newsletter-agent", "campaign-orchestrator", "landing-builder-agent",
       "branded-shorts-agent", "reputation-agent", "seo-geo-agent", "intel-report-agent",
-      "linkedin-setup-agent", "reddit-setup-agent", "tiktok-agent",
+      "tiktok-agent",
     ]);
     for (const key of [
       "karos-x-agent-v2", "karos-linkedin-writer-v2", "karos-reddit-runner",
@@ -72,11 +72,18 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
     }
   });
 
-  it("routes the two setup agents to their own onboarding workflows", () => {
-    // Not the drafting workflows: a setup run records a filled form, and a
-    // prefix match would have fed an onboarding interview into a post writer.
-    expect(resolveAgentEngineProductIdForCustomAgent("karos-linkedin-setup-v2")).toBe("linkedin-setup-agent");
-    expect(resolveAgentEngineProductIdForCustomAgent("karos-reddit-setup")).toBe("reddit-setup-agent");
+  it("routes the two onboarding keys to the drafting agents that now absorb them", () => {
+    // These used to route to `linkedin-setup-agent`/`reddit-setup-agent`, which
+    // were separate engine products. The setup routine is now each parent
+    // agent's `00-channel-setup` pre-flight: the same filled form arrives on
+    // the same run, the parent records it if the channel has no charter and
+    // skips it if one exists, and then drafts.
+    //
+    // Still not a prefix match — the mapping is exact, so a key is routed
+    // because someone decided it should be and not because its name happened
+    // to start the right way.
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-linkedin-setup-v2")).toBe("linkedin-agent");
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-reddit-setup")).toBe("reddit-agent");
   });
 
   it("routes the three drafting agents whose engine workflows were built but idle", () => {

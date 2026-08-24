@@ -68,15 +68,21 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, string>> = {
   "karos-x-agent-v2": "x-agent",
   "karos-linkedin-writer-v2": "linkedin-agent",
   "karos-reddit-runner": "reddit-agent",
-  // Onboarding, now that agent-engine has workflows for them. They record a
-  // filled form as the charter the drafting agents above read, so a client
-  // set up here is a client those agents can then run for.
+  // The lab's onboarding skills, now routed to the DRAFTING agents.
+  //
+  // `linkedin-setup-agent`/`reddit-setup-agent` were separate engine products
+  // until the setup workflow was inlined into each parent as its
+  // `00-channel-setup` pre-flight. A run dispatched from one of these lab keys
+  // carries the same filled form it always did; the parent agent records it if
+  // the channel has no charter, skips it if one exists, and then drafts. So
+  // onboarding and the first post are one run instead of two products someone
+  // had to sequence by hand.
   //
   // The manager variants stay absent on purpose: karos-linkedin-manager-v2
   // runs on two clocks and rewrites the generators' inputs, and agent-engine
   // has neither a scheduler nor a write path for that.
-  "karos-linkedin-setup-v2": "linkedin-setup-agent",
-  "karos-reddit-setup": "reddit-setup-agent",
+  "karos-linkedin-setup-v2": "linkedin-agent",
+  "karos-reddit-setup": "reddit-agent",
   // Three more whose engine workflows already exist.
   //
   // instagram-agent and branded-shorts-agent route correctly but do not finish

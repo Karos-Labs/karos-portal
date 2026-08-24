@@ -97,19 +97,16 @@ describe("the run card only offers what the workflow behind it reads", () => {
     expect(html).not.toContain("multiple");
   });
 
-  it("offers the run direction on every drafting agent, since every intake reads it", () => {
+  it("offers the run direction on every agent in the catalog", () => {
+    // No exceptions left. The two setup agents were the only cards whose
+    // workflow had no model step to honour a sentence, and they stopped being
+    // products when their setup routine moved inside linkedin-agent and
+    // reddit-agent as the `00-channel-setup` pre-flight.
     for (const slug of [...READS_MEDIA_ASSETS, ...DOES_NOT, "campaign-orchestrator", "reputation-agent", "seo-geo-agent"]) {
       const html = markup(slug);
       expect(html, slug).toContain(`id="direction-${slug}"`);
       expect(html, slug).toContain("Direction for this run");
     }
-  });
-
-  it.each(["linkedin-setup-agent", "reddit-setup-agent"])("offers no direction on %s", (slug) => {
-    // The one place a sentence has nowhere to go: these workflows are
-    // `wf.step.code` end to end — parse a filled form, persist it as a charter
-    // — so there is no model step that could honour one.
-    expect(markup(slug)).not.toContain(`id="direction-${slug}"`);
   });
 
   /**
@@ -128,10 +125,10 @@ describe("the run card only offers what the workflow behind it reads", () => {
     // scanned by logo.
     expect(isBrandLogo(markup("instagram-agent"))).toBe(true);
     expect(isBrandLogo(markup("x-agent"))).toBe(true);
-    // The case a slug-exact map would miss: the setup agents belong to a
-    // channel too, and prefix-matching is what gives them its logo.
-    expect(isBrandLogo(markup("linkedin-setup-agent"))).toBe(true);
-    expect(isBrandLogo(markup("reddit-setup-agent"))).toBe(true);
+    // Prefix-matched rather than slug-exact, which is what lets a channel's
+    // variants share its logo without an entry each.
+    expect(isBrandLogo(markup("linkedin-agent"))).toBe(true);
+    expect(isBrandLogo(markup("reddit-agent"))).toBe(true);
     // An agent with no single channel keeps whatever the control plane named.
     expect(isBrandLogo(markup("blog-agent", { icon: "FileText" }))).toBe(false);
     expect(isBrandLogo(markup("intel-report-agent"))).toBe(false);

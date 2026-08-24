@@ -79,8 +79,8 @@ export function RedditLogo({ className }: { className?: string }) {
  * catalog this size is much faster to scan when the channel is its own logo.
  * Slug-keyed rather than icon-name-keyed on purpose: the control plane supplies
  * the icon name, and a rename there should not silently drop a logo.
- * Prefix-matched, so the setup agents (`linkedin-setup-agent`,
- * `reddit-setup-agent`) inherit their channel's logo without an entry each.
+ * Prefix-matched rather than slug-exact, so a channel's variants inherit its
+ * logo without an entry each.
  *
  * An agent with no single channel (blog, landing, intel) renders `fallback` -
  * normally its control-plane lucide icon.

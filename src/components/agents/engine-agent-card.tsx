@@ -45,16 +45,6 @@ export function EngineAgentCard({
    */
   const acceptsMedia = agent.slug === "instagram-agent" || agent.slug === "tiktok-agent";
 
-  /**
-   * The setup agents are the one place a typed direction has nowhere to go.
-   *
-   * Their workflows are `wf.step.code` end to end — parse a filled intake form,
-   * persist it as the charter the drafting agents later read. There is no model
-   * step to honour a sentence, so offering the field would be the same empty
-   * promise as an attach control on a blog agent.
-   */
-  const acceptsDirection = !agent.slug.endsWith("-setup-agent");
-
   const runnable = agent.status === "active" && clientId !== "";
 
   /**
@@ -94,22 +84,24 @@ export function EngineAgentCard({
         {agent.model ? ` · ${agent.model}` : ""}
       </p>
 
-      {acceptsDirection && (
-        <div className="mt-3">
-          <Label htmlFor={`direction-${agent.slug}`}>Direction for this run (optional)</Label>
-          <Textarea
-            id={`direction-${agent.slug}`}
-            rows={2}
-            value={customPrompt}
-            onChange={(e) => setCustomPrompt(e.target.value)}
-            placeholder="e.g. Focus on the product launch — keep it factual"
-          />
-          <p className="mt-1 text-xs text-muted">
-            Steers this run only. A subject replaces the auto-picked topic; a note about tone or length just guides
-            the writing.
-          </p>
-        </div>
-      )}
+      {/* Offered on every agent in the catalog. The one exception used to be the
+          two setup agents, whose workflows were `wf.step.code` end to end with
+          no model step to honour a sentence — they are no longer products, so
+          nothing in the catalog reads a direction and ignores it. */}
+      <div className="mt-3">
+        <Label htmlFor={`direction-${agent.slug}`}>Direction for this run (optional)</Label>
+        <Textarea
+          id={`direction-${agent.slug}`}
+          rows={2}
+          value={customPrompt}
+          onChange={(e) => setCustomPrompt(e.target.value)}
+          placeholder="e.g. Focus on the product launch — keep it factual"
+        />
+        <p className="mt-1 text-xs text-muted">
+          Steers this run only. A subject replaces the auto-picked topic; a note about tone or length just guides the
+          writing.
+        </p>
+      </div>
 
       {acceptsMedia && (
         <RunAttachments

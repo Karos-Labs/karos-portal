@@ -57,14 +57,28 @@ describe("loadControlPlaneFacts", () => {
   });
 
   it("does not enrich an agent whose key maps to no engine product", async () => {
-    // Setup and manager variants are different products with no engine
-    // workflow; claiming a control-plane lineage for them would be a lie the
-    // runtime does not honour.
+    // The manager variants have no engine workflow — karos-linkedin-manager-v2
+    // runs on two clocks and rewrites the generators' inputs, and the engine has
+    // neither a scheduler nor a write path for that. Claiming a control-plane
+    // lineage for one would be a lie the runtime does not honour.
     routeFetch([agentRow("linkedin-agent")]);
 
-    const index = await loadControlPlaneFacts(["karos-linkedin-setup-v2", "karos-linkedin-manager-v2"]);
+    const index = await loadControlPlaneFacts(["karos-linkedin-manager-v2"]);
 
     expect(index.size).toBe(0);
+  });
+
+  it("enriches an onboarding key, now that it routes to the agent that absorbed it", async () => {
+    // `karos-linkedin-setup-v2` used to map to `linkedin-setup-agent`, a
+    // separate engine product, and this file asserted it enriched to nothing.
+    // The setup routine is now linkedin-agent's `00-channel-setup` pre-flight,
+    // so the key maps to a real workflow and its row is genuinely the one the
+    // control plane holds.
+    routeFetch([agentRow("linkedin-agent")]);
+
+    const index = await loadControlPlaneFacts(["karos-linkedin-setup-v2"]);
+
+    expect(index.get("karos-linkedin-setup-v2")).toMatchObject({ agentId: "linkedin-agent" });
   });
 
   it("still lists the control plane when no library key maps, because the union needs it", async () => {
