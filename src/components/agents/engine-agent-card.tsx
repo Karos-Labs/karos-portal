@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Badge, Button, Label, Select, Textarea } from "@/components/ui";
-import { Icon, platformLogoFor } from "@/components/icon";
+import { Icon, PlatformLogo } from "@/components/icon";
 import { RunAttachments, type RunAttachment } from "@/components/agents/run-attachments";
 import { dispatchControlPlaneAgentAction } from "@/lib/actions/control-plane-actions";
 import { agentStudioHref, type EngineAgentCardModel } from "@/lib/agent-engine/catalog-union";
@@ -55,9 +55,6 @@ export function EngineAgentCard({
    */
   const acceptsDirection = !agent.slug.endsWith("-setup-agent");
 
-  /** Capitalised: it is rendered as a component below, not called. */
-  const PlatformLogo = platformLogoFor(agent.slug);
-
   const runnable = agent.status === "active" && clientId !== "";
 
   /**
@@ -79,11 +76,11 @@ export function EngineAgentCard({
         {/* The channel's own logo when it has one, else whatever the control
             plane named. A catalog this size is far faster to scan by logo than
             by a generic stand-in glyph. */}
-        {PlatformLogo ? (
-          <PlatformLogo className="h-4 w-4 opacity-80" />
-        ) : (
-          <Icon name={agent.icon ?? "Sparkles"} className="h-4 w-4 opacity-70" />
-        )}
+        <PlatformLogo
+          slug={agent.slug}
+          className="h-4 w-4 opacity-80"
+          fallback={<Icon name={agent.icon ?? "Sparkles"} className="h-4 w-4 opacity-70" />}
+        />
         <span className="font-medium">{agent.name}</span>
         <Badge tone={agent.status === "active" ? "success" : "neutral"}>{agent.status}</Badge>
       </div>

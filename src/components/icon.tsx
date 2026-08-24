@@ -76,35 +76,36 @@ export function RedditLogo({ className }: { className?: string }) {
  *
  * lucide dropped brand glyphs, so a platform agent rendered with a lucide name
  * got a generic stand-in (Camera for Instagram, AtSign for X) - readable, but a
- * catalog of fourteen agents is much faster to scan when the channel is its own
- * logo. Slug-keyed rather than icon-name-keyed on purpose: the control plane
- * supplies the icon name, and a rename there should not silently drop a logo.
+ * catalog this size is much faster to scan when the channel is its own logo.
+ * Slug-keyed rather than icon-name-keyed on purpose: the control plane supplies
+ * the icon name, and a rename there should not silently drop a logo.
+ * Prefix-matched, so the setup agents (`linkedin-setup-agent`,
+ * `reddit-setup-agent`) inherit their channel's logo without an entry each.
  *
- * Returns null for an agent with no single channel (blog, landing, intel), which
- * keeps its control-plane lucide icon.
- */
-export function PlatformLogo({ slug, className }: { slug: string; className?: string }) {
-  const Logo = platformLogoFor(slug);
-  return Logo ? <Logo className={className} /> : null;
-}
-
-/**
- * The same lookup, as a component rather than an element.
+ * An agent with no single channel (blog, landing, intel) renders `fallback` -
+ * normally its control-plane lucide icon.
  *
- * A caller that wants its own fallback needs to know whether a logo exists
- * BEFORE rendering, and asking `PlatformLogo` for an element and testing it for
- * null means calling a component as a function — which works, and which the
- * next person reasonably reads as a mistake. Prefix-matched, so the setup
- * agents (`linkedin-setup-agent`, `reddit-setup-agent`) inherit their channel's
- * logo without a second entry each.
+ * `fallback` is a prop rather than something the caller decides by testing for
+ * a logo first, because the obvious alternative - a `platformLogoFor(slug)`
+ * returning the component so the caller can branch - is a component created
+ * during render, which `react-hooks/static-components` rejects and which breaks
+ * fast refresh's ability to track the component.
  */
-export function platformLogoFor(slug: string): React.ComponentType<{ className?: string }> | null {
-  if (slug.startsWith("instagram")) return InstagramLogo;
-  if (slug.startsWith("linkedin")) return LinkedInLogo;
-  if (slug.startsWith("x-")) return XLogo;
-  if (slug.startsWith("tiktok")) return TikTokLogo;
-  if (slug.startsWith("reddit")) return RedditLogo;
-  return null;
+export function PlatformLogo({
+  slug,
+  className,
+  fallback = null,
+}: {
+  slug: string;
+  className?: string;
+  fallback?: React.ReactNode;
+}) {
+  if (slug.startsWith("instagram")) return <InstagramLogo className={className} />;
+  if (slug.startsWith("linkedin")) return <LinkedInLogo className={className} />;
+  if (slug.startsWith("x-")) return <XLogo className={className} />;
+  if (slug.startsWith("tiktok")) return <TikTokLogo className={className} />;
+  if (slug.startsWith("reddit")) return <RedditLogo className={className} />;
+  return <>{fallback}</>;
 }
 
 /** A curated set of icons offered in the agent builder picker. */
