@@ -44,6 +44,69 @@ export function LinkedInLogo({ className }: { className?: string }) {
   );
 }
 
+/** The Instagram glyph - same hand-rolled-brand-logo rule as XLogo. */
+export function InstagramLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <path d="M12 2.163c3.204 0 3.584.012 4.85.07 1.366.062 2.633.336 3.608 1.311.975.975 1.249 2.242 1.311 3.608.058 1.266.07 1.646.07 4.85s-.012 3.584-.07 4.85c-.062 1.366-.336 2.633-1.311 3.608-.975.975-2.242 1.249-3.608 1.311-1.266.058-1.646.07-4.85.07s-3.584-.012-4.85-.07c-1.366-.062-2.633-.336-3.608-1.311-.975-.975-1.249-2.242-1.311-3.608-.058-1.266-.07-1.646-.07-4.85s.012-3.584.07-4.85c.062-1.366.336-2.633 1.311-3.608.975-.975 2.242-1.249 3.608-1.311 1.266-.058 1.646-.07 4.85-.07m0 1.802c-3.15 0-3.5.012-4.737.068-.94.043-1.68.19-2.223.733-.543.543-.69 1.283-.733 2.223-.056 1.237-.068 1.587-.068 4.737s.012 3.5.068 4.737c.043.94.19 1.68.733 2.223.543.543 1.283.69 2.223.733 1.237.056 1.587.068 4.737.068s3.5-.012 4.737-.068c.94-.043 1.68-.19 2.223-.733.543-.543.69-1.283.733-2.223.056-1.237.068-1.587.068-4.737s-.012-3.5-.068-4.737c-.043-.94-.19-1.68-.733-2.223-.543-.543-1.283-.69-2.223-.733-1.237-.056-1.587-.068-4.737-.068m0 3.064a5.135 5.135 0 1 1 0 10.27 5.135 5.135 0 0 1 0-10.27m0 1.802a3.333 3.333 0 1 0 0 6.666 3.333 3.333 0 0 0 0-6.666m6.538-2.043a1.2 1.2 0 1 1-2.4 0 1.2 1.2 0 0 1 2.4 0" />
+    </svg>
+  );
+}
+
+/** The TikTok glyph - same hand-rolled-brand-logo rule as XLogo. */
+export function TikTokLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <path d="M16.6 5.82a4.28 4.28 0 0 1-1.05-2.82h-3.1v12.2a2.59 2.59 0 1 1-1.84-2.48V9.55a5.7 5.7 0 1 0 4.94 5.65V8.9a7.32 7.32 0 0 0 4.28 1.37V7.17a4.28 4.28 0 0 1-3.23-1.35" />
+    </svg>
+  );
+}
+
+/** The Reddit glyph - same hand-rolled-brand-logo rule as XLogo. */
+export function RedditLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden className={className}>
+      <path d="M12 0C5.373 0 0 5.373 0 12c0 6.627 5.373 12 12 12s12-5.373 12-12c0-6.627-5.373-12-12-12m5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.983 0 1.777.795 1.777 1.777 0 .717-.429 1.333-1.03 1.615a3.1 3.1 0 0 1 .043.552c0 2.827-3.294 5.12-7.355 5.12-4.062 0-7.355-2.293-7.355-5.12 0-.187.015-.371.043-.552-.601-.282-1.03-.898-1.03-1.615 0-.982.794-1.777 1.777-1.777.477 0 .899.182 1.207.491 1.194-.856 2.85-1.418 4.674-1.488l.899-4.223a.532.532 0 0 1 .631-.411l2.986.63a1.25 1.25 0 0 1 1.124-.701zM8.235 12.79a1.25 1.25 0 0 0 0 2.498c.687 0 1.248-.561 1.248-1.249a1.25 1.25 0 0 0-1.248-1.249m7.53 0a1.25 1.25 0 0 0 0 2.498 1.25 1.25 0 0 0 0-2.498m-3.765 4.588c-.919 0-1.812-.043-2.671-.124a.34.34 0 0 0-.246.582c.796.796 2.05 1.184 2.917 1.184.867 0 2.121-.388 2.917-1.184a.34.34 0 0 0-.246-.582c-.859.081-1.752.124-2.671.124" />
+    </svg>
+  );
+}
+
+/**
+ * The platform glyph for an engine agent, by its slug.
+ *
+ * lucide dropped brand glyphs, so a platform agent rendered with a lucide name
+ * got a generic stand-in (Camera for Instagram, AtSign for X) - readable, but a
+ * catalog of fourteen agents is much faster to scan when the channel is its own
+ * logo. Slug-keyed rather than icon-name-keyed on purpose: the control plane
+ * supplies the icon name, and a rename there should not silently drop a logo.
+ *
+ * Returns null for an agent with no single channel (blog, landing, intel), which
+ * keeps its control-plane lucide icon.
+ */
+export function PlatformLogo({ slug, className }: { slug: string; className?: string }) {
+  const Logo = platformLogoFor(slug);
+  return Logo ? <Logo className={className} /> : null;
+}
+
+/**
+ * The same lookup, as a component rather than an element.
+ *
+ * A caller that wants its own fallback needs to know whether a logo exists
+ * BEFORE rendering, and asking `PlatformLogo` for an element and testing it for
+ * null means calling a component as a function — which works, and which the
+ * next person reasonably reads as a mistake. Prefix-matched, so the setup
+ * agents (`linkedin-setup-agent`, `reddit-setup-agent`) inherit their channel's
+ * logo without a second entry each.
+ */
+export function platformLogoFor(slug: string): React.ComponentType<{ className?: string }> | null {
+  if (slug.startsWith("instagram")) return InstagramLogo;
+  if (slug.startsWith("linkedin")) return LinkedInLogo;
+  if (slug.startsWith("x-")) return XLogo;
+  if (slug.startsWith("tiktok")) return TikTokLogo;
+  if (slug.startsWith("reddit")) return RedditLogo;
+  return null;
+}
+
 /** A curated set of icons offered in the agent builder picker. */
 export const AGENT_ICONS = [
   "Sparkles",

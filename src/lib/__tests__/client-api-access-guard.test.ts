@@ -642,6 +642,10 @@ describe("every API route that takes a client id asks the fence", () => {
 
   const CLASSIFIED: Record<string, "fenced" | "cron" | "signed" | "self"> = {
     "agent-engine/reconcile": "cron",
+    // Signs a PUT into `clients/<id>/run-attachments/`, so the id arrives
+    // asserted by the caller and the fence is the only thing between a guessed
+    // id and a write handle into that client's media prefix.
+    "agent-engine/run-media": "fenced",
     "agent-service/reconcile": "cron",
     "agent-service/webhook": "signed",
     "analytics/sync": "cron",

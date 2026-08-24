@@ -390,7 +390,11 @@ export async function requestModelAccessAction(
  */
 export async function dispatchControlPlaneAgentAction(
   agentRef: string,
-  input: { clientId: string; inputs?: Record<string, string> },
+  // `unknown` values, not strings: `mediaAssets` is a real array by the time it
+  // leaves the card, and `dispatchAgentEngineRun` already forwards
+  // `Record<string, unknown>` verbatim into the run envelope. Stringifying it
+  // here only to have the engine parse it back would add a format nobody needs.
+  input: { clientId: string; inputs?: Record<string, unknown> },
 ): Promise<Result<{ jobId: string }>> {
   const admin = await requireAdmin();
   if (!isMiddlewareDispatchEnabled()) {
