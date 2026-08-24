@@ -260,7 +260,7 @@ export async function setStageModelAction(
     const agent = await getAgent(agentRef);
     const stage = agent.stages.find((s) => s.id === stageId);
     if (!stage) throw new Error(`"${stageId}" is not a stage of this agent.`);
-    if (stage.kind !== "ai") {
+    if (stage.kind !== "agent") {
       // Offering the control on a code step would be offering a setting that
       // does nothing, which is worse than not offering it.
       throw new Error(`"${stage.label}" does not call a model, so it has no model to set.`);

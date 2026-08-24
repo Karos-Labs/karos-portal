@@ -44,8 +44,15 @@ export interface AgentStage {
   description: string | null;
   /** A gate pauses for a human — the difference between finishing and waiting. */
   isGate: boolean;
-  /** Only an `"ai"` stage calls a model, so only an `"ai"` stage can carry a `modelId`. */
-  kind: "ai" | "code" | "gate";
+  /**
+   * Which kind of step this is, in agent-engine's own vocabulary: `"agent"` for
+   * a model step, matching its `StepKindSchema`.
+   *
+   * Named `"ai"` on both sides of this wire when the feature first shipped,
+   * which meant no seeded stage ever matched and the model picker below
+   * rendered on none of them.
+   */
+  kind: "agent" | "code" | "gate";
   /**
    * A model id from the normalized catalog, overriding what this stage is
    * compiled to use. Null means "leave the stage alone".
@@ -219,7 +226,7 @@ function toAgent(row: Row): MiddlewareAgent {
             label: str(f.label),
             description: strOrNull(f.description),
             isGate: f.is_gate === true,
-            kind: f.kind === "ai" || f.kind === "gate" ? f.kind : "code",
+            kind: f.kind === "agent" || f.kind === "gate" ? f.kind : "code",
             modelId: typeof f.model_id === "string" ? f.model_id : null,
           };
         })

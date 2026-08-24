@@ -157,7 +157,7 @@ function StagesPanel({
             <span className="text-sm">{stage.label}</span>
             <code className="text-xs opacity-50">{stage.id}</code>
             {stage.isGate && <Badge tone="warning">waits for a human</Badge>}
-            {stage.kind === "ai" && (
+            {stage.kind === "agent" && (
               <StageModelPicker agent={agent} stage={stage} models={models} pending={pending} apply={apply} />
             )}
           </li>
@@ -170,7 +170,8 @@ function StagesPanel({
 /**
  * One stage's own model.
  *
- * Rendered only on `"ai"` stages, because a code step has no model to set and
+ * Rendered only on `"agent"` stages — the engine's own name for a model step
+ * — because a code step has no model to set and
  * a disabled control that explains itself is still a control someone has to
  * read past.
  *
