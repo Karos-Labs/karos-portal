@@ -91,7 +91,10 @@ export async function dispatchAgentEngineRun(input: DispatchAgentEngineRunInput)
         clientSlug: input.clientSlug,
         productId: input.productId,
         runKind: input.runKind,
-        ...(input.inputs && Object.keys(input.inputs).length > 0 ? { inputs: input.inputs } : {}),
+        // `input`, matching the engine's own schema key. `DispatchAgentEngineRunInput`
+        // keeps the plural for its callers, who are talking about "the run's
+        // inputs"; the rename happens here, once, at the wire boundary.
+        ...(input.inputs && Object.keys(input.inputs).length > 0 ? { input: input.inputs } : {}),
         idempotencyKey: jobId,
         correlationId: jobId,
       })

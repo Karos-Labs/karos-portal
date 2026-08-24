@@ -59,6 +59,61 @@ describe("dispatchAgentEngineRun", () => {
     expect(updateJobMock).toHaveBeenCalledWith("job_1", expect.objectContaining({ agentEngineRunId: "pubsub-msg_1", agentEngineProductId: "seo-geo-agent" }));
   });
 
+  /**
+   * THE BRIEF SURVIVES THE FALLBACK PATH.
+   *
+   * This published `inputs` for months. agent-engine's `RunJobRequestSchema`
+   * reads `input`, and Zod STRIPS unknown keys rather than rejecting them — so
+   * a run dispatched here was accepted, ran to completion, and silently ignored
+   * the brief: the agent picked its own topic and no attachment reached Tier 0.
+   * Nothing errored, in prep or in production.
+   *
+   * A live prep run is what caught it, which is the argument for asserting the
+   * wire key by name rather than trusting the type: both spellings typecheck,
+   * and only one of them is read.
+   */
+  it("publishes the brief under the key agent-engine actually reads", async () => {
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_2" });
+
+    await dispatchAgentEngineRun({
+      clientId: "client_1",
+      clientSlug: "acme",
+      productId: "instagram-agent",
+      runKind: "recurring",
+      agentName: "Instagram",
+      title: "Test dispatch",
+      inputs: { customPrompt: "focus on the launch", mediaAssets: [{ uri: "gs://b/o.png", role: "source" }] },
+    });
+
+    const envelope = publishAgentEngineRunMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(envelope.input).toEqual({
+      customPrompt: "focus on the launch",
+      mediaAssets: [{ uri: "gs://b/o.png", role: "source" }],
+    });
+    // Named explicitly: the plural is the shape the CALLERS use, and leaving it
+    // on the wire alongside the singular would let the old spelling quietly
+    // come back.
+    expect(envelope).not.toHaveProperty("inputs");
+  });
+
+  it("omits the brief entirely when a run carries none, rather than sending an empty object", async () => {
+    publishAgentEngineRunMock.mockResolvedValue({ messageId: "msg_3" });
+
+    await dispatchAgentEngineRun({
+      clientId: "client_1",
+      clientSlug: "acme",
+      productId: "blog-agent",
+      runKind: "recurring",
+      agentName: "Blog",
+      title: "Test dispatch",
+      inputs: {},
+    });
+
+    // A scheduled run has nobody typing at it. An empty `input` on the wire
+    // would read as "a brief was supplied and it said nothing".
+    expect(publishAgentEngineRunMock.mock.calls[0]![0]).not.toHaveProperty("input");
+  });
+
   it("marks the job failed and returns the error when publish throws", async () => {
     publishAgentEngineRunMock.mockRejectedValue(new Error("pubsub unavailable"));
 
