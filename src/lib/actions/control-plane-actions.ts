@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import {
   MiddlewareRequestError,
   getAgent,
+  getEnginePrompt,
   listModels,
   activatePromptVersion,
   bindTemplate,
@@ -12,6 +13,7 @@ import {
   requestModelAccess,
   setAgentStatus,
   submitFeedback,
+  putEnginePrompt,
   updateAgent,
 } from "@/lib/agent-engine/middleware-admin";
 import { isMiddlewareDispatchEnabled } from "@/lib/agent-engine/middleware-client";
@@ -251,6 +253,52 @@ export async function promoteFeedbackAction(
  * than merging, so a partial list would silently delete the stages it omitted.
  * The list comes from the agent as it is right now, edited in one place.
  */
+/**
+ * The prompt one stage will load on its next run.
+ *
+ * Read live rather than cached anywhere, because "what will this stage
+ * actually execute" is the only question the editor exists to answer, and a
+ * stale copy answers a different one.
+ */
+export async function getStagePromptAction(
+  skillRef: string,
+): Promise<Result<{ skillRef: string; content: string; updatedAt: string | null; updatedBy: string | null }>> {
+  return run(async () => {
+    const prompt = await getEnginePrompt(skillRef);
+    return {
+      skillRef: prompt.skillRef,
+      content: prompt.content,
+      updatedAt: prompt.updatedAt,
+      updatedBy: prompt.updatedBy,
+    };
+  });
+}
+
+/**
+ * Replaces it, so the next run of that stage uses the new text.
+ *
+ * Refuses blank content here as well as in the middleware. Two checks for one
+ * rule is worth it in this case: a stage whose system prompt is empty does not
+ * fail, it runs on its bare turn contract and produces something plausible and
+ * untethered, and the round trip that discovers the server also refuses it is
+ * a round trip in which somebody might have closed the tab.
+ */
+export async function saveStagePromptAction(
+  skillRef: string,
+  content: string,
+): Promise<Result<{ skillRef: string; content: string }>> {
+  return run(async () => {
+    if (!content.trim()) {
+      throw new Error("A stage prompt cannot be saved empty — the stage would still run, on nothing.");
+    }
+    // `run` has already called requireAdmin(); this second call is for the
+    // actor's identity, so the audit trail says who replaced the text.
+    const actor = await requireAdmin();
+    const prompt = await putEnginePrompt(skillRef, content, actor.email ?? undefined);
+    return { skillRef: prompt.skillRef, content: prompt.content };
+  });
+}
+
 export async function setStageModelAction(
   agentRef: string,
   stageId: string,

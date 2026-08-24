@@ -54,6 +54,12 @@ export interface AgentStage {
    */
   kind: "agent" | "code" | "gate";
   /**
+   * Which prompt this stage loads, as `"<promptId>@<version>"`. Absent on code
+   * steps and on the shared terminal guardrail, which builds its prompt inline
+   * from the client's forbidden-topic list.
+   */
+  skillRef: string | null;
+  /**
    * A model id from the normalized catalog, overriding what this stage is
    * compiled to use. Null means "leave the stage alone".
    *
@@ -227,6 +233,7 @@ function toAgent(row: Row): MiddlewareAgent {
             description: strOrNull(f.description),
             isGate: f.is_gate === true,
             kind: f.kind === "agent" || f.kind === "gate" ? f.kind : "code",
+            skillRef: typeof f.skill_ref === "string" ? f.skill_ref : null,
             modelId: typeof f.model_id === "string" ? f.model_id : null,
           };
         })
@@ -390,6 +397,7 @@ export async function updateAgent(agentRef: string, patch: AgentPatch): Promise<
       description: stage.description,
       is_gate: stage.isGate,
       kind: stage.kind,
+      skill_ref: stage.skillRef,
       model_id: stage.modelId,
     }));
   }
@@ -612,4 +620,62 @@ export async function requestModelAccess(
 
   const result = obj(await middlewareFetch(`/models/${ref(modelRef)}/access-request`, { method: "POST", body }));
   return { id: str(result.id), status: str(result.status) };
+}
+
+// ── engine prompts ───────────────────────────────────────────────────────
+//
+// The prompt store agent-engine EXECUTES from — `promptVersions/{id}@{n}` —
+// which is a different thing from this service's own
+// `agents/{slug}/prompts/{version}`. Editing the latter changes nothing about
+// what an agent runs; editing this changes the next run.
+
+export interface EnginePrompt {
+  promptId: string;
+  version: string;
+  skillRef: string;
+  content: string;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+function toEnginePrompt(row: Row): EnginePrompt {
+  return {
+    promptId: String(row.prompt_id ?? ""),
+    version: String(row.version ?? ""),
+    skillRef: String(row.skill_ref ?? ""),
+    content: typeof row.content === "string" ? row.content : "",
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
+    updatedBy: typeof row.updated_by === "string" ? row.updated_by : null,
+  };
+}
+
+/** Splits a stage's `skillRef` into the two path segments the API takes. */
+export function splitSkillRef(skillRef: string): { promptId: string; version: string } | null {
+  const at = skillRef.lastIndexOf("@");
+  if (at <= 0 || at === skillRef.length - 1) return null;
+  return { promptId: skillRef.slice(0, at), version: skillRef.slice(at + 1) };
+}
+
+/** The exact text this stage will load on its next run. */
+export async function getEnginePrompt(skillRef: string): Promise<EnginePrompt> {
+  const parts = splitSkillRef(skillRef);
+  if (!parts) throw new Error(`"${skillRef}" is not a promptId@version reference.`);
+  return toEnginePrompt(
+    obj(await middlewareFetch(`/engine-prompts/${ref(parts.promptId)}/versions/${ref(parts.version)}`)),
+  );
+}
+
+/** Replaces that text, so the next run uses it. */
+export async function putEnginePrompt(skillRef: string, content: string, actor?: string): Promise<EnginePrompt> {
+  const parts = splitSkillRef(skillRef);
+  if (!parts) throw new Error(`"${skillRef}" is not a promptId@version reference.`);
+  const query = actor ? `?actor=${encodeURIComponent(actor)}` : "";
+  return toEnginePrompt(
+    obj(
+      await middlewareFetch(`/engine-prompts/${ref(parts.promptId)}/versions/${ref(parts.version)}${query}`, {
+        method: "PUT",
+        body: { content },
+      }),
+    ),
+  );
 }

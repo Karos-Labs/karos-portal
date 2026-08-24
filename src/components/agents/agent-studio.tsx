@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
+import { Icon } from "@/components/icon";
 import {
   activatePromptVersionAction,
   bindTemplateAction,
@@ -9,6 +10,8 @@ import {
   requestModelAccessAction,
   savePromptVersionAction,
   setAgentModelAction,
+  getStagePromptAction,
+  saveStagePromptAction,
   setStageModelAction,
   setAgentStatusAction,
 } from "@/lib/actions/control-plane-actions";
@@ -160,10 +163,133 @@ function StagesPanel({
             {stage.kind === "agent" && (
               <StageModelPicker agent={agent} stage={stage} models={models} pending={pending} apply={apply} />
             )}
+            {stage.skillRef && <StagePromptEditor stage={stage} pending={pending} apply={apply} />}
           </li>
         ))}
       </ol>
     </Card>
+  );
+}
+
+/**
+ * One stage's system prompt, read from and written to the store the engine
+ * executes from.
+ *
+ * Loaded on demand rather than with the page. An agent has up to four model
+ * stages and their prompts run to thirteen thousand characters, so fetching
+ * them all to render a row of collapsed panels would make the page slow to
+ * serve something nobody asked to see.
+ *
+ * Never renders a blank textarea before the content arrives: an editor that
+ * shows empty and then fills in is an editor somebody will type into and save
+ * over. It shows the load state until there is real text.
+ */
+function StagePromptEditor({
+  stage,
+  pending,
+  apply,
+}: {
+  stage: MiddlewareAgent["stages"][number];
+  pending: boolean;
+  apply: Apply;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [meta, setMeta] = useState<{ updatedAt: string | null; updatedBy: string | null } | null>(null);
+
+  const skillRef = stage.skillRef!;
+
+  async function load() {
+    setLoading(true);
+    setLoadError(null);
+    const result = await getStagePromptAction(skillRef);
+    setLoading(false);
+    if (!result.ok) {
+      setLoadError(result.error);
+      return;
+    }
+    setLoaded(result.content);
+    setDraft(result.content);
+    setMeta({ updatedAt: result.updatedAt, updatedBy: result.updatedBy });
+  }
+
+  function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && loaded === null && !loading) void load();
+  }
+
+  const dirty = loaded !== null && draft !== loaded;
+
+  return (
+    <div className="mt-2 w-full">
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex items-center gap-1.5 text-xs opacity-70 hover:opacity-100"
+      >
+        <Icon name={open ? "ChevronDown" : "ChevronRight"} className="h-3 w-3" />
+        Prompt
+        <code className="opacity-60">{skillRef}</code>
+        {dirty && <Badge tone="warning">unsaved</Badge>}
+      </button>
+
+      {open && (
+        <div className="mt-2 rounded border border-white/10 p-3">
+          {loading && <p className="text-xs opacity-60">Loading the text this stage will run…</p>}
+          {loadError && (
+            <p className="text-xs text-red-400">
+              {loadError}
+              {/* A skillRef pointing at a version nobody published reads as
+                  not-found. Saying so is more useful than an empty box. */}
+            </p>
+          )}
+          {loaded !== null && (
+            <>
+              <Textarea
+                aria-label={`System prompt for ${stage.label}`}
+                value={draft}
+                rows={16}
+                spellCheck={false}
+                className="font-mono text-xs"
+                onChange={(e) => setDraft(e.target.value)}
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <Button
+                  size="sm"
+                  disabled={pending || !dirty || !draft.trim()}
+                  onClick={() =>
+                    apply(async () => {
+                      const result = await saveStagePromptAction(skillRef, draft);
+                      if (result.ok) setLoaded(result.content);
+                      return result;
+                    }, `${stage.label}'s prompt is what the next run will use`)
+                  }
+                >
+                  Save
+                </Button>
+                {dirty && (
+                  <Button size="sm" variant="outline" disabled={pending} onClick={() => setDraft(loaded)}>
+                    Revert
+                  </Button>
+                )}
+                <span className="text-xs opacity-50">
+                  {draft.length.toLocaleString()} characters
+                  {meta?.updatedBy ? ` · last edited by ${meta.updatedBy}` : ""}
+                </span>
+              </div>
+              <p className="mt-2 text-xs opacity-50">
+                Saving replaces version <code>{skillRef.split("@")[1]}</code> in place, because this stage
+                loads exactly that version — a new version would not be read until the workflow changed.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
