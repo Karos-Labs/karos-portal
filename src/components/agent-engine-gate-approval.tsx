@@ -36,8 +36,43 @@ import { resolveAgentEngineGateAction } from "@/lib/actions";
  * reaches the screen.
  */
 
-/** Already shown in the page header and the run panel — repeating it here costs a row and tells the reviewer nothing. */
-const SUPPRESSED_KEYS = new Set(["runId", "preview", "client"]);
+/**
+ * Already shown in the page header and the run panel, or rendered by a
+ * dedicated block below — repeating any of these as a generic row costs space
+ * and tells the reviewer nothing. `slideTemplates` has its own section.
+ */
+const SUPPRESSED_KEYS = new Set(["runId", "preview", "client", "slideTemplates"]);
+
+/**
+ * One slide's template provenance, from the gate payload's `slideTemplates`.
+ *
+ * Optional everywhere because the payload is arbitrary by contract: a product
+ * that does not render templated slides sends none of this, and an older
+ * engine build sends slides without ids.
+ */
+interface SlideTemplateInfo {
+  n: number;
+  template?: string;
+  templateId?: string;
+  templateSource?: string;
+  isExperimental?: boolean;
+}
+
+function readSlideTemplates(value: unknown): SlideTemplateInfo[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw) => {
+    if (!isRecord(raw) || typeof raw["n"] !== "number") return [];
+    return [
+      {
+        n: raw["n"],
+        ...(typeof raw["template"] === "string" ? { template: raw["template"] } : {}),
+        ...(typeof raw["templateId"] === "string" ? { templateId: raw["templateId"] } : {}),
+        ...(typeof raw["templateSource"] === "string" ? { templateSource: raw["templateSource"] } : {}),
+        ...(typeof raw["isExperimental"] === "boolean" ? { isExperimental: raw["isExperimental"] } : {}),
+      },
+    ];
+  });
+}
 
 /** The gate `kind`s the engine opens today, in words. An unrecognised kind falls back to its own raw id rather than to silence. */
 const GATE_KIND_LABELS: Readonly<Record<string, string>> = {
@@ -87,16 +122,42 @@ export function AgentEngineGateApproval({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  /** Per-slide design notes, keyed by slide number. Only sent for slides the reviewer actually wrote about. */
+  const [templateNotes, setTemplateNotes] = useState<Record<number, string>>({});
+  /** Which experimental templates the reviewer wants kept for future runs. */
+  const [promote, setPromote] = useState<Record<number, boolean>>({});
 
-  function resolve(decision: "approve" | "reject") {
+  const fields = isRecord(payload) ? payload : {};
+  const slideTemplates = readSlideTemplates(fields["slideTemplates"]);
+  const experimental = slideTemplates.filter((s) => s.isExperimental && s.templateId);
+
+  function resolve(decision: "approve" | "revise" | "reject") {
     startTransition(async () => {
-      const result = await resolveAgentEngineGateAction(jobId, gateId, decision, notes || undefined);
+      // Only slides with a real id AND a written note are sent — an empty box
+      // is not feedback, and the engine's schema requires a non-empty note.
+      const templateFeedback = slideTemplates
+        .filter((s) => s.templateId && (templateNotes[s.n] ?? "").trim().length > 0)
+        .map((s) => ({
+          slide: s.n,
+          templateId: s.templateId!,
+          // A design note given alongside a revision request is itself a
+          // request to change the design; alongside an approval it is praise.
+          verdict: decision === "approve" ? ("approved" as const) : ("revise" as const),
+          note: templateNotes[s.n]!.trim(),
+          promote: decision === "approve" && promote[s.n] === true,
+        }));
+      const result = await resolveAgentEngineGateAction(
+        jobId,
+        gateId,
+        decision,
+        notes || undefined,
+        templateFeedback.length > 0 ? templateFeedback : undefined,
+      );
       if (result.error) setError(result.error);
       else router.refresh();
     });
   }
 
-  const fields = isRecord(payload) ? payload : {};
   const preview = typeof fields["preview"] === "string" ? fields["preview"].trim() : "";
   const facts: Array<[string, string]> = [];
   const structured: Array<[string, unknown]> = [];
@@ -156,23 +217,89 @@ export function AgentEngineGateApproval({
         </p>
       )}
 
-      <textarea
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        placeholder="Optional notes"
-        rows={2}
-        className="w-full rounded-md border border-border bg-surface p-2 text-sm"
-        disabled={pending}
-      />
+      {/* Experimental templates used on this run.
+          A layout nobody has signed off on rendered one of these slides, and
+          the reviewer is the first person to see it. Surfacing it here (rather
+          than leaving it inside the collapsed JSON) is the difference between
+          a design decision getting reviewed and one getting rubber-stamped. */}
+      {experimental.length > 0 && (
+        <div className="space-y-2 rounded-md border border-neon/40 bg-neon/5 p-3">
+          <div className="flex items-center gap-2">
+            <Icon name="Sparkles" className="h-4 w-4 shrink-0 text-neon" />
+            <span className="text-sm font-medium">
+              New custom template used on slide{experimental.length > 1 ? "s" : ""}{" "}
+              {experimental.map((s) => s.n).join(", ")}
+            </span>
+          </div>
+          <p className="text-xs text-muted-2">
+            This layout has not been approved before. Tell us what you think of the design, and tick
+            &ldquo;keep it&rdquo; to add it to the template library for future runs.
+          </p>
+          {experimental.map((slide) => (
+            <div key={slide.n} className="space-y-1.5 rounded-md border border-border/60 bg-surface p-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium">Slide {slide.n}</span>
+                {slide.template && <Badge tone="neutral">{slide.template}</Badge>}
+                {slide.templateSource && <Badge tone="neutral">{labelForKey(slide.templateSource)}</Badge>}
+              </div>
+              <textarea
+                value={templateNotes[slide.n] ?? ""}
+                onChange={(e) => setTemplateNotes((prev) => ({ ...prev, [slide.n]: e.target.value }))}
+                placeholder={`Feedback on slide ${slide.n}'s design (optional)`}
+                rows={2}
+                className="w-full rounded-md border border-border bg-surface-2 p-2 text-sm"
+                disabled={pending}
+              />
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  checked={promote[slide.n] === true}
+                  onChange={(e) => setPromote((prev) => ({ ...prev, [slide.n]: e.target.checked }))}
+                  disabled={pending}
+                />
+                Keep this template for future runs
+              </label>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-1">
+        <textarea
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="What should change? (required to request changes, optional when approving)"
+          rows={3}
+          className="w-full rounded-md border border-border bg-surface p-2 text-sm"
+          disabled={pending}
+        />
+        {/* Stated because it changes what typing here is FOR: this text is not
+            a private note, it steers the next draft and is remembered for
+            future runs. */}
+        <p className="text-xs text-muted-2">
+          Saved to this client&apos;s memory either way, so future runs learn from it.
+        </p>
+      </div>
       {error && <span className="text-xs text-danger">{error}</span>}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" disabled={pending} onClick={() => resolve("approve")}>
           {pending ? <Spinner className="h-4 w-4" /> : "Approve"}
         </Button>
-        <Button variant="danger" disabled={pending} onClick={() => resolve("reject")}>
+        {/* The middle path, and the reason this panel exists in this shape:
+            "close, but change X" used to have to be spelled Reject, which
+            threw the whole run away. */}
+        <Button variant="outline" disabled={pending || notes.trim().length === 0} onClick={() => resolve("revise")}>
+          {pending ? <Spinner className="h-4 w-4" /> : "Request changes"}
+        </Button>
+        <Button variant="danger" disabled={pending || notes.trim().length === 0} onClick={() => resolve("reject")}>
           {pending ? <Spinner className="h-4 w-4" /> : "Reject"}
         </Button>
       </div>
+      {notes.trim().length === 0 && (
+        <p className="text-xs text-muted-2">
+          Requesting changes or rejecting needs a note above.
+        </p>
+      )}
     </div>
   );
 }

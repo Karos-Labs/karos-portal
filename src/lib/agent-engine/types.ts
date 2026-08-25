@@ -27,9 +27,37 @@ export interface AgentEngineRunEnvelope {
   correlationId: string;
 }
 
-/** A gate resolution, matching agent-engine's `POST /api/v1/runs/:runId/resume` body shape exactly (`apps/agent-server/src/routes/runs.ts`'s `ResumeRunRequestSchema`). */
+/**
+ * A reviewer's note on one slide's template, routed to the engine's template
+ * registry rather than to the post's own feedback.
+ *
+ * `promote` is explicit rather than implied by `verdict: "approved"`: liking
+ * one render is not the same as wanting every client's future runs to use that
+ * layout, and only a person can tell those apart.
+ */
+export interface AgentEngineTemplateFeedback {
+  slide: number;
+  templateId: string;
+  verdict: "approved" | "revise";
+  note: string;
+  promote?: boolean;
+}
+
+/**
+ * A gate resolution, matching agent-engine's `POST /api/v1/runs/:runId/resume`
+ * body shape exactly (`apps/agent-server/src/routes/runs.ts`'s
+ * `ResumeRunRequestSchema`).
+ *
+ * `revise` (2026-08) is the third decision: it re-enters the agent's drafting
+ * loop with `feedback` injected and everything already checkpointed reused,
+ * instead of holding the run and forcing somebody to dispatch a fresh one that
+ * knows nothing about what was asked for.
+ */
 export interface AgentEngineGateResolution {
-  decision: "approve" | "reject";
+  decision: "approve" | "revise" | "reject";
   actor: string;
   notes?: string;
+  /** Required by the engine on `revise`; optional guidance on `approve`. */
+  feedback?: string;
+  templateFeedback?: AgentEngineTemplateFeedback[];
 }
