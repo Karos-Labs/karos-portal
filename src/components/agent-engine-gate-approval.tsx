@@ -42,7 +42,49 @@ import { resolveAgentEngineGateAction } from "@/lib/actions";
  * and tells the reviewer nothing. `slideTemplates`/`images` have their own
  * sections.
  */
-const SUPPRESSED_KEYS = new Set(["runId", "preview", "client", "slideTemplates", "images"]);
+const SUPPRESSED_KEYS = new Set(["runId", "preview", "client", "slideTemplates", "images", "copy"]);
+
+/**
+ * The editable projection an instagram-agent gate carries under `copy`
+ * (Phase 2 in-place review editing): the caption plus each slide's prose
+ * fields. Absent for every other product — the editor simply doesn't render.
+ */
+interface EditableSlide {
+  n: number;
+  template?: string;
+  fields: Record<string, string>;
+}
+
+function readEditableCopy(value: unknown): { caption?: string; slides: EditableSlide[] } | undefined {
+  if (!isRecord(value)) return undefined;
+  const slidesRaw = value["slides"];
+  const slides: EditableSlide[] = Array.isArray(slidesRaw)
+    ? slidesRaw.flatMap((raw) => {
+        if (!isRecord(raw) || typeof raw["n"] !== "number" || !isRecord(raw["fields"])) return [];
+        const fields = Object.fromEntries(
+          Object.entries(raw["fields"]).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+        );
+        return [{ n: raw["n"], ...(typeof raw["template"] === "string" ? { template: raw["template"] } : {}), fields }];
+      })
+    : [];
+  if (slides.length === 0) return undefined;
+  return { ...(typeof value["caption"] === "string" ? { caption: value["caption"] } : {}), slides };
+}
+
+/**
+ * Prose fields in a reading order a reviewer expects — headline first, body
+ * second, everything else (quoteText, leftLabel, …) alphabetically after.
+ */
+function orderedFieldKeys(fields: Record<string, string>): string[] {
+  const preferred = ["headline", "body", "kicker"];
+  const keys = Object.keys(fields);
+  return [...preferred.filter((k) => keys.includes(k)), ...keys.filter((k) => !preferred.includes(k)).sort()];
+}
+
+const FONT_SCALES = ["s", "m", "l"] as const;
+const TEXT_ALIGNS = ["start", "center", "end"] as const;
+type FontScale = (typeof FONT_SCALES)[number];
+type TextAlign = (typeof TEXT_ALIGNS)[number];
 
 /**
  * One rendered slide, from the gate payload's `images` convention — the same
@@ -151,12 +193,51 @@ export function AgentEngineGateApproval({
   const [templateNotes, setTemplateNotes] = useState<Record<number, string>>({});
   /** Which experimental templates the reviewer wants kept for future runs. */
   const [promote, setPromote] = useState<Record<number, boolean>>({});
+  /** In-place edit state (Phase 2): only DIFFS against the payload's own text are ever submitted. */
+  const [editingSlides, setEditingSlides] = useState(false);
+  const [captionDraft, setCaptionDraft] = useState<string | null>(null);
+  const [fieldDrafts, setFieldDrafts] = useState<Record<number, Record<string, string>>>({});
+  const [styleDrafts, setStyleDrafts] = useState<Record<number, { fontScale?: FontScale; textAlign?: TextAlign }>>({});
 
   const fields = isRecord(payload) ? payload : {};
   const slideTemplates = readSlideTemplates(fields["slideTemplates"]);
   const experimental = slideTemplates.filter((s) => s.isExperimental && s.templateId);
   const images = readImages(fields["images"]);
   const loadableImages = images.filter((img): img is SlideImage & { url: string } => Boolean(img.url?.startsWith("https://")));
+  const editableCopy = readEditableCopy(fields["copy"]);
+  const imageByN = new Map(images.map((img) => [img.n, img]));
+
+  /** The edits object to submit — undefined when nothing actually changed. */
+  function collectEdits(): { caption?: string; slides?: Array<{ n: number; fields?: Record<string, string>; fontScale?: FontScale; textAlign?: TextAlign }> } | undefined {
+    if (!editableCopy) return undefined;
+    const slides: Array<{ n: number; fields?: Record<string, string>; fontScale?: FontScale; textAlign?: TextAlign }> = [];
+    for (const slide of editableCopy.slides) {
+      const changedFields = Object.fromEntries(
+        Object.entries(fieldDrafts[slide.n] ?? {}).filter(([key, value]) => value !== slide.fields[key] && value.trim().length > 0),
+      );
+      const style = styleDrafts[slide.n] ?? {};
+      const entry = {
+        n: slide.n,
+        ...(Object.keys(changedFields).length > 0 ? { fields: changedFields } : {}),
+        ...(style.fontScale !== undefined ? { fontScale: style.fontScale } : {}),
+        ...(style.textAlign !== undefined ? { textAlign: style.textAlign } : {}),
+      };
+      if (Object.keys(entry).length > 1) slides.push(entry);
+    }
+    const originalCaption = editableCopy.caption ?? "";
+    const caption =
+      captionDraft !== null && captionDraft.trim().length > 0 && captionDraft !== originalCaption ? captionDraft : undefined;
+    if (caption === undefined && slides.length === 0) return undefined;
+    return { ...(caption !== undefined ? { caption } : {}), ...(slides.length > 0 ? { slides } : {}) };
+  }
+
+  function slideHasEdits(n: number): boolean {
+    const slide = editableCopy?.slides.find((s) => s.n === n);
+    if (!slide) return false;
+    const changed = Object.entries(fieldDrafts[n] ?? {}).some(([key, value]) => value !== slide.fields[key]);
+    const style = styleDrafts[n] ?? {};
+    return changed || style.fontScale !== undefined || style.textAlign !== undefined;
+  }
 
   function resolve(decision: "approve" | "revise" | "reject") {
     startTransition(async () => {
@@ -173,13 +254,14 @@ export function AgentEngineGateApproval({
           note: templateNotes[s.n]!.trim(),
           promote: decision === "approve" && promote[s.n] === true,
         }));
-      const result = await resolveAgentEngineGateAction(
-        jobId,
-        gateId,
+      // Edits ship only with an approve — a redraft supersedes hand edits.
+      const edits = decision === "approve" ? collectEdits() : undefined;
+      const result = await resolveAgentEngineGateAction(jobId, gateId, {
         decision,
-        notes || undefined,
-        templateFeedback.length > 0 ? templateFeedback : undefined,
-      );
+        ...(notes ? { notes } : {}),
+        ...(templateFeedback.length > 0 ? { templateFeedback } : {}),
+        ...(edits !== undefined ? { edits } : {}),
+      });
       if (result.error) setError(result.error);
       else router.refresh();
     });
@@ -253,6 +335,127 @@ export function AgentEngineGateApproval({
         <div className="rounded-md border border-border bg-surface p-3">
           <p className="mb-1.5 text-xs text-muted-2">Awaiting your approval</p>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{normalizeDashes(preview)}</p>
+        </div>
+      )}
+
+      {/* In-place editing (Phase 2): the gate's `copy` projection is the
+          actual text behind the pixels. Edits ship VERBATIM with an approve —
+          the slides re-render engine-side — so a wording or type-size
+          preference no longer costs a full model redraft round. Collapsed by
+          default: most reviews approve as-is, and eight open editors would
+          bury the decision buttons. */}
+      {editableCopy && (
+        <div className="space-y-2 rounded-md border border-border bg-surface p-3">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 text-left"
+            onClick={() => setEditingSlides((v) => !v)}
+            disabled={pending}
+          >
+            <Icon name={editingSlides ? "ChevronDown" : "ChevronRight"} className="h-4 w-4 shrink-0 text-muted" />
+            <span className="text-sm font-medium">Edit before approving</span>
+            <span className="text-xs text-muted-2">
+              text and typography, applied exactly as written{collectEdits() !== undefined ? " · edited" : ""}
+            </span>
+          </button>
+
+          {editingSlides && (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-xs text-muted-2">Caption</label>
+                <textarea
+                  value={captionDraft ?? editableCopy.caption ?? ""}
+                  onChange={(e) => setCaptionDraft(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-md border border-border bg-surface-2 p-2 text-sm"
+                  disabled={pending}
+                />
+              </div>
+
+              {editableCopy.slides.map((slide) => {
+                const image = imageByN.get(slide.n);
+                const style = styleDrafts[slide.n] ?? {};
+                return (
+                  <div key={slide.n} className="space-y-2 rounded-md border border-border/60 bg-surface-2/40 p-2.5">
+                    <div className="flex items-center gap-2">
+                      {image?.url?.startsWith("https://") ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- signed GCS URL, not a Next/Image asset.
+                        <img src={image.url} alt={`Slide ${slide.n}`} className="h-12 w-12 shrink-0 rounded border border-border object-cover" />
+                      ) : (
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-dashed border-border/60 text-[10px] text-muted-2">
+                          {slide.n}
+                        </div>
+                      )}
+                      <span className="text-xs font-medium">Slide {slide.n}</span>
+                      {slideHasEdits(slide.n) && <Badge tone="neon">edited</Badge>}
+                    </div>
+
+                    {orderedFieldKeys(slide.fields).map((key) => (
+                      <div key={key} className="space-y-0.5">
+                        <label className="text-xs text-muted-2">{labelForKey(key)}</label>
+                        <textarea
+                          value={fieldDrafts[slide.n]?.[key] ?? slide.fields[key]}
+                          onChange={(e) =>
+                            setFieldDrafts((prev) => ({ ...prev, [slide.n]: { ...prev[slide.n], [key]: e.target.value } }))
+                          }
+                          rows={key === "body" ? 3 : 1}
+                          className="w-full rounded-md border border-border bg-surface p-2 text-sm"
+                          disabled={pending}
+                        />
+                      </div>
+                    ))}
+
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex items-center gap-1">
+                        <span className="mr-1 text-xs text-muted-2">Text size</span>
+                        {FONT_SCALES.map((scale) => (
+                          <Button
+                            key={scale}
+                            size="sm"
+                            variant={style.fontScale === scale ? "primary" : "outline"}
+                            disabled={pending}
+                            onClick={() =>
+                              setStyleDrafts((prev) => ({
+                                ...prev,
+                                [slide.n]: { ...prev[slide.n], fontScale: prev[slide.n]?.fontScale === scale ? undefined : scale },
+                              }))
+                            }
+                          >
+                            {scale.toUpperCase()}
+                          </Button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="mr-1 text-xs text-muted-2">Align</span>
+                        {TEXT_ALIGNS.map((align) => (
+                          <Button
+                            key={align}
+                            size="sm"
+                            variant={style.textAlign === align ? "primary" : "outline"}
+                            disabled={pending}
+                            onClick={() =>
+                              setStyleDrafts((prev) => ({
+                                ...prev,
+                                [slide.n]: { ...prev[slide.n], textAlign: prev[slide.n]?.textAlign === align ? undefined : align },
+                              }))
+                            }
+                          >
+                            {labelForKey(align)}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <p className="text-xs text-muted-2">
+                Edits apply exactly as written when you approve, the slides re-render with them, and your changes are
+                remembered so future drafts match your preferences. Requesting changes instead sends your note to the
+                agent for a redraft.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

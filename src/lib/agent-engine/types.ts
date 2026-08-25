@@ -44,6 +44,26 @@ export interface AgentEngineTemplateFeedback {
 }
 
 /**
+ * A reviewer's in-place edit of one slide, applied VERBATIM by the engine on
+ * approve — no model redraft. `fields` patches the slide's own prose slots
+ * (the engine only applies keys the slide actually has and that are not
+ * layout metadata); `fontScale`/`textAlign` are the discrete typography
+ * controls the templates implement as body classes.
+ */
+export interface AgentEngineSlideEdit {
+  n: number;
+  fields?: Record<string, string>;
+  fontScale?: "s" | "m" | "l";
+  textAlign?: "start" | "center" | "end";
+}
+
+/** Everything a reviewer hand-changed before approving — changes TO the post, shipped as written, distinct from `feedback` (words ABOUT it). */
+export interface AgentEngineReviewEdits {
+  caption?: string;
+  slides?: AgentEngineSlideEdit[];
+}
+
+/**
  * A gate resolution, matching agent-engine's `POST /api/v1/runs/:runId/resume`
  * body shape exactly (`apps/agent-server/src/routes/runs.ts`'s
  * `ResumeRunRequestSchema`).
@@ -60,4 +80,6 @@ export interface AgentEngineGateResolution {
   /** Required by the engine on `revise`; optional guidance on `approve`. */
   feedback?: string;
   templateFeedback?: AgentEngineTemplateFeedback[];
+  /** In-place edits, meaningful on `approve` only — a redraft supersedes hand edits. */
+  edits?: AgentEngineReviewEdits;
 }

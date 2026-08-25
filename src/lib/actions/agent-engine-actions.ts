@@ -3,10 +3,28 @@
 import { revalidatePath } from "next/cache";
 import { getJob } from "@/lib/data";
 import { resolveAgentEngineGate } from "@/lib/agent-engine/client";
-import type { AgentEngineTemplateFeedback } from "@/lib/agent-engine/types";
+import type { AgentEngineReviewEdits, AgentEngineTemplateFeedback } from "@/lib/agent-engine/types";
 import { requireStaff } from "./_shared";
 
 const NOT_FOUND = "This run could not be found.";
+
+export interface ResolveAgentEngineGateOptions {
+  decision: "approve" | "revise" | "reject";
+  notes?: string;
+  /**
+   * Per-slide design notes on the templates that rendered this output. Routed
+   * by the engine to its template registry, where they move that template's
+   * quality score and therefore which layouts later runs get.
+   */
+  templateFeedback?: AgentEngineTemplateFeedback[];
+  /**
+   * In-place edits the reviewer made before approving — applied verbatim by
+   * the engine (re-rendered, delivered, and learned from). Only sent with an
+   * `approve`: a redraft supersedes hand edits, so the UI drops them on
+   * revise/reject and this action enforces the same.
+   */
+  edits?: AgentEngineReviewEdits;
+}
 
 /**
  * Approves or rejects an agent-engine run's currently-pending gate — the
@@ -17,19 +35,17 @@ const NOT_FOUND = "This run could not be found.";
  * `POST /api/v1/runs/:runId/resume` directly — this is a synchronous RPC,
  * not something that goes through Pub/Sub (dispatch is fire-and-forget; a
  * gate decision needs a real response to know whether it landed).
+ *
+ * An options object rather than the previous five positional arguments —
+ * `edits` made a sixth, and positional optionals past four are how a
+ * `templateFeedback` ends up passed as a `notes`.
  */
 export async function resolveAgentEngineGateAction(
   jobId: string,
   gateId: string,
-  decision: "approve" | "revise" | "reject",
-  notes?: string,
-  /**
-   * Per-slide design notes on the templates that rendered this output. Routed
-   * by the engine to its template registry, where they move that template's
-   * quality score and therefore which layouts later runs get.
-   */
-  templateFeedback?: AgentEngineTemplateFeedback[],
+  options: ResolveAgentEngineGateOptions,
 ): Promise<{ error?: string }> {
+  const { decision, notes, templateFeedback, edits } = options;
   const user = await requireStaff();
   const job = await getJob(jobId);
   if (!job || !job.agentEngineRunId) return { error: NOT_FOUND };
@@ -43,6 +59,7 @@ export async function resolveAgentEngineGateAction(
   if (decision === "reject" && !notes?.trim()) {
     return { error: "A rejection needs a reason." };
   }
+  const hasEdits = edits !== undefined && (edits.caption !== undefined || (edits.slides?.length ?? 0) > 0);
 
   try {
     await resolveAgentEngineGate(job.agentEngineRunId, gateId, {
@@ -54,6 +71,7 @@ export async function resolveAgentEngineGateAction(
       // arrive as a rejection `reason` and steer nothing.
       ...(notes ? { feedback: notes } : {}),
       ...(templateFeedback && templateFeedback.length > 0 ? { templateFeedback } : {}),
+      ...(hasEdits && decision === "approve" ? { edits } : {}),
     });
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to resolve the gate." };
