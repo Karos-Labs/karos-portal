@@ -352,7 +352,7 @@ interface InstagramCarouselDeliverable {
 }
 
 /** Never prose — excluded from anything read as slide text, same rule the engine's own workflow applies before this ever reaches a person. */
-const NON_PROSE_FIELD_KEYS = new Set(["accentColor"]);
+const NON_PROSE_FIELD_KEYS = new Set(["accentColor", "dir"]);
 
 /**
  * Every slide's prose field values, joined the same way the engine's own

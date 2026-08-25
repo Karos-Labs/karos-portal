@@ -449,6 +449,23 @@ describe("the three products that already worked keep working", () => {
     expect(metaSlides[0]!.headline).not.toContain("#ff6b2c");
   });
 
+  // Every slide's `fields` may also carry `dir` ("rtl"/"ltr", the RTL-template
+  // fix for prep job 9qkTWlg7e9ZLiVIZUok4's Hebrew client) — same non-prose
+  // rule as `accentColor` above, so it must not leak into content either.
+  it("never lets the dir field leak into content or a slide's gallery caption", async () => {
+    uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
+    await materialize("instagram-agent", {
+      topic: "No caption field on this old deliverable",
+      slides: [{ n: 1, fields: { dir: "rtl", headline: "The real headline" } }],
+      rendered: [{ n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" }],
+    });
+    const asset = createdAsset();
+    expect(asset.content).not.toContain("rtl");
+    expect(asset.content).toContain("The real headline");
+    const metaSlides = asset.meta?.slides as Array<{ headline?: string }>;
+    expect(metaSlides[0]!.headline).not.toContain("rtl");
+  });
+
   it("instagram-carousel skips a slide that could not be rehosted, without losing the others", async () => {
     uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
     await materialize("instagram-agent", {
