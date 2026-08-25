@@ -347,12 +347,75 @@ describe("the three products that already worked keep working", () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
     await materialize("instagram-agent", {
       topic: "Three ways to brief an AI",
+      slides: [{ n: 1, fields: { headline: "Three ways to brief an AI" } }],
       rendered: [{ n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" }],
     });
     const asset = createdAsset();
     expect(asset.type).toBe("social_post");
     expect(asset.imageUrl).toBe("https://karos.example/rehosted.png");
     expect(asset.channels).toEqual(["instagram"]);
+  });
+
+  // A real prep run (rWb2EutSDjHzkPnsoeEY) shipped 8 slides and the reviewer
+  // could see none of it, before or after approval: `content` was the bare
+  // topic and only slide 1's photo was ever rehosted. This is the regression
+  // test for both halves of that fix.
+  it("instagram-carousel rehosts EVERY slide into a gallery, and builds real caption text from each slide's own fields", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
+    await materialize("instagram-agent", {
+      topic: "AI Digital Marketing trends this week",
+      slides: [
+        { n: 1, fields: { headline: "AI is reshaping marketing", body: "Here's what changed this quarter." } },
+        { n: 2, fields: { stat: "62%", label: "of teams now use AI drafting tools" } },
+      ],
+      rendered: [
+        { n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" },
+        { n: 2, path: "https://signed.example/slide-2.png", gcsUri: "gs://b/2.png" },
+      ],
+    });
+    const asset = createdAsset();
+
+    // The actual post copy, not the topic label.
+    expect(asset.content).toContain("AI is reshaping marketing");
+    expect(asset.content).toContain("Here's what changed this quarter.");
+    expect(asset.content).toContain("62%");
+    expect(asset.content).not.toBe("AI Digital Marketing trends this week");
+
+    // Both slides rehosted and exposed as a gallery `assetImages()` can read,
+    // not just slide 1.
+    const metaSlides = asset.meta?.slides as Array<{ n: number; imageUrl: string | null; headline?: string }>;
+    expect(metaSlides).toHaveLength(2);
+    expect(metaSlides.map((s) => s.imageUrl)).toEqual([
+      "https://karos.example/agent-engine/job_1/slide-1.png",
+      "https://karos.example/agent-engine/job_1/slide-2.png",
+    ]);
+    expect(metaSlides[0]!.headline).toContain("AI is reshaping marketing");
+
+    // The cover thumbnail existing cards read is still slide 1's photo.
+    expect(asset.imageUrl).toBe("https://karos.example/agent-engine/job_1/slide-1.png");
+  });
+
+  it("instagram-carousel skips a slide that could not be rehosted, without losing the others", async () => {
+    uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
+    await materialize("instagram-agent", {
+      topic: "Fallback case",
+      slides: [
+        { n: 1, fields: { headline: "First slide" } },
+        { n: 2, fields: { headline: "Second slide" } },
+      ],
+      rendered: [
+        // Not a signed URL — signing was unavailable on this deploy — so
+        // `rehostIfFetchable` skips it rather than fetching a `gs://` URI.
+        { n: 1, path: "gs://bucket/1.png", gcsUri: "gs://bucket/1.png" },
+        { n: 2, path: "https://signed.example/slide-2.png", gcsUri: "gs://bucket/2.png" },
+      ],
+    });
+    const asset = createdAsset();
+    const metaSlides = asset.meta?.slides as Array<{ n: number; imageUrl: string | null }>;
+    expect(metaSlides).toHaveLength(1);
+    expect(metaSlides[0]!.n).toBe(2);
+    expect(asset.imageUrl).toBe("https://karos.example/agent-engine/job_1/slide-2.png");
   });
 
   it("landing-page-site names where the reviewed source tree lives", async () => {

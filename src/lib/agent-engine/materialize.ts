@@ -316,26 +316,71 @@ function materializeNewsletterEdition(deliverable: Record<string, unknown>): Ass
   };
 }
 
+/**
+ * A slide as `create-instagram-agent-workflow.ts`'s `ledger.writeDeliverable`
+ * call actually writes it: `slidesData.slides`, the render tool's own `Slide`
+ * shape (`@agent-engine/tool-karos-publish`) — per-archetype `fields`, never a
+ * single `caption` string. `caption` never existed on a real deliverable;
+ * `headline`/`body` below is what a text-only or stat/quote/comparison slide
+ * actually carries, and `fields` covers whatever other archetype fields the
+ * template registry adds later without this module needing to know their names.
+ */
 interface InstagramCarouselDeliverable {
   postId?: string;
   topic?: string;
-  slides?: Array<{ n: number; caption?: string }>;
+  slides?: Array<{ n: number; fields?: Record<string, string> }>;
   rendered?: Array<{ n: number; path: string; gcsUri?: string }>;
+}
+
+/**
+ * Every slide's field values, joined the same way the engine's own topic
+ * guardrail and review-gate `preview` already do — so what a client reads on
+ * the card is the exact text that was reviewed, not a re-derivation of it.
+ */
+function joinSlideFields(slide: { fields?: Record<string, string> } | undefined): string {
+  return Object.values(slide?.fields ?? {})
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .join(" ");
 }
 
 async function materializeInstagramCarousel(job: Job, deliverable: InstagramCarouselDeliverable): Promise<AssetMaterialization> {
   const rendered = deliverable.rendered ?? [];
-  const first = rendered[0];
-  const imageUrl = first ? await rehostIfFetchable(first.path, `agent-engine/${job.id}/slide-${first.n}.png`, "image/png") : undefined;
+  const slidesByN = new Map((deliverable.slides ?? []).map((s) => [s.n, s]));
+
+  // Every slide, not only the first — `assetImages()` already understands
+  // `meta.slides: [{headline, imageUrl}]` (content-engine/agent-service's own
+  // carousel shape) and renders it as a gallery; this deliverable just never
+  // populated it. Rehosts run in parallel: each is an independent fetch, and
+  // a stalled one otherwise costs seven slides their wait for nothing.
+  const slides = await Promise.all(
+    rendered.map(async (r) => {
+      const imageUrl = await rehostIfFetchable(r.path, `agent-engine/${job.id}/slide-${r.n}.png`, "image/png");
+      const text = joinSlideFields(slidesByN.get(r.n));
+      return { n: r.n, headline: text || undefined, imageUrl: imageUrl ?? null };
+    }),
+  );
+  const withPhotos = slides.filter((s) => s.imageUrl);
+
+  // The post's actual text — every slide's copy, in order — not the bare
+  // topic string. `deliverable.topic` is still the title (a topic is a good
+  // short label; slide 1's own copy usually is not).
+  const content = joinBlocks(rendered.map((r) => joinSlideFields(slidesByN.get(r.n))));
+
   return {
     title: deliverable.topic ?? "Instagram post",
-    content: deliverable.topic ?? "",
-    imageUrl: imageUrl ?? null,
+    content,
+    // The cover thumbnail existing cards read directly — first slide with a
+    // rehosted photo, same "best available" rule the single-photo path uses.
+    imageUrl: withPhotos[0]?.imageUrl ?? null,
     channels: ["instagram"],
     meta: {
       taskType: "social_post",
       postId: deliverable.postId,
       slideCount: rendered.length,
+      // `assetImages()` reads this shape FIRST, ahead of `meta.artifacts` —
+      // one rehosted photo per slide, in order, each with its own caption.
+      slides: withPhotos,
       artifacts: rendered.map((r) => ({ n: r.n, gcsUri: r.gcsUri })),
     },
   };

@@ -39,9 +39,34 @@ import { resolveAgentEngineGateAction } from "@/lib/actions";
 /**
  * Already shown in the page header and the run panel, or rendered by a
  * dedicated block below — repeating any of these as a generic row costs space
- * and tells the reviewer nothing. `slideTemplates` has its own section.
+ * and tells the reviewer nothing. `slideTemplates`/`images` have their own
+ * sections.
  */
-const SUPPRESSED_KEYS = new Set(["runId", "preview", "client", "slideTemplates"]);
+const SUPPRESSED_KEYS = new Set(["runId", "preview", "client", "slideTemplates", "images"]);
+
+/**
+ * One rendered slide, from the gate payload's `images` convention — the same
+ * "any drafting workflow may use this key" idea `preview` already is, just
+ * for a deliverable that IS pictures (a carousel) rather than only text.
+ *
+ * `url` is only sometimes a browser-loadable `https://` link: the engine
+ * signs one when its runtime credentials allow it and falls back to a bare
+ * `gs://` URI otherwise (see `GcsArtifactStore.upload`'s own doc comment) —
+ * a reviewer sees a real photo in the first case and a labelled placeholder
+ * in the second, never a broken `<img>`.
+ */
+interface SlideImage {
+  n: number;
+  url?: string;
+}
+
+function readImages(value: unknown): SlideImage[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw) => {
+    if (!isRecord(raw) || typeof raw["n"] !== "number") return [];
+    return [{ n: raw["n"], ...(typeof raw["url"] === "string" ? { url: raw["url"] } : {}) }];
+  });
+}
 
 /**
  * One slide's template provenance, from the gate payload's `slideTemplates`.
@@ -130,6 +155,8 @@ export function AgentEngineGateApproval({
   const fields = isRecord(payload) ? payload : {};
   const slideTemplates = readSlideTemplates(fields["slideTemplates"]);
   const experimental = slideTemplates.filter((s) => s.isExperimental && s.templateId);
+  const images = readImages(fields["images"]);
+  const loadableImages = images.filter((img): img is SlideImage & { url: string } => Boolean(img.url?.startsWith("https://")));
 
   function resolve(decision: "approve" | "revise" | "reject") {
     startTransition(async () => {
@@ -179,6 +206,46 @@ export function AgentEngineGateApproval({
         {requiredRole && <Badge tone="neutral">{labelForKey(requiredRole)}</Badge>}
       </div>
 
+      {/* The rendered slides, when the gate carried any — a carousel IS its
+          photos, and a reviewer approving one sight-unseen is exactly the gap
+          this whole component exists to close (see the file header). Images
+          that came back as a bare `gs://` URI (signing unavailable on this
+          deploy) render as a labelled placeholder rather than a broken tile,
+          so the gap is visible instead of silent. */}
+      {images.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-2">
+            {loadableImages.length} of {images.length} slide{images.length > 1 ? "s" : ""} rendered
+          </p>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {images
+              .slice()
+              .sort((a, b) => a.n - b.n)
+              .map((image) =>
+                image.url?.startsWith("https://") ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- a
+                  // signed GCS URL, re-signed per run; not a Next/Image asset.
+                  <img
+                    key={image.n}
+                    src={image.url}
+                    alt={`Slide ${image.n}`}
+                    className="aspect-square w-full rounded-md border border-border object-cover"
+                  />
+                ) : (
+                  <div
+                    key={image.n}
+                    className="flex aspect-square w-full items-center justify-center rounded-md border border-dashed border-border/60 bg-surface-2/40 text-center text-xs text-muted-2"
+                  >
+                    Slide {image.n}
+                    <br />
+                    not viewable here
+                  </div>
+                ),
+              )}
+          </div>
+        </div>
+      )}
+
       {/* The deliverable itself, when the gate carried one. Deliberately not a
           disclosure and deliberately first: it is the thing being approved, and
           a reviewer should not have to open anything to see it. */}
@@ -211,7 +278,7 @@ export function AgentEngineGateApproval({
         </details>
       ))}
 
-      {!preview && facts.length === 0 && structured.length === 0 && (
+      {!preview && images.length === 0 && facts.length === 0 && structured.length === 0 && (
         <p className="text-xs text-muted-2">
           This gate carried no payload — approve or reject on the run&apos;s step history above.
         </p>
