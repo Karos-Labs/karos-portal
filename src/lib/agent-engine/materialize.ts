@@ -114,6 +114,19 @@ interface AssetMaterialization {
  * fetchable at all — a bare `gs://` URI (signing unavailable) or a local
  * filesystem path (no media store configured on agent-engine's side) is
  * skipped, loudly, rather than silently producing an asset with no image.
+ *
+ * `objectPath` here is deterministic — `agent-engine/${job.id}/slide-${n}.png`,
+ * the same path every time this job's deliverable is materialized. `ifAbsent:
+ * true` is not optional on a path like that: it's `uploadBytes`'s own
+ * documented fix for "two overlapping writers to the same deterministic
+ * path... whichever write lands LAST wins the object, so the OTHER writer's
+ * Firestore doc now points a token that matches no live generation" — a
+ * permanent, silent 403 on every future load, indistinguishable from a real
+ * access-rules rejection. `materializeAgentEngineDeliverable`'s own
+ * `assetIds.length > 0` guard narrows the window this can happen in but does
+ * not close it (a read-then-later-write race, not a lock), and a real prep
+ * job (hcf9ymPGJC7mDS5pcEQ4) hit exactly this: every slide's photo vanished
+ * after initially rendering correctly, with no code change in between.
  */
 async function rehostIfFetchable(path: string | undefined, objectPath: string, contentType: string): Promise<string | undefined> {
   if (!path || !path.startsWith("https://")) {
@@ -126,7 +139,7 @@ async function rehostIfFetchable(path: string | undefined, objectPath: string, c
     return undefined;
   }
   const bytes = Buffer.from(await res.arrayBuffer());
-  const { url } = await uploadBytes({ bytes, path: objectPath, contentType });
+  const { url } = await uploadBytes({ bytes, path: objectPath, contentType, ifAbsent: true });
   return url;
 }
 

@@ -411,6 +411,26 @@ describe("the three products that already worked keep working", () => {
     expect(asset.content).toBe("ChatGPT just became an ad platform, and Europe is first. Here's what changed this week.");
   });
 
+  // Job hcf9ymPGJC7mDS5pcEQ4's photos rendered correctly once, then vanished
+  // with no code change in between: two overlapping materialize calls for
+  // the same job both uploaded to the same deterministic slide-N.png path,
+  // each minting its own random download token, and whichever upload landed
+  // last orphaned the token the OTHER call had just written into Firestore
+  // — a permanent 403 on every future load. `ifAbsent: true` is
+  // `uploadBytes`'s own documented fix for exactly this ("two overlapping
+  // writers to the same deterministic path... whichever write lands LAST
+  // wins the object"): a second attempt reads back the first writer's real,
+  // still-valid token instead of minting one that immediately orphans it.
+  it("rehosts every slide with ifAbsent: true, so a second overlapping materialize call can't orphan the first one's token", async () => {
+    uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
+    await materialize("instagram-agent", {
+      topic: "Two overlapping writers",
+      slides: [{ n: 1, fields: { headline: "Slide one" } }],
+      rendered: [{ n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" }],
+    });
+    expect(uploadBytesMock).toHaveBeenCalledWith(expect.objectContaining({ ifAbsent: true }));
+  });
+
   // Every slide's `fields` always carries `accentColor` (a hex string) —
   // never prose, and it must not leak into either the fallback caption text
   // or a slide's own gallery caption (prep run 2VFCw79Wu8xfJOKXC7zP's
