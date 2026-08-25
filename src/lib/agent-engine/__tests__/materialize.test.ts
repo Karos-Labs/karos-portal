@@ -396,6 +396,39 @@ describe("the three products that already worked keep working", () => {
     expect(asset.imageUrl).toBe("https://karos.example/agent-engine/job_1/slide-1.png");
   });
 
+  // The engine's instagram-copy prompt gained a required `caption` field
+  // (2026-08) — the post's own text, distinct from any slide's copy. The
+  // asset's `content` must prefer it over the joined-slide-fields fallback.
+  it("instagram-carousel uses the deliverable's own caption as content when present", async () => {
+    uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
+    await materialize("instagram-agent", {
+      topic: "AI Digital Marketing trends this week",
+      caption: "ChatGPT just became an ad platform, and Europe is first. Here's what changed this week.",
+      slides: [{ n: 1, fields: { headline: "ChatGPT just became an ad platform" } }],
+      rendered: [{ n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" }],
+    });
+    const asset = createdAsset();
+    expect(asset.content).toBe("ChatGPT just became an ad platform, and Europe is first. Here's what changed this week.");
+  });
+
+  // Every slide's `fields` always carries `accentColor` (a hex string) —
+  // never prose, and it must not leak into either the fallback caption text
+  // or a slide's own gallery caption (prep run 2VFCw79Wu8xfJOKXC7zP's
+  // "preview" read "#ff6b2c week in ai marketing..." before this fix).
+  it("never lets accentColor's hex code leak into content or a slide's gallery caption", async () => {
+    uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
+    await materialize("instagram-agent", {
+      topic: "No caption field on this old deliverable",
+      slides: [{ n: 1, fields: { accentColor: "#ff6b2c", headline: "The real headline" } }],
+      rendered: [{ n: 1, path: "https://signed.example/slide-1.png", gcsUri: "gs://b/1.png" }],
+    });
+    const asset = createdAsset();
+    expect(asset.content).not.toContain("#ff6b2c");
+    expect(asset.content).toContain("The real headline");
+    const metaSlides = asset.meta?.slides as Array<{ headline?: string }>;
+    expect(metaSlides[0]!.headline).not.toContain("#ff6b2c");
+  });
+
   it("instagram-carousel skips a slide that could not be rehosted, without losing the others", async () => {
     uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
     await materialize("instagram-agent", {

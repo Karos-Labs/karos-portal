@@ -320,26 +320,38 @@ function materializeNewsletterEdition(deliverable: Record<string, unknown>): Ass
  * A slide as `create-instagram-agent-workflow.ts`'s `ledger.writeDeliverable`
  * call actually writes it: `slidesData.slides`, the render tool's own `Slide`
  * shape (`@agent-engine/tool-karos-publish`) — per-archetype `fields`, never a
- * single `caption` string. `caption` never existed on a real deliverable;
- * `headline`/`body` below is what a text-only or stat/quote/comparison slide
- * actually carries, and `fields` covers whatever other archetype fields the
- * template registry adds later without this module needing to know their names.
+ * single per-slide caption string. `headline`/`body` below is what a
+ * text-only or stat/quote/comparison slide actually carries, and `fields`
+ * covers whatever other archetype fields the template registry adds later
+ * without this module needing to know their names.
+ *
+ * `caption` (2026-08) is the POST's own text — separate from any slide —
+ * required on every new deliverable. Optional here only so an older
+ * deliverable already in Firestore (written before this field existed)
+ * still materializes something rather than throwing.
  */
 interface InstagramCarouselDeliverable {
   postId?: string;
   topic?: string;
+  caption?: string;
   slides?: Array<{ n: number; fields?: Record<string, string> }>;
   rendered?: Array<{ n: number; path: string; gcsUri?: string }>;
 }
 
+/** Never prose — excluded from anything read as slide text, same rule the engine's own workflow applies before this ever reaches a person. */
+const NON_PROSE_FIELD_KEYS = new Set(["accentColor"]);
+
 /**
- * Every slide's field values, joined the same way the engine's own topic
- * guardrail and review-gate `preview` already do — so what a client reads on
- * the card is the exact text that was reviewed, not a re-derivation of it.
+ * Every slide's prose field values, joined the same way the engine's own
+ * topic guardrail does — so a slide's caption in the gallery is the exact
+ * text that was reviewed, not a re-derivation of it. `accentColor` is a hex
+ * string, never prose; excluding it is what stopped it leaking into a
+ * gallery caption (prep run 2VFCw79Wu8xfJOKXC7zP).
  */
 function joinSlideFields(slide: { fields?: Record<string, string> } | undefined): string {
-  return Object.values(slide?.fields ?? {})
-    .map((v) => v.trim())
+  return Object.entries(slide?.fields ?? {})
+    .filter(([key]) => !NON_PROSE_FIELD_KEYS.has(key))
+    .map(([, value]) => value.trim())
     .filter(Boolean)
     .join(" ");
 }
@@ -362,10 +374,12 @@ async function materializeInstagramCarousel(job: Job, deliverable: InstagramCaro
   );
   const withPhotos = slides.filter((s) => s.imageUrl);
 
-  // The post's actual text — every slide's copy, in order — not the bare
-  // topic string. `deliverable.topic` is still the title (a topic is a good
-  // short label; slide 1's own copy usually is not).
-  const content = joinBlocks(rendered.map((r) => joinSlideFields(slidesByN.get(r.n))));
+  // The post's own caption — required on every new deliverable (§1 of the
+  // engine's instagram-copy prompt). A deliverable written before `caption`
+  // existed falls back to every slide's copy joined, which is what shipped
+  // before — worse than a real caption, but still real text rather than the
+  // bare topic string this used to be.
+  const content = deliverable.caption?.trim() || joinBlocks(rendered.map((r) => joinSlideFields(slidesByN.get(r.n))));
 
   return {
     title: deliverable.topic ?? "Instagram post",
