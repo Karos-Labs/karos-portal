@@ -87,6 +87,26 @@ substitutions:
   _REGION: us-central1
   _REPO: karos-cmo
   _SERVICE: karos-cmo
+  # The runtime identity this service runs AS (AU58 / SCRUM-357).
+  #
+  # Empty is exactly today's behaviour: Cloud Run falls back to the project's
+  # DEFAULT COMPUTE service account — which is also what Cloud Build, every GCE
+  # VM and every Cloud Function in the project run as. That shared identity
+  # currently holds roles/run.admin and project-wide
+  # roles/secretmanager.secretAccessor, so the portal's identity can today
+  # delete any Cloud Run service in the project, agent-engine included.
+  #
+  # It also makes agent-engine's AUTH_ALLOWED_SERVICE_ACCOUNTS meaningless in
+  # prep: the portal's outbound ID token is minted from the metadata server
+  # (src/lib/agent-engine/client.ts) and therefore carries the RUNTIME service
+  # account's identity, so allowlisting it would authorise the whole project
+  # rather than the portal.
+  #
+  # Set to karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com for prep now
+  # that its grants are in place. Leave empty anywhere the dedicated SA does
+  # not exist yet — an empty value adds no flag at all, so a deploy cannot
+  # break on it.
+  _RUNTIME_SERVICE_ACCOUNT: ""
   # Set after the agent service is deployed. Empty ⇒ the three submit cores
   # (submit-managed.ts, submit-custom.ts, run-custom-agent.ts) refuse before a job
   # row exists or credits are charged, and the run control renders disabled:
@@ -267,7 +287,16 @@ steps:
         if [ "${_ALLOW_UNAUTHENTICATED}" != "true" ]; then
           AUTH_FLAG="--no-allow-unauthenticated"
         fi
+        # AU58: only pass --service-account when one is configured. An empty
+        # substitution must add no flag at all, not an invalid
+        # `--service-account=`, so an unset value is a no-op rather than a
+        # broken deploy.
+        SA_FLAG=""
+        if [ -n "${_RUNTIME_SERVICE_ACCOUNT}" ]; then
+          SA_FLAG="--service-account=${_RUNTIME_SERVICE_ACCOUNT}"
+        fi
         gcloud run deploy ${_SERVICE} \
+          $$SA_FLAG \
           --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
           --region=${_REGION} \
           --platform=managed \
