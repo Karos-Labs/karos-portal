@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { listInFlightAgentEngineJobs, listUnmaterializedAgentEngineJobs } from "@/lib/data";
+import { listClients, listInFlightAgentEngineJobs, listUnmaterializedAgentEngineJobs } from "@/lib/data";
 import { syncAgentEngineJobStatus } from "@/lib/agent-engine/reconcile";
+import { syncClientKnowledgeToWorkspace } from "@/lib/agent-engine/knowledge-sync";
+import { isWorkspaceWriterConfigured } from "@/lib/agent-engine/workspace-writer";
 import { requireCronSecret } from "@/lib/cron-auth";
 
 export const maxDuration = 60;
@@ -59,6 +61,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Phase 4: the knowledge mirror rides the same tick. Cron-driven rather
+  // than write-hooked BECAUSE three raw-batch writers bypass data.ts's write
+  // path entirely (see knowledge-sync.ts's own doc comment) — polling every
+  // engine-enabled client is the only seam that covers all of them. Cheap by
+  // construction: three small docs per client, full-overwrite idempotent, and
+  // skipped wholesale when no workspace bucket is configured. Best-effort per
+  // client — a failed mirror must not block the job sweep's own results.
+  const knowledge: Array<{ clientId: string; status: string }> = [];
+  if (isWorkspaceWriterConfigured()) {
+    const engineClients = (await listClients()).filter((c) => c.agentsRepoSlug);
+    for (const client of engineClients) {
+      try {
+        const result = await syncClientKnowledgeToWorkspace(client);
+        knowledge.push({
+          clientId: client.id,
+          status: `synced (${result.contextDocs} docs, ${result.transcripts} transcripts, ${result.assets} assets)`,
+        });
+      } catch (e) {
+        knowledge.push({ clientId: client.id, status: `error: ${e instanceof Error ? e.message : "unknown"}` });
+      }
+    }
+  }
+
   // `checked` keeps its original meaning (every job this tick looked at) so an
   // existing caller or dashboard reading it does not silently change what it
   // reports; the per-query counts are additive.
@@ -67,5 +92,6 @@ export async function GET(req: NextRequest) {
     inFlight: inFlight.length,
     unmaterialized: unmaterialized.length,
     results,
+    knowledge,
   });
 }
