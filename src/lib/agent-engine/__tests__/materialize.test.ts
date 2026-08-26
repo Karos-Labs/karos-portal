@@ -86,6 +86,7 @@ const ENGINE_CATALOG: Readonly<Record<string, string>> = {
   "linkedin-agent": "linkedin-post",
   "instagram-agent": "instagram-carousel",
   "branded-shorts-agent": "branded-shorts-video",
+  "tiktok-agent": "tiktok-clip",
   "reddit-agent": "reddit-reply",
   "blog-agent": "blog-post",
   "newsletter-agent": "newsletter-edition",
@@ -96,9 +97,9 @@ const ENGINE_CATALOG: Readonly<Record<string, string>> = {
 };
 
 describe("the product catalog is covered end to end", () => {
-  it("maps every one of the eleven engine products, by the kind its workflow actually writes", () => {
+  it("maps every one of the twelve engine products, by the kind its workflow actually writes", () => {
     expect(PRODUCT_DELIVERABLE_KINDS).toEqual(ENGINE_CATALOG);
-    expect(Object.keys(PRODUCT_DELIVERABLE_KINDS)).toHaveLength(11);
+    expect(Object.keys(PRODUCT_DELIVERABLE_KINDS)).toHaveLength(12);
   });
 
   it("fetches each product's deliverable by that exact kind — a mismatch 404s and silently delivers nothing", async () => {
@@ -339,6 +340,50 @@ describe("the report and bundle products render to something a reviewer can read
     expect(asset.content).toContain("**Pillars:** Positioning, Proof");
     expect(asset.content).toContain("- **x** · completed — Two camps");
     expect(asset.content).toContain("- **linkedin** · held");
+  });
+});
+
+describe("tiktok-clip", () => {
+  it("rehosts the signed clip into a video asset whose content is the commentary caption", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    uploadBytesMock.mockResolvedValue({ url: "https://karos.example/agent-engine/job_1/clip.mp4" });
+    await materialize("tiktok-agent", {
+      topic: "The Show ep. 12 — the margin call moment",
+      caption: "Our read: the number is right, the conclusion is wrong. Via Jane Doe on The Show ep. 12.",
+      about: "A clip where a guest gives a figure we disagree with.",
+      sourceCredit: "Jane Doe on The Show ep. 12",
+      hookLine: "word10.",
+      hookType: "surprising-number",
+      sourceTier: "user-asset",
+      durationSeconds: 40,
+      signedUrl: "https://signed.example/clip.mp4",
+      gcsUri: "gs://media/tiktok/acme/run/clip.mp4",
+    });
+    const asset = createdAsset();
+    expect(asset.type).toBe("social_post");
+    expect(asset.channels).toEqual(["tiktok"]);
+    expect(asset.videoUrl).toBe("https://karos.example/agent-engine/job_1/clip.mp4");
+    // The caption IS the post text — the reviewer reads the client's own take,
+    // with the source credit the engine enforces in code.
+    expect(asset.content).toContain("Via Jane Doe on The Show ep. 12");
+    expect(asset.meta).toMatchObject({
+      sourceCredit: "Jane Doe on The Show ep. 12",
+      sourceTier: "user-asset",
+      durationSeconds: 40,
+      artifacts: [{ gcsUri: "gs://media/tiktok/acme/run/clip.mp4" }],
+    });
+  });
+
+  it("still materializes with no signed URL — the caption survives even when the engine had no media store", async () => {
+    await materialize("tiktok-agent", {
+      topic: "A moment",
+      caption: "The take. Via Jane Doe on The Show.",
+      sourceTier: "generated",
+    });
+    const asset = createdAsset();
+    expect(asset.content).toBe("The take. Via Jane Doe on The Show.");
+    expect(asset.videoUrl ?? undefined).toBeUndefined();
+    expect(asset.meta).toMatchObject({ sourceTier: "generated" });
   });
 });
 

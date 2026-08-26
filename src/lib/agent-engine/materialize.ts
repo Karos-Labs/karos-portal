@@ -71,6 +71,7 @@ const PRODUCT_DELIVERABLES: Readonly<Record<string, ProductDeliverableSpec>> = {
   "linkedin-agent": { kind: "linkedin-post", taskType: "social_post" },
   "instagram-agent": { kind: "instagram-carousel", taskType: "social_post" },
   "branded-shorts-agent": { kind: "branded-shorts-video", taskType: "social_post" },
+  "tiktok-agent": { kind: "tiktok-clip", taskType: "social_post" },
   // Draft-only by hard product rule. Left as `social_post` deliberately: the
   // fence in `deliverableAssetType` is what re-types it to `note`, and routing
   // through the fence rather than hard-coding `note` here is the whole point —
@@ -434,6 +435,46 @@ async function materializeBrandedShortsVideo(job: Job, deliverable: BrandedShort
   };
 }
 
+/**
+ * The commentary clip as `create-tiktok-agent-workflow.ts`'s
+ * `ledger.writeDeliverable` call writes it. Unlike branded-shorts, this
+ * deliverable's `caption` IS the post text — the client's own take, with the
+ * source credit the engine enforces in code — so `content` carries it rather
+ * than the empty string the branded-shorts materializer ships.
+ */
+interface TiktokClipDeliverable {
+  topic?: string;
+  caption?: string;
+  about?: string;
+  sourceCredit?: string;
+  hookLine?: string;
+  hookType?: string;
+  sourceTier?: string;
+  durationSeconds?: number;
+  gcsUri?: string;
+  signedUrl?: string;
+}
+
+async function materializeTiktokClip(job: Job, deliverable: TiktokClipDeliverable): Promise<AssetMaterialization> {
+  const videoUrl = await rehostIfFetchable(deliverable.signedUrl, `agent-engine/${job.id}/clip.mp4`, "video/mp4");
+  return {
+    title: fallbackTitle(deliverable.topic, "Commentary clip"),
+    content: deliverable.caption?.trim() ?? "",
+    videoUrl: videoUrl ?? null,
+    channels: ["tiktok"],
+    meta: {
+      taskType: "social_post",
+      ...(deliverable.about !== undefined ? { about: deliverable.about } : {}),
+      ...(deliverable.sourceCredit !== undefined ? { sourceCredit: deliverable.sourceCredit } : {}),
+      ...(deliverable.hookLine !== undefined ? { hookLine: deliverable.hookLine } : {}),
+      ...(deliverable.hookType !== undefined ? { hookType: deliverable.hookType } : {}),
+      ...(deliverable.sourceTier !== undefined ? { sourceTier: deliverable.sourceTier } : {}),
+      ...(deliverable.durationSeconds !== undefined ? { durationSeconds: deliverable.durationSeconds } : {}),
+      artifacts: deliverable.gcsUri ? [{ gcsUri: deliverable.gcsUri }] : [],
+    },
+  };
+}
+
 interface LandingPageSiteDeliverable {
   gcsPrefix?: string;
   fileCount?: number;
@@ -633,6 +674,8 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
       return materializeInstagramCarousel(job, deliverable as InstagramCarouselDeliverable);
     case "branded-shorts-agent":
       return materializeBrandedShortsVideo(job, deliverable as BrandedShortsVideoDeliverable);
+    case "tiktok-agent":
+      return materializeTiktokClip(job, deliverable as TiktokClipDeliverable);
     case "landing-builder-agent":
       return materializeLandingPageSite(deliverable as LandingPageSiteDeliverable);
     case "intel-report-agent":
