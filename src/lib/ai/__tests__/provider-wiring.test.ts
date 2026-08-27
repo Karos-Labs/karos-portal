@@ -11,7 +11,6 @@ import {
   ProviderWiringError,
   aiFor,
   assertManifestWirable,
-  assertVendorsBindable,
   defaultVendor,
   modelIdFor,
   vendorForRole,
@@ -181,19 +180,24 @@ describe("aiFor", () => {
     );
   });
 
-  it("reports capability failure BEFORE bindability, so the durable finding is not masked", () => {
-    // Both are true of seo.site_audit on vertex. The capability one is the
-    // product constraint and must be the message the caller sees.
-    expect(() => aiFor("seo.site_audit", { vendor: "vertex" })).toThrow(/cannot supply/);
-    expect(() => aiFor("seo.site_audit", { vendor: "vertex" })).not.toThrow(/cannot be bound/);
+  it("now BINDS a capability-clean role on vertex, instead of refusing it", () => {
+    // Before the ai 6->7 upgrade this threw for a dependency reason. Vertex is
+    // reachable now, so the only thing that may stop a role is capability.
+    const resolved = aiFor("x_agent.research", { vendor: "vertex" });
+    expect(resolved.vendor).toBe("vertex");
+    expect(Object.keys(resolved.tools)).toEqual(["web_search"]);
   });
 
-  it("refuses a capability-clean role on vertex for the DEPENDENCY reason, naming it", () => {
-    // x_agent.research needs only web_search, which vertex has — so the only
-    // thing stopping it is the SDK version, and the error must say so.
-    expect(() => aiFor("x_agent.research", { vendor: "vertex" })).toThrow(
-      /cannot be bound[\s\S]*provider@3/,
-    );
+  it("still refuses a web_fetch role on vertex — the durable constraint survived the upgrade", () => {
+    expect(() => aiFor("seo.site_audit", { vendor: "vertex" })).toThrow(/cannot supply/);
+  });
+
+  it("gives each vendor its OWN web_search tool object, not the other's", () => {
+    // Handing a Vertex model an Anthropic-namespace tool is the failure the seam
+    // exists to make impossible, and it would not throw — it would just be wrong.
+    const onVertex = aiFor("x_agent.research", { vendor: "vertex" }).tools;
+    const onAnthropic = aiFor("x_agent.research", { vendor: "anthropic" }).tools;
+    expect(onVertex.web_search).not.toBe(onAnthropic.web_search);
   });
 
   it("refuses a budget for a capability the role never declared", () => {
@@ -221,29 +225,10 @@ describe("aiFor", () => {
 describe("per-vendor model ids", () => {
   it("uses Vertex's @-separated snapshot id, not the first-party one", () => {
     // The failure this prevents is a 404 at request time from reusing
-    // MODELS.HAIKU verbatim on Vertex. Checked through modelIdFor because the
-    // vertex model itself cannot be BOUND on this dependency set.
+    // MODELS.HAIKU verbatim on Vertex.
     expect(modelIdFor("asset.title", "anthropic")).toBe("claude-haiku-4-5-20251001");
     expect(modelIdFor("asset.title", "vertex")).toBe("claude-haiku-4-5@20251001");
     expect(modelIdFor("chat.client", "vertex")).toBeNull();
-  });
-});
-
-describe("bindability is a separate check from capability", () => {
-  it("passes for anthropic", () => {
-    expect(() => assertVendorsBindable("anthropic")).not.toThrow();
-  });
-
-  it("refuses vertex and names the exact dependency conflict", () => {
-    expect(() => assertVendorsBindable("vertex")).toThrow(ProviderWiringError);
-    expect(() => assertVendorsBindable("vertex")).toThrow(/ai 6->7/);
-  });
-
-  it("still refuses vertex even though the pinned measurement role is fine", () => {
-    // geo.capture.claude pins to anthropic, so a naive "are all vendors ok"
-    // check that only looked at pins would pass. It must look at what roles
-    // ACTUALLY resolve to.
-    expect(() => assertVendorsBindable("vertex")).toThrow(/"vertex"/);
   });
 });
 
@@ -386,5 +371,21 @@ describe("the invariant: nothing reaches a vendor except through the layer", () 
         expect(text, `${role} at ${site}`).toContain(`aiFor("${role}"`);
       }
     }
+  });
+});
+
+describe("the twelve coupled sites still get anthropic after the upgrade", () => {
+  it("binds every capability-declaring role to anthropic under the default vendor", () => {
+    for (const role of AI_ROLE_NAMES) {
+      const spec = roleSpec(role);
+      if ((spec.requires ?? []).length === 0) continue;
+      const resolved = aiFor(role, spec.tier === "caller" ? { modelId: "x" } : {});
+      expect(resolved.vendor, role).toBe("anthropic");
+    }
+  });
+
+  it("keeps the measurement role on anthropic even if the default flips to vertex", () => {
+    // Its pin is the reason; the upgrade did not touch pins.
+    expect(vendorForRole("geo.capture.claude", "vertex")).toBe("anthropic");
   });
 });
