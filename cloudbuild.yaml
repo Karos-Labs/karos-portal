@@ -254,6 +254,16 @@ steps:
     args:
       - -c
       - |
+        # Two cache sources, because they cache different things:
+        #   :deps-cache  is the `deps` STAGE, and carries the npm ci layer.
+        #   :latest      is the final `runner` stage only.
+        # A multi-stage build keeps intermediate layers OUT of the final image,
+        # so pulling :latest alone leaves `npm ci` re-running on every build.
+        # Measured with :latest only: 7 layers cached, docker-build still 158s.
+        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:deps-cache || echo "no :deps-cache yet"
+        docker build --target deps \
+          --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:deps-cache \
+          --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:deps-cache .
         docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest ||           echo "no :latest yet — first build, or cache image pruned; continuing uncached"
 
   - id: docker-build
@@ -271,6 +281,7 @@ steps:
       - -c
       - |
         docker build \
+          --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:deps-cache \
           --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
           --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
           --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
