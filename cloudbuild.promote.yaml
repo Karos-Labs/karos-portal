@@ -100,6 +100,19 @@ substitutions:
   # a mismatch be fixed without moving the URL.
   _AGENT_ENGINE_AUDIENCE: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app"
   # Read by the telemetry BigQuery client and the GCS/Firestore clients.
+  # SCRUM-371: prod ran as firebase-adminsdk-fbsvc@ - Firebase's own SA, holding
+  # project-wide storage.admin and secretmanager.secretAccessor. karos-cmo-sa@ is
+  # dedicated and narrowly granted: per-secret accessor (31), topic-scoped
+  # pubsub.publisher, dataset-scoped BigQuery WRITER, logging.logWriter, and
+  # run.invoker on the three services the portal mints ID tokens for.
+  #
+  # It deliberately holds NO storage role: GCS still authenticates with
+  # FIREBASE_SERVICE_ACCOUNT_KEY, not the runtime SA. See SCRUM-373.
+  #
+  # Unlike cloudbuild.yaml this step is an args array, not a bash script, so the
+  # flag is passed unconditionally - an empty value here would be an invalid
+  # --service-account=. Keep this substitution non-empty.
+  _RUNTIME_SERVICE_ACCOUNT: "karos-cmo-sa@karoscmo.iam.gserviceaccount.com"
   _GOOGLE_CLOUD_PROJECT: "karoscmo"
   # Which clients may have their CUSTOM-agent jobs routed to agent-engine,
   # as a comma-separated list of agentsRepoSlug (or "*").
@@ -162,6 +175,7 @@ steps:
       - run
       - deploy
       - ${_SERVICE}
+      - --service-account=${_RUNTIME_SERVICE_ACCOUNT}
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:${_SHA}
       - --region=${_REGION}
       - --platform=managed
