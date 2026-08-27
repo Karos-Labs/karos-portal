@@ -1,12 +1,12 @@
 import "server-only";
 
 import { streamText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
 import { CONDENSATION_RULES } from "./brain";
 import { MODELS, CONDENSE_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble, stripTrailingMetaCommentary } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
+import { aiFor } from "@/lib/ai/provider";
 
 export interface CondensedDoc {
   docType: ContextDocType;
@@ -69,7 +69,7 @@ Update the frontmatter:
 Return ONLY the condensed markdown document. No preamble, no explanation.`;
 
   const condenseStream = streamText({
-    model: anthropic(MODELS.SONNET),
+    model: aiFor("intel.condense").model,
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
     maxOutputTokens: CONDENSE_MAX_TOKENS,
@@ -96,7 +96,7 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
     // Retry as a fresh call — do not include the truncated assistant turn, which anchors
     // the model to the incomplete first output and defeats a full-rewrite instruction.
     const condenseRetryStream = streamText({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("intel.condense").model,
       system: systemPrompt,
       messages: [
         {

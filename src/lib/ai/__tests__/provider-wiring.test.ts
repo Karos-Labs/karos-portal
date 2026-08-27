@@ -79,8 +79,11 @@ describe("assertManifestWirable refuses a vendor that cannot serve the manifest"
     }
     expect(message).toContain("4 roles cannot be wired");
     // The sites are in the message so the reader does not have to go looking.
-    expect(message).toContain("src/lib/intel/seo-geo.ts:212");
-    expect(message).toContain("src/lib/intel/pipeline.ts:415");
+    // Taken from the manifest rather than hardcoded: line numbers move whenever
+    // a file's imports change, and a test that pins them fails on the sweep
+    // rather than on the thing it is meant to police.
+    for (const site of roleSpec("seo.site_audit").sites) expect(message).toContain(site);
+    for (const site of roleSpec("intel.research.agent").sites) expect(message).toContain(site);
   });
 
   it("does NOT fail the two web_search-only roles — they can route to Vertex", () => {
@@ -295,6 +298,93 @@ describe("the manifest does not drift from the tree", () => {
         (v) => missingCapabilities(v, requires).length === 0,
       );
       expect(servable, `${role} requires something no vendor has`).toBe(true);
+    }
+  });
+});
+
+describe("the invariant: nothing reaches a vendor except through the layer", () => {
+  /**
+   * The check that stops the 44th call site being written the old way.
+   *
+   * The allowed set is DERIVED from the manifest, not hardcoded here — a file
+   * may import a vendor only because it owns a role that declares a capability,
+   * and the reason for that lives in roles.ts next to the declaration. Adding a
+   * file to the allowlist therefore means adding a declared, reasoned role,
+   * which is the whole design.
+   */
+  const vendorImport = /(?:from\s+"@ai-sdk\/(?:anthropic|google-vertex)[^"]*"|await\s+import\("@ai-sdk\/[^"]+"\))/;
+
+  /** Files that own at least one capability-declaring role. */
+  const coupledFiles = new Set(
+    AI_ROLE_NAMES.filter((r) => (roleSpec(r).requires ?? []).length > 0)
+      .flatMap((r) => roleSpec(r).sites)
+      .map((s) => s.replace(/:\d+$/, "")),
+  );
+
+  function sourceFiles(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === "__tests__") continue;
+          walk(full);
+        } else if (/\.tsx?$/.test(e.name)) {
+          out.push(path.relative(process.cwd(), full).split(path.sep).join("/"));
+        }
+      }
+    };
+    walk(path.join(process.cwd(), "src"));
+    return out;
+  }
+
+  it("keeps the coupled set at exactly the six files that declare a capability", () => {
+    expect([...coupledFiles].sort()).toEqual([
+      "src/lib/actions/x-agent-actions.ts",
+      "src/lib/branding.ts",
+      "src/lib/intel/pipeline.ts",
+      "src/lib/intel/report.ts",
+      "src/lib/intel/seo-geo-providers.ts",
+      "src/lib/intel/seo-geo.ts",
+    ]);
+  });
+
+  it("lets no other file in src/ import a model vendor directly", () => {
+    const offenders = sourceFiles().filter(
+      (f) =>
+        !f.startsWith("src/lib/ai/") &&
+        !coupledFiles.has(f) &&
+        vendorImport.test(fs.readFileSync(path.join(process.cwd(), f), "utf8")),
+    );
+    // Message names the fix, because the person who trips this will be adding a
+    // call site and needs to know the alternative, not just the rule.
+    expect(
+      offenders,
+      `these import a model vendor directly instead of calling aiFor():\n  ${offenders.join("\n  ")}`,
+    ).toEqual([]);
+  });
+
+  it("leaves no call site constructing a model outside the layer", () => {
+    const offenders = sourceFiles().filter(
+      (f) =>
+        !f.startsWith("src/lib/ai/") &&
+        !coupledFiles.has(f) &&
+        /(?<![\w.])anthropic\(/.test(fs.readFileSync(path.join(process.cwd(), f), "utf8")),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("has swept every plain site — no plain role still points at a raw vendor call", () => {
+    for (const role of AI_ROLE_NAMES) {
+      const spec = roleSpec(role);
+      if ((spec.requires ?? []).length > 0) continue;
+      for (const site of spec.sites) {
+        const [file, line] = [site.replace(/:\d+$/, ""), Number(site.match(/:(\d+)$/)![1])];
+        const text = fs
+          .readFileSync(path.join(process.cwd(), file), "utf8")
+          .split(/\r?\n/)[line - 1];
+        expect(text, `${role} at ${site}`).toContain(`aiFor("${role}"`);
+      }
     }
   });
 });
