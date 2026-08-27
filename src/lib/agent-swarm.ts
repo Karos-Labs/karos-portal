@@ -14,7 +14,6 @@
 
 import "server-only";
 import { generateObject } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { after } from "next/server";
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
@@ -37,6 +36,7 @@ import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engin
 import { integrationIsUsable } from "@/lib/integration-status";
 import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
+import { aiFor } from "@/lib/ai/provider";
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -269,7 +269,7 @@ async function runTurn(
   totalRounds: number,
 ): Promise<z.infer<typeof swarmTurnSchema>> {
   const { object, usage } = await generateObject({
-    model: anthropic(MODELS.HAIKU),
+    model: aiFor("agent_swarm.step").model,
     schema: swarmTurnSchema,
     system: persona.systemPrompt,
     prompt: buildTurnPrompt(persona, tasks, input.context, round, totalRounds),

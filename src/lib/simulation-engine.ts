@@ -7,11 +7,11 @@
 
 import "server-only";
 import { generateObject, generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { after } from "next/server";
 import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
+import { aiFor } from "@/lib/ai/provider";
 
 export const MAX_PERSONAS = 4;
 
@@ -326,7 +326,7 @@ export async function buildSimulationPersonas(
   let object: z.infer<typeof personaPlanSchema>;
   try {
     const result = await generateObject({
-      model: anthropic(MODELS.HAIKU),
+      model: aiFor("simulation.persona").model,
       schema: personaPlanSchema,
       prompt: buildPersonaPlannerPrompt(artifact, ctx),
     });
@@ -365,7 +365,7 @@ export async function simulatePersona(
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     const first = await generateObject({
-      model: anthropic(MODELS.HAIKU),
+      model: aiFor("simulation.persona").model,
       schema: personaResultSchema,
       system,
       prompt,
@@ -379,7 +379,7 @@ export async function simulatePersona(
     logger.logGenerationFailure(simUsageMeta, firstError);
     try {
       const second = await generateObject({
-        model: anthropic(MODELS.HAIKU),
+        model: aiFor("simulation.persona").model,
         schema: personaResultFallbackSchema,
         system,
         prompt,
@@ -390,7 +390,7 @@ export async function simulatePersona(
       logger.logGenerationFailure(simUsageMeta, secondError);
       try {
         const third = await generateText({
-          model: anthropic(MODELS.HAIKU),
+          model: aiFor("simulation.persona").model,
           system,
           prompt: `${prompt}
 

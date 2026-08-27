@@ -1,6 +1,5 @@
 import "server-only";
 
-import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 
@@ -19,6 +18,7 @@ import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 import type { FirefliesTranscript } from "@/lib/transcripts/fireflies";
 import type { AppUser, Client, Transcript } from "@/lib/types";
+import { aiFor } from "@/lib/ai/provider";
 
 const analysisSchema = z.object({
   summary: z.string().describe("A concise 3-5 sentence summary of the meeting."),
@@ -31,7 +31,7 @@ async function analyze(t: FirefliesTranscript, clientId: string | null) {
   const model = process.env.TRANSCRIPT_MODEL || MODELS.SONNET;
   try {
     const { object, usage } = await generateObject({
-      model: anthropic(model),
+      model: aiFor("transcript.ingest", { modelId: model }).model,
       schema: analysisSchema,
       system:
         "You are an analyst for a marketing agency. Summarise client meeting transcripts and extract action items and key topics that the agency should act on.",

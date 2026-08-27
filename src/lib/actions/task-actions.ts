@@ -3,7 +3,6 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { generateText, generateObject } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
@@ -37,6 +36,7 @@ import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { logger } from "@/services/logger";
 import type { AppUser, TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
+import { aiFor } from "@/lib/ai/provider";
 
 /**
  * The charge spec for a small Haiku task helper (plan generation, custom-task
@@ -361,7 +361,7 @@ export async function generateTaskPlanAction(
       let usage: { inputTokens?: number; outputTokens?: number };
       try {
         ({ text, usage } = await generateText({
-          model: anthropic(MODELS.HAIKU),
+          model: aiFor("task.generation").model,
           prompt: buildTaskExecutionPlanPrompt(
             task.title,
             task.description,
@@ -482,7 +482,7 @@ async function ingestRoutedTask(args: {
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ object: parsed, usage } = await generateObject({
-      model: anthropic(MODELS.HAIKU),
+      model: aiFor("task.generation").model,
       schema: routingSchema,
       prompt: buildTaskIngestionRoutingPrompt(
         trimmed,

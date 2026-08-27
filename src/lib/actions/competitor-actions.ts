@@ -94,7 +94,7 @@ async function upsertManualCompetitor(
 async function resolveCompetitorWebsite(clientId: string, company: string): Promise<string | undefined> {
   try {
     const { generateObject } = await import("ai");
-    const { anthropic } = await import("@ai-sdk/anthropic");
+    const { aiFor } = await import("@/lib/ai/provider");
     const { z } = await import("zod");
 
     const schema = z.object({
@@ -109,7 +109,7 @@ async function resolveCompetitorWebsite(clientId: string, company: string): Prom
       modelName: MODELS.SONNET, operation: "competitor_url_lookup",
     };
     const { object, usage } = await generateObject({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("competitor.analysis").model,
       schema,
       system: "You identify company websites for a competitor-tracking UI. Return a bare domain only — no protocol, no path.",
       prompt: `What is the primary website domain for the company "${company}"?`,
@@ -136,7 +136,7 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
   if (!client || competitors.length === 0) return;
 
   const { generateObject } = await import("ai");
-  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { aiFor } = await import("@/lib/ai/provider");
   const { z } = await import("zod");
 
   const schema = z.object({
@@ -183,7 +183,7 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ object, usage } = await generateObject({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("competitor.analysis").model,
       schema,
       system:
         "You are a competitive intelligence analyst producing data for a compact UI dashboard table. " +
@@ -265,7 +265,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
   if (!client) throw new Error("Client not found");
 
   const { generateObject } = await import("ai");
-  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { aiFor } = await import("@/lib/ai/provider");
   const { z } = await import("zod");
 
   const schema = z.object({
@@ -307,7 +307,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ object, usage } = await generateObject({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("competitor.analysis").model,
       schema,
       system:
         "You are a market intelligence analyst producing data for a compact UI dashboard table. " +

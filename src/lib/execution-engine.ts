@@ -7,7 +7,6 @@ import "server-only";
 
 import { revalidatePath } from "next/cache";
 import { generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS } from "@/lib/constants";
 import {
   getClientTask,
@@ -30,11 +29,12 @@ import type { AppUser, ClientTask, CustomAgent, ManagedTaskType } from "@/lib/ty
 import { clientCategoryValue } from "@/lib/utils";
 import { logger } from "@/services/logger";
 import type { ModelId } from "@/lib/constants";
+import { aiFor } from "@/lib/ai/provider";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
-const SONNET = anthropic(MODELS.SONNET);
-const HAIKU = anthropic(MODELS.HAIKU);
+const SONNET = aiFor("execution.sonnet").model;
+const HAIKU = aiFor("execution.haiku").model;
 
 /* ── Internal helpers ────────────────────────────────────────────── */
 
