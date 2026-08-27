@@ -9,12 +9,11 @@ import type { AgentEngineGateResolution } from "./types";
  * `src/lib/agent-service/client.ts`'s own IAM-ID-token pattern exactly
  * (same Cloud-Run-to-Cloud-Run auth story, same metadata-server call).
  *
- * NOTE: as of this writing, `agent-engine`'s `/api/v1/runs/*` routes
- * (`apps/agent-server/src/app.ts`/`routes/runs.ts`) have no
- * application-level auth check at all — this ID token is sent anyway, for
- * when Cloud Run's own IAM invoker check (or an app-level check) is turned
- * on for that service, exactly like `agent-service` already has. That's a
- * gap in agent-engine itself, not something this repo can fix.
+ * NOTE: this ID token is sent whether or not agent-engine currently enforces
+ * anything, so that turning enforcement on there is a config flip rather than
+ * a code change here. `iamIdToken` below fails CLOSED for exactly that reason
+ * (SCRUM-330): a portal that answers "no token" instead of failing is a portal
+ * that discovers the problem in production, at call time.
  */
 
 const METADATA_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
@@ -33,28 +32,73 @@ export function isAgentEngineHttpConfigured(): boolean {
 
 let idTokenCache: { audience: string; token: string; expiresAt: number } | null = null;
 
-/** Google-signed ID token for an IAM-protected agent-engine Cloud Run service. `AGENT_ENGINE_AUDIENCE` unset (local dev) → no IAM in front → skip. */
-async function iamIdToken(): Promise<string | undefined> {
-  const audience = process.env.AGENT_ENGINE_AUDIENCE;
+/**
+ * Thrown when agent-engine is IAM-protected (`AGENT_ENGINE_AUDIENCE` is set)
+ * but this process could not mint an ID token for it.
+ *
+ * Exists so that a MISSING credential is a different thing from a credential
+ * that is legitimately not required. Callers that want to degrade gracefully
+ * can still catch it — but they have to name it, which is the point.
+ */
+export class AgentEngineCredentialError extends Error {
+  constructor(reason: string) {
+    super(`agent-engine is IAM-protected but no ID token could be minted: ${reason}`);
+    this.name = "AgentEngineCredentialError";
+  }
+}
+
+/**
+ * Google-signed ID token for an IAM-protected agent-engine Cloud Run service.
+ *
+ * Returns `undefined` in exactly ONE case: `AGENT_ENGINE_AUDIENCE` is unset,
+ * which means no IAM sits in front of the engine (local dev) and sending an
+ * unauthenticated request is the intended behaviour.
+ *
+ * Every other outcome throws `AgentEngineCredentialError`. This used to return
+ * `undefined` on a failed mint, which made a MISSING credential
+ * indistinguishable from a SUCCESSFUL one: the request went out unauthenticated,
+ * and the failure surfaced later, at call time, as an opaque rejection from the
+ * engine three layers from its cause. That is a hard blocker on ever turning on
+ * auth enforcement in the engine — with it, the flip is boring.
+ *
+ * Same shape as agent-engine's own `apps/agent-server/src/routes/queue.ts`:
+ * when the audience is configured but the verifier is missing it answers 500
+ * rather than silently accepting the request.
+ */
+async function iamIdToken(env: Record<string, string | undefined> = process.env): Promise<string | undefined> {
+  const audience = env.AGENT_ENGINE_AUDIENCE;
   if (!audience) return undefined;
   const now = Date.now();
   if (idTokenCache && idTokenCache.audience === audience && idTokenCache.expiresAt > now + 60_000) {
     return idTokenCache.token;
   }
+  let res: Response;
   try {
-    const res = await fetch(`${METADATA_URL}?audience=${encodeURIComponent(audience)}`, {
+    res = await fetch(`${METADATA_URL}?audience=${encodeURIComponent(audience)}`, {
       headers: { "Metadata-Flavor": "Google" },
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return undefined;
-    const token = (await res.text()).trim();
-    if (!token) return undefined;
-    idTokenCache = { audience, token, expiresAt: now + 55 * 60 * 1000 };
-    return token;
-  } catch {
-    return undefined;
+  } catch (e) {
+    // Includes the 5s AbortSignal timeout. Off a metadata-server-bearing host
+    // this is simply always true, which is exactly when failing closed matters.
+    throw new AgentEngineCredentialError(
+      `metadata server unreachable (${e instanceof Error ? e.message : String(e)})`,
+    );
   }
+  if (!res.ok) throw new AgentEngineCredentialError(`metadata server returned ${res.status}`);
+  const token = (await res.text().catch(() => "")).trim();
+  if (!token) throw new AgentEngineCredentialError("metadata server returned an empty token");
+  idTokenCache = { audience, token, expiresAt: now + 55 * 60 * 1000 };
+  return token;
 }
+
+/** Test seam: the module-level token cache would otherwise leak between cases. */
+export function __resetIdTokenCacheForTests(): void {
+  idTokenCache = null;
+}
+
+/** Exported for tests only — the failure modes above must be exercisable. */
+export const __iamIdTokenForTests = iamIdToken;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const { baseUrl } = config();
