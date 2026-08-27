@@ -1,6 +1,5 @@
 import { after } from "next/server";
 import { streamText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 
 import { getCurrentUser, isStaff } from "@/lib/auth";
 import {
@@ -20,10 +19,11 @@ import { CREDIT_COSTS } from "@/lib/credits";
 import { chargeClientModelCall, refundOnce } from "@/lib/client-model-charge";
 import { clientCategoryValue } from "@/lib/utils";
 import type { Asset, ClientMarketingAnalytics } from "@/lib/types";
+import { aiFor } from "@/lib/ai/provider";
 
 export const maxDuration = 30;
 
-const MODEL = anthropic(MODELS.HAIKU);
+const MODEL = aiFor("insights.summary").model;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**

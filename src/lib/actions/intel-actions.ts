@@ -113,7 +113,7 @@ export async function generateClientBriefAction(
   if (briefDenied !== null) return { ok: false, error: briefDenied };
 
   const { generateText } = await import("ai");
-  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { aiFor } = await import("@/lib/ai/provider");
   const MODEL = MODELS.HAIKU;
   const briefUsageMeta = {
     clientId, agentId: null, agentName: "Company Brief",
@@ -123,7 +123,7 @@ export async function generateClientBriefAction(
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ text, usage } = await generateText({
-      model: anthropic(MODEL),
+      model: aiFor("intel.actions").model,
       system:
         "Write a plain, factual company description in exactly two short sentences (about two lines total). " +
         "Describe what the company does and who it serves. " +
@@ -456,7 +456,7 @@ export async function generateDocSummaryAction(
   // The exposure while it stays free is bounded by the cache above: one Haiku
   // call per document VERSION, not per view.
   const { generateText } = await import("ai");
-  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { aiFor } = await import("@/lib/ai/provider");
   const MODEL = MODELS.HAIKU;
   const summaryUsageMeta = {
     clientId, agentId: null, agentName: "Executive Summary",
@@ -466,7 +466,7 @@ export async function generateDocSummaryAction(
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ text, usage } = await generateText({
-      model: anthropic(MODEL),
+      model: aiFor("intel.actions").model,
       system:
         "You are a strategic analyst. Distill the document into exactly 4-5 high-impact executive insights. " +
         "Return ONLY a valid JSON array of strings. No markdown, no preamble, no trailing text. " +

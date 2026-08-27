@@ -1,6 +1,5 @@
 import { after } from "next/server";
 import { streamText, tool, generateObject, isLoopFinished, stepCountIs } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import type { ModelMessage } from "ai";
 
@@ -74,6 +73,7 @@ import {
 import type { Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
+import { aiFor } from "@/lib/ai/provider";
 
 export const maxDuration = 60;
 
@@ -107,7 +107,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   };
   const messages = (body.messages ?? []) as ModelMessage[];
   const modelId = body.deep ? MODELS.SONNET : MODELS.HAIKU;
-  const MODEL = anthropic(modelId);
+  const MODEL = aiFor("chat.client", { modelId: modelId }).model;
 
   const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents, umbrellas] =
     await Promise.all([
@@ -700,7 +700,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ),
       });
 
-      const haiku = anthropic(MODELS.HAIKU);
+      const haiku = aiFor("chat.followups").model;
       const extractionPrompt = buildGmailExtractionPrompt(
         emails,
         client.name,

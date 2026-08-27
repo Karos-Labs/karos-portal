@@ -1,9 +1,9 @@
 import "server-only";
 
 import { generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
+import { aiFor } from "@/lib/ai/provider";
 import {
   sanitizeGeneratedTitle,
   TITLE_CONTENT_SAMPLE_CHARS,
@@ -49,7 +49,7 @@ export async function generateAssetTitle(args: {
   try {
     const result = await Promise.race([
       generateText({
-        model: anthropic(MODELS.HAIKU),
+        model: aiFor("asset.title").model,
         prompt: TITLE_PROMPT + sample,
         maxOutputTokens: 50,
         temperature: 0.2,

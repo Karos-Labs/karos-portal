@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getJob } from "@/lib/data";
-import { resolveAgentEngineGate } from "@/lib/agent-engine/client";
+import { AgentEngineCredentialError, resolveAgentEngineGate } from "@/lib/agent-engine/client";
 import type { AgentEngineReviewEdits, AgentEngineTemplateFeedback } from "@/lib/agent-engine/types";
 import { requireStaff } from "./_shared";
 
@@ -74,6 +74,14 @@ export async function resolveAgentEngineGateAction(
       ...(hasEdits && decision === "approve" ? { edits } : {}),
     });
   } catch (e) {
+    // SCRUM-330: the gate resolution never left this process — the portal could
+    // not authenticate to agent-engine at all. Told apart from an engine-side
+    // rejection deliberately: the reviewer's decision is intact and re-clicking
+    // will not help, so say so rather than offering the usual "try again".
+    if (e instanceof AgentEngineCredentialError) {
+      console.error(`[agent-engine] gate "${gateId}" on job "${jobId}" was not sent: no ID token could be minted`, e);
+      return { error: "Cannot reach the agent engine: this portal is not authenticated to it. Your decision was not sent — contact an administrator rather than retrying." };
+    }
     return { error: e instanceof Error ? e.message : "Failed to resolve the gate." };
   }
 

@@ -24,6 +24,7 @@ import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
+import { aiFor } from "@/lib/ai/provider";
 
 // "meeting-notes" is written exclusively by appendMeetingSignalToContextDoc; the
 // "*-agent-profile" types are written by upsertAgentProfileScope — neither is
@@ -570,7 +571,7 @@ INSTRUCTIONS:
 - Return ONLY the filled markdown document — start immediately with \`---\`, no preamble, no Change Log.`;
 
   const docStream = streamText({
-    model: anthropic(MODELS.SONNET),
+    model: aiFor("intel.pipeline.synthesis").model,
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
     maxOutputTokens: DOC_MAX_TOKENS,
@@ -585,7 +586,7 @@ INSTRUCTIONS:
   const lastSection = lastTemplateSection(template);
   if (lastSection && !text.includes(lastSection)) {
     const contDocStream = streamText({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("intel.pipeline.synthesis").model,
       system: systemPrompt,
       messages: [
         { role: "user", content: userMessage },
@@ -653,7 +654,7 @@ ${corrections.trim()}
 Return ONLY the corrected document. Start immediately with the first character of the document (the opening \`---\` of the YAML frontmatter, if present). No preamble, no explanation, no "Here is the corrected document:" prefix.`;
 
   const corrStream = streamText({
-    model: anthropic(MODELS.SONNET),
+    model: aiFor("intel.pipeline.synthesis").model,
     system: systemPrompt,
     messages: [
       {
@@ -683,7 +684,7 @@ Return ONLY the corrected document. Start immediately with the first character o
     // Correction failed structural checks — attempt a continuation pass before giving up.
     if (result.length < inputCharCount * 0.75) {
       const corrContStream = streamText({
-        model: anthropic(MODELS.SONNET),
+        model: aiFor("intel.pipeline.synthesis").model,
         system: systemPrompt,
         messages: [
           {

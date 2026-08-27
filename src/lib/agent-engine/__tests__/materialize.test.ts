@@ -18,7 +18,13 @@ vi.mock("@/lib/chain", () => ({ reflowClientChain: reflowMock }));
 // also the fallback the real path uses whenever that call fails, so this is the
 // branch that has to be right.
 vi.mock("@/lib/asset-titles", () => ({ generateAssetTitle: generateTitleMock }));
-vi.mock("../client", () => ({ getAgentEngineDeliverable: getDeliverableMock }));
+// Partial mock: `AgentEngineCredentialError` must be the REAL class, or the
+// `instanceof` branch in materialize.ts silently never matches and the
+// credential case would test as if it did not exist (SCRUM-330).
+vi.mock("../client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../client")>()),
+  getAgentEngineDeliverable: getDeliverableMock,
+}));
 
 import { materializeAgentEngineDeliverable, PRODUCT_DELIVERABLE_KINDS } from "../materialize";
 import { parseXDrafts } from "@/lib/x-drafts";
