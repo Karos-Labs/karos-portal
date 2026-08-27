@@ -79,12 +79,65 @@ const globalForDb = globalThis as typeof globalThis & {
   __karosAdminDb?: FirebaseFirestore.Firestore;
 };
 
+/**
+ * Which Firestore database each deployment is allowed to open (AU60 / SCRUM-359).
+ *
+ * Keyed on the GCP PROJECT the service runs in, which is deliberately NOT the
+ * Firebase project. Firebase here is one project — `karoscmo` — with two
+ * databases: `(default)` is production, `prep` is prep. So every credential in
+ * this system carries `project_id: karoscmo`, and asserting on that would assert
+ * something trivially true that can never fail.
+ *
+ * `GOOGLE_CLOUD_PROJECT` is the independent signal: cloudbuild.yaml sets it from
+ * `$PROJECT_ID` (the project the build runs in) and cloudbuild.promote.yaml from
+ * `_GOOGLE_CLOUD_PROJECT`. It differs between environments even though the
+ * Firebase project does not, so it can actually contradict the database id.
+ */
+const DATABASE_BY_DEPLOYMENT_PROJECT: Readonly<Record<string, string>> = {
+  "karoscmo-prep": "prep",
+  karoscmo: "(default)",
+};
+
+/**
+ * Refuse to open the wrong database for the environment. Fails CLOSED: an
+ * unrecognised deployment project throws rather than falling through to
+ * `(default)`, because `(default)` here is production.
+ *
+ * `GOOGLE_CLOUD_PROJECT` unset means no deployment to check against — local dev
+ * or a test — and is the one allowed skip.
+ */
+export function assertDatabaseMatchesDeployment(
+  databaseId: string,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  const project = env.GOOGLE_CLOUD_PROJECT;
+  if (!project) return;
+
+  const expected = DATABASE_BY_DEPLOYMENT_PROJECT[project];
+  if (!expected) {
+    throw new Error(
+      `Refusing to open Firestore: unrecognised deployment project ${JSON.stringify(project)}. ` +
+        `Add it to DATABASE_BY_DEPLOYMENT_PROJECT with the database it may use. Falling through ` +
+        `would open "(default)", which is production.`,
+    );
+  }
+  if (databaseId !== expected) {
+    throw new Error(
+      `Refusing to open Firestore database ${JSON.stringify(databaseId)} from deployment project ` +
+        `${JSON.stringify(project)}, which must use ${JSON.stringify(expected)}. ` +
+        `FIRESTORE_DATABASE_ID and the deployment disagree — one of them is wrong, and guessing ` +
+        `would write ${databaseId === "(default)" ? "prep traffic into production" : "production traffic into prep"}.`,
+    );
+  }
+}
+
 export const adminDb = () => {
   if (!globalForDb.__karosAdminDb) {
     // Named-database selection — prep runs its own isolated Firestore
     // database ("prep") in the same shared Firebase project; production
     // (and anything unset) uses the project's default database.
     const databaseId = process.env.FIRESTORE_DATABASE_ID || "(default)";
+    assertDatabaseMatchesDeployment(databaseId);
     const firestore = getFirestore(getAdminApp(), databaseId);
     try {
       // Drop undefined fields instead of throwing — optional Agent/field props
