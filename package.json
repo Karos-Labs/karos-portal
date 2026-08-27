@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.85",
+    "@ai-sdk/google-vertex": "^5.0.66",
     "@google-cloud/bigquery": "^9.0.2",
     "@google-cloud/pubsub": "^6.0.1",
     "@google-cloud/storage": "^7.16.0",
