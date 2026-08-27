@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.85",
+    "@ai-sdk/anthropic": "^4.0.44",
     "@ai-sdk/google-vertex": "^5.0.66",
     "@google-cloud/bigquery": "^9.0.2",
     "@google-cloud/pubsub": "^6.0.1",
@@ -22,7 +22,7 @@
     "@opentelemetry/sdk-node": "^0.221.0",
     "@opentelemetry/sdk-trace-node": "^2.10.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
-    "ai": "^6.0.208",
+    "ai": "^7.0.83",
     "clsx": "^2.1.1",
     "firebase": "^12.15.0",
     "firebase-admin": "^14.0.0",

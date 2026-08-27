@@ -2,6 +2,7 @@ import "server-only";
 
 import type { LanguageModel, streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
+import { vertexAnthropic } from "@ai-sdk/google-vertex/anthropic";
 import { MODELS } from "@/lib/constants";
 import {
   CAPABILITY_VARIANT,
@@ -18,17 +19,19 @@ import { AI_ROLE_NAMES, roleSpec, type AiRoleName, type ModelTier } from "./role
  * supply what a role declared, the module throws on import — not on the next
  * report run, not when someone notices the site audit stopped citing sources.
  *
- * There are two independent reasons a vendor can be unusable, and they are kept
- * apart because they have different lifetimes:
+ * Until the `ai` 6→7 / `@ai-sdk/anthropic` 3→4 upgrade there was a second check
+ * here, for whether a vendor's SDK could be plugged into this repo at all. That
+ * was a packaging problem with an expiry date, and it has expired: all three
+ * provider packages now sit on `@ai-sdk/provider@4`, and Vertex is bound below.
+ * The check was deleted rather than left returning `null` forever — a guard that
+ * can no longer fail is not a guard, and this codebase has already found six.
  *
- *   1. CAPABILITY — the vendor cannot do a thing a role depends on. A product
- *      constraint. Fixed only by the vendor gaining the feature, or by changing
- *      what the prompt claims.
- *   2. BINDABILITY — the vendor's SDK cannot be plugged into this repo's `ai`
- *      version at all. A dependency constraint, fixed by an upgrade.
- *
- * Both are checked at wiring. Conflating them would hide (1) — the durable,
- * nine-call-site finding — behind (2), which is a version bump.
+ * What remains is the durable constraint: CAPABILITY. A vendor that cannot do a
+ * thing a role depends on is a product fact, fixed only by the vendor gaining
+ * the feature or by changing what the prompt claims. Vertex still has no
+ * `web_fetch`, so the nine sites that declare it still cannot route there — and
+ * now that Vertex is reachable, that refusal is the only thing standing between
+ * a config flip and nine prompts quietly losing the faculty they promise to use.
  */
 
 /** `tools` as `streamText`/`generateText` accept it, matching report-stream.ts's idiom. */
@@ -52,35 +55,6 @@ export interface CapabilityBudgets {
 const MODEL_IDS: Readonly<Record<Vendor, Readonly<Record<ModelTier, string>>>> = {
   anthropic: { SONNET: MODELS.SONNET, HAIKU: MODELS.HAIKU },
   vertex: { SONNET: "claude-sonnet-4-6", HAIKU: "claude-haiku-4-5@20251001" },
-} as const;
-
-/**
- * Why a vendor cannot be BOUND on the current dependency set, or `null` if it can.
- *
- * `@ai-sdk/google-vertex` is installed and its capability surface is real and
- * asserted against — but no release of it can be plugged into this repo today:
- *
- *   ai@6.0.208            -> @ai-sdk/provider@3  (LanguageModel = V2 | V3)
- *   @ai-sdk/anthropic@3   -> @ai-sdk/provider@3  (emits V3)          ✓
- *   @ai-sdk/google-vertex@5.0.66 (latest)
- *                         -> @ai-sdk/provider@4  (emits V4)          ✗
- *
- * There is no google-vertex release on the provider@3 line — the package only
- * ever shipped against provider@4, alongside ai@7 / @ai-sdk/anthropic@4. So
- * binding Vertex is not a provider-layer problem; it is an `ai` 6→7 plus
- * `@ai-sdk/anthropic` 3→4 major upgrade, which touches every streaming call
- * site in the repo and is larger than the sweep this layer was built for.
- *
- * Recorded here rather than in a ticket so the next person hits it at wiring
- * time with the reason in hand, instead of rediscovering it from a type error.
- */
-const VENDOR_UNBINDABLE: Readonly<Record<Vendor, string | null>> = {
-  anthropic: null,
-  vertex:
-    "@ai-sdk/google-vertex@5 emits LanguageModelV4 (@ai-sdk/provider@4), but this repo's " +
-    "ai@6 + @ai-sdk/anthropic@3 are on @ai-sdk/provider@3 and accept V2|V3 only. No " +
-    "google-vertex release exists on the provider@3 line. Binding Vertex requires " +
-    "upgrading ai 6->7 and @ai-sdk/anthropic 3->4 first.",
 } as const;
 
 /** Thrown when a role cannot be wired. Always a misconfiguration, never a runtime condition. */
@@ -109,13 +83,6 @@ export function defaultVendor(env: Record<string, string | undefined> = process.
 /** The vendor a role resolves to: its pin if it has one, else the configured default. */
 export function vendorForRole(role: AiRoleName, fallback: Vendor): Vendor {
   return roleSpec(role).pinnedTo?.vendor ?? fallback;
-}
-
-/** Every vendor any role would actually resolve to under `fallback`. */
-function vendorsInUse(fallback: Vendor): Vendor[] {
-  const seen = new Set<Vendor>();
-  for (const role of AI_ROLE_NAMES) seen.add(vendorForRole(role, fallback));
-  return [...seen];
 }
 
 /**
@@ -152,18 +119,6 @@ export function assertManifestWirable(fallback: Vendor): void {
   }
 }
 
-/** CHECK 2 — bindability. Separate from capability, and separately fixable. */
-export function assertVendorsBindable(fallback: Vendor): void {
-  for (const vendor of vendorsInUse(fallback)) {
-    const reason = VENDOR_UNBINDABLE[vendor];
-    if (reason) {
-      throw new ProviderWiringError(
-        `Vendor "${vendor}" cannot be bound on the current dependency set.\n  ${reason}`,
-      );
-    }
-  }
-}
-
 /** Build the tool set for a role's declared capabilities, using the vendor's own factories. */
 function toolsFor(role: AiRoleName, vendor: Vendor, budgets: CapabilityBudgets): ToolSet {
   const declared = roleSpec(role).requires ?? [];
@@ -191,7 +146,13 @@ function toolsFor(role: AiRoleName, vendor: Vendor, budgets: CapabilityBudgets):
       );
     }
     if (capability === "web_search") {
-      tools.web_search = anthropic.tools.webSearch_20250305(budgets.web_search ?? {});
+      const opts = budgets.web_search ?? {};
+      // Each vendor's own factory. Handing a Vertex model an Anthropic-namespace
+      // tool is the failure the seam exists to make impossible.
+      tools.web_search =
+        vendor === "vertex"
+          ? vertexAnthropic.tools.webSearch_20250305(opts)
+          : anthropic.tools.webSearch_20250305(opts);
     } else {
       tools.web_fetch = anthropic.tools.webFetch_20250910(budgets.web_fetch ?? {});
     }
@@ -231,14 +192,6 @@ export function aiFor(
       `Role "${role}" requires "${missing[0]}", which vendor "${vendor}" cannot supply.`,
     );
   }
-
-  const unbindable = VENDOR_UNBINDABLE[vendor];
-  if (unbindable) {
-    throw new ProviderWiringError(
-      `Role "${role}" resolves to vendor "${vendor}", which cannot be bound.\n  ${unbindable}`,
-    );
-  }
-
   let modelId: string;
   if (spec.tier === "caller") {
     if (!opts.modelId) {
@@ -261,9 +214,12 @@ export function aiFor(
   const variants: Partial<Record<Capability, string>> = {};
   for (const c of spec.requires ?? []) variants[c] = CAPABILITY_VARIANT[vendor][c];
 
-  // Only `anthropic` is bindable today; the guard above has already returned for
-  // anything else, so this is the single vendor branch rather than a default.
-  return { model: anthropic(modelId), tools, vendor, variants };
+  return {
+    model: vendor === "vertex" ? vertexAnthropic(modelId) : anthropic(modelId),
+    tools,
+    vendor,
+    variants,
+  };
 }
 
 /** The per-vendor model id a role would use. Exported so the mapping is testable without binding. */
@@ -278,4 +234,3 @@ export function modelIdFor(role: AiRoleName, vendor: Vendor): string | null {
 // that touches AI — loudly, with the full list — rather than as a quietly worse
 // report weeks later.
 assertManifestWirable(defaultVendor());
-assertVendorsBindable(defaultVendor());
