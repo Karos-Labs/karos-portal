@@ -172,7 +172,18 @@ cannot `actAs`, so without this the deploy fails with
 `PERMISSION_DENIED: ... iam.serviceaccounts.actAs`:
 
 ```bash
-gcloud iam service-accounts add-iam-policy-binding   "karos-cmo-prep@${PREP_PROJECT_ID}.iam.gserviceaccount.com"   --member="serviceAccount:${PREP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"   --role="roles/iam.serviceAccountUser" --project=$PREP_PROJECT_ID
+# Grant BOTH: newer Cloud Build generations run the build as the Compute Engine
+# default SA, not the Cloud Build SA. The AU58 deploy failed on exactly this --
+# gcloud reported it was "authenticated as
+# 680337539054-compute@developer.gserviceaccount.com". bootstrap-prep-gcp.sh
+# already grants both, for the same reason.
+for SA in "${PREP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+          "${PREP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"; do
+  gcloud iam service-accounts add-iam-policy-binding \
+    "karos-cmo-prep@${PREP_PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:${SA}" \
+    --role="roles/iam.serviceAccountUser" --project=$PREP_PROJECT_ID
+done
 ```
 
 Deliberately NOT carried over from the default compute SA: `run.admin`,
