@@ -6,7 +6,7 @@ import { orderKeyForCreatedAt } from "@/lib/post-chain";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
 import { generateAssetTitle } from "@/lib/asset-titles";
-import { getAgentEngineDeliverable } from "./client";
+import { AgentEngineCredentialError, getAgentEngineDeliverable } from "./client";
 import type { AssetType, Job, WireTaskType } from "@/lib/types";
 
 /**
@@ -768,6 +768,22 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
 
     return assetId;
   } catch (e) {
+    // SCRUM-330: a credential failure is a MISCONFIGURATION, not "the
+    // deliverable isn't ready" — every job on this instance will fail the same
+    // way until someone fixes the runtime identity. This function's
+    // never-throws contract is deliberate and load-bearing (a materialization
+    // failure must not keep a job out of `review`), so we honour it rather than
+    // rethrowing — but the two cases must not read alike in the logs, or the
+    // one that needs an operator hides inside the one that needs nobody.
+    if (e instanceof AgentEngineCredentialError) {
+      console.error(
+        `[agent-engine materialize] CREDENTIAL FAILURE for job "${job.id}" (run "${job.agentEngineRunId}") — ` +
+          `the portal could not mint an agent-engine ID token, so NO deliverable will materialize on this instance ` +
+          `until its runtime service account can reach the metadata server. This is not a per-job problem.`,
+        e,
+      );
+      return undefined;
+    }
     console.error(`[agent-engine materialize] failed to materialize deliverable for job "${job.id}" (run "${job.agentEngineRunId}")`, e);
     return undefined;
   }
