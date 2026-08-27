@@ -156,6 +156,32 @@ gcloud projects add-iam-policy-binding $PREP_PROJECT_ID \
   --role="roles/secretmanager.secretAccessor"
 ```
 
+
+#### Prep runs as a dedicated runtime SA (AU58 / SCRUM-357)
+
+`deploy-prep.yml` passes `_RUNTIME_SERVICE_ACCOUNT`, so the prep service runs
+as `karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com` rather than the
+project's shared default compute SA. The runtime grants on that SA (logging,
+BigQuery, Pub/Sub publish, `agent-engine-prep` invoker, and per-secret
+accessor) are applied separately.
+
+The `roles/iam.serviceAccountUser` binding above is scoped to the OLD
+`${PREP_PROJECT_NUMBER}-compute@developer.gserviceaccount.com` and does NOT
+cover the new SA. Cloud Build cannot deploy a service as an identity it
+cannot `actAs`, so without this the deploy fails with
+`PERMISSION_DENIED: ... iam.serviceaccounts.actAs`:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding   "karos-cmo-prep@${PREP_PROJECT_ID}.iam.gserviceaccount.com"   --member="serviceAccount:${PREP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"   --role="roles/iam.serviceAccountUser" --project=$PREP_PROJECT_ID
+```
+
+Deliberately NOT carried over from the default compute SA: `run.admin`,
+`artifactregistry.writer`, project-wide `secretmanager.secretAccessor`,
+project-wide `storage.objectViewer`. `run.admin` is the one that mattered --
+it let the portal's own identity modify or delete any Cloud Run service in
+the project, `agent-engine-prep` included. The portal deploys nothing; that
+was Cloud Build's role set inherited by accident.
+
 ### 4. Prep secrets
 
 Same secret *names* as production (`cloudbuild.yaml`'s `--set-secrets` list), own values:
