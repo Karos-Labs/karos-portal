@@ -77,22 +77,22 @@ export const AI_ROLES = {
     tier: "SONNET",
     requires: ["web_search", "web_fetch"],
     sites: [
-      "src/lib/intel/pipeline.ts:231",
-      "src/lib/intel/pipeline.ts:265",
-      "src/lib/intel/pipeline.ts:311",
-      "src/lib/intel/pipeline.ts:373",
-      "src/lib/intel/pipeline.ts:415",
+      "src/lib/intel/pipeline.ts:232",
+      "src/lib/intel/pipeline.ts:266",
+      "src/lib/intel/pipeline.ts:312",
+      "src/lib/intel/pipeline.ts:374",
+      "src/lib/intel/pipeline.ts:416",
     ],
   },
   "seo.site_audit": {
     tier: "SONNET",
     requires: ["web_search", "web_fetch"],
-    sites: ["src/lib/intel/seo-geo.ts:212"],
+    sites: ["src/lib/intel/seo-geo.ts:213"],
   },
   "branding.fetch_site": {
     tier: "HAIKU",
     requires: ["web_fetch"],
-    sites: ["src/lib/branding.ts:339"],
+    sites: ["src/lib/branding.ts:340"],
   },
 
   /* ── COUPLED · web_search only · 2 sites ─────────────────────────────────
@@ -107,7 +107,7 @@ export const AI_ROLES = {
   "branding.search_brand": {
     tier: "HAIKU",
     requires: ["web_search"],
-    sites: ["src/lib/branding.ts:378"],
+    sites: ["src/lib/branding.ts:379"],
   },
 
   /* ── PLAIN · no vendor-specific surface · 31 sites ───────────────────────
@@ -116,10 +116,10 @@ export const AI_ROLES = {
   "intel.pipeline.synthesis": {
     tier: "SONNET",
     sites: [
-      "src/lib/intel/pipeline.ts:573",
-      "src/lib/intel/pipeline.ts:588",
-      "src/lib/intel/pipeline.ts:656",
-      "src/lib/intel/pipeline.ts:686",
+      "src/lib/intel/pipeline.ts:574",
+      "src/lib/intel/pipeline.ts:589",
+      "src/lib/intel/pipeline.ts:657",
+      "src/lib/intel/pipeline.ts:687",
     ],
   },
   "simulation.persona": {
@@ -139,13 +139,22 @@ export const AI_ROLES = {
       "src/lib/actions/competitor-actions.ts:310",
     ],
   },
+  // HAIKU, not SONNET: both sites read a local `const MODEL = MODELS.HAIKU`.
+  // Caught by diffing the manifest against the call sites before the T-B2 sweep —
+  // declaring SONNET here would have silently upgraded both at sweep time.
   "intel.actions": {
-    tier: "SONNET",
-    sites: ["src/lib/actions/intel-actions.ts:126", "src/lib/actions/intel-actions.ts:469"],
+    tier: "HAIKU",
+    sites: [
+      "src/lib/actions/intel-actions.ts:126",
+      "src/lib/actions/intel-actions.ts:469",
+    ],
   },
   "task.generation": {
     tier: "HAIKU",
-    sites: ["src/lib/actions/task-actions.ts:364", "src/lib/actions/task-actions.ts:485"],
+    sites: [
+      "src/lib/actions/task-actions.ts:364",
+      "src/lib/actions/task-actions.ts:485",
+    ],
   },
   "intel.condense": {
     tier: "SONNET",
@@ -153,7 +162,7 @@ export const AI_ROLES = {
   },
   "branding.extract": {
     tier: "HAIKU",
-    sites: ["src/lib/branding.ts:726", "src/lib/branding.ts:741"],
+    sites: ["src/lib/branding.ts:727", "src/lib/branding.ts:742"],
   },
   "execution.sonnet": { tier: "SONNET", sites: ["src/lib/execution-engine.ts:36"] },
   "execution.haiku": { tier: "HAIKU", sites: ["src/lib/execution-engine.ts:37"] },
@@ -165,8 +174,8 @@ export const AI_ROLES = {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/chat/route.ts:703"],
   },
-  "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:414"] },
-  "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:579"] },
+  "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:415"] },
+  "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:580"] },
   "insights.summary": {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/insights/route.ts:26"],

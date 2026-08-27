@@ -22,7 +22,6 @@ import "server-only";
  */
 
 import { generateObject, NoObjectGeneratedError } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { DOC_MAX_TOKENS, MODELS } from "@/lib/constants";
 import {
@@ -33,6 +32,7 @@ import {
 import { checkDanglingReferences } from "@/lib/dynamic-agent-reference-check";
 import { logger } from "@/services/logger";
 import type { DynamicAgentInputDef, DynamicAgentStepDef } from "@/lib/types";
+import { aiFor } from "@/lib/ai/provider";
 
 const GeneratedInputDef = z.object({
   key: z
@@ -193,7 +193,7 @@ async function generateOnce(description: string, correction?: string): Promise<G
     : description;
   const startedAt = Date.now();
   const { object, usage } = await generateObject({
-    model: anthropic(MODELS.SONNET),
+    model: aiFor("dynamic_agent.generate").model,
     schema: GENERATION_SCHEMA,
     system: SYSTEM_PROMPT,
     prompt,

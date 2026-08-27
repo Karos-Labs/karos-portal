@@ -15,7 +15,6 @@
 
 import "server-only";
 import { generateObject } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { after } from "next/server";
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
@@ -34,6 +33,7 @@ import { taskWeekKey, findDuplicateReason } from "@/lib/task-dedup";
 import { freshnessGuard } from "@/lib/entropy-guard";
 import type { ClientTask, TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
+import { aiFor } from "@/lib/ai/provider";
 
 const SOCIAL_PLATFORMS = ["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"] as const;
 
@@ -263,7 +263,7 @@ export async function generateCampaignBundle(
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ object: blueprint, usage } = await generateObject({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("campaign.plan").model,
       schema: campaignBlueprintSchema,
       system,
       prompt: buildCampaignPrompt(client.name, clientCategoryValue(client), input.trend),

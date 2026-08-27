@@ -13,6 +13,7 @@ import {
 import type { BrandColor, BrandingGuidelines, Client } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import { logger, readWebSearchCount } from "@/services/logger";
+import { aiFor } from "@/lib/ai/provider";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Color helper
@@ -723,7 +724,7 @@ export async function applyBrandingForClient(
     if (logoContext?.kind === "vision") {
       // Vision mode: pass logo image as Claude image part alongside the text prompt
       return generateObject({
-        model: anthropic(MODELS.HAIKU),
+        model: aiFor("branding.extract").model,
         schema: BrandingAISchema,
         messages: [
           {
@@ -738,7 +739,7 @@ export async function applyBrandingForClient(
     }
     // Text-only mode: SVG colors and/or site intelligence are embedded in the prompt text
     return generateObject({
-      model: anthropic(MODELS.HAIKU),
+      model: aiFor("branding.extract").model,
       schema: BrandingAISchema,
       prompt: promptText,
     });

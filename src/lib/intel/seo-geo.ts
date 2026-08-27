@@ -53,6 +53,7 @@ import {
 } from "@/lib/seo-geo";
 import { configuredEngines, probeEngine } from "./seo-geo-providers";
 import { logger } from "@/services/logger";
+import { aiFor } from "@/lib/ai/provider";
 
 /**
  * SEO & GEO research vertical for the onboarding pipeline — the platform port of
@@ -411,7 +412,7 @@ const PROMPT_POOL_SIZE = 32;
 async function generatePromptSet(client: Client, competitors: string[], gazetteer: Gazetteer): Promise<string[]> {
   try {
     const draftStream = streamText({
-      model: anthropic(MODELS.SONNET), // Sonnet drafts (a3 Phase 1); tagging/dedupe/quota are deterministic
+      model: aiFor("seo.prompt_drafting").model, // Sonnet drafts (a3 Phase 1); tagging/dedupe/quota are deterministic
       system:
         "You write realistic, high-intent questions that real buyers type into AI assistants (ChatGPT, Gemini, Claude). Questions are in the language the client's customers actually use and never embed the answer. Draft a generous, varied pool — the platform trims and balances it.",
       messages: [
@@ -576,7 +577,7 @@ async function discoverAnswerBrands(
 
     const excluded = [gazetteer.client[0], ...Object.keys(gazetteer.competitors)].join(", ");
     const { object, usage } = await generateObject({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("seo.competitor_extraction").model,
       schema,
       system:
         "You extract competitor brand names from AI-assistant answers for a market-visibility tracker. " +
