@@ -242,9 +242,24 @@ steps:
   # step's own secretEnv, and passed through as --build-arg — Next.js only
   # inlines NEXT_PUBLIC_* from build-time ENV, so these can't be deferred to
   # the Cloud Run --set-secrets deploy step below.
+  # Pull the previous image so `--cache-from` below has something to match
+  # against. Cloud Build starts each build with an EMPTY local docker daemon, so
+  # `--cache-from` naming a remote tag is a silent no-op on its own — the flag
+  # was already here and the last successful build logged ZERO cache hits.
+  # `|| true` keeps the very first build (and any build after a repo wipe) from
+  # failing on a tag that does not exist yet.
+  - id: docker-pull-cache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest ||           echo "no :latest yet — first build, or cache image pruned; continuing uncached"
+
   - id: docker-build
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
+    waitFor: [docker-pull-cache]
     secretEnv:
       - NEXT_PUBLIC_FIREBASE_API_KEY
       - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
