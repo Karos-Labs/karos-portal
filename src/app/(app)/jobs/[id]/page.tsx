@@ -21,7 +21,7 @@ import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
 import { fetchJobTranscript } from "@/lib/agent-service/transcript";
 import { AgentEngineRunPanel } from "@/components/agent-engine-run-panel";
 import { readAgentEngineRun } from "@/lib/agent-engine/read-run";
-import { syncAgentEngineJobStatusFromView } from "@/lib/agent-engine/reconcile";
+import { isJobInProgress, scheduleAgentEngineJobStatusSync } from "@/lib/agent-engine/reconcile";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
 import { normalizeDashes } from "@/lib/text-utils";
@@ -37,11 +37,12 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   // A job dispatched through agent-engine (Task 2/3) has no reverse-webhook completion path
   // — this view (and the periodic sweep at /api/agent-engine/reconcile) IS the completion
   // channel. Reads agentEngineRuns/{runId} once and, if it's reached a real terminal state,
-  // writes job.status here so this page load is also the moment the job's status catches up
-  // — see reconcile.ts's own doc comment.
+  // reflects job.status/error/heldReason in THIS render immediately (SCRUM-265 item 4: the
+  // actual Firestore write is scheduled via after() instead of blocking here — see
+  // scheduleAgentEngineJobStatusSync's own doc comment in reconcile.ts).
   const agentEngineView = job.agentEngineRunId ? await readAgentEngineRun(job.agentEngineRunId) : undefined;
   if (agentEngineView) {
-    job = await syncAgentEngineJobStatusFromView(job, agentEngineView);
+    job = scheduleAgentEngineJobStatusSync(job, agentEngineView);
   }
 
   const [client, ...assets] = await Promise.all([
@@ -51,12 +52,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
   const realAssets = assets.filter((a) => !!a);
   const classifiedError = classifyJobError(job.error);
 
-  const agentEngineTerminal =
-    agentEngineView !== undefined &&
-    ["completed", "failed", "degraded", "held", "blocked_intake"].includes(agentEngineView.run.status);
-  const inProgress = job.agentEngineRunId
-    ? !agentEngineTerminal
-    : job.status === "running" || job.status === "queued";
+  const inProgress = isJobInProgress(job, agentEngineView);
 
   // F107 - without this the deliverables here rendered with no connectedPlatforms,
   // so Publish Now never appeared on the job page even for an approved post whose
@@ -82,7 +78,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
 
   return (
     <>
-      {inProgress && <AutoRefresh />}
+      {inProgress && <AutoRefresh statusUrl={`/api/jobs/${job.id}/status`} />}
       <Link href="/jobs" className="mb-4 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground">
         <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> All jobs
       </Link>
