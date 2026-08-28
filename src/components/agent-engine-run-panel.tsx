@@ -5,6 +5,7 @@ import { AgentEngineStepOutputs } from "@/components/agent-engine-step-outputs";
 import type { AgentEngineRunView } from "@/lib/agent-engine/read-run";
 import { isArchivedOutput, totalStepCostUsd } from "@/lib/agent-engine/read-run";
 import { runAgentTranscripts, stepOutputPreviews } from "@/lib/agent-engine/step-transcript";
+import { agentEngineStepStatusBadge } from "@/lib/agent-engine/step-status";
 
 const RUN_STATUS_TONE: Record<AgentEngineRunView["run"]["status"], "neutral" | "success" | "warning" | "danger" | "info"> = {
   running: "info",
@@ -113,17 +114,11 @@ export function AgentEngineRunPanel({ jobId, view }: { jobId: string; view: Agen
                     {kindBadge && <Badge tone={kindBadge.tone} className="ml-2">{kindBadge.label}</Badge>}
                   </td>
                   <td className="py-2 pr-3">
-                    {step.status === "running" ? (
-                      // A `gate` step sits at "running" for as long as a person
-                      // takes to answer it, which is not the same claim as a
-                      // code step still executing — saying "Running…" of a
-                      // human-approval row reads as the machine being busy.
-                      <Badge tone={step.kind === "gate" ? "warning" : "info"}>{step.kind === "gate" ? "Awaiting review" : "Running…"}</Badge>
-                    ) : step.status === "completed" ? (
-                      <Badge tone="success">Done</Badge>
-                    ) : (
-                      <Badge tone="danger">{step.error ?? "Failed"}</Badge>
-                    )}
+                    {/* AU68 (SCRUM-366): agent-engine's step status is a
+                        seven-value vocabulary, not a tri-state. The mapping —
+                        and the argument for which of them are faults — lives in
+                        `agentEngineStepStatusBadge` so it can be tested. */}
+                    <Badge tone={agentEngineStepStatusBadge(step).tone}>{agentEngineStepStatusBadge(step).label}</Badge>
                   </td>
                   <td className="py-2 pr-3 text-right text-xs">{step.costUsd !== undefined ? fmtCost(step.costUsd) : "—"}</td>
                   <td className="py-2 text-right text-xs text-muted-2">{step.durationMs !== undefined ? `${(step.durationMs / 1000).toFixed(1)}s` : "—"}</td>

@@ -39,11 +39,28 @@ export interface AgentStepTranscript {
   truncated: boolean;
   /**
    * The step's own terminal status (`AgentExecutionStatus`) — `"completed"`,
-   * `"content_fail"`, `"tooling_error"` or `"budget_exceeded"`. Distinct from
-   * the step CHECKPOINT's status, which only says whether the step ran: an
-   * agent step can be a checkpointed `"completed"` while its own execution
-   * resolved to `content_fail`, and conflating the two is how a run reads as
-   * clean when its draft turn never produced anything.
+   * `"content_fail"`, `"tooling_error"` or `"budget_exceeded"`, read out of the
+   * checkpointed `AgentExecutionResult` (`output.status`) below.
+   *
+   * ## Why this survived SCRUM-366 unchanged — read before deleting it
+   *
+   * AU68 fixed the producer: `step.agent` now records that same verdict on the
+   * step CHECKPOINT's own `status` instead of hardcoding `"completed"`. The
+   * obvious follow-up is to delete this and trust `step.status`. Do not.
+   *
+   * 1. This never read `step.status` in the first place. It reads a DIFFERENT
+   *    field — the agent result's own — so there is no correction here to
+   *    double-apply and nothing to un-apply. The producer fix and this
+   *    projection cannot disagree; they now report the same fact, and each
+   *    surface shows it exactly once.
+   * 2. `output.status` is right for EVERY record. `step.status` is right only
+   *    for records written after the AU68 deploy: agent-engine deliberately did
+   *    not rewrite history, so a pre-deploy checkpoint still says `"completed"`
+   *    for a step whose agent failed. Switching to `step.status` would make
+   *    this view LESS accurate on exactly the runs someone is most likely to be
+   *    reading back.
+   * 3. `code`/`gate` steps have no `AgentExecutionResult`, so this stays
+   *    `undefined` for them — which is what makes it an agent-only badge.
    */
   executionStatus?: string;
   /** The structured object the agent returned, pretty-printed. Absent when the agent produced none (a `content_fail`/`tooling_error` outcome). */

@@ -46,8 +46,31 @@ export interface AgentEngineStepRecord {
    * absence beyond what a missing step already implies.
    */
   kind: "code" | "agent" | "gate";
-  /** `"running"`: the step's checkpoint exists but hasn't reached a terminal state yet — no `completedAt`/`costUsd`/`durationMs`/`output` yet. For a `"gate"` step this is the genuine "registered, still waiting on a human" state, which can last as long as the gate's own timeout. */
-  status: "running" | "completed" | "failed";
+  /**
+   * The step's own execution verdict, mirroring agent-engine's
+   * `StepRecordSchema.status` (`packages/workflow/src/adapters/types.ts`).
+   *
+   * `"running"`: the checkpoint exists but hasn't reached a terminal state yet
+   * — no `completedAt`/`costUsd`/`durationMs`/`output` yet. For a `"gate"` step
+   * this is the genuine "registered, still waiting on a human" state, which can
+   * last as long as the gate's own timeout.
+   *
+   * The four middle values arrived with AU67 (SCRUM-365) for `step.code` and
+   * AU68 (SCRUM-366) for `step.agent`. Before those, a failure REPORTED AS A
+   * RETURNED OUTCOME rather than thrown was persisted as `"completed"`, so this
+   * union was accidentally accurate. It is a description of what Firestore
+   * holds, not a validator — nothing parses these records — which is precisely
+   * why it went stale silently and why widening it is the whole of this repo's
+   * half of SCRUM-366.
+   *
+   * `"failed"` now means only what it always actually meant: the step's body
+   * THREW, so there is no outcome and no replayable output.
+   *
+   * HISTORIC RECORDS KEEP THE OLD MEANING. A `"completed"` written before those
+   * changes may describe a step whose tool failed. The boundary is the deploy,
+   * not a data migration — agent-engine deliberately did not rewrite history.
+   */
+  status: "running" | "completed" | "content_fail" | "not_available" | "tooling_error" | "budget_exceeded" | "failed";
   /** Arbitrary — either the step's real (possibly-summarized) output, or `{archived:true, gcsUri, sizeBytes}` for an oversized output offloaded to GCS (agent-engine's own dual-storage archive). Absent while `status === "running"`. */
   output?: unknown;
   costUsd?: number;
