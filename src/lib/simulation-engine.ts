@@ -9,9 +9,8 @@ import "server-only";
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import { after } from "next/server";
-import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 export const MAX_PERSONAS = 4;
 
@@ -321,7 +320,7 @@ export async function buildSimulationPersonas(
 ): Promise<SyntheticPersona[]> {
   const usageMeta = {
     clientId: ctx.clientId, agentId: null, agentName: "Simulation: persona planner",
-    modelName: MODELS.HAIKU, operation: "audience_simulation",
+    ...usageFor("simulation.persona"), operation: "audience_simulation",
   };
   let object: z.infer<typeof personaPlanSchema>;
   try {
@@ -359,7 +358,7 @@ export async function simulatePersona(
   const prompt = buildUserPrompt(artifact, ctx);
   const simUsageMeta = {
     clientId: ctx.clientId, agentId: null, agentName: `Simulation: ${persona.name}`,
-    modelName: MODELS.HAIKU, operation: "audience_simulation",
+    ...usageFor("simulation.persona"), operation: "audience_simulation",
   };
   let verdict: PersonaVerdict;
   let usage: { inputTokens?: number; outputTokens?: number };

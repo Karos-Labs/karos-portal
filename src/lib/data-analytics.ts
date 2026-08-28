@@ -3,7 +3,7 @@ import "server-only";
 import { adminDb } from "@/lib/firebase/admin";
 import {
   resolveModelName,
-  MODEL_PRICING,
+  displayRateFor,
   type UsageLog,
   type ErrorLog,
   type AnalyticsSnapshot,
@@ -145,7 +145,10 @@ export function extractModelStats(snapshot: AnalyticsSnapshot): ModelStat[] {
     seen.add(sanitized);
 
     const modelName = resolveModelName(sanitized);
-    const pricing = MODEL_PRICING[modelName] ?? { inputPer1M: 3.0, outputPer1M: 15.0 };
+    // AU70: an unpriced historic id shows a blank rate, not Sonnet's. The three
+    // copies of `?? { 3.0, 15.0 }` that used to live here printed a confident
+    // wrong rate for any model the table did not know.
+    const pricing = displayRateFor(modelName) ?? { inputPer1M: 0, outputPer1M: 0 };
     stats.push({
       modelName,
       inputPer1M: pricing.inputPer1M,
@@ -279,7 +282,10 @@ export async function getRangeStats(opts: {
 
   // Build model stats
   const modelStats: ModelStat[] = [...modelMap.entries()].map(([modelName, m]) => {
-    const pricing = MODEL_PRICING[modelName] ?? { inputPer1M: 3.0, outputPer1M: 15.0 };
+    // AU70: an unpriced historic id shows a blank rate, not Sonnet's. The three
+    // copies of `?? { 3.0, 15.0 }` that used to live here printed a confident
+    // wrong rate for any model the table did not know.
+    const pricing = displayRateFor(modelName) ?? { inputPer1M: 0, outputPer1M: 0 };
     return { modelName, inputPer1M: pricing.inputPer1M, outputPer1M: pricing.outputPer1M, ...m, pctOfTotalCost: 0 };
   });
   modelStats.sort((a, b) => b.costUsd - a.costUsd);
@@ -381,7 +387,10 @@ export async function getAgentDrilldown(opts: {
 
   const modelStats: ModelStat[] = [...modelMap.entries()]
     .map(([modelName, m]) => {
-      const pricing = MODEL_PRICING[modelName] ?? { inputPer1M: 3.0, outputPer1M: 15.0 };
+      // AU70: an unpriced historic id shows a blank rate, not Sonnet's. The three
+    // copies of `?? { 3.0, 15.0 }` that used to live here printed a confident
+    // wrong rate for any model the table did not know.
+    const pricing = displayRateFor(modelName) ?? { inputPer1M: 0, outputPer1M: 0 };
       return {
         modelName,
         inputPer1M: pricing.inputPer1M,

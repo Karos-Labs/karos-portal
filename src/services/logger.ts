@@ -17,8 +17,15 @@
 import "server-only";
 
 import { adminDb } from "@/lib/firebase/admin";
-import { computeCostUsd, providerForModel, sanitizeModelKey } from "@/lib/models/usage-log";
-import type { ProviderId, UsageLog, ErrorLog } from "@/lib/models/usage-log";
+import {
+  PricingLookupError,
+  computeCostUsd,
+  providerForModel,
+  providerForVendor,
+  sanitizeModelKey,
+  vendorsPricing,
+} from "@/lib/models/usage-log";
+import type { PricingVendor, ProviderId, UsageLog, ErrorLog } from "@/lib/models/usage-log";
 import { trackAgentRun } from "@/lib/telemetry/bi-tracker";
 import { logStructured } from "@/lib/telemetry/structured-log";
 
@@ -28,9 +35,20 @@ interface SdkUsage {
   outputTokens?: number;
 }
 
-/** Fields every usage record needs; provider is derived from the model when omitted. */
-type UsageInput = Omit<UsageLog, "id" | "timestamp" | "estimatedCostUsd" | "provider"> & {
+/**
+ * Fields every usage record needs.
+ *
+ * `modelName` must be the RESOLVED model id and `vendor` the vendor that served
+ * it — spread `usageFor("<role>")` from `@/lib/ai/provider` to get both from one
+ * place. Passing a `MODELS.*` tier constant still type-checks (it is a string),
+ * which is why the pricing lookup, not the type, is the thing that refuses: see
+ * `logUsage` below and `lib/models/usage-log.ts`'s `priceFor`.
+ *
+ * `provider` (the coarse billing family) is derived from `vendor` when omitted.
+ */
+type UsageInput = Omit<UsageLog, "id" | "timestamp" | "estimatedCostUsd" | "provider" | "vendor"> & {
   provider?: ProviderId;
+  vendor?: PricingVendor;
 };
 
 /** Metadata for logging an AI SDK streaming/generate result (usage read for you). */
@@ -79,6 +97,22 @@ export function readWebSearchCount(providerMetadata: unknown): number {
   }
 }
 
+/**
+ * Best-effort vendor for a row whose caller did not pass one.
+ *
+ * Only ever used for legacy/raw-id call sites (a client-configured chat model,
+ * the SEO/GEO engine columns). Picking any vendor that prices the id is safe
+ * because `MODEL_PRICING` refuses to build if two vendors price one id
+ * differently — so where more than one matches, the bill is the same either way.
+ * An id NO vendor prices falls through to the id-sniffed family and is then
+ * REFUSED by `priceFor`, which is the intended outcome: an id nobody prices must
+ * not be quietly costed.
+ */
+function inferVendor(modelId: string): PricingVendor {
+  const vendors = vendorsPricing(modelId);
+  return vendors.length === 1 ? vendors[0]! : (vendors[0] ?? providerForModel(modelId));
+}
+
 const MAX_ERROR_DETAIL_LENGTH = 300;
 
 /**
@@ -99,15 +133,48 @@ class Logger {
   /* ── Public API ─────────────────────────────────────────────────── */
 
   logUsage(data: UsageInput): void {
-    const provider = data.provider ?? providerForModel(data.modelName);
+    const vendor = data.vendor ?? inferVendor(data.modelName);
+    const provider = data.provider ?? providerForVendor(vendor);
     const webSearchCount = data.webSearchCount ?? 0; // Firestore rejects undefined
-    const estimatedCostUsd = computeCostUsd(
-      data.modelName,
-      data.inputTokens,
-      data.outputTokens,
+
+    // AU70/SCRUM-370. Pricing is keyed on (vendor, resolved model id) and the
+    // lookup THROWS on a pair it does not know — there is no default row any
+    // more. logUsage's contract is that it never throws into the generation
+    // path, so the refusal is converted here into the loudest thing that is
+    // still safe: a structured ERROR naming the pair, and a row recorded at
+    // cost 0. A 0 next to an ERROR is visibly wrong and gets fixed. The old
+    // behaviour — Sonnet's $3/$15 substituted for an unrecognised pair — was
+    // silent, plausible and wrong, which is the entire ticket.
+    let estimatedCostUsd = 0;
+    try {
+      estimatedCostUsd = computeCostUsd(
+        vendor,
+        data.modelName,
+        data.inputTokens,
+        data.outputTokens,
+        webSearchCount,
+      );
+    } catch (err) {
+      if (!(err instanceof PricingLookupError)) throw err;
+      logStructured("ERROR", err.message, {
+        event: "pricing.lookup_failed",
+        vendor: err.vendor,
+        modelName: err.modelId,
+        operation: data.operation,
+        clientId: data.clientId,
+        inputTokens: data.inputTokens,
+        outputTokens: data.outputTokens,
+      });
+    }
+
+    void this._writeUsage({
+      ...data,
+      provider,
+      vendor,
       webSearchCount,
-    );
-    void this._writeUsage({ ...data, provider, webSearchCount, estimatedCostUsd, timestamp: Date.now() });
+      estimatedCostUsd,
+      timestamp: Date.now(),
+    });
   }
 
   /**
@@ -176,7 +243,7 @@ class Logger {
       const { FieldValue } = await import("firebase-admin/firestore");
 
       const logRef = db.collection("usageLogs").doc();
-      const key = sanitizeModelKey(data.modelName);
+      const key = sanitizeModelKey(data.modelName, data.vendor ?? "anthropic");
       const now = data.timestamp;
 
       // Increments shared across global + (optionally) client snapshot. Failed

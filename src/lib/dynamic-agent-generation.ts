@@ -23,7 +23,7 @@ import "server-only";
 
 import { generateObject, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
-import { DOC_MAX_TOKENS, MODELS } from "@/lib/constants";
+import { DOC_MAX_TOKENS } from "@/lib/constants";
 import {
   validateAndNormalizeInputSchema,
   validateAndNormalizeSteps,
@@ -32,7 +32,7 @@ import {
 import { checkDanglingReferences } from "@/lib/dynamic-agent-reference-check";
 import { logger } from "@/services/logger";
 import type { DynamicAgentInputDef, DynamicAgentStepDef } from "@/lib/types";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 const GeneratedInputDef = z.object({
   key: z
@@ -183,7 +183,7 @@ const USAGE_META = {
   clientId: null,
   agentId: null,
   agentName: "dynamic_agent_builder",
-  modelName: MODELS.SONNET,
+  ...usageFor("dynamic_agent.generate"),
   operation: "dynamic_agent_draft",
 } as const;
 

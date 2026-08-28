@@ -24,7 +24,7 @@ import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 // "meeting-notes" is written exclusively by appendMeetingSignalToContextDoc; the
 // "*-agent-profile" types are written by upsertAgentProfileScope — neither is
@@ -256,7 +256,7 @@ Return structured markdown. Follow the no-guessed-numbers rule strictly — a "�
   });
   logger.trackStream(socialStream, {
     clientId: client.id, agentId: null, agentName: "Research: Social",
-    modelName: MODELS.SONNET, operation: "intel_research",
+    ...usageFor("intel.research.agent"), operation: "intel_research",
   });
   return socialStream.text;
 }
@@ -294,7 +294,7 @@ Return detailed markdown with strategic implications for each finding.`,
   });
   logger.trackStream(contentStream, {
     clientId: client.id, agentId: null, agentName: "Research: Content",
-    modelName: MODELS.SONNET, operation: "intel_research",
+    ...usageFor("intel.research.agent"), operation: "intel_research",
   });
   return contentStream.text;
 }
@@ -360,7 +360,7 @@ Return rich, structured markdown with strategic implications throughout.`,
   });
   logger.trackStream(competitiveStream, {
     clientId: client.id, agentId: null, agentName: "Research: Competitive",
-    modelName: MODELS.SONNET, operation: "intel_research",
+    ...usageFor("intel.research.agent"), operation: "intel_research",
   });
   return competitiveStream.text;
 }
@@ -402,7 +402,7 @@ Return structured markdown with strategic implications.${signalsBlock}`,
   });
   logger.trackStream(strategyStream, {
     clientId: client.id, agentId: null, agentName: "Research: Strategy",
-    modelName: MODELS.SONNET, operation: "intel_research",
+    ...usageFor("intel.research.agent"), operation: "intel_research",
   });
   return strategyStream.text;
 }
@@ -444,7 +444,7 @@ Return structured markdown with strategic implications.${signalsBlock}`,
   });
   logger.trackStream(sentimentStream, {
     clientId: client.id, agentId: null, agentName: "Research: Sentiment",
-    modelName: MODELS.SONNET, operation: "intel_research",
+    ...usageFor("intel.research.agent"), operation: "intel_research",
   });
   return sentimentStream.text;
 }
@@ -579,7 +579,7 @@ INSTRUCTIONS:
   const text = await docStream.text;
   logger.trackStream(docStream, {
     clientId: client.id, agentId: null, agentName: `Doc: ${docType}`,
-    modelName: MODELS.SONNET, operation: "intel_doc_generation",
+    ...usageFor("intel.pipeline.synthesis"), operation: "intel_doc_generation",
   });
 
   // Continuation pass: if the last template section is missing, the model stopped early.
@@ -602,7 +602,7 @@ INSTRUCTIONS:
     const cont = await contDocStream.text;
     logger.trackStream(contDocStream, {
       clientId: client.id, agentId: null, agentName: `Doc (continuation): ${docType}`,
-      modelName: MODELS.SONNET, operation: "intel_doc_generation",
+      ...usageFor("intel.pipeline.synthesis"), operation: "intel_doc_generation",
     });
     return stripPreamble(text + cont);
   }
@@ -667,7 +667,7 @@ Return ONLY the corrected document. Start immediately with the first character o
   const text = await corrStream.text;
   logger.trackStream(corrStream, {
     clientId: client.id, agentId: null, agentName: `Doc Correction: ${docType}`,
-    modelName: MODELS.SONNET, operation: "doc_correction",
+    ...usageFor("intel.pipeline.synthesis"), operation: "doc_correction",
   });
 
   const result = text.trim();
@@ -703,7 +703,7 @@ Return ONLY the corrected document. Start immediately with the first character o
       const cont = await corrContStream.text;
       logger.trackStream(corrContStream, {
         clientId: client.id, agentId: null, agentName: `Doc Correction (continuation): ${docType}`,
-        modelName: MODELS.SONNET, operation: "doc_correction",
+        ...usageFor("intel.pipeline.synthesis"), operation: "doc_correction",
       });
       const recovered = (result + cont).trim();
       const recoveredSections = (recovered.match(/^## /gm) ?? []).length;

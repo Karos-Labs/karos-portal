@@ -12,7 +12,6 @@ import {
 } from "@/lib/data";
 import { competitorBrandKeys, parseCompetitorInput } from "@/lib/competitor-input";
 import { requireStaff, requireClientAccess, logActivity } from "./_shared";
-import { MODELS } from "@/lib/constants";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { withClientModelCharge } from "@/lib/client-model-charge";
 import { logger } from "@/services/logger";
@@ -94,7 +93,7 @@ async function upsertManualCompetitor(
 async function resolveCompetitorWebsite(clientId: string, company: string): Promise<string | undefined> {
   try {
     const { generateObject } = await import("ai");
-    const { aiFor } = await import("@/lib/ai/provider");
+    const { aiFor, usageFor } = await import("@/lib/ai/provider");
     const { z } = await import("zod");
 
     const schema = z.object({
@@ -106,7 +105,7 @@ async function resolveCompetitorWebsite(clientId: string, company: string): Prom
 
     const usageMeta = {
       clientId, agentId: null, agentName: "Competitor URL Lookup",
-      modelName: MODELS.SONNET, operation: "competitor_url_lookup",
+      ...usageFor("competitor.analysis"), operation: "competitor_url_lookup",
     };
     const { object, usage } = await generateObject({
       model: aiFor("competitor.analysis").model,
@@ -136,7 +135,7 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
   if (!client || competitors.length === 0) return;
 
   const { generateObject } = await import("ai");
-  const { aiFor } = await import("@/lib/ai/provider");
+  const { aiFor, usageFor } = await import("@/lib/ai/provider");
   const { z } = await import("zod");
 
   const schema = z.object({
@@ -177,7 +176,7 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
 
   const competitorUsageMeta = {
     clientId, agentId: null, agentName: "Competitor Analysis",
-    modelName: MODELS.SONNET, operation: "competitor_analysis",
+    ...usageFor("competitor.analysis"), operation: "competitor_analysis",
   };
   let object: zType.infer<typeof schema>;
   let usage: { inputTokens?: number; outputTokens?: number };
@@ -265,7 +264,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
   if (!client) throw new Error("Client not found");
 
   const { generateObject } = await import("ai");
-  const { aiFor } = await import("@/lib/ai/provider");
+  const { aiFor, usageFor } = await import("@/lib/ai/provider");
   const { z } = await import("zod");
 
   const schema = z.object({
@@ -301,7 +300,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
 
   const discoveryUsageMeta = {
     clientId, agentId: null, agentName: "Competitor Discovery",
-    modelName: MODELS.SONNET, operation: "competitor_analysis",
+    ...usageFor("competitor.analysis"), operation: "competitor_analysis",
   };
   let object: zType.infer<typeof schema>;
   let usage: { inputTokens?: number; outputTokens?: number };

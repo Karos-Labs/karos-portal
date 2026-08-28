@@ -73,7 +73,7 @@ import {
 import type { Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 export const maxDuration = 60;
 
@@ -719,7 +719,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           clientId,
           agentId: null,
           agentName: "proactive_signal_extractor",
-          modelName: MODELS.HAIKU,
+          ...usageFor("chat.followups"),
           operation: "operational_signal_extraction",
           inputTokens: haikuUsage.inputTokens ?? 0,
           outputTokens: haikuUsage.outputTokens ?? 0,

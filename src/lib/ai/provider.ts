@@ -164,6 +164,15 @@ export interface ResolvedAi {
   readonly model: LanguageModel;
   readonly tools: ToolSet;
   readonly vendor: Vendor;
+  /**
+   * The model id this resolution actually bound — `MODEL_IDS[vendor][tier]`.
+   *
+   * Returned because it was already computed and thrown away: cost logging then
+   * had nothing to log but the tier CONSTANT, which agrees with the resolved id
+   * on first-party Anthropic and disagrees on Vertex. See AU70/SCRUM-370 and
+   * `usageFor()` below.
+   */
+  readonly modelId: string;
   /** Which tool variants were wired, so a downgrade is visible rather than silent. */
   readonly variants: Partial<Record<Capability, string>>;
 }
@@ -218,8 +227,43 @@ export function aiFor(
     model: vendor === "vertex" ? vertexAnthropic(modelId) : anthropic(modelId),
     tools,
     vendor,
+    modelId,
     variants,
   };
+}
+
+/**
+ * What the cost logger must record for a role: the RESOLVED id and the vendor
+ * that will serve it, as one spreadable object.
+ *
+ *   logger.trackStream(stream, { ...usageFor("intel.condense"), clientId, … })
+ *
+ * Spreadable on purpose. The pre-AU70 shape was `modelName: MODELS.SONNET` — a
+ * tier constant written by hand, one line away from an `aiFor()` call that had
+ * already resolved something else. Two independent facts that had to agree and
+ * had nothing making them agree. Here they come from ONE call, keyed on the same
+ * role, reading the same `MODEL_IDS` map `aiFor` reads, so they cannot diverge:
+ * there is no argument a caller could pass to make the id and the vendor
+ * disagree.
+ *
+ * Cheap: no SDK binding, no tool wiring — safe to call next to the log, not next
+ * to the generation.
+ */
+export function usageFor(
+  role: AiRoleName,
+  opts: { modelId?: string; vendor?: Vendor } = {},
+): { modelName: string; vendor: Vendor } {
+  const spec = roleSpec(role);
+  const vendor = opts.vendor ?? vendorForRole(role, defaultVendor());
+  if (spec.tier === "caller") {
+    if (!opts.modelId) {
+      throw new ProviderWiringError(
+        `Role "${role}" is tier "caller"; usageFor() needs the modelId the call site chose.`,
+      );
+    }
+    return { modelName: opts.modelId, vendor };
+  }
+  return { modelName: MODEL_IDS[vendor][spec.tier], vendor };
 }
 
 /** The per-vendor model id a role would use. Exported so the mapping is testable without binding. */

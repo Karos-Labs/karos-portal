@@ -53,7 +53,7 @@ import {
 } from "@/lib/seo-geo";
 import { configuredEngines, probeEngine } from "./seo-geo-providers";
 import { logger } from "@/services/logger";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 /**
  * SEO & GEO research vertical for the onboarding pipeline — the platform port of
@@ -260,7 +260,7 @@ Every check id from both registries MUST appear exactly once in the JSON. The JS
   const text = await auditStream.text;
   logger.trackStream(auditStream, {
     clientId: client.id, agentId: null, agentName: "SEO/GEO Site Audit",
-    modelName: MODELS.SONNET, operation: "seo_audit",
+    ...usageFor("seo.site_audit"), operation: "seo_audit",
   });
   const json = extractJsonBlock(text);
   if (!json) throw new Error("Site audit returned no JSON check block");
@@ -443,7 +443,7 @@ Return ONLY a fenced \`\`\`json block containing an array of ${PROMPT_POOL_SIZE}
     const text = await draftStream.text;
     logger.trackStream(draftStream, {
       clientId: client.id, agentId: null, agentName: "GEO Prompt Set (draft)",
-      modelName: MODELS.SONNET, operation: "geo_promptset",
+      ...usageFor("seo.prompt_drafting"), operation: "geo_promptset",
     });
     // Bare JSON array (no seoChecks/geoChecks keys) → generic array extractor.
     const json = extractJsonArray(text);
@@ -590,7 +590,7 @@ async function discoverAnswerBrands(
 
     logger.logUsage({
       clientId: client.id, agentId: null, agentName: "GEO Brand Discovery",
-      modelName: MODELS.SONNET, operation: "geo_brand_discovery",
+      ...usageFor("seo.competitor_extraction"), operation: "geo_brand_discovery",
       inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
     });
 

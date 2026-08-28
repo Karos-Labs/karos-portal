@@ -38,6 +38,7 @@ import { CREDIT_COSTS } from "@/lib/credits";
 import { withClientModelCharge } from "@/lib/client-model-charge";
 import type { ContextDocTier } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
+import { usageFor } from "@/lib/ai/provider";
 
 const MAX_TEXT = 2_000;
 /** originalText is system-captured (pick time), not user-typed — truncate rather than error,
@@ -350,7 +351,7 @@ export async function proposeXRosterAction(input: {
       // unparseable text, or returned too few usable handles.
       const usageMeta = {
         clientId: input.clientId, agentId: null, agentName: "X agent · account suggestions",
-        modelName: MODELS.SONNET, operation: "x_agent_roster_suggestions",
+        ...usageFor("x_agent.research"), operation: "x_agent_roster_suggestions",
       };
       let usageLogged = false;
       try {
