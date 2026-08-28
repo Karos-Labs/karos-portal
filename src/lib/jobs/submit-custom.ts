@@ -688,7 +688,14 @@ export async function submitCustomAgentJob(
       title: jobTitleForClient(agent.name, client.name),
       // What the person actually asked for, allow-listed down to the keys the
       // engine understands as a per-run request.
-      inputs: toEngineRunInput(input.briefValues),
+      //
+      // `engineProductId` is passed, not omitted: it is the SAME id the run
+      // dialog resolved when it decided which engine fields to show
+      // (`withEngineRunFields`, custom-agents.tsx), and C3's second mandatory
+      // fix is that the page and the server must agree on it — otherwise the
+      // dialog paints a field the server builds its input without. Pinned by
+      // the page/server consistency sweep in product-mapping.test.ts.
+      inputs: toEngineRunInput(input.briefValues, engineProductId),
       createdBy: user.uid,
     });
     if ("error" in dispatched) {
