@@ -75,9 +75,25 @@ import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 import { aiFor, usageFor } from "@/lib/ai/provider";
 
-export const maxDuration = 60;
-
-const STOP_WHEN = [isLoopFinished(), stepCountIs(6)];
+// This route sets no Vercel-style duration export — see
+// asset-media-download.test.ts's "asserts no request-duration ceiling it
+// does not control" for the same reasoning applied to another route:
+// `maxDuration` is a Vercel convention and is inert on this deploy, which
+// runs Cloud Build → Cloud Run with a single service-wide `--timeout=300`
+// in cloudbuild.yaml. A number here would just be a claim nothing enforces,
+// and the old `= 60` was actively misleading — it read as a 60s ceiling on
+// a route that actually had 300s.
+//
+// T-B24: the real, in-process budget for this route is `stepCountIs` below —
+// the AI SDK's tool-call loop, which stops after N *model* steps regardless
+// of wall-clock time. A copilot turn that has to look something up
+// (find_output/fetch_gmail_context), decide, act (run_agent_now/create_tasks/
+// edit_output/...) and answer easily spends a step per tool call plus a step
+// per intervening model turn; `stepCountIs(6)` cut that off mid-turn. Raised
+// to sit alongside this route's other multi-tool loops (RESEARCH_MAX_STEPS
+// in intel/pipeline.ts runs 20; branding.ts's rewrite loop runs 8) rather than
+// being the tightest budget in the codebase for the tool with the most tools.
+const STOP_WHEN = [isLoopFinished(), stepCountIs(16)];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
