@@ -50,6 +50,26 @@ export function isAgentEngineDispatchEnabled(): boolean {
 }
 
 /**
+ * Whether a dispatch to agent-engine can leave the building right now — the
+ * counterpart to `isAgentServiceConfigured()` (`src/lib/agent-service/
+ * client.ts`) for the engine, and SCRUM-264's subject.
+ *
+ * Mirrors the exact transport guard `dispatchAgentEngineRun` runs below
+ * before publishing, so this can never say "healthy" while that function is
+ * about to return an error, or vice versa: middleware dispatch, when
+ * enabled, needs nothing else (`isMiddlewareDispatchEnabled` already folds
+ * in its own base-URL check); the direct-publish fallback needs
+ * `AGENT_ENGINE_PUBSUB_TOPIC` (or the Pub/Sub emulator). A client whose
+ * custom agents route to agent-engine (`isClientEnabledForEngineCustomAgents`
+ * in `./product-mapping`) but whose transport is unconfigured gets exactly
+ * the same class of silent failure agent-service clients already have a
+ * banner for — this function is what lets a caller say so instead.
+ */
+export function isAgentEngineTransportConfigured(): boolean {
+  return isMiddlewareDispatchEnabled() || isAgentEnginePubSubConfigured();
+}
+
+/**
  * Creates a `jobs` doc and dispatches it through agent-engine's Pub/Sub
  * topic — the one place this repo does that, shared by
  * `submit-managed.ts`'s own agent-engine branch and the two new observable
