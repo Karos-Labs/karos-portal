@@ -17,7 +17,7 @@ import "server-only";
 import { generateObject } from "ai";
 import { z } from "zod";
 import { after } from "next/server";
-import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 import {
   getClient,
@@ -33,7 +33,7 @@ import { taskWeekKey, findDuplicateReason } from "@/lib/task-dedup";
 import { freshnessGuard } from "@/lib/entropy-guard";
 import type { ClientTask, TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 const SOCIAL_PLATFORMS = ["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"] as const;
 
@@ -256,7 +256,7 @@ export async function generateCampaignBundle(
     clientId: input.clientId,
     agentId: null,
     agentName: "Campaign Director",
-    modelName: MODELS.SONNET,
+    ...usageFor("campaign.plan"),
     operation: "campaign_generation",
   };
   let blueprint: CampaignBlueprint;

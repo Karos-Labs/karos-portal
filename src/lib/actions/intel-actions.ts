@@ -20,7 +20,6 @@ import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
 import type { ContextDocTier } from "@/lib/types";
 import { requireStaff, requireAdmin, logActivity, logGenerationFailure } from "./_shared";
-import { MODELS } from "@/lib/constants";
 import { stripPipelineMarkers } from "@/lib/doc-render";
 import { CREDIT_COSTS } from "@/lib/credits";
 import {
@@ -113,11 +112,10 @@ export async function generateClientBriefAction(
   if (briefDenied !== null) return { ok: false, error: briefDenied };
 
   const { generateText } = await import("ai");
-  const { aiFor } = await import("@/lib/ai/provider");
-  const MODEL = MODELS.HAIKU;
+  const { aiFor, usageFor } = await import("@/lib/ai/provider");
   const briefUsageMeta = {
     clientId, agentId: null, agentName: "Company Brief",
-    modelName: MODEL, operation: "client_brief",
+    ...usageFor("intel.actions"), operation: "client_brief",
   };
   let text: string;
   let usage: { inputTokens?: number; outputTokens?: number };
@@ -456,11 +454,10 @@ export async function generateDocSummaryAction(
   // The exposure while it stays free is bounded by the cache above: one Haiku
   // call per document VERSION, not per view.
   const { generateText } = await import("ai");
-  const { aiFor } = await import("@/lib/ai/provider");
-  const MODEL = MODELS.HAIKU;
+  const { aiFor, usageFor } = await import("@/lib/ai/provider");
   const summaryUsageMeta = {
     clientId, agentId: null, agentName: "Executive Summary",
-    modelName: MODEL, operation: "doc_summary",
+    ...usageFor("intel.actions"), operation: "doc_summary",
   };
   let text: string;
   let usage: { inputTokens?: number; outputTokens?: number };

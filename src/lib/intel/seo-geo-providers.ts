@@ -6,6 +6,7 @@ import { MODELS, SEO_GEO_CAPTURE } from "@/lib/constants";
 import type { EngineAnswer, EngineId, ProviderSource } from "@/lib/seo-geo";
 import { rootDomain } from "@/lib/seo-geo";
 import { logger } from "@/services/logger";
+import { usageFor } from "@/lib/ai/provider";
 
 /**
  * Multi-model answer-engine connectors for the GEO visibility capture.
@@ -240,7 +241,7 @@ async function askClaude(prompt: string, clientId: string): Promise<{ answerText
   // web_search cost is captured too (this capture grants Claude live search).
   logger.trackStream(stream, {
     clientId, agentId: null, agentName: "GEO Capture · Claude",
-    modelName: MODELS.HAIKU, operation: "geo_capture",
+    ...usageFor("geo.capture.claude"), operation: "geo_capture",
   });
   if (!answerText.trim()) throw new Error("Claude capture returned an empty answer");
 

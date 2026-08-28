@@ -62,7 +62,7 @@ export const AI_ROLES = {
         "consumer product IS the measurement — Vertex serves the raw model, so routing " +
         "here would silently change what the report claims to have measured.",
     },
-    sites: ["src/lib/intel/seo-geo-providers.ts:230"],
+    sites: ["src/lib/intel/seo-geo-providers.ts:231"],
   },
 
   /* ── COUPLED · needs web_fetch · 9 sites ─────────────────────────────────
@@ -71,7 +71,7 @@ export const AI_ROLES = {
   "intel.report.pass": {
     tier: "SONNET",
     requires: ["web_search", "web_fetch"],
-    sites: ["src/lib/intel/report.ts:311", "src/lib/intel/report.ts:371"],
+    sites: ["src/lib/intel/report.ts:312", "src/lib/intel/report.ts:372"],
   },
   "intel.research.agent": {
     tier: "SONNET",
@@ -102,7 +102,7 @@ export const AI_ROLES = {
   "x_agent.research": {
     tier: "SONNET",
     requires: ["web_search"],
-    sites: ["src/lib/actions/x-agent-actions.ts:358"],
+    sites: ["src/lib/actions/x-agent-actions.ts:359"],
   },
   "branding.search_brand": {
     tier: "HAIKU",
@@ -125,18 +125,18 @@ export const AI_ROLES = {
   "simulation.persona": {
     tier: "HAIKU",
     sites: [
-      "src/lib/simulation-engine.ts:329",
-      "src/lib/simulation-engine.ts:368",
-      "src/lib/simulation-engine.ts:382",
-      "src/lib/simulation-engine.ts:393",
+      "src/lib/simulation-engine.ts:328",
+      "src/lib/simulation-engine.ts:367",
+      "src/lib/simulation-engine.ts:381",
+      "src/lib/simulation-engine.ts:392",
     ],
   },
   "competitor.analysis": {
     tier: "SONNET",
     sites: [
-      "src/lib/actions/competitor-actions.ts:112",
-      "src/lib/actions/competitor-actions.ts:186",
-      "src/lib/actions/competitor-actions.ts:310",
+      "src/lib/actions/competitor-actions.ts:111",
+      "src/lib/actions/competitor-actions.ts:185",
+      "src/lib/actions/competitor-actions.ts:309",
     ],
   },
   // HAIKU, not SONNET: both sites read a local `const MODEL = MODELS.HAIKU`.
@@ -145,8 +145,8 @@ export const AI_ROLES = {
   "intel.actions": {
     tier: "HAIKU",
     sites: [
-      "src/lib/actions/intel-actions.ts:126",
-      "src/lib/actions/intel-actions.ts:469",
+      "src/lib/actions/intel-actions.ts:124",
+      "src/lib/actions/intel-actions.ts:466",
     ],
   },
   "task.generation": {
@@ -178,10 +178,10 @@ export const AI_ROLES = {
   "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:580"] },
   "insights.summary": {
     tier: "HAIKU",
-    sites: ["src/app/api/clients/[id]/insights/route.ts:26"],
+    sites: ["src/app/api/clients/[id]/insights/route.ts:25"],
   },
   "agent_swarm.step": { tier: "HAIKU", sites: ["src/lib/agent-swarm.ts:272"] },
-  "asset.title": { tier: "HAIKU", sites: ["src/lib/asset-titles.ts:52"] },
+  "asset.title": { tier: "HAIKU", sites: ["src/lib/asset-titles.ts:51"] },
   "campaign.plan": { tier: "SONNET", sites: ["src/lib/campaign-engine.ts:266"] },
   "dynamic_agent.generate": {
     tier: "SONNET",

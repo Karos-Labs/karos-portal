@@ -3,10 +3,10 @@ import "server-only";
 import { streamText } from "ai";
 import type { Client, ContextDocType } from "@/lib/types";
 import { CONDENSATION_RULES } from "./brain";
-import { MODELS, CONDENSE_MAX_TOKENS } from "@/lib/constants";
+import { CONDENSE_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble, stripTrailingMetaCommentary } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 export interface CondensedDoc {
   docType: ContextDocType;
@@ -77,7 +77,7 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
   const text = await condenseStream.text;
   logger.trackStream(condenseStream, {
     clientId: client.id, agentId: null, agentName: `Condense: ${docType}`,
-    modelName: MODELS.SONNET, operation: "doc_condense",
+    ...usageFor("intel.condense"), operation: "doc_condense",
   });
 
   // Detect truncation/omission: the condensed doc must include both the first and last ## sections.
@@ -111,7 +111,7 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
     const cont = await condenseRetryStream.text;
     logger.trackStream(condenseRetryStream, {
       clientId: client.id, agentId: null, agentName: `Condense (retry): ${docType}`,
-      modelName: MODELS.SONNET, operation: "doc_condense",
+      ...usageFor("intel.condense"), operation: "doc_condense",
     });
     const rewritten = stripTrailingMetaCommentary(stripPreamble(cont));
     // Fall back to the first-pass result if the rewrite returned empty content,

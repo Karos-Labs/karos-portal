@@ -13,7 +13,7 @@ import {
 import type { BrandColor, BrandingGuidelines, Client } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import { logger, readWebSearchCount } from "@/services/logger";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 /* ─────────────────────────────────────────────────────────────────────────
    Color helper
@@ -367,7 +367,7 @@ async function gatherSiteIntelligence(
       });
       logger.logUsage({
         clientId, agentId: null, agentName: "Branding · Site Intelligence",
-        modelName: MODELS.HAIKU, operation: "branding_extraction",
+        ...usageFor("branding.search_brand"), operation: "branding_extraction",
         inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
         webSearchCount: readWebSearchCount(providerMetadata),
       });
@@ -390,7 +390,7 @@ async function gatherSiteIntelligence(
     });
     logger.logUsage({
       clientId, agentId: null, agentName: "Branding · Site Intelligence",
-      modelName: MODELS.HAIKU, operation: "branding_extraction",
+      ...usageFor("branding.search_brand"), operation: "branding_extraction",
       inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
       webSearchCount: readWebSearchCount(providerMetadata),
     });
@@ -398,7 +398,7 @@ async function gatherSiteIntelligence(
   } catch (err) {
     console.warn(`[branding] Site intelligence gathering failed for ${domain}:`, err);
     logger.logGenerationFailure(
-      { clientId, agentId: null, agentName: "Branding · Site Intelligence", modelName: MODELS.HAIKU, operation: "branding_extraction" },
+      { clientId, agentId: null, agentName: "Branding · Site Intelligence", ...usageFor("branding.search_brand"), operation: "branding_extraction" },
       err,
     );
     return null;
@@ -717,7 +717,7 @@ export async function applyBrandingForClient(
 
   const paletteUsageMeta = {
     clientId, agentId: null, agentName: "Branding · Palette Extraction",
-    modelName: MODELS.HAIKU, operation: "branding_extraction",
+    ...usageFor("branding.extract"), operation: "branding_extraction",
   };
 
   async function runPaletteExtraction() {

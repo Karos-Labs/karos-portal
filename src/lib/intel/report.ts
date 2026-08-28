@@ -18,6 +18,7 @@ import { applyBrandingForClient, effectiveDominantColors } from "@/lib/branding"
 import type { BrandingGuidelines } from "@/lib/types";
 import { DEFAULT_INTEL_PROMPT } from "./brain";
 import { logger } from "@/services/logger";
+import { usageFor } from "@/lib/ai/provider";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
@@ -318,7 +319,7 @@ export async function runIntelReportPipeline(
     if (pass.stream) {
       logger.trackStream(pass.stream, {
         clientId, agentId: null, agentName: "Intel Report",
-        modelName: MODELS.SONNET, operation: "intel_report",
+        ...usageFor("intel.report.pass"), operation: "intel_report",
       });
     }
 
@@ -386,7 +387,7 @@ export async function runIntelReportPipeline(
     if (cont.stream) {
       logger.trackStream(cont.stream, {
         clientId, agentId: null, agentName: "Intel Report (continuation)",
-        modelName: MODELS.SONNET, operation: "intel_report",
+        ...usageFor("intel.report.pass"), operation: "intel_report",
       });
     }
     // Non-fatal: the first pass already cleared the integrity gate. If the continuation

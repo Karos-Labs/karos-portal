@@ -14,12 +14,11 @@ import { canViewClient } from "@/lib/client-visibility";
 import { engagementIsMockOrStale, rankByEngagement } from "@/lib/analytics";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
-import { MODELS } from "@/lib/constants";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { chargeClientModelCall, refundOnce } from "@/lib/client-model-charge";
 import { clientCategoryValue } from "@/lib/utils";
 import type { Asset, ClientMarketingAnalytics } from "@/lib/types";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 export const maxDuration = 30;
 
@@ -264,7 +263,7 @@ Write the update now.`;
               clientId,
               agentId: null,
               agentName: "ai_insights",
-              modelName: MODELS.HAIKU,
+              ...usageFor("insights.summary"),
               operation: "ai_insights_pipeline_summary",
               inputTokens: usage.inputTokens ?? 0,
               outputTokens: usage.outputTokens ?? 0,
@@ -325,7 +324,7 @@ Write the briefing now.`;
             clientId,
             agentId: null,
             agentName: "ai_insights",
-            modelName: MODELS.HAIKU,
+            ...usageFor("insights.summary"),
             operation: "ai_insights_summary",
             inputTokens: usage.inputTokens ?? 0,
             outputTokens: usage.outputTokens ?? 0,

@@ -16,7 +16,7 @@ import "server-only";
 import { generateObject } from "ai";
 import { z } from "zod";
 import { after } from "next/server";
-import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 import {
   getClient,
@@ -36,7 +36,7 @@ import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engin
 import { integrationIsUsable } from "@/lib/integration-status";
 import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
@@ -281,7 +281,7 @@ async function runTurn(
       clientId: input.clientId,
       agentId: null,
       agentName: `Swarm: ${persona.name}`,
-      modelName: MODELS.HAIKU,
+      ...usageFor("agent_swarm.step"),
       operation: "task_swarm",
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
@@ -324,7 +324,7 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
         };
       } catch (e) {
         logger.logGenerationFailure(
-          { clientId: input.clientId, agentId: null, agentName: `Swarm: ${persona.name}`, modelName: MODELS.HAIKU, operation: "task_swarm" },
+          { clientId: input.clientId, agentId: null, agentName: `Swarm: ${persona.name}`, ...usageFor("agent_swarm.step"), operation: "task_swarm" },
           e,
         );
         yield {

@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { generateText, generateObject } from "ai";
-import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { requireTaskAccess, campaignDependencyBlocker } from "./_shared";
@@ -36,7 +36,7 @@ import { clientTaskRunRefusal } from "@/lib/client-agent-gate";
 import { logger } from "@/services/logger";
 import type { AppUser, TaskStatus, ClientTask, TaskComment, TaskOwner } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 /**
  * The charge spec for a small Haiku task helper (plan generation, custom-task
@@ -352,7 +352,7 @@ export async function generateTaskPlanAction(
 
   const taskPlanUsageMeta = {
     clientId, agentId: null, agentName: "Task Plan",
-    modelName: MODELS.HAIKU, operation: "task_plan",
+    ...usageFor("task.generation"), operation: "task_plan",
   };
   const outcome = await withClientModelCharge(
     taskAssistCharge(user, clientId, `AI plan · ${task.title.slice(0, 80)}`),
@@ -476,7 +476,7 @@ async function ingestRoutedTask(args: {
 
   const ingestionUsageMeta = {
     clientId, agentId: null, agentName: "Task Ingestion Routing",
-    modelName: MODELS.HAIKU, operation: "task_ingestion",
+    ...usageFor("task.generation"), operation: "task_ingestion",
   };
   let parsed: z.infer<typeof routingSchema>;
   let usage: { inputTokens?: number; outputTokens?: number };

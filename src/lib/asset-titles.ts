@@ -1,9 +1,8 @@
 import "server-only";
 
 import { generateText } from "ai";
-import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
-import { aiFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 import {
   sanitizeGeneratedTitle,
   TITLE_CONTENT_SAMPLE_CHARS,
@@ -61,7 +60,7 @@ export async function generateAssetTitle(args: {
       clientId: args.clientId,
       agentId: null,
       agentName: "Deliverable titling",
-      modelName: MODELS.HAIKU,
+      ...usageFor("asset.title"),
       operation: "asset_titling",
       inputTokens: result.usage.inputTokens ?? 0,
       outputTokens: result.usage.outputTokens ?? 0,
