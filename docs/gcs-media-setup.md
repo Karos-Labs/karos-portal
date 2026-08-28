@@ -46,29 +46,38 @@ EOF
 gcloud storage buckets update gs://<BUCKET_NAME> --cors-file=/tmp/gcs-media-cors.json
 ```
 
-## 3. IAM — the app's existing Firebase service account needs bucket access
+## 3. IAM — the Cloud Run runtime service account needs bucket access
 
-The portal signs upload/read URLs with the SAME service account already
-configured for Firebase Admin (`FIREBASE_SERVICE_ACCOUNT_KEY` or the discrete
-`FIREBASE_PROJECT_ID`/`FIREBASE_CLIENT_EMAIL`/`FIREBASE_PRIVATE_KEY` vars) —
-no new key to manage. Grant it object read/write on the new bucket:
+**Post-SCRUM-373:** `src/lib/gcs-media.ts` builds its Storage client from
+Application Default Credentials ONLY. It no longer reads
+`FIREBASE_SERVICE_ACCOUNT_KEY` or the discrete `FIREBASE_*` vars — granting
+those has no effect on this bucket. Grant the environment's actual Cloud Run
+runtime service account (`_RUNTIME_SERVICE_ACCOUNT` in cloudbuild.yaml /
+cloudbuild.promote.yaml) object read/write, scoped to this bucket:
 
 ```sh
 gcloud storage buckets add-iam-policy-binding gs://<BUCKET_NAME> \
-  --member="serviceAccount:<FIREBASE_CLIENT_EMAIL>" \
+  --member="serviceAccount:<RUNTIME_SERVICE_ACCOUNT_EMAIL>" \
   --role="roles/storage.objectAdmin"
 ```
 
-If the app runs on Cloud Run/GCE with **Application Default Credentials**
-(no private key at all — see `src/lib/gcs-media.ts`'s ADC fallback), signed
-URLs are minted via the IAM `signBlob` API instead of a local private key.
-That requires the runtime service account to be able to sign as itself:
+Because ADC on Cloud Run has no local private key, V4 signed URLs are minted
+via the IAM `signBlob` API instead (google-auth-library's `GoogleAuth.sign()`
+falls through to it whenever the resolved client isn't holding a JWT key —
+see `node_modules/google-auth-library/build/src/auth/googleauth.js`). That
+call is authenticated as the runtime SA itself, so the SA needs permission to
+sign as itself:
 
 ```sh
 gcloud iam service-accounts add-iam-policy-binding <RUNTIME_SERVICE_ACCOUNT_EMAIL> \
   --member="serviceAccount:<RUNTIME_SERVICE_ACCOUNT_EMAIL>" \
   --role="roles/iam.serviceAccountTokenCreator"
 ```
+
+Locally (no `_RUNTIME_SERVICE_ACCOUNT` / no Cloud Run), `gcloud auth
+application-default login` covers ADC, and `scripts/upload-local-clips.ts`
+still uses whatever credential `FIREBASE_SERVICE_ACCOUNT_KEY` or your gcloud
+login provides — that script is unaffected by this ticket.
 
 ## 4. Env vars
 
@@ -79,8 +88,12 @@ see `.env.example`:
 GCS_MEDIA_BUCKET=<BUCKET_NAME>
 ```
 
-No other new vars — signing reuses the existing `FIREBASE_SERVICE_ACCOUNT_KEY`
-(or discrete `FIREBASE_*` vars) already required for Firebase Admin.
+No other new vars for `gcs-media.ts` itself — it authenticates via ADC (the
+Cloud Run runtime service account in prod/prep, or your local `gcloud auth
+application-default login`), not via `FIREBASE_SERVICE_ACCOUNT_KEY`. That var
+is still required elsewhere for Firebase Admin (Firestore/Auth) and for the
+`scripts/upload-local-clips.ts` CLI path below — it just no longer does
+anything for this module.
 
 ## 5. Local CLI use (`scripts/upload-local-clips.ts`)
 
