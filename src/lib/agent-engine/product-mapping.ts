@@ -154,8 +154,171 @@ export function resolveAgentEngineRunKind(productId: string): "setup" | "recurri
 }
 
 /**
+ * SHARED BRIEF FIELDS (C3's shared layer), dialog key -> wire key.
+ *
+ * snake_case in the dialog, camelCase on the wire, converted here and nowhere
+ * else — the one place C3 names for the conversion, so a second spelling can
+ * never appear on a second code path.
+ *
+ * `success_criteria` is the GENERIC profile's constraints field and maps onto
+ * the same `mustInclude` list as `must_include`. It is there because
+ * `karos-reddit-setup` resolves to the generic profile (its key matches no
+ * dedicated matcher), so without this alias a client filling the visible
+ * "Success criteria and constraints" box on a reddit-agent run would have it
+ * silently dropped — the exact defect T-B12 exists to close.
+ */
+const SHARED_SCALAR_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: string]> = [
+  ["audience", "audience"],
+  ["tone", "tone"],
+  ["cta", "cta"],
+];
+
+/**
+ * Shared LIST fields. C3 spells these `mustInclude[]` and `keywords[]` — the
+ * only two brief fields that are arrays on the wire, so nothing else here
+ * invents one.
+ *
+ * `must_include` splits on NEWLINES ONLY: its dialog helper says "one item per
+ * line" and its items routinely contain commas ("Dates, product facts,
+ * compliance"), so comma-splitting would shred one requirement into three.
+ * `keywords` is a single-line text input whose natural separator is the comma,
+ * so it splits on both.
+ */
+const SHARED_LIST_FIELDS: ReadonlyArray<
+  readonly [dialogKey: string, wireKey: string, splitOnCommas: boolean]
+> = [
+  ["must_include", "mustInclude", false],
+  ["success_criteria", "mustInclude", false],
+  ["keywords", "keywords", true],
+];
+
+/**
+ * DEDICATED PER-AGENT FIELDS, dialog key -> wire key.
+ *
+ * Per-agent by CONSTRUCTION rather than by a product-keyed filter here: each
+ * of these keys appears in exactly one launch profile (verified field-by-field
+ * in `product-mapping.test.ts`'s dialog-coverage sweep), so `offer` can only
+ * ever arrive from a landing-page dialog and `li_identity` only from a
+ * LinkedIn one.
+ *
+ * A product-keyed allow-list on THIS side was considered and rejected: the
+ * portal cannot know which profile a scheduled run or a copilot dispatch
+ * filled, and narrowing here would re-open the same silent-drop hole the
+ * moment a profile grows a field (it already would today — C3's reddit row
+ * lists only `tone`, while `karos-reddit-setup`'s generic dialog shows
+ * `audience`). Which fields a given agent READS is enforced engine-side by
+ * T-A13, where C3 requires one per-agent test that the field reaches the
+ * prompt.
+ *
+ * The five `requested*` keys are already camelCase and have no dialog field at
+ * all: nothing in this repo renders them. They are kept because non-dialog
+ * callers (`linkedin-agent-actions.ts` builds `briefValues` by hand, and the
+ * scheduled-run cron may) can set them, and dropping a key an existing caller
+ * may pass is a silent regression rather than a fix.
+ */
+const DEDICATED_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: string]> = [
+  // X draft
+  ["run_scope", "runScope"],
+  ["requestedLane", "requestedLane"],
+  ["requestedArchetype", "requestedArchetype"],
+  // LinkedIn post / setup
+  ["li_identity", "liIdentity"],
+  // Reddit reply
+  ["requestedSubreddit", "requestedSubreddit"],
+  ["requestedThreadUrl", "requestedThreadUrl"],
+  ["requestedThreadTitle", "requestedThreadTitle"],
+  // Blog / social content system
+  ["run_mode", "runMode"],
+  // Social content system + short-form video
+  ["platform", "platform"],
+  ["duration", "duration"],
+  // Conversion page
+  ["offer", "offer"],
+  ["proof", "proof"],
+  // Search audit
+  ["website", "website"],
+  ["scope", "scope"],
+  ["market", "market"],
+  ["competitors", "competitors"],
+];
+
+/**
+ * Dialog keys whose ANSWER IS PROSE FOR THE MODEL and which C3 rules should be
+ * folded into `customPrompt` rather than given a wire field of their own.
+ *
+ * Folded with their dialog label, in `buildCustomAgentPrompt`'s own
+ * "Label\nvalue" shape, so the engine receives the same prose the legacy
+ * agent-service path receives for the same answer.
+ */
+const FOLDED_INTO_CUSTOM_PROMPT: ReadonlyArray<readonly [dialogKey: string, label: string]> = [
+  ["point_of_view", "Brand point of view and proof"],
+  ["editing_notes", "Editing notes"],
+];
+
+/**
+ * Dialog keys that are LISTS OF LINKS, folded into `mediaAssets` — C3's
+ * "folds sources into mediaAssets/context" and "folds references into
+ * mediaAssets".
+ *
+ * A line that is not a `gs://` or `https://` URI is not silently discarded:
+ * these boxes take "URLs, studies, product pages, claims to verify", so the
+ * non-URI remainder folds into `customPrompt` under the same label. Nothing
+ * the client typed leaves without a destination.
+ */
+const FOLDED_INTO_MEDIA: ReadonlyArray<
+  readonly [dialogKey: string, role: string, label: string]
+> = [
+  ["sources", "reference", "Required sources or internal links"],
+  ["references", "reference", "Reference URLs"],
+  ["source_url", "source", "Source video or link"],
+];
+
+/**
+ * ONE DIALOG KEY IS DELIBERATELY ABSENT FROM EVERY TABLE ABOVE: `batch_size`.
+ *
+ * It is hidden in every profile that still declares it and inert for pricing
+ * by product ruling (2026-08-05 / 2026-08-11): one press, one output, flat
+ * price. C3 deletes it from the x-agent and linkedin-agent rows outright ("the
+ * engine does one post per run — product ruling 11.08"). Forwarding it would
+ * ask the engine for N outputs the client cannot see and is not billed for.
+ *
+ * Written here rather than enforced by a filter, because a filter over a key
+ * no table mentions is a check that cannot fail. What can fail is the test
+ * ("batch_size never reaches the engine, visible or not"), which asserts the
+ * payload — so adding the key to a table above breaks the suite.
+ */
+
+/** The engine product whose dialog `request` is DIRECTION, not a topic. */
+const REQUEST_IS_DIRECTION_PRODUCT = "seo-geo-agent";
+
+function splitList(raw: string, splitOnCommas: boolean): string[] {
+  return raw
+    .split(splitOnCommas ? /[\n,]+/ : /\n+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/**
+ * `target_date` as an ISO string, or `undefined`.
+ *
+ * NEVER THROWS and never guesses: a value Date.parse cannot read is an omitted
+ * field, not a failed run (C3's readRichRunInput invariant, held on this side
+ * too). A date-only answer stays date-only — widening `2026-09-01` to
+ * `2026-09-01T00:00:00.000Z` would move it a day for anyone west of UTC, and
+ * delivery reads this to schedule a publish.
+ */
+function normalizeTargetDate(raw: string): string | undefined {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return Number.isFinite(Date.parse(`${raw}T00:00:00Z`)) ? raw : undefined;
+  }
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return undefined;
+  return new Date(parsed).toISOString();
+}
+
+/**
  * The subset of a custom agent's brief that agent-engine understands as a
- * per-run request (`WorkflowContext.input`).
+ * per-run request (`WorkflowContext.input`, C3's `RichRunInputSchema`).
  *
  * Allow-listed rather than passed through wholesale for two reasons. The
  * engine's workflows overlay these onto the client's standing config, so an
@@ -164,36 +327,112 @@ export function resolveAgentEngineRunKind(productId: string): "setup" | "recurri
  * would let a form field named `targetSubreddits` or `xHandle` reach a place
  * where the engine reads client identity.
  *
- * `request` is the portal's own primary brief field on every launch profile
- * that has one (generic, X, LinkedIn, Reddit — see `submit-custom.ts`'s
- * `runLabel`), and it becomes the run's requested topic.
+ * WHAT T-B12 CHANGED. The allow-list used to be eight keys wide, and the
+ * fourteen other fields the run dialogs actually render — audience, tone, cta,
+ * must_include, keywords, point_of_view, sources, references, source_url,
+ * editing_notes, offer, proof, run_mode, run_scope, li_identity, platform,
+ * duration, post_count, website, scope, market, competitors — were accepted by
+ * the form and dropped here without a trace. C3's non-negotiable principle is
+ * that every field a dialog shows reaches the agent or is deleted from the
+ * dialog; this function is the half of that which reaches the agent.
+ *
+ * `engineProductId` is the product the PAGE resolved when it decided which
+ * fields to show (`withEngineRunFields`). It is passed so the two sides cannot
+ * disagree about the shape of the same dialog — C3's second mandatory fix —
+ * and today only `seo-geo-agent` reads it, whose `request` box asks for a
+ * business question rather than a topic. Omitted, `request` keeps its
+ * historical meaning.
  */
-export function toEngineRunInput(briefValues: Record<string, string> | undefined): Record<string, unknown> {
+export function toEngineRunInput(
+  briefValues: Record<string, string> | undefined,
+  engineProductId?: string,
+): Record<string, unknown> {
   if (!briefValues) return {};
 
   const input: Record<string, unknown> = {};
-  const request = briefValues["request"]?.trim();
-  if (request) input.requestedTopic = request;
+  const at = (key: string): string | undefined => briefValues[key]?.trim() || undefined;
 
   // The run's own direction, in the person's words. Distinct from `request`,
   // which is the topic: this is how to treat it. Left blank it is absent
   // rather than empty, because an agent handed "" would have to decide for
   // itself whether that meant "no direction" or "no strategy", and the answer
-  // is always the first.
-  const customPrompt = briefValues["customPrompt"]?.trim();
-  if (customPrompt) input.customPrompt = customPrompt;
+  // is always the first. Folded answers append to it, base direction first.
+  const promptParts: string[] = [];
+  const base = at("customPrompt");
+  if (base) promptParts.push(base);
+
+  const request = at("request");
+  if (request) {
+    if (engineProductId === REQUEST_IS_DIRECTION_PRODUCT) {
+      promptParts.push(`Business goal or question\n${request}`);
+    } else {
+      input.requestedTopic = request;
+    }
+  }
+
+  for (const [dialogKey, wireKey] of SHARED_SCALAR_FIELDS) {
+    const value = at(dialogKey);
+    if (value) input[wireKey] = value;
+  }
+
+  for (const [dialogKey, wireKey, splitOnCommas] of SHARED_LIST_FIELDS) {
+    const value = at(dialogKey);
+    if (!value) continue;
+    const items = splitList(value, splitOnCommas);
+    if (items.length === 0) continue;
+    const existing = Array.isArray(input[wireKey]) ? (input[wireKey] as string[]) : [];
+    input[wireKey] = [...existing, ...items];
+  }
+
+  const targetDate = at("target_date") ?? at("targetDate");
+  if (targetDate) {
+    const iso = normalizeTargetDate(targetDate);
+    if (iso) input.targetDate = iso;
+  }
+
+  // `post_count` is the social dialog's own VISIBLE "Number of posts" (1-10,
+  // default 3) and is not `batch_size`: it multiplies no bill and is not
+  // hidden, so a client who moves it is asking for something and must be heard.
+  // Sent as a number rather than the form's string, because a count is a count.
+  const postCount = at("post_count");
+  if (postCount) {
+    const n = Number(postCount);
+    if (Number.isInteger(n) && n > 0) input.postCount = n;
+  }
+
+  for (const [dialogKey, wireKey] of DEDICATED_FIELDS) {
+    const value = at(dialogKey);
+    if (value) input[wireKey] = value;
+  }
 
   // Attachments arrive as a JSON array from the dialog, because a form field
   // carries strings. Parsed and re-validated here rather than forwarded raw:
   // a malformed attachment should be dropped at the boundary, not become an
   // engine-side surprise on a run someone is waiting for.
   const mediaAssets = parseMediaAssets(briefValues["mediaAssets"]);
+
+  for (const [dialogKey, role, label] of FOLDED_INTO_MEDIA) {
+    const value = at(dialogKey);
+    if (!value) continue;
+    const leftovers: string[] = [];
+    for (const line of splitList(value, false)) {
+      if (line.startsWith("gs://") || line.startsWith("https://")) {
+        mediaAssets.push({ uri: line, role });
+      } else {
+        leftovers.push(line);
+      }
+    }
+    if (leftovers.length > 0) promptParts.push(`${label}\n${leftovers.join("\n")}`);
+  }
   if (mediaAssets.length > 0) input.mediaAssets = mediaAssets;
 
-  for (const key of ["requestedLane", "requestedArchetype", "requestedSubreddit", "requestedThreadUrl", "requestedThreadTitle"] as const) {
-    const value = briefValues[key]?.trim();
-    if (value) input[key] = value;
+  for (const [dialogKey, label] of FOLDED_INTO_CUSTOM_PROMPT) {
+    const value = at(dialogKey);
+    if (value) promptParts.push(`${label}\n${value}`);
   }
+
+  if (promptParts.length > 0) input.customPrompt = promptParts.join("\n\n");
+
   return input;
 }
 
