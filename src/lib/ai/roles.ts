@@ -180,8 +180,8 @@ export const AI_ROLES = {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/insights/route.ts:25"],
   },
-  "agent_swarm.step": { tier: "HAIKU", sites: ["src/lib/agent-swarm.ts:272"] },
-  "asset.title": { tier: "HAIKU", sites: ["src/lib/asset-titles.ts:51"] },
+  "agent_swarm.step": { tier: "HAIKU", sites: ["src/lib/agent-swarm.ts:284"] },
+  "asset.title": { tier: "HAIKU", sites: ["src/lib/asset-titles.ts:52"] },
   "campaign.plan": { tier: "SONNET", sites: ["src/lib/campaign-engine.ts:266"] },
   "dynamic_agent.generate": {
     tier: "SONNET",
