@@ -1,7 +1,6 @@
 import "server-only";
 
 import { streamText, stepCountIs } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import {
@@ -21,7 +20,7 @@ import { condenseDocs } from "./condense";
 import { carryChangeLog } from "./changelog";
 import { runSeoGeoResearch, type SeoGeoResearch } from "./seo-geo";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
-import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
+import { DOC_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
 import { aiFor, usageFor } from "@/lib/ai/provider";
@@ -48,25 +47,31 @@ function todayISO(): string {
 }
 
 /**
- * Anthropic server-side live-web tools. Web search + web fetch execute on
- * Anthropic's infrastructure inside a single request — no client-side loop.
- * The _20250305/_20250910 variants are direct server-executed web tools (the
- * model calls them, Anthropic runs them inline). The newer _20260209 variants are
- * code-execution-integrated and require programmatic tool-calling, which these
- * models reject — do NOT use them here.
+ * Live-web tool budgets. Web search + web fetch execute server-side inside a
+ * single request — no client-side loop. The _20250305/_20250910 variants are
+ * direct server-executed web tools (the model calls them, the vendor runs them
+ * inline). The newer _20260209 variants are code-execution-integrated and
+ * require programmatic tool-calling, which these models reject — do NOT use
+ * them here.
  *
  * These are what make every research pass a LIVE look at the client's current
  * state instead of a training-data recall. maxUses bounds cost per agent.
+ *
+ * Only builds the budget shape — each call site below still resolves its OWN
+ * model and tools through the shared provider layer's role resolver, keyed on
+ * "intel.research.agent" (role name deliberately spelled out, not routed
+ * through a shared wrapper, so each site stays independently auditable — see
+ * AU70/SCRUM-370 and the manifest coverage test in provider-wiring.test.ts).
  */
-function liveWebTools(maxSearches: number, maxFetches: number) {
+function researchBudgets(maxSearches: number, maxFetches: number) {
   return {
-    web_search: anthropic.tools.webSearch_20250305({ maxUses: maxSearches }),
-    web_fetch: anthropic.tools.webFetch_20250910({
+    web_search: { maxUses: maxSearches },
+    web_fetch: {
       maxUses: maxFetches,
       // Cap per-fetch content so one giant page can't crowd out the rest of
       // the research context (prevents truncated/corrupted downstream prompts).
       maxContentTokens: 6000,
-    }),
+    },
   };
 }
 
@@ -228,10 +233,11 @@ function buildMeetingSignals(
 /* ── Phase 1: Research agents (parallel) ─────────────────────────── */
 
 async function researchSocial(client: Client, rules: string): Promise<string> {
+  const research = aiFor("intel.research.agent", { budgets: researchBudgets(8, 6) });
   const socialStream = streamText({
-    model: anthropic(MODELS.SONNET),
+    model: research.model,
     system: `${rules}\n\nYou are a social media research analyst with LIVE web access. Search for real, current accounts — never recall handles or follower counts from memory when a live lookup is possible.`,
-    tools: liveWebTools(8, 6),
+    tools: research.tools,
     stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
@@ -262,10 +268,11 @@ Return structured markdown. Follow the no-guessed-numbers rule strictly — a "�
 }
 
 async function researchContent(client: Client, rules: string): Promise<string> {
+  const research = aiFor("intel.research.agent", { budgets: researchBudgets(5, 8) });
   const contentStream = streamText({
-    model: anthropic(MODELS.SONNET),
+    model: research.model,
     system: `${rules}\n\nYou are a senior brand messaging and content strategist with LIVE web access. Fetch the client's actual pages before analyzing — quote what is live TODAY, not what you remember. Apply deep analytical reasoning to extract every meaningful signal.`,
-    tools: liveWebTools(5, 8),
+    tools: research.tools,
     stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
@@ -308,10 +315,11 @@ async function researchCompetitive(
     ? `\n\nCRITICAL: The following competitors have been manually flagged by the client's team and MUST be included regardless of their prominence in the market:\n${trackedCompetitors.map((c) => `- ${c.company}${c.url ? ` (${c.url})` : ""}`).join("\n")}`
     : "";
 
+  const research = aiFor("intel.research.agent", { budgets: researchBudgets(10, 8) });
   const competitiveStream = streamText({
-    model: anthropic(MODELS.SONNET),
+    model: research.model,
     system: `${rules}\n\nYou are a senior competitive intelligence analyst with LIVE web access. You produce boardroom-grade market intelligence, not just lists of competitors. Verify each competitor exists and is active via live search, and quote their CURRENT taglines from fetched pages. For every finding, deliver the strategic implication — not just the observation. For qualitative analysis, never write "data unavailable" — use deep reasoning and industry knowledge to derive insights.`,
-    tools: liveWebTools(10, 8),
+    tools: research.tools,
     stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
@@ -370,10 +378,11 @@ async function researchStrategy(client: Client, rules: string, meetingSignals = 
     ? `\n\n${meetingSignals}\n\nUse the meeting signals above as additional context about what the client is focusing on, their stated priorities, and any market observations from real conversations. These are firsthand signals — treat them as high-confidence qualitative data and weight them heavily.`
     : "";
 
+  const research = aiFor("intel.research.agent", { budgets: researchBudgets(6, 5) });
   const strategyStream = streamText({
-    model: anthropic(MODELS.SONNET),
+    model: research.model,
     system: `${rules}\n\nYou are a senior market strategy analyst with LIVE web access. Ground positioning and business-model findings in pages fetched during THIS run. For every finding, deliver the strategic implication — not just the observation. Apply Claude Sonnet's full analytical reasoning.`,
-    tools: liveWebTools(6, 5),
+    tools: research.tools,
     stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {
@@ -412,10 +421,11 @@ async function researchSentiment(client: Client, rules: string, meetingSignals =
     ? `\n\n${meetingSignals}\n\nCross-reference the meeting signals with the sentiment research below. Client or prospect concerns surfaced in meetings are firsthand qualitative signals — treat them as the highest-confidence data in this section and factor them in explicitly.`
     : "";
 
+  const research = aiFor("intel.research.agent", { budgets: researchBudgets(8, 5) });
   const sentimentStream = streamText({
-    model: anthropic(MODELS.SONNET),
+    model: research.model,
     system: `${rules}\n\nYou are a senior customer sentiment and UX analyst with LIVE web access. Search review platforms for CURRENT ratings and real customer language before citing any sentiment data. Deliver strategic implications alongside every finding — not just the observation, but what it means for how Karos should position, message, and market for this brand. Apply deep contextual reasoning.`,
-    tools: liveWebTools(8, 5),
+    tools: research.tools,
     stopWhen: stepCountIs(RESEARCH_MAX_STEPS),
     messages: [
       {

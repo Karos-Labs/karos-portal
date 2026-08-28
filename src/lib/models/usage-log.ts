@@ -60,6 +60,21 @@ export interface UsageLog {
   status?: "success" | "failed" | "cancelled";
   /** Set when status is "failed"/"cancelled" — the thrown error or upstream failure/cancellation reason. */
   errorMessage?: string;
+  /**
+   * True when `priceFor()` refused this row's `(vendor, modelName)` pair and
+   * `estimatedCostUsd` was written as 0 rather than a real price — see
+   * `logUsage`'s catch branch. AU70/SCRUM-370 removed the flat `_default`
+   * pricing row specifically so an unpriced pair could no longer be quietly
+   * substituted with Sonnet's rate; the tradeoff is that some callers outside
+   * `aiFor`/`usageFor` — the agent-service webhook and reconcile-job, whose
+   * `modelName` comes from an external payload or an admin-typed
+   * `stepModels` override, never from `ResolvedAi` — can hit an unpriced pair
+   * too. Without this flag that row would look like a genuinely free run
+   * everywhere the row is read; with it, a dashboard or query can tell "we
+   * do not know the price" apart from "this cost nothing" instead of the two
+   * being silently indistinguishable. Absent/false on every other row.
+   */
+  pricingUnresolved?: boolean;
 }
 
 export interface ErrorLog {
@@ -153,6 +168,15 @@ export const MODEL_PRICING_BY_VENDOR: Readonly<
   vertex: {
     "claude-sonnet-4-6":          { inputPer1M: 3.00,  outputPer1M: 15.00 },
     "claude-haiku-4-5@20251001":  { inputPer1M: 0.80,  outputPer1M: 4.00  },
+    // Dateless spelling. Cross-referenced against agent-engine's own
+    // MODEL_PRICING (packages/core/src/telemetry/pricing.ts): "the spelling
+    // Agent Platform uses verbatim for the 4.6-and-later generation (where a
+    // dateless id is itself a pinned snapshot, not a moving pointer)". Real
+    // traffic can carry this id — it is also the literal example
+    // (`"claude-haiku-4-5"`) given for an admin-typed `stepModels` override in
+    // docs/one-pagers/x-agent-v2-integration-contract.md — so it is priced
+    // here rather than left to fall through to `pricingUnresolved`.
+    "claude-haiku-4-5":           { inputPer1M: 0.80,  outputPer1M: 4.00  },
   },
   // OpenAI (SEO/GEO "chatgpt" engine)
   openai: {

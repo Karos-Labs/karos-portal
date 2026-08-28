@@ -62,7 +62,7 @@ export const AI_ROLES = {
         "consumer product IS the measurement — Vertex serves the raw model, so routing " +
         "here would silently change what the report claims to have measured.",
     },
-    sites: ["src/lib/intel/seo-geo-providers.ts:231"],
+    sites: ["src/lib/intel/seo-geo-providers.ts:234"],
   },
 
   /* ── COUPLED · needs web_fetch · 9 sites ─────────────────────────────────
@@ -71,17 +71,17 @@ export const AI_ROLES = {
   "intel.report.pass": {
     tier: "SONNET",
     requires: ["web_search", "web_fetch"],
-    sites: ["src/lib/intel/report.ts:312", "src/lib/intel/report.ts:372"],
+    sites: ["src/lib/intel/report.ts:301", "src/lib/intel/report.ts:381"],
   },
   "intel.research.agent": {
     tier: "SONNET",
     requires: ["web_search", "web_fetch"],
     sites: [
-      "src/lib/intel/pipeline.ts:232",
-      "src/lib/intel/pipeline.ts:266",
-      "src/lib/intel/pipeline.ts:312",
-      "src/lib/intel/pipeline.ts:374",
-      "src/lib/intel/pipeline.ts:416",
+      "src/lib/intel/pipeline.ts:236",
+      "src/lib/intel/pipeline.ts:271",
+      "src/lib/intel/pipeline.ts:318",
+      "src/lib/intel/pipeline.ts:381",
+      "src/lib/intel/pipeline.ts:424",
     ],
   },
   "seo.site_audit": {
@@ -92,7 +92,7 @@ export const AI_ROLES = {
   "branding.fetch_site": {
     tier: "HAIKU",
     requires: ["web_fetch"],
-    sites: ["src/lib/branding.ts:340"],
+    sites: ["src/lib/branding.ts:346"],
   },
 
   /* ── COUPLED · web_search only · 2 sites ─────────────────────────────────
@@ -107,7 +107,7 @@ export const AI_ROLES = {
   "branding.search_brand": {
     tier: "HAIKU",
     requires: ["web_search"],
-    sites: ["src/lib/branding.ts:379"],
+    sites: ["src/lib/branding.ts:386"],
   },
 
   /* ── PLAIN · no vendor-specific surface · 31 sites ───────────────────────
@@ -116,10 +116,10 @@ export const AI_ROLES = {
   "intel.pipeline.synthesis": {
     tier: "SONNET",
     sites: [
-      "src/lib/intel/pipeline.ts:574",
-      "src/lib/intel/pipeline.ts:589",
-      "src/lib/intel/pipeline.ts:657",
-      "src/lib/intel/pipeline.ts:687",
+      "src/lib/intel/pipeline.ts:584",
+      "src/lib/intel/pipeline.ts:599",
+      "src/lib/intel/pipeline.ts:667",
+      "src/lib/intel/pipeline.ts:697",
     ],
   },
   "simulation.persona": {
@@ -162,7 +162,7 @@ export const AI_ROLES = {
   },
   "branding.extract": {
     tier: "HAIKU",
-    sites: ["src/lib/branding.ts:727", "src/lib/branding.ts:742"],
+    sites: ["src/lib/branding.ts:736", "src/lib/branding.ts:751"],
   },
   "execution.sonnet": { tier: "SONNET", sites: ["src/lib/execution-engine.ts:36"] },
   "execution.haiku": { tier: "HAIKU", sites: ["src/lib/execution-engine.ts:37"] },
@@ -174,8 +174,8 @@ export const AI_ROLES = {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/chat/route.ts:703"],
   },
-  "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:415"] },
-  "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:580"] },
+  "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:419"] },
+  "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:584"] },
   "insights.summary": {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/insights/route.ts:25"],
