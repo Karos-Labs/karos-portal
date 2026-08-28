@@ -21,6 +21,7 @@ import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import { isStaffCopilotActor } from "@/lib/copilot-tool-access";
 import { requireAdmin, requireClientAccess, requireStaff } from "./_shared";
 
 /* ── limits (mirror agent-service/src/schemas/task-types/custom.json) ── */
@@ -358,8 +359,25 @@ export async function runCustomAgentAction(input: {
    * SubmitCustomAgentInput.briefValues.
    */
   briefValues?: Record<string, string>;
+  /**
+   * T-B9 ("generate now, publish on date X"): a target publish date for this
+   * run's deliverable, epoch millis. STAFF-ONLY — `createPlannedRunAction`
+   * (schedule the GENERATION itself) is already staff-only, and this is the
+   * same trust tier applied to the honest alternative (run now, schedule the
+   * result), not a looser one. A client session passing this gets a clear
+   * refusal rather than the field being silently dropped.
+   */
+  requestedScheduledAt?: number;
 }): Promise<{ jobId?: string; error?: string }> {
   const user = await requireClientAccess(input.clientId);
+  if (input.requestedScheduledAt != null) {
+    if (!isStaffCopilotActor(user)) {
+      return { error: "Scheduling a publish date for a fresh run is a staff action." };
+    }
+    if (!Number.isFinite(input.requestedScheduledAt) || input.requestedScheduledAt <= Date.now()) {
+      return { error: "Pick a publish date in the future." };
+    }
+  }
   // §2 guard rail: an agent owned by a client-agent umbrella is not the
   // client's to run until that umbrella is live. Their surface for it is the
   // launch card, and a run fired here would charge for an agent that has no

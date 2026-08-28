@@ -1159,18 +1159,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const runAgentNowTool = tool({
     description:
       "Trigger an ad-hoc run of one of this client's custom agents right now, billed at its normal per-run rate. " +
-      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits.",
+      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits. " +
+      "STAFF ONLY: publishAt schedules the resulting deliverable to publish on that date instead of landing as a draft " +
+      "(T-B9, 'generate now, publish on date X') — give it as ISO 8601, computed from CURRENT DATE/TIME above, and only " +
+      "when a staff user explicitly asked for a specific publish date. Never pass it for a client session.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name"),
       prompt: z.string().optional().describe("Optional extra instruction for this run"),
+      publishAt: z
+        .string()
+        .optional()
+        .describe("Staff only. Target publish date/time for the deliverable, ISO 8601, e.g. 2026-09-10T13:00:00.000Z"),
     }),
-    execute: async ({ agentQuery, prompt }) => {
+    execute: async ({ agentQuery, prompt, publishAt }) => {
       const q = agentQuery.trim().toLowerCase();
       const match = customAgents.find((a) => a.name.toLowerCase().includes(q));
       if (!match) {
         return customAgents.length > 0
           ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
           : "This client has no AI agents assigned yet.";
+      }
+      // T-B9: publishAt is staff-only — checked HERE, not only inside
+      // runCustomAgentAction, so a client session gets a copilot-authored
+      // refusal in its own voice rather than runCustomAgentAction's generic
+      // one. runCustomAgentAction still re-checks (a chat tool is not the only
+      // caller of that action), so this is belt, not the only suspenders.
+      let requestedScheduledAt: number | undefined;
+      if (publishAt) {
+        if (!isStaffCopilotActor(user)) {
+          return "Scheduling a publish date for a fresh run is a staff action. Ask your Karos team.";
+        }
+        const parsed = Date.parse(publishAt);
+        if (Number.isNaN(parsed)) {
+          return "That publish date didn't parse. Give it as ISO 8601, e.g. 2026-09-10T13:00:00.000Z.";
+        }
+        if (parsed <= Date.now()) {
+          return "Pick a publish date in the future.";
+        }
+        requestedScheduledAt = parsed;
       }
       // chargeMultiplier: what a FRESH portal dialog would submit for this
       // agent (visible selector defaults only — a hidden batch size never
@@ -1184,6 +1210,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
         ...(chatBatchSize > 1 ? { chargeMultiplier: chatBatchSize } : {}),
+        ...(requestedScheduledAt != null ? { requestedScheduledAt } : {}),
       });
       if (result.error) {
         // REUSED, not re-answered: `clientSafeRunError` is exactly this shape (a
@@ -1202,7 +1229,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? clientSafeRunError(result.error)
           : `Couldn't start that run: ${result.error}`;
       }
-      return `Started a run of **${match.name}**. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
+      return requestedScheduledAt != null
+        ? `Started a run of **${match.name}**, set to publish ${new Date(requestedScheduledAt).toISOString()} once it's ready.`
+        : `Started a run of **${match.name}**. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
     },
   });
 

@@ -1895,6 +1895,40 @@ export async function POST(req: NextRequest) {
           // instead of vanishing off the calendar entirely (postKind returns
           // null for anything with no scheduledAt).
           ...(typeof suggestedScheduledAt === "number" ? { scheduledAt: suggestedScheduledAt } : {}),
+          // T-B9 ("generate now, publish on date X"): a staff-requested target
+          // publish date on the job (see Job.requestedScheduledAt) wins over
+          // both the recommendation above and the Task-Map suggestion above —
+          // it demands an actual scheduled post (`status: "scheduled"`), not
+          // merely a dated draft. `createPlannedRunAction` schedules the
+          // GENERATION and is staff-only by a different route;
+          // `scheduleAssetAction` only ever moves an asset that already
+          // exists. This is the run-now-then-schedule mechanism those two
+          // don't cover, applied at the one point the deliverable and the
+          // request meet.
+          //
+          // Never applied to a Test Run or a launch deliverable — neither is
+          // a real client calendar item regardless of what rides on the job
+          // that produced it (`scheduleAssetAction` itself refuses a Test Run
+          // for the same reason, asset-actions.ts). `publishMode: "manual"`
+          // rather than "auto": this only puts the deliverable on the
+          // calendar for a human to push live, and never auto-publishes to a
+          // platform sight-unseen — that is a decision this ticket does not
+          // make.
+          //
+          // Re-checked against "now" rather than trusted from request time:
+          // the run itself takes real time, and a date that has already
+          // passed by completion must not silently arm as a scheduled post
+          // dated in the past.
+          ...(typeof job.requestedScheduledAt === "number" &&
+          job.requestedScheduledAt > now &&
+          !isTestRun &&
+          !isLaunchRun
+            ? {
+                status: "scheduled" as const,
+                scheduledAt: job.requestedScheduledAt,
+                publishMode: "manual" as const,
+              }
+            : {}),
           createdBy: "agent-service",
           createdAt: now,
           updatedAt: now,
