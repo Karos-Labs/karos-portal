@@ -16,6 +16,8 @@ import { Icon } from "@/components/icon";
 import { AgentIdentity } from "@/components/agent-identity";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import { shouldShowEngineHealthBanner } from "@/lib/agent-engine/health";
+import { EngineHealthBanner } from "@/components/engine-health-banner";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
@@ -933,6 +935,13 @@ export default async function ClientAgentDetailPage({
             ? `Agent runs are paused right now. Starting a new ${outputNoun} will not work until this clears. Contact your Karos team if you need a ${outputNoun} today. Everything below is unaffected.`
             : `Agent runs are paused. The agent-service environment is not configured, so starting a ${outputNoun} will fail until it is set. Everything below is unaffected.`}
         </p>
+      )}
+      {/* SCRUM-264: this agent's own run controls are what a cut-over client
+          actually presses - the roster's banner (agents/page.tsx) only warns
+          before they get here. Same gate, one agent's key instead of the
+          whole enabled list. */}
+      {shouldShowEngineHealthBanner(client.agentsRepoSlug, [agent.key]) && (
+        <EngineHealthBanner viewerIsClient={viewerIsClient} />
       )}
 
       {/* CD-H7a's idiom, for the same failure one level up: the two-column
