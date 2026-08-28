@@ -42,7 +42,8 @@ loadEnvFile(resolve(process.cwd(), ".env.local"));
 loadEnvFile(resolve(process.cwd(), ".env"));
 
 import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+
+import { getScriptFirestore } from "./lib/firestore-db";
 
 /** Mirror of data.ts CLIENT_SCOPED_COLLECTIONS (see purge-orphaned-client-docs.ts). */
 const CLIENT_SCOPED_COLLECTIONS = [
@@ -88,7 +89,9 @@ async function main() {
     if (!raw) throw new Error("FIREBASE_SERVICE_ACCOUNT_KEY not set");
     initializeApp({ credential: cert(JSON.parse(raw)) });
   }
-  const db = getFirestore();
+  // Deliberately production-only by design (SCRUM-374) — opts in explicitly
+  // rather than inheriting "(default)" by leaving FIRESTORE_DATABASE_ID unset.
+  const db = getScriptFirestore(getApps()[0]!, { allowDefaultProduction: true });
 
   console.log("═══ Production data audit (read-only — nothing is deleted) ═══\n");
 

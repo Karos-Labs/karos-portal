@@ -33,7 +33,9 @@ loadEnvFile(resolve(process.cwd(), ".env.local"));
 loadEnvFile(resolve(process.cwd(), ".env"));
 
 import { initializeApp, cert, getApps } from "firebase-admin/app";
-import { getFirestore, type DocumentReference } from "firebase-admin/firestore";
+import type { DocumentReference } from "firebase-admin/firestore";
+
+import { getScriptFirestore } from "./lib/firestore-db";
 
 const CLIENT_SCOPED_COLLECTIONS = [
   "jobs",
@@ -80,7 +82,9 @@ async function main() {
     if (!raw) throw new Error("FIREBASE_SERVICE_ACCOUNT_KEY not set");
     initializeApp({ credential: cert(JSON.parse(raw)) });
   }
-  const db = getFirestore();
+  // Deliberately production-only by design (SCRUM-374) — opts in explicitly
+  // rather than inheriting "(default)" by leaving FIRESTORE_DATABASE_ID unset.
+  const db = getScriptFirestore(getApps()[0]!, { allowDefaultProduction: true });
 
   console.log(apply ? "[APPLY — deletions are permanent]\n" : "[DRY RUN — nothing is deleted. Pass --apply to delete.]\n");
 
