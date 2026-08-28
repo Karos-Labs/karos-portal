@@ -1,12 +1,11 @@
 import "server-only";
 
 import { streamText, stepCountIs } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { MODELS, SEO_GEO_CAPTURE } from "@/lib/constants";
+import { SEO_GEO_CAPTURE } from "@/lib/constants";
 import type { EngineAnswer, EngineId, ProviderSource } from "@/lib/seo-geo";
 import { rootDomain } from "@/lib/seo-geo";
 import { logger } from "@/services/logger";
-import { usageFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 /**
  * Multi-model answer-engine connectors for the GEO visibility capture.
@@ -227,9 +226,15 @@ async function askGemini(prompt: string, clientId: string): Promise<{ answerText
 
 async function askClaude(prompt: string, clientId: string): Promise<{ answerText: string; citations: string[] }> {
   // Capture uses the fast model (a3 rule: the report model is never used for raw capture).
+  // Resolved through the shared role resolver, same as every other call site —
+  // even though this role is vendor-pinned to anthropic (it measures the real
+  // Claude product, see roles.ts), so model and tools still come from one
+  // resolution rather than a hardcoded vendor call that could silently drift
+  // from the pin. AU70/SCRUM-370.
+  const claudeAi = aiFor("geo.capture.claude", { budgets: { web_search: { maxUses: 3 } } });
   const stream = streamText({
-    model: anthropic(MODELS.HAIKU),
-    tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 3 }) },
+    model: claudeAi.model,
+    tools: claudeAi.tools,
     // Continue past Anthropic pause_turn during web search (default stepCountIs(1)
     // would return only the pre-search intro).
     stopWhen: stepCountIs(8),

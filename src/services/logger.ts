@@ -141,11 +141,23 @@ class Logger {
     // lookup THROWS on a pair it does not know — there is no default row any
     // more. logUsage's contract is that it never throws into the generation
     // path, so the refusal is converted here into the loudest thing that is
-    // still safe: a structured ERROR naming the pair, and a row recorded at
-    // cost 0. A 0 next to an ERROR is visibly wrong and gets fixed. The old
-    // behaviour — Sonnet's $3/$15 substituted for an unrecognised pair — was
-    // silent, plausible and wrong, which is the entire ticket.
+    // still safe: a structured ERROR naming the pair, AND a `pricingUnresolved`
+    // flag persisted on the row itself (not only an ERROR log line, whose
+    // readership nothing here can confirm) — the row's cost is written as 0 but
+    // stays queryably distinct from a row that is 0 because the call really was
+    // free. This matters beyond the aiFor/usageFor-covered call sites this
+    // ticket rewired: the agent-service webhook and reconcile-job also call
+    // logUsage with a `modelName` sourced from an external payload or an
+    // admin-typed `stepModels` override, never from `ResolvedAi`, so they can
+    // hit an unpriced pair too — see cost-logger-external-model-ids.test.ts. The
+    // old behaviour — Sonnet's $3/$15 substituted for an unrecognised pair —
+    // was silent, plausible and wrong, which is the entire ticket; a bare 0
+    // with nothing marking it would trade that for a different silent wrong:
+    // indistinguishable from a genuinely free run on every dashboard that reads
+    // this collection. The flag is what keeps the failure loud all the way to
+    // the stored data, not just to whoever happens to be watching the log.
     let estimatedCostUsd = 0;
+    let pricingUnresolved = false;
     try {
       estimatedCostUsd = computeCostUsd(
         vendor,
@@ -156,6 +168,7 @@ class Logger {
       );
     } catch (err) {
       if (!(err instanceof PricingLookupError)) throw err;
+      pricingUnresolved = true;
       logStructured("ERROR", err.message, {
         event: "pricing.lookup_failed",
         vendor: err.vendor,
@@ -173,6 +186,7 @@ class Logger {
       vendor,
       webSearchCount,
       estimatedCostUsd,
+      ...(pricingUnresolved ? { pricingUnresolved: true } : {}),
       timestamp: Date.now(),
     });
   }

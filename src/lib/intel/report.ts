@@ -1,7 +1,6 @@
 import "server-only";
 
-import { anthropic } from "@ai-sdk/anthropic";
-import { MODELS, DOC_MAX_TOKENS } from "@/lib/constants";
+import { DOC_MAX_TOKENS } from "@/lib/constants";
 import { runGuardedReportPass, REPORT_IDLE_TIMEOUT_MS } from "./report-stream";
 import type { Client } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
@@ -18,7 +17,7 @@ import { applyBrandingForClient, effectiveDominantColors } from "@/lib/branding"
 import type { BrandingGuidelines } from "@/lib/types";
 import { DEFAULT_INTEL_PROMPT } from "./brain";
 import { logger } from "@/services/logger";
-import { usageFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
@@ -287,13 +286,20 @@ export async function runIntelReportPipeline(
   const userMessage = `Generate the complete Karos Intel Report for ${client.name}. Output ONLY the markdown report — no preamble, no explanation. Start immediately with "# Karos Intel: ${client.name}".`;
 
   // Live-web tools: the Intel Report must operate on the client's CURRENT state.
-  // web_search + web_fetch run server-side on Anthropic's infra inside this same
-  // request — the model fetches the client's live site, verifies competitors,
-  // and checks review platforms before scoring. maxUses bounds per-run cost.
-  const liveTools = {
-    web_search: anthropic.tools.webSearch_20250305({ maxUses: 15 }),
-    web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 12, maxContentTokens: 6000 }),
+  // web_search + web_fetch run server-side, verifying competitors and review
+  // platforms before scoring. maxUses bounds per-run cost. Resolved through the
+  // shared provider layer's role resolver — not a hardcoded vendor call — so the
+  // model AND its tools come from the same vendor resolution that
+  // `usageFor("intel.report.pass")` logs below; see AU70/SCRUM-370. The main
+  // pass and the continuation pass each resolve independently, right next to
+  // where they call it, so both stay visible to the manifest coverage test in
+  // provider-wiring.test.ts.
+  const reportPassBudgets = {
+    web_search: { maxUses: 15 },
+    web_fetch: { maxUses: 12, maxContentTokens: 6000 },
   };
+  const reportAi = aiFor("intel.report.pass", { budgets: reportPassBudgets });
+  const liveTools = reportAi.tools;
 
   // Phase A: main report. streamText is used throughout (not generateText) because Anthropic
   // starts sending response headers within ~1 second of receiving a streaming request, whereas
@@ -309,7 +315,7 @@ export async function runIntelReportPipeline(
   let passSucceeded = false;
   let lastPassError: unknown;
   for (let attempt = 1; attempt <= 2 && !passSucceeded; attempt++) {
-    const pass = await runGuardedReportPass(anthropic(MODELS.SONNET), {
+    const pass = await runGuardedReportPass(reportAi.model, {
       system: compiledPrompt,
       messages: [{ role: "user", content: userMessage }],
       tools: liveTools,
@@ -369,7 +375,11 @@ export async function runIntelReportPipeline(
     console.info(
       `[intel] Continuation pass triggered for ${client.name} (first pass: ${firstPassText.length} chars, missing: "${lastRequiredSection}")`,
     );
-    const cont = await runGuardedReportPass(anthropic(MODELS.SONNET), {
+    // Independently resolved rather than reusing `reportAi` above — same role,
+    // same budgets, but its own call so this site is not hidden behind the
+    // first pass's resolution (AU70/SCRUM-370).
+    const continuationAi = aiFor("intel.report.pass", { budgets: reportPassBudgets });
+    const cont = await runGuardedReportPass(continuationAi.model, {
       system: compiledPrompt,
       messages: [
         { role: "user", content: userMessage },
@@ -380,7 +390,7 @@ export async function runIntelReportPipeline(
             "You stopped before completing all required sections. Continue the report from exactly where you left off. Do not repeat any content already written. Continue immediately:",
         },
       ],
-      tools: liveTools,
+      tools: continuationAi.tools,
       maxOutputTokens: DOC_MAX_TOKENS,
       maxSteps: REPORT_MAX_STEPS,
     });

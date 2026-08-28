@@ -1,8 +1,6 @@
 import "server-only";
 
 import { generateObject, generateText, stepCountIs } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { MODELS } from "@/lib/constants";
 import { z } from "zod";
 import {
   getClient,
@@ -333,14 +331,24 @@ async function gatherSiteIntelligence(
 ): Promise<string | null> {
   if (access === "unknown") return null;
 
+  // Which role covers THIS call, decided once and reused everywhere below
+  // (including the shared catch) — the "accessible" branch is a web_fetch-only
+  // call and the "blocked" branch is web_search-only, and they were previously
+  // both logged under "branding.search_brand" regardless of which ran. That
+  // mislabeling is itself an instance of AU70/SCRUM-370: a role whose logged
+  // vendor need not match the capability the request actually used. Resolving
+  // model, tools AND the logged role from the SAME role name closes it.
+  const role = access === "accessible" ? ("branding.fetch_site" as const) : ("branding.search_brand" as const);
+
   try {
     if (access === "accessible") {
       const siteUrl = `https://${domain}`;
+      const siteAi = aiFor(role, { budgets: { web_fetch: {} } });
       const { text, usage, providerMetadata } = await generateText({
-        model: anthropic(MODELS.HAIKU),
+        model: siteAi.model,
         stopWhen: stepCountIs(8),
         tools: {
-          webFetch: anthropic.tools.webFetch_20250910({}),
+          webFetch: siteAi.tools.web_fetch,
         },
         system: ANALYST_SYSTEM,
         prompt:
@@ -367,7 +375,7 @@ async function gatherSiteIntelligence(
       });
       logger.logUsage({
         clientId, agentId: null, agentName: "Branding · Site Intelligence",
-        ...usageFor("branding.search_brand"), operation: "branding_extraction",
+        ...usageFor(role), operation: "branding_extraction",
         inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
         webSearchCount: readWebSearchCount(providerMetadata),
       });
@@ -375,11 +383,12 @@ async function gatherSiteIntelligence(
     }
 
     // blocked — use web search to find public brand identity assets
+    const searchAi = aiFor(role, { budgets: { web_search: {} } });
     const { text, usage, providerMetadata } = await generateText({
-      model: anthropic(MODELS.HAIKU),
+      model: searchAi.model,
       stopWhen: stepCountIs(5),
       tools: {
-        webSearch: anthropic.tools.webSearch_20250305({}),
+        webSearch: searchAi.tools.web_search,
       },
       system: ANALYST_SYSTEM,
       prompt:
@@ -390,7 +399,7 @@ async function gatherSiteIntelligence(
     });
     logger.logUsage({
       clientId, agentId: null, agentName: "Branding · Site Intelligence",
-      ...usageFor("branding.search_brand"), operation: "branding_extraction",
+      ...usageFor(role), operation: "branding_extraction",
       inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
       webSearchCount: readWebSearchCount(providerMetadata),
     });
@@ -398,7 +407,7 @@ async function gatherSiteIntelligence(
   } catch (err) {
     console.warn(`[branding] Site intelligence gathering failed for ${domain}:`, err);
     logger.logGenerationFailure(
-      { clientId, agentId: null, agentName: "Branding · Site Intelligence", ...usageFor("branding.search_brand"), operation: "branding_extraction" },
+      { clientId, agentId: null, agentName: "Branding · Site Intelligence", ...usageFor(role), operation: "branding_extraction" },
       err,
     );
     return null;
