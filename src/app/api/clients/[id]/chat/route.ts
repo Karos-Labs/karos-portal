@@ -75,9 +75,25 @@ import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 import { aiFor, usageFor } from "@/lib/ai/provider";
 
-export const maxDuration = 60;
-
-const STOP_WHEN = [isLoopFinished(), stepCountIs(6)];
+// This route sets no Vercel-style duration export — see
+// asset-media-download.test.ts's "asserts no request-duration ceiling it
+// does not control" for the same reasoning applied to another route:
+// `maxDuration` is a Vercel convention and is inert on this deploy, which
+// runs Cloud Build → Cloud Run with a single service-wide `--timeout=300`
+// in cloudbuild.yaml. A number here would just be a claim nothing enforces,
+// and the old `= 60` was actively misleading — it read as a 60s ceiling on
+// a route that actually had 300s.
+//
+// T-B24: the real, in-process budget for this route is `stepCountIs` below —
+// the AI SDK's tool-call loop, which stops after N *model* steps regardless
+// of wall-clock time. A copilot turn that has to look something up
+// (find_output/fetch_gmail_context), decide, act (run_agent_now/create_tasks/
+// edit_output/...) and answer easily spends a step per tool call plus a step
+// per intervening model turn; `stepCountIs(6)` cut that off mid-turn. Raised
+// to sit alongside this route's other multi-tool loops (RESEARCH_MAX_STEPS
+// in intel/pipeline.ts runs 20; branding.ts's rewrite loop runs 8) rather than
+// being the tightest budget in the codebase for the tool with the most tools.
+const STOP_WHEN = [isLoopFinished(), stepCountIs(16)];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -1159,18 +1175,54 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const runAgentNowTool = tool({
     description:
       "Trigger an ad-hoc run of one of this client's custom agents right now, billed at its normal per-run rate. " +
-      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits.",
+      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits. " +
+      "contextItemIds attaches existing client context files/images as reference for this run; briefValues carries any " +
+      "brief field values the agent needs as data (not prose). Both are optional. Returns the new job id. " +
+      "STAFF ONLY: publishAt schedules the resulting deliverable to publish on that date instead of landing as a draft " +
+      "(T-B9, 'generate now, publish on date X') — give it as ISO 8601, computed from CURRENT DATE/TIME above, and only " +
+      "when a staff user explicitly asked for a specific publish date. Never pass it for a client session.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name"),
       prompt: z.string().optional().describe("Optional extra instruction for this run"),
+      contextItemIds: z
+        .array(z.string())
+        .optional()
+        .describe("Ids of existing client context items (files/images) to attach as reference for this run"),
+      briefValues: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe("Brief field values this agent needs as data, keyed by field name"),
+      publishAt: z
+        .string()
+        .optional()
+        .describe("Staff only. Target publish date/time for the deliverable, ISO 8601, e.g. 2026-09-10T13:00:00.000Z"),
     }),
-    execute: async ({ agentQuery, prompt }) => {
+    execute: async ({ agentQuery, prompt, contextItemIds, briefValues, publishAt }) => {
       const q = agentQuery.trim().toLowerCase();
       const match = customAgents.find((a) => a.name.toLowerCase().includes(q));
       if (!match) {
         return customAgents.length > 0
           ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
           : "This client has no AI agents assigned yet.";
+      }
+      // T-B9: publishAt is staff-only — checked HERE, not only inside
+      // runCustomAgentAction, so a client session gets a copilot-authored
+      // refusal in its own voice rather than runCustomAgentAction's generic
+      // one. runCustomAgentAction still re-checks (a chat tool is not the only
+      // caller of that action), so this is belt, not the only suspenders.
+      let requestedScheduledAt: number | undefined;
+      if (publishAt) {
+        if (!isStaffCopilotActor(user)) {
+          return "Scheduling a publish date for a fresh run is a staff action. Ask your Karos team.";
+        }
+        const parsed = Date.parse(publishAt);
+        if (Number.isNaN(parsed)) {
+          return "That publish date didn't parse. Give it as ISO 8601, e.g. 2026-09-10T13:00:00.000Z.";
+        }
+        if (parsed <= Date.now()) {
+          return "Pick a publish date in the future.";
+        }
+        requestedScheduledAt = parsed;
       }
       // chargeMultiplier: what a FRESH portal dialog would submit for this
       // agent (visible selector defaults only — a hidden batch size never
@@ -1183,7 +1235,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         agentId: match.id,
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
+        ...(contextItemIds && contextItemIds.length > 0 ? { contextItemIds } : {}),
+        ...(briefValues && Object.keys(briefValues).length > 0 ? { briefValues } : {}),
         ...(chatBatchSize > 1 ? { chargeMultiplier: chatBatchSize } : {}),
+        ...(requestedScheduledAt != null ? { requestedScheduledAt } : {}),
       });
       if (result.error) {
         // REUSED, not re-answered: `clientSafeRunError` is exactly this shape (a
@@ -1202,7 +1257,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? clientSafeRunError(result.error)
           : `Couldn't start that run: ${result.error}`;
       }
-      return `Started a run of **${match.name}**. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
+      // The MCP `run_agent` tool (staff-only, PAT-gated — src/lib/mcp/tools.ts)
+      // already proved job id must come back from a run-agent primitive so the
+      // caller can poll it. This is the client- and staff-reachable equivalent,
+      // authorized on the actual signed-in session via `runCustomAgentAction`
+      // (no PAT involved) — so it must not drop `result.jobId` on the floor the
+      // way this tool previously did. T-B9's scheduled variant carries the same
+      // id: a scheduled run is still a run someone has to be able to look up.
+      return requestedScheduledAt != null
+        ? `Started a run of **${match.name}** (job \`${result.jobId}\`), set to publish ${new Date(requestedScheduledAt).toISOString()} once it's ready.`
+        : `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
     },
   });
 

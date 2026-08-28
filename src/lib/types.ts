@@ -1162,6 +1162,24 @@ export interface Job {
    * hold's answer is no. One field, one question.
    */
   heldReason?: string | null;
+  /**
+   * T-B9 ("generate now, publish on date X"): a target publish date requested
+   * AT RUN TIME, staff-only (see `run_agent_now`'s `publishAt` param in the
+   * copilot chat route and the staff-only check in `runCustomAgentAction`).
+   *
+   * `createPlannedRunAction` schedules GENERATION for later and is staff-only
+   * by a different route; `reschedule_output`/`clientRescheduleAssetAction`
+   * only ever move an asset that already exists. Neither lets someone ask for
+   * an immediate run whose deliverable lands already on the calendar. This
+   * field is the honest version of that: run now, and the completion webhook
+   * reads it back (this job doc, not the payload) and schedules the resulting
+   * asset directly — `status: "scheduled"` — instead of an undated draft.
+   *
+   * Epoch millis. Absent on every ordinary run. A value that is not in the
+   * future BY THE TIME THE JOB COMPLETES is ignored by the webhook rather than
+   * producing a scheduled post already in the past.
+   */
+  requestedScheduledAt?: number | null;
   /** Present when this job runs on the external agent service. */
   external?: ExternalJobInfo;
   createdBy: string;

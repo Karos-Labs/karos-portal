@@ -15,6 +15,8 @@ import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { BulkUploadClips } from "@/components/bulk-upload-clips";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import { shouldShowEngineHealthBanner } from "@/lib/agent-engine/health";
+import { EngineHealthBanner } from "@/components/engine-health-banner";
 import {
   agentKeyMatchesClientSlug,
   isUnlistedAgent,
@@ -316,6 +318,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             Contact your Karos team if you need a run today. Everything below is unaffected.
           </p>
         )}
+        {/* SCRUM-264: a client cut over to agent-engine got no warning of any
+            kind when it broke - agentServiceConfigured above has nothing to
+            say about it, since these runs never touch agent-service. */}
+        {shouldShowEngineHealthBanner(client.agentsRepoSlug, agents.map((a) => a.key)) && (
+          <EngineHealthBanner viewerIsClient />
+        )}
         {allRosterEntries.length > 0 ? (
           <ClientAgentRoster clientId={id} entries={allRosterEntries} />
         ) : (
@@ -604,6 +612,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           Agent runs are paused. The agent-service environment is not configured, so submitting a
           run will fail until it is set. Schedules, history and deliverables below are unaffected.
         </p>
+      )}
+      {/* SCRUM-264: agent-service's counterpart above has nothing to say about
+          a client cut over to agent-engine - this roster showed enabled Run
+          controls with no sign the engine's own transport was unconfigured.
+          Only renders when THIS client actually routes through agent-engine
+          (shouldShowEngineHealthBanner), so a client still fully on
+          agent-service never sees it. */}
+      {shouldShowEngineHealthBanner(client.agentsRepoSlug, enabledAgents.map((a) => a.key)) && (
+        <EngineHealthBanner viewerIsClient={false} />
       )}
       {/* An unconfigured service must NOT hide the roster. F34's banner says
           "everything below is unaffected", and replacing the whole grid with an

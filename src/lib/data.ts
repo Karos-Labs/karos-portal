@@ -838,10 +838,27 @@ export async function listAssets(opts?: { clientId?: string }): Promise<Asset[]>
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }
 
-export async function getAsset(id: string): Promise<Asset | null> {
+/**
+ * `cache()`-wrapped for the same reason as `getClient` above (SCRUM-265 item
+ * 3: "cache() on the hot getters"): a job's asset list and its own detail
+ * views can both ask for the same asset id within one request/render, and
+ * without this every one of those asks is its own Firestore round trip.
+ *
+ * NOT applied to `getJob` alongside it, deliberately: `refreshJobStatusAction`
+ * and `requestJobCancellation` (`src/lib/actions/external-job-actions.ts`)
+ * both call `getJob(jobId)` a SECOND time, by the same id, specifically to
+ * read back a value `updateJob` just wrote earlier in the same call — a
+ * request-scoped cache would hand them the pre-write copy forever, which is
+ * the opposite of what either was written to guarantee. No such re-read
+ * exists for `getAsset` today (checked every `updateAsset` call site); if one
+ * is ever added, it needs the same `getFreshX`-style escape hatch
+ * `layout.tsx`'s `starredAgentIds` backfill already uses for `getClient` —
+ * mutate the in-memory object directly rather than re-asking the cache.
+ */
+export const getAsset = cache(async (id: string): Promise<Asset | null> => {
   const doc = await col.assets().doc(id).get();
   return doc.exists ? withId<Asset>(doc) : null;
-}
+});
 
 /**
  * Creates an asset. With no `id`, an auto-generated one (the ordinary case,

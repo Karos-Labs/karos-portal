@@ -1,8 +1,6 @@
 import "server-only";
 
 import { streamText, stepCountIs } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { MODELS } from "@/lib/constants";
 import type { Client } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import {
@@ -209,13 +207,19 @@ interface AuditResult {
 }
 
 async function runSiteAudit(client: Client, rules: string): Promise<AuditResult> {
-  const auditStream = streamText({
-    model: anthropic(MODELS.SONNET),
-    system: `${rules}\n\nYou are a senior technical SEO and GEO (generative engine optimization) auditor with LIVE web access. You measure, you never guess: every check verdict cites what you actually observed this run (a URL, an HTTP behavior, a literal element). What you could not measure is marked PENDING — never a fabricated pass or fail. Findings are labeled CONFIRMED (verified from fetched data), LIKELY (strong signal, not directly verified), or HYPOTHESIS (pattern-based inference).`,
-    tools: {
-      web_search: anthropic.tools.webSearch_20250305({ maxUses: 10 }),
-      web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 12, maxContentTokens: 6000 }),
+  // Resolved through the shared role resolver — model and tools from one
+  // vendor resolution, so they cannot diverge from what
+  // usageFor("seo.site_audit") logs below. See AU70/SCRUM-370.
+  const auditAi = aiFor("seo.site_audit", {
+    budgets: {
+      web_search: { maxUses: 10 },
+      web_fetch: { maxUses: 12, maxContentTokens: 6000 },
     },
+  });
+  const auditStream = streamText({
+    model: auditAi.model,
+    system: `${rules}\n\nYou are a senior technical SEO and GEO (generative engine optimization) auditor with LIVE web access. You measure, you never guess: every check verdict cites what you actually observed this run (a URL, an HTTP behavior, a literal element). What you could not measure is marked PENDING — never a fabricated pass or fail. Findings are labeled CONFIRMED (verified from fetched data), LIKELY (strong signal, not directly verified), or HYPOTHESIS (pattern-based inference).`,
+    tools: auditAi.tools,
     // Continue past Anthropic pause_turn while the audit crawls (default stepCountIs(1)
     // would stop at the first pause with an empty, JSON-less stub).
     stopWhen: stepCountIs(24),

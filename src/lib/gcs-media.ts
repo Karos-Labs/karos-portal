@@ -14,12 +14,32 @@ import { dispositionFilename } from "@/lib/media-type";
  * Uses `@google-cloud/storage` directly (unlike storage.ts's REST workaround)
  * because V4 signed URLs need either a service-account private key to sign
  * locally, or — with no key present — the IAM signBlob API, both of which
- * this SDK already handles. Credentials mirror firebase-admin's own
- * precedence (src/lib/firebase/admin.ts) so no separate key is needed: the
- * same FIREBASE_SERVICE_ACCOUNT_KEY / FIREBASE_PROJECT_ID+CLIENT_EMAIL+
- * PRIVATE_KEY already configured for Firestore also authorizes GCS. Falls
- * back to Application Default Credentials (Cloud Run's attached service
- * account) when neither is set.
+ * this SDK already handles.
+ *
+ * SCRUM-373: this client is Application Default Credentials ONLY, deliberately
+ * NOT firebase-admin's precedence chain (FIREBASE_SERVICE_ACCOUNT_KEY / discrete
+ * FIREBASE_* vars / ADC). That chain used to be mirrored here, which meant every
+ * GCS call ran as `firebase-adminsdk-fbsvc@karoscmo` — a shared production
+ * identity present in BOTH environments — instead of the Cloud Run runtime SA,
+ * making every bucket-scoped IAM grant to a runtime SA (SCRUM-369, SCRUM-371)
+ * inert: the code never authenticated as the principal that was granted.
+ *
+ * Signing strategy, decided (see docs/gcs-media-setup.md §3): IAM `signBlob` via
+ * `roles/iam.serviceAccountTokenCreator` granted to the runtime SA on itself,
+ * NOT a dedicated signing key. No key material to create, store, rotate or leak
+ * — the same reasoning firebase/admin.ts already gives for its own ADC
+ * fallback. This is not a guess about SDK behaviour: google-auth-library's
+ * `GoogleAuth.sign()` (node_modules/google-auth-library/build/src/auth/
+ * googleauth.js) only signs locally when the resolved client carries a JWT
+ * private key; a metadata-server / ADC client has none, so it falls through to
+ * `signBlob()`, which POSTs to `iamcredentials.googleapis.com/.../{client_email}
+ * :signBlob` authenticated as that same identity — i.e. self-impersonation,
+ * which is exactly what `serviceAccountTokenCreator`-on-self authorizes and a
+ * bare `storage.objectAdmin` grant does not.
+ *
+ * Firestore's use of the Firebase credential (src/lib/firebase/admin.ts) is
+ * unchanged by this ticket — that chain still exists there, deliberately; see
+ * SCRUM-373's description for why the two are being decided separately.
  */
 
 const UPLOAD_URL_TTL_MS = 15 * 60 * 1000;
@@ -42,21 +62,11 @@ let storage: Storage | undefined;
 
 function getStorageClient(): Storage {
   if (storage) return storage;
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-  if (raw) {
-    const credentials = JSON.parse(raw);
-    storage = new Storage({ credentials, projectId: credentials.project_id });
-    return storage;
-  }
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (projectId && clientEmail && privateKey) {
-    storage = new Storage({ credentials: { client_email: clientEmail, private_key: privateKey }, projectId });
-    return storage;
-  }
-  // Application Default Credentials — Cloud Run's attached service account,
-  // or `gcloud auth application-default login` locally.
+  // Application Default Credentials ONLY — Cloud Run's attached runtime service
+  // account, or `gcloud auth application-default login` locally. Deliberately
+  // does NOT read FIREBASE_SERVICE_ACCOUNT_KEY or the discrete FIREBASE_* vars
+  // (see the module header): that credential is a different, shared identity
+  // and using it here is the SCRUM-373 finding, not a fallback to preserve.
   storage = new Storage();
   return storage;
 }

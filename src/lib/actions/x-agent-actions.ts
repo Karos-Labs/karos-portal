@@ -15,8 +15,6 @@
 
 import { revalidatePath } from "next/cache";
 import { generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { MODELS } from "@/lib/constants";
 import { logger, readWebSearchCount } from "@/services/logger";
 import {
   addXDraftFeedback,
@@ -38,7 +36,7 @@ import { CREDIT_COSTS } from "@/lib/credits";
 import { withClientModelCharge } from "@/lib/client-model-charge";
 import type { ContextDocTier } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
-import { usageFor } from "@/lib/ai/provider";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 const MAX_TEXT = 2_000;
 /** originalText is system-captured (pick time), not user-typed — truncate rather than error,
@@ -355,9 +353,13 @@ export async function proposeXRosterAction(input: {
       };
       let usageLogged = false;
       try {
+        // Resolved through the shared role resolver, not a hardcoded vendor
+        // call — model AND tools from one resolution, so they cannot diverge
+        // from what usageMeta above (usageFor) already logs. AU70/SCRUM-370.
+        const research = aiFor("x_agent.research", { budgets: { web_search: { maxUses: 4 } } });
         const { text, usage, providerMetadata } = await generateText({
-          model: anthropic(MODELS.SONNET),
-          tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
+          model: research.model,
+          tools: research.tools,
           system:
             "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active, such as well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
           prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
