@@ -1177,7 +1177,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Trigger an ad-hoc run of one of this client's custom agents right now, billed at its normal per-run rate. " +
       "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits. " +
       "contextItemIds attaches existing client context files/images as reference for this run; briefValues carries any " +
-      "brief field values the agent needs as data (not prose). Both are optional. Returns the new job id.",
+      "brief field values the agent needs as data (not prose). Both are optional. Returns the new job id. " +
+      "STAFF ONLY: publishAt schedules the resulting deliverable to publish on that date instead of landing as a draft " +
+      "(T-B9, 'generate now, publish on date X') — give it as ISO 8601, computed from CURRENT DATE/TIME above, and only " +
+      "when a staff user explicitly asked for a specific publish date. Never pass it for a client session.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name"),
       prompt: z.string().optional().describe("Optional extra instruction for this run"),
@@ -1189,14 +1192,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .record(z.string(), z.string())
         .optional()
         .describe("Brief field values this agent needs as data, keyed by field name"),
+      publishAt: z
+        .string()
+        .optional()
+        .describe("Staff only. Target publish date/time for the deliverable, ISO 8601, e.g. 2026-09-10T13:00:00.000Z"),
     }),
-    execute: async ({ agentQuery, prompt, contextItemIds, briefValues }) => {
+    execute: async ({ agentQuery, prompt, contextItemIds, briefValues, publishAt }) => {
       const q = agentQuery.trim().toLowerCase();
       const match = customAgents.find((a) => a.name.toLowerCase().includes(q));
       if (!match) {
         return customAgents.length > 0
           ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
           : "This client has no AI agents assigned yet.";
+      }
+      // T-B9: publishAt is staff-only — checked HERE, not only inside
+      // runCustomAgentAction, so a client session gets a copilot-authored
+      // refusal in its own voice rather than runCustomAgentAction's generic
+      // one. runCustomAgentAction still re-checks (a chat tool is not the only
+      // caller of that action), so this is belt, not the only suspenders.
+      let requestedScheduledAt: number | undefined;
+      if (publishAt) {
+        if (!isStaffCopilotActor(user)) {
+          return "Scheduling a publish date for a fresh run is a staff action. Ask your Karos team.";
+        }
+        const parsed = Date.parse(publishAt);
+        if (Number.isNaN(parsed)) {
+          return "That publish date didn't parse. Give it as ISO 8601, e.g. 2026-09-10T13:00:00.000Z.";
+        }
+        if (parsed <= Date.now()) {
+          return "Pick a publish date in the future.";
+        }
+        requestedScheduledAt = parsed;
       }
       // chargeMultiplier: what a FRESH portal dialog would submit for this
       // agent (visible selector defaults only — a hidden batch size never
@@ -1212,6 +1238,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...(contextItemIds && contextItemIds.length > 0 ? { contextItemIds } : {}),
         ...(briefValues && Object.keys(briefValues).length > 0 ? { briefValues } : {}),
         ...(chatBatchSize > 1 ? { chargeMultiplier: chatBatchSize } : {}),
+        ...(requestedScheduledAt != null ? { requestedScheduledAt } : {}),
       });
       if (result.error) {
         // REUSED, not re-answered: `clientSafeRunError` is exactly this shape (a
@@ -1235,11 +1262,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // caller can poll it. This is the client- and staff-reachable equivalent,
       // authorized on the actual signed-in session via `runCustomAgentAction`
       // (no PAT involved) — so it must not drop `result.jobId` on the floor the
-      // way this tool previously did.
-      return (
-        `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, ` +
-        `and your Karos team reviews the result before it reaches your Workspace.`
-      );
+      // way this tool previously did. T-B9's scheduled variant carries the same
+      // id: a scheduled run is still a run someone has to be able to look up.
+      return requestedScheduledAt != null
+        ? `Started a run of **${match.name}** (job \`${result.jobId}\`), set to publish ${new Date(requestedScheduledAt).toISOString()} once it's ready.`
+        : `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
     },
   });
 

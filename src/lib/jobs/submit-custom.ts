@@ -218,6 +218,13 @@ export interface SubmitCustomAgentInput {
    */
   extraMetadata?: Record<string, string>;
   /**
+   * T-B9: a target publish date for the deliverable this run produces, stamped
+   * on the job doc so the completion webhook can schedule the asset directly
+   * instead of landing it as an undated draft. Staff-only — enforced in
+   * `runCustomAgentAction`, not here; this layer only carries the value.
+   */
+  requestedScheduledAt?: number;
+  /**
    * Overrides the per-run price and ledger operation for runs that are not
    * priced per output — today only the client-billed LAUNCH, which costs
    * `CustomAgent.launchCreditCost` and lands as `agent_launch`. Charged with
@@ -589,6 +596,7 @@ export async function submitCustomAgentJob(
     ...(input.clientAgentId ? { clientAgentId: input.clientAgentId } : {}),
     ...(input.templateKey ? { templateKey: input.templateKey } : {}),
     ...(runLabel ? { runLabel } : {}),
+    ...(input.requestedScheduledAt ? { requestedScheduledAt: input.requestedScheduledAt } : {}),
     agentName: agent.name,
     title: jobTitleForClient(agent.name, client.name),
     status: "queued",
