@@ -1159,12 +1159,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const runAgentNowTool = tool({
     description:
       "Trigger an ad-hoc run of one of this client's custom agents right now, billed at its normal per-run rate. " +
-      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits.",
+      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits. " +
+      "contextItemIds attaches existing client context files/images as reference for this run; briefValues carries any " +
+      "brief field values the agent needs as data (not prose). Both are optional. Returns the new job id.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name"),
       prompt: z.string().optional().describe("Optional extra instruction for this run"),
+      contextItemIds: z
+        .array(z.string())
+        .optional()
+        .describe("Ids of existing client context items (files/images) to attach as reference for this run"),
+      briefValues: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe("Brief field values this agent needs as data, keyed by field name"),
     }),
-    execute: async ({ agentQuery, prompt }) => {
+    execute: async ({ agentQuery, prompt, contextItemIds, briefValues }) => {
       const q = agentQuery.trim().toLowerCase();
       const match = customAgents.find((a) => a.name.toLowerCase().includes(q));
       if (!match) {
@@ -1183,6 +1193,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         agentId: match.id,
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
+        ...(contextItemIds && contextItemIds.length > 0 ? { contextItemIds } : {}),
+        ...(briefValues && Object.keys(briefValues).length > 0 ? { briefValues } : {}),
         ...(chatBatchSize > 1 ? { chargeMultiplier: chatBatchSize } : {}),
       });
       if (result.error) {
@@ -1202,7 +1214,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? clientSafeRunError(result.error)
           : `Couldn't start that run: ${result.error}`;
       }
-      return `Started a run of **${match.name}**. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
+      // The MCP `run_agent` tool (staff-only, PAT-gated — src/lib/mcp/tools.ts)
+      // already proved job id must come back from a run-agent primitive so the
+      // caller can poll it. This is the client- and staff-reachable equivalent,
+      // authorized on the actual signed-in session via `runCustomAgentAction`
+      // (no PAT involved) — so it must not drop `result.jobId` on the floor the
+      // way this tool previously did.
+      return (
+        `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, ` +
+        `and your Karos team reviews the result before it reaches your Workspace.`
+      );
     },
   });
 
