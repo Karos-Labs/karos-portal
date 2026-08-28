@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import { updateJob } from "@/lib/data";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { materializeAgentEngineDeliverable } from "./materialize";
@@ -77,6 +78,27 @@ function terminalJobUpdate(run: AgentEngineRunRecord): TerminalJobUpdate | undef
     case "awaiting_gate":
       return undefined;
   }
+}
+
+/**
+ * Whether a job is still in flight, for a caller that has ALREADY fetched
+ * `agentEngineView` (or knows there is none) and just needs the boolean —
+ * the exact predicate the Job detail page computed inline as `inProgress` /
+ * `agentEngineTerminal` before SCRUM-265 item 1, now shared with the narrow
+ * status route (`/api/jobs/[id]/status`) so the two can never drift apart.
+ *
+ * Reuses `terminalJobUpdate` rather than re-listing agent-engine's terminal
+ * statuses a second time: a run is terminal here IFF `terminalJobUpdate`
+ * would have something to write for it. A dispatched run whose Firestore
+ * record isn't visible YET (`agentEngineView === undefined`) counts as still
+ * in progress — it hasn't reached a terminal state, it just hasn't reached
+ * ANY state this reader can see.
+ */
+export function isJobInProgress(job: Job, agentEngineView?: AgentEngineRunView): boolean {
+  if (job.agentEngineRunId) {
+    return agentEngineView === undefined || terminalJobUpdate(agentEngineView.run) === undefined;
+  }
+  return job.status === "running" || job.status === "queued";
 }
 
 /**
@@ -192,4 +214,58 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   }
 
   return { ...job, ...update, assetIds };
+}
+
+/**
+ * SCRUM-265 item 4 — "Stop writing during render on the job page."
+ *
+ * The Job detail page used to `await syncAgentEngineJobStatusFromView(...)`
+ * directly in its render, which means every view of an in-flight or just-
+ * finished agent-engine job blocked the response on a Firestore write (and,
+ * on the completing view, on `materializeAgentEngineDeliverable`'s own HTTP
+ * fetch + asset write + `reflowClientChain`) before the page could render at
+ * all. None of that work affects what this render needs to SHOW — the status/
+ * error/heldReason fields come straight out of `view` — only what gets
+ * PERSISTED for the next request.
+ *
+ * This is the render-safe half: it computes the same transition purely (no
+ * I/O) for THIS response, and — only when there is a real transition to
+ * record — schedules the full, unmodified `syncAgentEngineJobStatusFromView`
+ * (status write, materialize, refund, all of it) via `after()`, so it runs
+ * once the response has already been sent. `after()` requires an active
+ * request scope, which is exactly why this is a SEPARATE function from
+ * `syncAgentEngineJobStatusFromView` rather than an `after()` call added
+ * inside it — that function is also called synchronously, outside any
+ * request, by the reconcile cron sweep (`/api/agent-engine/reconcile`) and by
+ * this repo's own unit tests, and it needs its result (assetIds, status) back
+ * immediately in both places.
+ *
+ * Known, accepted trade-off: a run whose completion is caught on THIS exact
+ * page view no longer shows its freshly materialized deliverable in the same
+ * response — `assetIds` isn't known until `materializeAgentEngineDeliverable`
+ * actually runs, and that now happens after the response, not before it. It
+ * appears on the next view of the page, or via the periodic reconcile sweep,
+ * whichever comes first — the same "somebody will pick this up" guarantee the
+ * sweep already exists to provide (see that route's own doc comment).
+ */
+export function scheduleAgentEngineJobStatusSync(job: Job, view: AgentEngineRunView): Job {
+  const update = terminalJobUpdate(view.run);
+  if (!update) return job; // still in flight — nothing to schedule
+
+  after(() => {
+    syncAgentEngineJobStatusFromView(job, view).catch((error: unknown) => {
+      // Best-effort, same as the other after()-deferred side effects in this
+      // codebase (see cloudbuild.promote.yaml's --no-cpu-throttling note,
+      // SCRUM-265 item 2) — a dropped tick here is caught by the next page
+      // view or the next reconcile sweep, neither of which this function has
+      // any way to force.
+      console.error(`[agent-engine] deferred status sync failed for job ${job.id}`, error);
+    });
+  });
+
+  // In-memory only — NOT what gets persisted (that's the deferred call
+  // above). Good enough for this render: status/error/heldReason are exactly
+  // what `view` already says, and assetIds is deliberately left as whatever
+  // the caller already fetched with, per the trade-off noted above.
+  return { ...job, ...update };
 }

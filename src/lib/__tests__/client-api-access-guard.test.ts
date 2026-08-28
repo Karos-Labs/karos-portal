@@ -677,6 +677,11 @@ describe("every API route that takes a client id asks the fence", () => {
     "integrations/linkedin/employee/auth": "fenced",
     "integrations/linkedin/employee/callback": "signed",
     "intel-report-schedule": "cron",
+    // Reads a JOB id from the request, never a client id — the narrow status
+    // poll behind /jobs/[id]'s own AutoRefresh (SCRUM-265 item 1). Staff-only
+    // via requireUser, same as the page it serves; no clientId ever crosses
+    // this boundary for the mechanical check below to catch.
+    "jobs/[id]/status": "self",
     mcp: "signed",
     publish: "cron",
     "run-scheduled": "cron",
