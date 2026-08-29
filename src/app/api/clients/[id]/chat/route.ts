@@ -50,7 +50,10 @@ import {
   clientSafeRunError,
   CLIENT_SAVE_REFUSAL_MESSAGE,
   defaultRunBatchSize,
+  agentEngineProductAcceptsMediaAssets,
 } from "@/lib/custom-agent-launch";
+import { resolveDispatchedAgentEngineProductId } from "@/lib/agent-engine/health";
+import { parseChatAttachments } from "@/lib/chat/chat-attachments";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
 import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { isInClientArchive, isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
@@ -136,8 +139,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
      * had not been sent.
      */
     model?: unknown;
+    /**
+     * T-B5: files the client attached to THIS message
+     * (chatbot-widget.tsx's `RunAttachments` "chat" mode) — already real
+     * `gs://` URIs from a completed browser → GCS upload, not a form field
+     * the model has to fill in. UNTRUSTED like every other body field:
+     * `parseChatAttachments` re-validates shape, URI scheme/tenancy and role
+     * before anything below reads it — see that module's own doc comment for
+     * why tenancy (not just scheme) matters once this is client-reachable.
+     */
+    attachments?: unknown;
   };
   const messages = (body.messages ?? []) as ModelMessage[];
+  // T-B5: validated once, read by both the system prompt appendix below (so
+  // the model knows a file exists to reference) and `run_agent_now`'s own
+  // execute (so the ACTUAL wiring into `briefValues.mediaAssets` happens in
+  // code we control, never by asking the model to reproduce a URI it was
+  // never given). Scoped to THIS route's own `clientId` — the tenancy check
+  // that makes an attacker-controlled `gs://` path unable to reference
+  // another client's media.
+  const turnAttachments = parseChatAttachments(body.attachments, clientId);
   // T-B3 (SCRUM-246) owns the decision of WHICH model runs: cheap Gemini by
   // default, the deep tier on request, and `body.model` treated as untrusted
   // `unknown` against a mandatory server-side allowlist — an unrecognized
@@ -547,6 +568,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const nowAppendix = `\n\n## CURRENT DATE/TIME\n${new Date().toISOString()} (UTC). Convert relative dates ("next Thursday", "in two weeks") from this instant.`;
 
   /**
+   * T-B5: tells the model a real file exists for this turn WITHOUT ever
+   * handing it the file's own URI. The actual wiring into
+   * `briefValues.mediaAssets` happens inside `run_agent_now`'s execute, from
+   * `turnAttachments` directly (a closure over server-side state) — never by
+   * asking the model to read a URI out of this prompt and retype it, which is
+   * exactly the fragile "paste JSON of gs:// URIs" pattern this ticket
+   * replaces. The model's only job is to notice the attachment exists and
+   * call the tool; letting it also handle the identifier would just move the
+   * old textarea's failure mode into the model's own text generation.
+   */
+  const attachmentsAppendix =
+    turnAttachments.length > 0
+      ? `\n\n## ATTACHED FILES\nThe user attached ${turnAttachments.length} file(s) to this message` +
+        `${turnAttachments.some((a) => a.label) ? `: ${turnAttachments.map((a) => a.label ?? "an unnamed file").join(", ")}` : ""}. ` +
+        `If they ask you to run an agent using them, call run_agent_now for the matching agent. The file is wired into that run ` +
+        `automatically when that agent works from media - if it does not, run_agent_now will say so and the run still proceeds ` +
+        `without it. Never invent, guess, or ask the user to retype a file path or URI; you do not have one and do not need one.`
+      : "";
+
+  /**
    * AF-8 REACHES THE MODEL'S OWN SENTENCES TOO.
    *
    * "Why is there an M dash? We don't use those." The static guard
@@ -586,6 +627,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     agentFeedbackAppendix +
     focusAppendix +
     nowAppendix +
+    attachmentsAppendix +
     styleAppendix;
 
   /* ── Shared tools ─────────────────────────────────────────────────── */
@@ -1241,6 +1283,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits. " +
       "contextItemIds attaches existing client context files/images as reference for this run; briefValues carries any " +
       "brief field values the agent needs as data (not prose). Both are optional. Returns the new job id. " +
+      "If the user attached file(s) to this message (see ATTACHED FILES above), do not pass them yourself. They are " +
+      "wired into the run automatically when the matched agent uses source media. " +
       "STAFF ONLY: publishAt schedules the resulting deliverable to publish on that date instead of landing as a draft " +
       "(T-B9, 'generate now, publish on date X') — give it as ISO 8601, computed from CURRENT DATE/TIME above, and only " +
       "when a staff user explicitly asked for a specific publish date. Never pass it for a client session.",
@@ -1294,12 +1338,62 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // visible multi-output default cannot be sold cheaper through chat than
       // through its own page.
       const chatBatchSize = defaultRunBatchSize({ key: match.key, name: match.name });
+
+      // T-B5: fold this turn's real, already-uploaded attachments into the
+      // SAME `briefValues.mediaAssets` JSON the run dialog's textarea field
+      // has always written (`MEDIA_ASSETS_FIELD_KEY`, custom-agent-launch.ts)
+      // — `toEngineRunInput` (agent-engine/product-mapping.ts) reads that key
+      // however it got filled in, so this is the one place that has to know
+      // the shape, not a second path the engine has to understand.
+      //
+      // Gated on `resolveDispatchedAgentEngineProductId`, NOT on
+      // `resolveAgentEngineProductIdForCustomAgent` alone: the earlier
+      // predicate only asks "does agent-engine have a workflow for this
+      // agent key", which says nothing about whether agent-engine dispatch
+      // is enabled at all or whether THIS client (`client.agentsRepoSlug`)
+      // has actually been cut over to it (`AGENT_ENGINE_CUSTOM_AGENT_CLIENTS`
+      // — unset/not-listed is the normal state for most clients mid-
+      // migration). Using the narrower predicate meant a client not yet cut
+      // over was told "Attached ... as source media for this run" for a run
+      // that silently fell through to the legacy agent-service path, which
+      // never reads `mediaAssets` at all. `resolveDispatchedAgentEngineProductId`
+      // (agent-engine/health.ts) is the SAME three-part gate
+      // `submit-custom.ts` applies immediately before it creates the job doc
+      // (that function now calls this one too, so the two cannot drift back
+      // apart) — so this can only ever claim "attached" when the run this
+      // tool is about to submit will really read it.
+      //
+      // Set (and OVERRIDE whatever the model put under
+      // `briefValues.mediaAssets`, if anything) rather than merged: the model
+      // was never given a real URI (see attachmentsAppendix above), so
+      // anything it supplied under that key is a guess, not data.
+      const engineProductId = resolveDispatchedAgentEngineProductId(match.key, client.agentsRepoSlug);
+      const mediaCapable = agentEngineProductAcceptsMediaAssets(engineProductId);
+      let attachmentNote = "";
+      let effectiveBriefValues = briefValues;
+      if (turnAttachments.length > 0) {
+        if (mediaCapable) {
+          effectiveBriefValues = { ...briefValues, mediaAssets: JSON.stringify(turnAttachments) };
+          attachmentNote = ` Attached ${turnAttachments.length === 1 ? "the file" : `${turnAttachments.length} files`} you sent as source media for this run.`;
+        } else {
+          // Still runs — an unused attachment is not a reason to block a run
+          // the user otherwise asked for — but said honestly rather than
+          // silently dropped, matching this route's general rule that a
+          // client is told what actually happened, not what was attempted.
+          // Reached both when the agent has no engine workflow that reads
+          // media AND when this client's runs of it are not (yet) routed to
+          // agent-engine at all — from the client's point of view those are
+          // the same fact: this run will not use the file.
+          attachmentNote = ` (The file(s) you attached aren't used by **${match.name}**, so they weren't sent with this run.)`;
+        }
+      }
+
       const result = await runCustomAgentAction({
         agentId: match.id,
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
         ...(contextItemIds && contextItemIds.length > 0 ? { contextItemIds } : {}),
-        ...(briefValues && Object.keys(briefValues).length > 0 ? { briefValues } : {}),
+        ...(effectiveBriefValues && Object.keys(effectiveBriefValues).length > 0 ? { briefValues: effectiveBriefValues } : {}),
         ...(chatBatchSize > 1 ? { chargeMultiplier: chatBatchSize } : {}),
         ...(requestedScheduledAt != null ? { requestedScheduledAt } : {}),
       });
@@ -1330,9 +1424,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       //
       // T-B4: the job id ALSO goes out as a typed `data-job` part, not only
       // baked into the confirmation sentence below. A future caller that wants
-      // to poll or display it (T-B5's file-processing job is the anticipated
-      // next writer of this same part) can read a structured field instead of
-      // parsing a backtick-quoted id out of prose the model is free to reword.
+      // to poll or display it can read a structured field instead of parsing
+      // a backtick-quoted id out of prose the model is free to reword. T-B5's
+      // file-processing run is exactly such a caller and deliberately does NOT
+      // get a second, parallel data part of its own for "a file was attached"
+      // — the upload itself is a synchronous browser→GCS PUT with no server-
+      // side job behind it (see run-media/route.ts), so the run this data-job
+      // part already announces IS the one thing that started; inventing a
+      // second signal for the same event is exactly the parallel-signal this
+      // ticket was told not to build.
       // `result.jobId` is typed optional even on a non-error result (the
       // action's own return shape) — guarded rather than asserted, so a
       // theoretical id-less success still returns its confirmation sentence
@@ -1351,8 +1451,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         });
       }
       return requestedScheduledAt != null
-        ? `Started a run of **${match.name}** (job \`${result.jobId}\`), set to publish ${new Date(requestedScheduledAt).toISOString()} once it's ready.`
-        : `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
+        ? `Started a run of **${match.name}** (job \`${result.jobId}\`), set to publish ${new Date(requestedScheduledAt).toISOString()} once it's ready.${attachmentNote}`
+        : `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.${attachmentNote}`;
     },
   });
 

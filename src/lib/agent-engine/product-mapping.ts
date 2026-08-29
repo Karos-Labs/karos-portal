@@ -504,8 +504,13 @@ export function toEngineRunInput(
   return input;
 }
 
-/** The asset roles agent-engine understands (`MediaAssetSchema` in its core package). */
-const MEDIA_ROLES = new Set(["source", "reference", "logo", "overlay"]);
+/**
+ * The asset roles agent-engine understands (`MediaAssetSchema` in its core
+ * package). Exported so `chat-attachments.ts` (T-B5) validates a chat-turn
+ * attachment against the exact same set this function already does, rather
+ * than a second copy of the list that can silently drift from this one.
+ */
+export const MEDIA_ROLES = new Set(["source", "reference", "logo", "overlay"]);
 
 /**
  * Attachments the engine will accept, and nothing else.

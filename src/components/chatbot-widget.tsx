@@ -10,6 +10,7 @@ import { renderSectionBody } from "@/lib/doc-render";
 import { readChatStream } from "@/lib/chat/client-stream";
 import type { ClientReport } from "@/lib/types";
 import { CHAT_MODEL_KEYS, CHAT_MODEL_OPTIONS, type ChatModelKey } from "@/lib/ai/chat-models";
+import { RunAttachments, type RunAttachment } from "@/components/agents/run-attachments";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
@@ -25,6 +26,14 @@ interface Message {
    * `content` is still what goes to the API.
    */
   display?: string;
+  /**
+   * Filenames/URIs of files sent WITH this message (T-B5), shown as a small
+   * chip row under the user bubble. Display-only - the actual `MediaAsset`
+   * objects the turn carried are never persisted here (`isPersistedMessage`
+   * only re-hydrates strings), so reloading a restored transcript shows a
+   * message was attached without re-attaching the files it named.
+   */
+  attachmentLabels?: string[];
 }
 
 /** One of this client's LIVE agents, offered in the `@mention` dropdown. */
@@ -74,7 +83,9 @@ function isPersistedMessage(v: unknown): v is Message {
     typeof m.id === "string" &&
     (m.role === "user" || m.role === "assistant") &&
     typeof m.content === "string" &&
-    (m.display === undefined || typeof m.display === "string")
+    (m.display === undefined || typeof m.display === "string") &&
+    (m.attachmentLabels === undefined ||
+      (Array.isArray(m.attachmentLabels) && m.attachmentLabels.every((x) => typeof x === "string")))
   );
 }
 
@@ -260,6 +271,14 @@ function useCopilot(
    * client-visible receipt.
    */
   const [preferredModel, setPreferredModel] = useState<ChatModelKey | null>(null);
+  /**
+   * T-B5: files uploaded (browser → GCS, real `gs://` URIs - see
+   * `RunAttachments`) and staged for the NEXT message only. Not persisted
+   * (unlike `focusAgent`/the transcript): a signed-URL upload is a live GCS
+   * object either way, and re-offering a stale pending attachment across a
+   * reload is a worse default than just asking the user to attach again.
+   */
+  const [attachments, setAttachments] = useState<RunAttachment[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   // Scoped to viewer AND client: sessionStorage survives sign-out in the same
   // tab, and StaffCopilotDock writes under this prefix too - an unscoped key
@@ -344,6 +363,7 @@ function useCopilot(
     setInput("");
     setError(null);
     setStreaming(false);
+    setAttachments([]);
     try {
       sessionStorage.removeItem(storageKey);
     } catch {
@@ -363,16 +383,24 @@ function useCopilot(
       const trimmed = text.trim();
       if (!trimmed || streaming) return;
 
+      // Captured before any state update below clears it - this message's
+      // attachments, not whatever is pending by the time the fetch resolves.
+      const turnAttachments = attachments;
+
       const userMsg: Message = {
         id: crypto.randomUUID(),
         role: "user",
         content: trimmed,
         ...(display ? { display } : {}),
+        ...(turnAttachments.length > 0
+          ? { attachmentLabels: turnAttachments.map((a) => a.label ?? a.uri) }
+          : {}),
       };
       const assistantId = crypto.randomUUID();
 
       setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
       setInput("");
+      setAttachments([]);
       setStreaming(true);
       setError(null);
 
@@ -394,6 +422,12 @@ function useCopilot(
             // body field and validates it against its own server-side copy of
             // the same allowlist (resolveChatModel, lib/ai/chat-models.ts).
             ...(preferredModel ? { model: preferredModel } : {}),
+            // T-B5: already-uploaded `MediaAsset`-shaped attachments for this
+            // turn - real `gs://` URIs from RunAttachments' signed-URL upload,
+            // not a form field. UNTRUSTED like everything else in this body;
+            // the route re-validates every field (parseChatAttachments),
+            // including tying each `gs://` path back to THIS client.
+            ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           }),
           signal: controller.signal,
         });
@@ -474,7 +508,7 @@ function useCopilot(
         setStreaming(false);
       }
     },
-    [clientId, messages, streaming, focusAgent, preferredModel, onBrandingChange, onTasksCreated, router],
+    [clientId, messages, streaming, focusAgent, preferredModel, attachments, onBrandingChange, onTasksCreated, router],
   );
 
   /**
@@ -524,6 +558,7 @@ function useCopilot(
   return {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
     focusAgent, setFocusAgent, preferredModel, setPreferredModel,
+    attachments, setAttachments,
   };
 }
 
@@ -814,6 +849,7 @@ export function ChatbotWidget({
   const {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
     focusAgent, setFocusAgent, preferredModel, setPreferredModel,
+    attachments, setAttachments,
   } = useCopilot(clientId, viewerUid, onBrandingChange, onTasksCreated);
 
   // Whether to show the proactive welcome instead of the standard empty state
@@ -1080,6 +1116,23 @@ export function ChatbotWidget({
                     ) : (
                       <TypingDots />
                     )}
+                    {/* T-B5: what was attached to THIS message, not a
+                        generic "files" line - a client scanning back through
+                        the transcript should see which message a photo rode
+                        in on. */}
+                    {msg.attachmentLabels && msg.attachmentLabels.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {msg.attachmentLabels.map((label, i) => (
+                          <span
+                            key={`${msg.id}-attachment-${i}`}
+                            className="inline-flex items-center gap-1 rounded bg-black/10 px-1.5 py-0.5 text-[10px] text-primary-foreground/80"
+                          >
+                            <Icon name="Paperclip" className="h-2.5 w-2.5" />
+                            <span className="max-w-[160px] truncate">{label}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1204,6 +1257,20 @@ export function ChatbotWidget({
                   ))}
               </div>
             )}
+            {/* T-B5: real upload surface, not the run dialog's raw-JSON
+                textarea - reuses the same signed-URL upload RunAttachments
+                already does for the admin agent card, so a chat attachment
+                is a real `gs://` MediaAsset the moment the file finishes
+                uploading, before the message is even sent. */}
+            <div className="border-t border-border px-3 pt-2">
+              <RunAttachments
+                clientId={clientId}
+                attachments={attachments}
+                onChange={setAttachments}
+                disabled={streaming}
+                mode="chat"
+              />
+            </div>
             <ModelPicker value={preferredModel} onChange={setPreferredModel} />
             <form
               onSubmit={handleSubmit}

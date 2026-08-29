@@ -1,9 +1,8 @@
 import "server-only";
 import { jobTitleForClient } from "@/lib/job-title";
-import { isAgentEngineDispatchEnabled, dispatchAgentEngineRun } from "@/lib/agent-engine/dispatch";
+import { dispatchAgentEngineRun } from "@/lib/agent-engine/dispatch";
+import { resolveDispatchedAgentEngineProductId } from "@/lib/agent-engine/health";
 import {
-  isClientEnabledForEngineCustomAgents,
-  resolveAgentEngineProductIdForCustomAgent,
   resolveAgentEngineRunKind,
   toEngineRunInput,
 } from "@/lib/agent-engine/product-mapping";
@@ -546,12 +545,7 @@ export async function submitCustomAgentJob(
   // agent-service. Decided before the job doc is written so the doc records
   // the truth from the start — a job that says "agent-service" and was handed
   // to the engine is unreconcilable by every surface that reads agentId.
-  const engineProductId =
-    isAgentEngineDispatchEnabled() &&
-    client.agentsRepoSlug &&
-    isClientEnabledForEngineCustomAgents(client.agentsRepoSlug)
-      ? resolveAgentEngineProductIdForCustomAgent(agent.key)
-      : undefined;
+  const engineProductId = resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug);
 
   // Checked here rather than at the top of the function, which is where it
   // used to live: an agent routed to agent-engine has no use for

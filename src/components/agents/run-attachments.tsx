@@ -14,14 +14,17 @@ export interface RunAttachment {
 /**
  * How the agent under this control consumes what it is given.
  *
- * Two modes because two workflows read `mediaAssets` and they read it
- * differently: `instagram-agent` fills carousel slides in upload order, and
- * `tiktok-agent` takes ONE episode to cut a clip out of. A single mode would
- * have to lie to one of them — offering "slide 3" on an agent that ignores
- * everything after the first file, or hiding the slide order from the agent
- * whose whole contract is that order.
+ * Three modes because three surfaces read `mediaAssets` differently:
+ * `instagram-agent` fills carousel slides in upload order, `tiktok-agent`
+ * takes ONE episode to cut a clip out of, and the copilot chat (T-B5) has no
+ * agent picked yet when the file is attached — a run may not even happen this
+ * turn — so it can only promise "source media for whichever agent runs next",
+ * not a slide number or an episode role. A single mode would have to lie to
+ * one of them — offering "slide 3" on an agent that ignores everything after
+ * the first file, or hiding the slide order from the agent whose whole
+ * contract is that order.
  */
-export type AttachmentMode = "slides" | "source-video";
+export type AttachmentMode = "slides" | "source-video" | "chat";
 
 const MODES: Record<
   AttachmentMode,
@@ -32,7 +35,7 @@ const MODES: Record<
     // One per slide, and a carousel is ten at the very most.
     max: 10,
     chip: (index) => `slide ${index + 1}`,
-    hint: "Placed in upload order — first file on slide 1. Any slide you leave uncovered is sourced or generated as usual.",
+    hint: "Placed in upload order, first file on slide 1. Any slide you leave uncovered is sourced or generated as usual.",
     addLabel: "Attach images",
   },
   "source-video": {
@@ -43,6 +46,19 @@ const MODES: Record<
     chip: () => "source",
     hint: "The episode this run cuts its clip from.",
     addLabel: "Attach source video",
+  },
+  chat: {
+    // Same set the signed-URL route (`/api/agent-engine/run-media`) itself
+    // enforces server-side — offering a picker for a type the upload would
+    // 415 on is a control that lies.
+    accept: "image/jpeg,image/png,image/webp,video/mp4,video/quicktime",
+    // No slide grid or clip role to fill here — just "don't let one message
+    // silently balloon into a dozen uploads". Matches MAX_CHAT_ATTACHMENTS
+    // (lib/chat/chat-attachments.ts), the server-side backstop for this cap.
+    max: 4,
+    chip: () => "attached",
+    hint: "Sent with your next message as source media, if you ask an agent to run.",
+    addLabel: "Attach a file",
   },
 };
 
@@ -107,7 +123,7 @@ export function RunAttachments({
   async function onPick(files: FileList | null) {
     if (!files || files.length === 0 || busy) return;
     if (!clientId) {
-      setError("Pick a client first — an attachment is stored against their media.");
+      setError("Pick a client first. An attachment is stored against their media.");
       return;
     }
     // Refused before uploading, not trimmed after: a file that has already cost
