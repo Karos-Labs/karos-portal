@@ -1537,14 +1537,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...(category ? { category } : {}),
       });
       if (result.error) return result.error;
-      // T-B4: a typed `data-feedback` part alongside the confirmation prose,
-      // for T-B18's feedback loop (not built yet) to react to structurally —
+      // T-B4/T-B18: a typed `data-feedback` part alongside the confirmation
+      // prose. T-B18's client-facing surface (chatbot-widget.tsx, via
+      // client-stream.ts's `feedback` event) reacts to it structurally —
       // which agent, which scope/template/category — instead of re-deriving
-      // that from a sentence written for a human to read.
+      // that from a sentence written for a human to read. `agentId` is
+      // `customAgentId`, not `umbrella.id` — see stream-protocol.ts's
+      // `ChatDataParts.feedback` doc comment for why.
       chatWriter?.write({
         type: "data-feedback",
         data: {
           agentName: umbrella.displayName,
+          agentId: umbrella.customAgentId,
           scope,
           ...(scope === "template" && templateKey ? { templateKey } : {}),
           ...(category ? { category } : {}),

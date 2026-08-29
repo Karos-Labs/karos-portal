@@ -91,12 +91,66 @@ describe("readChatStream", () => {
     expect(events).toEqual([{ type: "error", errorText: "An error occurred." }]);
   });
 
-  it("ignores data parts this widget doesn't act on yet (data-model, data-job, data-feedback)", async () => {
+  it("ignores data parts this widget doesn't act on yet (data-model, data-job)", async () => {
     const body = sse(
       { type: "data-model", data: { modelId: "claude-haiku-4-5", vendor: "anthropic" } },
       { type: "data-job", data: { jobId: "job-1", agentName: "X", status: "started" } },
-      { type: "data-feedback", data: { agentName: "X", scope: "agent" } },
     );
+    const events = await collect(responseFromChunks([body]));
+    expect(events).toEqual([]);
+  });
+
+  it("surfaces a data-feedback part as a typed feedback event (T-B18)", async () => {
+    const body = sse({
+      type: "data-feedback",
+      data: { agentName: "X Agent", agentId: "custom-agent-1", scope: "agent" },
+    });
+    const events = await collect(responseFromChunks([body]));
+    expect(events).toEqual([
+      {
+        type: "feedback",
+        feedback: { agentName: "X Agent", agentId: "custom-agent-1", scope: "agent" },
+      },
+    ]);
+  });
+
+  it("carries templateKey and category through a data-feedback part when present", async () => {
+    const body = sse({
+      type: "data-feedback",
+      data: {
+        agentName: "X Agent",
+        agentId: "custom-agent-1",
+        scope: "template",
+        templateKey: "numbers",
+        category: "tone",
+      },
+    });
+    const events = await collect(responseFromChunks([body]));
+    expect(events).toEqual([
+      {
+        type: "feedback",
+        feedback: {
+          agentName: "X Agent",
+          agentId: "custom-agent-1",
+          scope: "template",
+          templateKey: "numbers",
+          category: "tone",
+        },
+      },
+    ]);
+  });
+
+  it("drops a data-feedback part missing agentId (a stale server build predating T-B18's field)", async () => {
+    const body = sse({ type: "data-feedback", data: { agentName: "X Agent", scope: "agent" } });
+    const events = await collect(responseFromChunks([body]));
+    expect(events).toEqual([]);
+  });
+
+  it("drops a data-feedback part with an unrecognized scope", async () => {
+    const body = sse({
+      type: "data-feedback",
+      data: { agentName: "X Agent", agentId: "custom-agent-1", scope: "bogus" },
+    });
     const events = await collect(responseFromChunks([body]));
     expect(events).toEqual([]);
   });
