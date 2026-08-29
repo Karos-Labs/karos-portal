@@ -82,8 +82,32 @@ export type ChatModelKey = keyof typeof CHAT_MODEL_OPTIONS;
 /** Every allowed key, for the picker UI to render without hardcoding a second copy of the list. */
 export const CHAT_MODEL_KEYS = Object.keys(CHAT_MODEL_OPTIONS) as ChatModelKey[];
 
-/** Cost-based default: the cheap model, when nobody asked for anything else. */
-export const DEFAULT_CHAT_MODEL_KEY: ChatModelKey = "gemini-flash";
+/**
+ * Cost-based default: the cheap model, when nobody asked for anything else.
+ *
+ * HELD AT `haiku` PENDING VERTEX CONFIG, deliberately — this is NOT what T-B3
+ * specifies, and it is one line to put back.
+ *
+ * `googleVertex()` validates `GOOGLE_VERTEX_LOCATION` synchronously at
+ * construction, unlike `vertexAnthropic()` which defers. Neither
+ * `GOOGLE_VERTEX_PROJECT` nor `GOOGLE_VERTEX_LOCATION` is set anywhere this
+ * repo deploys from: `cloudbuild.yaml`'s `--set-env-vars` passes
+ * `GOOGLE_CLOUD_PROJECT` and neither of those two, `.env.example` does not
+ * name them, and the only occurrences in the tree are the `vi.stubEnv` calls
+ * in this module's own routing test. Shipping `gemini-flash` as the default
+ * would therefore have made EVERY non-deep copilot turn — the most common
+ * path in the product — throw at model construction on the first deploy.
+ *
+ * Everything else T-B3 built ships unchanged: the allowlist, the manual
+ * Fast/Quality picker, and `gemini-flash` as a selectable, priced option. A
+ * client who picks "Fast" still gets it. Only which option is DEFAULT is held
+ * back, so the failure is opt-in and visible rather than universal.
+ *
+ * TO RESTORE: confirm the Cloud Run services carry `GOOGLE_VERTEX_PROJECT` +
+ * `GOOGLE_VERTEX_LOCATION` and that the Vertex project has Gemini model
+ * access, then set this back to `"gemini-flash"`. Nothing else changes.
+ */
+export const DEFAULT_CHAT_MODEL_KEY: ChatModelKey = "haiku";
 /** What `deep: true` (the 3 proactive-action chips) resolves to. */
 export const DEEP_CHAT_MODEL_KEY: ChatModelKey = "haiku";
 
