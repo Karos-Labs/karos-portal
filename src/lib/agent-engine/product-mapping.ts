@@ -1,4 +1,5 @@
 import type { ManagedTaskType } from "@/lib/types";
+import type { EngineProductWithDeliverable } from "./materialize";
 
 /**
  * Maps one of karosCMO's "managed" catalog task types onto agent-engine's
@@ -64,7 +65,26 @@ export function resolveAgentEngineProductId(taskType: ManagedTaskType, brief: Re
  * executor for the overwhelming majority of production jobs. This is a
  * per-agent cutover, not a switch.
  */
-const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, string>> = {
+/**
+ * SCRUM-213 (C5)'s build-time guard: every value here must be a key of
+ * `PRODUCT_DELIVERABLES` in `materialize.ts` — a route to an engine product
+ * with no registered materializer — because a run dispatched down that route
+ * completes and reaches `status: "review"` with `assetIds: []`: a finished
+ * job, an "In review" tag, and nothing to review, discovered only by a client
+ * asking where their content went (exactly what shipped for `reputation-agent`
+ * until this ticket — it was already routed here but had no row in
+ * `PRODUCT_DELIVERABLES`).
+ *
+ * Enforced by TYPING THE MAP'S VALUES, not by a runtime check: `Record<string,
+ * EngineProductWithDeliverable>` forces every value literal below to be a key
+ * `materialize.ts` actually has a materializer for, so adding a route here
+ * ahead of its materializer is a `tsc`/`next build` failure — the same build
+ * that would otherwise ship silently — not a runtime surprise on a client's
+ * first real run. Type-only import: erased from the emitted JS, so this
+ * costs nothing at runtime and creates no cycle with the `server-only`
+ * module it references.
+ */
+const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, EngineProductWithDeliverable>> = {
   "karos-x-agent-v2": "x-agent",
   "karos-linkedin-writer-v2": "linkedin-agent",
   "karos-reddit-runner": "reddit-agent",
