@@ -2431,8 +2431,16 @@ export interface ClientSeat {
 export interface AgentIntake {
   id: string;
   clientId: string;
-  /** Agent family. Widen the union as more agents get intake. */
-  agent: "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation" | "carousel";
+  /**
+   * Agent family. Widen the union as more agents get intake.
+   *
+   * `"carousel"` was retired 2026-08-29 (SCRUM-377/T-B25a) along with the
+   * whole karos-carousel-runner/-setup/-manager family — no engine equivalent
+   * was ever planned. Do not reintroduce; a historical doc with
+   * `agent: "carousel"` may still exist in Firestore, but nothing in this
+   * codebase reads or writes one any more.
+   */
+  agent: "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation";
   /** null = company-page intake; otherwise the ClientSeat id. */
   seatId: string | null;
   /**
@@ -2528,20 +2536,6 @@ export interface AgentIntake {
    */
   openComplianceNote?: string;
   /**
-   * Carousel only — the Instagram account the slides are for.
-   *
-   * NOT a credential and not a connection: nothing in this product reads that
-   * account. It is how a person tells the drafts apart, and what a caption
-   * signs off as.
-   */
-  carouselHandle?: string;
-  /**
-   * Carousel only — how many slides a post should run to, as the client wants
-   * them. Absent means the agent decides per topic, which is the better default
-   * and the one setup assumes.
-   */
-  slideCountPreference?: number | null;
-  /**
    * Reputation only — the surfaces the client actually has, in their words.
    *
    * ASKED because it cannot be discovered: a business may have a Google Business
@@ -2590,10 +2584,13 @@ export interface AgentIntake {
    */
   toneNote?: string;
   /**
-   * Blog AND carousel — subjects never to make something about, on top of the
-   * house rules. Shared like `audienceNote` is: the two families hold separate
-   * DOCUMENTS (one per clientId+agent+seatId), so one name is one meaning per
-   * row rather than two products fighting over a field.
+   * Blog only — subjects never to make something about, on top of the house
+   * rules.
+   *
+   * Used to be shared with the carousel family too (each held its own
+   * document, one per clientId+agent+seatId, so one name was one meaning per
+   * row). Carousel was retired in full 2026-08-29 (SCRUM-377/T-B25a); the
+   * field stays exactly as it was for blog.
    */
   bannedTopics?: string[];
   /**
@@ -3343,67 +3340,11 @@ export interface BlogAgentState {
 }
 
 /**
- * The carousel agent's intake, as a client's browser may receive it.
- *
- * The FIELDS live on `AgentIntake` (all seven families share one collection);
- * this is the whitelist that decides which cross the RSC boundary.
- *
- * ASK vs BUILD: the visual style, the brand tokens, the slide templates and the
- * topic catalogue are all BUILT by setup from the client's own brand material.
- * None of it is asked here. What is asked is the account the slides are for, how
- * long a post should run, and what never to build one about.
+ * The carousel agent family (`karos-carousel-runner` / `-setup` / `-manager`)
+ * was retired in full 2026-08-29 (SCRUM-377/T-B25a) — no engine equivalent was
+ * ever planned. `CarouselAgentIntake` and `CarouselAgentState` used to live
+ * here; removed from code and the db, do not reintroduce.
  */
-export interface CarouselAgentIntake {
-  carouselHandle?: string;
-  slideCountPreference?: number | null;
-  bannedTopics?: string[];
-}
-
-/**
- * The carousel agent's DURABLE state — what setup writes under
- * `clients/<slug>/skills/carousel-agent-v2/` and the runner reads back.
- *
- * ── ONE DISCREPANCY, RECORDED RATHER THAN SMOOTHED OVER ───────────────────
- *
- * The integration spec named `02-style-config.json` and `03-catalog-state.yaml`
- * as the two files to sync. Against the lab manifest only the first is standing
- * state: setup writes `{02-style-config.json, brand-tokens.json, templates/,
- * topic-catalog.yaml}` to the skills directory, while `03-catalog-state.yaml`
- * is a numbered artifact inside the RUN's `internal/` trail.
- *
- * The file that actually carries continuity is `topic-catalog.yaml` — the
- * manifest says the runner "flips one topic-catalog.yaml row unused -> used", so
- * losing it means re-picking a topic already posted. It is captured for that
- * reason. `catalog-state` is captured too, because the spec named it and a run's
- * own view of the catalogue is cheap to keep, but it is NOT what protects
- * against a repeat.
- *
- * `templates/` is a DIRECTORY and is deliberately not a kind: one row holds one
- * file. Capturing a template set needs either a manifest row per file or an
- * archive, and neither is worth building before a pilot run shows how often
- * templates actually change.
- */
-export interface CarouselAgentState {
-  id: string;
-  clientId: string;
-  /**
-   *  - `style-config`   — 02-style-config.json, the visual system every slide obeys
-   *  - `brand-tokens`   — brand-tokens.json, the colours and type the templates read
-   *  - `topic-catalog`  — topic-catalog.yaml, THE CONTINUITY FILE. Rows flip
-   *                       unused -> used as posts ship; lose it and a topic repeats
-   *  - `catalog-state`  — 03-catalog-state.yaml, the run's own view of the above
-   */
-  kind: "style-config" | "brand-tokens" | "topic-catalog" | "catalog-state";
-  content: string;
-  contentType: string;
-  /** YYYY-MM-DD the content was produced. */
-  contentDate: string;
-  capturedFromJobId: string;
-  capturedAt: number;
-  version: number;
-  createdAt: number;
-  updatedAt: number;
-}
 
 /**
  * The reputation agent's intake, as a client's browser may receive it.
@@ -3427,8 +3368,11 @@ export interface ReputationAgentIntake {
 
 /**
  * The reputation agent's DURABLE state — the seven files setup emits under
- * `clients/<slug>/skills/reputation-agent-v2/`, which the runner and the manager
- * both read and write.
+ * `clients/<slug>/skills/reputation-agent-v2/`, which the runner reads and
+ * writes back. (The standalone monthly-review manager also used to read and
+ * append to these — most notably `response-voice.md`'s learning log — until
+ * it was retired in full 2026-08-29, SCRUM-377/T-B25a. The file shapes below
+ * are unchanged; nothing new appends the learning log going forward.)
  *
  * The fifth instance of the ephemeral-workspace capture, and the one with the
  * most files. Two of them are the reason it matters:

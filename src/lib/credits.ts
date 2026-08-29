@@ -434,23 +434,11 @@ export const BLOG_RUN_CREDITS = 10;
 export const REPUTATION_RUN_CREDITS = 25;
 
 /**
- * What one carousel post costs a billable client.
- *
- * A DECISION, not a carried price, like reputation's above: the carousel
- * replaces no managed task type, so there is no existing bill to hold steady.
- *
- * 25 is the generic `CREDIT_COSTS.customAgentRun` rate. It sits above the
- * newsletter's and the blog's tens because a post is a RENDER job, not a text
- * one: the run drafts the slide copy, then drives headless Chromium to
- * screenshot eight to ten slides at full resolution. That render leg is the
- * expensive half and it is the half a text price does not cover. Setting it
- * equal to the default also means the submit core's fallback and this constant
- * agree, so a reprice of one cannot silently diverge from the other.
- *
- * The rate card needs no row of its own for the same reason reputation's does
- * not: the existing "Agent run · from 25" line already quotes this number.
+ * `CAROUSEL_RUN_CREDITS` used to live here, pricing the
+ * karos-carousel-runner/-setup/-manager family. That family was retired in
+ * full 2026-08-29 (SCRUM-377/T-B25a) — no engine equivalent was ever planned.
+ * Removed from code and the db, do not reintroduce.
  */
-export const CAROUSEL_RUN_CREDITS = 25;
 
 /**
  * Resolve what one task execution costs given the product that will actually

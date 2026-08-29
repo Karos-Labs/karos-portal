@@ -12,7 +12,6 @@ import {
   reputationStateKindFor,
 } from "@/lib/agent-service/reputation-state-capture";
 import {
-  REPUTATION_MANAGER_KEY,
   REPUTATION_RUNNER_KEY,
   REPUTATION_RUN_CREDITS,
   REPUTATION_SETUP_KEY,
@@ -21,6 +20,12 @@ import {
   isUnlistedAgent,
   launchProfileFor,
 } from "@/lib/custom-agent-launch";
+
+// The standalone `karos-reputation-manager` card (a monthly review, distinct
+// from the runner and setup above) was retired in full 2026-08-29
+// (SCRUM-377/T-B25a) — no engine equivalent was ever planned, and product
+// ruled it fully gone rather than left dormant. Removed from code and the
+// db, do not reintroduce.
 
 /**
  * Reputation v2's own guarantees. Pure: the envelope assembler, the state
@@ -32,17 +37,20 @@ import {
 const RUN = "clients/xodigital/outputs/reputation-agent-v2/2026-08-11-pulse-004";
 
 describe("the reputation v2 keys", () => {
-  it("names the RUNNER as the agent and the other two as its steps", () => {
+  it("names the RUNNER as the agent and setup as its one remaining step", () => {
     expect(isReputationAgentIdentity(REPUTATION_RUNNER_KEY)).toBe(true);
-    for (const key of [REPUTATION_SETUP_KEY, REPUTATION_MANAGER_KEY]) {
-      // NOT the agent: this predicate decides who gets the reputation intake and
-      // the setup gate, and a setup run that gated on its own output could never
-      // run at all.
-      expect(isReputationAgentIdentity(key), key).toBe(false);
-      expect(isSubAgent({ key, parentKey: REPUTATION_RUNNER_KEY }), key).toBe(true);
-      expect(isUnlistedAgent({ key, parentKey: REPUTATION_RUNNER_KEY }), key).toBe(true);
-    }
+    // NOT the agent: this predicate decides who gets the reputation intake and
+    // the setup gate, and a setup run that gated on its own output could never
+    // run at all.
+    expect(isReputationAgentIdentity(REPUTATION_SETUP_KEY)).toBe(false);
+    expect(isSubAgent({ key: REPUTATION_SETUP_KEY, parentKey: REPUTATION_RUNNER_KEY })).toBe(true);
+    expect(isUnlistedAgent({ key: REPUTATION_SETUP_KEY, parentKey: REPUTATION_RUNNER_KEY })).toBe(
+      true,
+    );
     expect(isUnlistedAgent({ key: REPUTATION_RUNNER_KEY })).toBe(false);
+    // The retired standalone manager key is gone, not merely unlisted: it must
+    // no longer be recognised as the reputation agent identity at all.
+    expect(isReputationAgentIdentity("karos-reputation-manager")).toBe(false);
   });
 
   it("carries no -v2 suffix, matching the manifest rather than its siblings", () => {
@@ -50,7 +58,7 @@ describe("the reputation v2 keys", () => {
     // the manifest's, and a key invented to look like the newsletter's would
     // match nothing — the agent would never be gated, fed or hidden, which is
     // silent in every direction.
-    for (const key of [REPUTATION_RUNNER_KEY, REPUTATION_SETUP_KEY, REPUTATION_MANAGER_KEY]) {
+    for (const key of [REPUTATION_RUNNER_KEY, REPUTATION_SETUP_KEY]) {
       expect(key.endsWith("-v2"), key).toBe(false);
       expect(key.startsWith("karos-reputation-"), key).toBe(true);
     }
@@ -86,9 +94,12 @@ describe("the launch profile, which the loose regex would otherwise hijack", () 
     expect(launchProfileFor({ key: REPUTATION_SETUP_KEY, name: "Reputation Setup" }).eyebrow).toBe(
       "Reputation setup",
     );
+    // The retired standalone manager key no longer has an exact-match profile:
+    // it now falls all the way through to the loose /reputation|reviews|monitor/
+    // catch-all, same brief the legacy v1 product gets below.
     expect(
-      launchProfileFor({ key: REPUTATION_MANAGER_KEY, name: "Reputation Manager" }).eyebrow,
-    ).toBe("Reputation review");
+      launchProfileFor({ key: "karos-reputation-manager", name: "Reputation Manager" }).eyebrow,
+    ).toBe("Reputation brief");
   });
 
   it("leaves the legacy catalogue product on the old brief", () => {

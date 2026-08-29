@@ -7,13 +7,13 @@
  * writes the same fields the import writes — including `source.status: "blocked"`
  * and therefore `enabled: false`, exactly as `importCustomAgentsAction` would
  * derive them — from the manifest values, so an operator without that token can
- * still stand the three agents up.
+ * still stand the agents up.
  *
  * WHAT IT DELIBERATELY DOES NOT DO:
- *  - It does not ENABLE the agents. All three carry `status: "blocked"` upstream
- *    ("in build, no pilot run yet"), and the import rule is that a blocked skill
- *    lands disabled so nobody fires it by accident. An admin flips the switch
- *    after the portal code that feeds them is deployed.
+ *  - It does not ENABLE the agents. Every one below carries `status: "blocked"`
+ *    upstream ("in build, no pilot run yet"), and the import rule is that a
+ *    blocked skill lands disabled so nobody fires it by accident. An admin
+ *    flips the switch after the portal code that feeds them is deployed.
  *  - It does not GRANT them to any client. An enabled-and-granted agent whose
  *    portal support is not deployed yet would let a client press Run and get an
  *    un-fed run.
@@ -36,7 +36,18 @@ const LINKEDIN_DOC = "docs/linkedin-agent-portal.md";
 const REDDIT_DOC = "docs/reddit-agent-portal.md";
 const BACKUP_DIR = "_backup/2026-08-05";
 
-/** The three v2 skills, as `catalog/agent-runtime-manifest.json` describes them. */
+/**
+ * The v2 skills, as `catalog/agent-runtime-manifest.json` describes them.
+ *
+ * LinkedIn used to register THREE skills here: setup, writer, and a
+ * standalone manager. The standalone `karos-linkedin-manager-v2` card was
+ * retired in full 2026-08-29 (SCRUM-377/T-B25a) — no engine equivalent was
+ * ever planned, and product ruled it fully gone rather than left dormant.
+ * Removed from code and the db, do not reintroduce. The manager SKILL itself
+ * is unaffected: it still runs automatically as part of every writer press
+ * (see docs/linkedin-agent-portal.md), it is just no longer also offered as
+ * its own separately-fireable customAgents doc.
+ */
 const AGENTS = [
   {
     key: "karos-linkedin-setup-v2",
@@ -57,16 +68,6 @@ const AGENTS = [
     parentKey: null,
     description:
       "LinkedIn Agent v2, the writer. Runs on demand: each run belongs to exactly ONE identity (the company page, or a single seat) and produces that identity's post draft — one per run by default — as twelve numbered resumable steps. In this portal one press runs the manager pass first, then the writer. Draft-first: it never publishes.",
-  },
-  {
-    key: "karos-linkedin-manager-v2",
-    name: "LinkedIn Manager",
-    entrySkillDir: "products/building/linkedin-agent-v2/manager",
-    heading: "### `karos-linkedin-manager-v2`",
-    doc: LINKEDIN_DOC,
-    parentKey: "karos-linkedin-writer-v2",
-    description:
-      "LinkedIn Agent v2, the manager. Audits what shipped and what each identity did with it, adjusts the lane mix within bounds, and refills the topic catalog from ONE research pull cached per client and reused same-day. The only skill in the product that touches the network. It never drafts and never publishes.",
   },
   {
     key: "karos-reddit-runner",
@@ -196,7 +197,7 @@ async function main() {
 
   console.log(
     "\nNEXT, and deliberately not done here: deploy the portal branch and the agent service,\n" +
-      "then enable the three agents and grant them, then run one pilot end to end.",
+      "then enable the agents and grant them, then run one pilot end to end.",
   );
 }
 

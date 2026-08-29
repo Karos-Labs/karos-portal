@@ -32,26 +32,26 @@ import { uploadBytes } from "@/lib/storage";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { AgentIntake, ReputationAgentState } from "@/lib/types";
 import {
-  REPUTATION_MANAGER_KEY,
   REPUTATION_RUNNER_KEY,
   REPUTATION_SETUP_KEY,
 } from "@/lib/custom-agent-launch";
 
 /**
- * Every reputation v2 skill. The runner is the agent; setup and manager are its
- * steps and are hidden from rosters by `parentKey`.
+ * Every reputation skill still in the product. The runner is the agent; setup
+ * is its step and is hidden from rosters by `parentKey`.
  *
- * All three are fed the same context, and setup is the reason it is worth
- * saying: setup is the job that CREATES these files, so on a re-run it needs to
- * see what already exists rather than re-seeding a response ledger that records
+ * Both are fed the same context, and setup is the reason it is worth saying:
+ * setup is the job that CREATES these files, so on a re-run it needs to see
+ * what already exists rather than re-seeding a response ledger that records
  * every review already answered.
+ *
+ * The standalone monthly-review manager (`karos-reputation-manager`) was
+ * retired 2026-08-29 (SCRUM-377/T-B25a) — removed from code and the db, do
+ * not reintroduce. It used to answer true here too; every caller of this
+ * predicate needs nothing further, since no job can carry that key any more.
  */
 export function isReputationAgent(agentKey: string): boolean {
-  return (
-    agentKey === REPUTATION_RUNNER_KEY ||
-    agentKey === REPUTATION_SETUP_KEY ||
-    agentKey === REPUTATION_MANAGER_KEY
-  );
+  return agentKey === REPUTATION_RUNNER_KEY || agentKey === REPUTATION_SETUP_KEY;
 }
 
 /** The SETUP skill specifically — the only one that runs before state exists. */

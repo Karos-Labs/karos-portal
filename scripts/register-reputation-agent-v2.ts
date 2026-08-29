@@ -47,18 +47,20 @@
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import {
-  REPUTATION_MANAGER_KEY,
-  REPUTATION_RUNNER_KEY,
-  REPUTATION_SETUP_KEY,
-} from "../src/lib/custom-agent-launch";
+import { REPUTATION_RUNNER_KEY, REPUTATION_SETUP_KEY } from "../src/lib/custom-agent-launch";
 
 const APPLY = process.argv.includes("--apply");
 const REPUTATION_DOC = "docs/reputation-agent-portal.md";
 const BACKUP_DIR = "_backup/2026-08-06";
 
 /**
- * The three v2 skills: a runner, its setup and its manager.
+ * The two v2 skills still in the product: a runner and its setup.
+ *
+ * A third skill, the standalone monthly-review manager
+ * (`karos-reputation-manager`), used to be registered here too. It was
+ * retired in full 2026-08-29 (SCRUM-377/T-B25a) — no engine equivalent was
+ * ever planned, and product ruled it fully gone rather than left dormant.
+ * Removed from code and the db, do not reintroduce.
  *
  * KEYS ARE IMPORTED, never re-typed. They are the join between this script, the
  * roster predicates, the submit-core gates, the context builder and the state
@@ -72,8 +74,8 @@ const AGENTS = [
     entrySkillDir: "products/building/reputation-agent-v2",
     heading: `### \`${REPUTATION_RUNNER_KEY}\``,
     // THE PRODUCT. No parentKey: this is the one card a person sees, and giving
-    // it one would hide the agent itself from every roster while leaving its two
-    // steps visible — silently, with no error anywhere.
+    // it one would hide the agent itself from every roster while leaving its
+    // step visible — silently, with no error anywhere.
     parentKey: null,
     description:
       "Reputation Agent v2, the runner. One pulse per press: reads what has been posted about the client on their rostered review surfaces since the last pulse, triages it, and drafts a reply for each review worth answering. Checks the response ledger first so no review is ever answered twice. Anything urgent is FLAGGED and routed to the client's named contact rather than replied to. Draft-only: it holds no posting credential for any surface.",
@@ -86,15 +88,6 @@ const AGENTS = [
     parentKey: REPUTATION_RUNNER_KEY,
     description:
       "Reputation Agent v2, the run-once client setup. Resolves where the client THINKS they are reviewed into the real listings per surface and market, which is the work: a business may hold a Google Business Profile under a trading name and duplicate Yelp entries from a merge. Also sets the response voice and the autonomy bounds that decide what gets escalated rather than drafted, and stands up the two ledgers. Re-runnable, and a re-run VERIFIES rather than re-seeds.",
-  },
-  {
-    key: REPUTATION_MANAGER_KEY,
-    name: "Reputation Manager",
-    entrySkillDir: "products/building/reputation-agent-v2/manager",
-    heading: `### \`${REPUTATION_MANAGER_KEY}\``,
-    parentKey: REPUTATION_RUNNER_KEY,
-    description:
-      "Reputation Agent v2, the manager. The monthly look back: what came in, what was drafted, what the client actually sent, and which complaints keep recurring. Appends what a human edited before sending to the response voice, which is the sharpest signal this product gets. No internet and no credentials: it reads on-disk state only.",
   },
 ] as const;
 

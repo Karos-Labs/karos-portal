@@ -113,18 +113,20 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
   });
 
   it("leaves the manager variants and the agents with no engine workflow on agent-service", () => {
-    // The managers are the structural blocker, not an oversight:
-    // karos-linkedin-manager-v2 runs on two clocks and rewrites the
-    // generators' inputs, and agent-engine has neither a scheduler nor a write
-    // path for that. The rest simply have no engine product built yet.
+    // The still-live managers are the structural blocker, not an oversight:
+    // karos-blog-manager-v2 runs on two clocks and rewrites the generators'
+    // inputs, and agent-engine has neither a scheduler nor a write path for
+    // that. The rest simply have no engine product built yet.
+    //
+    // karos-linkedin-manager-v2, karos-reputation-manager and the whole
+    // karos-carousel-runner/-setup/-manager family used to appear in this list
+    // too — trivially true, since they were never mapped. They were retired in
+    // full 2026-08-29 (SCRUM-377/T-B25a) and no longer exist as customAgents
+    // keys at all, so asserting "maps to undefined" about them stopped being a
+    // meaningful test.
     for (const key of [
-      "karos-linkedin-manager-v2",
       "karos-blog-manager-v2",
       "karos-newsletter-manager-v2",
-      "karos-reputation-manager",
-      "karos-carousel-manager",
-      "karos-carousel-runner",
-      "karos-carousel-setup",
       "karos-blog-setup-v2",
       "karos-newsletter-setup-v2",
       "karos-reputation-setup",

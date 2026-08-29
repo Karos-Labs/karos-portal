@@ -65,6 +65,9 @@ describe("a client's run history", () => {
   });
 });
 
+// carousel-agent-intake.tsx used to be a seventh surface here; the whole
+// karos-carousel family was retired in full 2026-08-29 (SCRUM-377/T-B25a) and
+// the component deleted along with it.
 const SURFACES = [
   "src/components/x-agent-intake.tsx",
   "src/components/linkedin-agent-intake.tsx",
@@ -72,17 +75,16 @@ const SURFACES = [
   "src/components/newsletter-agent-intake.tsx",
   "src/components/blog-agent-intake.tsx",
   "src/components/reputation-agent-intake.tsx",
-  "src/components/carousel-agent-intake.tsx",
 ] as const;
 
 describe("the intake cards' run rows", () => {
   it("collapse a client's runs on the server, before the payload", () => {
     const views = readFileSync(join(process.cwd(), "src/lib/agent-intake-views.ts"), "utf8");
-    // One helper for all seven surfaces — the drift that let Reddit print raw
+    // One helper for all six surfaces — the drift that let Reddit print raw
     // status words while X printed badges started as three copies of this.
     expect(views).toContain("function toRunRowViews(");
     expect(views).toMatch(/const rows = isStaff \? jobs : collapseRunsPerDay\(jobs\)/);
-    expect(views.match(/toRunRowViews\(/g)).toHaveLength(8); // the definition + 7 call sites
+    expect(views.match(/toRunRowViews\(/g)).toHaveLength(7); // the definition + 6 call sites
     // Staff keep every run and the forensic link.
     expect(views).toMatch(/isStaff \? \{ href: `\/jobs\/\$\{j\.id\}` \} : \{\}/);
   });
@@ -113,7 +115,7 @@ describe("the intake cards' run rows", () => {
       // "the issues" would describe a batch, which is the very thing this test
       // is here to keep out of client copy.
       expect(rendered).toMatch(
-        /Once your Karos team has approved (the drafts|the replies|an issue|an article|a reply|a carousel),/,
+        /Once your Karos team has approved (the drafts|the replies|an issue|an article|a reply),/,
       );
     }
   });
