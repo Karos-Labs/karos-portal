@@ -3,6 +3,7 @@ import "server-only";
 import type { LanguageModel, streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { vertexAnthropic } from "@ai-sdk/google-vertex/anthropic";
+import { googleVertex } from "@ai-sdk/google-vertex";
 import { MODELS } from "@/lib/constants";
 import {
   CAPABILITY_VARIANT,
@@ -44,6 +45,19 @@ export interface CapabilityBudgets {
 }
 
 /**
+ * The vendors a plain `ModelTier` (SONNET/HAIKU) actually means something for.
+ *
+ * "google" is deliberately excluded: Gemini has no SONNET/HAIKU — a role that
+ * wants it is "caller"-tier and names an exact Gemini id itself (see
+ * `chat-models.ts`). Keeping `MODEL_IDS` keyed on this narrower type, instead
+ * of widening it to every `Vendor` with a made-up Gemini "SONNET" entry, means
+ * a future tiered role can never resolve to "google" by accident — the guard
+ * below makes that a thrown error instead of a table lookup that just happens
+ * to return something.
+ */
+type TieredVendor = Exclude<Vendor, "google">;
+
+/**
  * Model ids per vendor.
  *
  * NOT one constant reused across both. Vertex addresses dated snapshots with an
@@ -52,10 +66,25 @@ export interface CapabilityBudgets {
  * request time with an opaque 404, which is the class of late failure this layer
  * exists to prevent.
  */
-const MODEL_IDS: Readonly<Record<Vendor, Readonly<Record<ModelTier, string>>>> = {
+const MODEL_IDS: Readonly<Record<TieredVendor, Readonly<Record<ModelTier, string>>>> = {
   anthropic: { SONNET: MODELS.SONNET, HAIKU: MODELS.HAIKU },
   vertex: { SONNET: "claude-sonnet-4-6", HAIKU: "claude-haiku-4-5@20251001" },
 } as const;
+
+/**
+ * Refuses a tiered (non-"caller") role from resolving to a vendor with no
+ * tier table — today, that is only "google". Every call site below that
+ * indexes `MODEL_IDS` runs this first so the narrowing (`vendor` becomes
+ * `TieredVendor` afterward) is real, not just a comment.
+ */
+function assertTiered(role: AiRoleName, vendor: Vendor): asserts vendor is TieredVendor {
+  if (vendor === "google") {
+    throw new ProviderWiringError(
+      `Role "${role}" is tier-based, and "google" has no SONNET/HAIKU table — ` +
+        `only a "caller"-tier role may resolve to vendor "google" (pass an exact Gemini modelId).`,
+    );
+  }
+}
 
 /** Thrown when a role cannot be wired. Always a misconfiguration, never a runtime condition. */
 export class ProviderWiringError extends Error {
@@ -216,6 +245,7 @@ export function aiFor(
           `the per-vendor id mapping. Change the tier in roles.ts instead.`,
       );
     }
+    assertTiered(role, vendor);
     modelId = MODEL_IDS[vendor][spec.tier];
   }
 
@@ -224,7 +254,8 @@ export function aiFor(
   for (const c of spec.requires ?? []) variants[c] = CAPABILITY_VARIANT[vendor][c];
 
   return {
-    model: vendor === "vertex" ? vertexAnthropic(modelId) : anthropic(modelId),
+    model:
+      vendor === "vertex" ? vertexAnthropic(modelId) : vendor === "google" ? googleVertex(modelId) : anthropic(modelId),
     tools,
     vendor,
     modelId,
@@ -263,13 +294,25 @@ export function usageFor(
     }
     return { modelName: opts.modelId, vendor };
   }
+  assertTiered(role, vendor);
   return { modelName: MODEL_IDS[vendor][spec.tier], vendor };
 }
 
-/** The per-vendor model id a role would use. Exported so the mapping is testable without binding. */
+/**
+ * The per-vendor model id a role would use. Exported so the mapping is
+ * testable without binding.
+ *
+ * Returns `null` for a "caller"-tier role (nothing to look up — the call site
+ * chooses) AND for vendor "google" on a tiered role (no SONNET/HAIKU table —
+ * see `TieredVendor`), rather than throwing: unlike `aiFor`/`usageFor`, which
+ * only ever see a vendor a real call actually resolved to, this is queried
+ * speculatively (tests probe `modelIdFor(role, "vertex")` for every role) and
+ * "not applicable" is a normal answer here, not a wiring mistake.
+ */
 export function modelIdFor(role: AiRoleName, vendor: Vendor): string | null {
   const spec = roleSpec(role);
-  return spec.tier === "caller" ? null : MODEL_IDS[vendor][spec.tier];
+  if (spec.tier === "caller" || vendor === "google") return null;
+  return MODEL_IDS[vendor][spec.tier];
 }
 
 // ── Wiring time ──────────────────────────────────────────────────────────────

@@ -110,6 +110,16 @@ vi.mock("@ai-sdk/anthropic", () => ({
     tools: { webSearch_20250305: () => ({}) },
   }),
 }));
+// T-B3/SCRUM-246: chat.client's cost-based default now resolves to vendor
+// "google" (Gemini), so aiFor() reaches this constructor on the SAME plain
+// chat turns this file already drives through the real route. Real
+// `googleVertex()` validates GOOGLE_VERTEX_LOCATION synchronously — this repo
+// has no test env carrying Vertex settings (nor does it mock the real Vertex
+// SDK anywhere else), so it is stubbed the same way `@ai-sdk/anthropic` above
+// already is, not exercised against real Google Cloud config.
+vi.mock("@ai-sdk/google-vertex", () => ({
+  googleVertex: Object.assign((id: string) => ({ id }), { tools: {} }),
+}));
 vi.mock("@/services/logger", () => ({
   logger: { logUsage: vi.fn(), logGenerationFailure: vi.fn() },
 }));

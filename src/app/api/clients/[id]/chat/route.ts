@@ -71,10 +71,11 @@ import {
   renderFeedbackMarkdown,
 } from "@/lib/client-agent-feedback";
 import type { Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
-import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 import { aiFor, usageFor } from "@/lib/ai/provider";
 import { createChatStreamResponse, type ChatStreamWriter } from "@/lib/chat/stream-protocol";
+import { resolveChatModel } from "@/lib/ai/chat-models";
 
 // This route sets no Vercel-style duration export — see
 // asset-media-download.test.ts's "asserts no request-duration ceiling it
@@ -113,25 +114,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     /** Set by the `@agent` mention chip — focuses the system prompt on one live umbrella. */
     focusAgentId?: string;
     /**
-     * This is a plain chatbot, so it defaults to Haiku — the 3 substantive
-     * proactive actions (Competitor Deep-Dive, Brand Visibility Audit,
-     * Content Plan) opt into Sonnet by setting this, since they run
-     * multi-step tool orchestration over a full strategy write-up rather
-     * than a quick Q&A turn. Everything else, including plain questions and
-     * a focused-agent conversation, stays on the cheap model.
+     * This is a plain chatbot, so it defaults to the cheap model — the 3
+     * substantive proactive actions (Competitor Deep-Dive, Brand Visibility
+     * Audit, Content Plan) opt into the quality model by setting this, since
+     * they run multi-step tool orchestration over a full strategy write-up
+     * rather than a quick Q&A turn. Everything else, including plain
+     * questions and a focused-agent conversation, stays on the cheap model —
+     * unless `model` below overrides it.
      */
     deep?: boolean;
+    /**
+     * Manual model-picker override (chatbot-widget.tsx). UNTRUSTED — this is
+     * raw request-body input, never passed to a vendor directly.
+     * `resolveChatModel()` (T-B3/SCRUM-246) only ever honors it as an exact
+     * key into the SERVER-SIDE allowlist `CHAT_MODEL_OPTIONS`
+     * (`lib/ai/chat-models.ts`); anything else — missing, the wrong type, a
+     * raw vendor model id, an attempted injection — is silently ignored in
+     * favor of the `deep`-based cost routing below, exactly as if this field
+     * had not been sent.
+     */
+    model?: unknown;
   };
   const messages = (body.messages ?? []) as ModelMessage[];
-  const modelId = body.deep ? MODELS.SONNET : MODELS.HAIKU;
-  // T-B4: the FULL resolution, not just `.model` — `.modelId`/`.vendor` are
-  // what actually ran (the model tier constant and the resolved id agree on
-  // first-party Anthropic and diverge on the Vertex binding, see
-  // ResolvedAi's own doc comment in ai/provider.ts), and until this ticket
-  // that fact was computed here and then thrown away: the text-only stream
-  // protocol had no channel to carry it, so a client had no way to know which
-  // model/vendor actually served a turn.
-  const resolvedAi = aiFor("chat.client", { modelId: modelId });
+  // T-B3 (SCRUM-246) owns the decision of WHICH model runs: cheap Gemini by
+  // default, the deep tier on request, and `body.model` treated as untrusted
+  // `unknown` against a mandatory server-side allowlist — an unrecognized
+  // value falls back to the `deep` default and never reaches a vendor.
+  //
+  // T-B4 (SCRUM-248) owns what the client is TOLD about it. It needs the FULL
+  // resolution, not just `.model`: `.modelId`/`.vendor` are what actually ran
+  // (the tier constant and the resolved id agree on first-party Anthropic and
+  // diverge on the Vertex binding — see ResolvedAi's doc comment in
+  // ai/provider.ts), and until that ticket the fact was computed here and then
+  // thrown away, because the text-only stream protocol had no channel to carry
+  // it.
+  //
+  // One resolution, two consumers. Deliberately NOT two resolvers: a second
+  // path deciding vendor+model from `body` is a second place the allowlist
+  // could be forgotten.
+  const chatModel = resolveChatModel({ deep: body.deep, requestedModel: body.model });
+  const resolvedAi = aiFor("chat.client", {
+    modelId: chatModel.option.modelId,
+    vendor: chatModel.option.vendor,
+  });
   const MODEL = resolvedAi.model;
 
   const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents, umbrellas] =
@@ -1482,7 +1507,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         clientId,
         agentId: null,
         agentName: "chat_copilot",
-        modelName: modelId,
+        ...usageFor("chat.client", { modelId: chatModel.option.modelId, vendor: chatModel.option.vendor }),
         operation: "chat_copilot",
         inputTokens: usage.inputTokens ?? 0,
         outputTokens: usage.outputTokens ?? 0,
@@ -1541,7 +1566,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           clientId,
           agentId: null,
           agentName: "chat_copilot",
-          modelName: modelId,
+          ...usageFor("chat.client", { modelId: chatModel.option.modelId, vendor: chatModel.option.vendor }),
           operation: "chat_copilot",
         },
         error,
