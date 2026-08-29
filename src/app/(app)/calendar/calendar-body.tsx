@@ -279,7 +279,10 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   );
   const suggestedTaskViews: SuggestedTaskView[] = pendingSuggestionTasks.map((t) => {
     const meta = t.metadata ?? {};
-    const customAgentName = meta.customAgentName as string | undefined;
+    // `agentName`, not `customAgentName` — the one field name every writer
+    // (agent-swarm.ts, campaign-engine.ts, the chat route) uses for the
+    // linked agent's display name (SCRUM-255).
+    const agentName = meta.agentName as string | undefined;
     const productType = meta.productType as string | undefined;
     const platform = meta.platform as string | undefined;
     return {
@@ -288,7 +291,7 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       ...(t.description ? { description: t.description } : {}),
       priority: t.priority,
       executorLabel:
-        customAgentName ?? MANAGED_PRODUCTS.find((p) => p.taskType === productType)?.name ?? "Karos AI",
+        agentName ?? MANAGED_PRODUCTS.find((p) => p.taskType === productType)?.name ?? "Karos AI",
       ...(platform ? { platform } : {}),
       at: suggestionDates.get(t.id)!,
     };

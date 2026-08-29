@@ -422,7 +422,10 @@ export async function generateCampaignBundle(
       // picks an executor — rather than one pointing at an agent that is not there.
       if (agent) {
         metadata.customAgentId = agent.id;
-        metadata.customAgentName = agent.name;
+        // `agentName`, not `customAgentName` — the one field name for the
+        // linked agent's display name (see ClientTask.metadata's doc comment
+        // in types.ts, and agent-swarm.ts's persistSwarmTasks; SCRUM-255).
+        metadata.agentName = agent.name;
       }
     } else {
       metadata.productType = draft.productType;

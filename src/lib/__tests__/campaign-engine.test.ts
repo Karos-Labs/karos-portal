@@ -136,7 +136,7 @@ describe("generateCampaignBundle", () => {
       dependsOnTaskIds: [],
       metadata: expect.objectContaining({
         customAgentId: "blog-agent-id",
-        customAgentName: "Blog agent",
+        agentName: "Blog agent",
         campaignRole: "anchor",
       }),
     });
@@ -151,7 +151,7 @@ describe("generateCampaignBundle", () => {
       dependsOnTaskIds: ["t1"],
       metadata: expect.objectContaining({
         customAgentId: "nl-agent-id",
-        customAgentName: "Newsletter agent",
+        agentName: "Newsletter agent",
       }),
     });
     // AND NO product_run TRIGGER, which is the whole reason this migration
