@@ -998,7 +998,7 @@ export function ChatbotWidget({
             <div className="min-w-0">
               <p className="font-serif text-base leading-none">AI Copilot</p>
               <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">
-                {clientName} · Powered by Claude
+                {clientName} · KarosAI
               </p>
             </div>
             <div className="flex items-center gap-1">
