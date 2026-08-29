@@ -29,6 +29,8 @@ import {
   CLIENT_PRICE_ROWS,
   CREDIT_COSTS,
   availableCredits,
+  chatMessageCreditCost,
+  chatModelFor,
   clientPriceText,
   creditsLabel,
 } from "@/lib/credits";
@@ -122,7 +124,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     deep?: boolean;
   };
   const messages = (body.messages ?? []) as ModelMessage[];
-  const modelId = body.deep ? MODELS.SONNET : MODELS.HAIKU;
+  // T-B23: which model this turn actually runs on, resolved once and read by
+  // both the model call below and the credit charge just below that — the
+  // whole point being that the two can no longer disagree the way a flat
+  // `CREDIT_COSTS.chatMessage` did (see chatMessageCreditCost's docstring).
+  const chatModel = chatModelFor(body.deep);
+  const modelId = chatModel === "sonnet" ? MODELS.SONNET : MODELS.HAIKU;
   const MODEL = aiFor("chat.client", { modelId: modelId }).model;
 
   const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents, umbrellas] =
@@ -183,9 +190,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const chatCharge = await chargeClientModelCall({
     user,
     clientId,
-    amount: CREDIT_COSTS.chatMessage,
+    // T-B23: priced on the model this turn actually runs (chatModel, resolved
+    // above), not the old flat CREDIT_COSTS.chatMessage — a deep/Sonnet turn
+    // now costs more than a quick Haiku one. modelName/provider are carried
+    // onto the ledger entry purely for telemetry (reconciling a client's
+    // credit spend against what the call actually cost Karos); they play no
+    // part in the amount charged above.
+    amount: chatMessageCreditCost(chatModel),
     operation: "chat_message",
     reason: "Copilot chat message",
+    modelName: modelId,
+    provider: "anthropic",
   });
   if (chatCharge.denied !== null) {
     return Response.json({ error: chatCharge.denied }, { status: 402 });

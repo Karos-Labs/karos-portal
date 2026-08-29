@@ -188,7 +188,7 @@ export function CreditsPanel({
               it at the bottom. The Documents tab a client clicks to make the
               correction is not abbreviated either. */}
           <p className="mt-1 text-xs text-muted-2">
-            Copilot message {CREDIT_COSTS.chatMessage} · document correction{" "}
+            Copilot message from {CREDIT_COSTS.chatMessage} · document correction{" "}
             {CREDIT_COSTS.targetedCorrection} · agent run from {CREDIT_COSTS.customAgentRun}.
           </p>
         </div>

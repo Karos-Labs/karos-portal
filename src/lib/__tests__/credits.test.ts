@@ -2,9 +2,12 @@ import { resolve } from "node:path";
 import { readSource } from "./source-scan";
 
 import {
+  CHAT_MESSAGE_CREDITS,
   CREDIT_BUCKET_LABEL,
   CREDIT_COSTS,
   CREDIT_OPERATION_LABEL,
+  chatMessageCreditCost,
+  chatModelFor,
   creditBucketFor,
   type CreditBucket,
 } from "@/lib/credits";
@@ -415,5 +418,59 @@ describe("credit ledger presentation", () => {
     // two different things.
     const labels = Object.values(CREDIT_BUCKET_LABEL);
     expect(new Set(labels).size).toBe(labels.length);
+  });
+});
+
+/* ── T-B23: per-model chat pricing ────────────────────────────────── */
+
+describe("chatModelFor", () => {
+  it("picks the default (Haiku) tier when the request did not opt into deep", () => {
+    expect(chatModelFor(false)).toBe("haiku");
+    expect(chatModelFor(undefined)).toBe("haiku");
+  });
+
+  it("picks Sonnet only when the request explicitly asked for a deep turn", () => {
+    expect(chatModelFor(true)).toBe("sonnet");
+  });
+});
+
+describe("chatMessageCreditCost", () => {
+  it("prices the default Haiku turn at the unchanged CREDIT_COSTS.chatMessage rate", () => {
+    // The whole point of keeping this constant: nothing changes for the
+    // by-far-most-common case, only for the deep/Sonnet turn that used to be
+    // billed identically to it.
+    expect(chatMessageCreditCost("haiku")).toBe(CREDIT_COSTS.chatMessage);
+  });
+
+  it("prices a deep Sonnet turn ABOVE the Haiku rate — the bug this ticket fixes", () => {
+    const haiku = chatMessageCreditCost("haiku");
+    const sonnet = chatMessageCreditCost("sonnet");
+    expect(sonnet).toBeGreaterThan(haiku);
+    // Specifically the "one Sonnet call" rate this file's own scale already
+    // defines (taskExecution), not a freestanding new number.
+    expect(sonnet).toBe(CREDIT_COSTS.taskExecution);
+  });
+
+  it("defaults to the anthropic provider when none is passed", () => {
+    expect(chatMessageCreditCost("haiku")).toBe(chatMessageCreditCost("haiku", "anthropic"));
+  });
+
+  it("refuses an unpriced (model, provider) pair rather than guessing a price", () => {
+    // No Gemini chat model is wired yet — see CHAT_MESSAGE_CREDITS's own
+    // docstring for why "google" is reserved rather than populated. Reading
+    // it must throw, not silently fall back to the Haiku/Sonnet rate.
+    expect(() => chatMessageCreditCost("haiku", "google")).toThrow(/No credit price/);
+    expect(() => chatMessageCreditCost("sonnet", "openai")).toThrow(/No credit price/);
+  });
+
+  it("CHAT_MESSAGE_CREDITS reserves a slot for every provider the internal cost tracker prices", () => {
+    // @/lib/models/usage-log.ts's ProviderId is "anthropic" | "openai" |
+    // "google" — this table must have a bucket for each so that a future
+    // Gemini/GPT chat model is a price DECISION, not a table reshape. This
+    // is exactly the gap the ticket names ("no Gemini rows anywhere in the
+    // pricing table").
+    expect(Object.keys(CHAT_MESSAGE_CREDITS).sort()).toEqual(["anthropic", "google", "openai"]);
+    expect(CHAT_MESSAGE_CREDITS.anthropic.haiku).toBeDefined();
+    expect(CHAT_MESSAGE_CREDITS.anthropic.sonnet).toBeDefined();
   });
 });
