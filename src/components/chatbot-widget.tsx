@@ -7,6 +7,7 @@ import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-iden
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
 import { renderSectionBody } from "@/lib/doc-render";
+import { readChatStream } from "@/lib/chat/client-stream";
 import type { ClientReport } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
@@ -383,54 +384,50 @@ function useCopilot(
           throw new Error((errBody as { error?: string }).error ?? `HTTP ${response.status}`);
         }
 
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
+        // T-B4: the route now returns a real UI-message stream (typed data
+        // parts, tool-call/tool-result parts) instead of a bare text body.
+        // `readChatStream` decodes it into the events this handler reacts to.
         let accumulated = "";
         let brandingUpdated = false;
         let tasksCreated = false;
-        // Set once the marker is seen, so a later chunk containing more
-        // "<!--" text (unlikely, but the model writes free text) can't
-        // re-trigger this and stomp a focus change the user made meanwhile.
-        let focusMarkerSeen = false;
+        let sawErrorPart = false;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          if (chunk.includes("Branding guidelines updated")) brandingUpdated = true;
-          if (chunk.includes("Created") && chunk.includes("task")) tasksCreated = true;
-          accumulated += chunk;
-          // The plain-text half of @mention focus (set_agent_focus, chat/route.ts):
-          // the tool rides its answer inside an HTML comment the same way the
-          // brand-sync block already does, so it renders invisibly
-          // (stripPipelineMarkers, doc-render.ts) while still being sniffable
-          // here, on the raw stream, before that stripping happens.
-          if (!focusMarkerSeen) {
-            const m = /<!--\s*COPILOT_FOCUS:([\s\S]*?)\s*-->/.exec(accumulated);
-            if (m) {
-              focusMarkerSeen = true;
-              try {
-                const payload = JSON.parse(m[1]) as { id: string; name: string } | null;
-                setFocusAgent(payload);
-              } catch {
-                /* malformed payload - leave focus exactly as it was */
+        for await (const evt of readChatStream(response)) {
+          switch (evt.type) {
+            case "text-delta":
+              accumulated += evt.delta;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
+              );
+              break;
+            case "agent-focus":
+              // Replaces the old COPILOT_FOCUS HTML-comment sniff: a typed
+              // data part instead of text regexed out of the raw stream.
+              setFocusAgent(evt.focusAgent);
+              break;
+            case "tool-result":
+              // Replaces sniffing the model's own PROSE for magic substrings
+              // ("Branding guidelines updated", "Created ... task") - these
+              // are the tool's actual name and return value, not a guess
+              // about how the model chose to phrase its answer.
+              if (evt.toolName === "update_branding_guidelines") brandingUpdated = true;
+              if (evt.toolName === "create_tasks" && typeof evt.output === "string" && evt.output.startsWith("Created ")) {
+                tasksCreated = true;
               }
-            }
+              break;
+            case "error":
+              sawErrorPart = true;
+              break;
           }
-          setMessages((prev) =>
-            prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
-          );
         }
 
-        // A provider failure mid-stream (token depletion, a 5xx) produces no
-        // text-delta parts at all - the plain text-stream protocol this route
-        // returns has no channel to carry an error part, so the request still
-        // completes normally with nothing written (chat/route.ts's onError
-        // logs it and alerts the Karos team server-side, but can't tell the
-        // client). Left alone this renders as a permanently "typing" bubble.
-        // An error-free completion with no visible text is itself the signal.
-        const visibleContent = accumulated.replace(/<!--\s*COPILOT_FOCUS:[\s\S]*?-->/g, "").trim();
-        if (!visibleContent) {
+        // A provider failure mid-stream (token depletion, a 5xx) now arrives
+        // as a real `error` protocol part (T-B4) - detected directly, rather
+        // than inferred from "the turn produced no visible text at all" the
+        // way the old text-only protocol forced this to be. The no-visible-
+        // text check stays as a backstop for any other empty-completion case.
+        const visibleContent = accumulated.trim();
+        if (sawErrorPart || !visibleContent) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
