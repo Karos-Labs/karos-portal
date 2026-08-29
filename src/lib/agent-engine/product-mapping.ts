@@ -57,9 +57,11 @@ export function resolveAgentEngineProductId(taskType: ManagedTaskType, brief: Re
  * would feed an onboarding form into a post-drafting workflow. Each pairing is
  * written out because each was checked.
  *
- * `karos-linkedin-manager-v2` is deliberately still absent: it runs on two
- * clocks and rewrites the generators' inputs, and agent-engine has neither a
- * scheduler nor a write path for that. It stays on agent-service until it does.
+ * The standalone `karos-linkedin-manager-v2` was retired in full 2026-08-29
+ * (SCRUM-377/T-B25a) — it is not merely absent from this map, it no longer
+ * exists as a `customAgents` key at all. It ran on two clocks and rewrote the
+ * generators' inputs, which agent-engine had neither a scheduler nor a write
+ * path for; product ruled it gone rather than left dormant awaiting one.
  *
  * Everything absent from this map stays on agent-service, which is still the
  * executor for the overwhelming majority of production jobs. This is a
@@ -98,9 +100,8 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, EngineProductW
   // onboarding and the first post are one run instead of two products someone
   // had to sequence by hand.
   //
-  // The manager variants stay absent on purpose: karos-linkedin-manager-v2
-  // runs on two clocks and rewrites the generators' inputs, and agent-engine
-  // has neither a scheduler nor a write path for that.
+  // The standalone LinkedIn manager key is not merely absent — it was retired
+  // in full (see the note above), so there is nothing left to map.
   "karos-linkedin-setup-v2": "linkedin-agent",
   "karos-reddit-setup": "reddit-agent",
   // Three more whose engine workflows already exist.

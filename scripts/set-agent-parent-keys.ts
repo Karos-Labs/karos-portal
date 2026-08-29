@@ -27,10 +27,15 @@ import { mkdirSync, writeFileSync } from "node:fs";
 const APPLY = process.argv.includes("--apply");
 const BACKUP_DIR = "_backup/2026-08-05";
 
-/** Each step, and the agent whose surface fires it. */
+/**
+ * Each step, and the agent whose surface fires it.
+ *
+ * `karos-linkedin-manager-v2` (the standalone manager card) used to have a
+ * line here too. It was retired in full 2026-08-29 (SCRUM-377/T-B25a) —
+ * removed from code and the db, do not reintroduce.
+ */
 const PARENT_BY_KEY: Record<string, string> = {
   "karos-linkedin-setup-v2": "karos-linkedin-writer-v2",
-  "karos-linkedin-manager-v2": "karos-linkedin-writer-v2",
 };
 
 async function main() {

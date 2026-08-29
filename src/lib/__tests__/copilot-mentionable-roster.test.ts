@@ -145,12 +145,16 @@ describe("the @mention roster combines the two lists without doubling anything",
 
   it("drops a STEP of another agent, and a superseded one", async () => {
     // The copilot can ACT on a tag, so a taggable name has to be something a
-    // person would ask for. "@LinkedIn Manager, draft me a post" would dispatch a
+    // person would ask for. "@LinkedIn Notes, draft me a post" would dispatch a
     // run that never drafts, and "@LinkedIn Company Page" a run of an agent v2
     // replaced — the same reason a disabled agent is already kept off this list.
+    // The fixture step below is a synthetic key chosen only to prove the
+    // structural rule (parentKey, not the key string, decides step-hood) — it is
+    // deliberately not `karos-linkedin-manager-v2`, the standalone manager card
+    // retired in full 2026-08-29 (SCRUM-377/T-B25a).
     vi.mocked(getClientCustomAgents).mockResolvedValue([
       { id: "agent-setup", name: "LinkedIn Setup" },
-      { id: "agent-mgr", name: "LinkedIn Manager" },
+      { id: "agent-notes", name: "LinkedIn Notes" },
       { id: "agent-e10", name: "LinkedIn Company Page" },
       { id: "agent-li", name: "LinkedIn Agent" },
     ] as any);
@@ -159,7 +163,7 @@ describe("the @mention roster combines the two lists without doubling anything",
     // be hidden. The e10 row has no parent and is dropped for the other reason.
     vi.mocked(data.listCustomAgents).mockResolvedValue([
       { id: "agent-setup", icon: "Bot", key: "karos-linkedin-setup-v2", parentKey: "karos-linkedin-writer-v2" },
-      { id: "agent-mgr", icon: "Bot", key: "karos-linkedin-manager-v2", parentKey: "karos-linkedin-writer-v2" },
+      { id: "agent-notes", icon: "Bot", key: "karos-linkedin-notes-v2", parentKey: "karos-linkedin-writer-v2" },
       { id: "agent-e10", icon: "Bot", key: "karos-linkedin-company-acme" },
       { id: "agent-li", icon: "Bot", key: "karos-linkedin-writer-v2" },
     ] as any);

@@ -18,7 +18,6 @@ import {
   updateJob,
   upsertLiAgentState,
   upsertBlogAgentState,
-  upsertCarouselAgentState,
   upsertReputationAgentState,
   upsertNewsletterAgentState,
   upsertNewsletterLedgerEntry,
@@ -46,17 +45,6 @@ import {
 import { isNewsletterAgent } from "@/lib/agent-service/newsletter-agent-context";
 import { isBlogAgent } from "@/lib/agent-service/blog-agent-context";
 import { isReputationAgent } from "@/lib/agent-service/reputation-agent-context";
-import { isCarouselAgent } from "@/lib/agent-service/carousel-agent-context";
-import {
-  CAROUSEL_STATE_MAX_CHARS,
-  type CarouselClientFile,
-  buildCarouselEnvelope,
-  carouselEnvelopeHasContent,
-  carouselStateContentType,
-  carouselStateDateFor,
-  carouselStateKindFor,
-  isCarouselSlideName,
-} from "@/lib/agent-service/carousel-state-capture";
 import {
   REPUTATION_STATE_MAX_CHARS,
   type ReputationClientFile,
@@ -106,7 +94,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { BlogAgentState, CarouselAgentState, ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, NewsletterAgentState, NewsletterLedgerEntry, RedditAgentState, ReputationAgentState } from "@/lib/types";
+import type { BlogAgentState, ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, NewsletterAgentState, NewsletterLedgerEntry, RedditAgentState, ReputationAgentState } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -650,9 +638,10 @@ export async function POST(req: NextRequest) {
   // means drafting a second public reply to a review a human already answered
   // under the client's own name.
   let isReputationStateJob = false;
-  // Carousel v2: the topic catalogue is the continuity file. Lose it and the
-  // next press posts a topic already on the client's public grid.
-  let isCarouselStateJob = false;
+  // The karos-carousel-runner/-setup/-manager family used to have its own state
+  // job here (`isCarouselStateJob`). It was retired in full 2026-08-29
+  // (SCRUM-377/T-B25a) — no engine equivalent was ever planned. Removed from
+  // code and the db, do not reintroduce.
   try {
     const producing = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
     isLinkedInStateJob = producing ? isLinkedInV2Agent(producing.key) : false;
@@ -663,7 +652,6 @@ export async function POST(req: NextRequest) {
     isNewsletterStateJob = producing ? isNewsletterAgent(producing.key) : false;
     isBlogStateJob = producing ? isBlogAgent(producing.key) : false;
     isReputationStateJob = producing ? isReputationAgent(producing.key) : false;
-    isCarouselStateJob = producing ? isCarouselAgent(producing.key) : false;
   } catch {
     isLinkedInStateJob = false;
     isLinkedInSetupJob = false;
@@ -671,7 +659,6 @@ export async function POST(req: NextRequest) {
     isNewsletterStateJob = false;
     isBlogStateJob = false;
     isReputationStateJob = false;
-    isCarouselStateJob = false;
   }
 
   // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
@@ -763,19 +750,6 @@ export async function POST(req: NextRequest) {
   const newsletterClientFiles: NewsletterClientFile[] = [];
   /** A blog v2 run's client-facing five, flattened into the envelope after the claim. */
   const blogClientFiles: BlogClientFile[] = [];
-  /**
-   * A carousel run's client-facing TEXT. The slides are images and never reach
-   * this list — they are re-hosted like any other image deliverable, and the
-   * envelope names them rather than carrying them.
-   */
-  const carouselClientFiles: CarouselClientFile[] = [];
-  /** Carousel v2 durable state, same rules as its five siblings. */
-  const carouselStateArtifacts: {
-    kind: CarouselAgentState["kind"];
-    content: string;
-    contentDate: string;
-    path: string;
-  }[] = [];
   /** A reputation pulse's client-facing folder, flattened after the claim. */
   const reputationClientFiles: ReputationClientFile[] = [];
   /** Reputation v2 durable state, same rules as its four siblings. */
@@ -963,31 +937,6 @@ export async function POST(req: NextRequest) {
           }
         } catch {
           // Best-effort, same as its three siblings.
-        }
-      }
-      const carouselState = isCarouselStateJob ? carouselStateKindFor(liPath) : null;
-      if (!artifact.client_facing && carouselState && artifact.url) {
-        try {
-          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
-          if (budget > 0) {
-            const res = await fetch(artifact.url, {
-              headers: agentServiceFetchHeaders(artifact.url),
-              signal: AbortSignal.timeout(budget),
-            });
-            if (res.ok) {
-              const text = (await res.text()).slice(0, CAROUSEL_STATE_MAX_CHARS);
-              if (text.trim()) {
-                carouselStateArtifacts.push({
-                  kind: carouselState,
-                  content: text,
-                  contentDate: carouselStateDateFor(liPath, handlerStartedAt),
-                  path: liPath,
-                });
-              }
-            }
-          }
-        } catch {
-          // Best-effort, same as its five siblings.
         }
       }
       const reputationState = isReputationStateJob ? reputationStateKindFor(liPath) : null;
@@ -1183,12 +1132,6 @@ export async function POST(req: NextRequest) {
                     text: content,
                   });
                 }
-                if (isCarouselStateJob) {
-                  carouselClientFiles.push({
-                    path: artifact.path ?? artifact.name,
-                    text: content,
-                  });
-                }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
                 // agents (X, LinkedIn) — prefer it deterministically over the
                 // size race, so a long sibling text file (a video brief, an
@@ -1316,22 +1259,6 @@ export async function POST(req: NextRequest) {
       ? JSON.stringify(reputationEnvelope)
       : null;
 
-  // ── Carousel v2: the caption and about become the reader's one string ──
-  // The SLIDE NAMES come off the client-facing artifact manifest rather than the
-  // text list, because the slides are images: their bytes never pass through the
-  // text branch above. Counting them here is what lets a reader see that ten
-  // were made and notice when nine arrived.
-  const carouselEnvelope = isCarouselStateJob
-    ? buildCarouselEnvelope(
-        carouselClientFiles,
-        artifacts.filter((a) => a.clientFacing && isCarouselSlideName(a.name)).map((a) => a.name),
-      )
-    : null;
-  const carouselEnvelopeJson =
-    carouselEnvelope && carouselEnvelopeHasContent(carouselEnvelope)
-      ? JSON.stringify(carouselEnvelope)
-      : null;
-
   const deliveredCount = rehosted.length;
   // For the Task Map sync below: the run may have been dispatched by a board
   // task, whose ticket gets the deliverable for client preview.
@@ -1342,8 +1269,6 @@ export async function POST(req: NextRequest) {
     ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : reputationEnvelopeJson
     ? reputationEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
-    : carouselEnvelopeJson
-    ? carouselEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : redditEnvelopeJson
     ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
     : primaryText
@@ -1609,38 +1534,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Carousel v2 durable state. Reported as an error because the TOPIC
-    // CATALOGUE is the continuity file: without it the next press picks a topic
-    // already on the client's public grid, where a repeat is visible to everyone
-    // who follows them.
-    if (carouselStateArtifacts.length > 0) {
-      const byKind = new Map(carouselStateArtifacts.map((row) => [row.kind, row]));
-      for (const row of byKind.values()) {
-        try {
-          await upsertCarouselAgentState({
-            clientId: job.clientId,
-            kind: row.kind,
-            content: row.content,
-            contentType: carouselStateContentType(row.path),
-            contentDate: row.contentDate,
-            capturedFromJobId: job.id,
-            capturedAt: now,
-          });
-        } catch (e) {
-          console.error(`[webhook] carousel ${row.kind} state save failed:`, e);
-          events.push({
-            at: Date.now(),
-            level: "error",
-            message:
-              row.kind === "topic-catalog"
-                ? "The carousel TOPIC CATALOGUE did not persist. The next post may repeat a subject that has already been published - check the catalogue before running again."
-                : row.kind === "style-config"
-                  ? "The carousel STYLE CONFIG did not persist. The next post has no visual system to build against and will stop."
-                  : `Carousel ${row.kind} did not persist - the next run will not see this run's changes to it.`,
-          });
-        }
-      }
-    }
+    // The karos-carousel-runner/-setup/-manager family's durable-state persist
+    // block used to live here. The whole family was retired in full 2026-08-29
+    // (SCRUM-377/T-B25a) — no engine equivalent was ever planned. Removed from
+    // code and the db, do not reintroduce.
 
     // Reputation v2 durable state. Reported as an error because the RESPONSE
     // LEDGER is the no-repeat memory: without it the next pulse drafts a second
@@ -1788,8 +1685,6 @@ export async function POST(req: NextRequest) {
         ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
         : reputationEnvelopeJson
         ? reputationEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
-        : carouselEnvelopeJson
-        ? carouselEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
         : redditEnvelopeJson
         ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
         : primaryText

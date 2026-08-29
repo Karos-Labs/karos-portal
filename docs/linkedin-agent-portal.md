@@ -22,12 +22,12 @@ auto-posting, so a person posts every time.
 | Surface | Where |
 |---|---|
 | Company form, seats (shared `clientSeats` — one person, one seat across agents), **"What should we cover next?"** (v2 Section A0), the shared what-happened-this-week box, the setup band, per-seat voice setup, per-draft feedback | `src/components/linkedin-agent-intake.tsx`, rendered inside the run dialog on `/clients/<id>/agents` — inline on a first run, then collapsed behind the "LinkedIn agent data" button — and by the `/clients/<id>/linkedin-agent` deep link, which no navigation points at. Both get their props from `buildLinkedInAgentIntakeView` in `src/lib/agent-intake-views.ts` — one mapping, two mounts |
-| Agent registration | THREE `customAgents` docs imported from the lab manifest: `karos-linkedin-writer-v2` → `products/building/linkedin-agent-v2`, `karos-linkedin-setup-v2` → `…/setup`, `karos-linkedin-manager-v2` → `…/manager` |
+| Agent registration | TWO `customAgents` docs imported from the lab manifest: `karos-linkedin-writer-v2` → `products/building/linkedin-agent-v2`, `karos-linkedin-setup-v2` → `…/setup`. A third, standalone `karos-linkedin-manager-v2` card existed briefly and was retired in full 2026-08-29 (SCRUM-377/T-B25a) — removed from code and the db, do not reintroduce. The manager SKILL itself is unaffected: it still runs automatically as part of every writer press, see "Three decisions" below |
 | Per-client binding | **None, and that is the v2 design.** One generic writer and one generic manager serve every client (setup emits no per-client agent code — the v1 generation did, which is why a fix had to be hand-applied to every client's copy). The keys carry no `<slug>`, so `perClientAgentSlug` is null and `PER_CLIENT_AGENT_KEY_PREFIXES` does not apply to them. The e10 doc `karos-linkedin-company-karoslabs` keeps its prefix and stays disabled as the fallback |
 | What the client sees | **ONE card, and only one.** Pressing Run the first time opens the agent's data on its stand-up step; after that, Run runs the writer. "Add a seat" fires that person's setup as part of adding them. The setup and manager docs exist (a doc is what carries `entrySkillDir`) but are marked as STEPS by `parentKey: "karos-linkedin-writer-v2"` on the document, and `isSubAgent` reads that field — so the next agent that grows a step needs a field, not a code change. Filtered off every roster by `isUnlistedAgent`, and so is the whole **e10 generation**, because a disabled-but-granted agent renders as "Coming soon" and a client was left looking at a LinkedIn agent AND a LinkedIn company page promising to arrive. Filtered on: both client roster lists, both staff roster lists, the "+ Add / Set up an agent for this client" dropdown (`bindableAgents`, structural only — see below), the dashboard tiles, the copilot's @-mentions, and the intake page's DESTINATION. On `/agents` they are NOT hidden but NESTED under the parent card, because that page is the library where an admin edits an agent's prompt; hiding a step there would make it uneditable. NOT on the intake GATE — that rung is deliberately coarse, and narrowing it 404'd the client whose only LinkedIn agent is the e10 instance. They stay GRANTED, because a client-fired run is refused unless the agent is granted; hiding and un-granting are different questions. Inside the agent: the company-page form always (it is the floor every identity stands on), then a name strip to pick a person, plus "Add someone" |
-| Run launcher | `/clients/<id>/agents`; exact-key profiles for all three v2 keys in `src/lib/custom-agent-launch.ts`, above the loose `/linkedin/` brief. "Post as" options are per client — `withLinkedInIdentityOptions` lists the company page plus every seat whose voice is built |
+| Run launcher | `/clients/<id>/agents`; exact-key profiles for both v2 keys in `src/lib/custom-agent-launch.ts`, above the loose `/linkedin/` brief. "Post as" options are per client — `withLinkedInIdentityOptions` lists the company page plus every seat whose voice is built |
 | Stored data | Firestore: `clientSeats` (shared), `agentIntake` (agent="linkedin"), `xNewsUpdates` (the SHARED news drop — SCRUM-51), `liDraftFeedback`, **`liDirectionRequests`** (new), **`liAgentState`** (new — the durable state), `seatVoiceProfiles` (agent="linkedin") |
-| Run-time injection | `src/lib/agent-service/linkedin-agent-context.ts` on every LinkedIn run (**both** submit cores). Per skill: setup gets the answers, the writer gets everything, the manager gets the state it audits and no CVs |
+| Run-time injection | `src/lib/agent-service/linkedin-agent-context.ts` on every LinkedIn run (**both** submit cores). Per skill: setup gets the answers; the writer gets everything, including — now that the manager pass runs inside the same press — the state it audits |
 | State capture | `src/lib/agent-service/linkedin-state-capture.ts` + the delivery handler. Internal state artifacts are fetched for their TEXT only — never re-hosted, never on an asset — and upserted into `liAgentState`. `agent-service/runner/src/artifacts.ts` `outputRoots` was widened to reach `clients/<slug>/internal` and `clients/<slug>/linkedin-agent` or the memory file and the calendar were collected from nowhere |
 | Run gate | Two rungs above the injection, both refusing what the AGENT would refuse anyway, one press earlier: the company form must be SAVED (saving it empty satisfies it — the deliberate portal policy), and for a writer/manager run the client must have been SET UP (asked of the `foundation` row, the same file setup's own join check treats as the source of truth). A seat identity with no voice card is refused by name |
 | Review | Webhook → job status `review` + one library asset (type `note`, unpublishable). `client/DRAFTS.md` becomes the asset content; the reader (`src/components/li-drafts-review.tsx`) renders per-identity cards with Pick & post on LinkedIn / Pick with edits / Request a change / Skip |
@@ -47,8 +47,10 @@ directory (the manager is a subfolder of it), so this is ONE job, one charge and
 one delivery rather than a chain across two webhooks with a cross-delivery
 dependency. The manager's cache rule is what makes it affordable: a same-day pull
 is reused and never re-bought, which only holds because the cache is captured
-into `liAgentState` and re-injected. The standalone manager card is staff's, for a
-bigger refill.
+into `liAgentState` and re-injected. A standalone manager card used to exist for
+staff, for a bigger refill; it was retired in full 2026-08-29 (SCRUM-377/T-B25a)
+— removed from code and the db, do not reintroduce. The automatic in-press
+manager pass described here is unaffected.
 
 Two honest costs: a press is slower (~20–40 min, reflected in the brief), and a
 death mid-manager costs the whole press.
@@ -109,7 +111,7 @@ seat variant. Consequences worth knowing:
 - **Repoint when the lab ships real seat onboarding.** This is a divergence, and
   it is written down here so it is found.
 
-## Canonical instructions for the three `customAgents` docs
+## Canonical instructions for the two `customAgents` docs
 
 To be applied in Phase 3 (snapshot each doc first; see `ROLLBACK.md`).
 
@@ -262,38 +264,11 @@ DRAFT-ONLY: nothing posts, no posting credential exists, and a person publishes
 every post from the portal. Never imply otherwise in a note to the client.
 ```
 
-### `karos-linkedin-manager-v2`
-
-```
-Run the LinkedIn manager for this client — the standalone pass (a normal post run
-already includes one). Run manager/SKILL.md end to end, nine steps.
-
-Read first: client_context/brief.md and every file in client_context/files/.
-The attached AGENT-MEMORY.md, linkedin-ledger.json, topic-catalog.yaml,
-LINKEDIN-FOUNDATION.md and manager-plan.json are the LIVE copies — the baked
-repo's are stale. linkedin-portal-intake.md carries every identity's learning log
-and outcomes; company-updates.md carries the client's live section.
-
-Check research-cache.json before pulling: if its date is TODAY, reuse it and
-record the reuse. One pull serves every identity and every run that day. When you
-do pull, the raw payload lands in the cache before anything parses it.
-
-Bounded authority. You may reweight lanes, retire an exhausted subject, and add
-topic rows — every new row citing a source URL with a date AND the client profile
-document that makes it relevant to this client. You may NOT invent a post type,
-change the default posts-per-run, change a voice, or alter a compliance rule:
-those become recorded requests for a human, in memory and in the report.
-
-Deliver AGENT-MEMORY.md, the updated topic-catalog.yaml and 05-plan.json at their
-contract paths — the portal captures them from there and hands them back to every
-later run. Never draft a post, never publish, never write the ledger.
-
-Write client/report.md: what went out per identity, what they did with it, what
-changed in the plan and why, what is coming, and anything we need from them.
-Client-facing prose — sentence case, no em dashes, no jargon, no placeholders,
-every number carrying its source or stated as client-reported. LinkedIn's own
-performance numbers are CLIENT-REPORTED until the API is wired; say so.
-```
+`karos-linkedin-manager-v2`, a standalone card for firing the manager pass on
+its own (a normal post run already includes one), was retired in full
+2026-08-29 (SCRUM-377/T-B25a) — no engine equivalent was ever planned, and
+product ruled it fully gone rather than left dormant. Removed from code and
+the db, do not reintroduce; its instruction block used to live here.
 
 ## Out of scope (parked)
 

@@ -57,13 +57,16 @@ describe("loadControlPlaneFacts", () => {
   });
 
   it("does not enrich an agent whose key maps to no engine product", async () => {
-    // The manager variants have no engine workflow — karos-linkedin-manager-v2
+    // The manager variants have no engine workflow — karos-blog-manager-v2
     // runs on two clocks and rewrites the generators' inputs, and the engine has
     // neither a scheduler nor a write path for that. Claiming a control-plane
-    // lineage for one would be a lie the runtime does not honour.
+    // lineage for one would be a lie the runtime does not honour. (The
+    // standalone LinkedIn manager card that used to illustrate this same point,
+    // karos-linkedin-manager-v2, was retired in full 2026-08-29,
+    // SCRUM-377/T-B25a — it is not merely unmapped now, it no longer exists.)
     routeFetch([agentRow("linkedin-agent")]);
 
-    const index = await loadControlPlaneFacts(["karos-linkedin-manager-v2"]);
+    const index = await loadControlPlaneFacts(["karos-blog-manager-v2"]);
 
     expect(index.size).toBe(0);
   });

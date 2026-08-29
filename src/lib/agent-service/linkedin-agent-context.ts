@@ -86,14 +86,19 @@ import type {
 export const LINKEDIN_WRITER_V2_KEY = "karos-linkedin-writer-v2";
 /** The v2 run-once setup, also used per seat (see `LiRunIdentity`). */
 export const LINKEDIN_SETUP_V2_KEY = "karos-linkedin-setup-v2";
-/** The v2 manager: refills the topic pool, writes the plan. The only one online. */
-export const LINKEDIN_MANAGER_V2_KEY = "karos-linkedin-manager-v2";
 
-const V2_KEYS: ReadonlySet<string> = new Set([
-  LINKEDIN_WRITER_V2_KEY,
-  LINKEDIN_SETUP_V2_KEY,
-  LINKEDIN_MANAGER_V2_KEY,
-]);
+/**
+ * The standalone staff-facing manager card (`karos-linkedin-manager-v2`) was
+ * retired 2026-08-29 (SCRUM-377/T-B25a) — removed from code and the db, do
+ * not reintroduce. `LINKEDIN_MANAGER_V2_KEY` and `isLinkedInManagerV2` used to
+ * live here.
+ *
+ * THE MANAGER SKILL ITSELF IS UNAFFECTED. It is a subfolder of the writer's
+ * own entry directory and still runs automatically as part of every writer
+ * press (Ben, 2026-08-04: "Run every run"); only the separate standalone doc
+ * that let staff fire it on its own, outside a normal writer press, is gone.
+ */
+const V2_KEYS: ReadonlySet<string> = new Set([LINKEDIN_WRITER_V2_KEY, LINKEDIN_SETUP_V2_KEY]);
 
 export function isLinkedInWriterV2(agentKey: string): boolean {
   return agentKey === LINKEDIN_WRITER_V2_KEY;
@@ -101,10 +106,6 @@ export function isLinkedInWriterV2(agentKey: string): boolean {
 
 export function isLinkedInSetupV2(agentKey: string): boolean {
   return agentKey === LINKEDIN_SETUP_V2_KEY;
-}
-
-export function isLinkedInManagerV2(agentKey: string): boolean {
-  return agentKey === LINKEDIN_MANAGER_V2_KEY;
 }
 
 export function isLinkedInV2Agent(agentKey: string): boolean {
@@ -707,10 +708,16 @@ export interface LinkedInContextArgs {
  *    there is nothing to not-repeat yet, and S8 must see an absent file as
  *    absent so it creates it rather than recording it as already present.
  *  - The WRITER gets everything: the combined file, the live section, the
- *    durable state, the prior batches, the CVs.
- *  - The MANAGER never drafts, so it gets the state it audits and steers from
- *    (ledger, catalog, memory, its own last plan, the research cache) and the
- *    outcomes, but no CVs and no voice cards it has no authority to change.
+ *    durable state, the prior batches, the CVs. This also covers the manager
+ *    SKILL's automatic pass that runs inside every writer press — it is not a
+ *    separate `agentKey` and was never branched on here.
+ *
+ * The standalone manager card (`karos-linkedin-manager-v2`) used to be a third
+ * branch — its own `agentKey`, fed the state it audits and steers from
+ * (ledger, catalog, memory, its own last plan, the research cache) but no CVs
+ * and no voice cards it had no authority to change. Retired 2026-08-29
+ * (SCRUM-377/T-B25a): no engine equivalent was ever planned, and no job can
+ * carry that key any more, so the branch is gone rather than left dead.
  */
 export async function buildLinkedInAgentContextFiles(
   args: LinkedInContextArgs,
@@ -718,9 +725,8 @@ export async function buildLinkedInAgentContextFiles(
   const { clientId, agentKey, agentName } = args;
   const identity = args.identity ?? LI_COMPANY_IDENTITY;
   const isSetup = isLinkedInSetupV2(agentKey);
-  const isManager = isLinkedInManagerV2(agentKey);
   // Every e10 key and the v2 writer take the full drafting set.
-  const isWriter = !isSetup && !isManager;
+  const isWriter = !isSetup;
 
   const [seats, intakes, news, feedback, requests, state, voiceCards] = await Promise.all([
     listClientSeats(clientId),
@@ -807,9 +813,7 @@ export async function buildLinkedInAgentContextFiles(
       // and re-running setup is a supported operation. The foundation is the
       // exception: a re-run must see it so it does not rewrite a live one.
       ["foundation"]
-    : isManager
-      ? ["foundation", "ledger", "topic-catalog", "agent-memory", "manager-plan", "research-cache"]
-      : ["foundation", "ledger", "topic-catalog", "manager-plan"];
+    : ["foundation", "ledger", "topic-catalog", "manager-plan"];
   for (const kind of stateKinds) {
     const row = state.find((s) => s.kind === kind);
     const spec = STATE_FILES[kind];

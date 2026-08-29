@@ -36,11 +36,16 @@ import { parseLiDrafts } from "@/lib/li-drafts";
 
 const WRITER = "karos-linkedin-writer-v2";
 const SETUP = "karos-linkedin-setup-v2";
-const MANAGER = "karos-linkedin-manager-v2";
+// The standalone `karos-linkedin-manager-v2` card was retired in full
+// 2026-08-29 (SCRUM-377/T-B25a) — no engine equivalent was ever planned, and
+// product ruled it fully gone rather than left dormant. Removed from code
+// and the db, do not reintroduce. The manager SKILL itself is unaffected: it
+// still runs automatically as part of every writer press (see the writer's
+// own instructions), it just no longer has a separately-fireable key.
 
 describe("the v2 agent keys", () => {
   it("are all recognised as LinkedIn agents, and so is the e10 generation", () => {
-    for (const key of [WRITER, SETUP, MANAGER]) {
+    for (const key of [WRITER, SETUP]) {
       expect(isLinkedInAgentIdentity(key), key).toBe(true);
     }
     // The fallback stays recognised: it is disabled, not deleted, and a run of it
@@ -48,6 +53,9 @@ describe("the v2 agent keys", () => {
     expect(isLinkedInAgentIdentity("karos-linkedin-company-karoslabs")).toBe(true);
     expect(isLinkedInAgentIdentity("karos-linkedin-agent")).toBe(true);
     expect(isLinkedInAgentIdentity("karos-x-agent-v2")).toBe(false);
+    // The retired standalone manager key is gone, not merely unlisted: it must
+    // no longer be recognised as a LinkedIn agent identity at all.
+    expect(isLinkedInAgentIdentity("karos-linkedin-manager-v2")).toBe(false);
   });
 
   it("keeps the client-safe twin in step with the server predicate", () => {
@@ -58,9 +66,12 @@ describe("the v2 agent keys", () => {
       join(process.cwd(), "src/lib/agent-service/linkedin-agent-context.ts"),
       "utf8",
     );
-    for (const key of [WRITER, SETUP, MANAGER]) {
+    for (const key of [WRITER, SETUP]) {
       expect(src, `the server predicate does not know ${key}`).toContain(`"${key}"`);
     }
+    // And the retired manager key must not linger as a live string literal
+    // (a retirement comment naming it in backticks is fine and expected).
+    expect(src).not.toContain('"karos-linkedin-manager-v2"');
   });
 
   it("is bound to NO client, which is the whole point of the v2 rebuild", () => {
@@ -68,7 +79,7 @@ describe("the v2 agent keys", () => {
     // to every copy. v2 has one generic writer, so the keys carry no slug and the
     // per-client binding must not claim them — a v2 key that read as bound would
     // be offered to exactly one client and hidden from every other.
-    for (const key of [WRITER, SETUP, MANAGER]) {
+    for (const key of [WRITER, SETUP]) {
       expect(perClientAgentSlug(key), key).toBeNull();
       expect(agentKeyMatchesClientSlug(key, "hankypanky")).toBe(true);
       expect(agentKeyMatchesClientSlug(key, null)).toBe(true);
@@ -87,7 +98,6 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
     // LOOKS like a step but carries no parentKey is a product; a key that looks
     // like nothing but carries one is a step.
     expect(isSubAgent({ key: SETUP, parentKey: WRITER })).toBe(true);
-    expect(isSubAgent({ key: MANAGER, parentKey: WRITER })).toBe(true);
     expect(isSubAgent({ key: SETUP })).toBe(false);
     expect(isSubAgent({ key: SETUP, parentKey: null })).toBe(false);
     // Whitespace is not a parent. A doc edited to "" or " " must read as
@@ -113,7 +123,6 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
     const roster = [
       { key: SETUP, parentKey: WRITER },
       { key: WRITER },
-      { key: MANAGER, parentKey: WRITER },
       { key: "karos-linkedin-company-karoslabs" },
       { key: "karos-linkedin-agent" },
       { key: "karos-x-agent-v2" },
@@ -126,18 +135,13 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
   it("nests steps under their parent for the library, and never drops an orphan", () => {
     const agents = [
       { key: WRITER, name: "LinkedIn Agent" },
-      { key: MANAGER, name: "LinkedIn Manager", parentKey: WRITER },
       { key: SETUP, name: "LinkedIn Setup", parentKey: WRITER },
       { key: "karos-x-agent-v2", name: "X Agent" },
       { key: "stray", name: "Stray Step", parentKey: "karos-typo-agent" },
     ];
     const { parents, orphans } = groupAgentsByParent(agents);
     expect(parents.map((p) => p.agent.key)).toEqual([WRITER, "karos-x-agent-v2"]);
-    // Sorted by name, so the order does not depend on the read order.
-    expect(parents[0].children.map((c) => c.name)).toEqual([
-      "LinkedIn Manager",
-      "LinkedIn Setup",
-    ]);
+    expect(parents[0].children.map((c) => c.name)).toEqual(["LinkedIn Setup"]);
     expect(parents[1].children).toEqual([]);
     // A step whose parentKey matches nothing is RETURNED, not swallowed: a
     // dropped orphan is an agent nobody can find or fix, and a typo'd parentKey
@@ -149,22 +153,25 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
     // Unlisted is not the same as unknown. The family predicate decides what gets
     // its intake attached and its setup gate applied; a key dropped from THAT
     // would run with no data. Only the offering changes.
-    for (const key of [SETUP, MANAGER, "karos-linkedin-agent", "karos-linkedin-company-karoslabs"]) {
+    for (const key of [SETUP, "karos-linkedin-agent", "karos-linkedin-company-karoslabs"]) {
       expect(isLinkedInAgentIdentity(key), key).toBe(true);
     }
   });
 
   it("is filtered on every surface that lists agents, staff included", () => {
-    // The manager is quiet BY CONSTRUCTION — the writer's instructions run its
-    // pass before drafting — so a card for it offers a run nobody would choose.
-    // Asked of the sources because these are server components and route
-    // handlers: a fifth roster added later has to opt in here or it ships the
-    // regression this test was written for.
+    // The manager PASS is quiet BY CONSTRUCTION — the writer's instructions run
+    // it before drafting — and the standalone manager CARD that used to also
+    // offer it directly was retired in full 2026-08-29 (SCRUM-377/T-B25a), so
+    // there is no longer a manager card for this filter to catch. It stays
+    // asserted anyway for the setup step, which is still a real doc a roster
+    // must not leak. Asked of the sources because these are server components
+    // and route handlers: a roster added later has to opt in here or it ships
+    // the regression this test was written for.
     const SURFACES = [
       "src/app/(app)/clients/[id]/agents/page.tsx",
       "src/app/(app)/dashboard/page.tsx",
       "src/app/api/clients/[id]/agents/mentionable/route.ts",
-      // The intake page's own agent resolution: the LinkedIn family has four
+      // The intake page's own agent resolution: the LinkedIn family has several
       // keys and only one is the agent a person means.
       "src/lib/agent-intake-views.ts",
       // The client's "+ Add / Set up an agent for this client" dropdown, which is
@@ -184,15 +191,16 @@ describe("the LinkedIn agent is ONE agent on the portal", () => {
     // (isCustomAgentGrantedToClient in the submit core), and the LinkedIn agent's
     // own surface fires setup on the client's behalf. So the grant stays and the
     // LISTING goes — the two were never the same question, and the enable script
-    // grants all three on purpose.
-    // enable-linkedin-v2-prep.ts became enable-v2-agents-prep.ts when the third
-    // and fourth families needed the identical three writes. The claim is
-    // unchanged and so is what proves it: the script that grants must name all
-    // three keys, steps included.
+    // grants both LinkedIn keys on purpose (the standalone manager key it used to
+    // also grant was retired in full 2026-08-29, SCRUM-377/T-B25a, and dropped
+    // from the family list).
     const script = readFileSync(join(process.cwd(), "scripts/enable-v2-agents-prep.ts"), "utf8");
-    for (const key of [SETUP, WRITER, MANAGER]) {
+    for (const key of [SETUP, WRITER]) {
       expect(script, `${key} is not granted by the enable script`).toContain(key);
     }
+    // The retired manager key must not linger as a live string literal in the
+    // FAMILIES table (a retirement comment naming it in backticks is fine).
+    expect(script).not.toContain('"karos-linkedin-manager-v2"');
     // And it still grants what it enables — the whole point of the assertion.
     expect(script).toContain("customAgentIds: [...granted, ...missing]");
   });
@@ -245,8 +253,11 @@ describe("the writer's brief", () => {
     // and must never collect.
     expect(profile.eyebrow).toBe("LinkedIn post");
     expect(launchProfileFor({ key: SETUP, name: "LinkedIn setup" }).eyebrow).toBe("LinkedIn setup");
-    expect(launchProfileFor({ key: MANAGER, name: "LinkedIn manager" }).eyebrow).toBe(
-      "LinkedIn plan and topics",
+    // The retired standalone manager key no longer has an exact-match profile:
+    // it now falls all the way through to the loose /linkedin/ catch-all, same
+    // as any other unrecognised LinkedIn-ish key would.
+    expect(launchProfileFor({ key: "karos-linkedin-manager-v2", name: "LinkedIn manager" }).eyebrow).toBe(
+      "Founder-led LinkedIn brief",
     );
   });
 });

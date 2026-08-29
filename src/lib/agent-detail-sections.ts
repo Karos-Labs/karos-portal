@@ -12,7 +12,6 @@ import {
 import type { AgentProfileScopeFields } from "@/lib/data";
 import {
   isBlogAgentIdentity,
-  isCarouselAgentIdentity,
   isLinkedInAgentIdentity,
   isReputationAgentIdentity,
   isNewsletterAgentIdentity,
@@ -207,10 +206,6 @@ function intakeAnswersFor(
       // page a reader lands on by clicking an agent card; its own surface, which
       // a person opens deliberately, is where it belongs.
       return [];
-    case "carousel":
-      // Same call as the three above, same reason: configuration rather than
-      // per-account identity answers. Its own surface is where a client reads it.
-      return [];
     case "reddit":
       return redditAnswers(toRedditIntakeView(doc));
   }
@@ -270,7 +265,6 @@ export function intakeFamilyFor(agentKey: string): AgentIntake["agent"] | null {
   if (isNewsletterAgentIdentity(agentKey)) return "newsletter";
   if (isBlogAgentIdentity(agentKey)) return "blog";
   if (isReputationAgentIdentity(agentKey)) return "reputation";
-  if (isCarouselAgentIdentity(agentKey)) return "carousel";
   return null;
 }
 
@@ -351,19 +345,6 @@ const FAMILY_CAPABILITIES: Record<AgentIntake["agent"], IntakeFamilyCapabilities
     // what says so.
     companyLabel: null,
     companyIcon: "User",
-  },
-  carousel: {
-    // No seats: a carousel is posted from the company account.
-    seats: false,
-    // No news drop. The runner takes its subject from the topic CATALOGUE setup
-    // built, and the manifest is explicit that a run flips one catalogue row
-    // used — so a drop row here would offer an input channel it cannot consume.
-    newsDrop: false,
-    takes: false,
-    direction: false,
-    profileDoc: false,
-    companyLabel: "Your carousel details",
-    companyIcon: "Images",
   },
   reputation: {
     // No seats: a review is about the business, not a person.
