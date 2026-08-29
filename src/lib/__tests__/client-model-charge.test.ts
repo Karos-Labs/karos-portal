@@ -254,3 +254,56 @@ describe("the once-only refund handle", () => {
     expect(creditClientCredits).toHaveBeenCalledTimes(2);
   });
 });
+
+/**
+ * T-B23: which model actually served a charged call is carried onto the
+ * ledger write as telemetry — the chat route's per-model chat pricing is the
+ * first caller to pass it. Asserted on the actual `chargeClientCredits` /
+ * `creditClientCredits` arguments, matching this file's own style, so a
+ * refactor that drops the field on the way to the data layer fails here.
+ */
+describe("model telemetry (T-B23)", () => {
+  it("carries modelName/provider onto the charge when the caller supplies them", async () => {
+    await chargeClientModelCall({
+      ...call(CLIENT_USER),
+      modelName: "claude-haiku-4-5-20251001",
+      provider: "anthropic",
+    });
+    expect(chargeClientCredits).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelName: "claude-haiku-4-5-20251001",
+        provider: "anthropic",
+      }),
+    );
+  });
+
+  it("writes null, not undefined, when the caller names no model", async () => {
+    // Firestore rejects `undefined` field values (the same reason logger.ts's
+    // webSearchCount is coalesced before a write) — every other optional
+    // field on this call already normalizes to null, and this one must too.
+    await chargeClientModelCall(call(CLIENT_USER));
+    expect(chargeClientCredits).toHaveBeenCalledWith(
+      expect.objectContaining({ modelName: null, provider: null }),
+    );
+  });
+
+  it("carries the same model info onto a refund", async () => {
+    const c = { ...call(CLIENT_USER), modelName: "claude-sonnet-4-6", provider: "anthropic" as const };
+    const { chargedAt } = await chargeClientModelCall(c);
+    await refundClientModelCall(c, chargedAt, "Refund · run failed");
+    expect(creditClientCredits).toHaveBeenCalledWith(
+      expect.objectContaining({ modelName: "claude-sonnet-4-6", provider: "anthropic" }),
+    );
+  });
+
+  it("never lets model info change the amount charged — it is telemetry, not pricing, at this layer", async () => {
+    // This module owns the mechanism only (see its own header note); the
+    // PRICE is decided by the caller before it ever reaches here. Passing a
+    // different modelName must not perturb the amount this layer forwards.
+    await chargeClientModelCall({ ...call(CLIENT_USER), amount: 5, modelName: "claude-sonnet-4-6" });
+    await chargeClientModelCall({ ...call(CLIENT_USER), amount: 5, modelName: "claude-haiku-4-5-20251001" });
+    for (const call_ of vi.mocked(chargeClientCredits).mock.calls) {
+      expect(call_[0].amount).toBe(5);
+    }
+  });
+});

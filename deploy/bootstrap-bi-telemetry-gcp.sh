@@ -92,14 +92,21 @@ else
 fi
 
 say "Table: credit_usage_bi"
+# model/provider (T-B23): which model actually served the call a credit
+# charge/refund is for, when the charging site resolved one — the chat
+# route's per-model chat pricing is the first writer. Nullable additions,
+# same widen-in-place pattern as agent_runs_bi's operation/jobId/stepId/source
+# above: safe against a live table, and a no-op if already present.
+CREDIT_USAGE_BI_SCHEMA="timestamp:TIMESTAMP,clientId:STRING,amount:FLOAT,balanceAfter:FLOAT,reason:STRING,source:STRING,model:STRING,provider:STRING"
 if have_table credit_usage_bi; then
-  echo "  already exists"
+  echo "  already exists — widening schema with model/provider (no-op if already present)"
+  bq update --project_id="$PROJECT_ID" "${PROJECT_ID}:${DATASET_ID}.credit_usage_bi" "$CREDIT_USAGE_BI_SCHEMA"
 else
   bq mk --table --project_id="$PROJECT_ID" \
     --time_partitioning_field=timestamp --time_partitioning_type=DAY \
     --clustering_fields=clientId \
     "${PROJECT_ID}:${DATASET_ID}.credit_usage_bi" \
-    timestamp:TIMESTAMP,clientId:STRING,amount:FLOAT,balanceAfter:FLOAT,reason:STRING,source:STRING
+    "$CREDIT_USAGE_BI_SCHEMA"
 fi
 
 say "Granting the Cloud Run runtime service account write access"

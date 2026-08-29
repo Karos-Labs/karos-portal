@@ -168,11 +168,15 @@ export const AI_ROLES = {
   "execution.haiku": { tier: "HAIKU", sites: ["src/lib/execution-engine.ts:37"] },
   "chat.client": {
     tier: "caller",
-    sites: ["src/app/api/clients/[id]/chat/route.ts:126"],
+    // T-B3 picks the model here, T-B4 captures the full `aiFor` resolution at
+    // the same call and T-B23 prices off it — three tickets moved this line, so
+    // it is recomputed against the merged file rather than carried over from
+    // any one branch.
+    sites: ["src/app/api/clients/[id]/chat/route.ts:165"],
   },
   "chat.followups": {
     tier: "HAIKU",
-    sites: ["src/app/api/clients/[id]/chat/route.ts:719"],
+    sites: ["src/app/api/clients/[id]/chat/route.ts:782"],
   },
   "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:419"] },
   "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:584"] },

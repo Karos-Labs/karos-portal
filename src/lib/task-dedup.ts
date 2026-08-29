@@ -11,6 +11,14 @@
  *   3. Same productType + same platform scope against ACTIVE tasks created in
  *      the same ISO week — one "social_post for instagram" dispatch per week
  *      scope; a second is a duplicate intent even with a different title.
+ *      DATE-AWARE (T-B11): that week-wide scope is a fallback for when nobody
+ *      knows which day the content is actually for. When the candidate names
+ *      a specific day (`TaskCandidate.targetDate` — "another Instagram post,
+ *      for the 14th"), tier 3 narrows to comparing that exact calendar day
+ *      against each active task's own best-known day instead of the whole
+ *      week, so a dated request no longer collides with an unrelated
+ *      same-week task for a different day. See `taskTargetDay` below for what
+ *      "best-known day" means when the existing task never got one.
  *
  * Capacity policy: MAX_ACTIVE_TASKS bounds ACTIVE (pending / in_progress /
  * review_pending) KAROS-MANAGED tasks only. client_managed tasks never count
@@ -74,6 +82,17 @@ export interface TaskCandidate {
   /** Custom-agent executor id, when the task runs one instead of a product. */
   customAgentId?: string;
   platform?: string;
+  /**
+   * Epoch millis for the specific calendar day this content is FOR — e.g. a
+   * request for "another Instagram post, for the 14th" carries the 14th here,
+   * distinct from `now` (when the request is being made). Optional and
+   * usually absent: most callers propose undated, generic dispatches (the
+   * weekly content sweep), and those keep the coarser per-week tier-3 scope
+   * documented above. Only set this when the request actually names a day —
+   * inventing one to "be more specific" defeats the one-per-week guard this
+   * tier exists for.
+   */
+  targetDate?: number;
 }
 
 /** The executor a candidate/task binds to, for the same-scope dedup tier. */
@@ -86,6 +105,26 @@ function taskExecutorKey(t: ClientTask): string | null {
   if (typeof custom === "string" && custom) return custom;
   if (typeof product === "string" && product) return product;
   return null;
+}
+
+/** Calendar-day key (UTC) for the date-aware tier-3 comparison. */
+function isoDayKey(ts: number): string {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+
+/**
+ * The best day we actually know this EXISTING task's content is for: the
+ * inferred calendar placement stashed at approve time
+ * (`metadata.suggestedDate` — see `ClientTask.metadata` doc), or, failing
+ * that, the day it was created. `createdAt` is a real fallback, not a
+ * placeholder: for the undated dispatches this tier is meant to cap (the
+ * weekly sweep creating a task "now" for "sometime this week"), the creation
+ * day is the only day anyone has actually named, so a dated candidate that
+ * lands on that same day is still treated as the same request.
+ */
+function taskTargetDay(t: ClientTask): number {
+  const suggested = t.metadata?.suggestedDate;
+  return typeof suggested === "number" ? suggested : t.createdAt;
 }
 
 /**
@@ -115,19 +154,26 @@ export function findDuplicateReason(
     return `near-identical to active task "${similar.title}"`;
   }
 
-  // 3. Same executor (managed product OR custom agent) + platform scope in the
-  //    same week window.
+  // 3. Same executor (managed product OR custom agent) + platform scope,
+  //    scoped to a specific day when the candidate names one (date-aware,
+  //    T-B11), or to the whole ISO week when it doesn't.
   const candidateExecutor = executorKey(candidate);
   if (candidateExecutor) {
+    const dateAware = candidate.targetDate != null;
     const week = taskWeekKey(now);
-    const clash = active.find(
-      (t) =>
-        taskExecutorKey(t) === candidateExecutor &&
-        (t.metadata?.platform ?? null) === (candidate.platform ?? null) &&
-        taskWeekKey(t.createdAt) === week,
-    );
+    const candidateDayKey = dateAware ? isoDayKey(candidate.targetDate!) : null;
+
+    const clash = active.find((t) => {
+      if (taskExecutorKey(t) !== candidateExecutor) return false;
+      if ((t.metadata?.platform ?? null) !== (candidate.platform ?? null)) return false;
+      return dateAware
+        ? isoDayKey(taskTargetDay(t)) === candidateDayKey
+        : taskWeekKey(t.createdAt) === week;
+    });
     if (clash) {
-      return `an active task for the same agent and ${candidate.platform ?? "channel"} scope already exists this week ("${clash.title}")`;
+      return dateAware
+        ? `an active task for the same agent and ${candidate.platform ?? "channel"} scope already targets ${candidateDayKey} ("${clash.title}")`
+        : `an active task for the same agent and ${candidate.platform ?? "channel"} scope already exists this week ("${clash.title}")`;
     }
   }
 

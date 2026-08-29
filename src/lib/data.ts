@@ -2879,6 +2879,9 @@ type CreditEntryMeta = {
   jobId?: string | null;
   actorUid: string;
   actorName?: string;
+  /** See CreditLedgerEntry.modelName/.provider (T-B23). */
+  modelName?: string | null;
+  provider?: string | null;
 };
 
 /**
@@ -2917,6 +2920,8 @@ export async function chargeClientCredits(
       reason: args.reason,
       agentId: args.agentId ?? null,
       jobId: args.jobId ?? null,
+      modelName: args.modelName ?? null,
+      provider: args.provider ?? null,
       actorUid: args.actorUid,
       actorName: args.actorName,
       createdAt: now,
@@ -2930,6 +2935,8 @@ export async function chargeClientCredits(
       balanceAfter: result.balance,
       reason: args.reason,
       source: args.operation,
+      model: args.modelName ?? null,
+      provider: args.provider ?? null,
     });
   }
   return result;
@@ -2976,6 +2983,8 @@ export async function creditClientCredits(
       reason: args.reason,
       agentId: args.agentId ?? null,
       jobId: args.jobId ?? null,
+      modelName: args.modelName ?? null,
+      provider: args.provider ?? null,
       actorUid: args.actorUid,
       actorName: args.actorName,
       createdAt: now,
@@ -2988,6 +2997,8 @@ export async function creditClientCredits(
     balanceAfter: result.balance,
     reason: args.reason,
     source: args.operation,
+    model: args.modelName ?? null,
+    provider: args.provider ?? null,
   });
   return result;
 }
