@@ -225,6 +225,12 @@ vi.mock("@ai-sdk/anthropic", () => ({
     tools: { webSearch_20250305: () => ({}) },
   }),
 }));
+// T-B3/SCRUM-246: chat.client's cost-based default now resolves to vendor
+// "google" (Gemini) rather than always "anthropic" — see the matching note in
+// client-api-access-guard.test.ts.
+vi.mock("@ai-sdk/google-vertex", () => ({
+  googleVertex: Object.assign((id: string) => ({ id }), { tools: {} }),
+}));
 
 import { streamText } from "ai";
 import * as data from "@/lib/data";

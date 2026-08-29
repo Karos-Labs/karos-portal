@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
 import { renderSectionBody } from "@/lib/doc-render";
 import type { ClientReport } from "@/lib/types";
+import { CHAT_MODEL_KEYS, CHAT_MODEL_OPTIONS, type ChatModelKey } from "@/lib/ai/chat-models";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
@@ -245,6 +246,19 @@ function useCopilot(
   const [error, setError] = useState<string | null>(null);
   /** Set by picking `@AgentName` - sent as `focusAgentId` on every turn until cleared. */
   const [focusAgent, setFocusAgent] = useState<FocusAgent | null>(null);
+  /**
+   * Manual model-picker override (T-B3/SCRUM-246). `null` means "Auto" - the
+   * route's own cost-based routing (cheap Gemini by default, Haiku for a
+   * `deep` proactive action) decides. A picked key is sent as `model` on
+   * every turn until cleared, taking priority over `deep` server-side
+   * (`resolveChatModel`, lib/ai/chat-models.ts) - picking "Fast" even
+   * overrides one of the three proactive actions' own `deep: true`. Session-
+   * only by design, unlike `focusAgent`: a cost preference from a prior visit
+   * silently carrying into a new one is a worse default than just asking
+   * again, and this is a plain UI convenience, not billed state worth a
+   * client-visible receipt.
+   */
+  const [preferredModel, setPreferredModel] = useState<ChatModelKey | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Scoped to viewer AND client: sessionStorage survives sign-out in the same
   // tab, and StaffCopilotDock writes under this prefix too - an unscoped key
@@ -374,6 +388,11 @@ function useCopilot(
             messages: history,
             ...(focusAgent ? { focusAgentId: focusAgent.id } : {}),
             ...(deep ? { deep: true } : {}),
+            // Sent as one of CHAT_MODEL_OPTIONS's keys, never a raw model id -
+            // the route treats this exactly as untrusted as any other request
+            // body field and validates it against its own server-side copy of
+            // the same allowlist (resolveChatModel, lib/ai/chat-models.ts).
+            ...(preferredModel ? { model: preferredModel } : {}),
           }),
           signal: controller.signal,
         });
@@ -458,7 +477,7 @@ function useCopilot(
         setStreaming(false);
       }
     },
-    [clientId, messages, streaming, focusAgent, onBrandingChange, onTasksCreated, router],
+    [clientId, messages, streaming, focusAgent, preferredModel, onBrandingChange, onTasksCreated, router],
   );
 
   /**
@@ -507,8 +526,58 @@ function useCopilot(
 
   return {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
-    focusAgent, setFocusAgent,
+    focusAgent, setFocusAgent, preferredModel, setPreferredModel,
   };
+}
+
+/* ── Manual model picker ─────────────────────────────────────────────── */
+
+/**
+ * T-B3/SCRUM-246's manual override. "Auto" (the default, `value === null`)
+ * defers to the route's own cost-based routing; the other two pills force a
+ * specific allowlisted model for every turn until changed back. Rendered
+ * from `CHAT_MODEL_KEYS`/`CHAT_MODEL_OPTIONS` rather than a hardcoded copy of
+ * the label pair, so this can never drift from the actual server-side
+ * allowlist it is choosing keys out of.
+ */
+function ModelPicker({
+  value,
+  onChange,
+}: {
+  value: ChatModelKey | null;
+  onChange: (key: ChatModelKey | null) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 border-t border-border px-3 pt-2 text-[11px]">
+      <span className="mr-0.5 text-muted-2">Model</span>
+      <button
+        type="button"
+        onClick={() => onChange(null)}
+        aria-pressed={value === null}
+        className={cn(
+          "rounded-full px-2 py-0.5 transition-colors",
+          value === null ? "bg-neon-soft text-neon" : "text-muted-2 hover:bg-surface-2",
+        )}
+      >
+        Auto
+      </button>
+      {CHAT_MODEL_KEYS.map((key) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => onChange(value === key ? null : key)}
+          aria-pressed={value === key}
+          title={CHAT_MODEL_OPTIONS[key].description}
+          className={cn(
+            "rounded-full px-2 py-0.5 transition-colors",
+            value === key ? "bg-neon-soft text-neon" : "text-muted-2 hover:bg-surface-2",
+          )}
+        >
+          {CHAT_MODEL_OPTIONS[key].label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /* ── Typing dots ─────────────────────────────────────────────────────── */
@@ -747,7 +816,7 @@ export function ChatbotWidget({
 
   const {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
-    focusAgent, setFocusAgent,
+    focusAgent, setFocusAgent, preferredModel, setPreferredModel,
   } = useCopilot(clientId, viewerUid, onBrandingChange, onTasksCreated);
 
   // Whether to show the proactive welcome instead of the standard empty state
@@ -1138,6 +1207,7 @@ export function ChatbotWidget({
                   ))}
               </div>
             )}
+            <ModelPicker value={preferredModel} onChange={setPreferredModel} />
             <form
               onSubmit={handleSubmit}
               className="flex items-center gap-2 border-t border-border px-3 py-3"

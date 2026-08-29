@@ -28,8 +28,19 @@
  */
 export type Capability = "web_search" | "web_fetch";
 
-/** A model vendor. Both currently serve Anthropic models; they are not equivalent. */
-export type Vendor = "anthropic" | "vertex";
+/**
+ * A model vendor. "anthropic" and "vertex" both serve Anthropic models (they
+ * are not equivalent — see the capability matrix below). "google" is Gemini
+ * on Vertex (T-B3/SCRUM-246) — a different model family on the same
+ * underlying Vertex AI project/auth, reached through
+ * `@ai-sdk/google-vertex`'s default export rather than its `/anthropic`
+ * subpath. It is deliberately NOT a legal `AI_VENDOR` value (`defaultVendor()`
+ * in provider.ts still only accepts "anthropic"/"vertex") — nothing in the
+ * 43-site manifest is meant to bulk-route to Gemini. It is reachable only as
+ * an explicit per-call `vendor` on a "caller"-tier role, which today is only
+ * `chat.client` (see `src/lib/ai/chat-models.ts`).
+ */
+export type Vendor = "anthropic" | "vertex" | "google";
 
 /**
  * Which capabilities each vendor can supply.
@@ -54,6 +65,12 @@ export type Vendor = "anthropic" | "vertex";
 export const VENDOR_CAPABILITIES: Readonly<Record<Vendor, readonly Capability[]>> = {
   anthropic: ["web_search", "web_fetch"],
   vertex: ["web_search"],
+  // Empty, not "whatever Gemini happens to support": no coupled role has ever
+  // been asked to run on Gemini, so nothing has verified what it can do. A
+  // role that later pins itself to "google" while declaring a capability
+  // fails the SAME way an unsupported vertex pairing already does — loudly,
+  // at wiring time — rather than silently getting a tool nobody checked.
+  google: [],
 } as const;
 
 /**
@@ -68,6 +85,7 @@ export const CAPABILITY_VARIANT: Readonly<
 > = {
   anthropic: { web_search: "webSearch_20250305", web_fetch: "webFetch_20250910" },
   vertex: { web_search: "webSearch_20250305" },
+  google: {},
 } as const;
 
 /** True when `vendor` can supply `capability`. */
