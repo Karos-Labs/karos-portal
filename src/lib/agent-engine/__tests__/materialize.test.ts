@@ -100,12 +100,13 @@ const ENGINE_CATALOG: Readonly<Record<string, string>> = {
   "intel-report-agent": "intel-report",
   "seo-geo-agent": "seo-geo-report",
   "campaign-orchestrator": "campaign-bundle",
+  "reputation-agent": "reputation-pulse",
 };
 
 describe("the product catalog is covered end to end", () => {
-  it("maps every one of the twelve engine products, by the kind its workflow actually writes", () => {
+  it("maps every one of the thirteen engine products, by the kind its workflow actually writes", () => {
     expect(PRODUCT_DELIVERABLE_KINDS).toEqual(ENGINE_CATALOG);
-    expect(Object.keys(PRODUCT_DELIVERABLE_KINDS)).toHaveLength(12);
+    expect(Object.keys(PRODUCT_DELIVERABLE_KINDS)).toHaveLength(13);
   });
 
   it("fetches each product's deliverable by that exact kind — a mismatch 404s and silently delivers nothing", async () => {
@@ -390,6 +391,61 @@ describe("tiktok-clip", () => {
     expect(asset.content).toBe("The take. Via Jane Doe on The Show.");
     expect(asset.videoUrl ?? undefined).toBeUndefined();
     expect(asset.meta).toMatchObject({ sourceTier: "generated" });
+  });
+});
+
+describe("reputation-pulse", () => {
+  it("renders the crisis line, flagged items, and drafted replies as one markdown asset, typed note", async () => {
+    await materialize("reputation-agent", {
+      pulseNumber: "004",
+      generatedAt: "2026-08-20T00:00:00.000Z",
+      summary: { respond: 2, flag: 1, no_action: 3, unavailable: 0 },
+      crisis: { fired: true, triggers: [{ signature: "sig-1" }] },
+      flagged: [{ reviewId: "r1", valueScore: 80, urgencyScore: 91, reason: "Legal threat mentioned in the review." }],
+      approvedDrafts: [
+        { reviewId: "r2", draftText: "Thanks for the feedback — we've passed this to the team." },
+        { reviewId: "r3", draftText: "We're sorry to hear that and would like to make it right." },
+      ],
+      draftManifest: [{ reviewId: "r2", outcome: "written" }],
+    });
+    const asset = createdAsset();
+    // The fence: a review reply is posted from the client's own listing, not
+    // through this portal, so this is `note` — never `social_post` offered
+    // to twitter/linkedin/facebook/tiktok.
+    expect(asset.type).toBe("note");
+    expect(asset.title).toBe("Reputation pulse 004");
+    expect(asset.content).toContain("A crisis trigger fired on this pulse");
+    expect(asset.content).toContain("2 responded · 1 flagged · 3 no action · 0 unavailable");
+    expect(asset.content).toContain("## Flagged — needs a person (1)");
+    expect(asset.content).toContain("Legal threat mentioned in the review. (urgency 91/100)");
+    expect(asset.content).toContain("## Drafted replies (2)");
+    expect(asset.content).toContain("Thanks for the feedback");
+    expect(asset.content).toContain("We're sorry to hear that");
+    expect(asset.meta).toMatchObject({
+      pulseNumber: "004",
+      crisis: { fired: true, triggers: [{ signature: "sig-1" }] },
+    });
+  });
+
+  it("a pulse with nothing safe to answer but a live flag still materializes — flags alone count", async () => {
+    await materialize("reputation-agent", {
+      pulseNumber: "005",
+      summary: { respond: 0, flag: 1, no_action: 0, unavailable: 0 },
+      crisis: { fired: false },
+      flagged: [{ reviewId: "r1", urgencyScore: 95, reason: "Needs a manager's response." }],
+      approvedDrafts: [],
+    });
+    const asset = createdAsset();
+    expect(asset.content).not.toContain("crisis trigger fired");
+    expect(asset.content).toContain("Needs a manager's response. (urgency 95/100)");
+    expect(asset.content).not.toContain("## Drafted replies");
+  });
+
+  it("survives a deliverable with none of these fields yet, without throwing", async () => {
+    const assetId = await materialize("reputation-agent", {});
+    expect(assetId).toBe("asset_1");
+    expect(createdAsset().content).toBe("");
+    expect(createdAsset().title).toBe("Reputation pulse");
   });
 });
 
