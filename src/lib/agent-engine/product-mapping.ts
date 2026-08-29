@@ -186,12 +186,18 @@ export function resolveAgentEngineRunKind(productId: string): "setup" | "recurri
  * dedicated matcher), so without this alias a client filling the visible
  * "Success criteria and constraints" box on a reddit-agent run would have it
  * silently dropped — the exact defect T-B12 exists to close.
+ *
+ * Exported (as `const satisfies`, not a widened type annotation) so C3
+ * (`engine-field-contract.ts`) can derive its `WireFieldKey` union from the
+ * literal `wireKey` slot of each row here, rather than re-declaring the same
+ * key list a second time by hand. See that file's header for why this is the
+ * whole point of the exercise.
  */
-const SHARED_SCALAR_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: string]> = [
+export const SHARED_SCALAR_FIELDS = [
   ["audience", "audience"],
   ["tone", "tone"],
   ["cta", "cta"],
-];
+] as const satisfies ReadonlyArray<readonly [dialogKey: string, wireKey: string]>;
 
 /**
  * Shared LIST fields. C3 spells these `mustInclude[]` and `keywords[]` — the
@@ -203,14 +209,15 @@ const SHARED_SCALAR_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: 
  * compliance"), so comma-splitting would shred one requirement into three.
  * `keywords` is a single-line text input whose natural separator is the comma,
  * so it splits on both.
+ *
+ * Exported for the same reason as `SHARED_SCALAR_FIELDS` above — C3's
+ * `WireFieldKey` union is derived from this table's literal `wireKey` slot.
  */
-const SHARED_LIST_FIELDS: ReadonlyArray<
-  readonly [dialogKey: string, wireKey: string, splitOnCommas: boolean]
-> = [
+export const SHARED_LIST_FIELDS = [
   ["must_include", "mustInclude", false],
   ["success_criteria", "mustInclude", false],
   ["keywords", "keywords", true],
-];
+] as const satisfies ReadonlyArray<readonly [dialogKey: string, wireKey: string, splitOnCommas: boolean]>;
 
 /**
  * DEDICATED PER-AGENT FIELDS, dialog key -> wire key.
@@ -235,8 +242,13 @@ const SHARED_LIST_FIELDS: ReadonlyArray<
  * callers (`linkedin-agent-actions.ts` builds `briefValues` by hand, and the
  * scheduled-run cron may) can set them, and dropping a key an existing caller
  * may pass is a silent regression rather than a fix.
+ *
+ * Exported for the same reason as the two tables above: this is the table a
+ * new dedicated field is added to in practice, so it is the one whose literal
+ * `wireKey` slot C3's `WireFieldKey` union must actually widen from — not a
+ * second, hand-copied list that a change here can silently leave behind.
  */
-const DEDICATED_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: string]> = [
+export const DEDICATED_FIELDS = [
   // X draft
   ["run_scope", "runScope"],
   ["requestedLane", "requestedLane"],
@@ -260,7 +272,42 @@ const DEDICATED_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: stri
   ["scope", "scope"],
   ["market", "market"],
   ["competitors", "competitors"],
-];
+] as const satisfies ReadonlyArray<readonly [dialogKey: string, wireKey: string]>;
+
+/**
+ * The wire keys `toEngineRunInput` sets by BESPOKE logic below rather than by
+ * walking one of the three tables above: `customPrompt`/`mustInclude`-style
+ * folding, `request` (-> `requestedTopic`, unless `engineProductId` is
+ * `REQUEST_IS_DIRECTION_PRODUCT`), `target_date` (-> `targetDate`, after
+ * `normalizeTargetDate`), `post_count` (-> `postCount`, after the integer
+ * guard) and the parsed `mediaAssets` array.
+ *
+ * This list exists so C3 (`engine-field-contract.ts`) can build its
+ * `WireFieldKey` union from ALL of this function's real outputs, not just the
+ * three table-driven ones — closing the other half of the same disconnect:
+ * `WireFieldKey` used to be a hand-copied 25-key list that neither this file
+ * nor the tables above ever checked against each other. A field added to one
+ * of the THREE TABLES above now fails `tsc --noEmit` if the contract has no
+ * row for it (`WireFieldKey` widens automatically because those tables are
+ * declared `as const satisfies`, and `ENGINE_FIELD_CONTRACT`'s
+ * `Record<WireFieldKey, FieldContractEntry>` annotation then demands the new
+ * key). A field added here — a NEW bespoke `input.xyz = ...` line in
+ * `toEngineRunInput` with no table row behind it — is NOT caught by that same
+ * compile-time mechanism (there is no table for TypeScript to widen from);
+ * `engine-field-contract.test.ts`'s exhaustive-payload test below catches
+ * that case at test time instead, by asserting every key `toEngineRunInput`
+ * ever actually emits, across every dialog key this repo defines, is a member
+ * of this list. Both gaps are closed; neither is closed by the same
+ * mechanism, and this comment says so rather than overclaiming one guard
+ * covers both.
+ */
+export const SPECIAL_CASED_WIRE_KEYS = [
+  "customPrompt",
+  "mediaAssets",
+  "requestedTopic",
+  "targetDate",
+  "postCount",
+] as const;
 
 /**
  * Dialog keys whose ANSWER IS PROSE FOR THE MODEL and which C3 rules should be
