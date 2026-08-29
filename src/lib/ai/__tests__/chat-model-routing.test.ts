@@ -26,22 +26,26 @@ import { MODEL_PRICING_BY_VENDOR } from "@/lib/models/usage-log";
  */
 
 describe("CHAT_MODEL_OPTIONS is the allowlist and matches the ticket's target", () => {
-  it("keeps the cheap Gemini option in the allowlist — it is selectable and priced, whatever the default is", () => {
-    const gemini = CHAT_MODEL_OPTIONS["gemini-flash"];
-    expect(gemini.vendor).toBe("google");
-    expect(gemini.modelId).toMatch(/^gemini-/);
+  it("defaults to a cheap Gemini model, not Haiku or Sonnet", () => {
+    // The hold this briefly sat under is lifted: GOOGLE_VERTEX_PROJECT and
+    // GOOGLE_VERTEX_LOCATION are set by both deploy configs, both portal
+    // runtime service accounts hold roles/aiplatform.user, and
+    // gemini-2.5-flash answered a real call in both projects.
+    const def = CHAT_MODEL_OPTIONS[DEFAULT_CHAT_MODEL_KEY];
+    expect(def.vendor).toBe("google");
+    expect(def.modelId).toMatch(/^gemini-/);
   });
 
-  it("holds the DEFAULT at Haiku until the deploy actually configures Vertex for Gemini", () => {
-    // NOT what T-B3 specifies, and deliberately so — see
-    // DEFAULT_CHAT_MODEL_KEY's own doc comment for the full reasoning.
-    // `googleVertex()` validates GOOGLE_VERTEX_LOCATION synchronously at
-    // construction and nothing this repo deploys from sets it, so a Gemini
-    // default would throw on every non-deep turn. This test is the record of
-    // that hold: when the Vertex config is confirmed, flip the constant and
-    // this test flips with it, deliberately, rather than the product
-    // discovering the change in prep.
-    expect(DEFAULT_CHAT_MODEL_KEY).toBe("haiku");
+  it("gives the picker three distinct behaviours: Auto routes, Fast is Gemini, Quality is Haiku", () => {
+    // The widget's "Auto" sends no `model` at all, so it falls through to
+    // `deep`-based routing. Auto and Quality collapsing onto the same model
+    // is exactly what the Haiku hold caused, and this is the assertion that
+    // catches it if the default is ever pinned to the deep tier again.
+    expect(resolveChatModel({}).option.vendor).toBe("google");
+    expect(resolveChatModel({ deep: true }).option.vendor).toBe("anthropic");
+    expect(resolveChatModel({ requestedModel: "gemini-flash" }).option.modelId).toMatch(/^gemini-/);
+    expect(resolveChatModel({ requestedModel: "haiku" }).option.modelId).toBe("claude-haiku-4-5-20251001");
+    expect(DEFAULT_CHAT_MODEL_KEY).not.toBe(DEEP_CHAT_MODEL_KEY);
   });
 
   it("routes a quality/deep request to Haiku, not Sonnet", () => {
@@ -145,13 +149,8 @@ describe("aiFor(\"chat.client\", ...) actually binds through the capability-awar
     vi.unstubAllEnvs();
   });
 
-  it("binds the Gemini option to vendor google when it is picked", () => {
-    // Explicitly requested rather than taken from the default: the Gemini
-    // BINDING is what this test is about, and it must keep being exercised
-    // while DEFAULT_CHAT_MODEL_KEY is held at haiku — a manual "Fast" pick
-    // still reaches this path in production.
-    const chosen = resolveChatModel({ requestedModel: "gemini-flash" });
-    expect(chosen.manual).toBe(true);
+  it("binds the cost-based default to vendor google", () => {
+    const chosen = resolveChatModel({});
     const resolved = aiFor("chat.client", { modelId: chosen.option.modelId, vendor: chosen.option.vendor });
     expect(resolved.vendor).toBe("google");
     expect(resolved.modelId).toBe("gemini-2.5-flash");
