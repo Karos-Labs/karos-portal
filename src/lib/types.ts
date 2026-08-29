@@ -2356,6 +2356,21 @@ export interface CreditLedgerEntry {
   actorUid: string;
   actorName?: string;
   createdAt: number;
+  /**
+   * The model that actually served the call this entry charges/refunds for,
+   * when the charging site resolved one — the chat route's per-model chat
+   * pricing (T-B23) is the first writer. Carries the same two facts
+   * `@/lib/models/usage-log.ts`'s `UsageLog.modelName`/`UsageLog.provider`
+   * record for real-dollar cost, spelled the same way on purpose, so a
+   * client's credit spend can eventually be joined against what that call
+   * actually cost Karos. `provider` is `ProviderId` from that module
+   * ("anthropic" | "openai" | "google") — not re-imported here because this
+   * file is deliberately import-free; keep the two vocabularies in sync by
+   * hand. Absent on every entry written before this and on every operation
+   * that doesn't price a model choice (seat purchases, manual adjustments…).
+   */
+  modelName?: string | null;
+  provider?: string | null;
 }
 
 /* ─────────────── Agent intake & seats (X e13 · LinkedIn e10) ───────────────

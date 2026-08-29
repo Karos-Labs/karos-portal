@@ -43,6 +43,17 @@ interface CreditUsageEvent {
   balanceAfter: number;
   reason: string;
   source: string;
+  /**
+   * Which model this charge/grant/refund is for, when the caller resolved
+   * one before writing the ledger entry (T-B23's per-model chat pricing is
+   * the first writer). Same two fields as `AgentRunEvent.model` below, kept
+   * separate rather than named identically only because this event already
+   * calls its "what surface spent this" field `source` — additive/nullable
+   * columns, so this ships safely whether or not the widening migration in
+   * bootstrap-bi-telemetry-gcp.sh has run yet against a given table.
+   */
+  model?: string | null;
+  provider?: string | null;
 }
 
 /** Every creditLedger write (charge, grant, refund, adjustment) — call right after the Firestore transaction resolves. */
@@ -54,6 +65,8 @@ export function trackCreditUsage(event: CreditUsageEvent): void {
     balanceAfter: event.balanceAfter,
     reason: event.reason,
     source: event.source,
+    model: event.model ?? null,
+    provider: event.provider ?? null,
   });
 }
 

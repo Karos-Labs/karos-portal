@@ -19,6 +19,8 @@ import type {
   JobRunType,
   ManagedTaskType,
 } from "@/lib/types";
+import type { ProviderId } from "@/lib/models/usage-log";
+import type { ChatModelKey } from "@/lib/ai/chat-models";
 
 /**
  * True when this actor's AI actions should charge the client's balance:
@@ -40,7 +42,15 @@ export function isBillableClientActor(
  * Sonnet calls) so it costs 3× a task execution.
  */
 export const CREDIT_COSTS = {
-  /** One copilot chat message (Sonnet, up to 6 tool steps). */
+  /**
+   * One copilot chat message on the default (Haiku) tier — the by-far-most-
+   * common case: a quick Q&A turn. A `deep` turn (Sonnet, multi-step tool
+   * orchestration — the copilot's three substantive proactive actions opt
+   * into it) costs more: see `CHAT_MESSAGE_CREDITS` / `chatMessageCreditCost()`
+   * below, which the chat route resolves through — always resolve through
+   * that, never charge this flat rate for a `deep` turn. (This constant used
+   * to be charged for every turn regardless of model — T-B23.)
+   */
   chatMessage: 1,
   /**
    * BASELINE karos_managed task execution — the in-process (single Sonnet/Haiku
@@ -70,6 +80,134 @@ export const CREDIT_COSTS = {
    */
   employeeSeat: 100,
 } as const;
+
+/* ── Per-model chat pricing (T-B23) ──────────────────────────────── */
+
+/**
+ * The two Claude tiers the copilot can actually run one turn on today — the
+ * `deep` flag on the chat route's request body (a quick Q&A turn vs the three
+ * substantive proactive actions that opt into multi-step tool orchestration).
+ *
+ * NOT `ModelTier` from `@/lib/ai/roles`: that type also carries `"caller"`,
+ * which this file has no business modelling (a price table has nothing to
+ * charge a caller-chosen tier that isn't one of these two), and it is a
+ * Claude-only vocabulary — a model this table might one day price is not a
+ * Sonnet/Haiku tier at all.
+ */
+export type ChatModel = "haiku" | "sonnet" | "gemini-flash";
+
+/**
+ * Per-model credit price for one copilot chat message.
+ *
+ * REPLACES A PRICE THAT DID NOT MOVE WITH THE MODEL. `CREDIT_COSTS.chatMessage`
+ * has priced every copilot turn identically since before the chat route could
+ * run on two different models — `deep` (Sonnet, multi-step tool
+ * orchestration) was added later with no second price, so an in-depth Sonnet
+ * turn and a one-line Haiku answer have always cost a client the same 1
+ * credit. `haiku` here IS `CREDIT_COSTS.chatMessage` — nothing changes for
+ * the default, by-far-most-common case. `sonnet` reuses
+ * `CREDIT_COSTS.taskExecution` rather than a new number of its own: this
+ * file's own scale already prices one Sonnet call at 5 Haiku-credits (see the
+ * module doc above — "a Sonnet task execution burns ~5× a chat message" —
+ * and `taskExecution`'s own doc: "the in-process single Sonnet/Haiku call
+ * path"), so a deep chat turn is billed on that existing call, not a second
+ * guess at what a Sonnet call is worth.
+ *
+ * SHAPE, because this pairs with S12 (the middleware-side pricing table this
+ * ticket flags, Shlomi's repo — out of scope here). Keyed on `ProviderId`
+ * (`@/lib/models/usage-log.ts`) — the SAME vocabulary `UsageLog.provider` /
+ * `UsageLog.modelName` already use to cross the boundary between this repo's
+ * real-dollar cost tracking and whatever tracks cost middleware-side —
+ * rather than inventing a portal-only vendor enum, so a future
+ * reconciliation diffs two same-shaped tables instead of translating between
+ * naming schemes. Deliberately NOT keyed on `ai/provider.ts`'s `Vendor`
+ * (anthropic vs vertex): that is which INFRASTRUCTURE served the call, and a
+ * client's price must not move because Karos happened to route the same
+ * Claude model through Vertex — see `usageFor()`'s own vendor/provider split
+ * for the same reasoning applied to real-dollar cost.
+ *
+ * `google` and `openai` are reserved, empty, alongside `anthropic` — this is
+ * the gap the ticket names ("no Gemini rows anywhere in the pricing table"):
+ * adding a Gemini or GPT chat option is now a price DECISION recorded here,
+ * not a table that has to be reshaped to fit a third provider. Deliberately
+ * NOT populated with a guessed Gemini number: no Gemini vendor exists in
+ * `ai/provider.ts` today (`capabilities.ts`'s `Vendor` is `"anthropic" |
+ * "vertex"`, both Claude, and the chat route has no client-selectable Gemini
+ * model to price), so there is no real call this file could price without
+ * inventing one — exactly the placeholder-pricing failure
+ * `CLIENT_PRICE_ROWS`'s own docstring already warns against for the
+ * agent-setup row.
+ */
+export const CHAT_MESSAGE_CREDITS: Readonly<
+  Record<ProviderId, Readonly<Partial<Record<ChatModel, number>>>>
+> = {
+  anthropic: {
+    haiku: CREDIT_COSTS.chatMessage,
+    sonnet: CREDIT_COSTS.taskExecution,
+  },
+  // T-B3 (SCRUM-246) landed the Gemini chat option this row was reserved for,
+  // so it is no longer a future one — `gemini-flash` is now the DEFAULT model
+  // for every non-deep copilot turn. Leaving `google` empty would make
+  // `chatMessageCreditCost` throw on the most common path in the product.
+  //
+  // The number is `CREDIT_COSTS.chatMessage`: the SAME 1 credit a copilot
+  // turn has cost since before the route could run on more than one model.
+  // That is deliberately not a new price decision — a client's bill does not
+  // move because Karos started routing the cheap path to a cheaper model, and
+  // Gemini Flash costs Karos less than Haiku, so this cannot under-recover
+  // against the tier it replaced. If Gemini's chat turn should be priced
+  // BELOW a Haiku one, that is a real pricing decision and it belongs here,
+  // made deliberately, not inherited from a merge.
+  google: { "gemini-flash": CREDIT_COSTS.chatMessage },
+  openai: {},
+};
+
+/**
+ * The price row for a copilot turn, given the model T-B3's allowlist resolved.
+ *
+ * T-B23 originally shipped `chatModelFor(deep)`, which read `body.deep` and
+ * mapped it to a tier itself. T-B3 (SCRUM-246) landed in the same round and
+ * made that decision its own: `resolveChatModel()` in `ai/chat-models.ts` is
+ * the ONLY thing allowed to turn a request body into a `{ vendor, modelId }`
+ * pair, because `body.model` is untrusted browser input and that function
+ * holds the mandatory server-side allowlist.
+ *
+ * So this takes the resolved KEY rather than the raw flag. Pricing is
+ * downstream of routing, never a second opinion about it — a second function
+ * reading `body.deep` would be a second place the allowlist can be forgotten,
+ * and the charge could name a model the turn did not actually run on.
+ *
+ * Exhaustive over `ChatModelKey` by construction: adding an option to
+ * `CHAT_MODEL_OPTIONS` without a price row here fails the type-check, which
+ * is the same refuse-to-guess posture as `chatMessageCreditCost` throwing.
+ */
+export function chatPricingFor(key: ChatModelKey): { provider: ProviderId; model: ChatModel } {
+  const ROWS: Readonly<Record<ChatModelKey, { provider: ProviderId; model: ChatModel }>> = {
+    "gemini-flash": { provider: "google", model: "gemini-flash" },
+    haiku: { provider: "anthropic", model: "haiku" },
+  };
+  return ROWS[key];
+}
+
+/**
+ * Credits one copilot chat message costs, given which model actually serves
+ * it. Throws rather than silently falling back to the flat rate — an
+ * unpriced (model, provider) pair reaching a live charge is a wiring gap (a
+ * new tier or provider added to the chat route without a row here), not a
+ * runtime condition worth papering over with a guess. Mirrors
+ * `models/usage-log.ts`'s `priceFor()`, which throws for the identical
+ * reason on the real-dollar cost side.
+ */
+export function chatMessageCreditCost(model: ChatModel, provider: ProviderId = "anthropic"): number {
+  const price = CHAT_MESSAGE_CREDITS[provider]?.[model];
+  if (price == null) {
+    throw new Error(
+      `No credit price for chat model "${model}" under provider "${provider}". Add it to ` +
+        `CHAT_MESSAGE_CREDITS.${provider} — there is deliberately no default.`,
+    );
+  }
+  return price;
+}
 
 /** Client-facing weekly estimate for a recurring custom-agent schedule. */
 export function scheduledAgentWeeklyCost(
@@ -375,7 +513,12 @@ export interface ClientPriceRow {
  * no number says so — see ClientPriceRow.
  */
 export const CLIENT_PRICE_ROWS: readonly ClientPriceRow[] = [
-  { label: "Copilot message", credits: CREDIT_COSTS.chatMessage },
+  {
+    label: "Copilot message",
+    credits: CREDIT_COSTS.chatMessage,
+    from: true,
+    note: `up to ${chatMessageCreditCost("sonnet")} for an in-depth question`,
+  },
   { label: "Correct one document", credits: CREDIT_COSTS.targetedCorrection },
   { label: "Correct every document", credits: CREDIT_COSTS.globalCorrection },
   {

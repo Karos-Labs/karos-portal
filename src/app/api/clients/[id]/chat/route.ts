@@ -29,6 +29,8 @@ import {
   CLIENT_PRICE_ROWS,
   CREDIT_COSTS,
   availableCredits,
+  chatMessageCreditCost,
+  chatPricingFor,
   clientPriceText,
   creditsLabel,
 } from "@/lib/credits";
@@ -149,10 +151,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // thrown away, because the text-only stream protocol had no channel to carry
   // it.
   //
-  // One resolution, two consumers. Deliberately NOT two resolvers: a second
-  // path deciding vendor+model from `body` is a second place the allowlist
-  // could be forgotten.
+  // T-B23 (SCRUM-247) owns what the CLIENT IS CHARGED for it, and reads the
+  // same resolution rather than repeating it: `chatPricingFor` maps this key
+  // to its (provider, model) price row. T-B23 was built against the old
+  // `body.deep ? SONNET : HAIKU` ternary and shipped its own `chatModelFor`
+  // resolver; that resolver is deliberately NOT merged. Two paths deciding
+  // vendor+model from the request body is two places the allowlist can be
+  // forgotten, and only one of them would have had it.
+  //
+  // One resolution, three consumers.
   const chatModel = resolveChatModel({ deep: body.deep, requestedModel: body.model });
+  const chatPrice = chatPricingFor(chatModel.key);
   const resolvedAi = aiFor("chat.client", {
     modelId: chatModel.option.modelId,
     vendor: chatModel.option.vendor,
@@ -217,9 +226,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const chatCharge = await chargeClientModelCall({
     user,
     clientId,
-    amount: CREDIT_COSTS.chatMessage,
+    // T-B23: priced on the model this turn actually runs — the key T-B3's
+    // allowlist resolved, mapped to its price row by `chatPricingFor` — not
+    // the old flat CREDIT_COSTS.chatMessage. modelName/provider are carried
+    // onto the ledger entry purely for telemetry (reconciling a client's
+    // credit spend against what the call actually cost Karos); they play no
+    // part in the amount charged above, and they now name the model that
+    // really served the turn rather than a hardcoded "anthropic".
+    amount: chatMessageCreditCost(chatPrice.model, chatPrice.provider),
     operation: "chat_message",
     reason: "Copilot chat message",
+    modelName: chatModel.option.modelId,
+    provider: chatPrice.provider,
   });
   if (chatCharge.denied !== null) {
     return Response.json({ error: chatCharge.denied }, { status: 402 });

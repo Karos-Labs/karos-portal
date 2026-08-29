@@ -2,12 +2,16 @@ import { resolve } from "node:path";
 import { readSource } from "./source-scan";
 
 import {
+  CHAT_MESSAGE_CREDITS,
   CREDIT_BUCKET_LABEL,
   CREDIT_COSTS,
   CREDIT_OPERATION_LABEL,
+  chatMessageCreditCost,
+  chatPricingFor,
   creditBucketFor,
   type CreditBucket,
 } from "@/lib/credits";
+import { CHAT_MODEL_KEYS } from "@/lib/ai/chat-models";
 import type { CreditOperation, JobRunType } from "@/lib/types";
 import { describe, expect, it } from "vitest";
 import {
@@ -415,5 +419,73 @@ describe("credit ledger presentation", () => {
     // two different things.
     const labels = Object.values(CREDIT_BUCKET_LABEL);
     expect(new Set(labels).size).toBe(labels.length);
+  });
+});
+
+/* ── T-B23: per-model chat pricing ────────────────────────────────── */
+
+describe("chatPricingFor", () => {
+  // T-B23 originally resolved the model itself, from `body.deep`. T-B3
+  // (SCRUM-246) landed in the same round and owns that decision behind a
+  // mandatory server-side allowlist, so pricing now maps the RESOLVED key to
+  // its price row instead of forming a second opinion about which model ran.
+  it("prices the default option on its own provider, not a hardcoded anthropic", () => {
+    expect(chatPricingFor("gemini-flash")).toEqual({ provider: "google", model: "gemini-flash" });
+  });
+
+  it("prices the deep/quality option on anthropic", () => {
+    expect(chatPricingFor("haiku")).toEqual({ provider: "anthropic", model: "haiku" });
+  });
+
+  it("has a real price for every option the chat allowlist can resolve to", () => {
+    // The gap this closes: T-B23 shipped `google: {}` as a reserved-empty
+    // row because no Gemini chat option existed yet. T-B3 then made Gemini
+    // the DEFAULT, so an empty row would have made chatMessageCreditCost
+    // throw on the most common turn in the product.
+    for (const key of CHAT_MODEL_KEYS) {
+      const row = chatPricingFor(key);
+      expect(() => chatMessageCreditCost(row.model, row.provider), `no credit price for chat option "${key}"`).not.toThrow();
+    }
+  });
+});
+
+describe("chatMessageCreditCost", () => {
+  it("prices the default Haiku turn at the unchanged CREDIT_COSTS.chatMessage rate", () => {
+    // The whole point of keeping this constant: nothing changes for the
+    // by-far-most-common case, only for the deep/Sonnet turn that used to be
+    // billed identically to it.
+    expect(chatMessageCreditCost("haiku")).toBe(CREDIT_COSTS.chatMessage);
+  });
+
+  it("prices a deep Sonnet turn ABOVE the Haiku rate — the bug this ticket fixes", () => {
+    const haiku = chatMessageCreditCost("haiku");
+    const sonnet = chatMessageCreditCost("sonnet");
+    expect(sonnet).toBeGreaterThan(haiku);
+    // Specifically the "one Sonnet call" rate this file's own scale already
+    // defines (taskExecution), not a freestanding new number.
+    expect(sonnet).toBe(CREDIT_COSTS.taskExecution);
+  });
+
+  it("defaults to the anthropic provider when none is passed", () => {
+    expect(chatMessageCreditCost("haiku")).toBe(chatMessageCreditCost("haiku", "anthropic"));
+  });
+
+  it("refuses an unpriced (model, provider) pair rather than guessing a price", () => {
+    // No Gemini chat model is wired yet — see CHAT_MESSAGE_CREDITS's own
+    // docstring for why "google" is reserved rather than populated. Reading
+    // it must throw, not silently fall back to the Haiku/Sonnet rate.
+    expect(() => chatMessageCreditCost("haiku", "google")).toThrow(/No credit price/);
+    expect(() => chatMessageCreditCost("sonnet", "openai")).toThrow(/No credit price/);
+  });
+
+  it("CHAT_MESSAGE_CREDITS reserves a slot for every provider the internal cost tracker prices", () => {
+    // @/lib/models/usage-log.ts's ProviderId is "anthropic" | "openai" |
+    // "google" — this table must have a bucket for each so that a future
+    // Gemini/GPT chat model is a price DECISION, not a table reshape. This
+    // is exactly the gap the ticket names ("no Gemini rows anywhere in the
+    // pricing table").
+    expect(Object.keys(CHAT_MESSAGE_CREDITS).sort()).toEqual(["anthropic", "google", "openai"]);
+    expect(CHAT_MESSAGE_CREDITS.anthropic.haiku).toBeDefined();
+    expect(CHAT_MESSAGE_CREDITS.anthropic.sonnet).toBeDefined();
   });
 });

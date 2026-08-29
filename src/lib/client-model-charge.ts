@@ -3,6 +3,7 @@ import "server-only";
 import { chargeClientCredits, creditClientCredits } from "@/lib/data";
 import { CreditError, isBillableClientActor } from "@/lib/credits";
 import type { AppUser, CreditOperation } from "@/lib/types";
+import type { ProviderId } from "@/lib/models/usage-log";
 
 /**
  * ONE WAY TO SAY "a client just made us call a model — charge it or refuse it".
@@ -55,6 +56,19 @@ export interface ClientModelCall {
    */
   jobId?: string | null;
   agentId?: string | null;
+  /**
+   * The model that actually serves this call, when the caller resolved one
+   * before charging — the chat route's per-model chat pricing (T-B23) is the
+   * first user. Carried onto the ledger entry / BI event alongside the
+   * charge so a client's credit spend can be reconciled against which model
+   * ran it, the way `@/lib/models/usage-log.ts`'s `UsageLog.modelName`
+   * already does for real-dollar cost. Optional: most call sites price a
+   * fixed action rather than a model choice, and pass neither this nor
+   * `provider`.
+   */
+  modelName?: string | null;
+  /** Coarse billing family for `modelName` — see `UsageLog.provider`. */
+  provider?: ProviderId | null;
 }
 
 /**
@@ -89,6 +103,8 @@ export async function chargeClientModelCall(call: ClientModelCall): Promise<Char
       reason: call.reason,
       jobId: call.jobId ?? null,
       agentId: call.agentId ?? null,
+      modelName: call.modelName ?? null,
+      provider: call.provider ?? null,
       actorUid: call.user.uid,
       actorName: call.user.name,
     });
@@ -121,6 +137,8 @@ export async function refundClientModelCall(
       reason,
       jobId: call.jobId ?? null,
       agentId: call.agentId ?? null,
+      modelName: call.modelName ?? null,
+      provider: call.provider ?? null,
       actorUid: call.user.uid,
       actorName: call.user.name,
     });
