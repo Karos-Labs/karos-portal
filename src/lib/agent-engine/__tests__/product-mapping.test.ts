@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { launchProfileFor, withEngineRunFields } from "@/lib/custom-agent-launch";
 import {
   isClientEnabledForEngineCustomAgents,
+  KNOWN_ENGINE_PRODUCT_IDS,
   resolveAgentEngineProductId,
   resolveAgentEngineProductIdForCustomAgent,
   resolveAgentEngineRunKind,
@@ -55,14 +56,10 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
 
 
   it("only ever maps to a product id the engine can resolve", () => {
-    // The guard against the whole class of mistake above. Mirrors
-    // KNOWN_PRODUCT_IDS in apps/agent-server/src/wiring/workflows.ts.
-    const KNOWN = new Set([
-      "x-agent", "instagram-agent", "linkedin-agent", "reddit-agent", "blog-agent",
-      "newsletter-agent", "campaign-orchestrator", "landing-builder-agent",
-      "branded-shorts-agent", "reputation-agent", "seo-geo-agent", "intel-report-agent",
-      "tiktok-agent",
-    ]);
+    // The guard against the whole class of mistake above, against the ONE set
+    // this repo now names (`KNOWN_ENGINE_PRODUCT_IDS`, product-mapping.ts) —
+    // not a second hand-copied list that could quietly drift from it.
+    const KNOWN = new Set<string>(KNOWN_ENGINE_PRODUCT_IDS);
     for (const key of [
       "karos-x-agent-v2", "karos-linkedin-writer-v2", "karos-reddit-runner",
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",

@@ -2,6 +2,45 @@ import type { ManagedTaskType } from "@/lib/types";
 import type { EngineProductWithDeliverable } from "./materialize";
 
 /**
+ * Every `productId` agent-engine's own `wiring/workflows.ts` knows how to run
+ * (`KNOWN_PRODUCT_IDS`, `apps/agent-server/src/wiring/workflows.ts`).
+ * Transcribed here rather than imported — agent-engine is a separate
+ * deployable with its own release cycle (the same reason `read-run.ts`
+ * duplicates its Firestore record shapes instead of importing them, and
+ * `materialize.test.ts`'s `ENGINE_CATALOG` is a point-in-time transcription
+ * rather than a re-derivation) — so this list drifts only when someone
+ * updates it, not when the engine ships a new product. Verified directly
+ * against agent-engine's source (13 entries, `tiktok-agent` included) as of
+ * this writing.
+ *
+ * This is the ONE place in this repo that names the full set; every other
+ * caller who used to hardcode a copy of it (`product-mapping.test.ts`'s own
+ * `KNOWN` set, C2's `RoutableRecommendation.engineProductId` guard in
+ * `routable-recommendation.ts`) now imports this instead.
+ */
+export const KNOWN_ENGINE_PRODUCT_IDS = [
+  "x-agent",
+  "instagram-agent",
+  "linkedin-agent",
+  "reddit-agent",
+  "blog-agent",
+  "newsletter-agent",
+  "campaign-orchestrator",
+  "landing-builder-agent",
+  "branded-shorts-agent",
+  "reputation-agent",
+  "seo-geo-agent",
+  "intel-report-agent",
+  "tiktok-agent",
+] as const;
+
+export type EngineProductId = (typeof KNOWN_ENGINE_PRODUCT_IDS)[number];
+
+export function isKnownEngineProductId(value: string | undefined): value is EngineProductId {
+  return typeof value === "string" && (KNOWN_ENGINE_PRODUCT_IDS as readonly string[]).includes(value);
+}
+
+/**
  * Maps one of karosCMO's "managed" catalog task types onto agent-engine's
  * own fixed `productId` enum (`apps/agent-server/src/wiring/workflows.ts`'s
  * `KNOWN_PRODUCT_IDS`) — the only two directions this repo can currently

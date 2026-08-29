@@ -7,6 +7,7 @@ import { recommendedScheduleFields } from "@/lib/scheduling";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
 import { generateAssetTitle } from "@/lib/asset-titles";
 import { AgentEngineCredentialError, getAgentEngineDeliverable } from "./client";
+import { groupRecommendationsByOwner, hasClassifiedOwner, toRoutableRecommendation } from "./routable-recommendation";
 import type { AssetType, Job, WireTaskType } from "@/lib/types";
 
 /**
@@ -614,6 +615,10 @@ function materializeSeoGeoReport(deliverable: Record<string, unknown>): AssetMat
     .filter((part): part is string => Boolean(part))
     .join(" · ");
 
+  // Never narrower than the raw payload: an older/partial record (missing
+  // `recommendation`, or predating C2's routing fields entirely) still gets
+  // its title into this list exactly as before. This is deliberately loose
+  // where the typed parse below is strict.
   const recommendationBlock = recommendations
     .map((recommendation) => {
       const title = firstOf(recommendation["title"], recommendation["recommendation"], recommendation["id"]);
@@ -622,24 +627,64 @@ function materializeSeoGeoReport(deliverable: Record<string, unknown>): AssetMat
     .filter((line): line is string => Boolean(line))
     .join("\n");
 
+  // [C2] The routable half of the same array: `check`/`lever`/`productRef`
+  // and the `fixAction`/`actionKind`/`owner`/`engineProductId` routing,
+  // fail-safe-parsed rather than thrown away. A record too malformed to be
+  // even a `FiredRecommendation` (no `recId`/`recommendation`) is dropped
+  // from this typed view — it still rendered above, from the raw payload.
+  // Always populated (structured data — every unclassified record still
+  // resolves to a real, honest `owner: "client_manual"`), unlike the prose
+  // line below, which is gated on the wire actually carrying owner data.
+  const routableRecommendations = recommendations
+    .map(toRoutableRecommendation)
+    .filter((r): r is NonNullable<typeof r> => r !== undefined);
+
+  // THE SPRAYER (SCRUM-210 acceptance #3): sorts into the three owner
+  // categories off `owner` alone — see groupRecommendationsByOwner's own
+  // doc comment for why that is recId-blind by construction.
+  const byOwner = groupRecommendationsByOwner(routableRecommendations);
+
+  // GATED ON REAL DATA, not merely on there being recommendations at all
+  // (R1 review finding: today's real agent-engine payload carries ZERO
+  // owner/fixAction/engineProductId fields — see `hasClassifiedOwner`'s own
+  // doc comment — so an unconditional line here would show every real report
+  // "0 we run automatically · 0 tool/connector · N client action", which
+  // reads as a genuine triage result when it is actually nothing but the
+  // fail-safe default. Rendering nothing until the wire actually carries an
+  // `owner` is the honest version of this line: accurate zero counts once
+  // T-A4/SCRUM-257 ships classified data are fine to show, an all-default
+  // batch dressed up as a triage is not.
+  const anyClassified = recommendations.some(hasClassifiedOwner);
+  const ownerMixLine = anyClassified
+    ? `**Owner mix:** ${byOwner.karos_agent.length} we run automatically · ${byOwner.karos_tool.length} tool/connector · ${byOwner.client_manual.length} client action`
+    : undefined;
+
   return {
     title: "SEO and GEO visibility report",
     content: joinBlocks([
       scoreLine ? `**${scoreLine}**` : undefined,
       str(deliverable["narrative"]),
       recommendationBlock ? `## Recommendations (${recommendations.length})\n\n${recommendationBlock}` : undefined,
+      ownerMixLine,
     ]),
-    meta: metaFrom(deliverable, [
-      "seoScore",
-      "geoReadiness",
-      "visibility",
-      "geoScoreModel",
-      "connectorOverlay",
-      "firedRecommendations",
-      "fixDrafts",
-      "promptSet",
-      "reproducibility",
-    ]),
+    meta: {
+      ...metaFrom(deliverable, [
+        "seoScore",
+        "geoReadiness",
+        "visibility",
+        "geoScoreModel",
+        "connectorOverlay",
+        "firedRecommendations",
+        "fixDrafts",
+        "promptSet",
+        "reproducibility",
+      ]),
+      // Structured, typed, routable — always present (even when every record
+      // fails safe to client_manual) so a consumer that reads meta directly
+      // never has to guess whether this run predates C2. What is withheld
+      // above is the PROSE claim, not this data.
+      routableRecommendations,
+    },
   };
 }
 

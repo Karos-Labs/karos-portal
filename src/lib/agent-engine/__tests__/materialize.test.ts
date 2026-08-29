@@ -27,6 +27,7 @@ vi.mock("../client", async (importOriginal) => ({
 }));
 
 import { materializeAgentEngineDeliverable, PRODUCT_DELIVERABLE_KINDS } from "../materialize";
+import type { RoutableRecommendation } from "../routable-recommendation";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { parseRedditDrafts } from "@/lib/reddit-drafts";
@@ -329,6 +330,112 @@ describe("the report and bundle products render to something a reviewer can read
     expect(asset.content).toContain("## Recommendations (2)");
     expect(asset.content).toContain("- Add FAQ schema");
     expect(asset.content).toContain("- Fix canonical tags");
+  });
+
+  /**
+   * [C2/SCRUM-210] THE INTEGRATION WIRING ITSELF, exercised through the real
+   * `materializeAgentEngineDeliverable` -> `buildMaterialization` ->
+   * `materializeSeoGeoReport` path (the same call the tests above already
+   * use) — never a duplicate call into `routable-recommendation.ts`'s own
+   * exports directly. That distinction is the whole point: the R1 review's
+   * finding #1 was that reverting `materialize.ts`'s C2 changes back to its
+   * pre-C2 version left ALL existing tests green, including the test above,
+   * because nothing exercised the wiring — only the isolated parser/sprayer
+   * functions had coverage. Delete `routableRecommendations`/`ownerMixLine`
+   * from `materializeSeoGeoReport` (or the import at the top of
+   * materialize.ts) and see this block go red; that is what proves it now
+   * covers the wiring rather than the parser's own unit tests a second time.
+   */
+  describe("seo-geo-report: the C2 routable-recommendation wiring", () => {
+    it("today's REAL agent-engine payload shape (zero owner/fixAction/engineProductId fields) renders no Owner-mix line at all", async () => {
+      // Exactly what create-seo-geo-agent-workflow.ts writes today, verified
+      // directly against that file: `firedRecommendations: recommendations`,
+      // a bare `FiredRecommendation[]` with none of C2's routing fields.
+      // (R1 review finding #4: this used to render "0 we run automatically ·
+      // 0 tool/connector · 2 client action" — a false-looking triage result
+      // manufactured entirely by the fail-safe default, not by any real
+      // classification, and no test caught it.)
+      await materialize("seo-geo-agent", {
+        narrative: "Visibility is concentrated in two prompts.",
+        firedRecommendations: [
+          { recId: "SEO-02", recommendation: "Title length, truncation & rewrite-mismatch guard", fireState: "fail" },
+          { recId: "BOTH-07", recommendation: "Canonical tag coverage", fireState: "approaching" },
+        ],
+      });
+      const asset = createdAsset();
+      expect(asset.content).not.toContain("Owner mix");
+      expect(asset.content).not.toContain("we run automatically");
+      // The structured data is still there for a future consumer, correctly
+      // fail-safed to client_manual — it is only the PROSE claim that is
+      // withheld until the data backing it is real.
+      const routable = asset.meta?.routableRecommendations as RoutableRecommendation[];
+      expect(routable).toHaveLength(2);
+      expect(routable.every((r) => r.owner === "client_manual")).toBe(true);
+      expect(routable.every((r) => r.engineProductId === undefined)).toBe(true);
+    });
+
+    it("once the wire carries real owner data, meta.routableRecommendations groups correctly AND the Owner-mix line reports it", async () => {
+      await materialize("seo-geo-agent", {
+        narrative: "Visibility is concentrated in two prompts.",
+        firedRecommendations: [
+          {
+            recId: "SEO-02",
+            recommendation: "Fix the title tag",
+            owner: "karos_agent",
+            engineProductId: "seo-geo-agent",
+            fixAction: "meta_title",
+            actionKind: "one_click",
+          },
+          {
+            recId: "BOTH-09",
+            recommendation: "Submit an updated sitemap",
+            owner: "karos_tool",
+            fixAction: "sitemap",
+            actionKind: "connect",
+          },
+          {
+            recId: "GEO-14",
+            recommendation: "Publish an FAQ page addressing X",
+            owner: "client_manual",
+            fixAction: "manual",
+            actionKind: "guided_manual",
+          },
+        ],
+      });
+      const asset = createdAsset();
+      expect(asset.content).toContain("**Owner mix:** 1 we run automatically · 1 tool/connector · 1 client action");
+
+      const routable = asset.meta?.routableRecommendations as RoutableRecommendation[];
+      expect(routable).toHaveLength(3);
+      const byId = Object.fromEntries(routable.map((r) => [r.recId, r]));
+      expect(byId["SEO-02"]).toMatchObject({ owner: "karos_agent", engineProductId: "seo-geo-agent", fixAction: "meta_title" });
+      expect(byId["BOTH-09"]).toMatchObject({ owner: "karos_tool", fixAction: "sitemap" });
+      expect(byId["GEO-14"]).toMatchObject({ owner: "client_manual", fixAction: "manual" });
+    });
+
+    it("a karos_agent record with no verifiable engineProductId is downgraded to client_manual through the real wiring, not just in the unit parser", async () => {
+      await materialize("seo-geo-agent", {
+        narrative: "n",
+        firedRecommendations: [
+          { recId: "SEO-06", recommendation: "Meta description coverage", owner: "karos_agent" /* no engineProductId */ },
+        ],
+      });
+      const asset = createdAsset();
+      const routable = asset.meta?.routableRecommendations as RoutableRecommendation[];
+      expect(routable[0]?.owner).toBe("client_manual");
+      expect(routable[0]?.engineProductId).toBeUndefined();
+      // Real classification data DID arrive on the wire (an "owner" field was
+      // present), so the mix line still renders — this is a real, if all-manual,
+      // triage result, not the zero-data case above.
+      expect(asset.content).toContain("**Owner mix:** 0 we run automatically · 0 tool/connector · 1 client action");
+    });
+
+    it("no firedRecommendations at all: no crash, no Owner-mix line, empty routableRecommendations", async () => {
+      await materialize("seo-geo-agent", { narrative: "n" });
+      const asset = createdAsset();
+      expect(asset.content).not.toContain("Owner mix");
+      expect(asset.meta?.routableRecommendations).toEqual([]);
+    });
   });
 
   it("campaign-bundle: an index over the channel slots, not a copy of their drafts", async () => {
