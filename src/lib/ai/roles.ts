@@ -176,7 +176,7 @@ export const AI_ROLES = {
   },
   "chat.followups": {
     tier: "HAIKU",
-    sites: ["src/app/api/clients/[id]/chat/route.ts:781"],
+    sites: ["src/app/api/clients/[id]/chat/route.ts:782"],
   },
   "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:419"] },
   "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:584"] },
