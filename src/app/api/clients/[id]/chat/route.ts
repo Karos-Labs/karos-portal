@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { streamText, tool, generateObject, isLoopFinished, stepCountIs } from "ai";
+import { tool, generateObject, isLoopFinished, stepCountIs } from "ai";
 import { z } from "zod";
 import type { ModelMessage } from "ai";
 
@@ -74,6 +74,7 @@ import type { Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } f
 import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 import { aiFor, usageFor } from "@/lib/ai/provider";
+import { createChatStreamResponse, type ChatStreamWriter } from "@/lib/chat/stream-protocol";
 
 // This route sets no Vercel-style duration export — see
 // asset-media-download.test.ts's "asserts no request-duration ceiling it
@@ -123,7 +124,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   };
   const messages = (body.messages ?? []) as ModelMessage[];
   const modelId = body.deep ? MODELS.SONNET : MODELS.HAIKU;
-  const MODEL = aiFor("chat.client", { modelId: modelId }).model;
+  // T-B4: the FULL resolution, not just `.model` — `.modelId`/`.vendor` are
+  // what actually ran (the model tier constant and the resolved id agree on
+  // first-party Anthropic and diverge on the Vertex binding, see
+  // ResolvedAi's own doc comment in ai/provider.ts), and until this ticket
+  // that fact was computed here and then thrown away: the text-only stream
+  // protocol had no channel to carry it, so a client had no way to know which
+  // model/vendor actually served a turn.
+  const resolvedAi = aiFor("chat.client", { modelId: modelId });
+  const MODEL = resolvedAi.model;
 
   const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents, umbrellas] =
     await Promise.all([
@@ -537,6 +546,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     styleAppendix;
 
   /* ── Shared tools ─────────────────────────────────────────────────── */
+
+  // T-B4: set once the response's UI-message-stream writer exists
+  // (createChatStreamResponse's `registerWriter`, called at the bottom of
+  // this handler, assigns it before the model call starts). Tools below close
+  // over this `let` binding by reference, so by the time the model ever
+  // actually invokes one, the assignment has already happened — a tool
+  // never fires before the stream that would carry its data part exists.
+  // Read through the union type only where a tool needs to push a typed
+  // data part outside its own string return value (run_agent_now,
+  // set_agent_focus, provide_feedback); every other tool ignores it.
+  let chatWriter: ChatStreamWriter | null = null;
 
   const updateBrandingTool = tool({
     description:
@@ -1264,6 +1284,29 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // (no PAT involved) — so it must not drop `result.jobId` on the floor the
       // way this tool previously did. T-B9's scheduled variant carries the same
       // id: a scheduled run is still a run someone has to be able to look up.
+      //
+      // T-B4: the job id ALSO goes out as a typed `data-job` part, not only
+      // baked into the confirmation sentence below. A future caller that wants
+      // to poll or display it (T-B5's file-processing job is the anticipated
+      // next writer of this same part) can read a structured field instead of
+      // parsing a backtick-quoted id out of prose the model is free to reword.
+      // `result.jobId` is typed optional even on a non-error result (the
+      // action's own return shape) — guarded rather than asserted, so a
+      // theoretical id-less success still returns its confirmation sentence
+      // without emitting a data part that lies about having a job id.
+      if (result.jobId) {
+        chatWriter?.write({
+          type: "data-job",
+          data: {
+            jobId: result.jobId,
+            agentName: match.name,
+            status: "started",
+            ...(requestedScheduledAt != null
+              ? { scheduledAt: new Date(requestedScheduledAt).toISOString() }
+              : {}),
+          },
+        });
+      }
       return requestedScheduledAt != null
         ? `Started a run of **${match.name}** (job \`${result.jobId}\`), set to publish ${new Date(requestedScheduledAt).toISOString()} once it's ready.`
         : `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.`;
@@ -1351,6 +1394,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...(category ? { category } : {}),
       });
       if (result.error) return result.error;
+      // T-B4: a typed `data-feedback` part alongside the confirmation prose,
+      // for T-B18's feedback loop (not built yet) to react to structurally —
+      // which agent, which scope/template/category — instead of re-deriving
+      // that from a sentence written for a human to read.
+      chatWriter?.write({
+        type: "data-feedback",
+        data: {
+          agentName: umbrella.displayName,
+          scope,
+          ...(scope === "template" && templateKey ? { templateKey } : {}),
+          ...(category ? { category } : {}),
+        },
+      });
       return `Saved. This ${
         scope === "template" ? `shapes only "${templateKey}" posts` : `applies to everything ${umbrella.displayName} makes`
       } from here on.`;
@@ -1365,13 +1421,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    * instead of the mention chip.
    *
    * The client holds `focusAgentId` in its own state (sent back on every
-   * turn) — there is no other channel from server to client mid-stream, so
-   * the change rides inside a plain HTML comment in the reply text:
-   * `<!-- COPILOT_FOCUS:{...} -->`. `stripPipelineMarkers` (doc-render.ts)
-   * already strips every HTML comment before render — the SAME mechanism the
-   * brand-sync block already relies on to stay invisible — so this needs no
-   * new rendering code; the client only needs to sniff the raw stream for it
-   * (chatbot-widget.tsx) before the marker is stripped away.
+   * turn), so this still has to get the change to it mid-turn.
+   *
+   * T-B4: THIS USED TO RIDE INSIDE AN HTML COMMENT IN THE REPLY TEXT —
+   * `<!-- COPILOT_FOCUS:{...} -->`, sniffed out of the raw stream with a
+   * regex on the client (chatbot-widget.tsx) before `stripPipelineMarkers`
+   * (doc-render.ts) stripped it for render, the same trick the brand-sync
+   * block used to stay invisible. That was the only channel the OLD
+   * `toTextStreamResponse()` protocol had for anything but assistant prose.
+   * Now it is a real typed `data-agentFocus` part (same payload shape,
+   * `{ id, name } | null`, chosen so the client's existing handling barely
+   * changes) — a protocol-level signal instead of text the client has to
+   * regex out of its own transcript.
    */
   const setAgentFocusTool = tool({
     description:
@@ -1385,7 +1446,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ action, agentQuery }) => {
       if (action === "clear") {
-        return "Back to the general copilot. I'm not focused on a specific agent anymore.\n\n<!-- COPILOT_FOCUS:null -->";
+        chatWriter?.write({ type: "data-agentFocus", data: null });
+        return "Back to the general copilot. I'm not focused on a specific agent anymore.";
       }
       const q = (agentQuery ?? "").trim().toLowerCase();
       if (!q) return "Which agent would you like to focus on?";
@@ -1404,10 +1466,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${mentionableNames.join(", ")}.`
           : "This client has no agents to focus on yet.";
       }
-      const payload = JSON.stringify(resolved);
+      chatWriter?.write({ type: "data-agentFocus", data: resolved });
       return (
         `Switched focus to **${resolved.name}**. I'll prioritize it until you ask to focus on a different agent ` +
-        `or go back to general.\n\n<!-- COPILOT_FOCUS:${payload} -->`
+        `or go back to general.`
       );
     },
   });
@@ -1428,10 +1490,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
-  /* ── Stream ──────────────────────────────────────────────────────── */
+  /* ── Stream (T-B4: real typed-data-part protocol, not text-only) ────── */
 
-  const result = streamText({
+  // See stream-protocol.ts's own doc comment for the full "why": in short,
+  // `toTextStreamResponse()` forwarded text-delta parts ONLY, so a job id, a
+  // tool call, which model ran, and even a provider error had no channel —
+  // the old COPILOT_FOCUS HTML-comment hack (removed above, in
+  // setAgentFocusTool) was this route's one workaround, and it only ever
+  // carried a string. `createChatStreamResponse` returns a real UI-message
+  // stream instead: text deltas, tool-call/tool-result parts (for free, from
+  // the protocol itself), and the typed `data-model` / `data-job` /
+  // `data-agentFocus` / `data-feedback` parts this file's tools write.
+  return createChatStreamResponse({
     model: MODEL,
+    modelMeta: { modelId: resolvedAi.modelId, vendor: resolvedAi.vendor },
     system: systemPrompt,
     messages,
     stopWhen: STOP_WHEN,
@@ -1449,16 +1521,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       provide_feedback: provideFeedbackTool,
       set_agent_focus: setAgentFocusTool,
     }),
+    // Assigns `chatWriter` (declared up in "Shared tools") before the model
+    // call starts, so run_agent_now / set_agent_focus / provide_feedback can
+    // push their typed data parts the moment they execute.
+    registerWriter: (writer) => {
+      chatWriter = writer;
+    },
     onFinish: ({ usage }) => logCopilotUsage(usage),
-    // The text-stream response protocol this route returns has no channel for
-    // an error part — toTextStreamResponse() only ever forwards "text-delta"
-    // parts, so a thrown/streamed provider error (token depletion, a 5xx)
-    // otherwise vanishes silently: the HTTP response still completes with
-    // whatever partial text came before it, usually none. This is the only
-    // place the real error is ever observed server-side, so it's also the
-    // only place the failure can be logged and alerted on — the client
-    // detects the resulting empty completion itself (chatbot-widget.tsx) and
-    // shows the friendly fallback message.
+    // Still the only place a stream failure is observed server-side, so still
+    // the only place it's logged and alerted on. What changed with T-B4 is
+    // what the CLIENT sees: `createChatStreamResponse` now emits a real
+    // `error` protocol part (sanitized before it reaches the client — see its
+    // own doc comment) instead of the turn silently completing with whatever
+    // partial text came before the failure, usually none.
     onError: ({ error }) => {
       const message = error instanceof Error ? error.message : String(error);
       logger.logGenerationFailure(
@@ -1481,6 +1556,4 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       console.error(`[chat] copilot stream error for client ${clientId}:`, classifyJobError(message)?.label ?? message);
     },
   });
-
-  return result.toTextStreamResponse();
 }
