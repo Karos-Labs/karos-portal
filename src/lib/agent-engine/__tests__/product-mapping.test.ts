@@ -520,16 +520,33 @@ describe("toEngineRunInput — the C3 wire shape", () => {
 describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => {
   it("the server hands toEngineRunInput the same id the page built the dialog from", () => {
     // A source pin rather than a convention: submit-custom.ts resolves
-    // `engineProductId` with the same function custom-agents.tsx passes to
-    // withEngineRunFields, and must forward it. Without the second argument
-    // the server builds seo-geo's input from a dialog whose `request` box the
-    // page labelled "Business goal or question".
-    const source = readFileSync(
+    // `engineProductId` with the same underlying function custom-agents.tsx
+    // passes to withEngineRunFields, and must forward it. Without the second
+    // argument the server builds seo-geo's input from a dialog whose `request`
+    // box the page labelled "Business goal or question".
+    //
+    // SCRUM-249 (T-B5): submit-custom.ts no longer calls
+    // `resolveAgentEngineProductIdForCustomAgent` directly — it now goes
+    // through `resolveDispatchedAgentEngineProductId` (agent-engine/health.ts),
+    // which applies the same per-run dispatch gate (dispatch enabled + client
+    // cut over) BEFORE resolving the product id, and is what the copilot chat
+    // route now shares to avoid the two silently disagreeing (see that
+    // ticket). The pin below follows the call to where it now lives, and
+    // confirms health.ts's own resolution still bottoms out in the identical
+    // `resolveAgentEngineProductIdForCustomAgent(agentKey)` call — so the id
+    // submit-custom.ts ends up with, WHEN it dispatches at all, is still
+    // exactly the one the page's dialog was built from.
+    const submitCustomSource = readFileSync(
       resolve(__dirname, "../../jobs/submit-custom.ts"),
       "utf8",
     );
-    expect(source).toContain("resolveAgentEngineProductIdForCustomAgent(agent.key)");
-    expect(source).toContain("toEngineRunInput(input.briefValues, engineProductId)");
+    expect(submitCustomSource).toContain(
+      "resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug)",
+    );
+    expect(submitCustomSource).toContain("toEngineRunInput(input.briefValues, engineProductId)");
+
+    const healthSource = readFileSync(resolve(__dirname, "../health.ts"), "utf8");
+    expect(healthSource).toContain("resolveAgentEngineProductIdForCustomAgent(agentKey)");
   });
 
   it("every routed product has a dialog pinned above, so a new route cannot ship unswept", () => {

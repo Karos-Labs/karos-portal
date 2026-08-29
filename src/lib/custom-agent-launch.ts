@@ -1272,6 +1272,28 @@ export const MEDIA_ASSETS_FIELD_KEY = "mediaAssets";
 const MEDIA_DEPENDENT_PRODUCTS = new Set(["instagram-agent", "branded-shorts-agent", "tiktok-agent"]);
 
 /**
+ * Whether an agent-engine product reads `mediaAssets` at all.
+ *
+ * T-B5 reuses this from the copilot chat route to decide whether a file the
+ * client attached this turn is actually wired into `run_agent_now`'s
+ * `briefValues.mediaAssets`, or left out with an honest note — the same
+ * question `withEngineRunFields` below answers when it decides whether to
+ * paint the field at all, asked here from a second caller that has no field
+ * to paint, only a run to (not) attach a file to. One set backs both, so the
+ * chat surface and the run dialog can never disagree about which agents take
+ * media.
+ *
+ * Takes the engine product id ALONE, deliberately — it says nothing about
+ * whether this client's runs of this agent actually reach agent-engine at
+ * all (that is `resolveDispatchedAgentEngineProductId`,
+ * agent-engine/health.ts, which callers must apply first to get the id this
+ * function should be asked about).
+ */
+export function agentEngineProductAcceptsMediaAssets(engineProductId: string | undefined): boolean {
+  return engineProductId != null && MEDIA_DEPENDENT_PRODUCTS.has(engineProductId);
+}
+
+/**
  * Adds the two run-scoped inputs agent-engine understands from any agent: a
  * free-text direction, and — for the media products — the source asset.
  *
@@ -1301,7 +1323,7 @@ export function withEngineRunFields(
       helper: "How to treat the topic this time — an angle to take, something to avoid, a tone to hit.",
     });
   }
-  if (MEDIA_DEPENDENT_PRODUCTS.has(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
+  if (agentEngineProductAcceptsMediaAssets(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
     extra.push({
       key: MEDIA_ASSETS_FIELD_KEY,
       label: "Source media",
