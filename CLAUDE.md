@@ -32,6 +32,15 @@ and the rules for each token are documented in `src/app/globals.css`'s own heade
   drafts ONE reply.
   The old in-app agent systems (builder agents + `lib/agents` engine, intel system agent,
   Claude-platform launcher, content-engine e12, newsletter e11) were removed 2026-07.
+- **agent-engine** (a separate deployable, `getAgentEngineDeliverable` in
+  `src/lib/agent-engine/client.ts`) is a second, newer execution path for a growing set of
+  products, materialized into karosCMO assets by `src/lib/agent-engine/materialize.ts`.
+  `src/lib/agent-engine/product-mapping.ts` holds `KNOWN_ENGINE_PRODUCT_IDS` (the one place
+  in this repo naming agent-engine's full product set) plus the custom-agent/managed-task
+  routing tables. The SEO/GEO report's fired recommendations carry a cross-repo "routable
+  recommendation" contract — canonical shape, invariants, and where the still-unbuilt
+  engine-side mapping table needs to land — documented in
+  `docs/routable-recommendation-contract.md` (SCRUM-210/C2).
 - **Dynamic Agent Studio** (2026-08) is a deliberate, distinct reintroduction of an
   admin-authored agent builder — not the removed `lib/agents` engine. An admin composes a
   `dynamicAgentSpecs` doc (input schema + a step pipeline of AI/code steps) at
