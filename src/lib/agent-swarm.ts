@@ -473,8 +473,13 @@ export async function persistSwarmTasks(
   let capSkipped = 0;
 
   for (const t of drafts) {
+    // Only an id the client actually has is a real executor link — same rule
+    // the persist pass below applies, and it has to run here too: an
+    // unvalidated (possibly hallucinated) id must not scope the dedup either.
+    const validCustomAgentId =
+      t.customAgentId && customById.has(t.customAgentId) ? t.customAgentId : undefined;
     const reason = findDuplicateReason(
-      { title: t.title, productType: t.productType, platform: t.platform },
+      { title: t.title, productType: t.productType, customAgentId: validCustomAgentId, platform: t.platform },
       pool,
     );
     if (reason) {
@@ -495,7 +500,7 @@ export async function persistSwarmTasks(
       priority: t.priority as TaskPriority,
       source: "copilot" as TaskSource,
       owner: "karos_managed" as TaskOwner,
-      metadata: { productType: t.productType, platform: t.platform },
+      metadata: { productType: t.productType, customAgentId: validCustomAgentId, platform: t.platform },
       createdBy,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -512,7 +517,12 @@ export async function persistSwarmTasks(
         // in-process productTypes — record the intended executor for display and
         // for staff to run it; no product_run trigger (that flow is separate).
         metadata.customAgentId = customAgent.id;
-        metadata.customAgentName = customAgent.name;
+        // The one field name for "the linked agent's display name" —
+        // execution-engine.ts and task-ticket-modal.tsx both read
+        // `metadata.agentName` (see ClientTask.metadata's doc comment in
+        // types.ts); this used to write `customAgentName`, a second name for
+        // the same link that neither reader recognized (SCRUM-255).
+        metadata.agentName = customAgent.name;
       } else if (t.productType) {
         metadata.productType = t.productType;
         metadata.completionTrigger = `product_run:${t.productType}`;
