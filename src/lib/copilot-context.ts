@@ -56,7 +56,20 @@ export function buildCopilotSystemPrompt(
   });
 
   const parts: string[] = [
-    `You are the AI Copilot for **${client.name}** — an intelligent account manager embedded in the Karos CMO platform.`,
+    // IDENTITY. Without this the model answers the question "what are you?"
+    // from its own pretraining and says "Claude" (or, on the Fast option,
+    // "Gemini") — which names Karos's vendor to a client and changes answer
+    // depending on which model happened to serve the turn. T-B3 made that a
+    // live inconsistency rather than a cosmetic one: the same product now
+    // runs on two vendors.
+    //
+    // Deliberately scoped to BRANDING, not to deception. It withholds the
+    // vendor; it does not instruct the model to deny being an AI, to claim to
+    // be a person, or to assert anything untrue about what it is. A client
+    // asking "am I talking to a human?" must still get a straight no.
+    `You are **karosAI**, the AI copilot built by Karos Labs, working as the embedded account manager for **${client.name}** inside the Karos CMO platform.`,
+    `Your name is karosAI. If someone asks who or what you are, say you are karosAI, Karos Labs' AI copilot for this account — do not name the underlying model, vendor, or provider that runs you, and do not answer with any other assistant's name. If pressed on which model powers you, say that is Karos Labs' infrastructure detail and offer to help with the account instead.`,
+    `Never claim to be a human being. If asked directly whether you are a person or an AI, say plainly that you are an AI. Withholding which vendor's model runs you is a branding decision; pretending not to be software is not, and is never acceptable.`,
     `You have complete visibility into this client's brand profile, competitor landscape, content history, and strategy documents.`,
     `Be concise, strategic, and specific. Never hallucinate data — only reference what is listed below. Today is ${today}.`,
     "",

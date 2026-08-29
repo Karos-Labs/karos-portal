@@ -85,29 +85,17 @@ export const CHAT_MODEL_KEYS = Object.keys(CHAT_MODEL_OPTIONS) as ChatModelKey[]
 /**
  * Cost-based default: the cheap model, when nobody asked for anything else.
  *
- * HELD AT `haiku` PENDING VERTEX CONFIG, deliberately — this is NOT what T-B3
- * specifies, and it is one line to put back.
- *
- * `googleVertex()` validates `GOOGLE_VERTEX_LOCATION` synchronously at
- * construction, unlike `vertexAnthropic()` which defers. Neither
- * `GOOGLE_VERTEX_PROJECT` nor `GOOGLE_VERTEX_LOCATION` is set anywhere this
- * repo deploys from: `cloudbuild.yaml`'s `--set-env-vars` passes
- * `GOOGLE_CLOUD_PROJECT` and neither of those two, `.env.example` does not
- * name them, and the only occurrences in the tree are the `vi.stubEnv` calls
- * in this module's own routing test. Shipping `gemini-flash` as the default
- * would therefore have made EVERY non-deep copilot turn — the most common
- * path in the product — throw at model construction on the first deploy.
- *
- * Everything else T-B3 built ships unchanged: the allowlist, the manual
- * Fast/Quality picker, and `gemini-flash` as a selectable, priced option. A
- * client who picks "Fast" still gets it. Only which option is DEFAULT is held
- * back, so the failure is opt-in and visible rather than universal.
- *
- * TO RESTORE: confirm the Cloud Run services carry `GOOGLE_VERTEX_PROJECT` +
- * `GOOGLE_VERTEX_LOCATION` and that the Vertex project has Gemini model
- * access, then set this back to `"gemini-flash"`. Nothing else changes.
+ * Briefly held at `haiku` after T-B3 merged, because the deploy configured
+ * neither GOOGLE_VERTEX_PROJECT nor GOOGLE_VERTEX_LOCATION and
+ * `googleVertex()` resolves both synchronously at construction — a Gemini
+ * default would have thrown on every non-deep turn. That is fixed: both are
+ * now set from cloudbuild.yaml / cloudbuild.promote.yaml (karoscmo-prep /
+ * us-central1, karoscmo / europe-west1), both portal runtime service accounts
+ * hold roles/aiplatform.user, and gemini-2.5-flash answered a real
+ * generateContent call in both projects. So the hold is lifted and the
+ * ticket's actual default is restored.
  */
-export const DEFAULT_CHAT_MODEL_KEY: ChatModelKey = "haiku";
+export const DEFAULT_CHAT_MODEL_KEY: ChatModelKey = "gemini-flash";
 /** What `deep: true` (the 3 proactive-action chips) resolves to. */
 export const DEEP_CHAT_MODEL_KEY: ChatModelKey = "haiku";
 
