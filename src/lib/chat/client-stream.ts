@@ -16,12 +16,25 @@
  *    guidelines updated", "Created ... task") to guess which tool ran (now
  *    the protocol's own `tool-input-available` / `tool-output-available`
  *    parts, surfaced here as `tool-result` with the tool's REAL name).
+ *
+ * T-B18 added the third: the `data-feedback` part `provide_feedback` writes
+ * (stream-protocol.ts / chat/route.ts) is surfaced here as `feedback`, so
+ * chatbot-widget.tsx can render a real confirmation chip — which agent, which
+ * scope, a link into that agent's own feedback panel — instead of the model's
+ * prose being the only place the client ever sees it recorded.
  */
+
+// Type-only — erased at compile time, so this does not actually pull
+// stream-protocol.ts's (server-safe, but still not a client concern) module
+// into the client bundle; it only borrows the shape `data-feedback` chunks
+// are written in, so the two sides of the wire cannot drift apart silently.
+import type { ChatDataParts } from "./stream-protocol";
 
 export type ChatStreamEvent =
   | { type: "text-delta"; delta: string }
   | { type: "agent-focus"; focusAgent: { id: string; name: string } | null }
   | { type: "tool-result"; toolName: string; output: unknown }
+  | { type: "feedback"; feedback: ChatDataParts["feedback"] }
   | { type: "error"; errorText?: string };
 
 /** One line of the SSE body, parsed to its JSON payload — or null for framing/noise. */
@@ -43,7 +56,9 @@ function parseSseLine(line: string): Record<string, unknown> | null {
 /**
  * One raw UI-message chunk -> the event this module exposes, or null for a
  * chunk type this widget doesn't act on (text-start/end, step boundaries,
- * the `data-model`/`data-job`/`data-feedback` parts no current UI reads yet).
+ * the `data-model`/`data-job` parts no current UI reads yet — T-B5's file
+ * upload is the intended future reader of `data-job`; `data-feedback` is now
+ * read, below, by T-B18).
  *
  * `toolNameByCallId` exists because `tool-output-available` carries no
  * `toolName` of its own (see stream-protocol.ts's own note on this) — only
@@ -71,6 +86,25 @@ function mapChunk(
         type: "agent-focus",
         focusAgent: (chunk.data as { id: string; name: string } | null | undefined) ?? null,
       };
+    case "data-feedback": {
+      // Defensive, not just a cast: this is untrusted-shape wire data as far
+      // as this module is concerned (server and client can drift a version
+      // apart in a rolling deploy), so a malformed/missing-agentName payload
+      // is dropped rather than handed to the widget as a half-formed chip.
+      const data = chunk.data as Partial<ChatDataParts["feedback"]> | null | undefined;
+      if (!data || typeof data.agentName !== "string" || typeof data.agentId !== "string") return null;
+      if (data.scope !== "agent" && data.scope !== "template") return null;
+      return {
+        type: "feedback",
+        feedback: {
+          agentName: data.agentName,
+          agentId: data.agentId,
+          scope: data.scope,
+          ...(typeof data.templateKey === "string" ? { templateKey: data.templateKey } : {}),
+          ...(typeof data.category === "string" ? { category: data.category } : {}),
+        },
+      };
+    }
     case "error":
       return { type: "error", errorText: typeof chunk.errorText === "string" ? chunk.errorText : undefined };
     default:

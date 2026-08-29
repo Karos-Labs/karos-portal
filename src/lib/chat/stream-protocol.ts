@@ -69,9 +69,14 @@ import {
  *    `status` is left open rather than a boolean, and nothing about the shape
  *    assumes there is only ever one job per turn.
  *  - `feedback`: confirms standing feedback was recorded, with the structured
- *    fields (which agent, which scope/template/category) a future feedback
- *    surface (T-B18) needs to react to — not just the prose sentence the tool
- *    already returns for the model to read aloud.
+ *    fields (which agent, which scope/template/category) T-B18's client-facing
+ *    surface (chatbot-widget.tsx, via client-stream.ts's `feedback` event)
+ *    reacts to — not just the prose sentence the tool already returns for the
+ *    model to read aloud. `agentId` is the umbrella's `customAgentId`
+ *    (ClientAgent.customAgentId) rather than its own `.id`: that is the id
+ *    space `/clients/[id]/agents/[agentId]` actually resolves
+ *    (`getCustomAgent(agentId)`, see that page) — the umbrella's own doc id
+ *    would 404 there.
  */
 // `type`, not `interface`: an interface has no index signature, so it fails
 // the `extends UIDataTypes` (`Record<string, unknown>`) constraint the SDK's
@@ -89,6 +94,8 @@ export type ChatDataParts = {
   agentFocus: { id: string; name: string } | null;
   feedback: {
     agentName: string;
+    /** `ClientAgent.customAgentId` — see the doc comment above for why not `.id`. */
+    agentId: string;
     scope: "agent" | "template";
     templateKey?: string;
     category?: string;
