@@ -14,6 +14,7 @@ import {
 import { roleSpec } from "../roles";
 import { aiFor, ProviderWiringError, usageFor } from "../provider";
 import { MODEL_PRICING_BY_VENDOR } from "@/lib/models/usage-log";
+import { VERTEX_MODELS } from "@/lib/constants";
 
 /**
  * T-B3 / SCRUM-246: cost-based routing plus a manual model picker for the
@@ -42,16 +43,31 @@ describe("CHAT_MODEL_OPTIONS is the allowlist and matches the ticket's target", 
     // is exactly what the Haiku hold caused, and this is the assertion that
     // catches it if the default is ever pinned to the deep tier again.
     expect(resolveChatModel({}).option.vendor).toBe("google");
-    expect(resolveChatModel({ deep: true }).option.vendor).toBe("anthropic");
+    expect(resolveChatModel({ deep: true }).option.vendor).toBe("vertex");
     expect(resolveChatModel({ requestedModel: "gemini-flash" }).option.modelId).toMatch(/^gemini-/);
-    expect(resolveChatModel({ requestedModel: "haiku" }).option.modelId).toBe("claude-haiku-4-5-20251001");
+    expect(resolveChatModel({ requestedModel: "haiku" }).option.modelId).toBe(VERTEX_MODELS.HAIKU);
     expect(DEFAULT_CHAT_MODEL_KEY).not.toBe(DEEP_CHAT_MODEL_KEY);
   });
 
-  it("routes a quality/deep request to Haiku, not Sonnet", () => {
+  it("routes a quality/deep request to Haiku, not Sonnet — and through Vertex, not first-party Anthropic", () => {
     const deep = CHAT_MODEL_OPTIONS[DEEP_CHAT_MODEL_KEY];
-    expect(deep.vendor).toBe("anthropic");
-    expect(deep.modelId).toBe("claude-haiku-4-5-20251001");
+    expect(deep.vendor).toBe("vertex");
+    // The "@" spelling, not MODELS.HAIKU's dashed one. Vertex addresses a
+    // dated snapshot with "@" and 404s on the first-party form, so this
+    // assertion is the difference between a working option and an opaque
+    // runtime failure.
+    expect(deep.modelId).toBe(VERTEX_MODELS.HAIKU);
+    expect(deep.modelId).toContain("@");
+  });
+
+  it("keeps both chat options on one vendor account — nothing routes to first-party Anthropic", () => {
+    // The point of moving Quality onto Vertex: both options now bill to one
+    // Google invoice against one credential. A future option added with
+    // vendor "anthropic" reintroduces the split bill SCRUM-361 had to unpick
+    // on the engine side, so it fails here rather than at reconciliation.
+    for (const key of CHAT_MODEL_KEYS) {
+      expect(CHAT_MODEL_OPTIONS[key].vendor, `chat option "${key}"`).not.toBe("anthropic");
+    }
   });
 
   it("prices every allowlisted (vendor, modelId) pair — a picker option that cannot be costed is a bug here, not at bill time", () => {
@@ -157,11 +173,11 @@ describe("aiFor(\"chat.client\", ...) actually binds through the capability-awar
     expect(resolved.model).toBeDefined();
   });
 
-  it("binds a deep/manual Haiku pick to vendor anthropic", () => {
+  it("binds a deep/manual Haiku pick to vendor vertex", () => {
     const chosen = resolveChatModel({ deep: true });
     const resolved = aiFor("chat.client", { modelId: chosen.option.modelId, vendor: chosen.option.vendor });
-    expect(resolved.vendor).toBe("anthropic");
-    expect(resolved.modelId).toBe("claude-haiku-4-5-20251001");
+    expect(resolved.vendor).toBe("vertex");
+    expect(resolved.modelId).toBe(VERTEX_MODELS.HAIKU);
   });
 
   it("usageFor agrees with aiFor on the exact same pair — cost logging cannot diverge from what actually served the request", () => {

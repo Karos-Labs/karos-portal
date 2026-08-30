@@ -176,6 +176,22 @@ export const AI_ROLES = {
   },
   "chat.followups": {
     tier: "HAIKU",
+    // Pinned so the WHOLE chat surface sits on one vendor account. The
+    // picker's two options are chosen per-turn in chat-models.ts and both
+    // resolve to Vertex; this role is picked by tier instead, so without a pin
+    // it follows defaultVendor() — "anthropic" — and the follow-up chips
+    // beneath a Vertex-served answer would quietly bill to a second invoice.
+    //
+    // Safe to pin because this role declares no `requires`: Vertex supplies
+    // web_search but not web_fetch, which is why AI_VENDOR cannot simply be
+    // flipped to "vertex" for everything (intel.report.pass,
+    // intel.research.agent, seo.site_audit and branding.fetch_site all need
+    // web_fetch, and assertManifestWirable refuses the pairing on purpose).
+    pinnedTo: {
+      vendor: "vertex",
+      because:
+        "Keeps the whole chat surface on one vendor account: the picker already resolves both of its options to Vertex, and a tier-picked follow-up call would otherwise follow AI_VENDOR to first-party Anthropic and split the bill.",
+    },
     sites: ["src/app/api/clients/[id]/chat/route.ts:824"],
   },
   "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:419"] },

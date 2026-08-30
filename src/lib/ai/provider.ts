@@ -4,7 +4,7 @@ import type { LanguageModel, streamText } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { vertexAnthropic } from "@ai-sdk/google-vertex/anthropic";
 import { googleVertex } from "@ai-sdk/google-vertex";
-import { MODELS } from "@/lib/constants";
+import { MODELS, VERTEX_MODELS } from "@/lib/constants";
 import {
   CAPABILITY_VARIANT,
   missingCapabilities,
@@ -68,7 +68,7 @@ type TieredVendor = Exclude<Vendor, "google">;
  */
 const MODEL_IDS: Readonly<Record<TieredVendor, Readonly<Record<ModelTier, string>>>> = {
   anthropic: { SONNET: MODELS.SONNET, HAIKU: MODELS.HAIKU },
-  vertex: { SONNET: "claude-sonnet-4-6", HAIKU: "claude-haiku-4-5@20251001" },
+  vertex: { SONNET: VERTEX_MODELS.SONNET, HAIKU: VERTEX_MODELS.HAIKU },
 } as const;
 
 /**
