@@ -287,7 +287,7 @@ describe("the long-form products land on the asset type their content actually i
 });
 
 describe("the report and bundle products render to something a reviewer can read", () => {
-  it("intel-report: prose sections and the SWOT, not a wall of JSON", async () => {
+  it("intel-report: real headings, a dimension-scores table, grouped recommendations and the SWOT — not a wall of JSON", async () => {
     await materialize("intel-report-agent", {
       overallScore: 72,
       overallGrade: "B",
@@ -299,21 +299,41 @@ describe("the report and bundle products render to something a reviewer can read
       seoAnalysis: "Technical SEO is sound.",
       brandSynchronizationUpdate: "Tighten the positioning line.",
       swot: { strengths: ["Fast delivery"], weaknesses: ["Thin case studies"], opportunities: [], threats: ["Two funded entrants"] },
-      recommendations: [{ id: "r1" }],
+      recommendations: [
+        { title: "Ship the case-studies page", priorityLabel: "Priority 1", tag: "Content" },
+        { id: "r1" },
+      ],
     });
     const asset = createdAsset();
     expect(asset.type).toBe("note");
     expect(asset.title).toBe("Competitive intelligence report (B)");
-    expect(asset.content).toContain("**Overall: 72/100 (B)**");
-    expect(asset.content).toContain("- content: 80/100");
-    expect(asset.content).toContain("## Content");
+    expect(asset.content).toContain("## Overall Assessment");
+    expect(asset.content).toContain("**Overall score: 72/100 (Grade B)**");
+    expect(asset.content).toContain("| Dimension | Score |");
+    expect(asset.content).toContain("| content | 80/100 |");
+    expect(asset.content).toContain("## Content & Messaging");
     expect(asset.content).toContain("The content library is broad but undifferentiated.");
-    expect(asset.content).toContain("**Strengths**\n- Fast delivery");
+    expect(asset.content).toContain("## SWOT Analysis");
+    expect(asset.content).toContain("### Strengths\n\n- Fast delivery");
     // An empty SWOT arm contributes no empty heading.
-    expect(asset.content).not.toContain("**Opportunities**");
-    // The structure still travels, so a real report viewer can be built later
-    // without re-delivering the run.
-    expect(asset.meta).toMatchObject({ overallScore: 72, recommendations: [{ id: "r1" }] });
+    expect(asset.content).not.toContain("### Opportunities");
+    expect(asset.content).toContain("## Recommendations");
+    expect(asset.content).toContain("### Priority 1");
+    expect(asset.content).toContain("**Ship the case-studies page** [Content]");
+    // A recommendation with no title-ish field but an id still renders (the
+    // same "ask, don't assert" fallback the seo-geo renderer already used).
+    expect(asset.content).toContain("**r1**");
+    // The structure still travels, so a future dedicated viewer can be built
+    // later without re-delivering the run.
+    expect(asset.meta).toMatchObject({ overallScore: 72, recommendations: [{ title: "Ship the case-studies page", priorityLabel: "Priority 1", tag: "Content" }, { id: "r1" }] });
+  });
+
+  it("intel-report: an empty deliverable renders to an empty string rather than broken markdown", async () => {
+    await materialize("intel-report-agent", {});
+    const asset = createdAsset();
+    expect(asset.type).toBe("note");
+    expect(asset.title).toBe("Competitive intelligence report");
+    expect(asset.content).toBe("");
   });
 
   it("seo-geo-report: the narrative leads, with both canonical scores above it", async () => {
