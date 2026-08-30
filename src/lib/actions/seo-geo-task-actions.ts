@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { listAssets, listClientTasks, createClientTask } from "@/lib/data";
+import { listClientTasks, createClientTask } from "@/lib/data";
 import { requireClientAccess } from "./_shared";
-import { toRoutableRecommendation } from "@/lib/agent-engine/routable-recommendation";
+import { latestSeoGeoReportRecommendations } from "@/lib/agent-engine/seo-geo-report-lookup";
 import { routableRecommendationsToTaskInputs } from "@/lib/agent-engine/routable-recommendation-tasks";
 import type { AppUser } from "@/lib/types";
 
@@ -49,19 +49,16 @@ export async function createTasksFromSeoGeoReportAction(
     return { error: e instanceof Error ? e.message : "Forbidden" };
   }
 
-  const assets = await listAssets({ clientId });
-  // Latest first: listAssets already sorts by createdAt desc.
-  const reportAsset = assets.find(
-    (a) => a.meta?.agentEngineProductId === "seo-geo-agent" && Array.isArray(a.meta?.routableRecommendations),
-  );
-  if (!reportAsset) {
+  // [SCRUM-260/T-B15] "which asset is the current report, and what does
+  // toRoutableRecommendation make of it" now lives in one place
+  // (seo-geo-report-lookup.ts), shared with approveSeoGeoRecommendationAction
+  // (intel-actions.ts) — see that module's own header for why. `undefined`
+  // (no report asset at all) and `[]` (a report with zero valid recs) stay
+  // distinguishable here exactly as they were before the extraction.
+  const recommendations = await latestSeoGeoReportRecommendations(clientId);
+  if (recommendations === undefined) {
     return { error: "No SEO/GEO visibility report found for this client yet." };
   }
-
-  const raw = reportAsset.meta?.routableRecommendations;
-  const recommendations = Array.isArray(raw)
-    ? raw.map(toRoutableRecommendation).filter((r): r is NonNullable<typeof r> => r !== undefined)
-    : [];
   if (recommendations.length === 0) {
     return { ok: true, created: 0, skipped: 0 };
   }
