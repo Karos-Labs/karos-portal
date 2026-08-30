@@ -28,6 +28,43 @@ export function clientHasEngineRoutedCustomAgent(
 }
 
 /**
+ * Whether ONE specific custom agent, for one specific client, would actually
+ * be routed to agent-engine on a run submitted RIGHT NOW — the exact
+ * per-run gate `submit-custom.ts` applies before it ever creates a job doc
+ * (`isAgentEngineDispatchEnabled() && client.agentsRepoSlug &&
+ * isClientEnabledForEngineCustomAgents(client.agentsRepoSlug)`, then
+ * `resolveAgentEngineProductIdForCustomAgent(agent.key)`), returning the
+ * resolved productId (or `undefined`, meaning "falls through to the legacy
+ * agent-service path").
+ *
+ * SCRUM-249 (T-B5) exists because of exactly the bug this function closes: a
+ * prior version of the chat route decided whether a client's uploaded file
+ * would be wired into a run by asking
+ * `resolveAgentEngineProductIdForCustomAgent(agent.key)` ALONE — which
+ * answers "does agent-engine have a workflow for this agent key at all",
+ * completely independent of whether agent-engine dispatch is enabled or
+ * whether THIS client has been cut over to it
+ * (`AGENT_ENGINE_CUSTOM_AGENT_CLIENTS`, the normal state mid-migration for
+ * most clients). The result was a client told "Attached ... as source media
+ * for this run" for a run that actually fell through to agent-service, which
+ * never reads `mediaAssets` — the file was silently dropped.
+ *
+ * `submit-custom.ts` now calls this too instead of re-deriving the same
+ * three-part predicate inline, specifically so the two can never drift back
+ * apart: this function IS the definition of "would actually dispatch to the
+ * engine", not a description of it duplicated at a second call site.
+ */
+export function resolveDispatchedAgentEngineProductId(
+  agentKey: string,
+  clientSlug: string | undefined,
+): string | undefined {
+  if (!isAgentEngineDispatchEnabled() || !isClientEnabledForEngineCustomAgents(clientSlug)) {
+    return undefined;
+  }
+  return resolveAgentEngineProductIdForCustomAgent(agentKey);
+}
+
+/**
  * The engine counterpart to a page's `!isAgentServiceConfigured()` check:
  * true when this client's runs would be routed to agent-engine AND
  * agent-engine's dispatch transport is not currently configured — i.e.

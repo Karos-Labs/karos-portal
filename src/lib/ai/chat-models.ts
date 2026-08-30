@@ -31,7 +31,7 @@
  */
 
 import type { Vendor } from "./capabilities";
-import { MODELS } from "@/lib/constants";
+import { VERTEX_MODELS } from "@/lib/constants";
 
 export interface ChatModelOption {
   /** Passed straight through to `aiFor("chat.client", { vendor, modelId })`. */
@@ -69,8 +69,21 @@ export const CHAT_MODEL_OPTIONS = {
     description: "Cheapest model. The copilot's default for everyday questions.",
   },
   haiku: {
-    vendor: "anthropic",
-    modelId: MODELS.HAIKU,
+    // Claude, served through Vertex AI rather than the first-party Anthropic
+    // API. Same model, same price to the client (see CHAT_MESSAGE_CREDITS,
+    // which is keyed on the model FAMILY and deliberately not on which
+    // infrastructure carried the call) — what changes is that both chat
+    // options now bill to one Google invoice against one credential, instead
+    // of the portal holding an ANTHROPIC_API_KEY alongside its Vertex
+    // access. That split is the same one SCRUM-361 had to unpick on the
+    // engine side to reconcile a bill at all.
+    //
+    // The id MUST be the VERTEX_MODELS spelling: Vertex addresses a dated
+    // snapshot with "@", so MODELS.HAIKU's "claude-haiku-4-5-20251001" is
+    // not a model id there and 404s. MODEL_PRICING_BY_VENDOR.vertex already
+    // carries a row for this exact spelling.
+    vendor: "vertex",
+    modelId: VERTEX_MODELS.HAIKU,
     label: "Quality",
     description:
       "Claude Haiku. Used automatically for the multi-step proactive actions, or pick it yourself for a harder question.",

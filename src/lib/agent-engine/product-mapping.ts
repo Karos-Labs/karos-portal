@@ -1,4 +1,5 @@
 import type { ManagedTaskType } from "@/lib/types";
+import type { EngineProductWithDeliverable } from "./materialize";
 
 /**
  * Maps one of karosCMO's "managed" catalog task types onto agent-engine's
@@ -56,15 +57,36 @@ export function resolveAgentEngineProductId(taskType: ManagedTaskType, brief: Re
  * would feed an onboarding form into a post-drafting workflow. Each pairing is
  * written out because each was checked.
  *
- * `karos-linkedin-manager-v2` is deliberately still absent: it runs on two
- * clocks and rewrites the generators' inputs, and agent-engine has neither a
- * scheduler nor a write path for that. It stays on agent-service until it does.
+ * The standalone `karos-linkedin-manager-v2` was retired in full 2026-08-29
+ * (SCRUM-377/T-B25a) — it is not merely absent from this map, it no longer
+ * exists as a `customAgents` key at all. It ran on two clocks and rewrote the
+ * generators' inputs, which agent-engine had neither a scheduler nor a write
+ * path for; product ruled it gone rather than left dormant awaiting one.
  *
  * Everything absent from this map stays on agent-service, which is still the
  * executor for the overwhelming majority of production jobs. This is a
  * per-agent cutover, not a switch.
  */
-const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, string>> = {
+/**
+ * SCRUM-213 (C5)'s build-time guard: every value here must be a key of
+ * `PRODUCT_DELIVERABLES` in `materialize.ts` — a route to an engine product
+ * with no registered materializer — because a run dispatched down that route
+ * completes and reaches `status: "review"` with `assetIds: []`: a finished
+ * job, an "In review" tag, and nothing to review, discovered only by a client
+ * asking where their content went (exactly what shipped for `reputation-agent`
+ * until this ticket — it was already routed here but had no row in
+ * `PRODUCT_DELIVERABLES`).
+ *
+ * Enforced by TYPING THE MAP'S VALUES, not by a runtime check: `Record<string,
+ * EngineProductWithDeliverable>` forces every value literal below to be a key
+ * `materialize.ts` actually has a materializer for, so adding a route here
+ * ahead of its materializer is a `tsc`/`next build` failure — the same build
+ * that would otherwise ship silently — not a runtime surprise on a client's
+ * first real run. Type-only import: erased from the emitted JS, so this
+ * costs nothing at runtime and creates no cycle with the `server-only`
+ * module it references.
+ */
+const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, EngineProductWithDeliverable>> = {
   "karos-x-agent-v2": "x-agent",
   "karos-linkedin-writer-v2": "linkedin-agent",
   "karos-reddit-runner": "reddit-agent",
@@ -78,9 +100,8 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, string>> = {
   // onboarding and the first post are one run instead of two products someone
   // had to sequence by hand.
   //
-  // The manager variants stay absent on purpose: karos-linkedin-manager-v2
-  // runs on two clocks and rewrites the generators' inputs, and agent-engine
-  // has neither a scheduler nor a write path for that.
+  // The standalone LinkedIn manager key is not merely absent — it was retired
+  // in full (see the note above), so there is nothing left to map.
   "karos-linkedin-setup-v2": "linkedin-agent",
   "karos-reddit-setup": "reddit-agent",
   // Three more whose engine workflows already exist.
@@ -166,12 +187,18 @@ export function resolveAgentEngineRunKind(productId: string): "setup" | "recurri
  * dedicated matcher), so without this alias a client filling the visible
  * "Success criteria and constraints" box on a reddit-agent run would have it
  * silently dropped — the exact defect T-B12 exists to close.
+ *
+ * Exported (as `const satisfies`, not a widened type annotation) so C3
+ * (`engine-field-contract.ts`) can derive its `WireFieldKey` union from the
+ * literal `wireKey` slot of each row here, rather than re-declaring the same
+ * key list a second time by hand. See that file's header for why this is the
+ * whole point of the exercise.
  */
-const SHARED_SCALAR_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: string]> = [
+export const SHARED_SCALAR_FIELDS = [
   ["audience", "audience"],
   ["tone", "tone"],
   ["cta", "cta"],
-];
+] as const satisfies ReadonlyArray<readonly [dialogKey: string, wireKey: string]>;
 
 /**
  * Shared LIST fields. C3 spells these `mustInclude[]` and `keywords[]` — the
@@ -183,14 +210,15 @@ const SHARED_SCALAR_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: 
  * compliance"), so comma-splitting would shred one requirement into three.
  * `keywords` is a single-line text input whose natural separator is the comma,
  * so it splits on both.
+ *
+ * Exported for the same reason as `SHARED_SCALAR_FIELDS` above — C3's
+ * `WireFieldKey` union is derived from this table's literal `wireKey` slot.
  */
-const SHARED_LIST_FIELDS: ReadonlyArray<
-  readonly [dialogKey: string, wireKey: string, splitOnCommas: boolean]
-> = [
+export const SHARED_LIST_FIELDS = [
   ["must_include", "mustInclude", false],
   ["success_criteria", "mustInclude", false],
   ["keywords", "keywords", true],
-];
+] as const satisfies ReadonlyArray<readonly [dialogKey: string, wireKey: string, splitOnCommas: boolean]>;
 
 /**
  * DEDICATED PER-AGENT FIELDS, dialog key -> wire key.
@@ -215,8 +243,13 @@ const SHARED_LIST_FIELDS: ReadonlyArray<
  * callers (`linkedin-agent-actions.ts` builds `briefValues` by hand, and the
  * scheduled-run cron may) can set them, and dropping a key an existing caller
  * may pass is a silent regression rather than a fix.
+ *
+ * Exported for the same reason as the two tables above: this is the table a
+ * new dedicated field is added to in practice, so it is the one whose literal
+ * `wireKey` slot C3's `WireFieldKey` union must actually widen from — not a
+ * second, hand-copied list that a change here can silently leave behind.
  */
-const DEDICATED_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: string]> = [
+export const DEDICATED_FIELDS = [
   // X draft
   ["run_scope", "runScope"],
   ["requestedLane", "requestedLane"],
@@ -240,7 +273,42 @@ const DEDICATED_FIELDS: ReadonlyArray<readonly [dialogKey: string, wireKey: stri
   ["scope", "scope"],
   ["market", "market"],
   ["competitors", "competitors"],
-];
+] as const satisfies ReadonlyArray<readonly [dialogKey: string, wireKey: string]>;
+
+/**
+ * The wire keys `toEngineRunInput` sets by BESPOKE logic below rather than by
+ * walking one of the three tables above: `customPrompt`/`mustInclude`-style
+ * folding, `request` (-> `requestedTopic`, unless `engineProductId` is
+ * `REQUEST_IS_DIRECTION_PRODUCT`), `target_date` (-> `targetDate`, after
+ * `normalizeTargetDate`), `post_count` (-> `postCount`, after the integer
+ * guard) and the parsed `mediaAssets` array.
+ *
+ * This list exists so C3 (`engine-field-contract.ts`) can build its
+ * `WireFieldKey` union from ALL of this function's real outputs, not just the
+ * three table-driven ones — closing the other half of the same disconnect:
+ * `WireFieldKey` used to be a hand-copied 25-key list that neither this file
+ * nor the tables above ever checked against each other. A field added to one
+ * of the THREE TABLES above now fails `tsc --noEmit` if the contract has no
+ * row for it (`WireFieldKey` widens automatically because those tables are
+ * declared `as const satisfies`, and `ENGINE_FIELD_CONTRACT`'s
+ * `Record<WireFieldKey, FieldContractEntry>` annotation then demands the new
+ * key). A field added here — a NEW bespoke `input.xyz = ...` line in
+ * `toEngineRunInput` with no table row behind it — is NOT caught by that same
+ * compile-time mechanism (there is no table for TypeScript to widen from);
+ * `engine-field-contract.test.ts`'s exhaustive-payload test below catches
+ * that case at test time instead, by asserting every key `toEngineRunInput`
+ * ever actually emits, across every dialog key this repo defines, is a member
+ * of this list. Both gaps are closed; neither is closed by the same
+ * mechanism, and this comment says so rather than overclaiming one guard
+ * covers both.
+ */
+export const SPECIAL_CASED_WIRE_KEYS = [
+  "customPrompt",
+  "mediaAssets",
+  "requestedTopic",
+  "targetDate",
+  "postCount",
+] as const;
 
 /**
  * Dialog keys whose ANSWER IS PROSE FOR THE MODEL and which C3 rules should be
@@ -436,8 +504,13 @@ export function toEngineRunInput(
   return input;
 }
 
-/** The asset roles agent-engine understands (`MediaAssetSchema` in its core package). */
-const MEDIA_ROLES = new Set(["source", "reference", "logo", "overlay"]);
+/**
+ * The asset roles agent-engine understands (`MediaAssetSchema` in its core
+ * package). Exported so `chat-attachments.ts` (T-B5) validates a chat-turn
+ * attachment against the exact same set this function already does, rather
+ * than a second copy of the list that can silently drift from this one.
+ */
+export const MEDIA_ROLES = new Set(["source", "reference", "logo", "overlay"]);
 
 /**
  * Attachments the engine will accept, and nothing else.

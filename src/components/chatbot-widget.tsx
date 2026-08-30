@@ -2,16 +2,24 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
 import { renderSectionBody } from "@/lib/doc-render";
-import { readChatStream } from "@/lib/chat/client-stream";
+import { readChatStream, type ChatStreamEvent } from "@/lib/chat/client-stream";
 import type { ClientReport } from "@/lib/types";
 import { CHAT_MODEL_KEYS, CHAT_MODEL_OPTIONS, type ChatModelKey } from "@/lib/ai/chat-models";
+import { RunAttachments, type RunAttachment } from "@/components/agents/run-attachments";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
+
+/**
+ * T-B18: the payload of one `data-feedback` part (stream-protocol.ts /
+ * client-stream.ts), as recorded against the assistant turn that wrote it.
+ */
+type FeedbackNote = Extract<ChatStreamEvent, { type: "feedback" }>["feedback"];
 
 interface Message {
   id: string;
@@ -25,6 +33,21 @@ interface Message {
    * `content` is still what goes to the API.
    */
   display?: string;
+  /**
+   * Filenames/URIs of files sent WITH this message (T-B5), shown as a small
+   * chip row under the user bubble. Display-only - the actual `MediaAsset`
+   * objects the turn carried are never persisted here (`isPersistedMessage`
+   * only re-hydrates strings), so reloading a restored transcript shows a
+   * message was attached without re-attaching the files it named.
+   */
+  attachmentLabels?: string[];
+  /**
+   * `provide_feedback` calls this turn recorded, structurally — not just the
+   * confirmation sentence in `content` (T-B18). Rendered as a chip under the
+   * reply; a persisted transcript keeps these across a reload exactly like it
+   * keeps `content` (isPersistedMessage below validates the shape on restore).
+   */
+  feedbackNotes?: FeedbackNote[];
 }
 
 /** One of this client's LIVE agents, offered in the `@mention` dropdown. */
@@ -67,6 +90,19 @@ const THREAD_KEY_PREFIX = "karos.copilot.thread.";
 /** Cap what we write back - a long thread is not worth a quota error. */
 const MAX_PERSISTED_MESSAGES = 40;
 
+/** One persisted `feedbackNotes` entry — validated field-by-field, same reasoning as `isPersistedMessage`. */
+function isPersistedFeedbackNote(v: unknown): v is FeedbackNote {
+  if (!v || typeof v !== "object") return false;
+  const n = v as Record<string, unknown>;
+  return (
+    typeof n.agentName === "string" &&
+    typeof n.agentId === "string" &&
+    (n.scope === "agent" || n.scope === "template") &&
+    (n.templateKey === undefined || typeof n.templateKey === "string") &&
+    (n.category === undefined || typeof n.category === "string")
+  );
+}
+
 function isPersistedMessage(v: unknown): v is Message {
   if (!v || typeof v !== "object") return false;
   const m = v as Record<string, unknown>;
@@ -74,7 +110,15 @@ function isPersistedMessage(v: unknown): v is Message {
     typeof m.id === "string" &&
     (m.role === "user" || m.role === "assistant") &&
     typeof m.content === "string" &&
-    (m.display === undefined || typeof m.display === "string")
+    (m.display === undefined || typeof m.display === "string") &&
+    (m.attachmentLabels === undefined ||
+      (Array.isArray(m.attachmentLabels) && m.attachmentLabels.every((x) => typeof x === "string"))) &&
+    // sessionStorage is this tab's own prior write, but still untrusted shape
+    // as far as this type guard is concerned - a corrupted/older-shape entry
+    // (or one written by a pre-T-B18 build in the same session) is dropped
+    // rather than handed to render as a malformed chip.
+    (m.feedbackNotes === undefined ||
+      (Array.isArray(m.feedbackNotes) && m.feedbackNotes.every(isPersistedFeedbackNote)))
   );
 }
 
@@ -260,6 +304,14 @@ function useCopilot(
    * client-visible receipt.
    */
   const [preferredModel, setPreferredModel] = useState<ChatModelKey | null>(null);
+  /**
+   * T-B5: files uploaded (browser → GCS, real `gs://` URIs - see
+   * `RunAttachments`) and staged for the NEXT message only. Not persisted
+   * (unlike `focusAgent`/the transcript): a signed-URL upload is a live GCS
+   * object either way, and re-offering a stale pending attachment across a
+   * reload is a worse default than just asking the user to attach again.
+   */
+  const [attachments, setAttachments] = useState<RunAttachment[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   // Scoped to viewer AND client: sessionStorage survives sign-out in the same
   // tab, and StaffCopilotDock writes under this prefix too - an unscoped key
@@ -344,6 +396,7 @@ function useCopilot(
     setInput("");
     setError(null);
     setStreaming(false);
+    setAttachments([]);
     try {
       sessionStorage.removeItem(storageKey);
     } catch {
@@ -363,16 +416,24 @@ function useCopilot(
       const trimmed = text.trim();
       if (!trimmed || streaming) return;
 
+      // Captured before any state update below clears it - this message's
+      // attachments, not whatever is pending by the time the fetch resolves.
+      const turnAttachments = attachments;
+
       const userMsg: Message = {
         id: crypto.randomUUID(),
         role: "user",
         content: trimmed,
         ...(display ? { display } : {}),
+        ...(turnAttachments.length > 0
+          ? { attachmentLabels: turnAttachments.map((a) => a.label ?? a.uri) }
+          : {}),
       };
       const assistantId = crypto.randomUUID();
 
       setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
       setInput("");
+      setAttachments([]);
       setStreaming(true);
       setError(null);
 
@@ -394,6 +455,12 @@ function useCopilot(
             // body field and validates it against its own server-side copy of
             // the same allowlist (resolveChatModel, lib/ai/chat-models.ts).
             ...(preferredModel ? { model: preferredModel } : {}),
+            // T-B5: already-uploaded `MediaAsset`-shaped attachments for this
+            // turn - real `gs://` URIs from RunAttachments' signed-URL upload,
+            // not a form field. UNTRUSTED like everything else in this body;
+            // the route re-validates every field (parseChatAttachments),
+            // including tying each `gs://` path back to THIS client.
+            ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           }),
           signal: controller.signal,
         });
@@ -410,6 +477,10 @@ function useCopilot(
         let brandingUpdated = false;
         let tasksCreated = false;
         let sawErrorPart = false;
+        // T-B18: every `data-feedback` part this turn wrote (normally one -
+        // provide_feedback is one call - but not assumed to be, same as
+        // stream-protocol.ts's own comment on the `job` part above it).
+        const feedbackNotes: FeedbackNote[] = [];
 
         for await (const evt of readChatStream(response)) {
           switch (evt.type) {
@@ -434,10 +505,22 @@ function useCopilot(
                 tasksCreated = true;
               }
               break;
+            case "feedback":
+              // Structural confirmation that standing feedback was recorded -
+              // rendered as a chip on this assistant message below, not just
+              // read off the model's own confirmation sentence in `content`.
+              feedbackNotes.push(evt.feedback);
+              break;
             case "error":
               sawErrorPart = true;
               break;
           }
+        }
+
+        if (feedbackNotes.length > 0) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, feedbackNotes } : m)),
+          );
         }
 
         // A provider failure mid-stream (token depletion, a 5xx) now arrives
@@ -474,7 +557,7 @@ function useCopilot(
         setStreaming(false);
       }
     },
-    [clientId, messages, streaming, focusAgent, preferredModel, onBrandingChange, onTasksCreated, router],
+    [clientId, messages, streaming, focusAgent, preferredModel, attachments, onBrandingChange, onTasksCreated, router],
   );
 
   /**
@@ -524,6 +607,7 @@ function useCopilot(
   return {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
     focusAgent, setFocusAgent, preferredModel, setPreferredModel,
+    attachments, setAttachments,
   };
 }
 
@@ -590,6 +674,45 @@ function TypingDots() {
         />
       ))}
     </span>
+  );
+}
+
+/* ── Feedback chip (T-B18) ───────────────────────────────────────────── */
+
+/** Human copy for a feedback note's scope - same two values `provideFeedbackTool`'s confirmation prose uses. */
+function feedbackScopeLabel(note: FeedbackNote): string {
+  return note.scope === "template" && note.templateKey
+    ? `"${note.templateKey}" format`
+    : `everything ${note.agentName} makes`;
+}
+
+/**
+ * Structural confirmation that a `provide_feedback` call recorded a standing
+ * note - the client-facing surface this data-feedback part exists for (T-B18;
+ * see stream-protocol.ts's `ChatDataParts.feedback` doc comment). `self-start`
+ * keeps it from stretching to the bubble's width above it (its flex-col parent
+ * defaults every child to stretch) - it reads as a chip, not a second bubble.
+ *
+ * Links to the SAME feedback surface the context-doc "Correct Info" pattern's
+ * shape inspired this loop from: the agent's own detail page, where
+ * `ClientAgentFeedbackModal` already lists, edits and withdraws every open
+ * note (agent-detail-panel.tsx) - this chip is a shortcut into that existing
+ * management surface, not a second one.
+ */
+function FeedbackChip({ clientId, note }: { clientId: string; note: FeedbackNote }) {
+  return (
+    <Link
+      href={`/clients/${clientId}/agents/${note.agentId}`}
+      className="group flex w-fit max-w-full items-center gap-1.5 self-start rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-border-strong hover:bg-surface-3 hover:text-foreground"
+    >
+      <Icon name="MessageSquareQuote" className="h-3 w-3 shrink-0 text-muted-2 group-hover:text-foreground" />
+      <span className="truncate">
+        Feedback saved &middot; shapes {feedbackScopeLabel(note)}
+      </span>
+      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
+        Manage
+      </span>
+    </Link>
   );
 }
 
@@ -814,6 +937,7 @@ export function ChatbotWidget({
   const {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
     focusAgent, setFocusAgent, preferredModel, setPreferredModel,
+    attachments, setAttachments,
   } = useCopilot(clientId, viewerUid, onBrandingChange, onTasksCreated);
 
   // Whether to show the proactive welcome instead of the standard empty state
@@ -1054,31 +1178,68 @@ export function ChatbotWidget({
                   key={msg.id}
                   className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}
                 >
-                  <div
-                    className={cn(
-                      "max-w-[88%] rounded-md px-3.5 py-2.5 text-sm leading-relaxed",
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "border border-border bg-surface-2 text-foreground",
-                    )}
-                  >
-                    {msg.content ? (
-                      msg.role === "assistant" ? (
-                        // The model writes markdown - the system prompt is itself
-                        // authored in it and the flagship actions ask for
-                        // multi-section deliverables - so a pre-wrapped span put
-                        // asterisks, hash marks and table pipes on screen (QA F89).
-                        // renderSectionBody escapes before formatting, so model
-                        // output cannot inject markup; it is the same renderer the
-                        // documents view uses.
-                        <div dangerouslySetInnerHTML={{ __html: renderSectionBody(msg.content) }} />
+                  {/* Single flex child of the row above, so `justify-end`/
+                      `justify-start` still positions the whole stack - the
+                      bubble and (T-B18) its feedback chip render as a COLUMN
+                      inside it rather than two items competing for the row. */}
+                  <div className="flex max-w-[88%] flex-col gap-1.5">
+                    <div
+                      className={cn(
+                        "rounded-md px-3.5 py-2.5 text-sm leading-relaxed",
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "border border-border bg-surface-2 text-foreground",
+                      )}
+                    >
+                      {msg.content ? (
+                        msg.role === "assistant" ? (
+                          // The model writes markdown - the system prompt is itself
+                          // authored in it and the flagship actions ask for
+                          // multi-section deliverables - so a pre-wrapped span put
+                          // asterisks, hash marks and table pipes on screen (QA F89).
+                          // renderSectionBody escapes before formatting, so model
+                          // output cannot inject markup; it is the same renderer the
+                          // documents view uses.
+                          <div dangerouslySetInnerHTML={{ __html: renderSectionBody(msg.content) }} />
+                        ) : (
+                          // `display` is the action's own label when the chip's
+                          // hidden trigger is what was actually sent (QA F15).
+                          <span style={{ whiteSpace: "pre-wrap" }}>{msg.display ?? msg.content}</span>
+                        )
                       ) : (
-                        // `display` is the action's own label when the chip's
-                        // hidden trigger is what was actually sent (QA F15).
-                        <span style={{ whiteSpace: "pre-wrap" }}>{msg.display ?? msg.content}</span>
-                      )
-                    ) : (
-                      <TypingDots />
+                        <TypingDots />
+                      )}
+                      {/* T-B5: what was attached to THIS message, not a
+                          generic "files" line - a client scanning back through
+                          the transcript should see which message a photo rode
+                          in on. */}
+                      {msg.attachmentLabels && msg.attachmentLabels.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {msg.attachmentLabels.map((label, i) => (
+                            <span
+                              key={`${msg.id}-attachment-${i}`}
+                              className="inline-flex items-center gap-1 rounded bg-black/10 px-1.5 py-0.5 text-[10px] text-primary-foreground/80"
+                            >
+                              <Icon name="Paperclip" className="h-2.5 w-2.5" />
+                              <span className="max-w-[160px] truncate">{label}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {/* T-B18: structural confirmation of what provide_feedback
+                        recorded - not just the model's prose. One chip per
+                        data-feedback part this turn wrote. Links into the
+                        agent's own feedback panel (agent-detail-panel.tsx's
+                        ClientAgentFeedbackModal) - the place a client can
+                        already see, edit or withdraw the note this chip is
+                        confirming. */}
+                    {msg.role === "assistant" && msg.feedbackNotes && msg.feedbackNotes.length > 0 && (
+                      <>
+                        {msg.feedbackNotes.map((note, i) => (
+                          <FeedbackChip key={i} clientId={clientId} note={note} />
+                        ))}
+                      </>
                     )}
                   </div>
                 </div>
@@ -1204,6 +1365,20 @@ export function ChatbotWidget({
                   ))}
               </div>
             )}
+            {/* T-B5: real upload surface, not the run dialog's raw-JSON
+                textarea - reuses the same signed-URL upload RunAttachments
+                already does for the admin agent card, so a chat attachment
+                is a real `gs://` MediaAsset the moment the file finishes
+                uploading, before the message is even sent. */}
+            <div className="border-t border-border px-3 pt-2">
+              <RunAttachments
+                clientId={clientId}
+                attachments={attachments}
+                onChange={setAttachments}
+                disabled={streaming}
+                mode="chat"
+              />
+            </div>
             <ModelPicker value={preferredModel} onChange={setPreferredModel} />
             <form
               onSubmit={handleSubmit}

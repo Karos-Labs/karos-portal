@@ -13,6 +13,26 @@ export const MODELS = {
 
 export type ModelId = (typeof MODELS)[keyof typeof MODELS];
 
+/**
+ * The SAME models addressed through Vertex AI Model Garden.
+ *
+ * Not a second set of models and not an alias of MODELS above: Vertex
+ * addresses a dated snapshot with an `@` separator, so
+ * `claude-haiku-4-5-20251001` is simply not a model id there — it is
+ * `claude-haiku-4-5@20251001`. Passing the first-party spelling to Vertex
+ * fails at request time with an opaque 404.
+ *
+ * Lives here, next to MODELS, because both spellings now have a reader that
+ * cannot import the other's: `ai/provider.ts` is server-only, while
+ * `ai/chat-models.ts` is deliberately client-safe (chatbot-widget.tsx reads
+ * the picker labels out of it). A third hand-typed copy of these ids is
+ * exactly how the two spellings drift.
+ */
+export const VERTEX_MODELS = {
+  SONNET: "claude-sonnet-4-6",
+  HAIKU: "claude-haiku-4-5@20251001",
+} as const;
+
 /** Max output tokens for full internal context documents (Sonnet 4.6 ceiling). */
 export const DOC_MAX_TOKENS = 16_000;
 

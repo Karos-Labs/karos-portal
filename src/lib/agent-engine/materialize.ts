@@ -66,7 +66,7 @@ interface ProductDeliverableSpec {
   assetTypeHint?: AssetType;
 }
 
-const PRODUCT_DELIVERABLES: Readonly<Record<string, ProductDeliverableSpec>> = {
+const PRODUCT_DELIVERABLES = {
   "x-agent": { kind: "x-post", taskType: "social_post" },
   "linkedin-agent": { kind: "linkedin-post", taskType: "social_post" },
   "instagram-agent": { kind: "instagram-carousel", taskType: "social_post" },
@@ -86,7 +86,27 @@ const PRODUCT_DELIVERABLES: Readonly<Record<string, ProductDeliverableSpec>> = {
   "intel-report-agent": { kind: "intel-report", taskType: "custom", assetTypeHint: "note" },
   "seo-geo-agent": { kind: "seo-geo-report", taskType: "custom", assetTypeHint: "note" },
   "campaign-orchestrator": { kind: "campaign-bundle", taskType: "custom", assetTypeHint: "note" },
-};
+  // The reputation pulse. `note` for the same reason Reddit is fenced to it —
+  // a review reply is posted from the CLIENT'S OWN business listing (Google,
+  // Yelp, ...), so there is no platform this portal could push it to, and
+  // this portal has no reputation publish channel at all (nothing in
+  // `PUBLISHABLE_PLATFORMS` names one). A pulse is also not one post: it is a
+  // batch of approved drafts plus flagged items with no draft, the same
+  // "index over several things a staff member reads" shape as the three rows
+  // above it rather than one schedulable post — so `custom` + the `note` hint
+  // is the honest type here too, not `social_post` relying on a fence that
+  // only recognizes Reddit's identity.
+  "reputation-agent": { kind: "reputation-pulse", taskType: "custom", assetTypeHint: "note" },
+} as const satisfies Record<string, ProductDeliverableSpec>;
+
+/**
+ * Every engine product this module can turn into an asset — the literal key
+ * union other modules (`product-mapping.ts`'s build-time guard) check custom-
+ * agent routes against, so a route added with no materializer here fails
+ * `tsc`/`next build` instead of shipping a job that reaches `review` with
+ * nothing attached.
+ */
+export type EngineProductWithDeliverable = keyof typeof PRODUCT_DELIVERABLES;
 
 /**
  * Every engine product this module can turn into an asset, and the `kind` each
@@ -657,6 +677,84 @@ function materializeCampaignBundle(deliverable: Record<string, unknown>): AssetM
   };
 }
 
+/**
+ * The reputation pulse, as `create-reputation-pulse-workflow.ts`'s
+ * `ledger.writeDeliverable` call actually writes it (verified against
+ * agent-engine, `create-reputation-pulse-workflow.ts:762`): `summary` is the
+ * triage counts, `crisis` names whether an escalation fired, `flagged` is
+ * every review the run decided NOT to draft a reply for (the part with a
+ * deadline — a human has to act on it), and `approvedDrafts` is the batch of
+ * `{ reviewId, draftText }` pairs a human copies onto the real review
+ * platform. Every field is asked for, never asserted, same rule as every
+ * other cross-boundary materializer in this file.
+ *
+ * Rendered to markdown rather than shipped as raw JSON, same choice as
+ * `materializeIntelReport`/`materializeSeoGeoReport`: this portal has no
+ * pulse-specific viewer, and a reviewer handed the bare object would see
+ * braces, not the two things that matter — what needs action now, and what
+ * the drafted replies actually say. The crisis line leads when it fired,
+ * because that is the one fact in a pulse with a same-day cost.
+ */
+function materializeReputationPulse(deliverable: Record<string, unknown>): AssetMaterialization {
+  const summary = rec(deliverable["summary"]);
+  const crisis = rec(deliverable["crisis"]);
+  const crisisFired = crisis["fired"] === true;
+  const flagged = objArray(deliverable["flagged"]);
+  const approvedDrafts = objArray(deliverable["approvedDrafts"]);
+  const pulseNumber = str(deliverable["pulseNumber"]);
+
+  const summaryLine = (
+    [
+      ["responded", "respond"],
+      ["flagged", "flag"],
+      ["no action", "no_action"],
+      ["unavailable", "unavailable"],
+    ] as const
+  )
+    .map(([label, field]) => {
+      const value = summary[field];
+      return typeof value === "number" ? `${value} ${label}` : undefined;
+    })
+    .filter((part): part is string => Boolean(part))
+    .join(" · ");
+
+  const flaggedBlock = flagged
+    .map((row) => {
+      const reason = str(row["reason"]);
+      if (!reason) return undefined;
+      const urgency = row["urgencyScore"];
+      return `- ${reason}${typeof urgency === "number" ? ` (urgency ${urgency}/100)` : ""}`;
+    })
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+
+  const draftsBlock = approvedDrafts
+    .map((row) => str(row["draftText"]))
+    .filter((text): text is string => Boolean(text))
+    .join("\n\n---\n\n");
+
+  return {
+    title: pulseNumber ? `Reputation pulse ${pulseNumber}` : "Reputation pulse",
+    content: joinBlocks([
+      crisisFired ? "**A crisis trigger fired on this pulse — see flagged items below.**" : undefined,
+      summaryLine ? `**${summaryLine}**` : undefined,
+      flaggedBlock ? `## Flagged — needs a person (${flagged.length})\n\n${flaggedBlock}` : undefined,
+      draftsBlock ? `## Drafted replies (${approvedDrafts.length})\n\n${draftsBlock}` : undefined,
+    ]),
+    meta: metaFrom(deliverable, [
+      "pulseNumber",
+      "generatedAt",
+      "summary",
+      "crisis",
+      "captureLegs",
+      "unavailableLegs",
+      "flagged",
+      "approvedDrafts",
+      "draftManifest",
+    ]),
+  };
+}
+
 async function buildMaterialization(job: Job, productId: string, deliverable: unknown): Promise<AssetMaterialization | undefined> {
   const fields = rec(deliverable);
   switch (productId) {
@@ -684,6 +782,8 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
       return materializeSeoGeoReport(fields);
     case "campaign-orchestrator":
       return materializeCampaignBundle(fields);
+    case "reputation-agent":
+      return materializeReputationPulse(fields);
     default:
       return undefined;
   }
@@ -706,7 +806,12 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
   if (!job.agentEngineRunId || !job.agentEngineProductId) return undefined;
   if (job.assetIds.length > 0) return undefined;
 
-  const spec = PRODUCT_DELIVERABLES[job.agentEngineProductId];
+  // Widened to a plain index signature for this one lookup: `job.agentEngineProductId`
+  // is an arbitrary string that crossed a service boundary, not a key of the
+  // literal-typed `PRODUCT_DELIVERABLES` (that literal typing is what makes
+  // `EngineProductWithDeliverable` — and `product-mapping.ts`'s build-time guard
+  // — possible in the first place).
+  const spec = (PRODUCT_DELIVERABLES as Readonly<Record<string, ProductDeliverableSpec>>)[job.agentEngineProductId];
   if (!spec) return undefined;
 
   try {

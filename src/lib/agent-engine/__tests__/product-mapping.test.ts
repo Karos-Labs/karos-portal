@@ -113,18 +113,20 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
   });
 
   it("leaves the manager variants and the agents with no engine workflow on agent-service", () => {
-    // The managers are the structural blocker, not an oversight:
-    // karos-linkedin-manager-v2 runs on two clocks and rewrites the
-    // generators' inputs, and agent-engine has neither a scheduler nor a write
-    // path for that. The rest simply have no engine product built yet.
+    // The still-live managers are the structural blocker, not an oversight:
+    // karos-blog-manager-v2 runs on two clocks and rewrites the generators'
+    // inputs, and agent-engine has neither a scheduler nor a write path for
+    // that. The rest simply have no engine product built yet.
+    //
+    // karos-linkedin-manager-v2, karos-reputation-manager and the whole
+    // karos-carousel-runner/-setup/-manager family used to appear in this list
+    // too — trivially true, since they were never mapped. They were retired in
+    // full 2026-08-29 (SCRUM-377/T-B25a) and no longer exist as customAgents
+    // keys at all, so asserting "maps to undefined" about them stopped being a
+    // meaningful test.
     for (const key of [
-      "karos-linkedin-manager-v2",
       "karos-blog-manager-v2",
       "karos-newsletter-manager-v2",
-      "karos-reputation-manager",
-      "karos-carousel-manager",
-      "karos-carousel-runner",
-      "karos-carousel-setup",
       "karos-blog-setup-v2",
       "karos-newsletter-setup-v2",
       "karos-reputation-setup",
@@ -518,16 +520,33 @@ describe("toEngineRunInput — the C3 wire shape", () => {
 describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => {
   it("the server hands toEngineRunInput the same id the page built the dialog from", () => {
     // A source pin rather than a convention: submit-custom.ts resolves
-    // `engineProductId` with the same function custom-agents.tsx passes to
-    // withEngineRunFields, and must forward it. Without the second argument
-    // the server builds seo-geo's input from a dialog whose `request` box the
-    // page labelled "Business goal or question".
-    const source = readFileSync(
+    // `engineProductId` with the same underlying function custom-agents.tsx
+    // passes to withEngineRunFields, and must forward it. Without the second
+    // argument the server builds seo-geo's input from a dialog whose `request`
+    // box the page labelled "Business goal or question".
+    //
+    // SCRUM-249 (T-B5): submit-custom.ts no longer calls
+    // `resolveAgentEngineProductIdForCustomAgent` directly — it now goes
+    // through `resolveDispatchedAgentEngineProductId` (agent-engine/health.ts),
+    // which applies the same per-run dispatch gate (dispatch enabled + client
+    // cut over) BEFORE resolving the product id, and is what the copilot chat
+    // route now shares to avoid the two silently disagreeing (see that
+    // ticket). The pin below follows the call to where it now lives, and
+    // confirms health.ts's own resolution still bottoms out in the identical
+    // `resolveAgentEngineProductIdForCustomAgent(agentKey)` call — so the id
+    // submit-custom.ts ends up with, WHEN it dispatches at all, is still
+    // exactly the one the page's dialog was built from.
+    const submitCustomSource = readFileSync(
       resolve(__dirname, "../../jobs/submit-custom.ts"),
       "utf8",
     );
-    expect(source).toContain("resolveAgentEngineProductIdForCustomAgent(agent.key)");
-    expect(source).toContain("toEngineRunInput(input.briefValues, engineProductId)");
+    expect(submitCustomSource).toContain(
+      "resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug)",
+    );
+    expect(submitCustomSource).toContain("toEngineRunInput(input.briefValues, engineProductId)");
+
+    const healthSource = readFileSync(resolve(__dirname, "../health.ts"), "utf8");
+    expect(healthSource).toContain("resolveAgentEngineProductIdForCustomAgent(agentKey)");
   });
 
   it("every routed product has a dialog pinned above, so a new route cannot ship unswept", () => {

@@ -14,7 +14,11 @@ vi.mock("../dispatch", () => ({
   isAgentEngineTransportConfigured: transportConfiguredMock,
 }));
 
-import { clientHasEngineRoutedCustomAgent, shouldShowEngineHealthBanner } from "../health";
+import {
+  clientHasEngineRoutedCustomAgent,
+  resolveDispatchedAgentEngineProductId,
+  shouldShowEngineHealthBanner,
+} from "../health";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -69,5 +73,49 @@ describe("shouldShowEngineHealthBanner", () => {
     vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
     transportConfiguredMock.mockReturnValue(false);
     expect(shouldShowEngineHealthBanner("karoslabs", ["karos-x-agent-v2"])).toBe(true);
+  });
+});
+
+/**
+ * SCRUM-249 (T-B5): this is the exact per-run gate `submit-custom.ts`
+ * applies before it ever creates a job doc, and the fix for a review finding
+ * against a prior version of the chat route, which asked
+ * `resolveAgentEngineProductIdForCustomAgent(agent.key)` ALONE - true the
+ * moment agent-engine has ANY workflow for that agent key, completely
+ * independent of whether dispatch is enabled globally or this client has
+ * been cut over. That let a client not yet cut over (the normal state for
+ * most clients mid-migration) be told a file was "attached as source media
+ * for this run" when the run actually fell through to the legacy
+ * agent-service path, which never reads `mediaAssets` at all.
+ */
+describe("resolveDispatchedAgentEngineProductId", () => {
+  it("is undefined when the global dispatch flag is off, even for a cut-over client with an engine-mapped agent", () => {
+    dispatchEnabledMock.mockReturnValue(false);
+    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "*");
+    expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", "karoslabs")).toBeUndefined();
+  });
+
+  it("is undefined when the client is not in AGENT_ENGINE_CUSTOM_AGENT_CLIENTS - the realistic mid-migration state this finding was about", () => {
+    dispatchEnabledMock.mockReturnValue(true);
+    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "geektime");
+    expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", "karoslabs")).toBeUndefined();
+  });
+
+  it("is undefined for a cut-over client whose agent key has no engine workflow", () => {
+    dispatchEnabledMock.mockReturnValue(true);
+    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
+    expect(resolveDispatchedAgentEngineProductId("some-unmapped-agent-key", "karoslabs")).toBeUndefined();
+  });
+
+  it("is undefined when clientSlug itself is undefined (client.agentsRepoSlug unset)", () => {
+    dispatchEnabledMock.mockReturnValue(true);
+    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "*");
+    expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", undefined)).toBeUndefined();
+  });
+
+  it("resolves the real productId once all three conditions hold - dispatch enabled, client cut over, agent key mapped", () => {
+    dispatchEnabledMock.mockReturnValue(true);
+    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "karoslabs");
+    expect(resolveDispatchedAgentEngineProductId("karos-x-agent-v2", "karoslabs")).toBe("x-agent");
   });
 });

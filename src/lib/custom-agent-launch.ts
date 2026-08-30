@@ -117,24 +117,19 @@ export const REDDIT_RUNNER_V2_KEY = "karos-reddit-runner";
 export const REDDIT_SETUP_V2_KEY = "karos-reddit-setup";
 
 /**
- * The reputation v2 keys. NO `-v2` SUFFIX, like the Reddit pair and unlike the
+ * The reputation keys. NO `-v2` SUFFIX, like the Reddit pair and unlike the
  * newsletter and blog fours — the manifest's own inconsistency, not a choice
  * available here. Verified against `catalog/agent-runtime-manifest.json`;
  * guessing wrong means a key that matches nothing and an agent that is never
  * gated, fed or hidden.
+ *
+ * `karos-reputation-manager` (the standalone monthly-review skill) was
+ * retired 2026-08-29 (SCRUM-377/T-B25a) — removed from code and the db, do
+ * not reintroduce. The runner and setup pair above are unaffected: the
+ * decision named only the standalone manager surface, not the product.
  */
-/**
- * The carousel v2 keys. NO `-v2` SUFFIX while the DIRECTORY has one
- * (`products/building/carousel-agent-v2/`), matching the Reddit and reputation
- * pairs. Verified against `catalog/agent-runtime-manifest.json`.
- */
-export const CAROUSEL_RUNNER_KEY = "karos-carousel-runner";
-export const CAROUSEL_SETUP_KEY = "karos-carousel-setup";
-export const CAROUSEL_MANAGER_KEY = "karos-carousel-manager";
-
 export const REPUTATION_RUNNER_KEY = "karos-reputation-runner";
 export const REPUTATION_SETUP_KEY = "karos-reputation-setup";
-export const REPUTATION_MANAGER_KEY = "karos-reputation-manager";
 
 /**
  * The blog v2 keys. THREE skills, not four: there is no blog compliance lock —
@@ -439,40 +434,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       attachments: {
         label: "Extra material for setup (optional)",
         hint: "Anything about how this client sells and speaks that is not already in their onboarding documents.",
-        accept: DOCUMENTS_AND_IMAGES,
-      },
-    },
-  },
-  {
-    // The v2 manager, staff-facing. A client's Run press already includes a
-    // manager pass; this is the standalone one — a bigger refill, or a look at
-    // what the last stretch of posts actually did.
-    matches: (identity) => identity.startsWith("karos-linkedin-manager-v2 "),
-    profile: {
-      eyebrow: "LinkedIn plan and topics",
-      intro:
-        "Audits what went out and what the client did with it, adjusts the lane mix, and refills the topic pool from one research pull. Never drafts and never posts.",
-      fields: [
-        {
-          key: "request",
-          label: "Anything to steer this pass?",
-          type: "textarea",
-          helper: "Optional. It reads its own memory, the ledger and the outcomes either way.",
-          placeholder: "A lane that has gone quiet, a subject to retire.",
-        },
-      ],
-      quickStarts: [
-        "Refill the topic pool and say which lanes are running dry.",
-        "Audit the last stretch of posts and adjust the mix.",
-      ],
-      deliverables: [
-        "New topic rows, each with a source and a date",
-        "The standing plan every later post run reads, with a reason per change",
-      ],
-      estimate: RUN_ESTIMATE,
-      attachments: {
-        label: "Extra material for this pass (optional)",
-        hint: "Research, a competitor note, or anything that should shape what the client talks about next.",
         accept: DOCUMENTS_AND_IMAGES,
       },
     },
@@ -951,111 +912,21 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       },
     },
   },
-  /* ── carousel v2: three EXACT keys ──
-   *
-   * Placed with the other exact-key v2 profiles rather than near the loose
-   * `/instagram|tiktok|content.?engine/` matcher it must beat. That matcher is
-   * the LEGACY Instagram agent's brief, and the carousel is described as its
-   * modern replacement — so an identity carrying "carousel" would not hit it
-   * today, but a future rename to "Instagram Carousel" would, and its brief asks
-   * for inputs v2 builds at setup.
-   *
-   * `profiles` is first-match-wins, so placement IS the mechanism. */
-  {
-    matches: (identity) => identity.startsWith("karos-carousel-runner "),
-    profile: {
-      eyebrow: "Carousel brief",
-      // The publishing sentence is exact and load-bearing. The AGENT renders
-      // PNGs and stops; it holds no Instagram credential and no posting path.
-      // What can auto-publish is the PORTAL, from an approved asset, through the
-      // same publish cron every other channel uses. Saying "the agent publishes"
-      // would promise a capability that does not exist in the runner.
-      intro:
-        "One carousel per press, built on the style your setup pinned. Approval-gated drafts; portal auto-publishing available via Next.js execution.",
-      fields: [
-        {
-          key: "request",
-          label: "Anything to steer this one? (optional)",
-          type: "textarea",
-          placeholder: "A topic from your catalogue to prioritise, an angle, a launch to build around.",
-          helper: "Leave it empty and we take the next unused topic from your catalogue.",
-        },
-      ],
-      quickStarts: [
-        "Build the next carousel from my topic catalogue.",
-        "Make one about the topic that has been waiting longest.",
-      ],
-      deliverables: [
-        "Eight to ten rendered slides, on your brand",
-        "The caption, written to match",
-        "The topic marked used so it does not come round again",
-      ],
-      estimate: RUN_ESTIMATE,
-      attachments: {
-        label: "Extra material (optional)",
-        hint: "A product photo, a chart, a screenshot you want on a slide.",
-        accept: DOCUMENTS_AND_IMAGES,
-      },
-    },
-  },
-  {
-    matches: (identity) => identity.startsWith("karos-carousel-setup "),
-    profile: {
-      eyebrow: "Carousel setup",
-      intro:
-        "The one-time stand-up: we derive the visual system from your brand material, build the slide templates, and seed the topic catalogue every future post draws from.",
-      fields: [
-        {
-          key: "request",
-          label: "Anything setup should know? (optional)",
-          type: "textarea",
-          placeholder: "A look you want, a look you do not, an existing deck to match.",
-          helper: "Everything else is derived from the brand material you already gave us.",
-        },
-      ],
-      quickStarts: ["Set up carousels from our brand material."],
-      deliverables: [
-        "The visual system every slide obeys",
-        "Your slide templates, rendered and checked",
-        "A topic catalogue to draw from",
-      ],
-      estimate: RUN_ESTIMATE,
-      attachments: {
-        label: "Brand material (optional)",
-        hint: "Brand guidelines, a deck you like, fonts and colour references.",
-        accept: DOCUMENTS_AND_IMAGES,
-      },
-    },
-  },
-  {
-    matches: (identity) => identity.startsWith("karos-carousel-manager "),
-    profile: {
-      eyebrow: "Carousel review",
-      intro:
-        "The monthly look back: what shipped, how much catalogue is left, and any style changes worth making. It PROPOSES a style change and never applies one.",
-      fields: [
-        {
-          key: "request",
-          label: "Anything to look at in particular? (optional)",
-          type: "textarea",
-          placeholder: "A template that is not landing, a topic vein worth more posts.",
-        },
-      ],
-      quickStarts: ["Run the monthly carousel review."],
-      deliverables: ["The month in review", "Fresh topics added to the catalogue", "Style changes proposed, never applied"],
-      estimate: RUN_ESTIMATE,
-      attachments: generalAttachments,
-    },
-  },
-  /* ── reputation v2: three EXACT keys, above the loose matcher below ──
+  /* ── reputation v2: two EXACT keys (runner, setup), above the loose matcher
+   * below ──
    *
    * The loose `/reputation|reviews|monitor/` profile that follows predates v2
-   * and still serves the catalogue's `karos-reputation`. It would capture all
-   * three v2 skills, and its brief asks the client for the brand, the surfaces,
+   * and still serves the catalogue's `karos-reputation`. It would capture
+   * both v2 skills, and its brief asks the client for the brand, the surfaces,
    * the market and the response rules — every one of which v2 BUILDS at setup
    * from the client's own documents and their real review history. Two of its
    * fields are `required: true`, so a client would be blocked from running until
    * they typed answers this product does not want.
+   *
+   * The standalone monthly-review manager profile that used to sit here
+   * (`karos-reputation-manager`) was retired 2026-08-29 (SCRUM-377/T-B25a): no
+   * engine equivalent was ever planned, and product ruled it fully gone rather
+   * than left dormant. The runner and setup below are unaffected.
    *
    * `profiles` is first-match-wins, so placement IS the mechanism. */
   {
@@ -1119,26 +990,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         hint: "Past replies you were happy with, your escalation policy, anything your legal team has ruled on.",
         accept: DOCUMENTS_AND_IMAGES,
       },
-    },
-  },
-  {
-    matches: (identity) => identity.startsWith("karos-reputation-manager "),
-    profile: {
-      eyebrow: "Reputation review",
-      intro:
-        "The monthly look back: what came in, what we drafted, what you sent, and what keeps coming up.",
-      fields: [
-        {
-          key: "request",
-          label: "Anything to look at in particular? (optional)",
-          type: "textarea",
-          placeholder: "A surface that feels off, a complaint theme you want quantified.",
-        },
-      ],
-      quickStarts: ["Run the monthly reputation review."],
-      deliverables: ["The month in review", "Recurring themes worth acting on", "What to change next month"],
-      estimate: RUN_ESTIMATE,
-      attachments: generalAttachments,
     },
   },
   {
@@ -1241,14 +1092,20 @@ export const X_SETUP_REQUIRED_PREFIX = "Set up the X agent data";
  * the server-side isLinkedInAgent in agent-service/linkedin-agent-context.ts —
  * widen the two together or a card offers a brief the server has no data for.
  *
- * Covers the three v2 skills (setup / writer / manager) and the e10 generation
- * that stays importable as the fallback.
+ * Covers the two v2 skills (setup / writer) and the e10 generation that stays
+ * importable as the fallback.
+ *
+ * The standalone `karos-linkedin-manager-v2` staff card was retired
+ * 2026-08-29 (SCRUM-377/T-B25a) — removed from code and the db, do not
+ * reintroduce. The manager SKILL itself is unaffected: it still runs
+ * automatically as part of every writer press (it lives in a subfolder of the
+ * writer's own entry directory), it simply has no standalone product surface
+ * of its own any more.
  */
 export function isLinkedInAgentIdentity(key: string): boolean {
   return (
     key === "karos-linkedin-writer-v2" ||
     key === "karos-linkedin-setup-v2" ||
-    key === "karos-linkedin-manager-v2" ||
     key === "karos-linkedin-agent" ||
     key.startsWith("karos-linkedin-company-")
   );
@@ -1415,6 +1272,28 @@ export const MEDIA_ASSETS_FIELD_KEY = "mediaAssets";
 const MEDIA_DEPENDENT_PRODUCTS = new Set(["instagram-agent", "branded-shorts-agent", "tiktok-agent"]);
 
 /**
+ * Whether an agent-engine product reads `mediaAssets` at all.
+ *
+ * T-B5 reuses this from the copilot chat route to decide whether a file the
+ * client attached this turn is actually wired into `run_agent_now`'s
+ * `briefValues.mediaAssets`, or left out with an honest note — the same
+ * question `withEngineRunFields` below answers when it decides whether to
+ * paint the field at all, asked here from a second caller that has no field
+ * to paint, only a run to (not) attach a file to. One set backs both, so the
+ * chat surface and the run dialog can never disagree about which agents take
+ * media.
+ *
+ * Takes the engine product id ALONE, deliberately — it says nothing about
+ * whether this client's runs of this agent actually reach agent-engine at
+ * all (that is `resolveDispatchedAgentEngineProductId`,
+ * agent-engine/health.ts, which callers must apply first to get the id this
+ * function should be asked about).
+ */
+export function agentEngineProductAcceptsMediaAssets(engineProductId: string | undefined): boolean {
+  return engineProductId != null && MEDIA_DEPENDENT_PRODUCTS.has(engineProductId);
+}
+
+/**
  * Adds the two run-scoped inputs agent-engine understands from any agent: a
  * free-text direction, and — for the media products — the source asset.
  *
@@ -1444,7 +1323,7 @@ export function withEngineRunFields(
       helper: "How to treat the topic this time — an angle to take, something to avoid, a tone to hit.",
     });
   }
-  if (MEDIA_DEPENDENT_PRODUCTS.has(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
+  if (agentEngineProductAcceptsMediaAssets(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
     extra.push({
       key: MEDIA_ASSETS_FIELD_KEY,
       label: "Source media",
@@ -1536,32 +1415,28 @@ export function isBlogAgentIdentity(key: string): boolean {
  *
  * The loose `/reputation|reviews|monitor/` LAUNCH PROFILE further up this file
  * still exists and still serves the catalogue entry `karos-reputation`, which is
- * a different product. Exact-key profiles for all three v2 skills sit ABOVE it,
+ * a different product. Exact-key profiles for both v2 skills sit ABOVE it,
  * so the runner is never captured by a brief asking the client for the brand,
  * the surfaces, the market and the response rules — every one of which v2 BUILDS
  * at setup, and two of which are `required: true` and would block every run
  * until somebody typed into them.
+ *
+ * `karos-reputation-manager`, the third v2 skill, was retired 2026-08-29
+ * (SCRUM-377/T-B25a) and never answered true here — this predicate decided
+ * who gets the reputation INTAKE and the setup gate, and the standalone
+ * monthly-review pass needed neither.
  */
 export function isReputationAgentIdentity(key: string): boolean {
   return key === REPUTATION_RUNNER_KEY;
 }
 
 /**
- * The carousel agent. EXACTLY the runner.
- *
- * Same rule as its five siblings: this decides who gets the carousel intake and
- * the setup gate, and a setup run that gated on its own output could never run.
- *
- * NOTE this does NOT answer for `karos-instagram-agent`. The carousel is
- * described as its modern replacement, but the legacy agent is a separate
- * document with its own key, its own (much larger) credential set and its own
- * intake shape. Folding it into this family would attach carousel intake to an
- * agent that reads none of it. Retiring it is a deprecation of its own, and this
- * integration is purely additive.
+ * The carousel agent family (`karos-carousel-runner` / `-setup` / `-manager`)
+ * was retired in full 2026-08-29 (SCRUM-377/T-B25a) — no engine equivalent was
+ * ever planned, and product ruled it fully gone rather than left dormant.
+ * Removed from code and the db, do not reintroduce. `isCarouselAgentIdentity`
+ * used to live here; every caller was removed with it.
  */
-export function isCarouselAgentIdentity(key: string): boolean {
-  return key === CAROUSEL_RUNNER_KEY;
-}
 
 export function isRedditAgentIdentity(key: string): boolean {
   return (
@@ -1586,11 +1461,8 @@ export const NEWSLETTER_SETUP_REQUIRED_PREFIX = "Set up the newsletter agent";
 /** The blog twin. Same literal-constant rule as its four siblings. */
 export const BLOG_SETUP_REQUIRED_PREFIX = "Set up the blog agent";
 
-/** The reputation twin. Same literal-constant rule as its five siblings. */
+/** The reputation twin. Same literal-constant rule as its four siblings. */
 export const REPUTATION_SETUP_REQUIRED_PREFIX = "Set up the reputation agent";
-
-/** The carousel twin. Same literal-constant rule as its six siblings. */
-export const CAROUSEL_SETUP_REQUIRED_PREFIX = "Set up the carousel agent";
 
 /**
  * What one newsletter issue costs a billable client.
@@ -1609,7 +1481,6 @@ export {
   NEWSLETTER_RUN_CREDITS,
   BLOG_RUN_CREDITS,
   REPUTATION_RUN_CREDITS,
-  CAROUSEL_RUN_CREDITS,
 } from "@/lib/credits";
 
 /**

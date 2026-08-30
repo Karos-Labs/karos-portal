@@ -19,15 +19,18 @@
  *
  * Run: FIRESTORE_DATABASE_ID=prep NODE_PATH=./node_modules npx tsx \
  *        --env-file=.env.local scripts/enable-v2-agents-prep.ts \
- *        [--apply] [--family all|linkedin|reddit|newsletter|blog|reputation|carousel] [--client <id>]
+ *        [--apply] [--family all|linkedin|reddit|newsletter|blog|reputation] [--client <id>]
+ *
+ * The `carousel` family option was removed 2026-08-29 (SCRUM-377/T-B25a): the
+ * whole karos-carousel-runner/-setup/-manager family was retired in full, no
+ * engine equivalent was ever planned. The standalone `karos-linkedin-manager-v2`
+ * and `karos-reputation-manager` keys were retired the same day and dropped
+ * from the family lists below; runner/setup/writer for each are unaffected.
  */
 import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import {
   BLOG_MANAGER_V2_KEY,
-  CAROUSEL_MANAGER_KEY,
-  CAROUSEL_RUNNER_KEY,
-  CAROUSEL_SETUP_KEY,
   BLOG_SETUP_V2_KEY,
   BLOG_WRITER_V2_KEY,
   COMPLIANCE_LOCK_V2_KEY,
@@ -36,7 +39,6 @@ import {
   NEWSLETTER_WRITER_V2_KEY,
   REDDIT_RUNNER_V2_KEY,
   REDDIT_SETUP_V2_KEY,
-  REPUTATION_MANAGER_KEY,
   REPUTATION_RUNNER_KEY,
   REPUTATION_SETUP_KEY,
 } from "../src/lib/custom-agent-launch";
@@ -63,11 +65,7 @@ const FAMILY = arg("family") ?? "all";
  * the gates and the context builders, and a typo here silently enables nothing.
  */
 const FAMILIES: Record<string, readonly string[]> = {
-  linkedin: [
-    "karos-linkedin-writer-v2",
-    "karos-linkedin-setup-v2",
-    "karos-linkedin-manager-v2",
-  ],
+  linkedin: ["karos-linkedin-writer-v2", "karos-linkedin-setup-v2"],
   reddit: [REDDIT_RUNNER_V2_KEY, REDDIT_SETUP_V2_KEY],
   newsletter: [
     NEWSLETTER_WRITER_V2_KEY,
@@ -76,8 +74,7 @@ const FAMILIES: Record<string, readonly string[]> = {
     COMPLIANCE_LOCK_V2_KEY,
   ],
   blog: [BLOG_WRITER_V2_KEY, BLOG_SETUP_V2_KEY, BLOG_MANAGER_V2_KEY],
-  reputation: [REPUTATION_RUNNER_KEY, REPUTATION_SETUP_KEY, REPUTATION_MANAGER_KEY],
-  carousel: [CAROUSEL_RUNNER_KEY, CAROUSEL_SETUP_KEY, CAROUSEL_MANAGER_KEY],
+  reputation: [REPUTATION_RUNNER_KEY, REPUTATION_SETUP_KEY],
 };
 
 async function main() {

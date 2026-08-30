@@ -114,13 +114,15 @@ describe("removeClientSeatAction", () => {
 
     expect(result).toEqual({ removedName: "Maya Cohen" });
     const families = (data.listAgentIntake as any).mock.calls.map((c: any[]) => c[1]).sort();
-    // FOUR families now. Newsletter has no per-seat concept — an issue goes out
+    // SIX families now. Newsletter has no per-seat concept — an issue goes out
     // from the company, never from a person — so this sweep will always find
     // nothing there. It is visited anyway, and that is the point of the test: the
     // sweep's job is to leave no orphan behind, and "there are none" is cheaper to
     // prove by looking than to assume. A family omitted from the Record in
     // client-seat-actions.ts is a compile error, and this is its runtime twin.
-    expect(families).toEqual(["blog", "carousel", "linkedin", "newsletter", "reddit", "reputation", "x"]);
+    // (Carousel used to be a seventh family here; the whole karos-carousel
+    // family was retired in full 2026-08-29, SCRUM-377/T-B25a, and dropped.)
+    expect(families).toEqual(["blog", "linkedin", "newsletter", "reddit", "reputation", "x"]);
     expect(order).toContain("intake:i-x");
     expect(order).toContain("intake:i-linkedin");
   });
@@ -134,12 +136,11 @@ describe("removeClientSeatAction", () => {
     await removeClientSeatAction({ clientId: "c1", seatId: "seat-1" });
 
     // The fixture hands every family a seat-1 document, newsletter included, so
-    // all four are deleted here. What the test is actually pinning is unchanged:
+    // all six are deleted here. What the test is actually pinning is unchanged:
     // only the seat being removed is touched, and the `other-*` documents on
     // seat-2 survive.
     expect(order.filter((o) => o.startsWith("intake:")).sort()).toEqual([
       "intake:i-blog",
-      "intake:i-carousel",
       "intake:i-linkedin",
       "intake:i-newsletter",
       "intake:i-reddit",

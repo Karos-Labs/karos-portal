@@ -1,9 +1,8 @@
 import "server-only";
 import { jobTitleForClient } from "@/lib/job-title";
-import { isAgentEngineDispatchEnabled, dispatchAgentEngineRun } from "@/lib/agent-engine/dispatch";
+import { dispatchAgentEngineRun } from "@/lib/agent-engine/dispatch";
+import { resolveDispatchedAgentEngineProductId } from "@/lib/agent-engine/health";
 import {
-  isClientEnabledForEngineCustomAgents,
-  resolveAgentEngineProductIdForCustomAgent,
   resolveAgentEngineRunKind,
   toEngineRunInput,
 } from "@/lib/agent-engine/product-mapping";
@@ -65,13 +64,6 @@ import {
   isReputationAgent,
   isReputationSetupV2,
 } from "@/lib/agent-service/reputation-agent-context";
-import {
-  buildCarouselAgentContextFiles,
-  hasCarouselAgentIntake,
-  hasCarouselV2Setup,
-  isCarouselAgent,
-  isCarouselSetupV2,
-} from "@/lib/agent-service/carousel-agent-context";
 import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
 import { buildDynamicAgentClientContextFiles } from "@/lib/agent-service/dynamic-agent-context";
 import { buildDynamicAgentHistory } from "@/lib/agent-service/dynamic-agent-history";
@@ -83,8 +75,6 @@ import {
   BLOG_SETUP_REQUIRED_PREFIX,
   NEWSLETTER_RUN_CREDITS,
   NEWSLETTER_SETUP_REQUIRED_PREFIX,
-  CAROUSEL_RUN_CREDITS,
-  CAROUSEL_SETUP_REQUIRED_PREFIX,
   REPUTATION_RUN_CREDITS,
   REPUTATION_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
@@ -508,25 +498,10 @@ export async function submitCustomAgentJob(
     }
   }
 
-  if (isCarouselAgent(agent.key)) {
-    if (!(await hasCarouselAgentIntake(input.clientId))) {
-      return {
-        error: `${CAROUSEL_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your account and your off-limits subjects before it builds anything. Nothing has run.`,
-      };
-    }
-    if (!isCarouselSetupV2(agent.key) && !(await hasCarouselV2Setup(input.clientId))) {
-      return {
-        error: `${CAROUSEL_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the carousel agent card, which builds the look, the slide layouts and the subject list. Nothing has run.`,
-      };
-    }
-    try {
-      contextFiles.push(...(await buildCarouselAgentContextFiles(input.clientId, agent.name)));
-    } catch (e) {
-      return {
-        error: `Could not attach the client's carousel data: ${e instanceof Error ? e.message : "unknown error"}`,
-      };
-    }
-  }
+  // The karos-carousel-runner/-setup/-manager gating block used to live here.
+  // The whole family was retired in full 2026-08-29 (SCRUM-377/T-B25a) — no
+  // engine equivalent was ever planned. Removed from code and the db, do not
+  // reintroduce.
 
   // Client-agent feedback (§5): every run of a LIVE umbrella carries the
   // client's standing direction — global first, then per-template. Launch runs
@@ -570,12 +545,7 @@ export async function submitCustomAgentJob(
   // agent-service. Decided before the job doc is written so the doc records
   // the truth from the start — a job that says "agent-service" and was handed
   // to the engine is unreconcilable by every surface that reads agentId.
-  const engineProductId =
-    isAgentEngineDispatchEnabled() &&
-    client.agentsRepoSlug &&
-    isClientEnabledForEngineCustomAgents(client.agentsRepoSlug)
-      ? resolveAgentEngineProductIdForCustomAgent(agent.key)
-      : undefined;
+  const engineProductId = resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug);
 
   // Checked here rather than at the top of the function, which is where it
   // used to live: an agent routed to agent-engine has no use for
@@ -646,9 +616,7 @@ export async function submitCustomAgentJob(
       ? BLOG_RUN_CREDITS
       : isReputationAgent(agent.key)
         ? REPUTATION_RUN_CREDITS
-        : isCarouselAgent(agent.key)
-          ? CAROUSEL_RUN_CREDITS
-          : null;
+        : null;
   const runCost = input.charge
     ? input.charge.amount
     : (agent.creditCost ?? carriedDefault ?? CREDIT_COSTS.customAgentRun) * multiplier;

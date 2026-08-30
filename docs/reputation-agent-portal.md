@@ -17,13 +17,18 @@ telling a human. `crisisRoutingTag` is who. It exists in no document we hold, it
 is the only intake field with a same-day consequence, and it is the only one the
 form nudges about rather than shrugging at.
 
-## Three skills, one product
+## Two skills, one product
 
 | Key | What it is | Listed? |
 | --- | --- | --- |
 | `karos-reputation-runner` | **The agent.** One pulse: read, triage, draft. | Yes — this is the card |
 | `karos-reputation-setup` | Run-once. Resolves the real listings, the voice, the bounds. | No — `parentKey` |
-| `karos-reputation-manager` | Monthly: what came in, what was sent, what recurs. | No — `parentKey` |
+
+A third skill, `karos-reputation-manager` (a monthly review: what came in, what
+was sent, what recurs), used to be registered alongside these two. It was
+retired in full 2026-08-29 (SCRUM-377/T-B25a) — no engine equivalent was ever
+planned, and product ruled it fully gone rather than left dormant. Removed
+from code and the db, do not reintroduce.
 
 **The keys carry no `-v2` suffix while the directory does** — `karos-reputation-runner`
 lives at `products/building/reputation-agent-v2/`. That is the manifest's own
@@ -108,7 +113,7 @@ agent**, because `custom` is one shared task type — there is no per-agent egre
 today. Regenerate `config/proxy-filter.txt` with `npm run gen:proxy-filter` after
 any edit; the generated file is committed and is what tinyproxy reads.
 
-## Canonical instructions for the three `customAgents` docs
+## Canonical instructions for the two `customAgents` docs
 
 `scripts/register-reputation-agent-v2.ts` reads the fenced block under each
 heading and writes it as that agent's `instructions`.
@@ -202,22 +207,7 @@ the next pulse answer them a second time.
 Do not draft any replies in this run. This is the setup.
 ```
 
-### `karos-reputation-manager`
-
-```
-Run the monthly reputation review for this client. Run the manager skill at
-products/building/reputation-agent-v2/manager/SKILL.md end to end. No internet
-and no credentials: read on-disk state only.
-
-Report what came in, what was drafted, what the client actually sent, and what
-keeps recurring. A theme that appears three months running is a business
-problem, not a review problem, and saying so plainly is worth more than another
-draft.
-
-Append what a human EDITED before sending to response-voice.md. The diff between
-what we wrote and what they sent is the sharpest voice signal this product gets,
-and it is the only place it is recorded.
-
-Deliver the updated response-voice.md at its contract path; the portal captures
-it and hands it back next pulse.
-```
+`karos-reputation-manager`'s instruction block — the monthly review pass,
+reporting what came in, what was drafted, what the client actually sent, and
+what keeps recurring — used to live here. Retired in full 2026-08-29
+(SCRUM-377/T-B25a), removed from code and the db, do not reintroduce.
