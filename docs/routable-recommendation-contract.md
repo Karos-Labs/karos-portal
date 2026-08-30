@@ -16,8 +16,11 @@ in-repo pointer to it today. **This is a known gap, not an oversight** — see
 
 agent-engine's `seo-geo-agent` fires recommendations off a catalog
 (`packages/tools/karos-seo-geo/src/config/rec-catalog.data.ts`, agent-engine
-repo — 72 records as read on 2026-08-29; the ticket text says 75, which is
-either stale or counts a superset this reading didn't reproduce) that carries,
+repo — 75 records, independently re-counted on 2026-08-30 by parsing the
+top-level keys of the exported object literal (two independent methods:
+a top-level-key regex and a brace-depth walk, both landing on 75). The
+ticket's stated 75 was right; a prior reading of this file that reported
+72 was wrong) that carries,
 per record: `check` (the failing check, i.e. the evidence), `lever`
 (SEO/GEO/BOTH), `product_ref` (`{id, folder, status}`) — and, once T-A4 ships,
 which of three categories owns the fix and which engine product runs it when
@@ -181,7 +184,7 @@ someone with agent-engine write access needs to:
 2. **T-A4/SCRUM-257** then does the real work this contract exists to enable:
    enrich `FiredRecommendation` in `recommend.ts` with `check`/`lever`/
    `productRef`, and build the reviewed `rec_id -> {fixAction, actionKind,
-   owner, engineProductId?}` mapping table for all ~72–75 catalog records,
+   owner, engineProductId?}` mapping table for all 75 catalog records,
    landing beside `rec-catalog.data.ts`. `engineProductId` values must be
    validated against agent-engine's own `KNOWN_PRODUCT_IDS`
    (`apps/agent-server/src/wiring/workflows.ts`) — a test failing on an
