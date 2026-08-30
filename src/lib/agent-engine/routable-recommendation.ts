@@ -6,9 +6,10 @@ import { KNOWN_ENGINE_PRODUCT_IDS, isKnownEngineProductId } from "./product-mapp
  *
  * PROBLEM. agent-engine's `seo-geo-agent` fires recommendations off a
  * catalog (`packages/tools/karos-seo-geo/src/config/rec-catalog.data.ts` in
- * agent-engine — 72 records as of this reading; the ticket text says 75,
- * which is either stale or counts differently, so read that number as
- * approximate, not verified) that carries, per record, `check` (the failing
+ * agent-engine — 75 records, independently re-counted (top-level-key regex
+ * and a brace-depth walk on the exported object literal, both agreeing on
+ * 75; the ticket's stated 75 was right, a prior reading of 72 was wrong)
+ * that carries, per record, `check` (the failing
  * check — the evidence), `lever` (SEO/GEO/BOTH), and `product_ref` — plus,
  * going forward, which of three categories owns the fix and (when we own it)
  * which engine product runs it. Today's wire shape
