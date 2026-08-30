@@ -162,9 +162,12 @@ describe("'an agent is running' is asked of the flag", () => {
     expect(taskIsExecuting({ metadata: { executing: false } })).toBe(false);
     expect(taskIsExecuting({ metadata: {} })).toBe(false);
     expect(taskIsExecuting({})).toBe(false);
-    // Strictly `true`: the field is `Record<string, unknown>`, so a truthy
-    // non-boolean must not arm a claim about a live run.
-    expect(taskIsExecuting({ metadata: { executing: "yes" } })).toBe(false);
+    // Strictly `true`: SCRUM-258 gave `ClientTaskMetadata.executing` a real
+    // `boolean | undefined` type, but Firestore itself enforces nothing, so a
+    // legacy or hand-edited doc can still carry a truthy non-boolean here —
+    // the cast is simulating exactly that, not something new code can write.
+    // A truthy non-boolean must still not arm a claim about a live run.
+    expect(taskIsExecuting({ metadata: { executing: "yes" as unknown as boolean } })).toBe(false);
   });
 
   it("gives the running claim one wording, and no state name may read like it", () => {
