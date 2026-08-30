@@ -44,6 +44,17 @@ export interface ClientCustomAgentSummary {
    * instead of refusing or guessing (QA F95).
    */
   creditCost?: number | null;
+  /**
+   * C4 (SCRUM-212) descriptor fields, carried straight from `CustomAgent`
+   * (see the doc comment there) — never derived here from `key`/`name`. Real
+   * values await the S-A16/SCRUM-230 data-population pass (not yet landed);
+   * until then these are absent on every custom agent this repo has, and
+   * `buildAgentCatalog` below defaults each to its empty/undefined form.
+   */
+  capabilities?: string[] | null;
+  platforms?: string[] | null;
+  consumesMedia?: boolean | null;
+  requiredInputs?: string[] | null;
 }
 
 /**
@@ -74,6 +85,10 @@ export async function getClientCustomAgents(clientId: string): Promise<ClientCus
         clientBlurb: a.clientBlurb ?? null,
       }),
       creditCost: a.creditCost ?? null,
+      capabilities: a.capabilities ?? null,
+      platforms: a.platforms ?? null,
+      consumesMedia: a.consumesMedia ?? null,
+      requiredInputs: a.requiredInputs ?? null,
     }));
 }
 
@@ -84,7 +99,10 @@ export function managedCatalogEntries(): AgentCatalogEntry[] {
     name: p.name,
     outputKind: p.taskType,
     description: `${p.tagline}. ${p.description}`,
-    capabilities: [] as string[],
+    capabilities: p.capabilities,
+    platforms: p.platforms,
+    consumesMedia: p.consumesMedia,
+    requiredInputs: p.requiredInputs,
     deliverables: p.deliverables,
     estimate: p.estimate,
     briefKeys: p.briefFields.map((f) => f.key),
@@ -103,7 +121,12 @@ export function buildAgentCatalog(customAgents: ClientCustomAgentSummary[]): Age
     name: a.name,
     outputKind: "custom",
     description: a.description,
-    capabilities: [] as string[],
+    // Descriptor rides straight through from the agent's own record (see
+    // `ClientCustomAgentSummary`'s doc comment) — no per-agent name/key check.
+    capabilities: a.capabilities ?? [],
+    platforms: a.platforms ?? undefined,
+    consumesMedia: a.consumesMedia ?? undefined,
+    requiredInputs: a.requiredInputs ?? undefined,
     kind: "custom" as const,
   }));
   return [...managedCatalogEntries(), ...custom];

@@ -53,6 +53,57 @@ export interface ManagedProduct {
   estimate: string;
   briefFields: BriefField[];
   inputFiles: AgentAttachmentProfile;
+  /**
+   * @notCopy C4 (SCRUM-212) descriptor — capability TAGS, not prose. Written
+   * into the prompt as raw identifiers ("capabilities: produce_carousel,
+   * produce_video") for the model's own routing/reasoning, exactly the way
+   * `taskType`/`id` already are — never a sentence a client reads, so this is
+   * classified like `icon`/`color` above rather than like `deliverables`.
+   *
+   * TAXONOMY (open-ended; add a tag when a new deliverable shape appears):
+   *   produce_text     — written copy: captions, articles, emails, replies
+   *   produce_image    — a single static visual
+   *   produce_carousel — a multi-slide Instagram-style carousel
+   *   produce_video    — a video / short-form clip
+   *   produce_webpage  — a built page (source + static build)
+   *   produce_report   — an internal, non-publishable analysis document
+   *
+   * Cross-referenced against agent-engine's own finer-grained catalog
+   * (`agent-engine/materialize.ts`'s `PRODUCT_DELIVERABLES`, not imported here
+   * — a different subsystem's dispatch table, read only to keep these tags
+   * honest) so this stays a real assignment, not a placeholder: the
+   * `social_post` taskType fans out at the engine to `instagram-agent`
+   * (kind `instagram-carousel`), `branded-shorts-agent`/`tiktok-agent` (video),
+   * and `x-agent`/`linkedin-agent`/`reddit-agent` (text) — hence all three
+   * tags on this one catalog entry. `landing_page` fans out to
+   * `landing-builder-agent` (kind `landing-page-site`) only.
+   *
+   * ASSUMPTION (state explicitly per EXEC-CONTEXT): no ratified C4 spec doc
+   * exists in this repo as of T-B6/SCRUM-250 — SCRUM-212's PR is still at
+   * Code Review. This taxonomy and the sibling `platforms`/`consumesMedia`/
+   * `requiredInputs` fields below are inferred from the ticket text's own
+   * vocabulary, not ratified; treat them as this batch's working contract.
+   */
+  capabilities: string[];
+  /**
+   * @notCopy Canonical platform keys this product targets (same identifiers
+   * `ClientIntegration.platform` and the `create_tasks` `platform` enum use).
+   * Empty when the product is platform-agnostic — `landing_page` builds a
+   * page, not a social post, so it names no platform.
+   */
+  platforms: string[];
+  /** Whether this product's brief can incorporate uploaded image/video media (mirrors `inputFiles.accept`). */
+  consumesMedia: boolean;
+  /**
+   * @notCopy The subset of `briefFields` keys actually required to run this
+   * product (`briefFields.filter(f => f.required)`, kept in sync by hand
+   * since this file already hand-authors every other field below) — the flat
+   * key-list form T-B7 needs to prompt for missing inputs. `AgentInputDef` in
+   * `agent-engine/middleware-admin.ts` is a differently-shaped, unrelated
+   * concept (the agent-middleware admin control plane's own per-field
+   * metadata) — do not confuse the two.
+   */
+  requiredInputs: string[];
 }
 
 /**
@@ -103,6 +154,12 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
       hint: "Attach approved product photos, campaign briefs, or source material the posts should use.",
       accept: ".pdf,.txt,.md,.csv,image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,.mp4,.mov",
     },
+    capabilities: ["produce_carousel", "produce_video", "produce_text"],
+    platforms: ["instagram", "tiktok"],
+    consumesMedia: true,
+    // No brief field is marked `required` — the agent can pick topic/format
+    // itself from the client's content plan when the client leaves them blank.
+    requiredInputs: [],
   },
   {
     taskType: "landing_page",
@@ -138,6 +195,11 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
       hint: "Attach logos, product images, brand guidelines, testimonials, or an approved wireframe.",
       accept: ".pdf,.doc,.docx,.txt,.md,image/png,image/jpeg,image/webp,image/svg+xml,.svg",
     },
+    capabilities: ["produce_webpage"],
+    // Not a social-channel deliverable — no platform applies.
+    platforms: [],
+    consumesMedia: true,
+    requiredInputs: ["page_goal"],
   },
 ];
 
