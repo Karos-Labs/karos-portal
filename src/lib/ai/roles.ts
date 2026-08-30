@@ -172,11 +172,11 @@ export const AI_ROLES = {
     // the same call and T-B23 prices off it — three tickets moved this line, so
     // it is recomputed against the merged file rather than carried over from
     // any one branch.
-    sites: ["src/app/api/clients/[id]/chat/route.ts:186"],
+    sites: ["src/app/api/clients/[id]/chat/route.ts:187"],
   },
   "chat.followups": {
     tier: "HAIKU",
-    sites: ["src/app/api/clients/[id]/chat/route.ts:824"],
+    sites: ["src/app/api/clients/[id]/chat/route.ts:825"],
   },
   "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:419"] },
   "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:584"] },

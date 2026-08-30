@@ -59,8 +59,9 @@ import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { isInClientArchive, isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
-import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { MANAGED_PRODUCTS, CAPABILITY_TAGS } from "@/lib/agent-service/products";
 import { getClientCustomAgents, buildAgentCatalog } from "@/lib/agent-roster";
+import { routeAgentRun } from "@/lib/agent-router";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { sendEmail, supportRequestEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
@@ -1285,6 +1286,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "brief field values the agent needs as data (not prose). Both are optional. Returns the new job id. " +
       "If the user attached file(s) to this message (see ATTACHED FILES above), do not pass them yourself. They are " +
       "wired into the run automatically when the matched agent uses source media. " +
+      "T-B7: set requestedCapability when the request clearly asks for one specific C4 deliverable kind (see each " +
+      "agent's `capabilities` line above) — e.g. they asked for a video. The run is refused, not silently substituted, " +
+      "when the matched agent doesn't have that capability. Set requestedPlatform the same way when a specific target " +
+      "platform is named. Leave both unset for a generic run request. " +
       "STAFF ONLY: publishAt schedules the resulting deliverable to publish on that date instead of landing as a draft " +
       "(T-B9, 'generate now, publish on date X') — give it as ISO 8601, computed from CURRENT DATE/TIME above, and only " +
       "when a staff user explicitly asked for a specific publish date. Never pass it for a client session.",
@@ -1299,19 +1304,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .record(z.string(), z.string())
         .optional()
         .describe("Brief field values this agent needs as data, keyed by field name"),
+      requestedCapability: z
+        .enum(CAPABILITY_TAGS)
+        .optional()
+        .describe(
+          "Set only when the request clearly asks for one specific C4 deliverable kind (see each agent's " +
+            "`capabilities` line above) — e.g. they asked for a video. The run is refused if the matched agent " +
+            "doesn't have this capability. Leave unset for a generic run request.",
+        ),
+      requestedPlatform: z
+        .string()
+        .optional()
+        .describe(
+          "Canonical platform key (e.g. 'tiktok', 'instagram') if the request names a specific target platform for " +
+            "this run. The run is refused if the matched agent's `platforms` line above is non-empty and doesn't " +
+            "include it. Leave unset otherwise.",
+        ),
       publishAt: z
         .string()
         .optional()
         .describe("Staff only. Target publish date/time for the deliverable, ISO 8601, e.g. 2026-09-10T13:00:00.000Z"),
     }),
-    execute: async ({ agentQuery, prompt, contextItemIds, briefValues, publishAt }) => {
-      const q = agentQuery.trim().toLowerCase();
-      const match = customAgents.find((a) => a.name.toLowerCase().includes(q));
-      if (!match) {
-        return customAgents.length > 0
-          ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
-          : "This client has no AI agents assigned yet.";
+    execute: async ({ agentQuery, prompt, contextItemIds, briefValues, requestedCapability, requestedPlatform, publishAt }) => {
+      // T-B7 (SCRUM-251): a single routed decision replaces the old bare
+      // `customAgents.find((a) => a.name.toLowerCase().includes(q))` substring
+      // match — see agent-router.ts's doc comment for the full rationale. This
+      // resolves the agent by exact (normalized) name, gates on the C4
+      // capability/platform descriptor when the caller named one, and checks
+      // `requiredInputs` against `briefValues` — never falling back to running
+      // the name-matched agent when a gate fails.
+      const routed = routeAgentRun(customAgents, { agentQuery, requestedCapability, requestedPlatform, briefValues });
+      if (!routed.ok) {
+        return routed.reason;
       }
+      const match = routed.agent;
       // T-B9: publishAt is staff-only — checked HERE, not only inside
       // runCustomAgentAction, so a client session gets a copilot-authored
       // refusal in its own voice rather than runCustomAgentAction's generic

@@ -9,6 +9,24 @@ import type { ManagedTaskType } from "@/lib/types";
 import type { AgentAttachmentProfile } from "@/lib/custom-agent-launch";
 import { RUN_ESTIMATE } from "@/lib/run-estimate";
 
+/**
+ * C4 (SCRUM-212) capability-tag taxonomy, single-sourced here so every place
+ * that needs the literal tag list (the `ManagedProduct.capabilities` /
+ * `CustomAgent.capabilities` arrays below, and T-B7/SCRUM-251's chat-tool
+ * schema and router) draws from one array instead of hand-copying it. See the
+ * doc comment on `ManagedProduct.capabilities` below for what each tag means.
+ */
+export const CAPABILITY_TAGS = [
+  "produce_text",
+  "produce_image",
+  "produce_carousel",
+  "produce_video",
+  "produce_webpage",
+  "produce_report",
+] as const;
+
+export type CapabilityTag = (typeof CAPABILITY_TAGS)[number];
+
 export interface BriefField {
   key: string;
   label: string;
