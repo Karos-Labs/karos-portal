@@ -518,6 +518,38 @@ export interface CustomAgent {
    */
   launchCreditCost?: number | null;
   /**
+   * C4 (SCRUM-212) descriptor fields, added by T-B6 (SCRUM-250) so
+   * `agent-roster.ts`'s catalog can consume real per-agent capability data
+   * instead of hardcoding it. Admin-set, like `clientBlurb`/`creditCost` — the
+   * agent's OWN record carries the descriptor, so the portal code that reads
+   * it (`getClientCustomAgents`, `buildAgentCatalog`) needs zero per-agent
+   * name/key knowledge.
+   *
+   * ASSUMPTION, stated explicitly per EXEC-CONTEXT: no ratified C4 spec doc
+   * exists in this repo as of T-B6 — SCRUM-212's PR is still at Code Review —
+   * and the real-data population pass for these fields (S-A16/SCRUM-230) has
+   * not landed either, so every `customAgents` doc in this repo today has
+   * `capabilities` absent. Absent is read as "not yet described", never as
+   * "produces nothing" — see the taxonomy note on `ManagedProduct` in
+   * `agent-service/products.ts` for the shared vocabulary
+   * (produce_text/produce_image/produce_carousel/produce_video/
+   * produce_webpage/produce_report) these tags draw from.
+   */
+  capabilities?: string[] | null;
+  /** Canonical platform keys this agent targets; absent/empty ⇒ platform-agnostic or not yet described. */
+  platforms?: string[] | null;
+  /** Whether this agent's brief can incorporate uploaded image/video media. */
+  consumesMedia?: boolean | null;
+  /**
+   * Brief-field keys this agent requires to run — the flat key-list form
+   * `AgentCatalogEntry.briefKeys` already uses. `AgentInputDef` in
+   * `agent-engine/middleware-admin.ts` is a differently-shaped, unrelated
+   * concept (the agent-middleware admin control plane's own per-field
+   * metadata) — do not assume it is this field's shape, though its field
+   * names are a reasonable naming precedent.
+   */
+  requiredInputs?: string[] | null;
+  /**
    * Optional per-step model override, keyed by the named subagent identifier
    * the skill's steps delegate to via the Claude Agent SDK's Task tool (e.g.
    * `{"draft-post": "claude-haiku-4-5", "research": "claude-opus-4-8"}`).

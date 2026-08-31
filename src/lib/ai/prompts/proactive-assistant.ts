@@ -16,7 +16,34 @@ export interface AgentCatalogEntry {
   name: string;
   outputKind: string;
   description: string;
+  /**
+   * C4 (SCRUM-212) descriptor — capability TAGS this agent's runs can
+   * produce (see the taxonomy note on `ManagedProduct` in
+   * `agent-service/products.ts`: produce_text / produce_image /
+   * produce_carousel / produce_video / produce_webpage / produce_report).
+   * Always an array — empty means "not yet described", not "can do nothing";
+   * a custom agent reads empty until the S-A16/SCRUM-230 data-population
+   * pass (not yet landed) sets real values on its own `CustomAgent` record.
+   *
+   * ASSUMPTION, stated explicitly per EXEC-CONTEXT: no ratified C4 spec doc
+   * exists in this repo as of T-B6/SCRUM-250 (SCRUM-212's PR is still at Code
+   * Review). This field and its three siblings below are inferred from the
+   * ticket text's own vocabulary (`capabilities` × `platforms` ×
+   * `consumesMedia`, plus `requiredInputs`) — treat them as this batch's
+   * working contract, not a ratified shape. T-B7/SCRUM-251 builds its routing
+   * on these four fields by name, so keep them stable.
+   */
   capabilities: string[];
+  /** Canonical platform keys this agent targets (e.g. "instagram", "tiktok"); absent/empty ⇒ platform-agnostic. */
+  platforms?: string[];
+  /** Whether this agent's brief can incorporate uploaded image/video media. */
+  consumesMedia?: boolean;
+  /**
+   * Brief-field keys actually REQUIRED to run (the subset of `briefKeys`
+   * T-B7 prompts the user for when missing) — distinct from `briefKeys`,
+   * which is the full input surface whether required or not.
+   */
+  requiredInputs?: string[];
   /** Exact deliverables the agent produces (from the managed-product registry). */
   deliverables?: string[];
   /** Typical wall-clock runtime, e.g. "~10–15 min". */
@@ -94,10 +121,14 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
             : `**${a.name}** (productType: \`${a.id}\`)`;
           const lines = [
             `• ${ref} — ${a.description}`,
+            a.capabilities.length ? `  capabilities: ${a.capabilities.join(", ")}` : "",
+            a.platforms?.length ? `  platforms: ${a.platforms.join(", ")}` : "",
+            a.consumesMedia ? `  accepts uploaded image/video media as input` : "",
             a.deliverables?.length ? `  produces: ${a.deliverables.join("; ")}` : "",
             [
               a.estimate ? `runtime: ${a.estimate}` : "",
               a.briefKeys?.length ? `brief inputs: ${a.briefKeys.join(", ")}` : "",
+              a.requiredInputs?.length ? `required inputs: ${a.requiredInputs.join(", ")}` : "",
             ]
               .filter(Boolean)
               .map((s) => `  ${s}`)

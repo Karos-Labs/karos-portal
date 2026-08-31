@@ -97,6 +97,33 @@ describe("getClientCustomAgents", () => {
     expect(summary.description.length).toBeGreaterThan(0);
   });
 
+  it("carries a granted agent's own capabilities/platforms/consumesMedia/requiredInputs through, unmodified", async () => {
+    listCustomAgentsMock.mockResolvedValue([
+      agent({
+        id: "ca_1",
+        name: "Video Agent",
+        capabilities: ["produce_video"],
+        platforms: ["tiktok"],
+        consumesMedia: true,
+        requiredInputs: ["footage_url"],
+      }),
+    ]);
+    const [summary] = await getClientCustomAgents("c1");
+    expect(summary.capabilities).toEqual(["produce_video"]);
+    expect(summary.platforms).toEqual(["tiktok"]);
+    expect(summary.consumesMedia).toBe(true);
+    expect(summary.requiredInputs).toEqual(["footage_url"]);
+  });
+
+  it("passes null through for capabilities/platforms/consumesMedia/requiredInputs when the agent's own record has none set", async () => {
+    listCustomAgentsMock.mockResolvedValue([agent({ id: "ca_1", name: "Video Agent" })]);
+    const [summary] = await getClientCustomAgents("c1");
+    expect(summary.capabilities).toBeNull();
+    expect(summary.platforms).toBeNull();
+    expect(summary.consumesMedia).toBeNull();
+    expect(summary.requiredInputs).toBeNull();
+  });
+
   it("returns empty when the client has no granted agents (and skips the list query)", async () => {
     getClientMock.mockResolvedValue({ id: "c1", customAgentIds: [] });
     expect(await getClientCustomAgents("c1")).toEqual([]);
@@ -129,5 +156,57 @@ describe("buildAgentCatalog", () => {
     const managed = managedCatalogEntries();
     expect(managed[0].deliverables).toEqual(MANAGED_PRODUCTS[0].deliverables);
     expect(managed[0].briefKeys).toEqual(MANAGED_PRODUCTS[0].briefFields.map((f) => f.key));
+  });
+
+  /**
+   * T-B6 (SCRUM-250): `capabilities` (and its C4 siblings `platforms` /
+   * `consumesMedia` / `requiredInputs`) used to be a hardcoded `[]` at both
+   * catalog call sites, regardless of what the managed-product registry
+   * actually declared. This pins that the values now ride straight through
+   * from `MANAGED_PRODUCTS` — real, non-empty entries, not plumbing to
+   * nowhere — for every managed product, generically (no per-taskType
+   * conditional here, just object identity with the registry).
+   */
+  it("managedCatalogEntries carries real capabilities/platforms/consumesMedia/requiredInputs from the registry, for every product", () => {
+    const managed = managedCatalogEntries();
+    expect(managed).toHaveLength(MANAGED_PRODUCTS.length);
+    for (const [i, product] of MANAGED_PRODUCTS.entries()) {
+      expect(managed[i].capabilities).toEqual(product.capabilities);
+      expect(managed[i].capabilities.length).toBeGreaterThan(0);
+      expect(managed[i].platforms).toEqual(product.platforms);
+      expect(managed[i].consumesMedia).toBe(product.consumesMedia);
+      expect(managed[i].requiredInputs).toEqual(product.requiredInputs);
+    }
+  });
+
+  it("buildAgentCatalog carries a custom agent's own descriptor fields through untouched, with no agent-specific derivation", () => {
+    const custom: ClientCustomAgentSummary[] = [
+      {
+        id: "ca_1",
+        key: "some-custom-agent-key",
+        name: "Some Custom Agent",
+        description: "d",
+        capabilities: ["produce_text"],
+        platforms: ["linkedin"],
+        consumesMedia: true,
+        requiredInputs: ["topic"],
+      },
+    ];
+    const catalog = buildAgentCatalog(custom);
+    const last = catalog.at(-1)!;
+    expect(last.capabilities).toEqual(["produce_text"]);
+    expect(last.platforms).toEqual(["linkedin"]);
+    expect(last.consumesMedia).toBe(true);
+    expect(last.requiredInputs).toEqual(["topic"]);
+  });
+
+  it("buildAgentCatalog defaults a custom agent's capabilities to [] (not invented) when its record carries none yet", () => {
+    const custom: ClientCustomAgentSummary[] = [{ id: "ca_1", key: "k", name: "N", description: "d" }];
+    const catalog = buildAgentCatalog(custom);
+    const last = catalog.at(-1)!;
+    expect(last.capabilities).toEqual([]);
+    expect(last.platforms).toBeUndefined();
+    expect(last.consumesMedia).toBeUndefined();
+    expect(last.requiredInputs).toBeUndefined();
   });
 });
