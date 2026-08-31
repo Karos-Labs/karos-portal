@@ -1,8 +1,9 @@
 name: Quality checks
 
 # Reusable workflow — the single source of truth for "does this commit pass
-# lint/type-check/tests". Called by ci.yml (PR/push status checks) and by
-# deploy-prep.yml (which gates the prep deploy on the same checks).
+# lint/type-check/tests/env-inventory". Called by ci.yml (PR/push status
+# checks) and by deploy-prep.yml (which gates the prep deploy on the same
+# checks).
 on:
   workflow_call:
 
@@ -32,3 +33,12 @@ jobs:
 
       - name: Run test suite
         run: npm test
+
+      # SCRUM-332 (AU49) — Deliverable 3: fails the build when a variable the
+      # code reads (direct or through this repo's two indirection patterns —
+      # see scripts/lib/env-inventory-core.ts's header comment) is missing
+      # from .env.example. wired-but-never-read only warns (printed in this
+      # step's own output, does not affect its exit code) until the
+      # indirection resolution has proven itself over a few releases.
+      - name: Env inventory (read-but-undocumented must be empty)
+        run: npx tsx scripts/env-inventory.ts
