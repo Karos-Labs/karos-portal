@@ -34,7 +34,7 @@ import { computeAgentStaleness, agentStalenessSummary, reviewBacklogSummary } fr
 import { getClientCustomAgents, type ClientCustomAgentSummary } from "@/lib/agent-roster";
 import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engine";
 import { integrationIsUsable } from "@/lib/integration-status";
-import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
+import type { TaskPriority, TaskSource, TaskOwner, ManagedTaskType } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import { aiFor, usageFor } from "@/lib/ai/provider";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -500,7 +500,14 @@ export async function persistSwarmTasks(
       priority: t.priority as TaskPriority,
       source: "copilot" as TaskSource,
       owner: "karos_managed" as TaskOwner,
-      metadata: { productType: t.productType, customAgentId: validCustomAgentId, platform: t.platform },
+      // `t.productType` is zod's `z.enum(PRODUCT_TYPES)` output, which
+      // PRODUCT_TYPES's own `[string, ...string[]]` widening cast (above,
+      // for zod's tuple requirement) leaves typed as plain `string`, though
+      // every value the schema can actually produce is a real
+      // `ManagedTaskType` — this pool entry is dedup-scratch only, never
+      // persisted, and this metadata shape now carries the same
+      // `ClientTaskMetadata` contract as a real task's.
+      metadata: { productType: t.productType as ManagedTaskType | undefined, customAgentId: validCustomAgentId, platform: t.platform },
       createdBy,
       createdAt: Date.now(),
       updatedAt: Date.now(),

@@ -5,6 +5,20 @@
  */
 
 /**
+ * Type-only imports for `ClientTaskMetadata` (SCRUM-258/T-B10). Both erase
+ * completely at compile time (`isolatedModules` + `import type`), so neither
+ * pulls anything into this file's runtime output or creates a real module
+ * cycle — the same pattern `product-mapping.ts` already uses the other way
+ * (`import type { ManagedTaskType } from "@/lib/types"`) to reach a
+ * `server-only`-marked module (`./materialize`) at zero runtime cost.
+ * `seo-geo.ts` itself has no imports of its own ("pure, client-safe maths"),
+ * so this direction adds no cycle risk beyond the type-only one already
+ * accepted at the other end.
+ */
+import type { ActionKind, FixAction } from "@/lib/seo-geo";
+import type { EngineProductId } from "@/lib/agent-engine/product-mapping";
+
+/**
  * Platform roles stored in the `users` Firestore collection.
  * KAROS_ADMIN / KAROS_EMPLOYEE are internal staff; CLIENT_USER is an end-client.
  * Role assignment is purely DB-driven — no env-var bootstrap (except the very first user).
@@ -2170,6 +2184,189 @@ export type TaskSource =
  */
 export type TaskOwner = "karos_managed" | "client_managed";
 
+/**
+ * [C2] The routing decision this task carries for a single fired
+ * recommendation, when the task exists to act on one — SCRUM-210's
+ * `FixAction`/`ActionKind` vocabulary (`src/lib/seo-geo.ts`, canonical for
+ * both repos per `docs/routable-recommendation-contract.md`), not a new,
+ * third spelling of either.
+ *
+ * ASSUMPTION (stated explicitly — C4/SCRUM-212 has no committed spec in this
+ * repo, and neither C2's contract doc nor the codebase pins a shape for a
+ * *task's* action field, only for `RoutableRecommendation`'s): a task backed
+ * by a recommendation needs both which specific fix this is (`fixAction`,
+ * e.g. `"meta_title"`) and how it ships (`actionKind`, e.g. `"one_click"`),
+ * because `actionKind` is not derivable from `fixAction` alone — `seo-geo.ts`'s
+ * own `actionKindFor` also needs the gap's `delivery`, which a `ClientTask`
+ * does not otherwise carry. Bundled under one `action` key (rather than two
+ * flat top-level `ClientTaskMetadata` fields) because the two only ever mean
+ * something together for a given rec — a task with a `fixAction` but no
+ * `actionKind` (or vice versa) is not a state anything should be able to
+ * express.
+ */
+export interface ClientTaskAction {
+  fixAction: FixAction;
+  actionKind: ActionKind;
+}
+
+/**
+ * [C2/C4, SCRUM-258/T-B10] Typed shape of `ClientTask.metadata`.
+ *
+ * WAS `Record<string, unknown>`. The ~20 keys below were already the real,
+ * informal contract (every writer/reader in the codebase agreed on a name and
+ * an assumed type per key; `tsc` enforced none of it) — this makes that
+ * contract real. Verified against every actual read site (the `as X` casts
+ * `task.metadata?.foo as X` scattered across execution-engine.ts,
+ * task-actions.ts, execution-actions.ts, task-sync.ts, task-dedup.ts,
+ * task-agent-link.ts, task-outcome-copy.ts, task-disable-copy.ts,
+ * task-status-copy.ts, campaign-step-progress.tsx and task-ticket-modal.tsx)
+ * and every actual write site (the five `createClientTask` call sites plus
+ * every `updateClientTask(id, { metadata: {...} })` site) as of 2026-08-30.
+ *
+ * DELIBERATELY NOT CLOSED. A fully exact interface (no index signature) would
+ * be a much bigger, riskier change than this ticket's two-sentence scope
+ * implies: every existing write site builds its metadata patch as a bare
+ * `Record<string, unknown>` (or spreads `task.metadata ?? {}` and adds one
+ * key), and closing the type off entirely would fail every one of them under
+ * excess-property / index-signature checking, for keys this ticket has no
+ * mandate to touch. The trailing `[key: string]: unknown` is the escape
+ * hatch: every key below is narrowed for real (a typo or a wrong-shaped value
+ * on a KNOWN key is still caught by `tsc`), while an unlisted or
+ * not-yet-migrated key keeps exactly today's behavior — silently `unknown`,
+ * same as before this ticket — so migration can narrow the rest gradually
+ * rather than in one breaking pass.
+ *
+ * `productType` and `customAgentId` are mutually exclusive (a managed product
+ * vs. a git-imported custom agent executing this task); nothing in the type
+ * enforces that today, same as before.
+ */
+export interface ClientTaskMetadata {
+  /** The managed product (see `ManagedTaskType`) that executes this task. */
+  productType?: ManagedTaskType;
+  /**
+   * A git-imported custom agent that executes this task instead of a managed
+   * product (mutually exclusive with `productType`). The one field name for
+   * "which custom agent" — see `resolveTaskCustomAgentId` (task-agent-link.ts).
+   */
+  customAgentId?: string;
+  /** Canonical integration platform key (e.g. `"linkedin"`) the task concerns. */
+  platform?: string;
+  /**
+   * Auto-complete hook: `"integration_connected:<platform>"` or
+   * `"product_run:<taskType>"` — see task-sync.ts's own contract doc comment.
+   */
+  completionTrigger?: string;
+  /** Platform Job id of the agent-service run dispatched for this task. Cleared to `null`, never deleted, once the run finishes. */
+  externalJobId?: string | null;
+  /**
+   * The linked agent's display name. THE ONE FIELD NAME for this — T-P0a/
+   * SCRUM-255 unified this with a second, `customAgentName`-spelled field
+   * that neither reader recognized; every writer (agent-swarm.ts,
+   * campaign-engine.ts, execution-engine.ts, the chat route) uses this name
+   * now, and no live `customAgentName` remains anywhere in this codebase
+   * (confirmed while building this contract — see this ticket's own report).
+   */
+  agentName?: string;
+  /** True while a dispatched run is in flight for this task. */
+  executing?: boolean;
+  /** Freeform execution-surface discriminator (e.g. `"content_generation"`, `"integration_action"`). */
+  type?: string;
+  /** The produced deliverable's raw content (materialized into an Asset on approval). */
+  artifact?: string;
+  /** Cover/preview image URL for `artifact`, when the run produced one. */
+  artifactImageUrl?: string | null;
+  /** Asset ids already materialized from this task's artifact. */
+  artifactAssetIds?: string[];
+  /** The Asset id created when this task's artifact was approved. */
+  approvedAssetId?: string | null;
+  /** Client-typed feedback carried into a re-run ("Adjust and resubmit"). */
+  adjustmentFeedback?: string | null;
+  /**
+   * Why a dispatched run failed, or `null` once cleared. A raw engine
+   * diagnostic — staff-facing only (see task-disable-copy.ts's own note),
+   * never printed on a client screen.
+   */
+  executionError?: string | null;
+  /** Cached AI-generated execution plan (task-actions.ts's `getTaskExecutionPlan`), keyed off this exact string — no separate cache. */
+  aiPlan?: string;
+  /** Contact email an artifact-email dispatch was (or will be) sent to. */
+  recipient?: string;
+  /** An artifact-email dispatch failed (`true`), was cleared (`null`), or never happened (absent). */
+  failedUpload?: boolean | null;
+  /** Raw error from the failed dispatch `failedUpload` records. */
+  failedUploadError?: string;
+  failedUploadAt?: number;
+  /** When an artifact-email dispatch succeeded. */
+  publishedAt?: number;
+  /** Who an artifact-email dispatch was sent to (mirrors `recipient` at send time). */
+  publishedTo?: string;
+  /**
+   * `noDeliverable` — the run this task dispatched reported success and
+   * produced nothing. Never read on its own: `ranWithoutDeliverable`
+   * (task-outcome-copy.ts) asks whether the task is still sitting in that
+   * state, because only task-sync clears the flag while eight other writers
+   * move the state. `null` clears it; absent means it was never set.
+   */
+  noDeliverable?: boolean | null;
+  /**
+   * An admin paused this task (most often because its linked custom agent was
+   * turned off); read through `taskIsDisabled` (task-disable-copy.ts), the
+   * one predicate every execution-trigger action refuses on. Set and cleared
+   * by exactly one action (`setTaskDisabledAction`), so unlike `noDeliverable`
+   * it is a standing decision, not a run outcome.
+   */
+  disabled?: boolean;
+  /**
+   * (2026-08) Set only when this task's Approve (`updateTaskStatusAction`'s
+   * `targetDate` param) carried the inferred calendar placement a Task-Map
+   * suggestion was shown on (lib/calendar-suggestion-placement.ts). Read back
+   * by the agent-service webhook via `findDispatchingTask` and given to the
+   * resulting asset as its `scheduledAt`, so an approved suggestion lands on
+   * the calendar day it was shown on instead of as an undated draft.
+   */
+  suggestedDate?: number;
+  /** Which piece of an omnichannel campaign this task is (campaign-engine.ts's `CampaignRole`). Loosely typed here rather than importing that union, to keep this file dependency-light. */
+  campaignRole?: string;
+  /** The campaign's own title, mirrored onto each of its tasks for card display. */
+  campaignTitle?: string | null;
+  /** Which employee seat this task's dispatch ran under, when the client has seats. */
+  seatId?: string;
+
+  /**
+   * [C2/C4, SCRUM-258/T-B10 — new] Which agent-engine product this task's fix
+   * routes to, when one does. Typed against `EngineProductId`
+   * (`src/lib/agent-engine/product-mapping.ts`'s `KNOWN_ENGINE_PRODUCT_IDS`),
+   * the same canonical set `RoutableRecommendation.engineProductId` is
+   * validated against (C2 rule 2) — not a fourth, hand-typed copy of the id
+   * list. Only meaningful (and, upstream, only ever set) when the task's
+   * `RecOwner` would be `"karos_agent"`; nothing in this repo enforces that
+   * pairing on `ClientTaskMetadata` itself, the same fail-safe-at-the-boundary
+   * posture `toRoutableRecommendation` already takes for the wire shape.
+   */
+  agentEngineProductId?: EngineProductId;
+  /**
+   * [C2/C4, SCRUM-258/T-B10 — new] The fired recommendation (C2
+   * `RoutableRecommendation.recId` / `FiredRecommendation.recId`) this task
+   * exists to act on, when it was generated from one. Plain `string`,
+   * matching `recId`'s type everywhere else it appears in this codebase
+   * (`Recommendation.recId`, `FiredRecommendation.recId` — an opaque catalog
+   * id, never itself a closed union).
+   */
+  recId?: string;
+  /**
+   * [C2/C4, SCRUM-258/T-B10 — new] See `ClientTaskAction` for the shape and
+   * why `fixAction`/`actionKind` are bundled rather than two flat fields.
+   */
+  action?: ClientTaskAction;
+
+  /**
+   * Escape hatch — see this interface's own doc comment ("DELIBERATELY NOT
+   * CLOSED"). An ad hoc or not-yet-migrated key stays exactly `unknown`,
+   * same as every key here before this ticket.
+   */
+  [key: string]: unknown;
+}
+
 export interface ClientTask {
   id: string;
   clientId: string;
@@ -2188,36 +2385,8 @@ export interface ClientTask {
    * Absent ⇒ derived from `priority` (high 80 / medium 50 / low 25).
    */
   weight?: number;
-  /**
-   * Freeform execution state. Well-known keys:
-   * `productType` — the managed product (ManagedTaskType) that executes this task;
-   * `customAgentId` — a git-imported custom agent that executes this task instead of a
-   * managed product (mutually exclusive with productType);
-   * `platform` — canonical integration platform key the task concerns;
-   * `completionTrigger` — auto-complete hook: "integration_connected:<platform>" or
-   * "product_run:<taskType>" (see task-sync.ts);
-   * `externalJobId` — platform Job id of the agent-service run dispatched for this task;
-   * `agentName`, `executing`, `type`, `artifact`, `artifactImageUrl`, `artifactAssetIds`,
-   * `approvedAssetId`, `adjustmentFeedback`, `executionError`, `aiPlan`, `recipient`,
-   * `failedUpload*`, `published*`, `autoCompletedReason`;
-   * `noDeliverable` — the run this task dispatched reported success and produced
-   * nothing. Never read on its own: `ranWithoutDeliverable` (task-outcome-copy.ts)
-   * asks whether the task is still sitting in that state, because only task-sync
-   * clears the flag while eight other writers move the state.
-   * `disabled` — an admin paused this task (most often because its linked
-   * custom agent was turned off); read through `taskIsDisabled`
-   * (task-disable-copy.ts), the one predicate every execution-trigger action
-   * refuses on. Set and cleared by exactly one action (`setTaskDisabledAction`),
-   * so unlike `noDeliverable` it is a standing decision, not a run outcome.
-   * `suggestedDate` (2026-08) — set only when this task's Approve
-   * (`updateTaskStatusAction`'s `targetDate` param) carried the inferred
-   * calendar placement a Task-Map suggestion was shown on
-   * (lib/calendar-suggestion-placement.ts). Read back by the agent-service
-   * webhook via `findDispatchingTask` and given to the resulting asset as its
-   * `scheduledAt`, so an approved suggestion lands on the calendar day it was
-   * shown on instead of as an undated draft.
-   */
-  metadata?: Record<string, unknown>;
+  /** Execution state + C2/C4 routing — see `ClientTaskMetadata`. */
+  metadata?: ClientTaskMetadata;
   /**
    * Campaign this task belongs to (campaigns collection id) when it's part of a
    * cohesive omnichannel bundle rather than a standalone task. Absent ⇒ standalone.

@@ -20,6 +20,11 @@ import { logger } from "@/services/logger";
 import { getCurrentUser } from "@/lib/auth";
 import type { ContextDocTier } from "@/lib/types";
 import { requireStaff, requireAdmin, logActivity, logGenerationFailure } from "./_shared";
+import { findRoutableRecommendation } from "@/lib/agent-engine/seo-geo-report-lookup";
+import {
+  dispatchSeoGeoRecommendationRun,
+  type SeoGeoRecommendationRunMode,
+} from "@/lib/agent-engine/dispatch-recommendation-run";
 import { stripPipelineMarkers } from "@/lib/doc-render";
 import { CREDIT_COSTS } from "@/lib/credits";
 import {
@@ -191,17 +196,39 @@ export async function generateClientBriefAction(
  *     to everyone, client and staff alike, from the persisted set rather than from
  *     the clicking browser's memory.
  *
- * Then a HUMAN on the Karos team makes the change on the client's site. Nothing
- * here dispatches an agent — approval is authorization, not execution. The result
- * shows up as movement in the next capture, and `upsertClientSeoGeo` deliberately
- * carries `approvedRecIds` across re-captures so a refresh cannot silently
- * un-approve work that was already authorized.
+ * Then, for every category EXCEPT `owner: "karos_agent"`, a HUMAN on the Karos
+ * team makes the change on the client's site (or the client connects a tool,
+ * for `karos_tool`) — approval there is still authorization, not execution.
+ *
+ *  5. DISPATCH, `karos_agent` ONLY (D2/SCRUM-278, SCRUM-260/T-B15) — this is
+ *     the split this ticket implements. `owner`/`actionKind` classify the
+ *     SAME recId's routable recommendation (looked up from the client's most
+ *     recent `seo-geo-agent` report asset, `findRoutableRecommendation`) —
+ *     never `recId` itself. Only `owner: "karos_agent"` ever dispatches a
+ *     real agent-engine run (`dispatchSeoGeoRecommendationRun`), gated behind
+ *     `SEO_GEO_RECOMMENDATION_RUN_DISPATCH_ENABLED` (default OFF — see that
+ *     module's own header for why this must stay off in production today).
+ *     `karos_tool` and `client_manual` never dispatch anything, flag or no
+ *     flag — see that module for what "a tool runs it" concretely means in
+ *     this repo instead. A dispatch failure (or no classification data at
+ *     all — e.g. the client has no materialized report yet, or agent-engine
+ *     hasn't started sending `owner` classification for real) never fails
+ *     the approval itself: the approval already persisted in step 2, and a
+ *     client whose click didn't also start a run should still see it as
+ *     approved, not as an error.
+ *
+ * `upsertClientSeoGeo` deliberately carries `approvedRecIds` across
+ * re-captures so a refresh cannot silently un-approve work that was already
+ * authorized.
  */
 export async function approveSeoGeoRecommendationAction(
   clientId: string,
   recId: string,
   title: string,
-): Promise<{ ok: true; approved: string[] } | { ok?: never; error: string }> {
+): Promise<
+  | { ok: true; approved: string[]; runDispatched: boolean; runMode?: SeoGeoRecommendationRunMode; runError?: string }
+  | { ok?: never; error: string }
+> {
   try {
     const user = await getCurrentUser();
     if (!user || user.disabled) return { error: "Unauthorized" };
@@ -221,8 +248,43 @@ export async function approveSeoGeoRecommendationAction(
       actor: user.name,
       actorRole,
     });
+
+    // Step 5 above. Best-effort and isolated from the approval's own result —
+    // same convention `dispatchOnboardingResearchAgents` uses for its own
+    // best-effort dispatches: a run that can't be classified or can't be
+    // dispatched is never a reason to tell the client their approval failed.
+    let runDispatched = false;
+    let runMode: SeoGeoRecommendationRunMode | undefined;
+    let runError: string | undefined;
+    try {
+      const rec = await findRoutableRecommendation(clientId, recId);
+      const client = rec ? await getClient(clientId) : null;
+      if (rec && client) {
+        const outcome = await dispatchSeoGeoRecommendationRun(rec, client, user.uid);
+        if (outcome.dispatched) {
+          runDispatched = true;
+          runMode = outcome.mode;
+          if ("error" in outcome.result) {
+            runError = outcome.result.error;
+          } else {
+            await logActivity({
+              clientId,
+              timestamp: Date.now(),
+              type: "MANUAL_NOTE",
+              title: outcome.mode === "apply" ? "SEO/GEO fix run started" : "SEO/GEO fix draft run started",
+              description: `Agent-engine run dispatched for: ${title.slice(0, 160)}`,
+              actor: SYSTEM_AI_ACTOR_NAME,
+              actorRole: "system",
+            });
+          }
+        }
+      }
+    } catch (e) {
+      runError = e instanceof Error ? e.message : "Could not dispatch the agent-engine run";
+    }
+
     revalidatePath(`/clients/${clientId}`);
-    return { ok: true, approved };
+    return { ok: true, approved, runDispatched, ...(runMode ? { runMode } : {}), ...(runError ? { runError } : {}) };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Could not record approval" };
   }
