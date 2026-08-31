@@ -14,12 +14,19 @@ const REPO_ROOT = join(__dirname, "..", "..");
 // Absolute path to this repo's own installed tsx binary — a plain `npx tsx`
 // run with `cwd` pointed at a throwaway fixture directory (no node_modules
 // of its own) would try to fetch tsx from the network instead of finding it.
-const TSX_BIN = join(REPO_ROOT, "node_modules", ".bin", "tsx");
+// Invoked through tsx's own JS entrypoint under the current `node`, not through
+// `node_modules/.bin/tsx`. That shim is a POSIX shell script, which
+// execFileSync cannot run on Windows, and the `.cmd` beside it cannot be
+// execFile'd either without a shell — both fail the spawn outright and hand
+// back `status: null` instead of an exit code, so these assertions read as
+// failures even when the script exits 0. Going through `process.execPath`
+// needs no shim and behaves the same on every platform.
+const TSX_CLI = join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 const SCRIPT = join(REPO_ROOT, "scripts", "env-inventory.ts");
 
 function runInventory(cwd: string, args: string[] = []): { status: number; output: string } {
   try {
-    const stdout = execFileSync(TSX_BIN, [SCRIPT, ...args], {
+    const stdout = execFileSync(process.execPath, [TSX_CLI, SCRIPT, ...args], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
