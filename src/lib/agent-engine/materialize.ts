@@ -8,6 +8,7 @@ import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type
 import { generateAssetTitle } from "@/lib/asset-titles";
 import { AgentEngineCredentialError, getAgentEngineDeliverable } from "./client";
 import { groupRecommendationsByOwner, hasClassifiedOwner, toRoutableRecommendation } from "./routable-recommendation";
+import { renderIntelReport } from "./intel-report-render";
 import type { AssetType, Job, WireTaskType } from "@/lib/types";
 
 /**
@@ -522,63 +523,26 @@ function materializeLandingPageSite(deliverable: LandingPageSiteDeliverable): As
 }
 
 /**
- * The competitive-intelligence report, RENDERED to the markdown a reviewer
- * actually reads rather than shipped as its own JSON.
+ * The competitive-intelligence report, RENDERED through the typed structured
+ * renderer (`./intel-report-render.ts`, T-B17/SCRUM-270) rather than the
+ * hand-flattened `joinBlocks`/manual `- ${key}: ${score}/100` string-building
+ * this used to do inline.
  *
- * That choice is worth stating: `intel-report`'s deliverable is eight
- * dimension scores, seven prose analysis sections, a SWOT and a
- * recommendation list, and this portal has no report viewer that reads that
- * structure — so an asset carrying the raw object would show a reviewer a wall
- * of braces and nothing else. Every structured field still travels in `meta`
- * untouched, so a real viewer can be built later without a re-delivery.
+ * `intel-report`'s deliverable is eight dimension scores, seven prose
+ * analysis sections, a SWOT and a recommendation list, and this portal has no
+ * dedicated report VIEWER UI that reads that structure — so `renderIntelReport`
+ * is what stands in for one: real headings, a real dimension-scores table,
+ * grouped/numbered recommendations, each section typed and parsed
+ * defensively rather than read out of the raw object at the call site. Every
+ * structured field still travels in `meta` untouched in addition to being
+ * rendered, so a future dedicated viewer can still read the typed data
+ * directly without a re-delivery.
  */
 function materializeIntelReport(deliverable: Record<string, unknown>): AssetMaterialization {
-  const swot = rec(deliverable["swot"]);
-  const overallScore = deliverable["overallScore"];
-  const overallGrade = str(deliverable["overallGrade"]);
-
-  const dimensionBlock = objArray(deliverable["dimensionScores"])
-    .map((dimension) => {
-      const key = firstOf(dimension["label"], dimension["key"], dimension["dimension"]);
-      const score = dimension["score"];
-      return key && typeof score === "number" ? `- ${key}: ${score}/100` : undefined;
-    })
-    .filter((line): line is string => Boolean(line))
-    .join("\n");
-
-  const analysisBlock = joinBlocks(
-    (
-      [
-        ["Content", "contentAnalysis"],
-        ["Conversion", "conversionAnalysis"],
-        ["SEO", "seoAnalysis"],
-        ["GEO", "geoAnalysis"],
-        ["Positioning", "positioningAnalysis"],
-        ["Brand", "brandAnalysis"],
-        ["Growth", "growthAnalysis"],
-        ["Brand synchronization update", "brandSynchronizationUpdate"],
-      ] as const
-    ).map(([label, field]) => {
-      const body = str(deliverable[field]);
-      return body ? `## ${label}\n\n${body}` : undefined;
-    }),
-  );
-
-  const swotBlock = joinBlocks(
-    (["strengths", "weaknesses", "opportunities", "threats"] as const).map((key) => {
-      const items = strArray(swot[key]);
-      return items ? `**${key[0]!.toUpperCase()}${key.slice(1)}**\n${items.map((i) => `- ${i}`).join("\n")}` : undefined;
-    }),
-  );
-
+  const { title, content } = renderIntelReport(deliverable);
   return {
-    title: overallGrade ? `Competitive intelligence report (${overallGrade})` : "Competitive intelligence report",
-    content: joinBlocks([
-      typeof overallScore === "number" ? `**Overall: ${overallScore}/100${overallGrade ? ` (${overallGrade})` : ""}**` : undefined,
-      dimensionBlock ? `## Dimension scores\n\n${dimensionBlock}` : undefined,
-      analysisBlock,
-      swotBlock ? `## SWOT\n\n${swotBlock}` : undefined,
-    ]),
+    title,
+    content,
     meta: metaFrom(deliverable, [
       "overallScore",
       "overallGrade",
