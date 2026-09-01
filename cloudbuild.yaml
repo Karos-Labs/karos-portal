@@ -154,6 +154,9 @@ substitutions:
   _FIRESTORE_DATABASE_ID: "(default)"
   # Dedicated GCS bucket for large pre-generated media (src/lib/gcs-media.ts)
   # — own bucket per environment so prep media never lands in production's.
+  # SCRUM-376/AU74: deliberately NOT kept equal to agent-engine's variable of
+  # the same name; see cloudbuild.promote.yaml's comment on this substitution
+  # for why unifying them is a production outage, not a cleanup.
   _GCS_MEDIA_BUCKET: "karos-media-assets"
   # Agent-engine WORKSPACE bucket (src/lib/agent-engine/workspace-writer.ts) —
   # the reconcile cron mirrors client knowledge into it. Empty = sync skipped;

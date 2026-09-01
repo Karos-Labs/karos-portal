@@ -112,3 +112,53 @@ describe("deploy config env parity", () => {
     }
   });
 });
+
+/**
+ * SCRUM-376 (AU74): the portal's GCS_MEDIA_BUCKET and agent-engine's variable
+ * of the SAME NAME point at different production buckets, and that is correct.
+ *
+ *   this repo      karos-media-assets            `clients/<id>/podcast-clips/`
+ *                                                and `clients/<id>/run-attachments/`
+ *   agent-engine   karoscmo-prod-media-assets    `instagram/…` carousel renders
+ *
+ * They look like one setting written down twice, which is why AU74 was opened
+ * as a misconfiguration in the first place. They are not. This repo touches
+ * GCS_MEDIA_BUCKET in exactly two places (gcs-media.ts:118 and
+ * chat/chat-attachments.ts), both scoped to `clients/…`, and it never reads
+ * the engine's bucket at all — materialize.ts fetches deliverables over an
+ * https signed URL and re-uploads them into Firebase Storage, deliberately
+ * skipping a bare `gs://` URI.
+ *
+ * Verified live on 2026-09-01, which is the part that cannot be re-derived
+ * from source: production's karos-cmo runs as firebase-adminsdk-fbsvc@karoscmo
+ * and holds roles/storage.objectAdmin on karos-media-assets only —
+ * karoscmo-prod-media-assets carries no non-legacy IAM binding whatsoever.
+ * SCRUM-373 moved these call sites onto Application Default Credentials, so
+ * the runtime SA is now genuinely the principal a bucket grant targets.
+ * Repointing this variable is therefore a 403 on every read plus the
+ * disappearance of the client podcast clips, not a tidy-up.
+ *
+ * A comment saying so is what the two cloudbuild files now carry. This is the
+ * same instruction, enforced — the same reasoning the parity check above
+ * gives for itself.
+ */
+describe("AU74: the portal's media bucket is not the engine's", () => {
+  const ENGINE_PROD_MEDIA_BUCKET = "karoscmo-prod-media-assets";
+
+  it.each(["cloudbuild.yaml", "cloudbuild.promote.yaml"])(
+    "%s does not point _GCS_MEDIA_BUCKET at agent-engine's bucket",
+    (file) => {
+      const text = readFileSync(resolve(process.cwd(), file), "utf8");
+      const match = text.match(/^ {2}_GCS_MEDIA_BUCKET: *(.*)$/m);
+      expect(match, `${file} must declare _GCS_MEDIA_BUCKET`).not.toBeNull();
+      const value = match![1]!.trim().replace(/^["']|["']$/g, "");
+
+      expect(
+        value,
+        `${file} points this portal at agent-engine's own media bucket. The portal's runtime service ` +
+          `account has no IAM on it, and this portal's objects live under clients/ in its own bucket — ` +
+          `see the substitution's comment in cloudbuild.promote.yaml before changing this.`,
+      ).not.toBe(ENGINE_PROD_MEDIA_BUCKET);
+    },
+  );
+});

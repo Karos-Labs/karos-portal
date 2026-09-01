@@ -55,6 +55,30 @@ substitutions:
   # All the underlying secrets already exist in this (production) project's
   # Secret Manager; this file just wasn't referencing them.
   _ANALYTICS_LIVE_INGEST: "1"
+  # SCRUM-376/AU74 — NOT the same bucket agent-engine's own GCS_MEDIA_BUCKET
+  # names in production (`karoscmo-prod-media-assets`), and that is correct.
+  # The two variables share a name and nothing else:
+  #
+  #   this one     src/lib/gcs-media.ts + src/lib/chat/chat-attachments.ts,
+  #                both scoped to `clients/<clientId>/…` — staff-uploaded
+  #                podcast clips and client run-attachments.
+  #   the engine's publish.renderCarousel / branded-shorts output, written
+  #                under `instagram/…`.
+  #
+  # The portal does not read the engine's bucket. It fetches deliverables over
+  # an https signed URL and re-uploads them into Firebase Storage, skipping a
+  # bare `gs://` URI loudly — see materialize.ts's own note that such a URI
+  # "point[s] at a bucket this portal doesn't control access to long-term".
+  #
+  # DO NOT "unify" these. Verified live 2026-09-01: this service runs as
+  # firebase-adminsdk-fbsvc@karoscmo, which holds roles/storage.objectAdmin on
+  # karos-media-assets and NOTHING on karoscmo-prod-media-assets (that bucket
+  # has no non-legacy IAM bindings at all). Since SCRUM-373 moved these call
+  # sites to Application Default Credentials, the runtime SA is genuinely the
+  # principal — so repointing this variable 403s every getFiles() and every
+  # signed-URL mint, and the client podcast clips (which live under `clients/`
+  # in THIS bucket) vanish from the UI. Asserted in
+  # src/lib/__tests__/deploy-env-parity.test.ts.
   _GCS_MEDIA_BUCKET: "karos-media-assets"
   # Agent-engine WORKSPACE bucket (src/lib/agent-engine/workspace-writer.ts) —
   # the reconcile cron mirrors client knowledge into it. Empty = sync skipped.
