@@ -80,9 +80,17 @@ export type SeoGeoRecommendationRunOutcome =
  *     (`owner: "client_managed"`, `metadata.type: "integration_action"`,
  *     `completionTrigger: "integration_connected:<platform>"`) is the whole
  *     mechanism, and it runs once a human/ops process (or, once one exists,
- *     an actual tool runner) completes that connection. Flagged in this
- *     ticket's report as a finding rather than built here, since inventing a
- *     tool-runner primitive is out of this ticket's scope.
+ *     an actual tool runner) completes that connection.
+ *
+ *     SCRUM-392 (ratified 2026-09-01) checked the obvious candidate for that
+ *     tool runner — agent-engine's T-A17/`dispatchSeoFix` — and found it does
+ *     not satisfy `karos_tool` end to end (artifact-only, no persistence, no
+ *     apply step, and it treats `karos_tool` identically to `client_manual`
+ *     by its own design). This finding — originally just this module's own
+ *     observation — is now the project's ratified answer, not a local guess:
+ *     see `rec-owner-run-status.ts` for the full record and the test that
+ *     pins it. Building a real tool-runner primitive is still out of scope
+ *     here.
  *   - `owner: "client_manual"` — always the client's own action. Never
  *     dispatches anything, flag or no flag.
  */

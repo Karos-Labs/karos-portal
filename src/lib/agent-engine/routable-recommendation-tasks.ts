@@ -28,9 +28,14 @@ import type { RecOwner, RoutableRecommendation } from "./routable-recommendation
  * `__tests__/routable-recommendation-tasks.test.ts` feeds recIds this module
  * has never seen to prove that.
  *
- * OWNER MAPPING (assumption — stated explicitly, per EXEC-CONTEXT: neither C2
- * nor C4 has a ratified answer for how `RecOwner`'s three buckets land on
- * `ClientTask.owner`'s two, `TaskOwner = "karos_managed" | "client_managed"`).
+ * OWNER MAPPING (RATIFIED — SCRUM-392, 2026-09-01. Originally shipped here as
+ * an unratified assumption per EXEC-CONTEXT: "neither C2 nor C4 has a
+ * ratified answer for how `RecOwner`'s three buckets land on
+ * `ClientTask.owner`'s two." SCRUM-392 inspected the obvious candidate
+ * runner for `karos_tool` — T-A17/`dispatchSeoFix` — found it artifact-only
+ * (identical output for `karos_tool` and `client_manual`, no persistence, no
+ * apply step; see `rec-owner-run-status.ts`'s full account), and ratified
+ * this mapping as the project's decided answer rather than a guess.)
  * `RecOwner` and `TaskOwner` are DIFFERENT fields answering different
  * questions — this file's own doc, and `ClientTask.owner`'s, both say so — so
  * this is a deliberate design decision, not a rename:
@@ -53,10 +58,10 @@ import type { RecOwner, RoutableRecommendation } from "./routable-recommendation
  * rather than a title regex, and sets the same `completionTrigger` shape.
  *
  * WHAT THIS MODULE DELIBERATELY DOES NOT DO. It does not dispatch the actual
- * fix (that is T-A17/SCRUM-261, blocked on T-A4, out of scope here and
- * unbuilt per this ticket's own EXEC-CONTEXT) — a "karos_agent" task this
- * module creates carries `metadata.agentEngineProductId` for a future
- * actuator to read, but nothing here calls one. It does not run the
+ * fix — a "karos_agent" task this module creates carries
+ * `metadata.agentEngineProductId` for `dispatch-recommendation-run.ts`'s
+ * `dispatchSeoGeoRecommendationRun` (T-B15/SCRUM-260) to read on approval;
+ * this converter only builds the task. It does not run the
  * duplicate-title / karos-queue-capacity pipeline the swarm and chat-route
  * call sites share (`findDuplicateReason`, `queueCapacitySkipNote`,
  * `MAX_ACTIVE_TASKS`) — see `createTasksFromSeoGeoReportAction`
@@ -66,7 +71,12 @@ import type { RecOwner, RoutableRecommendation } from "./routable-recommendation
  * catalog recIds rather than free-text titles.
  */
 
-/** The task-board counterpart of `groupRecommendationsByOwner`'s sprayer — one dispatch table, no recId. */
+/**
+ * The task-board counterpart of `groupRecommendationsByOwner`'s sprayer — one
+ * dispatch table, no recId. Ratified SCRUM-392 — see `rec-owner-run-status.ts`
+ * for whether each `RecOwner` actually has a run path today, which is a
+ * separate question this table does not answer by itself.
+ */
 const TASK_OWNER_BY_REC_OWNER: Record<RecOwner, TaskOwner> = {
   karos_agent: "karos_managed",
   karos_tool: "client_managed",
