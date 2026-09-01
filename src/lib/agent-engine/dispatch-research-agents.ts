@@ -31,6 +31,21 @@ import { dispatchAgentEngineRun, type DispatchAgentEngineRunResult } from "./dis
  * operational consequence (a client/environment without agent-engine
  * configured now fails onboarding outright, rather than silently degrading
  * to the deleted hardcoded pipeline).
+ *
+ * SCRUM-388 — intel-report-agent's dispatch below is `runKind: "setup"`, not
+ * "recurring". This is the karosCMO half of a two-repo fix (see agent-engine's
+ * `packages/workflow/src/primitives/context-doc-policy.ts`, "SCRUM-388 — the
+ * bootstrap deadlock"): intel-report-agent's shared BLOCK/DEGRADED policy row
+ * is bootstrap-exempt ONLY for a `runKind: "setup"` run — every other runKind
+ * still BLOCKs on missing target-audience/market-strategy docs. This exact
+ * call is what dispatches intel-report-agent during onboarding to PRODUCE
+ * those two docs in the first place, so it must actually be tagged "setup" or
+ * the exemption on the agent-engine side never fires and a fresh client's
+ * first report deadlocks forever (BLOCK on the docs this run exists to
+ * create). `seo-geo-agent`'s dispatch stays "recurring", deliberately — its
+ * CONTEXT_DOC_POLICY row exists but is not wired to any call site (Batch 2
+ * owns `create-seo-geo-agent-workflow.ts`), so there is no bootstrap-exemption
+ * behavior for it to opt into here.
  */
 export async function dispatchOnboardingResearchAgents(client: Pick<Client, "id" | "name" | "agentsRepoSlug">): Promise<{
   seoGeo: DispatchAgentEngineRunResult | { skipped: true; reason: string };
@@ -54,7 +69,11 @@ export async function dispatchOnboardingResearchAgents(client: Pick<Client, "id"
       clientId: client.id,
       clientSlug: client.agentsRepoSlug,
       productId: "intel-report-agent",
-      runKind: "recurring",
+      // SCRUM-388: "setup", not "recurring" — see this module's own doc
+      // comment for why. This run is what onboarding uses to PRODUCE
+      // target-audience/market-strategy, so it must carry the runKind that
+      // agent-engine's bootstrap exemption checks for.
+      runKind: "setup",
       agentName: "Intel Report (Agent Engine)",
       title: `[Agent Engine] Intel report — ${client.name}`,
     }),
