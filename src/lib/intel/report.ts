@@ -273,8 +273,10 @@ async function describeStub(
 /**
  * Run the full Intel Report pipeline for a client:
  * 1. Generate the structured ClientReport (monolithic prompt, backward-compatible)
- * 2. Run the new multi-agent onboarding pipeline in parallel to generate context docs
- *    (onboard pipeline failure is non-fatal — report always stored regardless)
+ * 2. Run the real agent-engine onboarding path (SCRUM-274/T-B19) in parallel
+ *    to generate the context documents — FATAL when it fails (see the call
+ *    site below); the report itself is still stored either way, since Phase A
+ *    already completed before Phase B starts.
  */
 export async function runIntelReportPipeline(
   clientId: string,
