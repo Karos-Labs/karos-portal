@@ -15,10 +15,22 @@ import type { Capability, Vendor } from "./capabilities";
  * the tree, and what the coverage test asserts against, so the manifest cannot
  * drift away from the code it claims to describe.
  *
- * 43 call sites across 19 files. Three populations:
+ * 33 call sites across 18 files. Three populations:
  *   · MEASUREMENT (1)  — probes a real consumer product; vendor IS the subject
- *   · COUPLED    (11)  — generation that depends on a server-side web tool
- *   · PLAIN      (31)  — generation with no vendor-specific surface
+ *   · COUPLED     (5)  — generation that depends on a server-side web tool
+ *   · PLAIN       (27) — generation with no vendor-specific surface
+ *
+ * SCRUM-274 (T-B19) swept 10 sites off this manifest: `src/lib/intel/
+ * pipeline.ts` (the hardcoded onboarding pipeline D1 killed) and `src/lib/
+ * intel/seo-geo.ts` (its old, now-unreachable in-process SEO/GEO research
+ * orchestrator) are both deleted, not merely bypassed. The "intel.research.
+ * agent" role (5 sites, all in pipeline.ts) and "seo.site_audit" /
+ * "seo.prompt_drafting" / "seo.competitor_extraction" (3 sites, all in the
+ * deleted seo-geo.ts) are gone with them. "intel.pipeline.synthesis" keeps 2
+ * of its former 4 sites — the 2 in `generateDoc` (pipeline.ts-only) are gone;
+ * the 2 in `applyDocCorrections` moved verbatim to the new `src/lib/intel/
+ * doc-corrections.ts` (still called from `src/lib/actions/intel-actions.ts`,
+ * outside the deleted pipeline).
  */
 
 export type ModelTier = "SONNET" | "HAIKU";
@@ -65,29 +77,17 @@ export const AI_ROLES = {
     sites: ["src/lib/intel/seo-geo-providers.ts:234"],
   },
 
-  /* ── COUPLED · needs web_fetch · 9 sites ─────────────────────────────────
+  /* ── COUPLED · needs web_fetch · 3 sites ─────────────────────────────────
      None of these can run on a vendor without web fetch. Not "runs worse" —
-     each one's prompt instructs it to report only what it observed. */
+     each one's prompt instructs it to report only what it observed.
+     SCRUM-274 (T-B19) removed "intel.research.agent" (5 sites) and
+     "seo.site_audit" (1 site) — both lived exclusively in files this ticket
+     deleted (`src/lib/intel/pipeline.ts`, `src/lib/intel/seo-geo.ts`); see
+     this file's header comment. */
   "intel.report.pass": {
     tier: "SONNET",
     requires: ["web_search", "web_fetch"],
     sites: ["src/lib/intel/report.ts:301", "src/lib/intel/report.ts:381"],
-  },
-  "intel.research.agent": {
-    tier: "SONNET",
-    requires: ["web_search", "web_fetch"],
-    sites: [
-      "src/lib/intel/pipeline.ts:236",
-      "src/lib/intel/pipeline.ts:271",
-      "src/lib/intel/pipeline.ts:318",
-      "src/lib/intel/pipeline.ts:381",
-      "src/lib/intel/pipeline.ts:424",
-    ],
-  },
-  "seo.site_audit": {
-    tier: "SONNET",
-    requires: ["web_search", "web_fetch"],
-    sites: ["src/lib/intel/seo-geo.ts:213"],
   },
   "branding.fetch_site": {
     tier: "HAIKU",
@@ -110,16 +110,18 @@ export const AI_ROLES = {
     sites: ["src/lib/branding.ts:386"],
   },
 
-  /* ── PLAIN · no vendor-specific surface · 31 sites ───────────────────────
+  /* ── PLAIN · no vendor-specific surface · 27 sites ───────────────────────
      These are the sites T-B2 moves. They declare nothing because they need
-     nothing — which is a fact about them, now recorded rather than assumed. */
+     nothing — which is a fact about them, now recorded rather than assumed.
+     SCRUM-274 (T-B19): "intel.pipeline.synthesis" drops 2 of its 4 sites
+     (`generateDoc`, deleted with pipeline.ts) and "seo.prompt_drafting" /
+     "seo.competitor_extraction" (2 sites, deleted with seo-geo.ts) are gone
+     entirely — see this file's header comment. */
   "intel.pipeline.synthesis": {
     tier: "SONNET",
     sites: [
-      "src/lib/intel/pipeline.ts:584",
-      "src/lib/intel/pipeline.ts:599",
-      "src/lib/intel/pipeline.ts:667",
-      "src/lib/intel/pipeline.ts:697",
+      "src/lib/intel/doc-corrections.ts:67",
+      "src/lib/intel/doc-corrections.ts:97",
     ],
   },
   "simulation.persona": {
@@ -178,8 +180,6 @@ export const AI_ROLES = {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/chat/route.ts:825"],
   },
-  "seo.prompt_drafting": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:419"] },
-  "seo.competitor_extraction": { tier: "SONNET", sites: ["src/lib/intel/seo-geo.ts:584"] },
   "insights.summary": {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/insights/route.ts:25"],

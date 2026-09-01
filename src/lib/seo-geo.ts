@@ -21,37 +21,93 @@
 /* ── Engines & provenance ─────────────────────────────────────────── */
 
 /**
- * The tracked answer engines. Call directive B2 (2026-07-27) removed Perplexity and
- * Copilot from the set entirely: neither has a wired provider, so they contributed
- * nothing but permanent "not yet measured" chips, a "0 of 5 engines measured"
- * coverage figure that could never reach 5, and a standing flag-us-to-add-them
- * banner for connectors nobody is building. Removing them from the TYPE is
- * deliberate — every roster, order and label map is keyed by EngineId, so the
- * compiler now enforces the removal rather than five separate lists agreeing.
+ * The tracked answer engines.
  *
- * Snapshots captured before this still carry perplexity/copilot rows; they are
- * simply not rendered (ENGINE_ORDER drives the UI) and their stored
- * geoVisibilityEnginesTotal of 5 stands as a historical fact.
+ * WIDENED BACK TO FIVE (T-B16/SCRUM-271, 2026-09). Call directive B2
+ * (2026-07-27) had narrowed this to three because neither Perplexity nor
+ * Copilot had a wired provider on THIS side — they contributed nothing but
+ * permanent "not yet measured" chips. That constraint is gone: T-A3
+ * (SCRUM-237, agent-engine, merged at `56eae44`) now captures real answers
+ * for all five of `packages/tools/karos-research/src/capture-visibility.ts`'s
+ * `VISIBILITY_ENGINES` — `chatgpt`, `perplexity`, `gemini`, `claude`,
+ * `copilot` — Perplexity/Claude/Gemini through dedicated first-party
+ * providers and the `chatgpt`/`copilot` pair through a shared ScrappyCoco CLI
+ * route. Those five literal strings are EXACTLY this union's five members —
+ * verified against agent-engine's `SEO_GEO_VISIBILITY_ENGINES` const too
+ * (`packages/tools/karos-seo-geo/src/types.ts`) — so a `SeoGeoCaptureCell.engine`
+ * value crossing the service boundary needs no translation table, only a
+ * `EngineId` cast validated the same way `toRoutableRecommendation` validates
+ * everything else that crosses that boundary (see
+ * `agent-engine/seo-geo-insights-mapping.ts`'s `isEngineId`).
+ *
+ * MIGRATION STORY FOR OLD RECORDS. This union WIDENS a strict subset
+ * (`"chatgpt" | "gemini" | "claude"` ⊂ the five above) — it does not rename or
+ * remove a member, so every `EngineId` value ever persisted under the old
+ * three-value enum is still a valid value of this one. No data migration or
+ * backfill runs against `clientSeoGeo` for this change: an old snapshot's
+ * `perEngine`/`answerGrid` simply has no `perplexity`/`copilot` rows (exactly
+ * as it had none before this ticket), and every reader that walks
+ * `insights.perEngine`/`ENGINE_ORDER` and skips an engine with no matching row
+ * already treats a short array as "not captured this run" rather than an
+ * error — the same tolerance that let the B2 narrowing itself land without a
+ * migration. Pinned by `seo-geo-engine-widening.test.ts`: a 3-engine snapshot
+ * fixture, unioned into the mapper's own 5-engine output, keeps rendering the
+ * three original engines unchanged.
+ *
+ * Snapshots captured before B2 still carry perplexity/copilot rows from a
+ * different (pre-B2) pipeline; those now render again too, on the same terms
+ * as any other engine — nothing about them needs re-interpreting.
  */
-export type EngineId = "chatgpt" | "gemini" | "claude";
+export type EngineId = "chatgpt" | "perplexity" | "gemini" | "claude" | "copilot";
 
-/** Which model provider actually produced a data point (multi-model provenance). */
-export type ProviderSource = "OpenAI" | "Gemini" | "Anthropic";
+/** The five members of {@link EngineId}, for validating a value that crossed a service boundary. */
+export const KNOWN_ENGINE_IDS: readonly EngineId[] = ["chatgpt", "perplexity", "gemini", "claude", "copilot"];
+
+export function isEngineId(value: unknown): value is EngineId {
+  return typeof value === "string" && (KNOWN_ENGINE_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * Which model provider actually produced a data point (multi-model provenance).
+ *
+ * `"Perplexity"` and `"Microsoft"` (T-B16/SCRUM-271) cover the two engines the
+ * EngineId widening above added: Perplexity answers through its own Sonar API
+ * (agent-engine's dedicated adapter), and Copilot's answers are Microsoft's
+ * product even though agent-engine reaches it through the same shared
+ * ScrappyCoco CLI route as `chatgpt` (whose own provenance stays `"OpenAI"` —
+ * the delivery mechanism changed, not which company's model answered).
+ */
+export type ProviderSource = "OpenAI" | "Gemini" | "Anthropic" | "Perplexity" | "Microsoft";
 
 /** Capture tier per the a3 grade-data-only rule. Set at capture time, never upgraded. */
 export type CaptureTier = "MEASURED" | "MEASURED_grounded" | "ESTIMATED" | "UNAVAILABLE";
 
 export const ENGINE_LABELS: Record<EngineId, string> = {
   chatgpt: "ChatGPT",
+  perplexity: "Perplexity",
   gemini: "Gemini",
   claude: "Claude",
+  copilot: "Copilot",
 };
 
-/** Engine → provider that answers for it in this platform (null = no connector wired yet). */
+/**
+ * Engine → provider that answers for it THROUGH THIS PORTAL'S OWN direct
+ * connectors (`src/lib/intel/seo-geo-providers.ts`'s `CONNECTORS`) — null
+ * means no connector wired on this side. `perplexity`/`copilot` are null here
+ * on purpose even after the widening above: this portal has never called
+ * either API directly, and their real answers now reach `clientSeoGeo` only
+ * through agent-engine's capture (T-A3, routed through a shared ScrappyCoco
+ * CLI for the chatgpt/copilot pair) and this ticket's mapping layer, never
+ * through a portal-side `fetch`. A `PerEngineVisibility.source` for either
+ * engine on an engine-sourced snapshot carries whatever provenance the
+ * capture cell itself reported, not this table.
+ */
 export const ENGINE_PROVIDERS: Record<EngineId, ProviderSource | null> = {
   chatgpt: "OpenAI",
+  perplexity: null,
   gemini: "Gemini",
   claude: "Anthropic",
+  copilot: null,
 };
 
 /* ── Probe & answer shapes ────────────────────────────────────────── */
@@ -84,6 +140,23 @@ export interface GeoProbe {
   brandSentiment: number;
   /** Registrable domains this engine cited in the answer (for the citation leaderboard). */
   citations: string[];
+  /**
+   * GEMINI-ONLY (T-A3/SCRUM-237, T-B16/SCRUM-271): true when Google's AI
+   * Overview genuinely did not render for this prompt at all — no grounding
+   * chunks came back — as DISTINCT from `brandMentioned: false`, which means
+   * an answer (grounded or not) came back and simply never named the brand.
+   * Sourced verbatim from agent-engine's own capture cell
+   * (`packages/tools/karos-research/src/capture-visibility.ts`'s
+   * `CaptureCell.aioAbsent`, and `karos-seo-geo/src/types.ts`'s
+   * `SeoGeoCaptureCell.aioAbsent`) — this field exists on `GeoProbe` ONLY so
+   * that shape can survive the trip from an engine capture cell into the
+   * portal's own probe/grid pipeline without being flattened into a plain
+   * "absent" cell. Always `undefined` for a probe built from this portal's
+   * own direct-provider capture (`analyzeAnswer` below never sets it — the
+   * portal's own Gemini connector has no grounding-chunk signal to read) and
+   * for every engine except Gemini.
+   */
+  aioAbsent?: boolean;
 }
 
 /* ── Gazetteer (deterministic mention matching) ───────────────────── */
@@ -1654,8 +1727,16 @@ export function buildQuestionSet(
   return out;
 }
 
-/** One (question × engine) cell state, matching the PDF grid's dot legend. */
-export type CellState = "named_first" | "named" | "cited_not_named" | "absent" | "unavailable";
+/**
+ * One (question × engine) cell state, matching the PDF grid's dot legend.
+ *
+ * `"aio_absent"` (T-B16/SCRUM-271) is Gemini-only: Google's AI Overview did
+ * not render for this prompt at all, which is a DIFFERENT fact from
+ * `"absent"` (an answer came back and simply never named the brand). See
+ * `GeoProbe.aioAbsent`'s doc for why collapsing the two would throw away the
+ * one thing T-A3 was built to distinguish.
+ */
+export type CellState = "named_first" | "named" | "cited_not_named" | "absent" | "aio_absent" | "unavailable";
 
 export interface AnswerCell {
   engine: EngineId;
@@ -1676,6 +1757,10 @@ function cellState(probe: GeoProbe | undefined): CellState {
   if (probe.brandFirst) return "named_first";
   if (probe.brandMentioned) return "named";
   if (probe.brandCited) return "cited_not_named"; // ghost citation
+  // T-B16/SCRUM-271: a real capture that came back with no AI Overview at all
+  // is not the same fact as a rendered AIO that never named the brand — checked
+  // BEFORE the plain "absent" fallback so the distinction survives into the grid.
+  if (probe.aioAbsent) return "aio_absent";
   return "absent";
 }
 

@@ -665,24 +665,36 @@ describe("executing-product line (QA F7)", () => {
 describe("engine views (SCRUM-52 fixes 2 + 4)", () => {
   it("always yields every tracked engine in fixed order, synthesizing missing rows", () => {
     const views = buildEngineViews(insights({ perEngine: [] }));
-    // CD-B2: Perplexity and Copilot are no longer tracked engines.
-    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "gemini", "claude"]);
-    expect(views.map((v) => v.status)).toEqual(["no-data", "no-data", "no-data"]);
+    // T-B16/SCRUM-271: CD-B2's three-engine narrowing is reversed now that
+    // agent-engine (T-A3) genuinely captures all five — see EngineId's own
+    // doc comment in @/lib/seo-geo for the full migration story.
+    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "perplexity", "gemini", "claude", "copilot"]);
+    expect(views.map((v) => v.status)).toEqual(["no-data", "no-data", "no-data", "no-data", "no-data"]);
   });
 
-  it("drops Perplexity and Copilot even when a legacy snapshot still carries them", () => {
-    const legacy = insights({
-      perEngine: [
-        engineRow(),
-        { ...engineRow(), engine: "perplexity" as never },
-        { ...engineRow(), engine: "copilot" as never },
-      ],
+  it("renders Perplexity and Copilot rows once a snapshot actually carries them (T-B16/SCRUM-271 reverses the old CD-B2 drop)", () => {
+    const withFive = insights({
+      perEngine: [engineRow(), { ...engineRow(), engine: "perplexity" }, { ...engineRow(), engine: "copilot" }],
     });
-    const views = buildEngineViews(legacy);
-    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "gemini", "claude"]);
+    const views = buildEngineViews(withFive);
+    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "perplexity", "gemini", "claude", "copilot"]);
+    expect(views.filter((v) => v.status === "measured").map((v) => v.engine)).toEqual([
+      "chatgpt",
+      "perplexity",
+      "copilot",
+    ]);
     const rendered = JSON.stringify(views);
-    expect(rendered).not.toContain("Perplexity");
-    expect(rendered).not.toContain("Copilot");
+    expect(rendered).toContain("Perplexity");
+    expect(rendered).toContain("Copilot");
+  });
+
+  it("MIGRATION: a legacy (pre-T-B16) snapshot with only a chatgpt row still renders unchanged, with perplexity/copilot honestly no-data rather than erroring or vanishing", () => {
+    const legacy = insights({ perEngine: [engineRow()] }); // the fixture default: chatgpt only, exactly a pre-widening record
+    const views = buildEngineViews(legacy);
+    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "perplexity", "gemini", "claude", "copilot"]);
+    expect(views.find((v) => v.engine === "chatgpt")?.status).toBe("measured");
+    expect(views.find((v) => v.engine === "perplexity")?.status).toBe("no-data");
+    expect(views.find((v) => v.engine === "copilot")?.status).toBe("no-data");
   });
 
   it("synthesizes a missing engine row from a partial capture and traces the cause", () => {

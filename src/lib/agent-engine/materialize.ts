@@ -9,6 +9,8 @@ import { generateAssetTitle } from "@/lib/asset-titles";
 import { AgentEngineCredentialError, getAgentEngineDeliverable } from "./client";
 import { groupRecommendationsByOwner, hasClassifiedOwner, toRoutableRecommendation } from "./routable-recommendation";
 import { renderIntelReport } from "./intel-report-render";
+import { persistSeoGeoInsightsFromDeliverable } from "./persist-seo-geo-insights";
+import type { AgentEngineSeoGeoReport } from "./seo-geo-deliverable-types";
 import type { AssetType, Job, WireTaskType } from "@/lib/types";
 
 /**
@@ -879,6 +881,25 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
     await reflowClientChain(job.clientId).catch((e: unknown) => {
       console.error(`[agent-engine materialize] calendar reflow failed for client "${job.clientId}" — run the staff reflow action`, e);
     });
+
+    // [T-B16/SCRUM-271] The second half of "note only" -> "full rendering":
+    // the staff note asset above carries the run's prose and its raw meta,
+    // but the CLIENT-facing SEO/GEO analytics view (`components/seo-geo/`,
+    // fed by `getClientSeoGeo`) reads a separate document, `clientSeoGeo`,
+    // that this branch never used to write at all — a client's own comparative
+    // graphs kept showing whatever this portal's OWN internal onboarding
+    // pipeline (`src/lib/intel/seo-geo.ts`) had last captured, never a real
+    // agent-engine run. `persistSeoGeoInsightsFromDeliverable` never throws
+    // (see its own doc) — a mapping failure must not keep this job out of
+    // `status: "review"`, same discipline as `reflowClientChain` above.
+    if (job.agentEngineProductId === "seo-geo-agent") {
+      await persistSeoGeoInsightsFromDeliverable(
+        job.clientId,
+        job.agentEngineRunId,
+        deliverable as AgentEngineSeoGeoReport,
+        now,
+      );
+    }
 
     return assetId;
   } catch (e) {

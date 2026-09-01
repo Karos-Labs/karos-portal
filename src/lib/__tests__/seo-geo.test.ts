@@ -368,11 +368,21 @@ describe("PDF/report contract: intent taxonomy, answer grid, citations", () => {
     expect(grid[1].cells.find((c) => c.engine === "claude")?.state).toBe("absent");
   });
 
-  it("has a wired provider for every tracked engine (CD-B2)", () => {
-    for (const engine of Object.keys(ENGINE_PROVIDERS) as Array<keyof typeof ENGINE_PROVIDERS>) {
+  it("has a wired direct-connector provider for every engine this portal calls itself; the two agent-engine-only engines are honestly null (T-B16/SCRUM-271)", () => {
+    // CD-B2 (2026-07-27) asserted every TRACKED engine had a wired PORTAL
+    // connector, back when the tracked set was exactly the three engines this
+    // portal itself calls. T-B16/SCRUM-271 widens EngineId to the real
+    // five-engine agent-engine roster without adding two direct connectors on
+    // this side — perplexity/copilot reach clientSeoGeo only through
+    // agent-engine's own capture (see ENGINE_PROVIDERS's doc comment), so
+    // `null` here is the honest, deliberate answer for those two, not a gap.
+    for (const engine of ["chatgpt", "gemini", "claude"] as const) {
       expect(ENGINE_PROVIDERS[engine]).not.toBeNull();
     }
-    expect(Object.keys(ENGINE_LABELS).sort()).toEqual(["chatgpt", "claude", "gemini"]);
+    for (const engine of ["perplexity", "copilot"] as const) {
+      expect(ENGINE_PROVIDERS[engine]).toBeNull();
+    }
+    expect(Object.keys(ENGINE_LABELS).sort()).toEqual(["chatgpt", "claude", "copilot", "gemini", "perplexity"]);
   });
 
   it("computes the citation leaderboard and always keeps the client's own line", () => {

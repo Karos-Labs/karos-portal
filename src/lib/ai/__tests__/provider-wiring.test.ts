@@ -55,7 +55,7 @@ describe("assertManifestWirable refuses a vendor that cannot serve the manifest"
     expect(() => assertManifestWirable("anthropic")).not.toThrow();
   });
 
-  it("THROWS on vertex, because nine roles depend on web_fetch", () => {
+  it("THROWS on vertex, because two roles depend on web_fetch", () => {
     expect(() => assertManifestWirable("vertex")).toThrow(ProviderWiringError);
   });
 
@@ -67,22 +67,20 @@ describe("assertManifestWirable refuses a vendor that cannot serve the manifest"
       message = (e as Error).message;
     }
 
-    // Four roles, nine sites, all of them web_fetch-dependent.
-    for (const role of [
-      "intel.report.pass",
-      "intel.research.agent",
-      "seo.site_audit",
-      "branding.fetch_site",
-    ]) {
+    // Two roles, three sites, all of them web_fetch-dependent. SCRUM-274
+    // (T-B19) deleted "intel.research.agent" and "seo.site_audit" along with
+    // the files that held their only sites (src/lib/intel/pipeline.ts and
+    // src/lib/intel/seo-geo.ts) — see roles.ts's own header comment.
+    for (const role of ["intel.report.pass", "branding.fetch_site"]) {
       expect(message).toContain(role);
     }
-    expect(message).toContain("4 roles cannot be wired");
+    expect(message).toContain("2 roles cannot be wired");
     // The sites are in the message so the reader does not have to go looking.
     // Taken from the manifest rather than hardcoded: line numbers move whenever
     // a file's imports change, and a test that pins them fails on the sweep
     // rather than on the thing it is meant to police.
-    for (const site of roleSpec("seo.site_audit").sites) expect(message).toContain(site);
-    for (const site of roleSpec("intel.research.agent").sites) expect(message).toContain(site);
+    for (const site of roleSpec("intel.report.pass").sites) expect(message).toContain(site);
+    for (const site of roleSpec("branding.fetch_site").sites) expect(message).toContain(site);
   });
 
   it("does NOT fail the two web_search-only roles — they can route to Vertex", () => {
@@ -167,7 +165,11 @@ describe("aiFor", () => {
   });
 
   it("wires the declared tools for a coupled role", () => {
-    const resolved = aiFor("intel.research.agent", {
+    // SCRUM-274 (T-B19) deleted "intel.research.agent" along with its only
+    // file (src/lib/intel/pipeline.ts) — "intel.report.pass" declares the
+    // identical requires: ["web_search", "web_fetch"], so it exercises the
+    // same wiring path.
+    const resolved = aiFor("intel.report.pass", {
       vendor: "anthropic",
       budgets: { web_search: { maxUses: 8 }, web_fetch: { maxUses: 6 } },
     });
@@ -175,7 +177,10 @@ describe("aiFor", () => {
   });
 
   it("refuses to wire a web_fetch role to vertex, at wiring time", () => {
-    expect(() => aiFor("seo.site_audit", { vendor: "vertex" })).toThrow(
+    // SCRUM-274 (T-B19) deleted "seo.site_audit" along with its only file
+    // (src/lib/intel/seo-geo.ts) — "branding.fetch_site" declares the same
+    // requires: ["web_fetch"], so it exercises the same refusal.
+    expect(() => aiFor("branding.fetch_site", { vendor: "vertex" })).toThrow(
       /requires "web_fetch", which vendor "vertex" cannot supply/,
     );
   });
@@ -189,7 +194,7 @@ describe("aiFor", () => {
   });
 
   it("still refuses a web_fetch role on vertex — the durable constraint survived the upgrade", () => {
-    expect(() => aiFor("seo.site_audit", { vendor: "vertex" })).toThrow(/cannot supply/);
+    expect(() => aiFor("branding.fetch_site", { vendor: "vertex" })).toThrow(/cannot supply/);
   });
 
   it("gives each vendor its OWN web_search tool object, not the other's", () => {
@@ -233,8 +238,8 @@ describe("per-vendor model ids", () => {
 });
 
 describe("the manifest does not drift from the tree", () => {
-  it("declares exactly 43 call sites", () => {
-    expect(declaredSiteCount()).toBe(43);
+  it("declares exactly 33 call sites", () => {
+    expect(declaredSiteCount()).toBe(33);
   });
 
   it("names only files that exist", () => {
@@ -272,8 +277,8 @@ describe("the manifest does not drift from the tree", () => {
   it("declares a capability for every coupled site and none for the plain ones", () => {
     const coupled = AI_ROLE_NAMES.filter((r) => (roleSpec(r).requires ?? []).length > 0);
     const sites = coupled.reduce((n, r) => n + roleSpec(r).sites.length, 0);
-    expect(sites).toBe(12); // 1 measurement + 9 web_fetch + 2 web_search-only
-    expect(declaredSiteCount() - sites).toBe(31);
+    expect(sites).toBe(6); // 1 measurement + 3 web_fetch + 2 web_search-only
+    expect(declaredSiteCount() - sites).toBe(27);
   });
 
   it("has no role requiring a capability no vendor can supply", () => {
@@ -323,14 +328,15 @@ describe("the invariant: nothing reaches a vendor except through the layer", () 
     return out;
   }
 
-  it("keeps the coupled set at exactly the six files that declare a capability", () => {
+  it("keeps the coupled set at exactly the four files that declare a capability", () => {
+    // SCRUM-274 (T-B19) removed "src/lib/intel/pipeline.ts" and "src/lib/
+    // intel/seo-geo.ts" from this set — both files are deleted (their only
+    // roles, "intel.research.agent" and "seo.site_audit", are gone with them).
     expect([...coupledFiles].sort()).toEqual([
       "src/lib/actions/x-agent-actions.ts",
       "src/lib/branding.ts",
-      "src/lib/intel/pipeline.ts",
       "src/lib/intel/report.ts",
       "src/lib/intel/seo-geo-providers.ts",
-      "src/lib/intel/seo-geo.ts",
     ]);
   });
 
@@ -374,7 +380,7 @@ describe("the invariant: nothing reaches a vendor except through the layer", () 
   });
 });
 
-describe("the twelve coupled sites still get anthropic after the upgrade", () => {
+describe("the six coupled sites still get anthropic after the upgrade", () => {
   it("binds every capability-declaring role to anthropic under the default vendor", () => {
     for (const role of AI_ROLE_NAMES) {
       const spec = roleSpec(role);

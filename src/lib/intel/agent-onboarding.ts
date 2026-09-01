@@ -288,11 +288,93 @@ function labelledList(rows: readonly Record<string, unknown>[], labelKeys: reado
 }
 
 /**
+ * SCRUM-274 (T-B19). `ir.brandVoiceArchetypes` is `Array<{ company, archetype
+ * }>` on the real deliverable (`packages/tools/karos-intel/src/types.ts`'s
+ * `BrandVoiceArchetypeSchema` in agent-engine), not `string[]` — verified
+ * directly against the ref clone while wiring this cutover. A plain
+ * `strArray()` read (the pre-cutover code here) silently drops every row,
+ * since none of them satisfy `typeof e === "string"`.
+ */
+function brandVoiceArchetypeList(rows: readonly Record<string, unknown>[]): string | undefined {
+  const lines = rows
+    .map((row) => {
+      const archetype = str(row["archetype"]);
+      if (!archetype) return undefined;
+      const company = str(row["company"]);
+      return company ? `- ${company}: ${archetype}` : `- ${archetype}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+/**
+ * SCRUM-274 (T-B19). `ir.brandVoiceRows` is `Array<{ dimension: string,
+ * scores: Record<string, string> }>` on the real deliverable
+ * (`BrandVoiceRowSchema`, same file) — a per-dimension row with one score PER
+ * COMPANY, not the flat `{ attribute/label/name, score: number }` shape
+ * `labelledList` expects. Kept tolerant of that older shape too (falls back
+ * to a bare numeric `score` field) in case a differently-shaped fixture is
+ * ever fed through, but the real shape is read correctly first.
+ */
+function brandVoiceAttributeList(rows: readonly Record<string, unknown>[]): string | undefined {
+  const lines = rows
+    .map((row) => {
+      const label = str(row["dimension"]) ?? str(row["attribute"]) ?? str(row["label"]) ?? str(row["name"]);
+      if (!label) return undefined;
+      const scores = rec(row["scores"]);
+      const perCompany = Object.entries(scores)
+        .filter((e): e is [string, string] => typeof e[1] === "string" && e[1].trim().length > 0)
+        .map(([company, score]) => `${company}: ${score}`);
+      if (perCompany.length) return `- ${label} — ${perCompany.join(", ")}`;
+      const value = row["score"];
+      return typeof value === "number" ? `- ${label}: ${value}` : `- ${label}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+/**
+ * SCRUM-274 (T-B19). `ir.customerSentiment` is `CustomerSentimentEntry[]` —
+ * `{ company, rating?, ratingLabel?, responseTime?, wouldReturn? }` — on the
+ * real deliverable (`CustomerSentimentEntrySchema`, same file), not a
+ * pre-rendered string. A plain `str()` read (the pre-cutover code here)
+ * always returns `undefined` for an array, which combined with the
+ * `promptSet` fix below is why `target-audience` used to compose EMPTY
+ * against real agent-engine output — both of its sections read a field that
+ * was never a string. See this ticket's report for the full finding.
+ */
+function customerSentimentList(rows: readonly Record<string, unknown>[]): string | undefined {
+  const lines = rows
+    .map((row) => {
+      const company = str(row["company"]);
+      if (!company) return undefined;
+      const rating = str(row["rating"]);
+      const ratingLabel = str(row["ratingLabel"]);
+      const parts = [
+        rating ? (ratingLabel ? `${rating} (${ratingLabel})` : rating) : undefined,
+        str(row["responseTime"]) ? `response time ${str(row["responseTime"])}` : undefined,
+        str(row["wouldReturn"]) ? `would return: ${str(row["wouldReturn"])}` : undefined,
+      ].filter((p): p is string => Boolean(p));
+      return parts.length ? `- ${company} — ${parts.join(", ")}` : `- ${company}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+/**
  * The eight generated documents, composed from the two agent deliverables.
  *
  * Every section here is sourced from a field this repo already reads off the
- * same deliverable in `materialize.ts` — that is the check against inventing a
- * wire shape the engine does not send. A document that ends up with no content
+ * same deliverable in `materialize.ts`, or — where SCRUM-274 (T-B19) found
+ * `materialize.ts` itself only pass the field through untouched (`meta`) —
+ * verified directly against the real, current Zod schemas in agent-engine's
+ * ref clone (`packages/tools/karos-intel/src/types.ts`,
+ * `agents/seo-geo-agent/src/workflow/types.ts`). Six field-path mismatches
+ * against those real shapes were fixed as part of this ticket (see the
+ * `brandVoiceArchetypeList`/`brandVoiceAttributeList`/`customerSentimentList`
+ * helpers above and the `competitors`/`promptSetPrompts` locals below, each
+ * with its own comment) — this is the check against inventing a wire shape
+ * the engine does not send. A document that ends up with no content
  * at all is returned as an empty string and the caller's shape gate rejects the
  * run: an onboarding that produces a blank ground-truth document must fail
  * loudly, not store a placeholder for every downstream agent to read.
@@ -317,13 +399,39 @@ export function composeContextDocsFromAgentReports(input: {
 
   const recommendations = objArray(ir["recommendations"]);
   const fired = objArray(sg["firedRecommendations"]);
+  // `ir.competitors` is `ClientCompetitorSchema[]` on the real deliverable
+  // (`{ company, url?, marketTier, ... }`), not `string[]` — see the two uses
+  // below (SCRUM-274/T-B19 fix, verified against agent-engine's ref clone).
+  const competitors = objArray(ir["competitors"]);
+  // `sg.promptSet` is `{ prompts: SeoGeoPrompt[], source, ... }` on the real
+  // deliverable, not itself an array — `sg.promptSet.prompts` is the array,
+  // and each prompt's text is `promptText`, not `prompt`/`text` (SCRUM-274/
+  // T-B19 fix, verified against agent-engine's ref clone,
+  // `agents/seo-geo-agent/src/workflow/types.ts`'s `SeoGeoPrompt`).
+  const promptSetPrompts = objArray(rec(sg["promptSet"])["prompts"]);
 
   return {
+    // SCRUM-274 (T-B19) — Brand Voice precedence, flagged, unratified (see
+    // this ticket's report for the full account). `Client.brandVoice`
+    // (src/lib/types.ts) is one source of brand voice; the batch doc names a
+    // second — a `brand-voice` context doc agent-engine reads via
+    // `client.getKnowledge()` during its own runs, a boundary this checkout
+    // has no `getKnowledge` function to reach from here. This function WRITES
+    // the `brand-voice` doc purely from the Intel Report deliverable's own
+    // brand fields below; it does not read or reconcile against
+    // `Client.brandVoice` at all. SCRUM-380 (D1-v2, still Prep, not merged
+    // into this checkout) reportedly picks BrandKit (`Client.brandVoice`) as
+    // authoritative on its own branch, but that ratification hasn't landed
+    // here — this comment is what makes today's actual precedence (the Intel
+    // Report deliverable wins, unconditionally, because it is the only source
+    // consulted) explicit and visible rather than an implicit accident of
+    // "whichever function got called," per the ticket's own instruction: get
+    // it ratified or make the precedence explicit; do not inherit it silently.
     "brand-voice": document(header("Brand Voice"), [
       section("Brand analysis", str(ir["brandAnalysis"])),
       section("Voice territory", str(ir["brandVoiceTerritory"])),
-      section("Archetypes", bullets(strArray(ir["brandVoiceArchetypes"]))),
-      section("Voice attributes", labelledList(objArray(ir["brandVoiceRows"]), ["attribute", "label", "name"], "score")),
+      section("Archetypes", brandVoiceArchetypeList(objArray(ir["brandVoiceArchetypes"]))),
+      section("Voice attributes", brandVoiceAttributeList(objArray(ir["brandVoiceRows"]))),
     ]),
 
     "market-strategy": document(header("Market Strategy"), [
@@ -335,9 +443,9 @@ export function composeContextDocsFromAgentReports(input: {
     ]),
 
     "competitor-analysis": document(header("Competitor Analysis"), [
-      typeof ir["competitorCount"] === "number" ? `**Competitors analysed: ${ir["competitorCount"]}**` : undefined,
-      section("Rankings", labelledList(objArray(ir["competitorRankings"]), ["name", "competitor", "label"], "score")),
-      section("Tracked competitors", bullets(strArray(ir["competitors"]))),
+      competitors.length ? `**Competitors analysed: ${competitors.length}**` : undefined,
+      section("Rankings", labelledList(objArray(ir["competitorRankings"]), ["company", "name", "competitor", "label"], "score")),
+      section("Tracked competitors", bullets(competitors.map((c) => str(c["company"])).filter((s): s is string => Boolean(s)))),
       section(
         "SWOT",
         joinBlocks(
@@ -347,6 +455,18 @@ export function composeContextDocsFromAgentReports(input: {
           }),
         ),
       ),
+      // NOT FIXED — SCRUM-274 (T-B19) finding, not a diff: the real
+      // `SeoGeoReport.visibility` shape (`{ byN, byNe, denominatorDecision }`,
+      // agent-engine's `agents/seo-geo-agent/src/workflow/types.ts`) has no
+      // per-engine (chatgpt/gemini/claude) mention breakdown anywhere on it —
+      // `VisibilityIndexResult.componentNorms` is per-SCORING-COMPONENT
+      // (citation_share, who_ranks_first, share_of_voice — see
+      // `packages/tools/karos-seo-geo/src/visibility-index.ts`), a different
+      // axis entirely, not per-engine. Rendering componentNorms under this
+      // heading would look plausible and mean something else, which is worse
+      // than an honestly empty section — so this section is left reading a
+      // field that does not exist rather than substituting one that does but
+      // means the wrong thing. See this ticket's report for the full account.
       section("Share of voice in AI answers", labelledList(objArray(rec(sg["visibility"])["engines"]), ["engine", "label", "name"], "mentions")),
     ]),
 
@@ -362,8 +482,8 @@ export function composeContextDocsFromAgentReports(input: {
     ]),
 
     "target-audience": document(header("Target Audience"), [
-      section("Customer sentiment", str(ir["customerSentiment"])),
-      section("Buyer-intent prompt set", bullets(objArray(sg["promptSet"]).map((p) => str(p["prompt"]) ?? str(p["text"]) ?? "").filter(Boolean))),
+      section("Customer sentiment", customerSentimentList(objArray(ir["customerSentiment"]))),
+      section("Buyer-intent prompt set", bullets(promptSetPrompts.map((p) => str(p["promptText"]) ?? str(p["prompt"]) ?? str(p["text"]) ?? "").filter(Boolean))),
     ]),
 
     "client-guidelines": document(header("Client Guidelines"), [

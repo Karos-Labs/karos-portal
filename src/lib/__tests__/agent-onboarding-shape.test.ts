@@ -23,17 +23,28 @@ const CLIENT_ID = "acme";
 const CLIENT = { id: CLIENT_ID, name: "Acme" } as never;
 
 /**
- * The two deliverables, by the field names `materialize.ts` already reads off
- * them (`materializeIntelReport` / `materializeSeoGeoReport`) — the check
- * against inventing a wire shape agent-engine does not send.
+ * The two deliverables. SCRUM-274 (T-B19) rewrote this fixture to the REAL
+ * field names/shapes verified directly against agent-engine's ref clone
+ * (`packages/tools/karos-intel/src/types.ts`'s `IntelReportOutputSchema`,
+ * `agents/seo-geo-agent/src/workflow/types.ts`'s `SeoGeoReport`) — the
+ * pre-T-B19 fixture here used `brandVoiceArchetypes: string[]`,
+ * `customerSentiment: string`, `competitors: string[]`, `competitorRankings`
+ * keyed by `name`, and `promptSet` as a bare array, none of which match what
+ * the real deliverables actually send (`{company,archetype}` objects,
+ * `CustomerSentimentEntry[]`, `ClientCompetitor[]`, `{company,score,...}`,
+ * and `{prompts: SeoGeoPrompt[], ...}` respectively) — see this ticket's
+ * report for the full finding. Every field below is the field name
+ * `materialize.ts` already reads off the deliverable (`materializeIntelReport`
+ * / `materializeSeoGeoReport`) where that overlaps, and the real schema
+ * otherwise — the check against inventing a wire shape agent-engine does not
+ * send.
  */
 const INTEL_REPORT = {
   overallScore: 71,
   overallGrade: "B",
-  competitorCount: 4,
   dimensionScores: [
-    { label: "Content", score: 68 },
-    { label: "SEO", score: 74 },
+    { dimension: "contentMessaging", score: 68 },
+    { dimension: "seo", score: 74 },
   ],
   swot: {
     strengths: ["Named category"],
@@ -42,12 +53,15 @@ const INTEL_REPORT = {
     threats: ["Two funded entrants"],
   },
   recommendations: [{ title: "Ship five comparison pages" }, { title: "Rewrite the pricing page" }],
-  competitorRankings: [{ name: "Northwind", score: 81 }],
-  competitors: ["Northwind", "Initech"],
-  brandVoiceRows: [{ attribute: "Warmth", score: 4 }],
-  brandVoiceArchetypes: ["Sage", "Creator"],
+  competitorRankings: [{ company: "Northwind", score: 81 }],
+  competitors: [{ company: "Northwind" }, { company: "Initech" }],
+  brandVoiceRows: [{ dimension: "Warmth", scores: { Acme: "4/5", Northwind: "2/5" } }],
+  brandVoiceArchetypes: [
+    { company: "Acme", archetype: "Sage" },
+    { company: "Northwind", archetype: "Creator" },
+  ],
   brandVoiceTerritory: "Plain-spoken operator, never a hype merchant.",
-  customerSentiment: "Buyers trust the product and distrust the onboarding.",
+  customerSentiment: [{ company: "Acme", rating: "4.2", ratingLabel: "Very good", wouldReturn: "yes" }],
   whitespaceOpportunities: ["Migration tooling content"],
   contentAnalysis: "Docs outrank marketing pages for every buying term.",
   conversionAnalysis: "The trial gate is the drop-off, not the pricing.",
@@ -63,10 +77,16 @@ const SEO_GEO = {
   seoScore: { score: 74 },
   geoReadiness: { score: 58 },
   narrative: "Strong technical base, weak answer-engine presence.",
-  visibility: { engines: [{ engine: "perplexity", mentions: 3 }] },
-  firedRecommendations: [{ title: "Publish an FAQ block on every comparison page" }],
-  fixDrafts: [{ title: "robots.txt allow for answer engines" }],
-  promptSet: [{ prompt: "best tool for X" }, { prompt: "X vs Northwind" }],
+  // The real `visibility` shape has no per-engine breakdown at all (see
+  // agent-onboarding.ts's own comment at this section) — `byN`/`byNe` are
+  // what a real deliverable actually carries here.
+  visibility: { byN: null, byNe: null },
+  firedRecommendations: [{ recId: "GEO-1", recommendation: "Publish an FAQ block on every comparison page" }],
+  fixDrafts: [{ recId: "GEO-1", title: "robots.txt allow for answer engines" }],
+  promptSet: {
+    prompts: [{ promptText: "best tool for X" }, { promptText: "X vs Northwind" }],
+    source: "drafted",
+  },
 };
 
 /** A shape-valid set, used as the baseline every failure case perturbs. */
@@ -197,6 +217,31 @@ describe("composeContextDocsFromAgentReports", () => {
     expect(docs["market-strategy"]).toContain("SEO 74 · GEO readiness 58");
     expect(docs["market-strategy"]).toContain("weak answer-engine presence");
     expect(docs["action-plan"]).toContain("Publish an FAQ block");
+  });
+
+  /**
+   * SCRUM-274 (T-B19) — the six field-path mismatches this ticket fixed
+   * against the real deliverable shapes (see `agent-onboarding.ts`'s
+   * `brandVoiceArchetypeList`/`brandVoiceAttributeList`/
+   * `customerSentimentList` and the `competitors`/`promptSetPrompts` locals).
+   * Each assertion below reads a section that composed to EMPTY before this
+   * ticket, against the exact real-shaped fixture above.
+   */
+  it("reads the real (object-shaped) brandVoiceArchetypes, brandVoiceRows, customerSentiment, competitors and promptSet.prompts fields", () => {
+    const docs = composeContextDocsFromAgentReports({
+      client: CLIENT,
+      intelReport: INTEL_REPORT,
+      seoGeo: SEO_GEO,
+    });
+    expect(docs["brand-voice"]).toContain("Acme: Sage");
+    expect(docs["brand-voice"]).toContain("Warmth");
+    expect(docs["brand-voice"]).toContain("Acme: 4/5");
+    expect(docs["competitor-analysis"]).toContain("Competitors analysed: 2");
+    expect(docs["competitor-analysis"]).toContain("Initech");
+    expect(docs["target-audience"]).toContain("Acme");
+    expect(docs["target-audience"]).toContain("4.2 (Very good)");
+    expect(docs["target-audience"]).toContain("best tool for X");
+    expect(docs["target-audience"]).toContain("X vs Northwind");
   });
 
   it("omits a section whose field the engine did not send instead of throwing", () => {

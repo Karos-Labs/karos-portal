@@ -677,14 +677,25 @@ export interface EngineView {
   ghost: { label: string; explainer: string } | null;
 }
 
-/** Display order for every engine surface. CD-B2 removed Perplexity and Copilot. */
-const ENGINE_ORDER: EngineId[] = ["chatgpt", "gemini", "claude"];
+/**
+ * Display order for every engine surface. CD-B2 (2026-07-27) had dropped
+ * Perplexity and Copilot; T-B16/SCRUM-271 restores them now that agent-engine
+ * genuinely captures all five (`@/lib/seo-geo`'s `EngineId` widening doc has
+ * the full story). A snapshot with no perplexity/copilot rows (every
+ * pre-T-B16 capture) simply never populates those two columns — `byEngine.get`
+ * below and `buildAnswerGridViews`'s own `answered.has` filter both already
+ * drop an engine with nothing to show, so this list growing costs nothing on
+ * an old snapshot.
+ */
+const ENGINE_ORDER: EngineId[] = ["chatgpt", "perplexity", "gemini", "claude", "copilot"];
 
 /** Closed provider → "measured through …" phrase (provenance without badges). */
 const PROVIDER_PHRASES: Record<string, string> = {
   OpenAI: "through the OpenAI API",
   Gemini: "through the Google Gemini API",
   Anthropic: "through the Anthropic API",
+  Perplexity: "through the Perplexity API",
+  Microsoft: "through Copilot",
 };
 
 function providerPhrase(source: string | null): string {
@@ -1678,6 +1689,12 @@ const CELL_VIEW: Record<string, { label: string; tone: Tone; mark: AnswerCellVie
   named: { label: "Named", tone: "info", mark: "solid" },
   cited_not_named: { label: "Used your site, didn't name you", tone: "warning", mark: "ring" },
   absent: { label: "Not named", tone: "neutral", mark: "hollow" },
+  // T-B16/SCRUM-271: Gemini-only — a genuinely different fact from "absent"
+  // (an AI Overview came back and simply skipped the brand). Never falls
+  // through to CELL_VIEW_DEFAULT ("Not measured"), which would wrongly claim
+  // the prompt wasn't captured this run — it was, and it has a real cell
+  // stating so.
+  aio_absent: { label: "No AI Overview shown", tone: "neutral", mark: "hollow" },
   unavailable: { label: "Not measured", tone: "neutral", mark: "none" },
 };
 const CELL_VIEW_DEFAULT = CELL_VIEW.unavailable;
@@ -1782,10 +1799,20 @@ export function buildAnswerGridViews(insights: SeoGeoInsights): AnswerGridView |
       groups.push({ intentLabel: intentLabel(intent), basisLabel: basisLabel(intent), rows });
   }
 
+  // aio_absent only ever appears on a Gemini cell (see GeoProbe.aioAbsent) —
+  // the legend explains it only when the grid actually contains one, rather
+  // than teaching every client a state their own data never shows.
+  const hasAioAbsent = grid.some((row) => (row.cells ?? []).some((c) => c.state === "aio_absent"));
   return {
     engines,
     groups,
-    legend: [CELL_VIEW.named_first, CELL_VIEW.named, CELL_VIEW.cited_not_named, CELL_VIEW.absent],
+    legend: [
+      CELL_VIEW.named_first,
+      CELL_VIEW.named,
+      CELL_VIEW.cited_not_named,
+      CELL_VIEW.absent,
+      ...(hasAioAbsent ? [CELL_VIEW.aio_absent] : []),
+    ],
   };
 }
 

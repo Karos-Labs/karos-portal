@@ -83,7 +83,19 @@ describe("SEO/GEO surfaces stay mounted (QA F152)", () => {
   it("still builds and persists the plan on every capture run", () => {
     // If the pipeline stops writing `recommendations`, the mounted component
     // silently renders its empty state — the same invisible failure, one layer down.
-    const pipeline = read(path.join(SRC, "lib", "intel", "seo-geo.ts"));
+    //
+    // SCRUM-274 (T-B19): this used to read `src/lib/intel/seo-geo.ts`, the old
+    // in-process SEO/GEO capture `runSeoGeoResearch` ran, called exclusively
+    // from the now-deleted `src/lib/intel/pipeline.ts` — deleted along with it
+    // (see this ticket's report). The capture run this test's own name refers
+    // to is not gone: it is now the real `seo-geo-agent`, dispatched through
+    // agent-engine, whose deliverable `src/lib/agent-engine/
+    // seo-geo-insights-mapping.ts` maps into the SAME `SeoGeoInsights` shape
+    // (`recommendations: buildRecommendations(gaps)`, using the identical
+    // `src/lib/seo-geo.ts` helper the old path used) before
+    // `persist-seo-geo-insights.ts` writes it through the same
+    // `upsertClientSeoGeo` this test used to indirectly guard.
+    const pipeline = read(path.join(SRC, "lib", "agent-engine", "seo-geo-insights-mapping.ts"));
     expect(pipeline).toContain("buildRecommendations(");
     expect(pipeline).toMatch(/recommendations:\s*(dedupe|buildRecommendations)/);
   });
