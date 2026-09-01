@@ -6,7 +6,12 @@ import { CONDENSATION_RULES } from "./brain";
 import { CONDENSE_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble, stripTrailingMetaCommentary } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
-import { aiFor, usageFor } from "@/lib/ai/provider";
+import { logStructured } from "@/lib/telemetry/structured-log";
+import type { ResolvedAi } from "@/lib/ai/provider";
+import {
+  routeContextDocCondensation,
+  type CondensationModelAttempt,
+} from "./context-doc-routing";
 
 export interface CondensedDoc {
   docType: ContextDocType;
@@ -68,17 +73,36 @@ Update the frontmatter:
 
 Return ONLY the condensed markdown document. No preamble, no explanation.`;
 
-  const condenseStream = streamText({
-    model: aiFor("intel.condense").model,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
+  // SCRUM-387 — routes this document to a model BEFORE the first call: Vertex-
+  // primary/Anthropic-fallback for a standard document, or an escalation to
+  // Opus (high complexity) / Gemini (does not fit Claude's window) — see
+  // context-doc-routing.ts for the full design and citations. Both passes
+  // below (initial, and the truncation-triggered retry) reuse the SAME route:
+  // the document being condensed has not changed, so neither has its
+  // complexity.
+  const route = routeContextDocCondensation(docType, internalContent, {
     maxOutputTokens: CONDENSE_MAX_TOKENS,
   });
-  const text = await condenseStream.text;
-  logger.trackStream(condenseStream, {
-    clientId: client.id, agentId: null, agentName: `Condense: ${docType}`,
-    ...usageFor("intel.condense"), operation: "doc_condense",
+  logStructured("INFO", `context-doc condensation route: ${route.rationale}`, {
+    event: "context_document.route",
+    clientId: client.id,
+    docType,
+    tier: route.complexity.tier,
+    score: route.complexity.score,
+    escalated: route.escalated,
   });
+
+  const first = await runCondensationAttempts(
+    route.attempts,
+    (resolved) =>
+      streamText({
+        model: resolved.model,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userMessage }],
+        maxOutputTokens: CONDENSE_MAX_TOKENS,
+      }),
+    { clientId: client.id, docType, agentName: `Condense: ${docType}` },
+  );
 
   // Detect truncation/omission: the condensed doc must include both the first and last ## sections.
   const internalSections = internalContent.match(/^## .+/gm) ?? [];
@@ -87,7 +111,7 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
 
   // Strip model preamble, then any trailing meta-commentary the model appended
   // after the document ("If you intended a different template…").
-  const condensed = stripTrailingMetaCommentary(stripPreamble(text));
+  const condensed = stripTrailingMetaCommentary(stripPreamble(first.text));
   // Match the heading boundary (## prefix) to avoid substring false-positives.
   const missingFirst = firstInternalSection && !condensed.includes(`## ${firstInternalSection}`);
   const missingLast = lastInternalSection && !condensed.includes(`## ${lastInternalSection}`);
@@ -95,25 +119,25 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
   if (missingFirst || missingLast) {
     // Retry as a fresh call — do not include the truncated assistant turn, which anchors
     // the model to the incomplete first output and defeats a full-rewrite instruction.
-    const condenseRetryStream = streamText({
-      model: aiFor("intel.condense").model,
-      system: systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content:
-            userMessage +
-            "\n\nCRITICAL: You MUST condense every section from the original document. Do not stop before reaching the last section.",
-        },
-      ],
-      maxOutputTokens: CONDENSE_MAX_TOKENS,
-    });
-    const cont = await condenseRetryStream.text;
-    logger.trackStream(condenseRetryStream, {
-      clientId: client.id, agentId: null, agentName: `Condense (retry): ${docType}`,
-      ...usageFor("intel.condense"), operation: "doc_condense",
-    });
-    const rewritten = stripTrailingMetaCommentary(stripPreamble(cont));
+    const retry = await runCondensationAttempts(
+      route.attempts,
+      (resolved) =>
+        streamText({
+          model: resolved.model,
+          system: systemPrompt,
+          messages: [
+            {
+              role: "user",
+              content:
+                userMessage +
+                "\n\nCRITICAL: You MUST condense every section from the original document. Do not stop before reaching the last section.",
+            },
+          ],
+          maxOutputTokens: CONDENSE_MAX_TOKENS,
+        }),
+      { clientId: client.id, docType, agentName: `Condense (retry): ${docType}` },
+    );
+    const rewritten = stripTrailingMetaCommentary(stripPreamble(retry.text));
     // Fall back to the first-pass result if the rewrite returned empty content,
     // or if it covers fewer of the internal doc's sections — a retry must never
     // be allowed to hand back less than the pass that triggered it.
@@ -123,6 +147,78 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
   }
 
   return { docType, content: condensed };
+}
+
+/**
+ * Executes `build` against each of `route`'s candidate model resolutions IN
+ * ORDER, returning the first that succeeds (SCRUM-387). For the baseline
+ * (standard-complexity) route this is the Vertex-primary/Anthropic-fallback
+ * attempt: `attempts[0]` is Vertex, `attempts[1]` is direct Anthropic — a real
+ * retry across vendors at call time, not a config pin. For an escalated route
+ * (Opus / Gemini) `attempts` has exactly one candidate, so this degrades to a
+ * plain call with no fallback — there is nothing else verified to fall back
+ * to for those models (see context-doc-routing.ts).
+ *
+ * A candidate's OWN failure (network error, refused wiring, upstream error —
+ * anything `resolve()` or the `streamText` call throws) is caught and logged,
+ * then the next candidate is tried; only when every candidate has failed does
+ * this throw, and it throws the LAST candidate's error, since that is the one
+ * whose failure is still live.
+ */
+async function runCondensationAttempts(
+  attempts: readonly CondensationModelAttempt[],
+  build: (resolved: ResolvedAi) => ReturnType<typeof streamText>,
+  ctx: { clientId: string; docType: string; agentName: string },
+): Promise<{ text: string; resolved: ResolvedAi }> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts.length; i++) {
+    const attempt = attempts[i]!;
+    try {
+      const resolved = attempt.resolve();
+      const stream = build(resolved);
+      const text = await stream.text;
+      logger.trackStream(stream, {
+        clientId: ctx.clientId,
+        agentId: null,
+        agentName: ctx.agentName,
+        modelName: resolved.modelId,
+        vendor: resolved.vendor,
+        operation: "doc_condense",
+      });
+      if (i > 0) {
+        logStructured(
+          "WARNING",
+          `context-doc condensation: primary vendor "${attempts[0]!.vendor}" was bypassed — ` +
+            `"${ctx.docType}" served by fallback vendor "${attempt.vendor}"`,
+          {
+            event: "context_document.condense_fallback",
+            docType: ctx.docType,
+            from: attempts[0]!.vendor,
+            to: attempt.vendor,
+          },
+        );
+      }
+      return { text, resolved };
+    } catch (err) {
+      lastErr = err;
+      const more = i < attempts.length - 1;
+      logStructured(
+        more ? "WARNING" : "ERROR",
+        `context-doc condensation: vendor "${attempt.vendor}" (model "${attempt.modelId}") failed for ` +
+          `"${ctx.docType}"${more ? " — falling back" : " — no remaining vendors"}`,
+        {
+          event: "context_document.condense_attempt_failed",
+          docType: ctx.docType,
+          vendor: attempt.vendor,
+          modelId: attempt.modelId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error(`context-doc condensation: all vendor attempts failed for "${ctx.docType}"`);
 }
 
 /**

@@ -238,8 +238,15 @@ describe("per-vendor model ids", () => {
 });
 
 describe("the manifest does not drift from the tree", () => {
-  it("declares exactly 33 call sites", () => {
-    expect(declaredSiteCount()).toBe(33);
+  it("declares exactly 34 call sites", () => {
+    // SCRUM-387 (33 -> 34): "intel.condense" collapsed from 2 sites
+    // (condense.ts's initial + retry pass, each calling aiFor separately) to
+    // 1 (both passes now share one routed call site in
+    // context-doc-routing.ts), and two new "caller"-tier roles
+    // ("intel.condense.complexity_escalation", "intel.condense.context_overflow")
+    // add one site each for the Opus/Gemini escalation branches — see
+    // roles.ts's own header comment.
+    expect(declaredSiteCount()).toBe(34);
   });
 
   it("names only files that exist", () => {
@@ -278,7 +285,7 @@ describe("the manifest does not drift from the tree", () => {
     const coupled = AI_ROLE_NAMES.filter((r) => (roleSpec(r).requires ?? []).length > 0);
     const sites = coupled.reduce((n, r) => n + roleSpec(r).sites.length, 0);
     expect(sites).toBe(6); // 1 measurement + 3 web_fetch + 2 web_search-only
-    expect(declaredSiteCount() - sites).toBe(27);
+    expect(declaredSiteCount() - sites).toBe(28); // SCRUM-387: 27 -> 28, see roles.ts header
   });
 
   it("has no role requiring a capability no vendor can supply", () => {

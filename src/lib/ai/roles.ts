@@ -15,10 +15,19 @@ import type { Capability, Vendor } from "./capabilities";
  * the tree, and what the coverage test asserts against, so the manifest cannot
  * drift away from the code it claims to describe.
  *
- * 33 call sites across 18 files. Three populations:
+ * 34 call sites across 18 files. Three populations:
  *   · MEASUREMENT (1)  — probes a real consumer product; vendor IS the subject
  *   · COUPLED     (5)  — generation that depends on a server-side web tool
- *   · PLAIN       (27) — generation with no vendor-specific surface
+ *   · PLAIN       (28) — generation with no vendor-specific surface
+ *
+ * SCRUM-387 added three sites to the PLAIN population (27 -> 28), all in the
+ * NEW file `src/lib/intel/context-doc-routing.ts`: "intel.condense" moved its
+ * one remaining site there from `condense.ts` (which called it twice, once
+ * per pass — the two passes now share one routed call site), and two new
+ * "caller"-tier roles, "intel.condense.complexity_escalation" and
+ * "intel.condense.context_overflow", cover the Opus/Gemini escalation
+ * branches. See that role's own comment below and context-doc-routing.ts's
+ * header for the full design.
  *
  * SCRUM-274 (T-B19) swept 10 sites off this manifest: `src/lib/intel/
  * pipeline.ts` (the hardcoded onboarding pipeline D1 killed) and `src/lib/
@@ -158,9 +167,34 @@ export const AI_ROLES = {
       "src/lib/actions/task-actions.ts:485",
     ],
   },
+  // SCRUM-387 — the baseline (standard-complexity) condensation model. The
+  // literal call site MOVED from condense.ts (which called this twice, once
+  // per pass) into context-doc-routing.ts's routeContextDocCondensation:
+  // one shared line, tried once per candidate vendor at runtime
+  // (Vertex-primary, Anthropic-fallback), reused by both of condense.ts's
+  // passes. See that file's own header for why this is not a fallback
+  // mechanism competing with the two escalation roles below.
   "intel.condense": {
     tier: "SONNET",
-    sites: ["src/lib/intel/condense.ts:72", "src/lib/intel/condense.ts:99"],
+    sites: ["src/lib/intel/context-doc-routing.ts:329"],
+  },
+  // SCRUM-387 — the complexity-driven premium escalation for a `high`-tier
+  // document (`assessContextDocComplexity`). "caller"-tier and Anthropic-only
+  // on purpose: `claude-opus-4-8` has no Vertex row in agent-engine's own
+  // verified model catalog, so there is no per-vendor id to look up here —
+  // see context-doc-routing.ts's own comment on HIGH_COMPLEXITY_MODEL.
+  "intel.condense.complexity_escalation": {
+    tier: "caller",
+    sites: ["src/lib/intel/context-doc-routing.ts:312"],
+  },
+  // SCRUM-387 — the large-context escalation for a document that would not
+  // fit Claude's context window even before considering complexity.
+  // "caller"-tier because it is the one place this call site legitimately
+  // crosses to vendor "google" (Gemini) — see context-doc-routing.ts's
+  // LARGE_CONTEXT_MODEL comment.
+  "intel.condense.context_overflow": {
+    tier: "caller",
+    sites: ["src/lib/intel/context-doc-routing.ts:293"],
   },
   "branding.extract": {
     tier: "HAIKU",
