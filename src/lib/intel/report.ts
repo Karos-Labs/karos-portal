@@ -24,6 +24,16 @@ import { aiFor, usageFor } from "@/lib/ai/provider";
 /** Provenance key used when logging feedback on intel-generated context docs. */
 export const INTEL_AGENT_ID = "intel-report-agent";
 
+/**
+ * SCRUM-274 (T-B19). How long Phase B waits for each agent-engine deliverable
+ * before giving up — see the call site below for the full rationale. 70
+ * minutes: above `seo-geo-agent`'s real 1-hour gate auto-approve (T-A20/
+ * SCRUM-273) with a 10-minute margin for poll latency and the auto-approved
+ * gate's own resume-and-finish work, without ballooning so far past the hour
+ * that "completes within the hour" stops meaning anything.
+ */
+export const ONBOARDING_DELIVERABLE_TIMEOUT_MS = 70 * 60_000;
+
 /** Minimum chars for a viable first-pass report. Below this = a swallowed upstream failure. */
 const MIN_REPORT_CHARS = 500;
 
@@ -438,8 +448,36 @@ export async function runIntelReportPipeline(
   // ground truth every downstream agent consumes, so a run that silently skips
   // them must surface as failed (onboardingStatus: "failed"), not as "done".
   // Branding stays non-fatal — it is cosmetic relative to the intel outputs.
+  //
+  // SCRUM-274 (T-B19) — the cutover. This used to call the hardcoded
+  // `runOnboardPipeline` (`./pipeline`, now deleted — D1/SCRUM-277 decision 5).
+  // It now calls `runAgentOnboardingForClient`, which dispatches the real
+  // `seo-geo-agent`/`intel-report-agent` through agent-engine, awaits both
+  // deliverables, composes the 8 context documents, and writes them through
+  // the same `replaceClientContextDocs` the old pipeline used — same
+  // collection, same shape, gated by `assertContextDocSetShape` before the
+  // write (see `agent-onboarding.ts`).
+  //
+  // `deliverableTimeoutMs` is deliberately raised above the library default
+  // (15 min, `agent-onboarding.ts`'s own `deliverableTimeoutMs ?? 15 * 60_000`).
+  // In the real, now-merged agent-engine, `seo-geo-agent`'s two human gates
+  // auto-approve after 1 hour of no human response (T-A20/SCRUM-273 —
+  // `timeout: { duration: "1h", onTimeout: "auto_approve" }` in
+  // create-seo-geo-agent-workflow.ts, enforced by `runStepGate` in
+  // step-gate.ts). Fifteen minutes is shorter than that hour, so wiring the
+  // default as-is would fail an unattended run before the auto-approve ever
+  // fires. `ONBOARDING_DELIVERABLE_TIMEOUT_MS` sits safely above the 1-hour
+  // mark without being so generous it defeats "completes within the hour" —
+  // see this ticket's report for the exact value chosen and why, and for the
+  // real, unresolved cross-repo gap this does NOT close (intel-report-agent's
+  // own gate has no such auto-approve, and a fresh onboarding client's first
+  // run structurally can't reach the SEO/GEO gates gracefully either — see
+  // the report's "intel-report-agent gate gap" and "T-A9/T-A10 grounding"
+  // sections).
   const [onboardResult] = await Promise.allSettled([
-    import("./pipeline").then(({ runOnboardPipeline }) => runOnboardPipeline(clientId, runSpecificContext)),
+    import("./agent-onboarding").then(({ runAgentOnboardingForClient }) =>
+      runAgentOnboardingForClient(clientId, { deliverableTimeoutMs: ONBOARDING_DELIVERABLE_TIMEOUT_MS }),
+    ),
     applyBrandingForClient(clientId, client)
       .then((r) => {
         console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryAccent ?? "no color"}`);

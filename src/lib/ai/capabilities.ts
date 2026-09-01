@@ -7,14 +7,14 @@
  * it has to be trivially testable.
  *
  * ── Why this exists ──────────────────────────────────────────────────────────
- * Nine of this repo's model call sites depend on Anthropic's SERVER-SIDE web
- * tools. Those are not model behaviour, they are a vendor feature, and the
- * vendors do not agree on which ones exist. A model swap that silently drops
- * `web_fetch` does not throw — the model simply answers from its weights. For
- * `intel/seo-geo.ts`, whose system prompt says "You measure, you never guess:
- * every check verdict cites what you actually observed this run", that is worse
- * than an outage: the audit keeps producing CONFIRMED verdicts having lost the
- * faculty that let it confirm anything.
+ * Several of this repo's model call sites depend on Anthropic's SERVER-SIDE
+ * web tools (see `roles.ts`'s COUPLED population). Those are not model
+ * behaviour, they are a vendor feature, and the vendors do not agree on which
+ * ones exist. A model swap that silently drops `web_fetch` does not throw —
+ * the model simply answers from its weights. For a live-research call site
+ * whose prompt instructs it to report only what it fetched this run, that is
+ * worse than an outage: the call keeps producing confident-looking output
+ * having lost the faculty that made it trustworthy.
  *
  * So capability is declared, not assumed, and a mismatch fails at WIRING time.
  */

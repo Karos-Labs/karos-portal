@@ -3,23 +3,34 @@ import type { Client } from "@/lib/types";
 import { dispatchAgentEngineRun, type DispatchAgentEngineRunResult } from "./dispatch";
 
 /**
- * Task 1's "independent, observable steps" — dispatches `seo-geo-agent`/
- * `intel-report-agent` through agent-engine's Pub/Sub topic whenever
- * onboarding runs (`src/lib/intel/pipeline.ts`'s `runOnboardPipeline`),
- * alongside (never instead of) the existing rich in-process SEO/GEO and
- * Intel Report pipelines. Deliberately NOT wired to write into
- * `upsertClientSeoGeo`/`upsertClientReport`: agent-engine's `seo-geo-agent`
- * and `intel-report-agent` currently produce a structurally different
- * output (no citation leaderboards, per-engine visibility, roster, etc.) —
- * see this task's own scoping note. Each dispatch is its own real `jobs`
- * doc, visible in the Jobs list independent of whatever the in-process
- * pipeline is doing, which is what makes it "observable" rather than a
- * side effect buried inside another function's log lines.
+ * Originally Task 1's "independent, observable steps" (T-B17/SCRUM-270):
+ * dispatches `seo-geo-agent`/`intel-report-agent` through agent-engine's
+ * Pub/Sub topic. Each dispatch is its own real `jobs` doc, visible in the
+ * Jobs list independent of anything else onboarding is doing.
  *
- * Best-effort: a dispatch failure here (Pub/Sub misconfigured, agent-engine
- * down) is logged as its own failed `jobs` doc but never thrown — it must
- * never block or fail the real onboarding pipeline that already produces
- * the client's actual SEO/GEO/report data.
+ * SCRUM-274 (T-B19) — the cutover — changes what calling this function
+ * MEANS, not its own body. Before the cutover, `runOnboardPipeline` called
+ * this best-effort and fire-and-forget, purely for observability, alongside
+ * (never instead of) its own hardcoded, in-process document generation — a
+ * dispatch failure here was logged and swallowed, never blocking the real
+ * pipeline. `runOnboardPipeline` is gone now (see `src/lib/intel/
+ * agent-onboarding.ts` and this ticket's report). The one remaining caller
+ * is `runAgentOnboardingForClient` (`agent-onboarding.ts`), which calls this
+ * SYNCHRONOUSLY, AWAITS both dispatches, and is fatal on failure — these two
+ * agent-engine runs are now the sole producers of the client's context
+ * documents, not an observability side-channel next to a "real" pipeline
+ * that no longer exists.
+ *
+ * One consequence worth being explicit about: `isAgentEngineDispatchEnabled()`
+ * (`./dispatch.ts`) no longer gates this call anywhere on the onboarding
+ * path — `runAgentOnboarding` calls `dispatchResearchAgents` unconditionally.
+ * That flag's own doc comment describes it as "the one flag that turns on
+ * agent-engine dispatch anywhere in this repo," which was true when this
+ * function's only caller was the old fire-and-forget onboarding-observability
+ * path; it is no longer true post-cutover. See this ticket's report for the
+ * operational consequence (a client/environment without agent-engine
+ * configured now fails onboarding outright, rather than silently degrading
+ * to the deleted hardcoded pipeline).
  */
 export async function dispatchOnboardingResearchAgents(client: Pick<Client, "id" | "name" | "agentsRepoSlug">): Promise<{
   seoGeo: DispatchAgentEngineRunResult | { skipped: true; reason: string };

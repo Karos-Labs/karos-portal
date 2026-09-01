@@ -2,13 +2,13 @@ import "server-only";
 
 export { INTEL_AGENT_ID, runIntelReportPipeline } from "./report";
 export { DEFAULT_INTEL_PROMPT, RESEARCH_ENGINE_RULES, METRICS_RULES, CONDENSATION_RULES } from "./brain";
-export { TEMPLATES } from "./templates";
-export { runOnboardPipeline, applyDocCorrections } from "./pipeline";
-// SCRUM-272 (T-B20) — the post-cutover producer of the context documents,
-// built on the real agent-engine Intel Report and SEO/GEO agents per D1
-// (SCRUM-277, decision 5 of the 2026-08-28 record). It is not yet on the
-// onboarding path: flipping `runOnboardPipeline` over to it is the cutover,
-// T-B19 / SCRUM-274, which this ticket blocks.
+export { applyDocCorrections } from "./doc-corrections";
+// SCRUM-274 (T-B19) — the cutover. `runOnboardPipeline` (the hardcoded
+// onboarding pipeline D1 killed, `src/lib/intel/pipeline.ts`) is deleted, not
+// merely bypassed — see this ticket's report for the file-by-file account.
+// `runAgentOnboardingForClient` below (T-B20/SCRUM-272) is now the only
+// producer of the context documents; Phase B of `runIntelReportPipeline`
+// (report.ts) calls it directly, not through this barrel.
 export {
   runAgentOnboarding,
   runAgentOnboardingForClient,
@@ -23,7 +23,5 @@ export {
   SEO_GEO_DELIVERABLE_KIND,
 } from "./agent-onboarding";
 export type { StoredContextDoc, OnboardingDocType, AgentOnboardingDeps } from "./agent-onboarding";
-export { runSeoGeoResearch } from "./seo-geo";
-export type { SeoGeoResearch } from "./seo-geo";
 export { refreshClientCondensedDocs, condenseDocs } from "./condense";
 export type { CondensedDoc } from "./condense";
