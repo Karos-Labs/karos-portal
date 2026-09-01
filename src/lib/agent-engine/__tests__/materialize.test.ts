@@ -1,18 +1,48 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { createAssetMock, updateJobMock, getDeliverableMock, generateTitleMock, reflowMock, uploadBytesMock } = vi.hoisted(() => ({
+const {
+  createAssetMock,
+  updateJobMock,
+  getDeliverableMock,
+  generateTitleMock,
+  reflowMock,
+  uploadBytesMock,
+  getClientMock,
+  listClientCompetitorsMock,
+  upsertClientSeoGeoMock,
+  readAgentEngineRunMock,
+} = vi.hoisted(() => ({
   createAssetMock: vi.fn(),
   updateJobMock: vi.fn(),
   getDeliverableMock: vi.fn(),
   generateTitleMock: vi.fn(),
   reflowMock: vi.fn(),
   uploadBytesMock: vi.fn(),
+  getClientMock: vi.fn(),
+  listClientCompetitorsMock: vi.fn(),
+  upsertClientSeoGeoMock: vi.fn(),
+  readAgentEngineRunMock: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/data", () => ({ createAsset: createAssetMock, updateJob: updateJobMock }));
+vi.mock("@/lib/data", () => ({
+  createAsset: createAssetMock,
+  updateJob: updateJobMock,
+  // [T-B16/SCRUM-271] persist-seo-geo-insights.ts's own dependencies — a
+  // seo-geo-agent materialization now also builds and persists `clientSeoGeo`;
+  // see the "T-B16: persisting clientSeoGeo" describe block below for the
+  // tests that exercise this directly. Every other product's tests never
+  // touch these three.
+  getClient: getClientMock,
+  listClientCompetitors: listClientCompetitorsMock,
+  upsertClientSeoGeo: upsertClientSeoGeoMock,
+}));
 vi.mock("@/lib/storage", () => ({ uploadBytes: uploadBytesMock }));
 vi.mock("@/lib/chain", () => ({ reflowClientChain: reflowMock }));
+vi.mock("../read-run", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../read-run")>()),
+  readAgentEngineRun: readAgentEngineRunMock,
+}));
 // The titler is a live Haiku call in production. Mocked to null by default so
 // every assertion below reads the DETERMINISTIC field-derived title — which is
 // also the fallback the real path uses whenever that call fails, so this is the
@@ -32,6 +62,7 @@ import { parseXDrafts } from "@/lib/x-drafts";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { parseRedditDrafts } from "@/lib/reddit-drafts";
 import type { Asset, Job } from "@/lib/types";
+import type { SeoGeoInsights } from "@/lib/seo-geo";
 
 function job(productId: string, overrides: Partial<Job> = {}): Job {
   return {
@@ -71,6 +102,13 @@ beforeEach(() => {
   generateTitleMock.mockReset().mockResolvedValue(null);
   reflowMock.mockReset().mockResolvedValue(undefined);
   uploadBytesMock.mockReset().mockResolvedValue({ url: "https://karos.example/rehosted.png" });
+  // Defaults every non-seo-geo product's tests never touch: a resolvable
+  // client, no tracked competitors, no run steps (no visibility cells), and a
+  // no-op persist. The seo-geo-specific tests below override these per case.
+  getClientMock.mockReset().mockResolvedValue({ id: "client_1", name: "Acme Fintech", website: "acme.example" });
+  listClientCompetitorsMock.mockReset().mockResolvedValue([]);
+  upsertClientSeoGeoMock.mockReset().mockResolvedValue(undefined);
+  readAgentEngineRunMock.mockReset().mockResolvedValue(undefined);
 });
 
 /**
@@ -455,6 +493,124 @@ describe("the report and bundle products render to something a reviewer can read
       const asset = createdAsset();
       expect(asset.content).not.toContain("Owner mix");
       expect(asset.meta?.routableRecommendations).toEqual([]);
+    });
+  });
+
+  /**
+   * [T-B16/SCRUM-271] The second half of "note only" -> "full rendering":
+   * a seo-geo-agent materialization now also builds and persists
+   * `clientSeoGeo` (via `persist-seo-geo-insights.ts` ->
+   * `seo-geo-insights-mapping.ts`), which is what the client-facing SEO/GEO
+   * analytics view actually reads (`getClientSeoGeo`) — the note asset above
+   * was never that surface. These tests exercise the real wiring, the same
+   * discipline the C2 block above states for `routableRecommendations`.
+   */
+  describe("T-B16/SCRUM-271: persisting clientSeoGeo alongside the note asset", () => {
+    function stepsWithCells(cells: unknown[]) {
+      return {
+        run: {
+          runId: "pubsub-1",
+          clientSlug: "acme",
+          productId: "seo-geo-agent",
+          runKind: "recurring" as const,
+          status: "completed" as const,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        steps: [
+          {
+            stepId: "08-assemble-visibility-cells",
+            kind: "code" as const,
+            status: "completed" as const,
+            startedAt: 0,
+            output: { cells },
+          },
+        ],
+      };
+    }
+
+    it("acceptance: an AIO-absent Gemini cell renders a different answer-grid state than a plain brand-absent cell, end to end", async () => {
+      readAgentEngineRunMock.mockResolvedValue(
+        stepsWithCells([
+          // Gemini genuinely had no AI Overview render for p1 — distinct from p2,
+          // where an AIO rendered and simply never named the brand.
+          { promptId: "p1", engine: "gemini", captureTier: "MEASURED_grounded", brandMentioned: false, brandCited: false, aioAbsent: true },
+          { promptId: "p2", engine: "gemini", captureTier: "MEASURED_grounded", brandMentioned: false, brandCited: false, aioAbsent: false },
+        ]),
+      );
+
+      await materialize("seo-geo-agent", {
+        seoScore: { score: 61, dataCoveragePct: 80, inputs: [] },
+        geoReadiness: { score: 44, dataCoveragePct: 70, inputs: [] },
+        narrative: "n",
+        firedRecommendations: [],
+        promptSet: {
+          prompts: [
+            { promptId: "p1", promptText: "best fintech apps", intentType: "discovery" },
+            { promptId: "p2", promptText: "top rated fintech providers", intentType: "discovery" },
+          ],
+        },
+      });
+
+      expect(upsertClientSeoGeoMock).toHaveBeenCalledTimes(1);
+      const insights = upsertClientSeoGeoMock.mock.calls[0]![0] as SeoGeoInsights;
+      const aioAbsentCell = insights.answerGrid
+        .find((r) => r.prompt === "best fintech apps")
+        ?.cells.find((c) => c.engine === "gemini");
+      const plainAbsentCell = insights.answerGrid
+        .find((r) => r.prompt === "top rated fintech providers")
+        ?.cells.find((c) => c.engine === "gemini");
+      expect(aioAbsentCell?.state).toBe("aio_absent");
+      expect(plainAbsentCell?.state).toBe("absent");
+      expect(aioAbsentCell?.state).not.toBe(plainAbsentCell?.state);
+    });
+
+    it("real per-engine data (chatgpt, perplexity, gemini, claude, copilot) maps onto the widened 5-engine EngineId, not just the old 3", async () => {
+      readAgentEngineRunMock.mockResolvedValue(
+        stepsWithCells([
+          { promptId: "p1", engine: "perplexity", captureTier: "MEASURED", brandMentioned: true, brandFirstMentionCharOffset: 0, brandCited: false },
+          { promptId: "p1", engine: "copilot", captureTier: "MEASURED", brandMentioned: false, brandCited: false },
+        ]),
+      );
+      await materialize("seo-geo-agent", {
+        seoScore: { score: 50, dataCoveragePct: 50 },
+        geoReadiness: { score: 50, dataCoveragePct: 50 },
+        narrative: "n",
+        promptSet: { prompts: [{ promptId: "p1", promptText: "best fintech apps", intentType: "discovery" }] },
+      });
+      const insights = upsertClientSeoGeoMock.mock.calls[0]![0] as SeoGeoInsights;
+      const perplexity = insights.perEngine.find((e) => e.engine === "perplexity");
+      const copilot = insights.perEngine.find((e) => e.engine === "copilot");
+      expect(perplexity?.captureTier).toBe("MEASURED");
+      expect(perplexity?.promptsMeasured).toBe(1);
+      expect(copilot?.captureTier).toBe("MEASURED");
+    });
+
+    it("never blocks the job when the client record can't be read", async () => {
+      getClientMock.mockResolvedValue(null);
+      await materialize("seo-geo-agent", { narrative: "n" });
+      expect(createdAsset().type).toBe("note"); // the note asset still lands
+      expect(upsertClientSeoGeoMock).not.toHaveBeenCalled();
+    });
+
+    it("degrades honestly (no crash, zero engines scored) when the run's step 08 output can't be read", async () => {
+      readAgentEngineRunMock.mockResolvedValue(undefined);
+      await materialize("seo-geo-agent", {
+        seoScore: { score: 61, dataCoveragePct: 80 },
+        geoReadiness: { score: 44, dataCoveragePct: 70 },
+        narrative: "n",
+      });
+      expect(upsertClientSeoGeoMock).toHaveBeenCalledTimes(1);
+      const insights = upsertClientSeoGeoMock.mock.calls[0]![0] as SeoGeoInsights;
+      expect(insights.seoScore).toBe(61);
+      expect(insights.geoReadiness).toBe(44);
+      expect(insights.perEngine.every((e) => e.captureTier === "UNAVAILABLE")).toBe(true);
+      expect(insights.answerGrid).toEqual([]);
+    });
+
+    it("does not persist clientSeoGeo for any other product", async () => {
+      await materialize("x-agent", { text: "hello" });
+      expect(upsertClientSeoGeoMock).not.toHaveBeenCalled();
     });
   });
 
