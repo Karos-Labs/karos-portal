@@ -18,10 +18,15 @@ export interface ResolveAgentEngineGateOptions {
    */
   templateFeedback?: AgentEngineTemplateFeedback[];
   /**
-   * In-place edits the reviewer made before approving — applied verbatim by
-   * the engine (re-rendered, delivered, and learned from). Only sent with an
-   * `approve`: a redraft supersedes hand edits, so the UI drops them on
-   * revise/reject and this action enforces the same.
+   * In-place edits the reviewer made before deciding — applied verbatim by
+   * the engine (re-rendered, delivered, and learned from).
+   *
+   * `caption`/`slides` are only sent with an `approve`: a redraft supersedes
+   * hand edits, so this action drops them on `revise`/`reject` regardless of
+   * what the UI included. `style` (IGSTYLE-6) is the exception — see
+   * `AgentEngineStyleEdit`'s own doc comment for why a colour pick is
+   * meaningful on `revise` too — so this action forwards it on BOTH
+   * `approve` and `revise`, still never on `reject`.
    */
   edits?: AgentEngineReviewEdits;
 }
@@ -59,7 +64,15 @@ export async function resolveAgentEngineGateAction(
   if (decision === "reject" && !notes?.trim()) {
     return { error: "A rejection needs a reason." };
   }
-  const hasEdits = edits !== undefined && (edits.caption !== undefined || (edits.slides?.length ?? 0) > 0);
+  const hasTextEdits = edits !== undefined && (edits.caption !== undefined || (edits.slides?.length ?? 0) > 0);
+  // IGSTYLE-6, §2.5 point 3 — the split this whole ticket exists to fix: a
+  // style pick is meaningful on `revise` as much as `approve` (it is the
+  // instruction a redraft must not discard), while `caption`/`slides` stay
+  // approve-only (a redraft supersedes hand-edited prose). Widened in
+  // lockstep with the UI change that lets the Design block submit on
+  // `revise` at all — one without the other and the pick is silently
+  // dropped here, which is exactly the bug this ticket is closing.
+  const hasStyleEdits = edits?.style !== undefined && Object.keys(edits.style).length > 0;
 
   try {
     await resolveAgentEngineGate(job.agentEngineRunId, gateId, {
@@ -71,7 +84,10 @@ export async function resolveAgentEngineGateAction(
       // arrive as a rejection `reason` and steer nothing.
       ...(notes ? { feedback: notes } : {}),
       ...(templateFeedback && templateFeedback.length > 0 ? { templateFeedback } : {}),
-      ...(hasEdits && decision === "approve" ? { edits } : {}),
+      ...((hasTextEdits || hasStyleEdits) && decision === "approve" ? { edits } : {}),
+      // On `revise`, only the style pick ships — never caption/slides, even
+      // if the caller (a stale client, or a bug elsewhere) included them.
+      ...(hasStyleEdits && decision === "revise" ? { edits: { style: edits!.style } } : {}),
     });
   } catch (e) {
     // SCRUM-330: the gate resolution never left this process — the portal could
