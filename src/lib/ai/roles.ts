@@ -101,7 +101,9 @@ export const AI_ROLES = {
   "branding.fetch_site": {
     tier: "HAIKU",
     requires: ["web_fetch"],
-    sites: ["src/lib/branding.ts:346"],
+    // Re-pinned from :346 — SCRUM-394 (IGSTYLE-9) inserted the role-based
+    // palette resolver earlier in branding.ts, shifting every later line down.
+    sites: ["src/lib/branding.ts:507"],
   },
 
   /* ── COUPLED · web_search only · 2 sites ─────────────────────────────────
@@ -116,7 +118,8 @@ export const AI_ROLES = {
   "branding.search_brand": {
     tier: "HAIKU",
     requires: ["web_search"],
-    sites: ["src/lib/branding.ts:386"],
+    // Re-pinned from :386 — see branding.fetch_site's own comment above.
+    sites: ["src/lib/branding.ts:547"],
   },
 
   /* ── PLAIN · no vendor-specific surface · 27 sites ───────────────────────
@@ -198,7 +201,10 @@ export const AI_ROLES = {
   },
   "branding.extract": {
     tier: "HAIKU",
-    sites: ["src/lib/branding.ts:736", "src/lib/branding.ts:751"],
+    // SCRUM-394 (IGSTYLE-9) inserted the role-based palette resolver above
+    // this call in branding.ts, shifting these two line numbers down from
+    // 736/751 — re-pinned against the real file, not carried over stale.
+    sites: ["src/lib/branding.ts:897", "src/lib/branding.ts:912"],
   },
   "execution.sonnet": { tier: "SONNET", sites: ["src/lib/execution-engine.ts:36"] },
   "execution.haiku": { tier: "HAIKU", sites: ["src/lib/execution-engine.ts:37"] },

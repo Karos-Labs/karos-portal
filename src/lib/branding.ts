@@ -48,23 +48,184 @@ export function effectiveDominantColors(g: BrandingGuidelines): BrandColor[] {
   return colors;
 }
 
-/** Returns the effective primary accent — new field first, legacy fallback. */
+/* ─────────────────────────────────────────────────────────────────────────
+   Role-based palette resolution (SCRUM-394 / IGSTYLE-9)
+
+   THE BUG. `dominantColors` is ordered strictly by VISUAL DOMINANCE
+   (`BrandingAISchema`'s own words: "No dark/light constraints — Colors 3
+   and 4 are simply the 3rd and 4th most dominant, whatever they are").
+   Every accessor below used to read that array POSITIONALLY —
+   `dominantColors[0]` as "the" primary accent, `[2]`/`[3]` as the two
+   neutrals — as if dominance rank and semantic role were the same axis.
+   They are not: a brand's most dominant color is usually its page ground,
+   not its accent. `dominantColors[].role` is free text the AI extraction
+   already writes, correctly, per color ("Page ground across the
+   storefront", "Primary CTA and interactive accent") — only the reader was
+   wrong. See TASK-INSTAGRAM-FEEDBACK-LOOP-AND-MEMORY.md's IGSTYLE-9 for
+   the four real clients this scrambled and the full account.
+
+   THE FIX. Classify each color's ROLE TEXT against two keyword sets, never
+   its array position:
+     - ground/surface/canvas/background, or ink/type/body/wordmark/heading
+       → neutral (page/text substrate — "ink" only classifies a COLOR's
+       role, e.g. "Ink — body copy", never a role string with an unrelated
+       meaning; a role field is always describing what a color IS FOR, so
+       this is unambiguous in practice).
+     - accent/CTA/highlight/badge/signature → accent (the color the brand
+       acts with).
+   `dominantColors` itself is NEVER re-sorted — it is correct, dominance-
+   ordered data; only how its entries are grouped into "accent" vs.
+   "neutral" changes. Within each group, still no invented data: multiple
+   accent-classified colors keep their existing dominance order (whichever
+   came first in the dominance-ordered array is `primaryAccent`); the two
+   neutral slots are told apart by MEASURED LUMINANCE, never role text or
+   position — a brand can legitimately call both of its neutrals "surface".
+
+   THE FALLBACK. When NO color's role text classifies at all (a legacy
+   record with bare hexes and no `role` field, or role text this
+   vocabulary doesn't recognize), every accessor falls back to exactly
+   today's positional behavior — `resolveDominantColorsByRole` returns
+   `resolvedByRole: false` and callers use the old `[0]`/`[1]`/`[2]`/`[3]`
+   reads unchanged. A record whose roles ALL classify as neutral yields NO
+   accent, deliberately (refuse-to-guess, the same posture
+   `deriveBrandRenderTokens` takes in agent-engine) — it does not fall back
+   to the positional reading just because one bucket came up empty.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/** The three outcomes a `dominantColors[].role` string can classify as. */
+export type ColorRoleClassification = "accent" | "neutral" | "unclassified";
+
+/** Checked first: role text naming what the brand ACTS with. */
+const ACCENT_ROLE_KEYWORDS = ["accent", "cta", "highlight", "badge", "signature"];
+/** Checked second: role text naming the page/text substrate. */
+const NEUTRAL_ROLE_KEYWORDS = ["ground", "surface", "canvas", "background", "ink", "type", "body", "wordmark", "heading"];
+
+/**
+ * Classifies one `BrandColor.role` string. Case-insensitive substring match
+ * against the two keyword lists above — deliberately not a strict word-
+ * boundary regex, since role text like "badges" or "highlights" (plural)
+ * should still match "badge"/"highlight".
+ *
+ * Accent keywords are checked before neutral ones: in practice a role
+ * string describing an accent color ("Primary CTA and interactive accent")
+ * never also contains a neutral keyword, but if a future role string ever
+ * did, "this is the color the brand acts with" is the more specific,
+ * higher-value signal to keep.
+ */
+export function classifyColorRole(role: string | undefined): ColorRoleClassification {
+  if (!role) return "unclassified";
+  const lower = role.toLowerCase();
+  if (ACCENT_ROLE_KEYWORDS.some((kw) => lower.includes(kw))) return "accent";
+  if (NEUTRAL_ROLE_KEYWORDS.some((kw) => lower.includes(kw))) return "neutral";
+  return "unclassified";
+}
+
+/**
+ * WCAG relative luminance, 0 (black) – 1 (white). The ONLY thing used to
+ * decide which of two neutral-classified colors is "dark" and which is
+ * "light" — never role text (a brand can call both "surface") and never
+ * array position (dominance order says nothing about lightness).
+ */
+function relativeLuminance(hex: string): number {
+  const normalized = normalizeHex(hex);
+  if (!normalized) return 0;
+  const channel = (c: number): number => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const r = parseInt(normalized.slice(1, 3), 16);
+  const g = parseInt(normalized.slice(3, 5), 16);
+  const b = parseInt(normalized.slice(5, 7), 16);
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+export interface RoleResolvedPalette {
+  primaryAccent?: string;
+  secondaryAccent?: string;
+  brandNeutralDark?: string;
+  brandNeutralLight?: string;
+  /**
+   * False means NOTHING in `dominantColors` classified — every field above
+   * is left undefined and the caller must use the positional fallback
+   * instead. True means at least one color classified, and every field
+   * above (including an undefined accent, when nothing classified as
+   * accent) is this function's real, final answer — never partially
+   * combined with a positional read.
+   */
+  resolvedByRole: boolean;
+}
+
+/**
+ * Groups a client's `dominantColors` by ROLE, not array position. See this
+ * module's own section header above for the full rationale.
+ */
+export function resolveDominantColorsByRole(colors: readonly BrandColor[]): RoleResolvedPalette {
+  const classified = colors.map((color) => ({ color, classification: classifyColorRole(color.role) }));
+  if (!classified.some((c) => c.classification !== "unclassified")) {
+    return { resolvedByRole: false };
+  }
+
+  // Dominance order preserved — filtering, never re-sorting `colors` itself.
+  const accents = classified.filter((c) => c.classification === "accent").map((c) => c.color);
+  const neutrals = classified.filter((c) => c.classification === "neutral").map((c) => c.color);
+
+  let brandNeutralDark: string | undefined;
+  let brandNeutralLight: string | undefined;
+  if (neutrals.length >= 2) {
+    const byLuminance = [...neutrals].sort((a, b) => relativeLuminance(a.hex) - relativeLuminance(b.hex));
+    brandNeutralDark = byLuminance[0]?.hex;
+    brandNeutralLight = byLuminance[byLuminance.length - 1]?.hex;
+  } else if (neutrals.length === 1) {
+    // Only one neutral-classified color — still measured, not defaulted to
+    // always-dark: whichever side of the midpoint it falls on decides which
+    // field it fills. The OTHER field stays undefined rather than inventing
+    // a second neutral that isn't in the palette.
+    const only = neutrals[0]!;
+    if (relativeLuminance(only.hex) < 0.5) brandNeutralDark = only.hex;
+    else brandNeutralLight = only.hex;
+  }
+
+  return {
+    primaryAccent: accents[0]?.hex,
+    secondaryAccent: accents[1]?.hex,
+    brandNeutralDark,
+    brandNeutralLight,
+    resolvedByRole: true,
+  };
+}
+
+/** `resolveDominantColorsByRole`'s result, or `undefined` when it should not be trusted (no colors, or none classified). */
+function roleResolvedPalette(g: BrandingGuidelines): RoleResolvedPalette | undefined {
+  if (!g.dominantColors?.length) return undefined;
+  const resolved = resolveDominantColorsByRole(g.dominantColors);
+  return resolved.resolvedByRole ? resolved : undefined;
+}
+
+/** Returns the effective primary accent — role-resolved first, positional/legacy fallback. */
 export function effectivePrimaryAccent(g: BrandingGuidelines): string | undefined {
+  const byRole = roleResolvedPalette(g);
+  if (byRole) return byRole.primaryAccent;
   return g.dominantColors?.[0]?.hex ?? g.primaryAccent ?? g.primaryColor;
 }
 
-/** Returns the effective secondary accent — new field first, legacy fallback. */
+/** Returns the effective secondary accent — role-resolved first, positional/legacy fallback. */
 export function effectiveSecondaryAccent(g: BrandingGuidelines): string | undefined {
+  const byRole = roleResolvedPalette(g);
+  if (byRole) return byRole.secondaryAccent;
   return g.dominantColors?.[1]?.hex ?? g.secondaryAccent ?? g.secondaryColor;
 }
 
-/** Returns the effective neutral dark — new field first, legacy fallbacks. */
+/** Returns the effective neutral dark — role-resolved (by luminance) first, positional/legacy fallback. */
 export function effectiveNeutralDark(g: BrandingGuidelines): string | undefined {
+  const byRole = roleResolvedPalette(g);
+  if (byRole) return byRole.brandNeutralDark;
   return g.dominantColors?.[2]?.hex ?? g.brandNeutralDark ?? g.uiBackground ?? g.uiText;
 }
 
-/** Returns the effective neutral light — new field first, legacy fallback. */
+/** Returns the effective neutral light — role-resolved (by luminance) first, positional/legacy fallback. */
 export function effectiveNeutralLight(g: BrandingGuidelines): string | undefined {
+  const byRole = roleResolvedPalette(g);
+  if (byRole) return byRole.brandNeutralLight;
   return g.dominantColors?.[3]?.hex ?? g.brandNeutralLight ?? g.uiText ?? g.uiBackground;
 }
 
@@ -776,13 +937,30 @@ export async function applyBrandingForClient(
 
   const now = Date.now();
 
+  // SCRUM-394 (IGSTYLE-9): mirror into the legacy scalar fields via the SAME
+  // role-based resolver `effectivePrimaryAccent`/etc. use for reads — not by
+  // array position. A freshly-generated record is role-correct from the
+  // moment it's written, not only when later read through the accessors.
+  // Falls back to the old positional mirror only when the model returned no
+  // classifiable role text at all (see `resolveDominantColorsByRole`'s own
+  // doc comment for why that fallback exists and when it fires).
+  const roleResolved = resolveDominantColorsByRole(dominantColors);
+  const legacyScalars = roleResolved.resolvedByRole
+    ? roleResolved
+    : {
+        primaryAccent: dominantColors[0]?.hex,
+        secondaryAccent: dominantColors[1]?.hex,
+        brandNeutralDark: dominantColors[2]?.hex,
+        brandNeutralLight: dominantColors[3]?.hex,
+      };
+
   const fullGuidelines: BrandingGuidelines = {
     dominantColors,
     // Mirror into legacy scalar fields for callers that haven't migrated yet
-    primaryAccent: dominantColors[0]?.hex,
-    secondaryAccent: dominantColors[1]?.hex,
-    brandNeutralDark: dominantColors[2]?.hex,
-    brandNeutralLight: dominantColors[3]?.hex,
+    primaryAccent: legacyScalars.primaryAccent,
+    secondaryAccent: legacyScalars.secondaryAccent,
+    brandNeutralDark: legacyScalars.brandNeutralDark,
+    brandNeutralLight: legacyScalars.brandNeutralLight,
     fontHeading: object.fontHeading,
     fontBody: object.fontBody,
     visualStyle: object.visualStyle,
