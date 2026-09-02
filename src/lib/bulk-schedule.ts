@@ -57,12 +57,30 @@ export interface OccupiedDay {
  * put two clips and a post on one day while an unpaced one keeps the single slot
  * a day it has always had: with no pace, the ledger drops the lane from its key
  * and any dated post fills the day for clips too.
+ *
+ * ── THE PLATFORM CAN NOW DIFFER PER ID (2026-09) ─────────────────────────
+ *
+ * `opts.platform` was one value for the whole batch, which was true while the
+ * uploader accepted video only and booked every file to TikTok. It accepts
+ * images now, and those register against Instagram, so a batch is genuinely
+ * mixed — and `chainAllowsDay` is a PER-PLATFORM question (which weekdays that
+ * platform posts on). One value for a mixed batch would have skipped the wrong
+ * days for half of it.
+ *
+ * `platformById` overrides `opts.platform` for the ids it names and is optional,
+ * so a caller with a uniform batch passes nothing and gets exactly today's
+ * walk. THE LANE IS STILL "clip" for every id: the pace lanes are a product
+ * decision about how much a client posts per day, not a media-type
+ * classification, and quietly giving images their own lane here would change
+ * how much content a paced client receives.
  */
 export function planBulkSchedule(
   ids: string[],
   opts: {
     startDayMs: number;
     platform?: string;
+    /** Per-id platform, overriding `platform` where present. */
+    platformById?: Readonly<Record<string, string | undefined>>;
     /** The client's resolved pace. Absent ⇒ one item a day, as before. */
     pace?: ResolvedPace;
     /** This client's other already-scheduled social content, by day and lane. */
@@ -77,9 +95,10 @@ export function planBulkSchedule(
   const assignments: BulkScheduleAssignment[] = [];
 
   for (const id of ids) {
+    const platform = opts.platformById?.[id] ?? opts.platform;
     while (
       ledger.isFull("clip", cursor) ||
-      !chainAllowsDay("social_post", opts.platform, new Date(cursor).getDay())
+      !chainAllowsDay("social_post", platform, new Date(cursor).getDay())
     ) {
       cursor = nextDayStart(cursor);
     }

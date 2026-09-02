@@ -4,6 +4,9 @@ import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { assetsInClientState } from "@/lib/client-state-domain";
+// One spelling of the deep link, shared with the KPI card that writes the same
+// one - see the module's own note for the staff/client split and the null case.
+import { contentStatusHref } from "@/lib/content-status-links";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
@@ -202,7 +205,15 @@ export function ClientAnalytics({
       <div className="grid gap-6 @4xl:grid-cols-2">
         {/* Content by status */}
         <Card>
-          <CardTitle className="mb-4">Content by status</CardTitle>
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <CardTitle className="flex min-w-0 items-center gap-2">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+                <Icon name="ChartColumn" className="h-3.5 w-3.5 text-neon" />
+              </span>
+              <span className="min-w-0 truncate">Content by status</span>
+            </CardTitle>
+            <span className="shrink-0 font-mono text-xs text-muted-2">{charted.length} total</span>
+          </div>
           {statusRows.length === 0 ? (
             <EmptyState
               icon={<Icon name="FolderOpen" className="h-6 w-6" />}
@@ -210,23 +221,50 @@ export function ClientAnalytics({
               description="Deliverables produced by your agents will be summarized here."
             />
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-1.5">
               {statusRows.map(([status, count]) => {
                 const color = STATUS_COLOR[status as Asset["status"]] ?? UNKNOWN_STATUS_COLOR;
-                return (
-                  <li key={status}>
-                    <div className="mb-1 flex items-center justify-between text-xs">
-                      <span className="font-medium text-foreground">
+                const href = contentStatusHref(status, clientId, viewerIsClient);
+                const body = (
+                  <>
+                    <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate font-medium text-foreground">
                         {assetStatusLabel(status, viewerIsClient)}
                       </span>
-                      <span className="text-muted-2">{count}</span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        <span className="font-mono text-sm font-semibold text-foreground">
+                          {count}
+                        </span>
+                        {href && (
+                          <Icon
+                            name="ArrowRight"
+                            className="h-3 w-3 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
+                          />
+                        )}
+                      </span>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-sm bg-surface-2">
+                    <div className="h-2.5 overflow-hidden rounded-sm bg-surface-2">
                       <div
                         className="h-full rounded-sm"
                         style={{ width: `${(count / maxCount) * 100}%`, background: color }}
                       />
                     </div>
+                  </>
+                );
+                // A bar with nowhere to go stays a bar. Only the linked ones get
+                // the group-hover arrow and the pointer.
+                return (
+                  <li key={status}>
+                    {href ? (
+                      <Link
+                        href={href}
+                        className="group block rounded-md border border-transparent px-2 py-1.5 transition-colors hover:border-neon/30 hover:bg-surface-2"
+                      >
+                        {body}
+                      </Link>
+                    ) : (
+                      <div className="px-2 py-1.5">{body}</div>
+                    )}
                   </li>
                 );
               })}

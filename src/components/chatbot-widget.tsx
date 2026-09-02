@@ -1365,53 +1365,68 @@ export function ChatbotWidget({
                   ))}
               </div>
             )}
-            {/* T-B5: real upload surface, not the run dialog's raw-JSON
-                textarea - reuses the same signed-URL upload RunAttachments
-                already does for the admin agent card, so a chat attachment
-                is a real `gs://` MediaAsset the moment the file finishes
-                uploading, before the message is even sent. */}
-            <div className="border-t border-border px-3 pt-2">
+            <ModelPicker value={preferredModel} onChange={setPreferredModel} />
+            {/* THE ATTACH CONTROL IS ON THE INPUT LINE (2026-09).
+                
+                T-B5 gave the chat a real upload surface — the same signed-URL
+                path RunAttachments already does for the admin agent card, so a
+                chat attachment is a real `gs://` MediaAsset the moment the file
+                finishes uploading, before the message is even sent. That part
+                is unchanged and is the whole reason this reuses that component
+                rather than growing a second uploader.
+
+                What changed is WHERE it sits. It was its own bordered strip
+                above the model picker: a full-width band carrying a labelled
+                "Attach a file" button and a sentence explaining what
+                attachments are for, permanently, on a panel where most messages
+                attach nothing. The product owner's read was that it felt clunky
+                and out of place, and the honest description of it is that a
+                rarely-used control was given more room than the message box.
+
+                `layout="composer"` puts a `+` on the input line beside the send
+                button, moves the sentence into that button's tooltip and
+                accessible name, and shows the staged files above the line only
+                when there are some. The text input and the send button are its
+                children so the three share one row — see that component's
+                `AttachmentLayout`. */}
+            <form onSubmit={handleSubmit} className="border-t border-border px-3 py-3">
               <RunAttachments
                 clientId={clientId}
                 attachments={attachments}
                 onChange={setAttachments}
                 disabled={streaming}
                 mode="chat"
-              />
-            </div>
-            <ModelPicker value={preferredModel} onChange={setPreferredModel} />
-            <form
-              onSubmit={handleSubmit}
-              className="flex items-center gap-2 border-t border-border px-3 py-3"
-            >
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                setHighlightedIndex(0);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                showProactiveWelcome
-                  ? "Describe a task, or ask a question…"
-                  : "Ask about performance, brand, competitors…"
-              }
-              disabled={streaming}
-              className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || streaming}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
-              aria-label="Send"
-            >
-              {streaming ? (
-                <Icon name="Loader" className="h-4 w-4 animate-spin" />
-              ) : (
-                <Icon name="ArrowUp" className="h-4 w-4" />
-              )}
-            </button>
+                layout="composer"
+              >
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    setHighlightedIndex(0);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    showProactiveWelcome
+                      ? "Describe a task, or ask a question…"
+                      : "Ask about performance, brand, competitors…"
+                  }
+                  disabled={streaming}
+                  className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim() || streaming}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
+                  aria-label="Send"
+                >
+                  {streaming ? (
+                    <Icon name="Loader" className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Icon name="ArrowUp" className="h-4 w-4" />
+                  )}
+                </button>
+              </RunAttachments>
             </form>
           </div>
         </div>

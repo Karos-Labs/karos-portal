@@ -8,12 +8,13 @@ import {
   listScheduledRuns,
 } from "@/lib/data";
 import { EmptyState, PageHeader } from "@/components/ui";
+import { MoreActionsMenu } from "@/components/more-actions-menu";
 import { Icon } from "@/components/icon";
 import { AgentRunHistory } from "@/components/custom-agents";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
-import { BulkUploadClips } from "@/components/bulk-upload-clips";
+import { MediaUploadButton } from "@/components/media-upload";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { shouldShowEngineHealthBanner } from "@/lib/agent-engine/health";
 import { EngineHealthBanner } from "@/components/engine-health-banner";
@@ -584,20 +585,41 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           that leads here — the rail's item and the staff shell's client-context
           twin. One route rendered two headings and the label disagreed with
           both (#141); this is the one spelling. */}
+      {/* ONE PRIMARY ACTION, THE REST BEHIND A MENU (2026-09).
+          
+          The header carried three equal-weight buttons and a link. Reviewed
+          against the page's own job ("run custom AI agents for this client and
+          track their deliverables"), none of the four is part of that journey:
+          running an agent happens on the roster cards below, binding one
+          happens at the roster heading, and these are the occasional
+          side-errands. Two of them say so themselves — LabImportButton is only
+          mounted at all when the lab bucket is configured, and
+          ReplanCalendarButton's docstring calls itself a recovery path for "the
+          rare case" a best-effort reflow failed.
+
+          Bulk upload clips is the primary because it is the one that is always
+          there and always means the same thing: put content into this client.
+          A conditional primary (lab import when the bucket is configured, clips
+          otherwise) was the other candidate and was rejected — a button that
+          changes identity between environments is worse than a button in a
+          menu. Nothing is removed; everything keeps working. */}
       <PageHeader
         title="AI agents"
         description="Run custom AI agents for this client and track their deliverables."
         action={
-          <div className="flex items-center gap-3">
-            {isLabOutputsConfigured() && <LabImportButton clientId={id} />}
-            <BulkUploadClips clientId={id} bucketName={process.env.GCS_MEDIA_BUCKET} />
-            <ReplanCalendarButton clientId={id} />
-            <a
-              href={`/clients/${id}/settings?tab=settings`}
-              className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-            >
-              Manage integrations →
-            </a>
+          <div className="flex items-center gap-2">
+            <MediaUploadButton clientId={id} bucketName={process.env.GCS_MEDIA_BUCKET} />
+            <MoreActionsMenu>
+              {isLabOutputsConfigured() && <LabImportButton clientId={id} menuItem />}
+              <ReplanCalendarButton clientId={id} menuItem />
+              <a
+                href={`/clients/${id}/settings?tab=settings`}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <Icon name="Plug" className="h-3.5 w-3.5" />
+                Manage integrations
+              </a>
+            </MoreActionsMenu>
           </div>
         }
       />
