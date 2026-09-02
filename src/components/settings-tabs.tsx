@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
@@ -14,32 +14,41 @@ export interface SettingsTab {
    * page before they reach this component.
    */
   content?: ReactNode;
+  /**
+   * The heading this section sits under in the side navigation ("Company",
+   * "Workspace", "Your account"). Consecutive tabs with the same group share
+   * one heading; tabs with none render ungrouped.
+   */
+  group?: string;
 }
 
 /**
- * EVERY ENTRY ON THIS ROW IS A TAB (AF-2).
+ * A SIDE NAVIGATION, NOT A TAB STRIP (portal feedback round 2, 2026-09).
  *
- * There used to be one that was not: an `href` entry that rendered as a link
- * and navigated to /settings, sitting outside the `role="tablist"` element
- * because a tablist's owned children must all be tabs. It carried the account
- * settings, which are ordinary tabs now — so the exception, its ARIA carve-out
- * and the panel-vs-link split that ran through every selection decision below
- * are all gone with it.
- */
-const ENTRY =
-  "flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-all duration-150";
-
-/**
- * Task grouping for the client settings page, which was a nine-section
- * single-column stack with no tabs, anchors or index - so "where do I top up
- * credits" or "where do I disconnect LinkedIn" was a scroll-and-scan exercise.
+ * Account Center has eight sections for a client. A single horizontal row of
+ * eight iconed pills either scrolls (the first version, "I don't like this
+ * menu with the slide bar") or wraps onto a second line (the second version,
+ * "still don't like the display here"). The research is unambiguous about
+ * why both feel wrong: NN/g's "Tabs, Used Right" says a tab row should never
+ * become a carousel and that tab lists should not stack into multiple rows —
+ * stacked rows break the reader's spatial memory of where a section lives —
+ * and its "Left-Side Vertical Navigation on Desktop" says a vertical list is
+ * the right shape for navigation that is broad and will keep growing, with
+ * text labels (never icons alone), keyword-first, less-important entries at
+ * the bottom, and no duplicate horizontal copy. That is the settings layout
+ * every mature SaaS product converged on (Stripe, GitHub, Linear): a quiet
+ * list on the left, grouped under a few headings, and the section on the
+ * right.
  *
- * The active tab lives in `?tab=` so a link can point at one (support can send
- * "your credits are here"). It is seeded from the server, which reads the search
- * param, and updated with the native history API rather than router.replace:
- * every section is already rendered and held by the browser, so navigating would
- * re-run this page's server fetches only to show markup it already has. Same
- * reasoning as the Workspace's segmented control, whose markup this mirrors.
+ * Below `md` the list would eat the whole viewport, so it becomes one native
+ * `<select>` — every section visible in one tap, nothing to scroll or drag,
+ * and the platform's own picker on a phone.
+ *
+ * The active section still lives in `?tab=` (so support can send "your
+ * credits are here"), is seeded from the server, and is updated with the
+ * native history API rather than router.replace: every section is already
+ * rendered and held by the browser, so navigating would re-run this page's
+ * server fetches only to show markup it already has.
  */
 export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initialTab?: string }) {
   const pathname = usePathname();
@@ -47,6 +56,24 @@ export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initia
   const [active, setActive] = useState(() =>
     tabs.some((t) => t.id === initialTab) ? (initialTab as string) : fallback,
   );
+
+  /**
+   * `?tab=settings#meetings` — a sub-section deep link (portal feedback round
+   * 2, 2026-09), which is how the retired `?tab=meetings` now resolves.
+   *
+   * Only the ACTIVE tab's panel is in the DOM, so the browser's own anchor jump
+   * can miss it: the element exists in the server-rendered markup for the tab
+   * the URL names, but the jump happens before React has hydrated this strip
+   * and there is nothing to re-run it afterwards. One scroll on mount, only
+   * when a hash was given and only when it names something that is actually
+   * rendered — never a jump to the top when it names nothing.
+   */
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (!hash) return;
+    // Mount only: a later hash change is the browser's own to handle.
+    document.getElementById(hash)?.scrollIntoView({ block: "start" });
+  }, []);
 
   function select(next: string) {
     setActive(next);
@@ -58,37 +85,99 @@ export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initia
   if (tabs.length === 0) return null;
   const current = tabs.find((t) => t.id === active) ?? tabs[0];
 
-  return (
-    <>
-      {/* Scrolls rather than wrapping or squeezing: the tab count varies by role
-          (a client sees fewer than an admin) and this sits above a mobile view. */}
-      <div className="-mx-1 mb-6 max-w-full overflow-x-auto px-1">
-        <div
-          role="tablist"
-          aria-label="Settings sections"
-          className="inline-flex w-max items-center gap-1 rounded-lg border border-border bg-surface-2 p-1"
-        >
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              role="tab"
-              aria-selected={current?.id === tab.id}
-              onClick={() => select(tab.id)}
-              className={cn(
-                ENTRY,
-                current?.id === tab.id
-                  ? "bg-surface text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.3)]"
-                  : "text-muted hover:text-foreground",
-              )}
-            >
-              <Icon name={tab.icon} className="h-3.5 w-3.5" />
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+  // Consecutive tabs under one heading form a group; the page decides the
+  // order, so grouping never re-sorts what it was handed.
+  const groups: { name: string | undefined; tabs: SettingsTab[] }[] = [];
+  for (const tab of tabs) {
+    const last = groups[groups.length - 1];
+    if (last && last.name === tab.group) last.tabs.push(tab);
+    else groups.push({ name: tab.group, tabs: [tab] });
+  }
 
-      {current ? <div role="tabpanel">{current.content}</div> : null}
-    </>
+  return (
+    <div className="md:grid md:grid-cols-[13.5rem_minmax(0,1fr)] md:gap-10">
+      {/* Phone: one native picker, every section in it. */}
+      <label className="mb-5 block md:hidden">
+        <span className="sr-only">Section</span>
+        <select
+          value={current?.id}
+          onChange={(e) => select(e.target.value)}
+          className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground outline-none focus:border-foreground/25"
+        >
+          {groups.map((g) =>
+            g.name ? (
+              <optgroup key={g.name} label={g.name}>
+                {g.tabs.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </optgroup>
+            ) : (
+              g.tabs.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))
+            ),
+          )}
+        </select>
+      </label>
+
+      {/* Desktop: the side list. Sticky so a long section (Documents, the
+          ledger) keeps its map in view; text labels carry the meaning and
+          the icon is a secondary cue, same as the app rail. */}
+      <nav
+        role="tablist"
+        aria-orientation="vertical"
+        aria-label="Settings sections"
+        className="hidden self-start md:sticky md:top-6 md:block"
+      >
+        {groups.map((g, gi) => (
+          <div key={g.name ?? `group-${gi}`} className={cn(gi > 0 && "mt-5")}>
+            {g.name && (
+              <p className="mb-1.5 px-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">
+                {g.name}
+              </p>
+            )}
+            <div className="flex flex-col gap-0.5">
+              {g.tabs.map((tab) => {
+                const selected = current?.id === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    onClick={() => select(tab.id)}
+                    className={cn(
+                      "group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors",
+                      selected
+                        ? "bg-surface-2 text-foreground"
+                        : "text-muted hover:bg-surface-2 hover:text-foreground",
+                    )}
+                  >
+                    <Icon
+                      name={tab.icon}
+                      className={cn(
+                        "h-4 w-4 shrink-0",
+                        selected ? "text-foreground" : "text-muted-2 group-hover:text-foreground",
+                      )}
+                    />
+                    <span className="flex-1 truncate">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </nav>
+
+      {current ? (
+        <div role="tabpanel" className="min-w-0">
+          {current.content}
+        </div>
+      ) : null}
+    </div>
   );
 }

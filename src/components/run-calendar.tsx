@@ -233,8 +233,19 @@ function dayKey(at: number): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
-/** Portal revamp, Surface 05 — the four calendar views. Week is the default. */
-type CalendarViewMode = "day" | "week" | "month" | "archive";
+/**
+ * Portal revamp, Surface 05 — the four calendar views. Week is the default.
+ *
+ * Declared in lib/calendar-view-modes.ts since portal feedback round 2
+ * (2026-09): the archive view is a URL destination (`/calendar?view=archive`)
+ * and the SERVER page that parses `?view=` validates against the same list -
+ * which it cannot import from this "use client" module without getting a
+ * client-reference proxy instead of the array. Re-exported here so the
+ * calendar's own readers keep their import.
+ */
+export type { CalendarViewMode } from "@/lib/calendar-view-modes";
+export { CALENDAR_VIEW_MODES } from "@/lib/calendar-view-modes";
+import { CALENDAR_VIEW_MODES, type CalendarViewMode } from "@/lib/calendar-view-modes";
 
 /** Midnight of the same viewer-local day, on the one clock dayKey/the grid already use. */
 function startOfDay(d: Date): Date {
@@ -1516,6 +1527,8 @@ export function RunCalendar({
   defaultClientId,
   archiveAssets,
   agentLabelByAssetId,
+  initialViewMode,
+  initialArchiveStatus,
   suggestions = [],
   suggestionsClientId,
 }: {
@@ -1568,6 +1581,26 @@ export function RunCalendar({
   /** assetId → agent label for the rows above (§7.3 identity, contentLabelsByAsset). */
   agentLabelByAssetId?: Record<string, string>;
   /**
+   * Which view this calendar OPENS on, from the page's own `?view=` (portal
+   * feedback round 2, 2026-09). Account Center gave up its Archive tab —
+   * "Archive does not need to be in settings, it's in the calendar" — so the
+   * archive needs a URL, and every producer of the old settings deep link now
+   * writes `?view=archive`.
+   *
+   * A seed, not a controlled value: the view switcher owns `viewMode` after
+   * mount, so clicking Week from an archive deep link works exactly as it does
+   * from any other landing.
+   */
+  initialViewMode?: CalendarViewMode;
+  /**
+   * The archive's own status filter, seeded once from `?status=` — the other
+   * half of the same deep link (the Reporting chart's "Content by status" rows
+   * write both params). Validated by the page, which narrows it through
+   * `offeredStatesFor("archive", …)` so a status this archive cannot hold falls
+   * back to the unfiltered list rather than an empty one.
+   */
+  initialArchiveStatus?: Asset["status"] | "all";
+  /**
    * Task-Map proposals (pending, karos_managed/copilot), already carrying an
    * inferred `at` (lib/calendar-suggestion-placement.ts) — placed on their own
    * date, distinct from every real `CalendarAssetKind` (see SuggestionChip).
@@ -1589,7 +1622,9 @@ export function RunCalendar({
   // year/month state above is untouched by this: Week and Day each navigate
   // off their own anchor instant instead, so switching views never resets
   // Month's position (or vice versa).
-  const [viewMode, setViewMode] = useState<CalendarViewMode>("week");
+  // Seeded from `?view=` when the URL named one (portal feedback round 2,
+  // 2026-09); Week otherwise, which is still the default this page opens on.
+  const [viewMode, setViewMode] = useState<CalendarViewMode>(initialViewMode ?? "week");
   // Action 12 ("Look at your week") — event-tracked, no live signal answers it
   // (lib/action-list.ts). Week is the default view, so a client who lands
   // here at all has satisfied it; fire once per mount, never per re-render.
@@ -1860,7 +1895,7 @@ export function RunCalendar({
 
         {/* View switcher — Day/Week/Month/Archive (portal revamp, Surface 05). Week is the default. */}
         <div className="flex items-center gap-1 border-b border-border px-4 py-2">
-          {(["day", "week", "month", "archive"] as const).map((mode) => (
+          {CALENDAR_VIEW_MODES.map((mode) => (
             <button
               key={mode}
               type="button"
@@ -2069,6 +2104,7 @@ export function RunCalendar({
                 assets={archiveAssets}
                 agentLabelByAssetId={agentLabelByAssetId}
                 viewerIsClient={viewerIsClient}
+                initialStatus={initialArchiveStatus ?? "all"}
               />
             ) : (
               <p className="text-xs text-muted-2">Archive isn&apos;t available from this view.</p>

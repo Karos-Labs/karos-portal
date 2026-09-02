@@ -5,7 +5,7 @@ import type { Client, CustomAgent } from "@/lib/types";
 export type { RailAgent };
 
 /**
- * The roster the "AI agents" rail dropdown renders for one client — asked ONCE,
+ * The roster the "AI agents" rail list renders for one client — asked ONCE,
  * by both shells (parity pass 2026-09).
  *
  * This filter used to live inline in the `(app)` layout, which is the client
@@ -16,7 +16,7 @@ export type { RailAgent };
  *
  * The clauses, unchanged from the layout they came from:
  *  · GRANTED agents (`client.customAgentIds`), PLUS any agent already starred
- *    even without a grant. The dropdown used to be granted-only, on the
+ *    even without a grant. The list used to be granted-only, on the
  *    reasoning that an agent that only shows up via delivered work "will appear
  *    here once an admin grants it" — but the agent's own detail page can be
  *    opened, and starred, by EITHER a grant OR delivered work, and a star that

@@ -13,8 +13,11 @@ import type { Asset } from "@/lib/types";
  *
  *  • STAFF go to the client's Library, `/clients/[id]/assets?status=…`, which is
  *    where approving happens.
- *  • A CLIENT goes to Account Center's Archive tab,
- *    `?tab=archive&status=…`, their own list of delivered work.
+ *  • A CLIENT goes to their calendar's archive view,
+ *    `/calendar?view=archive&status=…`, their own list of delivered work. It
+ *    was Account Center's Archive tab until portal feedback round 2 (2026-09) —
+ *    "Archive does not need to be in settings, it's in the calendar" — and the
+ *    same ArchiveView renders it, seeded by the same `?status=` param.
  *
  * RETURNS NULL rather than a link for a status a client's archive cannot hold,
  * which is the F97 × F149 rule the dashboard's attention rows already follow: a
@@ -41,7 +44,11 @@ export function contentStatusHref(
   const q = encodeURIComponent(status);
   if (!viewerIsClient) return `/clients/${clientId}/assets?status=${q}`;
   if (!isClientStateFor("archive", status)) return null;
-  return `/clients/${clientId}/settings?tab=archive&status=${q}`;
+  // The flat calendar route: it scopes itself to the viewer's own client, and
+  // this branch is only ever taken for a real CLIENT_USER (staff previewing a
+  // client pass `viewerIsClient: false` and get the Library above), so no
+  // client id belongs in it.
+  return `/calendar?view=archive&status=${q}`;
 }
 
 /** The status filter's own value: a stored status, or the unfiltered default. */

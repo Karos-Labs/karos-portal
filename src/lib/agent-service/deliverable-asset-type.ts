@@ -6,8 +6,8 @@
  * decides whether the asset card offers "Publish now", whether the schedule form
  * lists channels, and whether the auto-publish cron will push the text to
  * whichever platform the client has connected. A Reddit reply typed
- * `social_post` is therefore offered to twitter, linkedin, facebook and tiktok —
- * a reply written for one thread, cross-posted to four strangers' feeds.
+ * `social_post` is therefore offered to twitter, linkedin and tiktok —
+ * a reply written for one thread, cross-posted to three strangers' feeds.
  *
  * REDDIT IS DRAFT-ONLY BY HARD PRODUCT RULE: a human always posts the reply from
  * their own account, and no posting code path exists or may be added. That rule
@@ -193,7 +193,7 @@ export function deliverableAssetType(run: {
  * folder called `reddit-agent` already lands draft-only). What it cannot see is a
  * Reddit batch exported under any other folder name — `social-replies`, say —
  * which was typed `social_post`, and `PUBLISHABLE_PLATFORMS` then offers a reply
- * written for one thread to twitter, linkedin, facebook and tiktok.
+ * written for one thread to twitter, linkedin and tiktok.
  *
  * So the folder's answer is the base and the fence is applied over it with BOTH
  * halves: the item's own text, and the folder name as identity. Same shape as

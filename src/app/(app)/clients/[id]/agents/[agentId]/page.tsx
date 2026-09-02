@@ -13,7 +13,9 @@ import {
 import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
 import { Badge, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AgentIdentity } from "@/components/agent-identity";
+import { AgentIdentity, socialPlatformsFor, type SocialPlatform } from "@/components/agent-identity";
+import { TaskKickoffStrip } from "@/components/client-agents/task-kickoff-strip";
+import { buildTaskKickoffView } from "@/lib/task-kickoff";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import {
@@ -23,6 +25,7 @@ import {
 import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import { EngineHealthBanner } from "@/components/engine-health-banner";
 import { IntakeBlockedBanner } from "@/components/client-agents/intake-blocked-banner";
+import { RunsPausedNotice } from "@/components/runs-paused-notice";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
@@ -200,12 +203,18 @@ export default async function ClientAgentDetailPage({
   params: Promise<{ id: string; agentId: string }>;
   /** `asset` - Copilot chat's staff deep link, lands on Control Room's Outputs
    *  tab with this asset pre-opened (OutputsHub/ControlRoom). Staff-only: a
-   *  CLIENT_USER never receives this param (their side has no Control Room). */
-  searchParams: Promise<{ asset?: string }>;
+   *  CLIENT_USER never receives this param (their side has no Control Room).
+   *
+   *  `task` - Home's "Let's do this" (portal feedback round 2, 2026-09). Names
+   *  a recommended task this agent would execute; the page answers it with the
+   *  kickoff strip at the top of the main column. Validated in
+   *  lib/task-kickoff.ts, never trusted: a task id for another client, or one
+   *  already started, resolves to null and nothing mounts. */
+  searchParams: Promise<{ asset?: string; task?: string }>;
 }) {
   const user = await requireUser();
   const { id, agentId } = await params;
-  const { asset: deepLinkAssetId } = await searchParams;
+  const { asset: deepLinkAssetId, task: kickoffTaskId } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
@@ -256,6 +265,18 @@ export default async function ClientAgentDetailPage({
 
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const now = Date.now();
+
+  // The recommended task this page was opened FOR, if any (portal feedback
+  // round 2, 2026-09). Fed the client's already-booked dates so the inferred
+  // start date it carries is the same one the calendar would have given it —
+  // the assets are already in hand above, so this opens no second query.
+  const kickoffTask = await buildTaskKickoffView({
+    clientId: id,
+    taskId: kickoffTaskId,
+    scheduledAt: assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
+    now,
+  });
+
   const umbrella = umbrellaForAgent(umbrellas, agent.id);
   // Has this agent landed work here? Asked ONCE, through the function the roster
   // lists by, and used for both the gate below and the status strip further
@@ -829,10 +850,50 @@ export default async function ClientAgentDetailPage({
     // for accounts nothing in this portal can connect.
     reputation: [],
   };
-  const familyPlatforms = family ? FAMILY_PLATFORMS[family] : null;
+  /**
+   * A NULL FAMILY NO LONGER MEANS "SHOW EVERY CONNECTION" (portal feedback
+   * round 2, 2026-09). Only the six intake families above have a family at all,
+   * so the Instagram agent — and every custom agent — fell through to the full
+   * list and printed Google Analytics beside "Connected accounts", which is the
+   * exact defect the family scoping was written to fix, just for the agents it
+   * did not cover.
+   *
+   * The fallback is the agent's OWN identity, resolved by the detector every
+   * other surface already brands this agent with (agent-identity.tsx's
+   * `socialPlatformsFor`, over `${key} ${name}` — the same string AgentMark and
+   * the roster pass it), then mapped onto integration-registry platform ids.
+   * One detector, so the logo in the header and the connector in the sidebar
+   * can never disagree about which platform this page is about.
+   */
+  const SOCIAL_TO_INTEGRATION_IDS: Record<SocialPlatform, string[]> = {
+    instagram: ["instagram"],
+    x: ["twitter"],
+    tiktok: ["tiktok"],
+    linkedin: ["linkedin", "linkedin_community"],
+    reddit: ["reddit"],
+    youtube: ["youtube"],
+    // Retired as a Karos integration — the registry has no facebook connector
+    // to link to, so a Facebook-identified agent maps to nothing and falls to
+    // the "no detectable platform" case below rather than offering a connect
+    // affordance for an account this portal cannot connect.
+    facebook: [],
+  };
+  const identityPlatformIds = socialPlatformsFor(`${agent.key} ${agent.name}`).flatMap(
+    (platform) => SOCIAL_TO_INTEGRATION_IDS[platform],
+  );
+  const familyPlatforms: string[] | null = family
+    ? FAMILY_PLATFORMS[family]
+    : identityPlatformIds.length > 0
+      ? identityPlatformIds
+      : null;
+  // An agent with no family AND no detectable platform gets NO connectors
+  // section at all — not an empty one, and not the "Manage connections" link
+  // either. There is no honest sentence to write there: the page cannot name
+  // the account it would be talking about, so it says nothing instead of
+  // listing every unrelated connection the client happens to hold.
   const scopedConnections = familyPlatforms
     ? connections.filter((connection) => familyPlatforms.includes(connection.platform))
-    : connections;
+    : [];
 
   // The row's display title, by VIEWER (F132: label rows by what was
   // produced, never by what was typed — the typed brief stays staff-facing).
@@ -959,12 +1020,7 @@ export default async function ClientAgentDetailPage({
           then what to do, then the reassurance: the reassurance sat between the
           other two and buried the action. */}
       {!agentServiceConfigured && (
-        <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-          <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-          {viewerIsClient
-            ? `Agent runs are paused right now. Starting a new ${outputNoun} will not work until this clears. Contact your Karos team if you need a ${outputNoun} today. Everything below is unaffected.`
-            : `Agent runs are paused. The agent-service environment is not configured, so starting a ${outputNoun} will fail until it is set. Everything below is unaffected.`}
-        </p>
+        <RunsPausedNotice viewerIsClient={viewerIsClient} cause="service" outputNoun={outputNoun} />
       )}
       {/* SCRUM-264: this agent's own run controls are what a cut-over client
           actually presses - the roster's banner (agents/page.tsx) only warns
@@ -981,7 +1037,7 @@ export default async function ClientAgentDetailPage({
           because our failures are not theirs to attend to. A missing intake IS
           theirs, so it reads its own field. */}
       {blockedIntake && (
-        <IntakeBlockedBanner reason={blockedIntake.reason} viewerIsClient={viewerIsClient} />
+        <IntakeBlockedBanner reason={blockedIntake.reason} viewerIsClient={viewerIsClient} outputNoun={outputNoun} />
       )}
 
       {/* CD-H7a's idiom, for the same failure one level up: the two-column
@@ -994,6 +1050,13 @@ export default async function ClientAgentDetailPage({
           the gap; below it the page is a single column. */}
       <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
+          {/* ── THE RECOMMENDED TASK THIS PAGE WAS OPENED FOR ──
+              Above everything, including the status strip and the hero: the
+              client pressed "Let's do this" on Home and this line is the answer
+              to "why am I here". Below it is the rest of the page — the intake
+              forms it tells them to fill in first. Identical for staff and
+              clients (parity pass, 2026-09). */}
+          {kickoffTask && <TaskKickoffStrip clientId={id} task={kickoffTask} />}
           {/* ── STATUS (CD-K1) ──
               The header badge says the same word in the same breath, and that
               is the point: Albert's directive is about how LOUDLY the page says
@@ -1373,7 +1436,13 @@ export default async function ClientAgentDetailPage({
 
           {/* ── Connectors ── read-only chips. Connecting and reconnecting are
               settings actions, so this states the fact and links there rather
-              than growing a second place to change them. */}
+              than growing a second place to change them.
+              MOUNTED ONLY WHEN THIS PAGE CAN NAME ITS PLATFORM (portal feedback
+              round 2, 2026-09) — see `familyPlatforms` above. The whole
+              section goes, "Manage connections" included: a link to the
+              integrations tab is not an answer to a question this agent never
+              raised. */}
+          {familyPlatforms && (
           <section>
             <SectionHeading title="Connected accounts" />
             {scopedConnections.length === 0 ? (
@@ -1415,6 +1484,7 @@ export default async function ClientAgentDetailPage({
               Manage connections <Icon name="ArrowRight" className="h-3 w-3" />
             </Link>
           </section>
+          )}
 
         </aside>
       </div>

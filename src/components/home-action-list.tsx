@@ -1,11 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Card, CardTitle } from "@/components/ui";
-import { Icon } from "@/components/icon";
-import { cn } from "@/lib/utils";
-import { dismissActionAction, markActionNotRelevantAction } from "@/lib/actions";
+import { HomeTaskRow } from "@/components/home-task-row";
+import { markActionNotRelevantAction } from "@/lib/actions";
 import type { ClientResolvedAction, ResolvedActionStatus } from "@/lib/action-list";
 
 /**
@@ -13,13 +11,28 @@ import type { ClientResolvedAction, ResolvedActionStatus } from "@/lib/action-li
  * 15-item engine, replacing Task 5's stateless shell. `resolved` arrives
  * already computed server-side (lib/action-list.ts's `resolveActionList`):
  * live signals decide most of the 15, `ClientActionState` decides the rest.
- * This component only narrates that answer and fires the two client-chosen
- * states — it holds no completion logic of its own.
+ * This component only narrates that answer and fires the one client-chosen
+ * state — it holds no completion logic of its own.
  *
- * `overrides` makes Dismiss / "Not relevant for me" feel instant: the row's
- * displayed status flips the moment a button is pressed, while the matching
- * server action runs in the background and `revalidatePath` catches the
- * server state up next time this page loads.
+ * `overrides` makes "Not relevant for me" feel instant: the row's displayed
+ * status flips the moment the X is pressed, while the matching server action
+ * runs in the background and `revalidatePath` catches the server state up next
+ * time this page loads.
+ *
+ * PORTAL FEEDBACK ROUND 2, 2026-09 — this widget now renders the SAME row as
+ * "Recommended tasks" below it (home-task-row.tsx), for the reason the ruling
+ * gives: every list on Home offers one X and one "Let's do this", and two lists
+ * an inch apart may not spell that pair two ways. Three consequences, all
+ * deliberate:
+ *  - The ROW IS NO LONGER A LINK. The button navigates. A row that is itself a
+ *    link cannot hold buttons without nesting interactive elements, which is
+ *    what forced the old controls into an absolutely-positioned hover overlay.
+ *  - THE CONTROLS ARE ALWAYS VISIBLE, not revealed on `group-hover` with a
+ *    touch fallback. They are the row's primary gesture now.
+ *  - SNOOZE IS GONE (the clock button, `dismissActionAction`). It was a third
+ *    verb on a two-verb row and said nothing the X does not: a client who does
+ *    not want an item now X's it. Rows ALREADY snoozed still render — muted,
+ *    labelled, uncontrolled — so nobody's existing state silently reappears.
  */
 export function ActionListWidget({
   clientId,
@@ -78,48 +91,26 @@ export function ActionListWidget({
         {shown.map((a) => {
           const done = a.status === "done";
           const snoozed = a.status === "dismissed";
+          const isEligible = a.status === "eligible";
           return (
-            <li key={a.id} className="group/row relative">
-              <Link
-                href={a.href}
-                className={cn(
-                  "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5 pr-8 transition-colors hover:border-border-strong",
-                  (done || snoozed) && "opacity-60",
-                )}
-              >
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-3">
-                  <Icon name={done ? "Check" : a.icon} className="h-3.5 w-3.5 text-muted-2" />
-                </span>
-                <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                  {a.label}
-                </span>
-                {snoozed && <span className="shrink-0 text-[10px] text-muted-2">Snoozed</span>}
-                <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
-              </Link>
-              {a.status === "eligible" && (
-                // Reachable without a pointer: these dismiss/snooze the row, and a
-                // hover-only reveal hides them entirely on touch and for keyboard
-                // nav (#89's shape — same fallback as client-context-sections.tsx's
-                // "Stop tracking" button and clients-grid.tsx).
-                <div className="absolute right-9 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 [@media(hover:none)]:opacity-100">
-                  <button
-                    type="button"
-                    title="Dismiss for now"
-                    onClick={() => act(a.id, "dismissed", dismissActionAction)}
-                    className="rounded p-1 text-muted-2 hover:bg-surface-3 hover:text-foreground"
-                  >
-                    <Icon name="Clock" className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    title="Not relevant for me"
-                    onClick={() => act(a.id, "not_relevant", markActionNotRelevantAction)}
-                    className="rounded p-1 text-muted-2 hover:bg-surface-3 hover:text-foreground"
-                  >
-                    <Icon name="X" className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              )}
+            <li key={a.id}>
+              <HomeTaskRow
+                icon={done ? "Check" : a.icon}
+                title={a.label}
+                muted={done || snoozed}
+                {...(snoozed
+                  ? { trailing: <span className="text-[10px] text-muted-2">Snoozed</span> }
+                  : {})}
+                {...(isEligible
+                  ? {
+                      dismiss: {
+                        label: "Not relevant for me",
+                        onClick: () => act(a.id, "not_relevant", markActionNotRelevantAction),
+                      },
+                      start: { href: a.href },
+                    }
+                  : {})}
+              />
             </li>
           );
         })}

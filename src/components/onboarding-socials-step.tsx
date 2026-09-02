@@ -39,7 +39,7 @@ export function OnboardingSocialsStep({
     <div className="space-y-5">
       <div>
         <h2 className="text-base font-semibold">Social media channels</h2>
-        {/* No count. PLATFORM_REGISTRY carries eleven channels and this line
+        {/* No count. PLATFORM_REGISTRY carries ten channels and this line
             said "all six" — a number the file cannot verify and the registry had
             already outgrown. The spaced hyphen it also carried was invisible to
             a per-line scan because JSX wrapped the sentence right after it:

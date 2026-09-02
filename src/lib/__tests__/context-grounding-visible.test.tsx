@@ -138,10 +138,15 @@ describe("SCRUM-404: a blocked_intake run is visibly blocked with its stated rea
     });
     expect(blocked?.reason).toBe("market-strategy is not on file for this client.");
     const html = renderToStaticMarkup(<IntakeBlockedBanner reason={blocked!.reason} viewerIsClient />);
+    // The engine's reason verbatim — it names the missing document, which is
+    // the whole actionable content.
     expect(html).toContain("market-strategy is not on file");
-    // The client is told it is theirs to clear, and that nothing else broke.
-    expect(html).toContain("not on file yet");
-    expect(html.toLowerCase()).toContain("nothing below is affected");
+    // And that nothing else broke. One short line, in the idiom portal
+    // feedback round 2 standardised on (`RunsPausedNotice`) — NOT the
+    // four-sentence amber block this banner first shipped as, which is the
+    // shape that round removed from three other places.
+    expect(html).toContain("Everything else here still works");
+    expect(html).toContain('role="status"');
   });
 
   it("reads blockedReason, never job.error — the two are separate slots for a reason", () => {

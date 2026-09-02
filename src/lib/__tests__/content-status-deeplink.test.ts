@@ -99,10 +99,14 @@ describe("the Content by status chart links into the filtered list", () => {
     }
   });
 
-  it("sends a client to their own Archive tab instead of the staff Library", () => {
+  it("sends a client to their own calendar archive instead of the staff Library", () => {
     const html = chart(true);
     expect(html, "the chart never rendered").toContain("Content by status");
-    expect(html).toContain("href=\"/clients/c1/settings?tab=archive&amp;status=published\"");
+    // The calendar's archive view since portal feedback round 2 (2026-09) —
+    // "Archive does not need to be in settings, it's in the calendar". The
+    // flat route, because it scopes itself to the viewer's own client and this
+    // branch is only ever taken for a real CLIENT_USER.
+    expect(html).toContain("href=\"/calendar?view=archive&amp;status=published\"");
     // The staff route redirects a CLIENT_USER straight back to their dashboard,
     // so landing them on it is a round trip to nowhere.
     expect(html, "a client was linked into the staff Library").not.toContain(
@@ -181,14 +185,36 @@ describe("the pages thread the param through", () => {
     expect(src.match(/initialStatus=\{initialStatus\}/g)?.length ?? 0).toBe(2);
   });
 
-  it("seeds the client's Archive tab, narrowed by what that archive can hold", () => {
-    const src = code(read("app/(app)/clients/[id]/settings/page.tsx"));
-    expect(src).toMatch(/status: statusParam/);
+  it("seeds the calendar's archive view, narrowed by what that archive can hold", () => {
+    // The reader moved with the surface (portal feedback round 2, 2026-09):
+    // Account Center gave up its Archive tab, so `?status=` is now parsed
+    // beside `?view=` on the calendar. Both calendar routes thread the params
+    // into the one body that validates them.
+    for (const rel of ["app/(app)/calendar/page.tsx", "app/(app)/clients/[id]/calendar/page.tsx"]) {
+      const page = code(read(rel));
+      expect(page, rel).toMatch(/searchParams/);
+      expect(page, rel).toMatch(/status \? \{ status \} : \{\}/);
+    }
+    const src = code(read("app/(app)/calendar/calendar-body.tsx"));
     // Narrowed through the archive's OWN offer list rather than trusted: a
     // hand-crafted `?status=draft` must degrade to the unfiltered list, not to
     // an empty one. This is the reader-side half of the rule the chart applies
     // when it declines to emit that link at all.
     expect(src).toMatch(/offeredStatesFor\(\s*"archive"/);
-    expect(src).toMatch(/initialStatus=\{initialArchiveStatus \?\? "all"\}/);
+    expect(src).toMatch(/initialArchiveStatus \? \{ initialArchiveStatus \} : \{\}/);
+    // …and the calendar hands it to the same ArchiveView prop the settings tab
+    // used to seed, so the param still means one thing end to end.
+    expect(code(read("components/run-calendar.tsx"))).toMatch(
+      /initialStatus=\{initialArchiveStatus \?\? "all"\}/,
+    );
+  });
+
+  it("leaves no producer pointing at the retired settings archive tab", () => {
+    // The old URL is a redirect now, not a destination — a link that still
+    // writes it works but arrives one hop late, and this is the file that
+    // pinned the pair of them together.
+    expect(code(read("lib/content-status-links.ts"))).not.toContain("tab=archive");
+    expect(code(read("lib/agent-intake-links.ts"))).not.toContain("tab=archive");
+    expect(code(read("lib/action-list.ts"))).not.toContain("tab=archive");
   });
 });
