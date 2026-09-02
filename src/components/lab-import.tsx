@@ -30,7 +30,18 @@ function runVisual(agentFolder: string): { icon: string } {
  * (karos-agents → clients/<slug>/outputs/<agent>/<run>/client) into the
  * platform as draft assets for review.
  */
-export function LabImportButton({ clientId }: { clientId: string }) {
+export function LabImportButton({
+  clientId,
+  menuItem = false,
+}: {
+  clientId: string;
+  /**
+   * Render the trigger as a row in a "More actions" menu rather than as a
+   * standalone header button (2026-09). Ghost over subtle: inside a popover the
+   * subtle variant's own fill and border draw a second card around every row.
+   */
+  menuItem?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -78,7 +89,7 @@ export function LabImportButton({ clientId }: { clientId: string }) {
 
   return (
     <>
-      <Button size="sm" variant="subtle" onClick={openModal}>
+      <Button size="sm" variant={menuItem ? "ghost" : "subtle"} onClick={openModal}>
         <Icon name="FolderDown" className="h-3.5 w-3.5" /> Import lab outputs
       </Button>
 

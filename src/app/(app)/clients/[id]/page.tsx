@@ -15,7 +15,7 @@ import {
 import { listClientAgents } from "@/lib/data-client-agents";
 import { isBillableClientActor, CREDIT_DEFAULTS } from "@/lib/credits";
 import { isAiProcessingLockActive } from "@/lib/constants";
-import { integrationIsUsable } from "@/lib/integration-status";
+import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { ClientAnalytics } from "@/components/client-analytics";
@@ -39,11 +39,14 @@ import {
   type ActionSignals,
 } from "@/lib/action-list";
 import { computePlatformGaps, gapPlatformNames } from "@/lib/calendar-gaps";
+import { isUpcomingPost } from "@/lib/calendar-kind";
 import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
 import { CalendarPreviewWidget } from "@/components/home-calendar-preview";
 import { HomeKpisWidget } from "@/components/home-kpis";
 import { HomeStandingWidget, hasStanding } from "@/components/home-standing";
 import { HomeOpsStrip, type OpsStat } from "@/components/home-ops-strip";
+import { contentThroughput } from "@/lib/content-throughput";
+import { contentStatusHref } from "@/lib/content-status-links";
 import { relativeTime } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
 
@@ -151,7 +154,22 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // redactLockedAsset already replaces it with a template name or "Upcoming
   // post", and the widget itself reads only `type` and `scheduledPlatform`
   // (absent on a locked row), never `title`.
-  const isUpcoming = (a: Asset) => a.status === "scheduled" && (a.scheduledAt ?? 0) > now;
+  /**
+   * WHAT "UPCOMING" MEANS, asked of the calendar's own classifier (2026-09).
+   *
+   * This was `a.status === "scheduled" && (a.scheduledAt ?? 0) > now`, and that
+   * spelling emptied the Calendar widget for a real client. `postKind` — which
+   * is what the calendar page's chips are built from — admits `approved` and
+   * dated `draft` assets too, and approval is what arms auto-publish, so a
+   * client's content can go from draft to approved to posted without ever
+   * holding the status this line asked for. XO Digital in production: 22
+   * assets, 21 approved, 1 draft, 0 scheduled; thirteen future-dated
+   * placeholders on their calendar and an empty widget on their dashboard.
+   *
+   * `isUpcomingPost` lives beside `postKind` so the two cannot drift again.
+   * The `Asset` type is a superset of its `CalendarKindInput` parameter.
+   */
+  const isUpcoming = (a: Asset) => isUpcomingPost(a, now);
   const upcomingAssets = isClientViewer
     ? getClientLibraryAssets(assets, {
         forClient: true,
@@ -183,14 +201,26 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const followerTotal = totalFollowers(followerHistoriesByPlatform);
   const followerSeries = combinedFollowerSeries(followerHistoriesByPlatform);
   const followerGrowth = followerGrowthPct(followerSeries);
-  const channelSummaries = integrations.map((i) => ({
-    platform: i.platform,
-    usable: integrationIsUsable(i),
-  }));
+  /**
+   * How many channels are dead (2026-09).
+   *
+   * All that survives of the KPI card's per-channel list, which was the SECOND
+   * copy of "Connected channels" and was removed in the de-duplication pass
+   * (see HomeKpisWidget's own note). The detailed list stays on that card; the
+   * number that asks somebody to DO something moves to "Needs your attention",
+   * which ranks by exactly that.
+   *
+   * `integrationNeedsReconnect` rather than `!integrationIsUsable` — the same
+   * predicate "Connected channels" counts its own "N need attention" with, so
+   * the attention row and the detailed card cannot report different totals.
+   */
+  const channelsNeedingAttention = integrations.filter(integrationNeedsReconnect).length;
+  const channelsHref = `/clients/${id}/settings?tab=settings`;
 
   // The KPI card's score meter and the full report share ONE buildScoreViews
   // call so the widget and the page can never quote different numbers for the
-  // same snapshot. Same rule for buildPresence and "Where you stand".
+  // same snapshot. Same rule for buildPresence and "SEO & AI visibility"
+  // (the card renamed from "Where you stand", 2026-09).
   const scoreViews = seoGeo ? buildScoreViews(seoGeo) : [];
   // D6 kept exactly one of the three: "the overall Google/AI visibility
   // rank" is this view's own established label ("AI visibility today"), not
@@ -280,27 +310,52 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // person landed first.
   //
   // So Home carries two summaries and a link — score meters inside the KPI card
-  // and the two share numbers in "Where you stand" — and the deep report has
+  // and the two share numbers in "SEO & AI visibility" — and the deep report has
   // exactly one address. Both summaries are projections of the same
   // buildScoreViews / buildPresence calls that page renders from, so this is
   // not a second copy of the report; it is the report's headline.
+  const competitorsHref = `/clients/${id}/settings?tab=competitors`;
   const standing = presence && hasStanding(presence) ? (
-    <HomeStandingWidget
-      presence={presence}
-      href={reportHref}
-      competitorsHref={`/clients/${id}/settings?tab=competitors`}
-    />
+    <HomeStandingWidget presence={presence} href={reportHref} competitorsHref={competitorsHref} />
   ) : null;
+
+  /**
+   * The KPI card's published-content cell, and where it opens.
+   *
+   * Both are new in the 2026-09 de-duplication pass — the cell replaces the
+   * per-channel list that duplicated "Connected channels" (see HomeKpisWidget's
+   * own note for the full argument, and lib/content-throughput.ts for why this
+   * is the one metric of the four suggested that the product can actually
+   * measure today).
+   *
+   * Fed `overviewAssets`, the projection every other widget on this page reads,
+   * rather than the raw set: a client's numbers must not count a row their own
+   * surfaces cannot show them.
+   */
+  const throughput = contentThroughput(overviewAssets, now);
+  // "published" is in every reader's set — staff's Library and a client's
+  // archive both hold it — so this never falls back. Asked through the shared
+  // helper anyway, so the cell and the "Content by status" bars resolve one
+  // spelling of the link between them.
+  const publishedHref = contentStatusHref("published", id, isClientViewer) ?? reportHref;
+  /**
+   * Where "N deliverables in review" opens, when the reader has such a screen.
+   *
+   * Null for a client by construction, not by a branch written here: no client
+   * surface lists a draft, and `contentStatusHref` answers that by asking
+   * `client-state-domain` rather than by taking our word for it.
+   */
+  const draftsHref = contentStatusHref("draft", id, isClientViewer);
 
   const kpis = (
     <HomeKpisWidget
       audienceTotal={followerTotal}
       audienceGrowthPct={followerGrowth}
       audienceSeries={followerSeries}
-      channels={channelSummaries}
+      throughput={throughput}
       visibilityScore={visibilityScore}
       reportHref={reportHref}
-      channelsHref={`/clients/${id}/settings?tab=settings`}
+      contentHref={publishedHref}
     />
   );
 
@@ -318,11 +373,19 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     {
       label: "Awaiting review",
       value: assets.filter((a) => a.status === "draft").length,
-      href: `/clients/${id}/assets`,
+      // Filtered since 2026-09: the queue link now lands on the queue rather
+      // than on the whole library with the drafts somewhere in it. Same helper
+      // the attention row and the chart use, so the three cannot disagree.
+      href: draftsHref ?? `/clients/${id}/assets`,
       warnWhenNonZero: true,
     },
     {
-      label: "Scheduled",
+      // "Upcoming", not "Scheduled" (2026-09). The predicate above now admits
+      // every forward-looking kind the calendar shows — a booked post, a
+      // placeholder, a dated draft — so a tile labelled with one of the three
+      // statuses would be naming a subset of what it counts. The number and
+      // the calendar it links to now agree, which is the point of the change.
+      label: "Upcoming",
       value: assets.filter(isUpcoming).length,
       // Staff-only strip (see HomeOpsStrip below) — scoped to this client's
       // own calendar, not the flat /calendar route, which resolves to the
@@ -334,7 +397,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     {
       label: "Published",
       value: assets.filter((a) => a.status === "published").length,
-      href: `/clients/${id}/settings?tab=archive`,
+      href: publishedHref,
     },
     { label: "Deliverables", value: assets.length, href: `/clients/${id}/assets` },
     {
@@ -387,25 +450,67 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
    * HomeOpsStrip for why a client may not have it) and Regenerate in the header.
    */
   if (!isClientViewer) {
+    /**
+     * REGENERATE MOVED OUT OF THE PAGE HEADER (2026-09).
+     *
+     * CD-G5 put it at client level, and it earned that: the pipeline rewrites
+     * the documents AND the SEO/GEO intel, so the rail's documents header was
+     * the wrong home for it. But "client level" got read as "the page header",
+     * where it sat beside the word "Dashboard" as a lone button whose only
+     * explanation was a `title` tooltip, three widgets above the numbers it
+     * rewrites. The product owner's read was that it looked disconnected from
+     * everything around it, and it was.
+     *
+     * It now sits in the footer of the SEO & AI visibility card: beside the
+     * data it regenerates, with the sentence saying what it rebuilds and when
+     * to reach for it in permanent view rather than on hover. Same modal, same
+     * server action, same admin gate, same AI-processing lock; only the
+     * placement changed, which is the same kind of move CD-G5 itself was.
+     *
+     * The admin gate stays HERE rather than moving into the widget: the widget
+     * is mounted on a client's dashboard too, and a component that decides for
+     * itself whether to render a staff control is one prop away from getting it
+     * wrong. It is also what keeps this staff copy out of the client-copy
+     * sweep's reach (channel 5 recognises `role === "KAROS_` as a staff gate).
+     */
+    const regenerateFooter =
+      user.role === "KAROS_ADMIN" ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-2">
+            Re-runs the Intel Report pipeline: it rebuilds this client&apos;s strategy
+            documents and re-measures the SEO/GEO snapshot both numbers above come from.
+            Reach for it after a positioning change, or when the snapshot has gone stale.
+          </p>
+          <RegenerateWorkspaceButton
+            clientId={client.id}
+            isAiProcessing={isAiProcessingLockActive(client)}
+          />
+        </div>
+      ) : undefined;
+
+    /**
+     * Staff keep this card even with nothing measured, BECAUSE of that footer:
+     * an unmeasured account is exactly when an operator wants the refresh, and a
+     * control that disappears when there is no data is a control you cannot use
+     * to GET data. An employee on an unmeasured account (no footer, no snapshot)
+     * still gets nothing, which is the client rule — see `hasStanding`.
+     *
+     * Built here rather than reusing `standing`: that binding is the client's,
+     * and it is gated on `hasStanding` alone.
+     */
+    const staffStanding =
+      (presence && hasStanding(presence)) || regenerateFooter ? (
+        <HomeStandingWidget
+          presence={presence}
+          href={reportHref}
+          competitorsHref={competitorsHref}
+          {...(regenerateFooter ? { footer: regenerateFooter } : {})}
+        />
+      ) : null;
+
     return (
       <>
-        <PageHeader
-          title="Dashboard"
-          description={`Workspace overview for ${client.name}.`}
-          // CD-G5: regeneration rewrites the documents AND the SEO/GEO intel, so
-          // it needs an entry point at client level and not only in the rail's
-          // documents header. Admin-only, same gate as that one - an employee or
-          // a client viewer never sees it (client viewers never reach this
-          // branch at all).
-          action={
-            user.role === "KAROS_ADMIN" ? (
-              <RegenerateWorkspaceButton
-                clientId={client.id}
-                isAiProcessing={isAiProcessingLockActive(client)}
-              />
-            ) : undefined
-          }
-        />
+        <PageHeader title="Dashboard" description={`Workspace overview for ${client.name}.`} />
         <div className="space-y-8">
           {/* CLIENT_USER already sees this via the (app) shell's own wrapper - only
               render here for staff, who use the plain Sidebar shell with no such wrapper. */}
@@ -425,6 +530,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               <CalendarPreviewWidget
                 upcoming={upcomingStaffAssets}
                 calendarHref={`/clients/${id}/calendar`}
+                viewerIsClient={false}
               />
               {/* `tasks` is deliberately empty here — see the fetch above and
                   this component's own note on `clientId`: its attention rows
@@ -437,11 +543,21 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 assets={overviewAssets}
                 viewerIsClient={false}
                 agentLabelByAssetId={agentLabelByAssetId}
-                recentActivityLimit={4}
+                // Three, matching the client branch (2026-09): "limit Recent
+                // activity to the three most recent items, then a clear See all
+                // activity link" was asked of the widget, not of one mount of it.
+                recentActivityLimit={3}
+                channelsNeedingAttention={channelsNeedingAttention}
+                channelsHref={channelsHref}
+                // Staff CAN act on a draft — approval is theirs — so their
+                // "N deliverables in review" row gets the destination a
+                // client's provably cannot have. Same helper the chart below
+                // writes its bars' links with.
+                {...(draftsHref ? { draftsHref } : {})}
               />
             </div>
             {kpis}
-            {standing}
+            {staffStanding}
             <HomeOpsStrip stats={opsStats} />
           </section>
 
@@ -481,7 +597,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // <ClientAnalytics/> charts now mount in Account Center → Reporting instead
   // (settings/page.tsx's analyticsSection) — moved, not deleted. After this
   // cut the client Home is exactly: alerts → Next Actions + Calendar Preview
-  // → Your numbers → Where you stand → Recent activity. Nothing else belongs
+  // → Your numbers → SEO & AI visibility → Recent activity. Nothing else belongs
   // here without a fresh product decision.
   return (
     <>
@@ -514,10 +630,10 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 resolved={toClientActions(resolvedActions, client.id)}
                 startExpanded={actionListStartExpanded}
               />
-              <CalendarPreviewWidget upcoming={upcomingAssets} />
+              <CalendarPreviewWidget upcoming={upcomingAssets} viewerIsClient />
             </div>
             {kpis}
-            {/* "Where you stand" replaced the old Reporting chip card here. The
+            {/* "SEO & AI visibility" replaced the old Reporting chip card here. The
                 chips restated the three scores the KPI card now meters two
                 inches above; these are the two numbers that were NOT anywhere
                 on Home — how often the engines name you in an open category
@@ -531,6 +647,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               agentLabelByAssetId={agentLabelByAssetId}
               recentActivityLimit={3}
               tasksHitLimit={tasks.length >= TASK_FEED_LIMIT}
+              // The one thing the retired Channels cell said that the detailed
+              // "Connected channels" card does not repeat on a client's Home:
+              // that one of them is broken. It is an action, so it is on the
+              // card that ranks actions. No `draftsHref` — a client has no
+              // screen that lists a draft (F97 × F149).
+              channelsNeedingAttention={channelsNeedingAttention}
+              channelsHref={channelsHref}
             />
           </div>
         </section>

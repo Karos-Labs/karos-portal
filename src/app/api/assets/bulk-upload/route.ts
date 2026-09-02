@@ -4,13 +4,18 @@ import { getCurrentUser } from "@/lib/auth";
 import { canViewClient } from "@/lib/client-visibility";
 import { getClient, createAsset, listAssets } from "@/lib/data";
 import {
-  ALLOWED_VIDEO_MIME_TYPES,
-  MAX_VIDEO_BYTES,
+  ALLOWED_MEDIA_MIME_TYPES,
   createReadSignedUrl,
   createUploadSignedUrl,
   listClientMediaObjects,
+  maxBytesFor,
+  mediaKindFor,
+  mediaMimeFor,
   mediaObjectPath,
 } from "@/lib/gcs-media";
+// The type/channel pairing lives in the pure module so platforms-publishable's
+// asset-type fence can call it — see MEDIA_REGISTRATION's own note.
+import { MEDIA_REGISTRATION } from "@/lib/media-kinds";
 import { detectFormatTags } from "@/lib/bulk-schedule";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import type { ManagedTaskType } from "@/lib/types";
@@ -51,7 +56,28 @@ interface ImportBucketBody {
 
 type Body = SignBody | CompleteBody | ImportBucketBody;
 
-async function registerClip(opts: {
+/**
+ * Register one uploaded object as a draft asset.
+ *
+ * ── IMAGES AND VIDEOS, since 2026-09 ────────────────────────────────────
+ *
+ * This was `registerClip` and it assumed video in three places, each of which
+ * would have quietly mis-filed an image: it stored the read URL on `videoUrl`,
+ * it defaulted `mimeType` to `"video/mp4"` when the caller gave none, and it
+ * booked `channels: ["tiktok"]`. An image registered through the old body would
+ * have been a TikTok post with a video mime type and its picture in the field
+ * players read — three wrong answers from one unconditional assumption.
+ *
+ * The kind is resolved ONCE, here, through `mediaKindFor` (content type first,
+ * filename second — the bucket-import path routinely has no usable content
+ * type), and everything below branches off that single answer rather than
+ * re-deriving it.
+ *
+ * The TYPE now differs by kind too, and it has to — see `MEDIA_REGISTRATION`
+ * (lib/media-kinds) for why an image cannot be a `social_post` while carrying
+ * an instagram channel, and for why that table is exported rather than local.
+ */
+async function registerMedia(opts: {
   clientId: string;
   gcsPath: string;
   filename: string;
@@ -62,11 +88,15 @@ async function registerClip(opts: {
 }): Promise<string> {
   const taskType: ManagedTaskType =
     opts.taskType && MANAGED_TASK_TYPES.has(opts.taskType) ? (opts.taskType as ManagedTaskType) : "social_post";
-  const videoUrl = await createReadSignedUrl(opts.gcsPath);
+  // Falls back to video only when NOTHING identifies the file — the historical
+  // behaviour for an object with no content type and an unrecognised name,
+  // preserved so a re-import of an existing clip keeps registering as one.
+  const kind = mediaKindFor(opts.contentType, opts.filename) ?? "video";
+  const readUrl = await createReadSignedUrl(opts.gcsPath);
   return createAsset({
     clientId: opts.clientId,
     agentId: null,
-    type: "social_post",
+    type: MEDIA_REGISTRATION[kind].type,
     title: humanizeFilename(opts.filename),
     content: "",
     meta: {
@@ -74,12 +104,21 @@ async function registerClip(opts: {
       gcsPath: opts.gcsPath,
       sourceFilename: opts.filename,
       taskType,
-      ...(typeof opts.durationSeconds === "number" ? { durationSeconds: opts.durationSeconds } : {}),
-      formatTags: detectFormatTags(opts.filename),
+      // A still has no duration, and a stored `durationSeconds: 0` would render
+      // as a zero-length clip on every surface that prints one.
+      ...(kind === "video" && typeof opts.durationSeconds === "number"
+        ? { durationSeconds: opts.durationSeconds }
+        : {}),
+      // Reels/Shorts/TikTok are video format tags. On an image they would be
+      // three claims about a file that cannot fill any of them.
+      ...(kind === "video" ? { formatTags: detectFormatTags(opts.filename) } : {}),
     },
-    videoUrl,
-    mimeType: opts.contentType || "video/mp4",
-    channels: ["tiktok"],
+    ...(kind === "image" ? { imageUrl: readUrl } : { videoUrl: readUrl }),
+    // `mediaMimeFor`, not a per-kind default: a `.webp` with no declared
+    // content type (the bucket-import path) resolves by extension rather than
+    // being stored as image/jpeg. See that function for why it matters.
+    mimeType: mediaMimeFor(opts.contentType, opts.filename),
+    channels: [MEDIA_REGISTRATION[kind].channel],
     status: "draft",
     createdBy: opts.createdBy,
     createdAt: Date.now(),
@@ -109,7 +148,7 @@ async function registerClip(opts: {
  * the survivor rule in lib/calendar-dedupe so the id a replay is told about is
  * the same copy the calendar shows.
  */
-async function registeredClipIds(clientId: string): Promise<Map<string, string>> {
+async function registeredMediaIds(clientId: string): Promise<Map<string, string>> {
   const existing = await listAssets({ clientId });
   const byPath = new Map<string, string>();
   for (const a of [...existing].sort((x, y) => (x.createdAt ?? 0) - (y.createdAt ?? 0))) {
@@ -121,7 +160,7 @@ async function registeredClipIds(clientId: string): Promise<Map<string, string>>
 
 /**
  * Two-step direct-to-GCS bulk media upload for staff (see the "Bulk Upload
- * Assets" dropzone, src/components/bulk-upload-clips.tsx):
+ * Assets" dropzone, src/components/media-upload.tsx):
  *   step "sign"     — returns a V4 signed PUT URL; the browser then uploads
  *                     the file bytes straight to GCS, never through this
  *                     server (keeps large video out of Node's memory).
@@ -157,15 +196,26 @@ export async function POST(req: Request) {
     if (!filename || !contentType) {
       return NextResponse.json({ error: "filename and contentType are required" }, { status: 400 });
     }
-    if (!ALLOWED_VIDEO_MIME_TYPES.includes(contentType)) {
+    if (!ALLOWED_MEDIA_MIME_TYPES.includes(contentType)) {
       return NextResponse.json({ error: `Unsupported file type: ${contentType}` }, { status: 400 });
     }
     if (typeof sizeBytes !== "number" || sizeBytes <= 0) {
       return NextResponse.json({ error: "sizeBytes is required" }, { status: 400 });
     }
-    if (sizeBytes > MAX_VIDEO_BYTES) {
+    // PER KIND (2026-09). One 2 GB ceiling over both halves would accept a
+    // 900 MB "image", which is never a file anyone meant to attach. The type is
+    // already known to be on the allowlist by the check above, so the content
+    // type alone answers the kind here.
+    const kind = mediaKindFor(contentType, filename);
+    const maxBytes = maxBytesFor(kind ?? "video");
+    if (sizeBytes > maxBytes) {
       return NextResponse.json(
-        { error: `File is larger than ${Math.round(MAX_VIDEO_BYTES / (1024 * 1024 * 1024))} GB` },
+        {
+          error:
+            kind === "image"
+              ? `Image is larger than ${Math.round(maxBytes / (1024 * 1024))} MB`
+              : `File is larger than ${Math.round(maxBytes / (1024 * 1024 * 1024))} GB`,
+        },
         { status: 413 },
       );
     }
@@ -197,10 +247,10 @@ export async function POST(req: Request) {
     // double click, the retry after a timeout, the resumed upload — which is the
     // shape that actually wrote the duplicate documents now sitting in
     // production.
-    const already = (await registeredClipIds(body.clientId)).get(gcsPath);
+    const already = (await registeredMediaIds(body.clientId)).get(gcsPath);
     if (already) return NextResponse.json({ id: already });
 
-    const id = await registerClip({
+    const id = await registerMedia({
       clientId: body.clientId,
       gcsPath,
       filename,
@@ -216,12 +266,12 @@ export async function POST(req: Request) {
   // into the bucket (gcloud storage cp, Cloud Console, rclone, …) without
   // going through this route's "sign"/"complete" steps at all.
   const objects = await listClientMediaObjects(body.clientId);
-  const registeredPaths = await registeredClipIds(body.clientId);
+  const registeredPaths = await registeredMediaIds(body.clientId);
   const unregistered = objects.filter((o) => !registeredPaths.has(o.gcsPath));
 
   const imported: string[] = [];
   for (const obj of unregistered) {
-    await registerClip({
+    await registerMedia({
       clientId: body.clientId,
       gcsPath: obj.gcsPath,
       filename: obj.filename,

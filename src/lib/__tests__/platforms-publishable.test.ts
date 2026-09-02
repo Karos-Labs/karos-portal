@@ -14,6 +14,7 @@ import {
 } from "@/lib/agent-service/deliverable-asset-type";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { recommendedScheduleFields } from "@/lib/scheduling";
+import { MEDIA_REGISTRATION, type MediaKind } from "@/lib/media-kinds";
 import type { AssetType, WireTaskType } from "@/lib/types";
 import { isStringDelimiter, matchingBrace, skipStringLiteral } from "./source-scan";
 
@@ -551,6 +552,20 @@ const PINNED_DERIVATIONS: Readonly<Record<string, string>> = {
   // the argument that produced it, so a hint cannot route around it.
   "deliverableAssetType({ taskType: spec.taskType, hint: spec.assetTypeHint ?? null, content: materialization.content, identity: [job.agentEngineProductId], })":
     "agent-engine materialize → deliverableAssetType",
+  // The media dropzone (2026-09), when it stopped being video-only. The type is
+  // picked by MEDIA KIND — image vs video, resolved by `mediaKindFor` from the
+  // uploaded file's content type or its filename — so it is a runtime
+  // derivation and this scan refused it, correctly.
+  //
+  // WHY IT NEEDS NO FENCE, as against the four above: those derive a type from
+  // an AGENT'S IDENTITY or from a caller-supplied hint, which is the channel the
+  // Reddit defect travelled down. This one derives it from a two-member union
+  // over a two-entry literal table, so its whole RANGE is two source literals
+  // and nothing an agent, a tool argument or a metadata field can say moves it.
+  // Pinned by "the media dropzone's own type table" below, exhaustively over
+  // `MediaKind` — the range, the Reddit rule, and the type/channel pairing that
+  // sent it here in the first place.
+  "MEDIA_REGISTRATION[kind].type": "media upload → MEDIA_REGISTRATION, closed over MediaKind",
 };
 
 /**
@@ -809,5 +824,52 @@ describe("#49 — the draft-only fence", () => {
       expect(/reddit/i.test(product.taskType)).toBe(false);
       expect(/reddit/i.test(product.name)).toBe(false);
     }
+  });
+
+  /**
+   * The pin for `MEDIA_REGISTRATION[kind].type` (the media dropzone, 2026-09).
+   *
+   * Three properties, and the first is what makes the other two enough: the
+   * derivation's RANGE is closed. Unlike the four fenced derivations above it
+   * reads neither an agent identity nor a caller-supplied hint — only a
+   * `MediaKind`, a two-member union — so enumerating the union enumerates every
+   * type this path can ever produce.
+   */
+  describe("the media dropzone's own type table", () => {
+    const KINDS: MediaKind[] = ["image", "video"];
+
+    it("has an entry per kind, and no third answer", () => {
+      // Non-vacuity, and the closed-range claim itself: if `MediaKind` gains a
+      // member, `Record<MediaKind, …>` makes that a compile error at the table
+      // and this count makes it a failure here.
+      expect(Object.keys(MEDIA_REGISTRATION).sort()).toEqual([...KINDS].sort());
+    });
+
+    it("produces no draft-only deliverable type", () => {
+      // The rule this whole section exists for. A media upload is a file
+      // somebody already has; it cannot be a Reddit reply. Asserted over the
+      // range rather than over the two literals, so a future entry is covered.
+      for (const kind of KINDS) {
+        const type = MEDIA_REGISTRATION[kind].type;
+        expect(/reddit/i.test(type), `${kind} → ${type}`).toBe(false);
+        // …and it is a REAL type this product publishes, not an inert one: the
+        // opposite failure would be an upload nobody can ever push.
+        expect((PUBLISHABLE_PLATFORMS[type] ?? []).length, `${kind} → ${type}`).toBeGreaterThan(0);
+      }
+    });
+
+    it("pairs each type with a channel that type can publish to", () => {
+      // The defect that sent this table here: `social_post` + `["instagram"]`,
+      // a pairing every publish surface rejects because it intersects
+      // PUBLISHABLE_PLATFORMS[type] with the asset's channels. Derived from the
+      // map, so widening either side moves this expectation with it.
+      for (const kind of KINDS) {
+        const { type, channel } = MEDIA_REGISTRATION[kind];
+        expect(
+          PUBLISHABLE_PLATFORMS[type] ?? [],
+          `a ${kind} registers as "${type}" on "${channel}", which that type rejects`,
+        ).toContain(channel);
+      }
+    });
   });
 });

@@ -50,6 +50,7 @@ import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { ClientDocuments } from "@/components/client-documents";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
 import { ArchiveView } from "@/components/archive-view";
+import { offeredStatesFor } from "@/lib/client-state-domain";
 import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { hasAiProcessingFailure, toClientPortalView } from "@/lib/client-visibility";
@@ -83,11 +84,16 @@ export default async function ClientSettingsPage({
   // Read here rather than with useSearchParams in SettingsTabs: this keeps the
   // tab component free of a Suspense requirement and seeds it from the URL on a
   // hard load, which is what makes a ?tab= link work at all.
-  searchParams: Promise<{ tab?: string }>;
+  //
+  // `status` rides along for `?tab=archive&status=…`, the deep link the
+  // Reporting tab's "Content by status" chart writes (2026-09). Same reason it
+  // is read here: the Archive tab's list is a client component whose filter is
+  // seeded, once, from this value.
+  searchParams: Promise<{ tab?: string; status?: string }>;
 }) {
   const user = await requireUser();
   const { id } = await params;
-  const { tab: initialTab } = await searchParams;
+  const { tab: initialTab, status: statusParam } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
@@ -442,8 +448,24 @@ export default async function ClientSettingsPage({
   // Archive (new tab). The exact component the Workspace's own Archive tab
   // uses (archive-view.tsx) — reused rather than rebuilt, fed the same way
   // tasks-body.tsx feeds it.
+  //
+  // NARROWED THROUGH `offeredStatesFor`, the same function that builds the
+  // list's own dropdown, so `?status=` can only ever seed a state this archive
+  // can hold. A link to `status=draft` (which a client's archive rejects by
+  // design) therefore opens the unfiltered list rather than an empty one, and
+  // the chart that writes these links already declines to emit that case —
+  // this is the second, mechanical half of the same rule, at the boundary the
+  // URL actually crosses.
+  const initialArchiveStatus = offeredStatesFor("archive", isClientViewer).find(
+    (option) => option === statusParam,
+  );
   const archiveSection = (
-    <ArchiveView assets={archiveAssets} agentLabelByAssetId={agentLabelByAssetId} viewerIsClient={isClientViewer} />
+    <ArchiveView
+      assets={archiveAssets}
+      agentLabelByAssetId={agentLabelByAssetId}
+      viewerIsClient={isClientViewer}
+      initialStatus={initialArchiveStatus ?? "all"}
+    />
   );
 
   // `CreditLedgerEntry.actorName`/`.actorUid` are staff-internal — set to the
