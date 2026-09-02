@@ -26,6 +26,13 @@ interface TerminalJobUpdate {
   status: Job["status"];
   error: string | null;
   heldReason: string | null;
+  /**
+   * SCRUM-404's third slot, written on every transition for exactly the reason
+   * the other two are: a run that was blocked, resumed and then completed
+   * would otherwise deliver with "missing client profile" still sitting on the
+   * doc, and the client-facing banner is gated on the FIELD.
+   */
+  blockedReason: string | null;
 }
 
 /**
@@ -63,17 +70,32 @@ interface TerminalJobUpdate {
 function terminalJobUpdate(run: AgentEngineRunRecord): TerminalJobUpdate | undefined {
   switch (run.status) {
     case "completed":
-      return { status: "review", error: null, heldReason: null };
+      return { status: "review", error: null, heldReason: null, blockedReason: null };
     case "failed":
     case "degraded":
-      return { status: "failed", error: run.failureReason ?? `agent-engine run ${run.status}`, heldReason: null };
+      return { status: "failed", error: run.failureReason ?? `agent-engine run ${run.status}`, heldReason: null, blockedReason: null };
     case "held":
       // `reason`, not `failureReason` — the run record keeps those two apart for
       // this exact reason (see `RunRecord`'s own note), and only one of them is
       // a failure.
-      return { status: "held", heldReason: run.reason ?? "Run held — nothing cleared the delivery gates.", error: null };
+      return { status: "held", heldReason: run.reason ?? "Run held — nothing cleared the delivery gates.", error: null, blockedReason: null };
     case "blocked_intake":
-      return { status: "failed", error: run.reason ?? "Run blocked — missing client input.", heldReason: null };
+      // SCRUM-404: the status is UNCHANGED (`failed`, and it still refunds) —
+      // the note above says why, and calls a dedicated `JobStatus` a separate
+      // decision. What changes is that the reason is now ALSO written to its
+      // own slot, so a client's own agent screen can say "we are waiting on
+      // something from you" without reading `error`, which the client-facing
+      // surfaces deliberately do not show them (AF-14: a failure that is ours
+      // is not the client's to attend to). A blocked intake is the one
+      // non-delivery that genuinely IS theirs to clear, and until now it was
+      // indistinguishable from an engine fault and therefore invisible to the
+      // only person who could fix it.
+      return {
+        status: "failed",
+        error: run.reason ?? "Run blocked — missing client input.",
+        heldReason: null,
+        blockedReason: run.reason ?? "Run blocked — missing client input.",
+      };
     case "running":
     case "awaiting_gate":
       return undefined;
@@ -145,7 +167,14 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   const statusChanged = !(
     job.status === update.status &&
     (job.error ?? null) === update.error &&
-    (job.heldReason ?? null) === update.heldReason
+    (job.heldReason ?? null) === update.heldReason &&
+    // SCRUM-404: `blockedReason` joins the comparison for the same reason
+    // `heldReason` did. `blocked_intake` already mapped to `failed`, so every
+    // blocked job in Firestore right now compares equal on status AND error —
+    // an update that ignored this slot would call them "already synced" and
+    // never backfill the reason, leaving the new banner permanently blank on
+    // exactly the runs it exists for.
+    (job.blockedReason ?? null) === update.blockedReason
   );
 
   // MATERIALIZATION IS NOT GATED ON THAT TRANSITION, and it used to be — which

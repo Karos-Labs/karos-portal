@@ -576,6 +576,55 @@ export function lastRunFailedAgentIds(
 }
 
 /**
+ * SCRUM-404 — the most recent run for this agent that stopped because the
+ * CLIENT has not supplied something, and its stated reason.
+ *
+ * ## Why this exists rather than reusing `lastRunFailedAgentIds`
+ *
+ * That verdict is a STAFF rung only, and correctly so (AF-14): a client should
+ * not be asked to attend to a failure that is ours. A `blocked_intake` run is
+ * the exception, and the only one — nothing broke, and the missing thing is
+ * theirs. `reconcile.ts` says the same in its own words: "a real blockage
+ * somebody must act on". Until this, it was mapped to `failed` and therefore
+ * suppressed from the one person who could clear it.
+ *
+ * Reads `job.blockedReason`, never `job.error`. The two are separate slots on
+ * purpose (see `Job.blockedReason`), and `error` is the field every "did this
+ * break" reader is gated on.
+ *
+ * ## The `runType` call
+ *
+ * A `test` run is excluded: that is staff exercising an agent, and its blockage
+ * is not news to the client. A `launch` run is deliberately INCLUDED, unlike in
+ * `lastRunFailedAgentIds` — a first-time client's onboarding IS a launch run,
+ * and it is the primary case this banner exists for. Excluding it would hide
+ * the notice at exactly the moment it is the only thing standing between the
+ * client and their first deliverable.
+ */
+export function latestBlockedIntake(
+  jobs: Pick<Job, "status" | "blockedReason" | "agentName" | "createdAt" | "runType">[],
+  agentName: string,
+  opts: { staff: boolean },
+): { reason: string; at: number } | undefined {
+  let newest: { reason: string; at: number } | undefined;
+  let newestAt = -1;
+  for (const job of jobs) {
+    if (job.agentName !== agentName) continue;
+    if (!opts.staff && job.runType === "test") continue;
+    // Any LATER run supersedes an earlier blockage, cleared or not: a delivered
+    // run after a blocked one means whatever was missing is no longer stopping
+    // this agent, and a banner that outlived its cause is the stale-refusal
+    // failure the schedule note below this describes.
+    if (job.createdAt <= newestAt) continue;
+    const blocked = typeof job.blockedReason === "string" && job.blockedReason !== "";
+    if (!blocked && !DELIVERED_JOB_STATUSES.has(job.status) && job.status !== "failed") continue;
+    newestAt = job.createdAt;
+    newest = blocked ? { reason: job.blockedReason as string, at: job.createdAt } : undefined;
+  }
+  return newest;
+}
+
+/**
  * How long a stored schedule refusal keeps forcing "Needs attention".
  *
  * `PlannedScheduledRun.lastError` clears only on the next CLEAN fire, so on a
