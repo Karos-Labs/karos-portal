@@ -1209,6 +1209,31 @@ export interface Job {
    */
   heldReason?: string | null;
   /**
+   * Why an agent-engine run never started because the CLIENT has not supplied
+   * something — the engine's `blocked_intake` reason, verbatim (SCRUM-404).
+   *
+   * A THIRD SLOT, for the same reason `heldReason` is a second one: the
+   * readers of `error` are all asking "did this break", and a blocked intake's
+   * answer is no — nothing broke, a document is missing. But it is not a
+   * `held` either: a hold is a product rule declining and is ours to explain,
+   * while this is genuinely **waiting on the client**, which makes it the one
+   * non-delivery a client's own screen should show them.
+   *
+   * NOT `CustomAgent.repo.blocked_reason`, which is snake_case, lives on a
+   * different object, and means "this skill is blocked in the lab repo" (in
+   * build, no pilot run yet). Different question, different answer, and the two
+   * are never read together — spelled out because the names are one underscore
+   * apart.
+   *
+   * The status stays `"failed"`. That is deliberate and unchanged: `reconcile.ts`
+   * gives its reasoning (a blockage "somebody must act on", which a soft badge
+   * would bury for staff, and which still refunds), and calls the question of a
+   * dedicated `JobStatus` "a separate decision". This field does not re-open it
+   * — it only makes the reason legible to the reader who can actually clear it,
+   * which is what SCRUM-404 asks for. Absent on every other outcome.
+   */
+  blockedReason?: string | null;
+  /**
    * T-B9 ("generate now, publish on date X"): a target publish date requested
    * AT RUN TIME, staff-only (see `run_agent_now`'s `publishAt` param in the
    * copilot chat route and the staff-only check in `runCustomAgentAction`).
@@ -1252,6 +1277,45 @@ export type AssetType =
  * Legacy assets (scheduled before this field existed) are treated as "auto".
  */
 export type PublishMode = "auto" | "manual" | "placeholder";
+
+/**
+ * Why a deliverable was drafted without the client context it is supposed to
+ * be grounded in (SCRUM-404). A read-only mirror of agent-engine's
+ * `DegradedContextGroundingMarker`
+ * (`packages/workflow/src/primitives/context-doc-policy.ts`), duplicated here
+ * for the same reason `AgentEngineRunRecord` is — agent-engine is a separate
+ * deployable with its own release cycle.
+ *
+ * ## Why this is an Asset field and not an internal diagnostic
+ *
+ * T-A10's premise is that a client-facing deliverable naming external parties,
+ * drafted with zero grounding, is worse than not drafting at all — so those
+ * agents BLOCK. SCRUM-388 then deliberately relaxed that for a first-time
+ * client's onboarding, because `intel-report-agent` BLOCKs on the very
+ * documents the onboarding run exists to produce, which deadlocked it. The
+ * relaxation is degraded-with-a-marker rather than blocked.
+ *
+ * **That relaxation is only honest if the marker reaches the client.** Until
+ * SCRUM-404 it did not: the marker rode on the deliverable and the materializer
+ * parsed deliverables into narrow typed shapes, none of which declared it, so
+ * a bootstrap deliverable reached the client looking exactly like a
+ * fully-grounded one. A staff-only diagnostic would not have fixed that — it is
+ * a different product from a client-visible "this was drafted before your
+ * market-strategy doc existed" label, and the honest one is the one the client
+ * can see.
+ *
+ * `status` is a literal rather than a boolean, mirroring the engine's own
+ * reasoning: a future third state should not need a breaking rename.
+ */
+export interface AssetContextGrounding {
+  status: "degraded";
+  /** The engine agent id that drafted this, e.g. `"intel-report-agent"`. */
+  agentId: string;
+  /** Which context documents were missing — the engine's own doc-type keys, e.g. `["market-strategy"]`. */
+  missingDocTypes: string[];
+  /** The engine's stated reason, verbatim — including the policy row's own rationale. Never re-worded here. */
+  reason: string;
+}
 
 export interface Asset {
   id: string;
@@ -1358,6 +1422,14 @@ export interface Asset {
    * assets without one are covered by deriveOrderKey() fallbacks at read time.
    */
   orderKey?: string;
+  /**
+   * Set when the agent-engine run that produced this deliverable reported
+   * degraded context grounding (SCRUM-404) — see {@link AssetContextGrounding}
+   * for what that means and why the client sees it. Absent on the normal path,
+   * which is the point: a fully-grounded deliverable shows nothing new, so
+   * there is no scare copy on the path almost every asset takes.
+   */
+  contextGrounding?: AssetContextGrounding | null;
   /**
    * DERIVED ONLY — never persisted to Firestore. Set true by the client-facing
    * redaction layer (redactLockedAsset) on copies of future-dated assets so

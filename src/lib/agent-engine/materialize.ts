@@ -7,6 +7,7 @@ import { recommendedScheduleFields } from "@/lib/scheduling";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
 import { generateAssetTitle } from "@/lib/asset-titles";
 import { AgentEngineCredentialError, getAgentEngineDeliverable } from "./client";
+import { readContextGroundingMarker } from "./context-grounding";
 import { groupRecommendationsByOwner, hasClassifiedOwner, toRoutableRecommendation } from "./routable-recommendation";
 import { renderIntelReport } from "./intel-report-render";
 import { persistSeoGeoInsightsFromDeliverable } from "./persist-seo-geo-insights";
@@ -832,6 +833,16 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
     const materialization = await buildMaterialization(job, job.agentEngineProductId, deliverable);
     if (!materialization) return undefined;
 
+    // SCRUM-404: read BEFORE the per-product branch, not inside it. The marker
+    // is cross-cutting — agent-engine spreads it onto every grounded agent's
+    // deliverable under one key — and this module's per-product functions parse
+    // deliverables into narrow typed shapes, none of which declared it. That is
+    // why a degraded deliverable used to reach the client looking exactly like a
+    // fully-grounded one. Declaring it on each shape instead would be eleven
+    // edits for one concept and would silently omit every product added later.
+    // See `context-grounding.ts` for the full reasoning.
+    const contextGrounding = readContextGroundingMarker(deliverable);
+
     // The one shared point every runtime-derived asset type in this codebase goes
     // through (platforms-publishable.test.ts's governance scan, PINNED_DERIVATIONS)
     // — applies the Reddit draft-only fence unconditionally, exactly as the webhook and
@@ -864,6 +875,10 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
       content: materialization.content,
       meta: { ...materialization.meta, agentEngineRunId: job.agentEngineRunId, agentEngineProductId: job.agentEngineProductId },
       imageUrl: materialization.imageUrl ?? null,
+      // Spread rather than `?? null`: an asset from a fully-grounded run keeps
+      // the field ABSENT, so the normal path stores nothing new and renders
+      // nothing new.
+      ...(contextGrounding ? { contextGrounding } : {}),
       ...(materialization.videoUrl ? { videoUrl: materialization.videoUrl } : {}),
       ...(materialization.channels ? { channels: materialization.channels } : {}),
       status: "draft",

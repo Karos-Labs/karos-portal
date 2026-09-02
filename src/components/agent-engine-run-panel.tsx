@@ -39,8 +39,19 @@ const STEP_KIND_BADGE: Readonly<Record<AgentEngineRunView["steps"][number]["kind
  * stage progress, per-step latency/cost, the agent's own reasoning transcript,
  * and a human-approval action when the run is paused at a gate — read straight
  * from `agentEngineRuns/{runId}` and its `steps` subcollection (`read-run.ts`),
- * not from `job.status`/`job.dynamicRun` (nothing updates those for this
- * dispatch path yet — see `ExternalJobInfo`'s own doc comment). Purely
+ * not from `job.status`/`job.dynamicRun`.
+ *
+ * THAT PARENTHETICAL USED TO SAY "nothing updates those for this dispatch path
+ * yet", and it has been wrong since Task 2 (corrected by SCRUM-404).
+ * `syncAgentEngineJobStatusFromView` (`reconcile.ts`) is the reverse completion
+ * channel, and describes itself as "the only way `job.status` ever changes for
+ * a job dispatched through agent-engine". This panel reads the run record
+ * anyway, because it needs per-step progress, per-step cost and the paused
+ * gate's payload, none of which `job.status` carries — a different reason from
+ * the one that used to be written here. The stale one cost real time: SCRUM-404
+ * was filed partly on the belief that a `degraded`/`blocked_intake` status
+ * "never arrives", when in fact it arrives FLATTENED, both mapping onto
+ * `job.status: "failed"`. Purely
  * additive: this card sits alongside the job's existing legacy status
  * badge/step UI, never replaces it, and the caller only renders it at all when
  * `job.agentEngineRunId` is set.

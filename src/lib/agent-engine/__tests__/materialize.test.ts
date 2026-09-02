@@ -918,6 +918,84 @@ describe("the three products that already worked keep working", () => {
   });
 });
 
+/**
+ * SCRUM-404, break #2: the materializer used to DROP the context-grounding
+ * marker.
+ *
+ * agent-engine attaches it to the deliverable under one `contextGrounding` key,
+ * identically for every grounded agent. This module parses deliverables into
+ * narrow typed shapes (`InstagramCarouselDeliverable` and siblings) and none of
+ * them declared it, so a degraded deliverable reached the client looking
+ * exactly like a fully-grounded one — which is the situation T-A10 exists to
+ * prevent and SCRUM-388's relaxation quietly depended on not being true.
+ *
+ * Asserted THROUGH the materializer, on the asset it actually writes, and
+ * across products rather than on one: the whole defect was that it worked
+ * per-product-shape, so a test that pinned one product would have passed
+ * against the broken code for every other.
+ */
+describe("SCRUM-404: the context-grounding marker survives onto the asset", () => {
+  const marker = {
+    contextGroundingStatus: "degraded",
+    agentId: "intel-report-agent",
+    missingDocTypes: ["market-strategy", "target-audience"],
+    reason: "output is a client-facing deliverable that names external parties (competitors) — ungrounded is worse than absent — exempted from BLOCK because this is a runKind:\"setup\" run",
+  };
+
+  it("carries the marker through for each of the three agents whose policy row can produce one", async () => {
+    // The CONTEXT_DOC_POLICY rows actually wired to a call site
+    // (`context-doc-policy.ts`): intel-report degrades under `bootstrapExempt`,
+    // instagram and branded-shorts degrade outright.
+    for (const [productId, deliverable] of [
+      ["intel-report-agent", { headline: "Three competitors moved", sections: [] }],
+      ["instagram-agent", { caption: "A caption", slides: [] }],
+      ["branded-shorts-agent", { title: "A short", scriptMarkdown: "# Script" }],
+    ] as const) {
+      createAssetMock.mockClear();
+      await materialize(productId, { ...deliverable, contextGrounding: marker });
+      expect(createdAsset().contextGrounding, `${productId} must carry the marker`).toEqual({
+        status: "degraded",
+        agentId: "intel-report-agent",
+        missingDocTypes: ["market-strategy", "target-audience"],
+        reason: marker.reason,
+      });
+    }
+  });
+
+  it("leaves the field ABSENT on a fully-grounded deliverable — no scare copy on the normal path", async () => {
+    await materialize("intel-report-agent", { headline: "Three competitors moved", sections: [] });
+    expect("contextGrounding" in createdAsset()).toBe(false);
+  });
+
+  it("drops a marker that does not validate rather than rendering a half-claim", async () => {
+    // This crossed a service boundary, so it gets the same treatment as every
+    // other value that does. A partial marker must not become a client-visible
+    // label naming a document it cannot actually name.
+    for (const bad of [
+      { contextGroundingStatus: "degraded" }, // no agentId, no reason
+      { contextGroundingStatus: "some_future_state", agentId: "a", reason: "r" },
+      { agentId: "a", reason: "r", missingDocTypes: [] }, // no status literal
+      "degraded",
+    ]) {
+      createAssetMock.mockClear();
+      await materialize("intel-report-agent", { headline: "H", sections: [], contextGrounding: bad });
+      expect("contextGrounding" in createdAsset(), `${JSON.stringify(bad)} must not become an asset label`).toBe(false);
+    }
+  });
+
+  it("keeps a marker whose missingDocTypes list is empty or partly unusable", async () => {
+    // The marker is still a true statement about the run when the list is
+    // empty, and a list with junk in it is narrowed to the strings present
+    // rather than dropped — the count a client reads must stay honest.
+    await materialize("intel-report-agent", {
+      headline: "H",
+      sections: [],
+      contextGrounding: { ...marker, missingDocTypes: ["market-strategy", 7, null, ""] },
+    });
+    expect(createdAsset().contextGrounding?.missingDocTypes).toEqual(["market-strategy"]);
+  });
+});
+
 describe("what it deliberately does not do", () => {
   it("no-ops for a product id it has never heard of, without reaching the engine", async () => {
     const assetId = await materializeAgentEngineDeliverable(job("some-future-agent"));

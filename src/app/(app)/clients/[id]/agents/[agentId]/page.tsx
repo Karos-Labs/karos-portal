@@ -24,11 +24,12 @@ import {
 } from "@/lib/agent-engine/health";
 import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import { EngineHealthBanner } from "@/components/engine-health-banner";
+import { IntakeBlockedBanner } from "@/components/client-agents/intake-blocked-banner";
 import { RunsPausedNotice } from "@/components/runs-paused-notice";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
+import { isLaunchInFlight, lastRunFailedAgentIds, latestBlockedIntake, rosterStatus } from "@/lib/client-agents";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
@@ -411,6 +412,12 @@ export default async function ClientAgentDetailPage({
     viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
     now,
   });
+
+  // SCRUM-404: whether this agent's latest run stopped waiting on the client.
+  // `isStaff` rather than `viewerIsClient` so a staff member in View-as-Client
+  // sees the same banner the client does — this is the one non-delivery both
+  // registers need, and the component switches the wording, not the visibility.
+  const blockedIntake = latestBlockedIntake(jobs, agent.name, { staff: isStaff });
 
   // `produced` is this page's LIST; `hasDelivered` above is the strip's VERDICT,
   // and it is also what the roster card that opened this page reads, so the two
@@ -1021,6 +1028,16 @@ export default async function ClientAgentDetailPage({
           whole enabled list. */}
       {shouldShowEngineHealthBanner(client.agentsRepoSlug, [agent.key]) && (
         <EngineHealthBanner viewerIsClient={viewerIsClient} />
+      )}
+
+      {/* SCRUM-404: the same slot, for the other reason an agent produces
+          nothing. A `blocked_intake` run never started because a context
+          document is missing, and it maps to `job.status: "failed"` — which the
+          client-facing surfaces correctly refuse to show a client (AF-14),
+          because our failures are not theirs to attend to. A missing intake IS
+          theirs, so it reads its own field. */}
+      {blockedIntake && (
+        <IntakeBlockedBanner reason={blockedIntake.reason} viewerIsClient={viewerIsClient} outputNoun={outputNoun} />
       )}
 
       {/* CD-H7a's idiom, for the same failure one level up: the two-column
