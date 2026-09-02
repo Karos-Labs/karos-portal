@@ -34,8 +34,20 @@ export function AgentArchiveRows({
    * noun this component dates itself, client-side, so the day is in the
    * viewer's timezone like the relative stamp beside it. The stored
    * asset.title is never re-read here.
+   *
+   * `runLabel` is the staff-only operator name for the run that produced the
+   * row (B4, parity pass 2026-09). It used to be concatenated INTO `title`,
+   * which replaced the client's primary text rather than adding to it; it is
+   * its own muted span now, so the row's first words are the same for both
+   * readers. The page passes it for staff only.
    */
-  rows: Array<{ asset: Asset; at: number; title?: string; fallbackNoun?: string }>;
+  rows: Array<{
+    asset: Asset;
+    at: number;
+    title?: string;
+    fallbackNoun?: string;
+    runLabel?: string;
+  }>;
   viewerIsClient: boolean;
 }) {
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
@@ -44,7 +56,7 @@ export function AgentArchiveRows({
   return (
     <>
       <ul className="space-y-1.5">
-        {rows.map(({ asset, at, title, fallbackNoun }) => (
+        {rows.map(({ asset, at, title, fallbackNoun, runLabel }) => (
           <li
             key={asset.id}
             className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"
@@ -55,6 +67,8 @@ export function AgentArchiveRows({
                   ? `${fallbackNoun} · ${new Date(at).toLocaleDateString([], { month: "short", day: "numeric" })}`
                   : "Untitled")}
             </span>
+            {/* B4: additive, and after the shared title rather than inside it. */}
+            {runLabel && <span className="shrink-0 text-[11px] text-muted-2">{runLabel}</span>}
             {asset.templateName && <Badge tone="neutral">{asset.templateName}</Badge>}
             <span className="shrink-0 text-[11px] text-muted-2">{relativeTime(at)}</span>
             {/* Orange-outline, not variant="accent": the accent is THE one

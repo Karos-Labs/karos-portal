@@ -54,11 +54,25 @@ describe("narrow-viewport shell chrome", () => {
     expect(src("components/client-rail.tsx")).toMatch(/aside className="[^"]*\bw-72\b/);
     expect(clientAnchor).toContain("md:left-72");
 
-    // The staff Sidebar's is narrower — this is the pair that had drifted.
-    expect(src("components/sidebar.tsx")).toMatch(/aside className="[^"]*\bw-64\b/);
-    expect(staffAnchor).toContain("md:left-64");
+    // THE STAFF SIDEBAR HAS TWO WIDTHS NOW (parity pass 2026-09, rulings
+    // D1/D2/D22). Its aside is `w-64` in the agency workspace and `w-72` in
+    // client context, because in client context it IS the client's rail — same
+    // width, same sections, same footer.
+    const sidebar = src("components/sidebar.tsx");
+    expect(sidebar).toMatch(/clientCtx \? "relative z-30 w-72" : "w-64"/);
+    // The dock only ever anchors to the SECOND of those: StaffCopilotDock
+    // returns null unless a client context is active, so the staff shell the
+    // strip is painted in is always the `w-72` one. `md:left-64` was the width
+    // of a shell this dock is never mounted in, and it left 32px of page
+    // showing under the rail's right edge.
+    expect(src("components/staff-chatbot-widget.tsx")).toMatch(/if\s*\(!activeClient\)\s*return null/);
+    expect(staffAnchor).toContain("md:left-72");
 
-    expect(clientAnchor).not.toBe(staffAnchor);
+    // IDENTICAL, and that is the assertion — not an oversight. The two anchors
+    // used to be pinned APART on the reasoning that the shells have different
+    // nav widths; they do, but only one of each shell's widths ever hosts this
+    // dock, and those two are the same number.
+    expect(clientAnchor).toBe(staffAnchor);
   });
 
   it("scopes outside-click dismissal to the overlay, never the lg+ side rail", () => {
@@ -101,6 +115,28 @@ describe("narrow-viewport shell chrome", () => {
     // Attribute, not a class-name match: class names get restyled, and this
     // has to hold for every overlay that portals through Modal.
     expect(handler).not.toMatch(/closest\(["'`]\./);
+  });
+
+  it("keeps the collapsed rail a paint clip, never a scroll container", () => {
+    // QA 2026-09: the collapsed strip showed the right edge of the chat.
+    // `overflow-hidden` is still a scroll container, and the chat's own
+    // scrollIntoView()/focus() scrolled it ~330px sideways, carrying the
+    // `absolute` overlay off-screen with the content. `overflow-clip` cannot
+    // be scrolled by anything; `inert` stops the focus half at the source.
+    const frame = /<div className="relative h-full overflow-(\w+)">/.exec(dock);
+    expect(frame?.[1]).toBe("clip");
+    // In a class attribute - the comment explaining the bug names the old value.
+    expect(dock).not.toMatch(/className="[^"]*\boverflow-hidden\b/);
+    expect(dock).toContain("inert={collapsed}");
+
+    // The strip is a real control (click anywhere to expand), rendered only
+    // while collapsed so it can never sit over the open chat, and pinned at
+    // the strip's own width so it does not slide during the width transition.
+    const overlay = /\{collapsed && \(\s*<button[\s\S]*?className="([^"]+)"/.exec(dock);
+    expect(overlay).not.toBeNull();
+    expect(overlay?.[1]).toContain("absolute inset-y-0 left-0");
+    expect(overlay?.[1]).toContain("w-12");
+    expect(overlay?.[1]).not.toContain("inset-0");
   });
 
   it("gives the expanded sheet a height cap rather than a fixed box", () => {

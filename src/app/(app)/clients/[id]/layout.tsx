@@ -1,6 +1,13 @@
 import { requireUser, requireVisibleClient } from "@/lib/auth";
-import { listClientContextDocs, listClientCompetitors } from "@/lib/data";
+import {
+  listClientContextDocs,
+  listClientCompetitors,
+  listCustomAgents,
+  getClientCredits,
+} from "@/lib/data";
 import { toStaffShellView } from "@/lib/client-visibility";
+import { railAgentsForClient } from "@/lib/rail-agents";
+import { availableCredits } from "@/lib/credits";
 import { ClientContextSync } from "@/lib/active-client-context";
 
 /**
@@ -42,10 +49,33 @@ export default async function ClientLayout({
   // Guard BEFORE the fan-out, not inside it: a refused viewer should not cause
   // this client's documents and competitor roster to be read at all.
   const client = await requireVisibleClient(user, id);
-  const [contextDocs, competitors] = await Promise.all([
+  const [contextDocs, competitors, customAgents, credits] = await Promise.all([
     listClientContextDocs(id),
     listClientCompetitors(id),
+    listCustomAgents(),
+    getClientCredits(id),
   ]);
+
+  // The two things the staff rail needs to render the CLIENT'S chrome rather
+  // than a staff approximation of it (parity pass 2026-09, rulings D3/D7): the
+  // agent roster the "AI agents" dropdown lists, and the credits pill's number.
+  //
+  // Both are read through the same functions the client portal's own shell uses
+  // — `railAgentsForClient` and `availableCredits` — so a staff member in client
+  // context and the client themselves can never be shown two different rosters
+  // or two different balances for the same second.
+  //
+  // What is deliberately NOT ported from the `(app)` layout is its one-time
+  // onboarding default-star WRITE. "Karos sets the first stars at onboarding"
+  // describes the client's first visit to their own portal; a staff member
+  // opening a client page must not silently write two stars into that client's
+  // record on their behalf.
+  const railAgents = railAgentsForClient(customAgents, client);
+  // The SPENDABLE figure, not the raw balance — the pill says "Credits", and
+  // what the charge transaction honours is the balance clipped by the
+  // weekly/monthly caps. `now` omitted for the same reason the client shell
+  // omits it: getClientCredits already rolled the windows on this read.
+  const spendableCredits = availableCredits(credits);
 
   return (
     <>
@@ -53,6 +83,8 @@ export default async function ClientLayout({
         client={toStaffShellView(client)}
         contextDocs={contextDocs}
         competitors={competitors}
+        railAgents={railAgents}
+        spendableCredits={spendableCredits}
         isAdmin={user.role === "KAROS_ADMIN"}
       />
       {children}

@@ -81,8 +81,8 @@ function jsxAttr(mount: string, name: string): string | null {
  * Where `<Name` opens in `src` at or after `from`, as a WHOLE element name, or
  * -1.
  *
- * `indexOf("<BulkUploadClips")` is a prefix match, so it is satisfied by
- * `<BulkUploadClipsPreview` — a mutation run against the first draft of this
+ * `indexOf("<MediaUploadButton")` is a prefix match, so it is satisfied by
+ * `<MediaUploadButtonPreview` — a mutation run against the first draft of this
  * file renamed the one render site and the entrance count below did not move.
  * The character after the name has to be one that can follow a tag name.
  */
@@ -208,16 +208,23 @@ function emptyStateDescriptions(rel: string): string[] {
   });
 }
 
-describe("bulk clip upload is reachable from the content library", () => {
+describe("media upload is reachable from the content library", () => {
   it("has more than one entrance in the product", () => {
     // The finding's own measurement: `grep -rn BulkUploadClips src` returned one
     // import and one render site, and that site was the action row of a page
     // titled "AI Agents" — for a feature that involves no agent at all.
-    // `elementAt`, not `includes("<BulkUploadClips")`: that prefix is satisfied
-    // by `<BulkUploadClipsPreview`, and a mutation run proved it — the render
-    // site was renamed and this count did not move.
+    // `elementAt`, not `includes("<MediaUploadButton")`: that prefix is
+    // satisfied by `<MediaUploadButtonPreview`, and a mutation run proved it —
+    // the render site was renamed and this count did not move.
+    //
+    // THE COMPONENT WAS `BulkUploadClips` UNTIL 2026-09, when it stopped being
+    // clip-only ("Upload media": images and video through one control) and its
+    // file and export were renamed with it. This guard caught that rename by
+    // going red, which is what it is for — the name it watches is the name that
+    // has to be updated here, deliberately, rather than a substring that would
+    // survive any rename and check nothing.
     const rendered = SOURCE_FILES.filter(
-      (f) => elementAt(code(f), "BulkUploadClips", 0) !== -1,
+      (f) => elementAt(code(f), "MediaUploadButton", 0) !== -1,
     );
     expect(rendered.length, `only these render it: ${rendered.join(", ") || "nothing"}`)
       .toBeGreaterThan(1);
@@ -243,7 +250,11 @@ describe("bulk clip upload is reachable from the content library", () => {
     const route = "/" + ASSETS_PAGE.replace("src/app/(app)/", "").replace("/page.tsx", "");
     const src = code(ASSETS_PAGE);
     expect(src).toMatch(new RegExp(`<Form\\s+action="${route}"`));
-    expect(src).toMatch(/const \{ clientId: \w+ \} = await searchParams/);
+    // `[^}]*` after the binding, not `\}` immediately: the page grew a second
+    // param in 2026-09 (`status`, the "Content by status" deep link), and this
+    // assertion is about the page READING clientId off searchParams, not about
+    // it being the only thing it reads.
+    expect(src).toMatch(/const \{ clientId: \w+[^}]*\} = await searchParams/);
     expect(src).toMatch(/name="clientId"/);
   });
 });

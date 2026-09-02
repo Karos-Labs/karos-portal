@@ -3,6 +3,7 @@ import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { listAssets } from "@/lib/data";
 import { PageHeader } from "@/components/ui";
 import { AssetsView } from "@/components/assets-view";
+import { statusFilterFromParam } from "@/lib/content-status-links";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 
 /**
@@ -10,9 +11,23 @@ import { getClientLibraryAssets } from "@/lib/asset-visibility";
  * draft (draft → approved) is what makes it visible in the client's own Library.
  * Client users are sent to their Library (they never see this staff review view).
  */
-export default async function ClientAssetsPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ClientAssetsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  /**
+   * `?status=` — where the dashboard's "Content by status" chart lands a staff
+   * reader who pressed one of its bars (2026-09). Seeds the list's own filter;
+   * see AssetsView's `initialStatus` for why it is a seed and not a controlled
+   * value, and `statusFilterFromParam` for why an unrecognised one falls back
+   * to the unfiltered list rather than an empty one.
+   */
+  searchParams: Promise<{ status?: string }>;
+}) {
   const user = await requireUser();
   const { id } = await params;
+  const { status: statusParam } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     // Client Library lives in Account Center's Archive tab now. The Workspace
@@ -40,7 +55,7 @@ export default async function ClientAssetsPage({ params }: { params: Promise<{ i
             : `Deliverables for ${client.name}. Approved items appear in the client's library.`
         }
       />
-      <AssetsView assets={assets} canApprove />
+      <AssetsView assets={assets} canApprove initialStatus={statusFilterFromParam(statusParam)} />
     </>
   );
 }

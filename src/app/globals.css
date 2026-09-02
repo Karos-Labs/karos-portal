@@ -55,6 +55,21 @@
   --info: #8ba1b7;
 
   --radius: 6px;           /* Ember squares things off */
+
+  /* Elevation (2026-09). NOT a fourth surface tone - the ladder above is still
+     three tones and these add no fill, only a cast shadow, so nothing here
+     competes with --surface-2/-3.
+
+     They exist because the two modes read depth by different means. On
+     charcoal, a card is already legible as raised: --surface is nine points
+     lighter than the ground and the eye reads that step as elevation. On paper
+     it is not - #ffffff on #f2f1ec is a five-point step with no shadow under
+     it, which is the "slightly flat" light mode the product owner reported. So
+     dark keeps a whisper (a shadow on charcoal is nearly invisible by
+     construction) and light carries the real one; the token names stay the
+     same so a component asks for elevation, not for a mode. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-2: 0 4px 6px -4px rgba(0, 0, 0, 0.3), 0 12px 28px -14px rgba(0, 0, 0, 0.5);
 }
 
 @theme inline {
@@ -201,6 +216,23 @@ body {
   background: var(--surface);
 }
 
+/* An interactive ROW inside a card — an attention item, a status bar, a recent
+   deliverable. Its hairline lifts to the accent on hover, which §6 lists as a
+   sanctioned orange use ("markers, eyebrows, hovers, live signals").
+
+   ROWS ONLY, and that fence is the whole reason this is a class rather than a
+   change to <Card>. Tinting every card border on hover would spend the one
+   rationed colour on a mouse passing over a panel; tinting a row that actually
+   navigates spends it on an affordance. Pairs with a surface-3 fill so the
+   effect still reads for anyone who cannot separate the two hues. */
+.row-lift {
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.row-lift:hover {
+  border-color: color-mix(in srgb, var(--neon) 45%, transparent);
+  background-color: var(--surface-3);
+}
+
 /* Glass surface for dropdowns / overlays — combine with border */
 .glass-surface {
   background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -246,6 +278,12 @@ body {
   --warning: #a8781e;
   --danger: #b04a43;
   --info: #5b7186;
+
+  /* Elevation carries the weight here - see the note on the dark values. Warm
+     charcoal rather than pure black in the shadow, so a card floats over paper
+     instead of over grey: rgba(26,26,26,...) is --foreground's own ink. */
+  --shadow-1: 0 1px 2px rgba(26, 26, 26, 0.05), 0 1px 3px rgba(26, 26, 26, 0.07);
+  --shadow-2: 0 2px 4px rgba(26, 26, 26, 0.06), 0 12px 26px -12px rgba(26, 26, 26, 0.22);
 }
 
 .light body {

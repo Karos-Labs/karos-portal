@@ -53,11 +53,22 @@ Button.displayName = "Button";
 
 /* --------------------------------- Card --------------------------------- */
 
+/**
+ * `shadow-[var(--shadow-1)]` (2026-09): the elevation tokens in globals.css,
+ * asked for by name so this line does not know which mode it is in. On charcoal
+ * they are a whisper — the surface ladder already reads as raised there — and on
+ * paper they are what makes a white card sit ON the ground rather than beside
+ * it, which is the "slightly flat light mode" this pass was opened for.
+ *
+ * `transition-colors` became `transition-[color,background-color,border-color,box-shadow]`
+ * for the same reason the shadow was added: a hover that changes the shadow but
+ * only transitions the border snaps.
+ */
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        "card-grad rounded-[var(--radius)] border border-border p-5 transition-colors duration-200 hover:border-border-strong",
+        "card-grad rounded-[var(--radius)] border border-border p-5 shadow-[var(--shadow-1)] transition-[color,background-color,border-color,box-shadow] duration-200 hover:border-border-strong hover:shadow-[var(--shadow-2)]",
         className,
       )}
       {...props}

@@ -34,6 +34,7 @@ export function ClientAgentRosterCard({
   blurb,
   status,
   note,
+  notGranted = false,
 }: {
   href: string;
   /** `"<key> <name>"` - drives the platform mark. */
@@ -50,6 +51,13 @@ export function ClientAgentRosterCard({
    * on the page this card opens.
    */
   note?: string | null;
+  /**
+   * STAFF ONLY (A4, parity pass 2026-09): this agent is on the staff superset
+   * but not in the client's grants, so the client's own roster has no card for
+   * it. A neutral badge beside the status word, never a status word of its own
+   * — the agent's state is unchanged by who may see it.
+   */
+  notGranted?: boolean;
 }) {
   const disabled = status.tone === "disabled";
 
@@ -65,13 +73,21 @@ export function ClientAgentRosterCard({
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate text-base font-medium text-foreground">{displayName}</p>
             <RosterStatusBadge status={status} />
+            {notGranted && <Badge tone="neutral">Not granted</Badge>}
           </div>
           {blurb && (
             <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">{blurb}</p>
           )}
+          {/* A5 (parity pass 2026-09): the same grey 11px line the client's copy
+              is set in used to carry staff-queue facts ("3 drafts waiting for
+              review") on a card that is otherwise identical to the client's.
+              The mono marker replaces the decorative dot rather than sitting
+              beside it — one glyph in, the reader knows whose line this is. */}
           {note && (
-            <p className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-2">
-              <Icon name="Dot" className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <p className="mt-1.5 flex items-baseline gap-1.5 text-[11px] text-muted-2">
+              <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.08em] text-muted-2">
+                Internal
+              </span>
               {note}
             </p>
           )}

@@ -6,7 +6,8 @@ import { listAssets, listClients } from "@/lib/data";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetsView } from "@/components/assets-view";
-import { BulkUploadClips } from "@/components/bulk-upload-clips";
+import { statusFilterFromParam } from "@/lib/content-status-links";
+import { MediaUploadButton } from "@/components/media-upload";
 import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
 import type { Client } from "@/lib/types";
@@ -17,7 +18,7 @@ import type { Client } from "@/lib/types";
  * `/assets?clientId=` had exactly one entrance in the whole product — the
  * copilot's staff deep-link fallback — so the branch it opens was unreachable
  * by anyone who had not asked the copilot a question. That branch is now the
- * only place outside the AI Agents page that offers bulk clip upload (#107),
+ * only place outside the AI Agents page that offers media upload (#107),
  * which makes "unreachable" the difference between the feature having a home
  * and not.
  *
@@ -57,10 +58,12 @@ function ClientLibraryPicker({ clients }: { clients: Client[] }) {
 export default async function AssetsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ clientId?: string }>;
+  /** `?status=` seeds the list's status filter — see AssetsView's `initialStatus`. */
+  searchParams: Promise<{ clientId?: string; status?: string }>;
 }) {
   const user = await requireUser();
-  const { clientId: viewClientId } = await searchParams;
+  const { clientId: viewClientId, status: statusParam } = await searchParams;
+  const initialStatus = statusFilterFromParam(statusParam);
 
   // The client Library merged into Account Center's Archive tab (2026-07) -
   // client users land there; this route stays the staff review surface. The
@@ -95,7 +98,7 @@ export default async function AssetsPage({
     // linked from the agent detail page, the task ticket modal and the live
     // card, and already passes `canApprove` (it passes no push targets, so
     // "Publish now" cannot render there). Two routes for one question is a
-    // consolidation nobody has made; whichever survives has to keep the clip
+    // consolidation nobody has made; whichever survives has to keep the media
     // uploader and the push targets, because those live here and only here.
     //
     // NO NEW AUTHORITY AND NO NEW WRITE PATH. Before: read-only cards. Now: the
@@ -119,14 +122,16 @@ export default async function AssetsPage({
           // Not "Content library and delivery calendar": the calendar moved to
           // the /calendar route (see the AssetsView docstring) and this page has
           // not carried one since.
-          description="Everything delivered for this client. Approve what is ready, or add clips by hand."
+          description="Everything delivered for this client. Approve what is ready, or add media by hand."
           action={
             <div className="flex items-center gap-3">
-              {/* #107: the second home. Bulk clip upload is manual upload of
-                  pre-made podcast MP4/MOVs — no agent is involved — and its only
-                  entrance was the action row of a page titled "AI Agents". A
-                  client's content library is where a reader looks for it. */}
-              <BulkUploadClips clientId={viewClient.id} bucketName={process.env.GCS_MEDIA_BUCKET} />
+              {/* #107: the second home. Media upload is a manual upload of
+                  files somebody already has — no agent is involved — and its
+                  only entrance was the action row of a page titled "AI Agents".
+                  A client's content library is where a reader looks for it.
+                  (It took podcast MP4/MOVs only until 2026-09; images now go
+                  through the same control — see media-upload.tsx.) */}
+              <MediaUploadButton clientId={viewClient.id} bucketName={process.env.GCS_MEDIA_BUCKET} />
               <Link
                 href="/assets"
                 className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
@@ -139,6 +144,7 @@ export default async function AssetsPage({
         <AssetsView
           assets={clientAssets}
           canApprove
+          initialStatus={initialStatus}
           {...(clientPlatforms ? { connectedPlatformsByClient: clientPlatforms } : {})}
         />
       </>
@@ -168,12 +174,13 @@ export default async function AssetsPage({
           // It read "Run an agent on a client to generate deliverables", which
           // named the one route it knew and so told a reader looking for the
           // clip uploader that no such thing existed (#107). Both routes now.
-          description="Deliverables land here when an agent run produces one, and so do clips you upload by hand into a client library."
+          description="Deliverables land here when an agent run produces one, and so does media you upload by hand into a client library."
         />
       ) : (
         <AssetsView
           assets={assets}
           canApprove
+          initialStatus={initialStatus}
           clientNames={Object.fromEntries(clients.map((client) => [client.id, client.name]))}
           {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
         />

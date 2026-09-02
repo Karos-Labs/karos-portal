@@ -96,9 +96,16 @@ describe("every surface under /clients/[id] that resolves an agent filters on th
   it("found the surfaces it is about to check", () => {
     // Non-vacuity: an empty list would make the rule below hold over nothing,
     // which is what a directory rename looks like from in here.
+    //
+    // The nested LAYOUT joined the list in the parity pass 2026-09: it reads
+    // the catalogue to build the staff shell's client-context agent roster
+    // (ruling D3). That is exactly the property this describe block is about —
+    // a surface under /clients/[id] resolving agents for the client in the URL
+    // — so it belongs here rather than being excused as "not a page".
     expect(surfaces.map((s) => s.rel).sort()).toEqual([
       "app/(app)/clients/[id]/agents/[agentId]/page.tsx",
       "app/(app)/clients/[id]/agents/page.tsx",
+      "app/(app)/clients/[id]/layout.tsx",
       "app/(app)/clients/[id]/settings/page.tsx",
     ]);
   });
@@ -116,12 +123,33 @@ describe("every surface under /clients/[id] that resolves an agent filters on th
       (total, re) => total + [...src.matchAll(new RegExp(re.source, "g"))].length,
       0,
     );
-    const filters = [...src.matchAll(/\bagentKeyMatchesClientSlug\s*\(/g)].length;
+    //
+    // A call to `railAgentsForClient` COUNTS as a filter (parity pass 2026-09):
+    // that helper's whole body is this filter, applied to a whole catalogue
+    // read, and it exists so the two shells cannot answer "which agents does
+    // this client have" differently. Inlining the clause at every call site
+    // instead would satisfy this sweep and reintroduce the drift. The helper's
+    // own use of the gate is asserted below, so the indirection cannot become a
+    // hole: delete the clause in there and this suite still goes red.
+    const filters = [
+      ...src.matchAll(/\b(agentKeyMatchesClientSlug|railAgentsForClient)\s*\(/g),
+    ].length;
     expect(resolutions, `${rel}: matched as a surface but resolves nothing`).toBeGreaterThan(0);
     expect(
       filters,
       `${rel}: ${resolutions} agent-catalogue read(s), ${filters} binding filter(s)`,
     ).toBeGreaterThanOrEqual(resolutions);
+  });
+
+  it("keeps the gate inside the helper the sweep above accepts in its place", () => {
+    // The other end of that indirection. `railAgentsForClient` is counted as a
+    // filter, so it has to BE one — and it is the only shared reader of the
+    // catalogue either shell uses, so a deletion here would silently unbind
+    // both the client portal's rail and the staff shell's client-context arm.
+    const helper = stripComments(
+      readFileSync(join(SRC, "lib/rail-agents.ts"), "utf8"),
+    );
+    expect(helper).toMatch(/agentKeyMatchesClientSlug\(\s*a\.key,\s*client\.agentsRepoSlug\s*\)/);
   });
 });
 

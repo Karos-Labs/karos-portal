@@ -89,8 +89,15 @@ export function AgentStatusStrip({
   // repeating itself over blank space. A LIVE agent keeps its strip whatever
   // else it has: the breathing mark is the point of it, and dropping that would
   // be losing a signal rather than removing a duplicate.
-  const saysSomething =
-    running || facts.length > 0 || Boolean(aside) || Boolean(staffNote) || status.tone === "live";
+  //
+  // AND A STAFF NOTE ALONE MAY NOT CONJURE ONE (B6, parity pass 2026-09).
+  // `Boolean(staffNote)` used to sit in this disjunction, so an agent with no
+  // facts, no aside and no live badge grew a full-width status band for staff
+  // and none at all for the client — a whole element in the column that shifted
+  // everything under it, which is exactly the divergence the pass exists to
+  // remove. The note still renders whenever the band is here on its own merits;
+  // it just cannot be the reason the band exists.
+  const saysSomething = running || facts.length > 0 || Boolean(aside) || status.tone === "live";
   if (!saysSomething) return null;
 
   const live = status.tone === "live";

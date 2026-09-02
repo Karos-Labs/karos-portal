@@ -102,6 +102,26 @@ const GROUP_PAGE_SIZE = 12;
  * Verify with `git log -S'status=draft' -- src/components/client-home-overview.tsx`
  * before re-adding it; reintroduce it WITH its producer and a test.
  *
+ * ── REINTRODUCED 2026-09, ON EXACTLY THOSE TERMS ─────────────────────────
+ *
+ * `initialStatus` below is the reader; the producer is the "Content by status"
+ * chart (client-analytics.tsx's `statusHref`), which is on the same reader's
+ * Reporting tab two clicks from here and whose entire purpose is to open this
+ * list narrowed to the bar they pressed. Both ends are pinned by
+ * content-status-deeplink.test.ts, which fails if either the link stops
+ * carrying the param or this prop stops seeding the filter.
+ *
+ * It is a SEED, not the re-reading controlled value the deleted version had.
+ * That version's manual same-route re-read is the part that had no test and is
+ * not coming back: the page passes an initial value, the dropdown owns the
+ * filter from the first interaction on, and a client changing the select does
+ * not have it snap back to the URL.
+ *
+ * The prop also cannot offer a state this list rejects — the page derives it
+ * through `offeredStatesFor("archive", …)`, the same function that builds the
+ * dropdown, so a deep link to "draft" degrades to the unfiltered list for a
+ * client rather than to an empty one.
+ *
  * SCOPE: this is about the `?status=` param on these two surfaces. `?tab=`
  * (F97, progress-view.tsx) is a separate, genuinely-used param and is
  * unaffected; no claim is made here about search params elsewhere.
@@ -110,6 +130,7 @@ export function ArchiveView({
   assets,
   agentLabelByAssetId,
   viewerIsClient,
+  initialStatus = "all",
 }: {
   assets: Asset[];
   /**
@@ -131,9 +152,14 @@ export function ArchiveView({
    * and every live mount (settings/page.tsx, run-calendar.tsx) already passes it.
    */
   viewerIsClient: boolean;
+  /**
+   * The status this list opens on, seeded from `?status=` by the page. See the
+   * REINTRODUCED note above for why this reader exists again and on what terms.
+   */
+  initialStatus?: Asset["status"] | "all";
 }) {
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
-  const [status, setStatus] = useState<Asset["status"] | "all">("all");
+  const [status, setStatus] = useState<Asset["status"] | "all">(initialStatus);
   const [agent, setAgent] = useState<string>("all");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

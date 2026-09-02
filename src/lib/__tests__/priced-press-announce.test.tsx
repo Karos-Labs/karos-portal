@@ -49,10 +49,30 @@ describe("the Task Map's Refresh Task Map button announces its price", () => {
     expect(text).toContain(creditsLabel(CREDIT_COSTS.taskExecution));
   });
 
-  it("paints no price at all for a reader who is never charged", () => {
-    // Staff, and an admin in "View as Client" — quoting them a price they do not
-    // pay is the same class of defect in the other direction.
-    expect(textOf(refreshButtonMarkup(false))).not.toMatch(/credit/i);
+  /**
+   * PARITY PASS (2026-09) changed the answer for the unbilled reader on THIS
+   * control, and only this one. It used to paint no price at all, which made
+   * staff's copy of the Task Map a visibly shorter button than the client's.
+   * The ruling is that staff read the client's page as the client gets it, so
+   * the suffix stays — attributed, in muted type, with a tooltip saying whose
+   * money it is. The thing still worth pinning is that it is not presented as
+   * a charge to the reader.
+   */
+  it("still quotes the client's price to a reader who is never charged, marked as the client's", () => {
+    const markup = refreshButtonMarkup(false);
+    // Same figure the billed client is quoted — a staff preview that showed a
+    // different number would be worse than showing none.
+    expect(textOf(markup)).toContain(creditsLabel(CREDIT_COSTS.taskExecution));
+    expect(markup).toContain("What the client is charged");
+  });
+
+  it("never tells the unbilled reader the press costs THEM anything", () => {
+    // The hover description is the one place the control says "costs …"; it is
+    // still gated on `viewerIsBilled`, so an admin in "View as Client" is not
+    // told they are about to spend. Asked of the raw markup because that copy
+    // lives in a `title=` attribute, which `textOf` strips with the tags.
+    expect(refreshButtonMarkup(false)).not.toMatch(/costs/i);
+    expect(refreshButtonMarkup(true)).toMatch(/costs/i);
   });
 
   it("still renders the button itself, so the price test is not vacuous", () => {

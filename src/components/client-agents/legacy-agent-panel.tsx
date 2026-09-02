@@ -175,11 +175,22 @@ export function LegacyAgentPanel({
             </p>
             {/* Portal revamp, Surface 03: the cost is a step on the page, never
                 on the button — moved off the label into its own line, right
-                where the rest of what-this-run-does copy already lives. */}
+                where the rest of what-this-run-does copy already lives.
+
+                B5 (parity pass 2026-09): the line exists for BOTH readers, so
+                the card is the same height and says the same thing in the same
+                slot. Only the register differs — a staff run is not charged to
+                the person pressing it, so theirs names whose credits move and
+                drops the orange coin, because the rationed accent belongs to
+                the reader who is actually spending. */}
             {cost != null && (
               <p className="mt-1 flex items-center gap-1 text-xs text-muted-2">
-                <Icon name="Coins" className="h-3 w-3 text-neon" />
+                <Icon
+                  name="Coins"
+                  className={`h-3 w-3 ${viewerIsClient ? "text-neon" : "text-muted-2"}`}
+                />
                 Costs {cost} credit{cost === 1 ? "" : "s"}
+                {!viewerIsClient && " · billed to the client"}
               </p>
             )}
           </div>

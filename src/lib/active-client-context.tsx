@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect } from "react";
 import type { StaffShellClientView } from "@/lib/client-visibility";
+import type { RailAgent } from "@/components/client-rail-agents-nav";
 import type { ClientCompetitor, ClientContextDoc } from "@/lib/types";
 
 /**
@@ -15,6 +16,24 @@ export interface ActiveClientData {
   client: StaffShellClientView;
   contextDocs: ClientContextDoc[];
   competitors: ClientCompetitor[];
+  /**
+   * The client's real agent roster, for the rail's "AI agents" dropdown
+   * (parity pass 2026-09, ruling D3). Already projected by
+   * `railAgentsForClient` — id/key/name/icon, never the agent's internal
+   * `description`, which is lab-repo shorthand and staff-only.
+   *
+   * Empty while the picker is seeding the context optimistically: the roster
+   * arrives on the next render from ClientContextSync, so the dropdown starts
+   * empty for one paint rather than lying about which agents a client has.
+   */
+  railAgents: RailAgent[];
+  /**
+   * The client's SPENDABLE credits — `availableCredits()`, the balance clipped
+   * by the weekly/monthly caps — for the footer pill the staff rail now shares
+   * with the client's own (ruling D7). `null` while unknown (the picker's
+   * optimistic seed), which hides the pill rather than printing a wrong number.
+   */
+  spendableCredits: number | null;
   isAdmin: boolean;
 }
 
@@ -51,6 +70,8 @@ export function ClientContextSync({
   client,
   contextDocs,
   competitors,
+  railAgents,
+  spendableCredits,
   isAdmin,
 }: ActiveClientData) {
   const { setActiveClient } = useActiveClient();
@@ -70,11 +91,26 @@ export function ClientContextSync({
   const competitorSignature = competitors
     .map((c) => `${c.id}:${c.source}:${c.company}`)
     .join("|");
+  // Same reasoning again for the two fields the parity pass added (2026-09).
+  // The roster changes by GRANT and by STAR — a star toggle can leave the count
+  // identical while reordering the pinned set — so the signature carries ids,
+  // and the client's own starred array is what the dropdown sorts by, so it is
+  // in here too. Without this the staff rail kept serving the roster from
+  // whichever client page was opened first.
+  const agentSignature = `${railAgents.map((a) => a.id).join(",")}|${(client.starredAgentIds ?? []).join(",")}`;
 
   useEffect(() => {
-    setActiveClient({ client, contextDocs, competitors, isAdmin });
+    setActiveClient({ client, contextDocs, competitors, railAgents, spendableCredits, isAdmin });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client.id, docSignature, competitorSignature, isAdmin, processingSignature]);
+  }, [
+    client.id,
+    docSignature,
+    competitorSignature,
+    agentSignature,
+    spendableCredits,
+    isAdmin,
+    processingSignature,
+  ]);
 
   return null;
 }

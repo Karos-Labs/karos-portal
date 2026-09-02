@@ -1,14 +1,11 @@
 import Link from "next/link";
-import { Card, CardTitle, Badge } from "@/components/ui";
+import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { platformLabel } from "@/lib/integrations/platforms";
 import { TONE_COLORS } from "@/components/seo-geo/tones";
+import { THROUGHPUT_WINDOW_DAYS, type ContentThroughput } from "@/lib/content-throughput";
 import type { FollowerPoint } from "@/lib/follower-tracking";
 import type { ScoreView } from "@/components/seo-geo/presenter";
-
-/** Channels listed before the rest collapse into a "+N more" line. */
-const CHANNEL_ROWS = 4;
 
 /** A minimal inline sparkline — no charting dependency for a handful of points. */
 function Sparkline({ counts }: { counts: number[] }) {
@@ -42,48 +39,109 @@ function Sparkline({ counts }: { counts: number[] }) {
   );
 }
 
-/** A signed percentage in the success/danger ink, or nothing at all when it is null. */
-function Delta({ pct }: { pct: number | null }) {
+/**
+ * The weekly-throughput bars (2026-09).
+ *
+ * Bars rather than a second sparkline: these are four discrete counts, and a
+ * line between them implies a reading in between that nobody took. An empty
+ * week still draws its track, so a quiet fortnight looks quiet.
+ */
+function WeeklyBars({ counts }: { counts: number[] }) {
+  const max = Math.max(1, ...counts);
+  return (
+    <div className="mt-2 flex h-9 items-end gap-1" aria-hidden="true">
+      {counts.map((c, i) => (
+        <div key={i} className="flex h-full flex-1 items-end rounded-sm bg-neon/10">
+          <div
+            className="w-full rounded-sm bg-neon"
+            style={{ height: `${Math.max(c > 0 ? 12 : 0, (c / max) * 100)}%` }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A signed percentage in the success/danger ink, or nothing at all when it is
+ * null. `text` is the already-formatted magnitude (the two callers round to
+ * different precisions), `note` the quiet basis clause after it.
+ */
+function Delta({ pct, text, note }: { pct: number | null; text: string; note?: string }) {
   if (pct == null) return null;
   return (
     <p className={`mt-0.5 text-xs ${pct >= 0 ? "text-success" : "text-danger"}`}>
       <Icon name={pct >= 0 ? "TrendingUp" : "TrendingDown"} className="mr-1 inline h-3 w-3" />
       {pct >= 0 ? "+" : ""}
-      {pct.toFixed(1)}%
+      {text}
+      {note ? <span className="ml-1 text-muted-2">{note}</span> : null}
     </p>
   );
 }
 
-/**
- * One score as a labelled meter — the compact form of the big tiles on Account
- * Center's Reporting tab, built from the SAME ScoreView the full report renders
- * (buildScoreViews), so this row and that page cannot quote different numbers
- * for one snapshot.
- *
- * The meter is what makes it readable at this size: a bare integer says
- * nothing about whether it's good, and a bar filled to `value` in the band's
- * own tone answers that without a legend.
- */
-function ScoreMeter({ view }: { view: ScoreView }) {
-  const measured = view.value != null;
+/** The shared shell of a KPI cell: an accented eyebrow, then whatever the cell is. */
+function Cell({
+  icon,
+  label,
+  children,
+  className,
+}: {
+  icon: string;
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <li>
-      <div className="mb-1 flex items-baseline justify-between gap-2">
-        <span className="truncate text-xs text-muted">{view.label}</span>
-        <span className="shrink-0 font-mono text-xs font-semibold text-foreground">
-          {measured ? view.value : "–"}
-        </span>
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-surface-3">
+    <div className={cn("rounded-md border border-border bg-surface-2 p-3.5", className)}>
+      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
+        <span className="min-w-0 truncate">{label}</span>
+      </p>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The visibility score as a headline + meter, built from the SAME ScoreView the
+ * full report renders (buildScoreViews), so this cell and Account Center's
+ * Reporting tab cannot quote different numbers for one snapshot.
+ *
+ * SHAPED LIKE ITS TWO NEIGHBOURS as of 2026-09 — big numeral, meter, caption —
+ * where it used to be a label/value row over a thin bar. Three cells side by
+ * side, one of them arranged differently, made the card read as two KPIs and an
+ * afterthought; the point of the row is that they are three readings of the same
+ * kind. The meter stays because it is what makes the number mean anything at
+ * this size: a bare 61 says nothing about whether 61 is good.
+ *
+ * The TRACK is the band's own colour at low alpha, not `surface-3`. In light
+ * mode surface-3 is #e9e7df on a surface-2 cell of #eceae2 — a three-point step,
+ * which is no step: the unfilled half of the meter simply disappeared and the
+ * bar had no readable length. Same device the SEO share meters use.
+ */
+function ScoreCell({ view }: { view: ScoreView }) {
+  const measured = view.value != null;
+  const color = TONE_COLORS[view.tone];
+  return (
+    <>
+      <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+        {measured ? view.value : "–"}
+        {measured && <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>}
+      </p>
+      <div
+        className="mt-2.5 h-2 overflow-hidden rounded-full"
+        style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
+      >
         <div
           className="h-full rounded-full transition-[width]"
           style={{
             width: `${measured ? Math.min(100, Math.max(0, view.value as number)) : 0}%`,
-            background: TONE_COLORS[view.tone],
+            background: color,
           }}
         />
       </div>
-    </li>
+      <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{view.label}</p>
+    </>
   );
 }
 
@@ -109,52 +167,66 @@ function ScoreMeter({ view }: { view: ScoreView }) {
  * buildScoreViews meters (search score, AI readiness, AI visibility): the
  * caller passes only the "visibility" one now — "the overall Google/AI
  * visibility rank" is that score's own established label ("AI visibility
- * today"), not a new metric invented for this card. Channels stays: it is a
- * separate, independently locked decision ("Channels shows the logos of what
- * they are connected to"), not one of the KPIs D6 was ever asked about.
+ * today"), not a new metric invented for this card.
+ *
+ * ── THE CHANNELS CELL IS GONE (2026-09) ──────────────────────────────────
+ *
+ * It listed this client's channels one per row with a Connected/Reconnect
+ * badge each, and the analytics stack's "Connected channels" card listed the
+ * same channels with MORE detail (the account name on each, the same reconnect
+ * link). Two lists of one thing, the shorter one first. The product owner's
+ * instruction was to keep the detailed list in one place and spend the freed
+ * cell on a high-level metric, so:
+ *
+ *  • the detailed list stays in "Connected channels" (client-analytics.tsx),
+ *    which is Account Center's Reporting tab for a client and the Performance
+ *    section for staff, next to the Settings tab that actually fixes one;
+ *  • this cell becomes CONTENT PUBLISHED — live deliverables in the last 30
+ *    days, the change against the 30 before it, and four weekly bars.
+ *
+ * That cell's own note about the Channels decision ("locked separately from
+ * D6") is not being overruled quietly: D6 never covered Channels, and this
+ * change is not a D6 revision either. It is the de-duplication pass, and what
+ * it removes is the SECOND copy of a list, not the information.
+ *
+ * The one thing the removed cell said that the detailed card does not repeat
+ * on this page is "N need attention". That did not vanish either — it is an
+ * attention row in "Needs your attention" now, which is where a thing that
+ * asks the reader to act belongs.
  */
 export function HomeKpisWidget({
   audienceTotal,
   audienceGrowthPct,
   audienceSeries,
-  channels,
+  throughput,
   visibilityScore,
   reportHref,
-  channelsHref,
+  contentHref,
 }: {
   /** Real stored follower snapshots only — an empty series hides the cell entirely. */
   audienceTotal: number;
   audienceGrowthPct: number | null;
   audienceSeries: FollowerPoint[];
-  channels: { platform: string; usable: boolean }[];
+  /** Live-deliverable throughput — see lib/content-throughput.ts. */
+  throughput: ContentThroughput;
   /** The one ScoreView D6 kept — null when there is no snapshot to score yet. */
   visibilityScore: ScoreView | null;
   reportHref: string;
-  /**
-   * Where the real "Reconnect" control lives (Account Center's Settings tab,
-   * which mounts IntegrationsTab) — the badge below used to say "Reconnect"
-   * over plain, non-interactive text with no href/onClick at all, promising an
-   * action it did not perform.
-   */
-  channelsHref: string;
+  /** Where the throughput cell opens the content it counts. */
+  contentHref: string;
 }) {
   // A single point is a reading, not a trend — the sparkline needs two.
   const showAudience = audienceSeries.length >= 2;
 
-  // A channel that needs reconnecting is the actionable one, so it sorts first
-  // — a broken LinkedIn must not fall under the "+2 more" fold while four
-  // healthy rows sit above it.
-  const sortedChannels = [...channels].sort(
-    (a, b) => Number(a.usable) - Number(b.usable) || a.platform.localeCompare(b.platform),
-  );
-  const shownChannels = sortedChannels.slice(0, CHANNEL_ROWS);
-  const extraChannels = sortedChannels.length - shownChannels.length;
-  const brokenChannels = sortedChannels.filter((c) => !c.usable).length;
-
   return (
     <Card>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <CardTitle className="min-w-0 truncate">Your numbers</CardTitle>
+        <CardTitle className="flex min-w-0 items-center gap-2">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+            <Icon name="ChartColumn" className="h-3.5 w-3.5 text-neon" />
+          </span>
+          <span className="min-w-0 truncate">Your numbers</span>
+        </CardTitle>
         <Link
           href={reportHref}
           className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
@@ -175,93 +247,54 @@ export function HomeKpisWidget({
       <div className={cn("grid gap-4", showAudience ? "@xl:grid-cols-3" : "@xl:grid-cols-2")}>
         {/* Audience — the D6 cell, real snapshots only; absent when there are none */}
         {showAudience && (
-          <div className="rounded-md border border-border bg-surface-2 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-              Total followers
-            </p>
-            <p className="mt-1 text-2xl font-semibold text-foreground">
+          <Cell icon="Users" label="Total followers">
+            <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
               {audienceTotal.toLocaleString()}
             </p>
-            <Delta pct={audienceGrowthPct} />
+            <Delta
+              pct={audienceGrowthPct}
+              text={audienceGrowthPct == null ? "" : `${audienceGrowthPct.toFixed(1)}%`}
+            />
             <div className="mt-2">
               <Sparkline counts={audienceSeries.map((p) => p.count)} />
             </div>
-          </div>
+          </Cell>
         )}
 
-        {/* Channels — locked separately from D6, unaffected by it */}
-        <div className="rounded-md border border-border bg-surface-2 p-3">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-              Channels
+        {/* Content published — the cell the duplicated channel list vacated */}
+        <Link href={contentHref} className="block">
+          <Cell
+            icon="Send"
+            label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`}
+            className="row-lift h-full"
+          >
+            <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+              {throughput.count.toLocaleString()}
             </p>
-            {/* The health summary IS the headline here: a count of connected
-                channels is inventory, "one needs attention" is news. */}
-            {brokenChannels > 0 && (
-              <span className="shrink-0 text-[10px] font-medium text-warning">
-                {brokenChannels} need{brokenChannels === 1 ? "s" : ""} attention
-              </span>
+            {throughput.deltaPct == null ? (
+              <p className="mt-0.5 text-xs text-muted-2">
+                {throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
+              </p>
+            ) : (
+              <Delta
+                pct={throughput.deltaPct}
+                text={`${throughput.deltaPct}%`}
+                note="vs previous 30 days"
+              />
             )}
-          </div>
-          {sortedChannels.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-2">None connected yet.</p>
-          ) : (
-            <>
-              <ul className="mt-2 space-y-1.5">
-                {shownChannels.map((c) => {
-                  const badge = (
-                    <Badge tone={c.usable ? "neon" : "warning"}>
-                      <Icon
-                        name={c.usable ? "CircleCheck" : "TriangleAlert"}
-                        className="h-3 w-3"
-                      />
-                      {c.usable ? "Connected" : "Reconnect"}
-                    </Badge>
-                  );
-                  return (
-                    <li key={c.platform} className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm text-foreground">
-                        {platformLabel(c.platform)}
-                      </span>
-                      {/* "Reconnect" is a real destination now — it used to be a
-                          plain, non-interactive label promising an action it
-                          could not perform. A healthy channel has nothing to
-                          reconnect, so only the broken row links out. */}
-                      {c.usable ? (
-                        badge
-                      ) : (
-                        <Link href={channelsHref} className="transition-opacity hover:opacity-80">
-                          {badge}
-                        </Link>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-              {extraChannels > 0 && (
-                <p className="mt-1.5 text-[11px] text-muted-2">
-                  +{extraChannels} more connected
-                </p>
-              )}
-            </>
-          )}
-        </div>
+            <WeeklyBars counts={throughput.weekly} />
+          </Cell>
+        </Link>
 
         {/* AI visibility — the one score D6 kept, of the three buildScoreViews returns */}
-        <Link
-          href={reportHref}
-          className="block rounded-md border border-border bg-surface-2 p-3 transition-colors hover:border-border-strong"
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-            Visibility
-          </p>
-          {visibilityScore ? (
-            <ul className="mt-2.5">
-              <ScoreMeter view={visibilityScore} />
-            </ul>
-          ) : (
-            <p className="mt-2 text-sm text-muted-2">Not measured yet.</p>
-          )}
+        <Link href={reportHref} className="block">
+          <Cell icon="Radar" label="Visibility" className="row-lift h-full">
+            {visibilityScore ? (
+              <ScoreCell view={visibilityScore} />
+            ) : (
+              <p className="mt-2 text-sm text-muted-2">Not measured yet.</p>
+            )}
+          </Cell>
         </Link>
       </div>
     </Card>

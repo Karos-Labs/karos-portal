@@ -80,6 +80,61 @@ export function postKind(a: CalendarKindInput): CalendarAssetKind | null {
 }
 
 /**
+ * The kinds that describe a slot which HAS NOT HAPPENED YET.
+ *
+ * "published" is the only one excluded on its own merits. The other two absent
+ * members are excluded by the date test in `isUpcomingPost` instead, and
+ * deliberately: "failed" and "held" are only ever written by the publish cron
+ * AT publish time, so a post carrying either is past due by construction —
+ * listing them here would be a claim about the cron, and the date test is a
+ * fact about the post.
+ */
+const UPCOMING_KINDS: ReadonlySet<CalendarAssetKind> = new Set<CalendarAssetKind>([
+  "scheduled",
+  "placeholder",
+  "draft",
+]);
+
+/**
+ * IS THIS POST STILL COMING UP? (2026-09)
+ *
+ * ── THE BUG THIS FUNCTION EXISTS TO CLOSE ────────────────────────────────
+ *
+ * Home's Calendar widget was empty in production for a client whose Calendar
+ * page had thirteen upcoming posts on it. The two surfaces asked different
+ * questions about the same assets:
+ *
+ *   the calendar page   postKind(a) !== null
+ *   Home's widget       a.status === "scheduled" && a.scheduledAt > now
+ *
+ * and `postKind` admits THREE statuses, not one. A post that is `approved` with
+ * a date is chipped "Scheduled post" (or "Placeholder", when `publishMode` says
+ * so) on the calendar and was invisible to the widget. Verified against
+ * production: XO Digital had 22 assets, 21 `approved` and 1 `draft`, and not one
+ * `scheduled` — 13 future-dated placeholders on the calendar, 0 on Home. The
+ * widget was not failing to load; it was asking for a status that client's
+ * content never enters, because approval arms auto-publish and the bulk
+ * uploader writes `publishMode: "placeholder"`.
+ *
+ * So the predicate lives HERE, beside `postKind`, and is asked by both. A
+ * second spelling of "what is upcoming" in a widget is what produced the
+ * defect, and re-deriving it there would only reset the clock on it.
+ *
+ * READS ONLY `CalendarKindInput` + `scheduledAt`, which matters across the
+ * redaction boundary: a client's future-dated post arrives whitelist-redacted
+ * (`redactLockedAsset`), and that copy carries `status`, `scheduledAt` and
+ * `publishMode` — every field this needs. `publishError` it does not carry, but
+ * a locked post classifying "scheduled" instead of "failed"/"held" is the
+ * residual already pinned in calendar-locked-chip.test.ts, and either way the
+ * date test is what decides membership here.
+ */
+export function isUpcomingPost(a: CalendarKindInput, now: number): boolean {
+  if ((a.scheduledAt ?? 0) <= now) return false;
+  const kind = postKind(a);
+  return kind != null && UPCOMING_KINDS.has(kind);
+}
+
+/**
  * VIEWER-AWARE for `published`, literal for everything else.
  *
  * `published` is the one kind that is also an asset STATUS, so it has a register

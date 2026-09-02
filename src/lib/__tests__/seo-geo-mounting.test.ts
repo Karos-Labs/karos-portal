@@ -31,7 +31,27 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const ALL_FILES = walk(SRC);
-const read = (file: string) => readFileSync(file, "utf8");
+
+/**
+ * MEMOIZED (2026-09), and the reason is the shape of `importersOf` below: it
+ * scans every file in `src/` looking for one module's importers, and it is
+ * called once per SEO/GEO module. Uncached that is `modules × files` synchronous
+ * reads — around 4,000 — and this test's 15s budget was being exceeded under a
+ * full-suite run, so the guard failed with a timeout rather than a finding. The
+ * cost also grew with the tree, which makes a timeout tuned on an unloaded run a
+ * tripwire on every future file added to src/.
+ *
+ * Nothing mutates a file during the run, so one read per path is the same text.
+ */
+const READ_CACHE = new Map<string, string>();
+const read = (file: string): string => {
+  let cached = READ_CACHE.get(file);
+  if (cached === undefined) {
+    cached = readFileSync(file, "utf8");
+    READ_CACHE.set(file, cached);
+  }
+  return cached;
+};
 
 /** Files whose whole point is to be rendered by someone else. */
 function seoGeoModules(): string[] {

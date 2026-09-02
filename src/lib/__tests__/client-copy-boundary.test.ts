@@ -1346,7 +1346,18 @@ describe('the "the cap stopped N of these" note', () => {
       })
       .map(toRel);
     expect(offenders, "call queueCapacitySkipNote instead of writing your own").toEqual([HOME]);
-  }, 45_000);
+    // 120s, not 45s (2026-09). This walks and AST-parses every module under
+    // src/ — the most expensive assertion in the suite — and 45s was measured
+    // on a run of this FILE alone. In the full suite, sharing cores with ~300
+    // other files, the same walk takes over twice as long and the budget was
+    // exceeded, so the guard failed with a timeout rather than a finding: red
+    // for a reason that says nothing about the rule it protects.
+    //
+    // A timeout is not a performance assertion, and this one was being read as
+    // one by accident. The walk's cost also grows with the tree, so a number
+    // tuned against an unloaded run is a tripwire on every future file added to
+    // src/ — which is the wrong thing for a copy guard to be watching.
+  }, 120_000);
 });
 
 /* ── the review refusals: one rule, one home, and two conditions ──────────── */
@@ -2224,7 +2235,17 @@ const NOT_TEXT: readonly string[] = [
   "createAsset.channels[]",
   "createAsset.createdBy",
   "createAsset.meta.source",
-  "createAsset.mimeType",
+  // `createAsset.mimeType` LEFT THIS LIST in 2026-09, and the guard is what
+  // said so: the bulk-upload writer's `mimeType: opts.contentType || "video/mp4"`
+  // became `mimeType: mediaMimeFor(opts.contentType, opts.filename)` when the
+  // uploader started taking images, so no writer puts a literal at that path any
+  // more and the citation had rotted into a field nobody writes.
+  //
+  // NO COVERAGE WAS LOST. The literals moved behind a function (lib/media-kinds),
+  // which this walk cannot see through by construction — it reads a string where
+  // it is written IN THE SAME EXPRESSION — and what they are is MIME types, not
+  // prose. If a writer ever puts a literal back at that path it arrives here as
+  // an unclassified field, which is the fail-closed direction.
   "createAsset.publishMode",
   "createAsset.status",
   "createAsset.type",

@@ -264,6 +264,13 @@ export type StaffShellClientView = Pick<
   | "contactEmail"
   | "domains"
   | "socialLinks"
+  // The client's own pinned agents, for the rail's "AI agents" dropdown. Added
+  // by the parity pass 2026-09 (ruling D3): the staff shell's client-context
+  // arm mounts the client's real ClientRailAgentsNav now, and that component
+  // sorts pinned agents to the front and paints their stars from this array.
+  // A list of agent DOC IDS and nothing else — no secret, and the star toggle
+  // it drives is authorized server-side by `toggleStarredAgentAction`.
+  | "starredAgentIds"
   // Workspace-generation state: greys out Regenerate, badges the failure.
   | "isAiProcessing"
   | "aiProcessingStartedAt"
@@ -292,6 +299,7 @@ export function toStaffShellView(c: Client): StaffShellClientView {
     ...(c.contactEmail ? { contactEmail: c.contactEmail } : {}),
     ...(c.domains ? { domains: c.domains } : {}),
     ...(c.socialLinks ? { socialLinks: c.socialLinks } : {}),
+    ...(c.starredAgentIds ? { starredAgentIds: c.starredAgentIds } : {}),
     ...(c.logoUrl ? { logoUrl: c.logoUrl } : {}),
     ...(c.accentColor ? { accentColor: c.accentColor } : {}),
     ...(c.brandingGuidelines ? { brandingGuidelines: c.brandingGuidelines } : {}),

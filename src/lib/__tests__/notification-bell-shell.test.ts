@@ -106,9 +106,15 @@ describe("a review row never leads where the surrounding nav does not go", () =>
  * into a node test run (same constraint as shell-chrome.test.ts).
  */
 describe("every shell tells the bell which shell it is", () => {
-  it("passes allowJobDeepLinks at all three staff mounts", () => {
+  it("passes allowJobDeepLinks at every staff mount", () => {
+    // FOUR now, not three (parity pass 2026-09, ruling D7): the drawer's row,
+    // the account menu's, the Company sheet's, and the client's own rail bell,
+    // which the client-context arm mounts beside the credits pill exactly where
+    // client-rail.tsx puts it. That fourth one is the one most at risk of
+    // missing this prop — it was copied from the CLIENT's rail, which has no
+    // business passing a staff-only flag and therefore does not.
     const mounts = bellMounts(sidebar);
-    expect(mounts).toHaveLength(3);
+    expect(mounts).toHaveLength(4);
     for (const mount of mounts) {
       expect(mount).toContain("allowJobDeepLinks={allowJobDeepLinks}");
     }

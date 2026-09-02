@@ -628,35 +628,50 @@ function ModelPicker({
   value: ChatModelKey | null;
   onChange: (key: ChatModelKey | null) => void;
 }) {
+  /* One segmented control on the composer's footer line (QA 2026-09). It used
+     to be its own bordered band above the input - a `border-t` of its own
+     stacked on the form's `border-t`, three loose text pills and a "Model"
+     word, sitting in the panel like a second toolbar. Now the input row is
+     the composer and this is one quiet line under it: label left, a single
+     track with three segments right. Active segment is paper on the surface
+     ladder, not orange - the accent is rationed to the send button. */
+  const options: { key: ChatModelKey | null; label: string; description: string }[] = [
+    { key: null, label: "Auto", description: "Picks the model per message, by cost." },
+    ...CHAT_MODEL_KEYS.map((key) => ({
+      key,
+      label: CHAT_MODEL_OPTIONS[key].label,
+      description: CHAT_MODEL_OPTIONS[key].description,
+    })),
+  ];
   return (
-    <div className="flex items-center gap-1 border-t border-border px-3 pt-2 text-[11px]">
-      <span className="mr-0.5 text-muted-2">Model</span>
-      <button
-        type="button"
-        onClick={() => onChange(null)}
-        aria-pressed={value === null}
-        className={cn(
-          "rounded-full px-2 py-0.5 transition-colors",
-          value === null ? "bg-neon-soft text-neon" : "text-muted-2 hover:bg-surface-2",
-        )}
+    <div className="mt-2 flex items-center justify-between gap-3">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">Model</span>
+      <div
+        role="group"
+        aria-label="Copilot model"
+        className="flex items-center gap-0.5 rounded-md border border-border bg-surface-2 p-0.5"
       >
-        Auto
-      </button>
-      {CHAT_MODEL_KEYS.map((key) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => onChange(value === key ? null : key)}
-          aria-pressed={value === key}
-          title={CHAT_MODEL_OPTIONS[key].description}
-          className={cn(
-            "rounded-full px-2 py-0.5 transition-colors",
-            value === key ? "bg-neon-soft text-neon" : "text-muted-2 hover:bg-surface-2",
-          )}
-        >
-          {CHAT_MODEL_OPTIONS[key].label}
-        </button>
-      ))}
+        {options.map((o) => {
+          const active = value === o.key;
+          return (
+            <button
+              key={o.key ?? "auto"}
+              type="button"
+              onClick={() => onChange(o.key === null ? null : value === o.key ? null : o.key)}
+              aria-pressed={active}
+              title={o.description}
+              className={cn(
+                "rounded-[4px] px-2.5 py-1 text-[11px] leading-none transition-colors",
+                active
+                  ? "bg-background text-foreground shadow-[inset_0_0_0_1px_var(--border)]"
+                  : "text-muted-2 hover:text-foreground",
+              )}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1365,53 +1380,69 @@ export function ChatbotWidget({
                   ))}
               </div>
             )}
-            {/* T-B5: real upload surface, not the run dialog's raw-JSON
-                textarea - reuses the same signed-URL upload RunAttachments
-                already does for the admin agent card, so a chat attachment
-                is a real `gs://` MediaAsset the moment the file finishes
-                uploading, before the message is even sent. */}
-            <div className="border-t border-border px-3 pt-2">
+            {/* THE ATTACH CONTROL IS ON THE INPUT LINE (2026-09).
+                
+                T-B5 gave the chat a real upload surface — the same signed-URL
+                path RunAttachments already does for the admin agent card, so a
+                chat attachment is a real `gs://` MediaAsset the moment the file
+                finishes uploading, before the message is even sent. That part
+                is unchanged and is the whole reason this reuses that component
+                rather than growing a second uploader.
+
+                What changed is WHERE it sits. It was its own bordered strip
+                above the model picker: a full-width band carrying a labelled
+                "Attach a file" button and a sentence explaining what
+                attachments are for, permanently, on a panel where most messages
+                attach nothing. The product owner's read was that it felt clunky
+                and out of place, and the honest description of it is that a
+                rarely-used control was given more room than the message box.
+
+                `layout="composer"` puts a `+` on the input line beside the send
+                button, moves the sentence into that button's tooltip and
+                accessible name, and shows the staged files above the line only
+                when there are some. The text input and the send button are its
+                children so the three share one row — see that component's
+                `AttachmentLayout`. */}
+            <form onSubmit={handleSubmit} className="border-t border-border px-3 py-3">
               <RunAttachments
                 clientId={clientId}
                 attachments={attachments}
                 onChange={setAttachments}
                 disabled={streaming}
                 mode="chat"
-              />
-            </div>
-            <ModelPicker value={preferredModel} onChange={setPreferredModel} />
-            <form
-              onSubmit={handleSubmit}
-              className="flex items-center gap-2 border-t border-border px-3 py-3"
-            >
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                setHighlightedIndex(0);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                showProactiveWelcome
-                  ? "Describe a task, or ask a question…"
-                  : "Ask about performance, brand, competitors…"
-              }
-              disabled={streaming}
-              className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || streaming}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
-              aria-label="Send"
-            >
-              {streaming ? (
-                <Icon name="Loader" className="h-4 w-4 animate-spin" />
-              ) : (
-                <Icon name="ArrowUp" className="h-4 w-4" />
-              )}
-            </button>
+                layout="composer"
+              >
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    setHighlightedIndex(0);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    showProactiveWelcome
+                      ? "Describe a task, or ask a question…"
+                      : "Ask about performance, brand, competitors…"
+                  }
+                  disabled={streaming}
+                  className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim() || streaming}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
+                  aria-label="Send"
+                >
+                  {streaming ? (
+                    <Icon name="Loader" className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Icon name="ArrowUp" className="h-4 w-4" />
+                  )}
+                </button>
+              </RunAttachments>
+              {/* Footer line of the same composer - see ModelPicker. */}
+              <ModelPicker value={preferredModel} onChange={setPreferredModel} />
             </form>
           </div>
         </div>

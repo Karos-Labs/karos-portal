@@ -63,7 +63,24 @@ const MODES: Record<
 };
 
 /**
- * The attach-media control on an agent run card.
+ * WHERE THE CONTROL SITS.
+ *
+ * `block` is the agent run card's arrangement, unchanged: a labelled button on
+ * its own row with the mode's hint sentence beside it, above the file list.
+ *
+ * `composer` is the chat input bar (2026-09). The product owner's report was
+ * that a standalone "Attach a file" button with an explanatory sentence, in its
+ * own bordered strip above the message box, "feels clunky and out of place" —
+ * and it was: a full-width band of chrome, permanently present, for something
+ * most messages do not use. In `composer` the trigger is a `+` on the input line
+ * itself, the hint moves to its tooltip and accessible name, and the staged
+ * files appear above the line only once there are some. The text input and the
+ * send button are passed in as `children` so all three share one row.
+ */
+export type AttachmentLayout = "block" | "composer";
+
+/**
+ * The attach-media control on an agent run card, and the chat composer's `+`.
  *
  * ## Upload order is the contract, not a detail
  *
@@ -85,12 +102,25 @@ export function RunAttachments({
   onChange,
   disabled,
   mode = "slides",
+  layout = "block",
+  children,
 }: {
   clientId: string;
   attachments: RunAttachment[];
   onChange: (next: RunAttachment[]) => void;
   disabled?: boolean;
   mode?: AttachmentMode;
+  /** Where this control sits — see `AttachmentLayout`. */
+  layout?: AttachmentLayout;
+  /**
+   * `composer` only: the rest of the input line (the text field and the send
+   * button), so the `+` sits beside them rather than in a strip of its own.
+   *
+   * Taken as children rather than rendered here because the chat owns that
+   * input's state, its keyboard handling and its slash-command list; this
+   * component owns only the upload.
+   */
+  children?: React.ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -154,6 +184,74 @@ export function RunAttachments({
     }
   }
 
+  /** The hidden picker, shared by both layouts. */
+  const picker = (
+    <input
+      ref={inputRef}
+      type="file"
+      multiple={spec.max > 1}
+      accept={spec.accept}
+      className="hidden"
+      onChange={(e) => void onPick(e.target.files)}
+    />
+  );
+
+  if (layout === "composer") {
+    return (
+      <div className="w-full">
+        {/* The tray, and ONLY when there is something in it. A permanently
+            visible strip for a thing most messages do not use is the clutter
+            this layout exists to remove. */}
+        {(attachments.length > 0 || error) && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            {attachments.map((a) => (
+              <span
+                key={a.uri}
+                className="inline-flex max-w-[14rem] items-center gap-1.5 rounded-full border border-border bg-surface-2 py-1 pl-2.5 pr-1.5 text-[11px] text-foreground"
+              >
+                <Icon name="Paperclip" className="h-3 w-3 shrink-0 text-muted-2" />
+                <span className="truncate">{a.label ?? a.uri}</span>
+                <button
+                  type="button"
+                  disabled={disabled || busy}
+                  onClick={() => onChange(attachments.filter((x) => x.uri !== a.uri))}
+                  className="shrink-0 rounded-full p-0.5 text-muted transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-50"
+                  aria-label={`Remove ${a.label ?? a.uri}`}
+                >
+                  <Icon name="X" className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+            {error && <span className="text-[11px] text-danger">{error}</span>}
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          {/* The `+`. `spec.hint` is the tooltip AND the accessible name, so
+              the sentence that used to occupy a line of the panel is still
+              available to a mouse and to a screen reader. `full` disables it at
+              the cap, which is why the label says which is which. */}
+          <button
+            type="button"
+            disabled={disabled || busy || full}
+            onClick={() => inputRef.current?.click()}
+            title={full ? `That is the maximum (${spec.max}).` : spec.hint}
+            aria-label={full ? `Attachment limit of ${spec.max} reached` : spec.addLabel}
+            className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-surface-2 text-muted transition-colors hover:border-neon/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25 disabled:cursor-default disabled:opacity-40"
+          >
+            <Icon
+              name={busy ? "Loader" : "Plus"}
+              className={`h-4 w-4 ${busy ? "animate-spin text-neon" : ""}`}
+            />
+          </button>
+          {children}
+        </div>
+
+        {picker}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -172,14 +270,7 @@ export function RunAttachments({
         <span className="text-xs text-muted">{spec.hint}</span>
       </div>
 
-      <input
-        ref={inputRef}
-        type="file"
-        multiple={spec.max > 1}
-        accept={spec.accept}
-        className="hidden"
-        onChange={(e) => void onPick(e.target.files)}
-      />
+      {picker}
 
       {attachments.length > 0 && (
         <ul className="mt-2 space-y-1">

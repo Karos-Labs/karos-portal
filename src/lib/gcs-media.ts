@@ -3,6 +3,7 @@ import "server-only";
 import { Storage } from "@google-cloud/storage";
 
 import { dispositionFilename } from "@/lib/media-type";
+import { ALLOWED_MEDIA_EXTENSIONS } from "@/lib/media-kinds";
 
 /**
  * Signed-URL access to a dedicated GCS bucket for large pre-generated media
@@ -54,9 +55,27 @@ export const READ_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export const PLAYBACK_URL_TTL_MS = 60 * 60 * 1000;
 
-export const ALLOWED_VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime"];
-export const ALLOWED_VIDEO_EXTENSIONS = [".mp4", ".mov"];
-export const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
+/**
+ * The accept lists, the size ceilings and their helpers moved to
+ * `lib/media-kinds.ts` (2026-09) — they are pure, and the client-side dropzone
+ * has to ask the same questions this module answers for the server, which it
+ * cannot do through a `server-only` module. Re-exported here so every existing
+ * server caller keeps importing them from where they have always been.
+ */
+export {
+  ALLOWED_VIDEO_MIME_TYPES,
+  ALLOWED_VIDEO_EXTENSIONS,
+  MAX_VIDEO_BYTES,
+  ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_IMAGE_EXTENSIONS,
+  MAX_IMAGE_BYTES,
+  ALLOWED_MEDIA_MIME_TYPES,
+  ALLOWED_MEDIA_EXTENSIONS,
+  mediaKindFor,
+  maxBytesFor,
+  mediaMimeFor,
+  type MediaKind,
+} from "@/lib/media-kinds";
 
 let storage: Storage | undefined;
 
@@ -107,17 +126,29 @@ export interface MediaObjectInfo {
 }
 
 /**
- * Every video object already sitting under a client's podcast-clips prefix —
- * the read side of "staff uploaded straight into the bucket (gcloud storage
- * cp, Cloud Console, rclone, …), now import it" (see the "Import from
- * Storage" button, bulk-upload-clips.tsx, and the "import-bucket" step on
- * /api/assets/bulk-upload).
+ * Every media object already sitting under a client's prefix — the read side of
+ * "staff uploaded straight into the bucket (gcloud storage cp, Cloud Console,
+ * rclone, …), now import it" (see the "Import from Storage" button,
+ * media-upload.tsx, and the "import-bucket" step on /api/assets/bulk-upload).
+ *
+ * IMAGES ARE LISTED TOO as of 2026-09 (`ALLOWED_MEDIA_EXTENSIONS`, not the
+ * video half alone). Leaving this on videos while the dropzone accepted images
+ * would have made "Import from Storage" quietly blind to half of what the
+ * button beside it had just uploaded — the same object, in the same prefix,
+ * invisible to the importer.
+ *
+ * THE PREFIX STILL SAYS `podcast-clips`, and that is on purpose. It is a stored
+ * path: every object already in production lives under it, `meta.gcsPath` on
+ * every registered asset points into it, and the route's own ownership check
+ * (`gcsPath.startsWith("clients/<id>/podcast-clips/")`) reads it. Renaming it
+ * is an object migration plus a backfill, not a rename, and it would buy a
+ * better-looking string and nothing else.
  */
 export async function listClientMediaObjects(clientId: string): Promise<MediaObjectInfo[]> {
   const bucket = getStorageClient().bucket(getBucketName());
   const [files] = await bucket.getFiles({ prefix: `clients/${clientId}/podcast-clips/` });
   return files
-    .filter((f) => ALLOWED_VIDEO_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext)))
+    .filter((f) => ALLOWED_MEDIA_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext)))
     .map((f) => ({
       gcsPath: f.name,
       filename: filenameFromGcsPath(f.name),
@@ -141,7 +172,7 @@ export async function createUploadSignedUrl(opts: {
   return url;
 }
 
-/** A V4 signed READ URL for playback — stored on the Asset as `videoUrl` (7-day TTL). */
+/** A V4 signed READ URL for playback — stored on the Asset as `videoUrl`/`imageUrl` (7-day TTL). */
 export async function createReadSignedUrl(gcsPath: string, ttlMs = READ_URL_TTL_MS): Promise<string> {
   const bucket = getStorageClient().bucket(getBucketName());
   const [url] = await bucket.file(gcsPath).getSignedUrl({
