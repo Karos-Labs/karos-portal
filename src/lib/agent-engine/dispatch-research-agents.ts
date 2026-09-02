@@ -47,7 +47,10 @@ import { dispatchAgentEngineRun, type DispatchAgentEngineRunResult } from "./dis
  * owns `create-seo-geo-agent-workflow.ts`), so there is no bootstrap-exemption
  * behavior for it to opt into here.
  */
-export async function dispatchOnboardingResearchAgents(client: Pick<Client, "id" | "name" | "agentsRepoSlug">): Promise<{
+export async function dispatchOnboardingResearchAgents(
+  client: Pick<Client, "id" | "name" | "agentsRepoSlug">,
+  options: { runSpecificContext?: string; createdBy?: string } = {},
+): Promise<{
   seoGeo: DispatchAgentEngineRunResult | { skipped: true; reason: string };
   intelReport: DispatchAgentEngineRunResult | { skipped: true; reason: string };
 }> {
@@ -56,26 +59,46 @@ export async function dispatchOnboardingResearchAgents(client: Pick<Client, "id"
     return { seoGeo: skipped, intelReport: skipped };
   }
 
+  // The run-scoped instruction an admin typed into the Regenerate modal.
+  // `customPrompt` is the shared wire field for exactly this
+  // (`RichRunInputSchema` in agent-engine's `packages/core/src/types/
+  // run-input.ts`, catalogued here in `engine-field-contract.ts`), and BOTH
+  // products read it: `seo-geo-agent` at its workflow line 148, and
+  // `intel-report-agent` at 112 — which then steers the research query itself
+  // ("— focus: …", line 147) as well as the drafting step. Before the Phase A
+  // cutover this text was Layer C of the in-process prompt; sending it here is
+  // what keeps that field doing something now that the agents do the writing.
+  const inputs = options.runSpecificContext?.trim() ? { customPrompt: options.runSpecificContext.trim() } : undefined;
+  const shared = {
+    clientId: client.id,
+    clientSlug: client.agentsRepoSlug,
+    ...(inputs ? { inputs } : {}),
+    ...(options.createdBy ? { createdBy: options.createdBy } : {}),
+  };
+
   const [seoGeo, intelReport] = await Promise.all([
     dispatchAgentEngineRun({
-      clientId: client.id,
-      clientSlug: client.agentsRepoSlug,
+      ...shared,
       productId: "seo-geo-agent",
       runKind: "recurring",
-      agentName: "SEO/GEO Research (Agent Engine)",
-      title: `[Agent Engine] SEO/GEO research — ${client.name}`,
+      // The catalogue name, verbatim — the same string a run dispatched from
+      // the Agents hub carries. These two rows used to read "SEO/GEO Research
+      // (Agent Engine)" and "[Agent Engine] …", which described the transport
+      // rather than the work and made the same agent look like two different
+      // products depending on which button started it.
+      agentName: "Local SEO & Geo-targeted Content Specialist",
+      title: `Local SEO & Geo-targeted Content Specialist — ${client.name}`,
     }),
     dispatchAgentEngineRun({
-      clientId: client.id,
-      clientSlug: client.agentsRepoSlug,
+      ...shared,
       productId: "intel-report-agent",
       // SCRUM-388: "setup", not "recurring" — see this module's own doc
       // comment for why. This run is what onboarding uses to PRODUCE
       // target-audience/market-strategy, so it must carry the runKind that
       // agent-engine's bootstrap exemption checks for.
       runKind: "setup",
-      agentName: "Intel Report (Agent Engine)",
-      title: `[Agent Engine] Intel report — ${client.name}`,
+      agentName: "Competitive Intelligence & Market Analysis",
+      title: `Competitive Intelligence & Market Analysis — ${client.name}`,
     }),
   ]);
 

@@ -98,9 +98,10 @@ function fixtureDeps(overrides: Partial<Record<string, unknown>> = {}) {
 describe("SCRUM-274 (T-B19) — the cutover is wired at the real call site", () => {
   const reportSrc = fs.readFileSync(path.join(process.cwd(), "src/lib/intel/report.ts"), "utf8");
 
-  it('Phase B calls runAgentOnboardingForClient, not the deleted "./pipeline"', () => {
-    expect(reportSrc).toContain('import("./agent-onboarding")');
-    expect(reportSrc).toContain("runAgentOnboardingForClient");
+  it("the pipeline runs through agent-onboarding, not the deleted \"./pipeline\"", () => {
+    expect(reportSrc).toContain('from "./agent-onboarding"');
+    expect(reportSrc).toContain("dispatchAndAwaitResearch");
+    expect(reportSrc).toContain("writeContextDocsFromResearch");
     // Not a bare substring check (this file's own comments legitimately
     // mention the deleted module by name, in prose, while explaining the
     // cutover) — asserting there is no live import of it is the real check.
@@ -112,6 +113,42 @@ describe("SCRUM-274 (T-B19) — the cutover is wired at the real call site", () 
     expect(fs.existsSync(path.join(process.cwd(), "src/lib/intel/pipeline.ts"))).toBe(false);
     expect(fs.existsSync(path.join(process.cwd(), "src/lib/intel/templates.ts"))).toBe(false);
     expect(fs.existsSync(path.join(process.cwd(), "src/lib/intel/seo-geo.ts"))).toBe(false);
+  });
+
+  /**
+   * The Phase A cutover. SCRUM-274 deleted the hardcoded CONTEXT-DOCUMENT
+   * pipeline and left the in-process REPORT generation standing, which is how
+   * the portal ended up with a second report writer running for six minutes
+   * before it dispatched the agent whose job that was.
+   *
+   * These assert the residue is gone rather than merely bypassed — the same
+   * standard the block above holds `./pipeline` to.
+   */
+  it("generates no report in-process: no model call, no prompt, no markdown parse", () => {
+    expect(reportSrc).not.toMatch(/\baiFor\(/);
+    expect(reportSrc).not.toMatch(/\bDEFAULT_INTEL_PROMPT\b\s*[,;)]/);
+    expect(reportSrc).not.toMatch(/\bparseMarkdownReport\(/);
+    expect(reportSrc).not.toMatch(/\brunGuardedReportPass\(/);
+    // The report is a mapping of the agent's deliverable now.
+    expect(reportSrc).toContain("parsedReportFromDeliverable");
+  });
+
+  it("the in-process report-pass module no longer exists on disk", () => {
+    expect(fs.existsSync(path.join(process.cwd(), "src/lib/intel/report-stream.ts"))).toBe(false);
+  });
+
+  it("dispatches BEFORE it stores anything, so both jobs exist while the run waits", () => {
+    // The user-visible half of the cutover: the job documents are created by
+    // the dispatch, so a dispatch that happens last is a Jobs list that stays
+    // empty for the length of the run. Ordering is asserted by position in the
+    // source because it is not otherwise observable from outside — the
+    // fixture run below cannot see a Firestore write it does not make.
+    const dispatchAt = reportSrc.indexOf("dispatchAndAwaitResearch(");
+    const reportWriteAt = reportSrc.indexOf("upsertClientReport(");
+    const docsWriteAt = reportSrc.indexOf("writeContextDocsFromResearch(");
+    expect(dispatchAt).toBeGreaterThan(-1);
+    expect(reportWriteAt).toBeGreaterThan(dispatchAt);
+    expect(docsWriteAt).toBeGreaterThan(reportWriteAt);
   });
 
   it("raises deliverableTimeoutMs strictly above seo-geo-agent's real 1-hour gate auto-approve", () => {

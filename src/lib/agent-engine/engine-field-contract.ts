@@ -222,6 +222,17 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:201-205 (readRichRunInput; rich.customPrompt wins over requestedTopic for the topic claim)" },
       { product: "reputation-agent", evidence: "agents/reputation-agent/src/workflow/create-reputation-pulse-workflow.ts:168,481" },
       { product: "seo-geo-agent", evidence: "agents/seo-geo-agent/src/workflow/create-seo-geo-agent-workflow.ts:148 (+ runDirectionField downstream)" },
+      // NOT listed, deliberately: `intel-report-agent`. It reads `customPrompt`
+      // (workflow lines 112/147/276 — the direction narrows the research query
+      // before the draft step ever sees it), and since the Phase A cutover this
+      // portal really does send it one, from the Regenerate modal via
+      // `dispatch-research-agents.ts`. But that dispatch does not go through
+      // `toEngineRunInput`, and this file's whole method — including the
+      // grounding check in its test, which drives `toEngineRunInput` per listed
+      // product — is scoped to the run-dialog wire path and its eleven
+      // `REACHABLE_PRODUCTS`. Adding a row here would assert something this
+      // file has no evidence path for. The evidence for that dispatch lives at
+      // the send site instead.
     ],
     sentButUnread: [],
   },

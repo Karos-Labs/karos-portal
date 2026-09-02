@@ -507,7 +507,10 @@ export const SEO_GEO_DELIVERABLE_KIND = "seo-geo-report";
 
 export interface AgentOnboardingDeps {
   getClient: (clientId: string) => Promise<Client | null>;
-  dispatchResearchAgents: (client: Client) => Promise<{
+  dispatchResearchAgents: (
+    client: Client,
+    options: { runSpecificContext?: string },
+  ) => Promise<{
     intelReport: { agentEngineRunId?: string; error?: string; skipped?: true; reason?: string };
     seoGeo: { agentEngineRunId?: string; error?: string; skipped?: true; reason?: string };
   }>;
@@ -523,6 +526,12 @@ export interface AgentOnboardingOptions {
   deliverableTimeoutMs?: number;
   /** Gap between deliverable polls. */
   pollIntervalMs?: number;
+  /**
+   * Run-scoped instructions a person typed for THIS run, forwarded to both
+   * agents as `customPrompt`. Absent for a scheduled or automatic run, which
+   * nobody typed at.
+   */
+  runSpecificContext?: string;
 }
 
 /**
@@ -544,13 +553,48 @@ export async function runAgentOnboarding(
   deps: AgentOnboardingDeps,
   options: AgentOnboardingOptions = {},
 ): Promise<{ docsWritten: number }> {
+  const research = await dispatchAndAwaitResearch(clientId, deps, options);
+  return writeContextDocsFromResearch(research, deps);
+}
+
+/** One client's two research deliverables, plus the client they describe. */
+export interface AgentResearchDeliverables {
+  client: Client;
+  intelReport: unknown;
+  seoGeo: unknown;
+}
+
+/**
+ * The first half of the run: dispatch both agents, then wait for both
+ * deliverables.
+ *
+ * Split out of `runAgentOnboarding` so `runIntelReportPipeline` can store the
+ * Intel Report itself between the two halves. That ordering is not cosmetic —
+ * it is the one Phase A used to provide for free. The report was stored the
+ * moment it existed and the context-document pipeline ran after it, so a
+ * context-doc failure left the client with a report; folding the report write
+ * in after `writeContextDocsFromResearch` would quietly make it fatal to the
+ * report too.
+ *
+ * The dispatch is also what makes the run visible: each call creates a real
+ * `jobs` document before anything is awaited, which is why both jobs now appear
+ * in the Jobs list within seconds of pressing Regenerate rather than after six
+ * minutes of in-process generation.
+ */
+export async function dispatchAndAwaitResearch(
+  clientId: string,
+  deps: AgentOnboardingDeps,
+  options: AgentOnboardingOptions = {},
+): Promise<AgentResearchDeliverables> {
   const deliverableTimeoutMs = options.deliverableTimeoutMs ?? 15 * 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 15_000;
 
   const client = await deps.getClient(clientId);
   if (!client) throw new Error(`Client not found: ${clientId}`);
 
-  const dispatched = await deps.dispatchResearchAgents(client);
+  const dispatched = await deps.dispatchResearchAgents(client, {
+    ...(options.runSpecificContext ? { runSpecificContext: options.runSpecificContext } : {}),
+  });
   const runIdFor = (name: "intelReport" | "seoGeo"): string => {
     const result = dispatched[name];
     if (result.agentEngineRunId) return result.agentEngineRunId;
@@ -564,6 +608,17 @@ export async function runAgentOnboarding(
     awaitDeliverable(deps, intelRunId, INTEL_REPORT_DELIVERABLE_KIND, deliverableTimeoutMs, pollIntervalMs),
     awaitDeliverable(deps, seoGeoRunId, SEO_GEO_DELIVERABLE_KIND, deliverableTimeoutMs, pollIntervalMs),
   ]);
+
+  return { client, intelReport, seoGeo };
+}
+
+/** The second half: compose the eight context documents and write them. */
+export async function writeContextDocsFromResearch(
+  research: AgentResearchDeliverables,
+  deps: Pick<AgentOnboardingDeps, "condense" | "replaceDocs" | "now">,
+): Promise<{ docsWritten: number }> {
+  const { client, intelReport, seoGeo } = research;
+  const clientId = client.id;
 
   const generated = composeContextDocsFromAgentReports({ client, intelReport: rec(intelReport), seoGeo: rec(seoGeo) });
 
@@ -639,14 +694,17 @@ async function awaitDeliverable(
 }
 
 /**
- * The production wiring of `runAgentOnboarding`. Kept as a thin factory so the
- * run above stays drivable in a test without a Firestore, a Pub/Sub topic or a
- * model call — the alternative is a function nobody can prove anything about.
+ * The production wiring, as a value.
+ *
+ * Kept as a thin factory so the run above stays drivable in a test without a
+ * Firestore, a Pub/Sub topic or a model call — the alternative is a function
+ * nobody can prove anything about. Exported (not just consumed by
+ * `runAgentOnboardingForClient` below) because `runIntelReportPipeline` drives
+ * the two halves separately and needs the same deps for both, and building them
+ * twice would mean two `dispatchResearchAgents` closures where there must be
+ * exactly one dispatch.
  */
-export async function runAgentOnboardingForClient(
-  clientId: string,
-  options: AgentOnboardingOptions = {},
-): Promise<{ docsWritten: number }> {
+export async function agentOnboardingDeps(): Promise<AgentOnboardingDeps> {
   const [{ getClient, replaceClientContextDocs }, { dispatchOnboardingResearchAgents }, { getAgentEngineDeliverable }, { condenseDocs }, { RESEARCH_ENGINE_RULES, METRICS_RULES }] =
     await Promise.all([
       import("@/lib/data"),
@@ -658,17 +716,20 @@ export async function runAgentOnboardingForClient(
 
   const rules = [RESEARCH_ENGINE_RULES, "", METRICS_RULES].filter(Boolean).join("\n");
 
-  return runAgentOnboarding(
-    clientId,
-    {
-      getClient,
-      dispatchResearchAgents: (client) => dispatchOnboardingResearchAgents(client),
-      getDeliverable: (runId, kind) => getAgentEngineDeliverable(runId, kind),
-      condense: (client, docTypes, internal) => condenseDocs(client, docTypes, internal, rules),
-      replaceDocs: (id, docs) => replaceClientContextDocs(id, docs),
-      now: () => Date.now(),
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    },
-    options,
-  );
+  return {
+    getClient,
+    dispatchResearchAgents: (client, dispatchOptions) => dispatchOnboardingResearchAgents(client, dispatchOptions),
+    getDeliverable: (runId, kind) => getAgentEngineDeliverable(runId, kind),
+    condense: (client, docTypes, internal) => condenseDocs(client, docTypes, internal, rules),
+    replaceDocs: (id, docs) => replaceClientContextDocs(id, docs),
+    now: () => Date.now(),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  };
+}
+
+export async function runAgentOnboardingForClient(
+  clientId: string,
+  options: AgentOnboardingOptions = {},
+): Promise<{ docsWritten: number }> {
+  return runAgentOnboarding(clientId, await agentOnboardingDeps(), options);
 }

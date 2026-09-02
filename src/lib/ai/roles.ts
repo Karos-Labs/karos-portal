@@ -86,18 +86,19 @@ export const AI_ROLES = {
     sites: ["src/lib/intel/seo-geo-providers.ts:234"],
   },
 
-  /* ── COUPLED · needs web_fetch · 3 sites ─────────────────────────────────
-     None of these can run on a vendor without web fetch. Not "runs worse" —
-     each one's prompt instructs it to report only what it observed.
+  /* ── COUPLED · needs web_fetch · 1 site ──────────────────────────────────
+     This cannot run on a vendor without web fetch. Not "runs worse" — its
+     prompt instructs it to report only what it observed.
      SCRUM-274 (T-B19) removed "intel.research.agent" (5 sites) and
      "seo.site_audit" (1 site) — both lived exclusively in files this ticket
      deleted (`src/lib/intel/pipeline.ts`, `src/lib/intel/seo-geo.ts`); see
-     this file's header comment. */
-  "intel.report.pass": {
-    tier: "SONNET",
-    requires: ["web_search", "web_fetch"],
-    sites: ["src/lib/intel/report.ts:301", "src/lib/intel/report.ts:381"],
-  },
+     this file's header comment. The Phase A cutover then removed
+     "intel.report.pass" (2 sites) the same way: both lived in
+     `runIntelReportPipeline`'s in-process report generation, which is deleted
+     — the report now comes from `intel-report-agent`'s deliverable, so the
+     live-web tools those sites needed are agent-engine's problem and no longer
+     a vendor constraint on this repo. It was the last role requiring BOTH
+     web_search and web_fetch. */
   "branding.fetch_site": {
     tier: "HAIKU",
     requires: ["web_fetch"],
