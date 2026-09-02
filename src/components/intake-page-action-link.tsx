@@ -2,8 +2,12 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 
 /**
- * The intake page's one header control — back to the agent for a client,
- * forward to the agent/roster for staff (`intakePageAction` resolves which).
+ * The intake page's one header control — back to the agent, or to the roster
+ * when no single instance resolves (`intakePageAction` resolves which).
+ *
+ * ONE LABEL AND ONE ARROW FOR BOTH ROLES since the parity pass (2026-09): the
+ * resolver used to hand staff their own wording and the opposite chevron, so a
+ * staff member previewing this page saw a control the client never gets.
  *
  * A real button, not the grey text link it used to be: this page is a leaf a
  * client reaches FROM the agent, so the way back is the header's only action,

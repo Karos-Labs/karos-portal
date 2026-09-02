@@ -15,10 +15,12 @@ import type { ClientReport } from "@/lib/types";
 const DOCK_STATE_KEY = "karos.copilot.dock";
 
 /**
- * Which app shell hosts the dock. The two differ only in the width of their
- * left nav column - ClientRail is `w-72`, the staff Sidebar is `w-64` - but the
- * strip has to start exactly at that column's right edge, and both numbers used
- * to be hardcoded to the client portal's geometry (CD-G8).
+ * Which app shell hosts the dock. They used to differ in the width of their
+ * left nav column (ClientRail `w-72`, staff Sidebar `w-64`), and the strip has
+ * to start exactly at that column's right edge (CD-G8). Since the parity pass
+ * (2026-09) the staff rail is `w-72` whenever this dock is mounted, so the two
+ * anchors are the same string - the key survives because each layout still
+ * declares which shell it is.
  */
 export type CopilotShell = "client" | "staff";
 
@@ -33,7 +35,15 @@ export type CopilotShell = "client" | "staff";
  */
 const SHELL_ANCHOR: Record<CopilotShell, string> = {
   client: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-72`,
-  staff: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-64`,
+  /* IDENTICAL TO THE CLIENT'S, and that is not a copy-paste slip (parity pass
+     2026-09, ruling D22). The staff dock is mounted by StaffCopilotDock, which
+     returns null unless a client context is active — so the only staff shell it
+     ever anchors to is the client-context one, whose rail is `w-72` like the
+     client's. `md:left-64` was the AGENCY rail's width, i.e. the width of a
+     shell this dock is never painted in, and it left a 32px strip of page
+     showing under the rail's right edge. The two keys stay separate because the
+     `shell` prop is still what the two layouts declare. */
+  staff: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-72`,
 };
 
 /**
@@ -225,31 +235,68 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
           onClick={() => setCollapsed((c) => !c)}
           className="absolute left-0 top-4 z-40 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-muted-2 shadow-md transition-colors hover:text-foreground"
           aria-label={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
+          aria-expanded={!collapsed}
           title={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
         >
           <Icon name={collapsed ? "ChevronLeft" : "ChevronRight"} className="h-4 w-4" />
         </button>
 
         {/* Clip lives on this inner frame - not the sticky one - so the
-            handle can hang past the border without being cut off. */}
-        <div className="relative h-full overflow-hidden">
-          {/* Fixed-width chat - clipped by the parent as the rail narrows (no reflow) */}
-          <div className="h-full w-[380px]">
+            handle can hang past the border without being cut off.
+
+            `overflow-clip`, NOT `overflow-hidden` (QA 2026-09, "collapsed
+            rail shows a slice of the chat"). `hidden` still makes this frame
+            a SCROLL CONTAINER - one with no scrollbar, but one the browser
+            will happily scroll programmatically. The chat inside is 380px
+            wide in a 48px frame, and it calls `scrollIntoView()` on its
+            last message and `focus()` on its input (chatbot-widget.tsx), both
+            of which scroll every scrollable ancestor sideways to reveal the
+            target. That dragged this frame ~330px to the left, and because
+            the collapsed overlay below is `absolute inset-0` it rode along
+            with the content - so the strip showed the RIGHT edge of the chat
+            ("opilot", "BY DEE", the greeting) with the overlay parked
+            off-screen. `clip` is a pure paint clip: not a scroll container,
+            so nothing can move it, and the overlay stays where it is drawn. */}
+        <div className="relative h-full overflow-clip">
+          {/* Fixed-width chat - clipped by the parent as the rail narrows (no
+              reflow). `inert` while collapsed: the widget focuses its input on
+              mount and after every send, and a focused control inside a
+              48px strip is both invisible and a keyboard trap. Inert also
+              takes the whole chat out of the tab order and out of the
+              accessibility tree, which is what "collapsed" should mean. */}
+          <div className="h-full w-[380px]" inert={collapsed}>
             <ChatbotWidget docked defaultOpen {...widgetProps} />
           </div>
 
-          {/* Collapsed strip overlay */}
-          <div
-            className={cn(
-              "absolute inset-0 flex flex-col items-center gap-3 bg-background pt-16 transition-opacity duration-200",
-              collapsed ? "opacity-100" : "pointer-events-none opacity-0",
-            )}
-          >
-            <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-2 [writing-mode:vertical-rl]">
-              AI Copilot
-            </span>
-          </div>
+          {/* Collapsed strip. The WHOLE strip is the expand control (product
+              owner, 2026-09: "when we click on the button, or actually
+              anywhere on this sidebar, it should pop out") - the round handle
+              above stays as the visible affordance and still toggles both
+              ways. Rendered only while collapsed so it can never intercept a
+              click meant for the open chat; the width transition on the
+              aside still animates the rail itself. */}
+          {collapsed && (
+            <button
+              type="button"
+              onClick={() => setCollapsed(false)}
+              // Anchored to the LEFT at the strip's own width, not `inset-0`:
+              // the aside animates 380px -> 48px, and a full-width overlay
+              // would centre the icon in the still-wide box and slide it
+              // across. Pinned at w-12 it stands still while the chat is
+              // clipped away behind it - the rail closes over the chat.
+              className="absolute inset-y-0 left-0 flex w-12 flex-col items-center gap-3 bg-background pt-16 text-muted-2 transition-colors hover:bg-surface hover:text-foreground"
+              // A pointer convenience over the same action as the handle;
+              // the handle is the one control assistive tech should hear.
+              aria-hidden="true"
+              tabIndex={-1}
+              title="Expand AI Copilot"
+            >
+              <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
+              <span className="font-mono text-[10px] uppercase tracking-[0.18em] [writing-mode:vertical-rl]">
+                AI Copilot
+              </span>
+            </button>
+          )}
         </div>
       </div>
       </aside>

@@ -20,6 +20,7 @@ import { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 import { XAgentIntake } from "@/components/x-agent-intake";
 import { Modal } from "@/components/modal";
+import { StaffOnlySection } from "@/components/staff-only-section";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
 import { ManagedJobProgress } from "@/components/managed-job-progress";
@@ -1564,6 +1565,11 @@ export function AgentRunHistory({
                 )}
               </div>
               {run.runType === "test" && <Badge tone="warning">TEST</Badge>}
+              {/* D (parity pass 2026-09): `href` is set only for staff rows and
+                  it points at /jobs/<id>, which is outside the client workspace
+                  and staff-guarded — a client following it is redirected. The
+                  row is the link, so the marker rides on the row. */}
+              {run.href && <Badge tone="neutral">Internal</Badge>}
               <JobStatusBadge status={run.status} />
             </>
           );
@@ -2422,12 +2428,17 @@ export function RunCustomAgentModal({
           {/* Where the redirect used to go, as a choice. Staff only: /jobs is
               not a route a CLIENT_USER may open. */}
           {!viewerIsClient && startedJobId && (
-            <Link
-              href={`/jobs/${startedJobId}`}
-              className="inline-flex items-center gap-1 text-xs text-neon hover:underline"
-            >
-              Open the run <Icon name="ArrowRight" className="h-3 w-3" />
-            </Link>
+            <span className="inline-flex items-center gap-2">
+              {/* D (parity pass 2026-09): it leaves the client workspace for a
+                  staff-guarded route, so it says whose link it is. */}
+              <Badge tone="neutral">Internal</Badge>
+              <Link
+                href={`/jobs/${startedJobId}`}
+                className="inline-flex items-center gap-1 text-xs text-neon hover:underline"
+              >
+                Open the run <Icon name="ArrowRight" className="h-3 w-3" />
+              </Link>
+            </span>
           )}
           <Button variant="subtle" onClick={onClose}>
             Done
@@ -2590,7 +2601,24 @@ export function RunCustomAgentModal({
               <p className="text-xs text-muted">{INTAKE_FIRST_STEP[intake.kind]}</p>
             )}
           </div>
-          <IntakeForm intake={intake} />
+          {/* B2 (parity pass 2026-09). The inline form is the STAFF shortcut:
+              the panes are prefetched only on the staff branch of the agent
+              detail route (`isStaff ? agentIntakePane(...) : undefined`), so a
+              client reaches the same intake as a full page at
+              `AgentSetupState.href` instead, and this dialog collects it in
+              place. The owner accepts staff having a bit more context here —
+              but it has to be marked as staff context, not read as a step the
+              client also gets. The `viewerIsClient` test is belt-and-braces:
+              `intake` is already null for that reader today, and if a future
+              caller ever prefetches panes for a client, the frame would be a
+              lie rather than merely redundant. */}
+          {viewerIsClient ? (
+            <IntakeForm intake={intake} />
+          ) : (
+            <StaffOnlySection label="Staff only · agent data, collected in place">
+              <IntakeForm intake={intake} />
+            </StaffOnlySection>
+          )}
           <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
             <Button variant="ghost" onClick={onClose}>
               {openedForSetup ? "Cancel run" : "Close"}

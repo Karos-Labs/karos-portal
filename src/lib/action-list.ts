@@ -395,6 +395,24 @@ export interface ClientResolvedAction extends Omit<ResolvedAction, "hrefFor"> {
  * function itself, the same way `toClientPortalView`/`sanitizeIntegrations`
  * strip what a client component may not receive.
  */
-export function toClientActions(resolved: ResolvedAction[], clientId: string): ClientResolvedAction[] {
-  return resolved.map(({ hrefFor, ...rest }) => ({ ...rest, href: hrefFor(clientId) }));
+export function toClientActions(
+  resolved: ResolvedAction[],
+  clientId: string,
+  opts: {
+    /**
+     * Where the flat `/calendar` rows (ids 12, 13, 15) should open instead.
+     * The flat route scopes itself to the viewer's OWN client - which is the
+     * right page for a CLIENT_USER and the cross-client overview for a staff
+     * member previewing that client (calendar-body.tsx's `isClient` branch is
+     * the only one that scopes it, keyed off `user.clientId`). The staff Home
+     * passes `/clients/${id}/calendar` so the same row lands on the same
+     * client's calendar for both readers.
+     */
+    calendarHref?: string;
+  } = {},
+): ClientResolvedAction[] {
+  return resolved.map(({ hrefFor, ...rest }) => {
+    const href = hrefFor(clientId);
+    return { ...rest, href: href === "/calendar" && opts.calendarHref ? opts.calendarHref : href };
+  });
 }

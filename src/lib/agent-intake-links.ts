@@ -126,42 +126,46 @@ export function clientArchiveLink(args: { clientId: string; isStaff: boolean }):
  * destination rather than keeping it over a roster: naming the roster honestly
  * is worth more than a verb the page cannot honour.
  *
- * The two roles still differ in the WORD, because they arrive differently: a
- * client reached the intake page FROM the agent's detail page, so "Back to the
- * agent" is where they came from; a staff member typically did not, so theirs
- * names the destination instead.
+ * ONE WORD FOR BOTH ROLES (parity pass 2026-09). The two labels used to split
+ * on the viewer — "All agents"/"Open the agent" for staff, "Your agents"/"Back
+ * to the agent" for a client — with the arrow flipping too, so a staff member
+ * previewing an intake page met a header control the client never gets, in a
+ * different direction. The product owner's ruling is that staff read the
+ * client's page; a staff extra has to be an ADDITIVE, marked block, and a
+ * different word on a shared control is not additive, it is a divergence. Both
+ * roles also reached this page the same way in practice — from the agent's own
+ * detail page, which is where both roles' run gesture lives — so the client's
+ * arrival word is the true one for either of them.
  *
- * ONE LIMIT ON THAT WORD, now that a fourth caller exists. "Back" is an arrival
- * claim, and it is only true of the three intake pages — a client reading the
- * empty Workspace timeline did not come from an agent's page. It cannot be
- * WRONG there, because that caller has no resolvable instance to pass and only
- * ever reaches the roster branch; but a fifth caller that CAN resolve one would
- * need this split reconsidered rather than inherited.
+ * `isStaff` is still taken rather than dropped: every caller resolves it for
+ * its own guard anyway, and keeping it in the signature is what makes a future
+ * re-split a visible edit here rather than a new ternary at six call sites.
  */
 export function intakePageAction(args: {
   clientId: string;
+  /** Unused since the parity pass — see the note above before re-reading it. */
   isStaff: boolean;
   /** This client's granted, enabled instance — see requireIntakeAgentAccess. */
   agentId: string | null;
 }): { href: string; label: string; back: boolean } {
   // `back` is the ARROW'S direction, and it belongs to the LABEL rather than to
   // the viewer: only "Back to the agent" is a return, so only it earns a back
-  // chevron. The roster branch is a forward move for both roles — a caller can
-  // reach it from a surface that was never the agent's page (the Workspace
-  // timeline's empty state does), and a left chevron there would point at a
-  // journey the reader did not make. No arrows in the labels themselves: each
-  // caller draws the icon this flag names.
+  // chevron. The roster branch is a forward move — a caller can reach it from a
+  // surface that was never the agent's page (the Workspace timeline's empty
+  // state does), and a left chevron there would point at a journey the reader
+  // did not make. No arrows in the labels themselves: each caller draws the
+  // icon this flag names.
   if (!args.agentId) {
-    // No resolvable instance for either role: name the roster, drop the verb.
+    // No resolvable instance: name the roster, drop the verb.
     return {
       href: `/clients/${args.clientId}/agents`,
-      label: args.isStaff ? "All agents" : "Your agents",
+      label: "Your agents",
       back: false,
     };
   }
   return {
     href: `/clients/${args.clientId}/agents/${args.agentId}`,
-    label: args.isStaff ? "Open the agent" : "Back to the agent",
-    back: !args.isStaff,
+    label: "Back to the agent",
+    back: true,
   };
 }

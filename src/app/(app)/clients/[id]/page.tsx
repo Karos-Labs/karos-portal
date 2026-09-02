@@ -16,7 +16,7 @@ import { listClientAgents } from "@/lib/data-client-agents";
 import { isBillableClientActor, CREDIT_DEFAULTS } from "@/lib/credits";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
-import { PageHeader } from "@/components/ui";
+import { StaffOnlySection } from "@/components/staff-only-section";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import { ClientAnalytics } from "@/components/client-analytics";
 import { AiInsights } from "@/components/ai-insights";
@@ -97,13 +97,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     listJobs({ clientId: id }),
     listClientIntegrations(id),
     getClientSeoGeo(id),
-    // Read for BOTH viewers now. It used to be client-only, which left the
-    // staff dashboard's Task Map nudge permanently reporting "0 suggestions"
-    // — a banner that cannot count is a banner that lies. Where the rows are
-    // ALLOWED to go is still split, and deliberately: `tasks` reaches
-    // ClientHomeOverview only on the client branch (see that component's note
-    // on `clientId` — its attention rows link to an owner-scoped board a staff
-    // viewer would land on the wrong tab of). Staff use the count only.
+    // Read for BOTH viewers, and handed to ClientHomeOverview on BOTH branches
+    // (parity pass, 2026-09). It used to be client-only, which left the staff
+    // dashboard's Task Map nudge permanently reporting "0 suggestions" — a
+    // banner that cannot count is a banner that lies — and then staff-only as
+    // a count, on the reasoning that the attention rows linked to an
+    // owner-scoped board a staff viewer would land on the wrong tab of. That
+    // board is gone (2026-08); the rows are plain status lines now.
     listClientTasks({ clientId: id, status: ["pending", "review_pending"], limit: TASK_FEED_LIMIT }),
     listClientCompetitors(id),
     // The last five feed client-only Home widgets (Recent Agent Activity's
@@ -436,18 +436,22 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
    * report is a page that already exists elsewhere.
    *
    * So this branch is now the client's own information architecture with the
-   * operator's extras added, rather than a different page:
+   * operator's extras added, rather than a different page. PARITY PASS
+   * (2026-09, product owner: "the client portal doesn't look the same as when
+   * the client actually signs in ... every single element should be pretty
+   * much the same"): the shared part is now the client branch below, element
+   * for element and in the client's order -
    *
-   *   1. alerts        — processing banner, then the Task Map / calendar-gap nudge
-   *   2. what's next   — upcoming slots + recent agent activity, side by side
-   *   3. how we're doing — audience, channel health, the three scores (one card)
-   *   4. where we stand — category presence + share of conversation
-   *   5. the numbers   — one thin ops strip, the retired five tiles' content
-   *   6. performance   — the status/channel charts, below the fold where they belong
-   *   7. AI Insights   — the written briefing, last
+   *   1. alerts        — processing banner, welcome line, Task Map / gap nudge
+   *   2. what's next   — Next actions + Calendar preview, side by side
+   *   3. how we're doing — Your numbers (one card)
+   *   4. where we stand — SEO & AI visibility (+ the admin Regenerate footer)
+   *   5. attention     — Needs your attention + Recent activity, full width
    *
-   * The two things staff keep that a client does not: the ops strip (§5, see
-   * HomeOpsStrip for why a client may not have it) and Regenerate in the header.
+   * - and everything staff keep that a client does not (the ops strip, the
+   * Performance charts, AI Insights) lives in ONE labelled staff-only block
+   * under it, never interleaved with the shared cards. When the client branch
+   * changes, this one changes with it.
    */
   if (!isClientViewer) {
     /**
@@ -510,71 +514,105 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
 
     return (
       <>
-        <PageHeader title="Dashboard" description={`Workspace overview for ${client.name}.`} />
+        {/* CLIENT_USER gets this from the (app) shell's own wrapper, ABOVE the
+            page; staff use the plain Sidebar shell with no such wrapper, so the
+            page mounts it itself - in the same slot, before the welcome line,
+            so the two views stack identically. */}
+        <AiProcessingBanner client={client} isAdmin={user.role === "KAROS_ADMIN"} />
+        {/* The client's own opening line, verbatim - not a "Dashboard" page
+            header. The client's name already sits in the ClientContextBar two
+            lines up, and a 3xl heading the client never sees is exactly the
+            kind of drift this branch exists to remove. */}
+        <p className="mb-6 text-sm text-muted">
+          {firstName ? `Welcome back, ${firstName}` : "Welcome back"}. Here&apos;s what&apos;s
+          happening across the {client.name} workspace.
+        </p>
         <div className="space-y-8">
-          {/* CLIENT_USER already sees this via the (app) shell's own wrapper - only
-              render here for staff, who use the plain Sidebar shell with no such wrapper. */}
-          <AiProcessingBanner client={client} isAdmin={user.role === "KAROS_ADMIN"} />
-
-          {/* `@container` (2026-08). Every grid inside these widgets sizes
-              itself against THIS element now instead of the viewport, because
-              the content column is the window minus a 288px rail — so a
-              viewport-keyed `lg:` fired on a ~700px column and split it into
-              two ~330px tracks, which is the unreadable dashboard in the
-              product owner's capture. One declaration here makes every child's
-              container query resolve against the width they are actually
-              given, at any window size, zoom level or rail width. */}
-          <section className="@container space-y-6">
-            {calendarBanner}
-            <div className="grid gap-6 @4xl:grid-cols-2">
-              <CalendarPreviewWidget
-                upcoming={upcomingStaffAssets}
-                calendarHref={`/clients/${id}/calendar`}
-                viewerIsClient={false}
-              />
-              {/* `tasks` is deliberately empty here — see the fetch above and
-                  this component's own note on `clientId`: its attention rows
-                  link to an owner-scoped board that a staff viewer lands on the
-                  wrong tab of. Staff get the Recent activity half, which is the
-                  half that joins agent identity (§7.3). */}
+          <section className="space-y-3">
+            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              Overview
+            </p>
+            {/* `@container` on an inner div, NOT on the section - same nesting
+                as the client branch. With the container on the section itself,
+                ClientHomeOverview's own `@4xl:grid-cols-2` resolved against the
+                full-width section while the widget sat in a half-width track,
+                and split its two cards again into four quarter-width columns
+                (the 2026-08 "unreadable dashboard" defect, reintroduced by the
+                staff branch alone). */}
+            <div className="@container space-y-6">
+              {calendarBanner}
+              <div className="grid gap-6 @4xl:grid-cols-2">
+                {/* Next actions is mounted for staff too (parity pass,
+                    2026-09): the signals and the resolved list are computed
+                    unconditionally above, and action-list-actions.ts already
+                    authorizes staff to dismiss / mark rows on any client -
+                    "View as Client at onboarding, or clearing one up on a
+                    support call". The only staff-specific wrinkle is the
+                    calendar destination, resolved in toClientActions. */}
+                <ActionListWidget
+                  clientId={client.id}
+                  resolved={toClientActions(resolvedActions, client.id, {
+                    calendarHref: `/clients/${id}/calendar`,
+                  })}
+                  startExpanded={actionListStartExpanded}
+                />
+                <CalendarPreviewWidget
+                  upcoming={upcomingStaffAssets}
+                  calendarHref={`/clients/${id}/calendar`}
+                  viewerIsClient={false}
+                />
+              </div>
+              {kpis}
+              {staffStanding}
+              {/* Full width, after the numbers - the client's slot. `tasks` is
+                  the real feed now: it used to be `[]` on the reasoning that
+                  the attention rows linked to an owner-scoped board a staff
+                  viewer would land on the wrong tab of, but that board is gone
+                  (2026-08) and both rows are plain status lines today, so an
+                  empty feed only made the card rank - and tint - differently
+                  for staff than for the client looking at the same account. */}
               <ClientHomeOverview
                 clientId={client.id}
-                tasks={[]}
+                tasks={tasks}
                 assets={overviewAssets}
                 viewerIsClient={false}
                 agentLabelByAssetId={agentLabelByAssetId}
-                // Three, matching the client branch (2026-09): "limit Recent
-                // activity to the three most recent items, then a clear See all
-                // activity link" was asked of the widget, not of one mount of it.
                 recentActivityLimit={3}
+                tasksHitLimit={tasks.length >= TASK_FEED_LIMIT}
                 channelsNeedingAttention={channelsNeedingAttention}
                 channelsHref={channelsHref}
                 // Staff CAN act on a draft — approval is theirs — so their
                 // "N deliverables in review" row gets the destination a
                 // client's provably cannot have. Same helper the chart below
-                // writes its bars' links with.
+                // writes its bars' links with. This is the one additive
+                // control inside the shared cards, and the widget labels it.
                 {...(draftsHref ? { draftsHref } : {})}
               />
             </div>
-            {kpis}
-            {staffStanding}
-            <HomeOpsStrip stats={opsStats} />
           </section>
 
-          <section className="space-y-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-              Performance
-            </p>
-            {analytics}
-          </section>
-          <section className="space-y-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-              AI Insights
-            </p>
-            {/* Staff branch — agency overhead, never billed, so no price is
-                quoted here even though the refresh does spend Karos money. */}
-            <AiInsights clientId={client.id} viewerIsBilled={viewerIsBilled} />
-          </section>
+          {/* ── The operator's extras, in ONE block below the client's page.
+              Everything above this line is what the client sees, in the order
+              they see it; everything inside this block is staff-only and says
+              so, so a staff member previewing an account can tell at a glance
+              which part of the screen the client will never get. ── */}
+          <StaffOnlySection>
+            <HomeOpsStrip stats={opsStats} />
+            <div className="space-y-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Performance
+              </p>
+              {analytics}
+            </div>
+            <div className="space-y-3">
+              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                AI Insights
+              </p>
+              {/* Staff branch — agency overhead, never billed, so no price is
+                  quoted here even though the refresh does spend Karos money. */}
+              <AiInsights clientId={client.id} viewerIsBilled={viewerIsBilled} />
+            </div>
+          </StaffOnlySection>
         </div>
       </>
     );

@@ -45,6 +45,15 @@ export function RefreshTaskMapButton({
   // charge is committed by the press itself. Quoted from the same constant
   // /api/tasks/generate-swarm charges from.
   const price = taskMapRefreshPrice(viewerIsBilled);
+  // PARITY PASS (2026-09). Staff (and an admin in "View as Client") used to
+  // get a SHORTER button than the client does — the price suffix simply
+  // vanished — so the one control this page leans on measured differently in
+  // the two views and nobody previewing an account could see the number the
+  // client is quoted. The suffix now paints for both readers at the same
+  // length; what changes is the tooltip, which says whose money it is. Asked
+  // of the same helper with `true` so the figure still moves with a reprice —
+  // this is the CLIENT's price, quoted to staff as information.
+  const clientPrice = taskMapRefreshPrice(true);
 
   const description = locked
     ? "Locked. A workspace build is already running"
@@ -70,7 +79,20 @@ export function RefreshTaskMapButton({
           <Icon name={locked ? "Loader" : "ListTodo"} className={cn("h-3.5 w-3.5", locked && "animate-spin")} />
         </span>
         {label}
-        {price && !locked && <span className="text-xs font-normal text-muted-2">· {price}</span>}
+        {clientPrice && !locked && (
+          <span
+            className="text-xs font-normal text-muted-2"
+            title={viewerIsBilled ? undefined : "What the client is charged · staff runs are free"}
+          >
+            {/* The unbilled reader gets the same figure at the same width, and
+                a RENDERED word saying whose charge it is - a tooltip is the one
+                marker in the parity pass a touch device cannot see. */}
+            · {clientPrice}
+            {!viewerIsBilled && (
+              <span className="ml-1 font-mono text-[9px] uppercase tracking-[0.1em]">client</span>
+            )}
+          </span>
+        )}
       </button>
 
       {warRoomOpen && (

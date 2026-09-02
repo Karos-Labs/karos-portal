@@ -6,6 +6,7 @@ import {
   resolveActionList,
   selectTopActions,
   shouldStartExpanded,
+  toClientActions,
   type ActionSignals,
 } from "../action-list";
 
@@ -236,5 +237,33 @@ describe("shouldStartExpanded", () => {
 
   it("never throws on an empty list", () => {
     expect(shouldStartExpanded([])).toBe(false);
+  });
+});
+
+describe("toClientActions", () => {
+  const resolved = resolveActionList(signals(), new Map(), NOW);
+
+  it("resolves hrefFor into a plain href for the client component", () => {
+    const rows = toClientActions(resolved, "c1");
+    expect(rows.length).toBe(resolved.length);
+    for (const row of rows) {
+      expect(typeof row.href).toBe("string");
+      expect("hrefFor" in row).toBe(false);
+    }
+  });
+
+  it("rewrites ONLY the flat /calendar rows when a scoped calendar is given", () => {
+    // The flat route scopes to the viewer's own client - the right page for a
+    // CLIENT_USER, the cross-client overview for staff in client context. The
+    // staff Home passes the scoped route so the same row lands on the same
+    // client's calendar for both readers (parity pass 2026-09).
+    const plain = toClientActions(resolved, "c1");
+    const scoped = toClientActions(resolved, "c1", { calendarHref: "/clients/c1/calendar" });
+    const flat = plain.filter((r) => r.href === "/calendar").map((r) => r.id);
+    expect(flat.length).toBeGreaterThan(0);
+    for (const row of scoped) {
+      if (flat.includes(row.id)) expect(row.href).toBe("/clients/c1/calendar");
+      else expect(row.href).toBe(plain.find((r) => r.id === row.id)?.href);
+    }
   });
 });

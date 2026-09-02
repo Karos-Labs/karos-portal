@@ -387,9 +387,17 @@ const HARDCODED_VIEWER_MOUNTS = new Map([
     {
       /** Only mounted by the Control Room… */
       via: "components/client-agents/control-room.tsx",
-      /** …which the agent detail page mounts behind this gate. */
+      /**
+       * …which the agent detail page mounts behind this gate.
+       *
+       * The gate now opens the shared staff frame rather than the ControlRoom
+       * directly (parity pass 2026-09): staff extras on a client page have to
+       * be marked as staff extras, and StaffOnlySection is that one marker. The
+       * gate itself is unchanged — `isStaff &&`, evaluated on the server — so
+       * this still asserts the property it always did, one element out.
+       */
       gatedIn: "app/(app)/clients/[id]/agents/[agentId]/page.tsx",
-      gate: "{isStaff && ( <ControlRoom",
+      gate: '{isStaff && ( <StaffOnlySection label="Staff only · control room"> <ControlRoom',
     },
   ],
 ]);

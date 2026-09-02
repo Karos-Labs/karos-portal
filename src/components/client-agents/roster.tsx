@@ -30,8 +30,23 @@ export interface AgentRosterEntry {
    * roster it would announce that work exists before anyone approved it (A3/A4).
    * It is a STRING, resolved server-side, not a set of fields the card
    * re-derives - the card cannot leak what it was never sent.
+   *
+   * Rendered behind a mono INTERNAL marker (parity pass 2026-09): it used to be
+   * a plain grey line under the blurb, indistinguishable from the client's own
+   * copy, on a card that otherwise looks identical to theirs.
    */
   note?: string | null;
+  /**
+   * STAFF ONLY: this agent is not in the client's `customAgentIds` (A4, parity
+   * pass 2026-09).
+   *
+   * The staff roster is a SUPERSET of the client's — every enabled bound agent,
+   * so an operator can see what is available to grant — and until this flag
+   * nothing distinguished the extra cards from the client's own. Kept out of
+   * `status` deliberately: the agent's status is whatever it is, and this is a
+   * fact about which VIEW you are looking at.
+   */
+  notGranted?: boolean;
 }
 
 /**
@@ -69,6 +84,7 @@ export function ClientAgentRoster({
             blurb={entry.blurb}
             status={entry.status}
             note={entry.note ?? null}
+            notGranted={entry.notGranted ?? false}
           />
         ))}
       </div>

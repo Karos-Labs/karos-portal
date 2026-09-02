@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/icon";
-import { cn } from "@/lib/utils";
 import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
 import { AccountMenu } from "@/components/account-menu";
 import { LogoutButton } from "@/components/logout-button";
@@ -14,6 +13,7 @@ import { ContactUsButton } from "@/components/contact-us-modal";
 import { ClientRailAgentsNav, type RailAgent } from "@/components/client-rail-agents-nav";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { BrandColorsSection } from "@/components/client-context-sections";
+import { NavLink, type RailNavItem as NavItem } from "@/components/rail-nav-link";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
@@ -21,37 +21,10 @@ import type {
   Client,
 } from "@/lib/types";
 
-interface NavItem {
-  href: string;
-  label: string;
-  icon: string;
-  exact?: boolean;
-}
-
-function isActive(pathname: string, item: NavItem): boolean {
-  return item.exact
-    ? pathname === item.href
-    : pathname === item.href || pathname.startsWith(item.href + "/");
-}
-
-function NavLink({ item, pathname }: { item: NavItem; pathname: string }) {
-  const active = isActive(pathname, item);
-  return (
-    <Link
-      href={item.href}
-      className={cn(
-        "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
-        active ? "bg-surface-2 text-foreground" : "text-muted hover:bg-surface-2 hover:text-foreground",
-      )}
-    >
-      <Icon
-        name={item.icon}
-        className={cn("h-4 w-4 shrink-0", active ? "text-foreground" : "text-muted-2 group-hover:text-foreground")}
-      />
-      <span className="flex-1">{item.label}</span>
-    </Link>
-  );
-}
+/* NavLink (and the `isActive` behind it) moved to components/rail-nav-link.tsx
+   in the parity pass 2026-09: the staff shell's client-context arm renders the
+   same nav for the same client and now mounts the same row, so the two cannot
+   drift on radius, padding, icon size or the active treatment again. */
 
 export function ClientRail({
   user,

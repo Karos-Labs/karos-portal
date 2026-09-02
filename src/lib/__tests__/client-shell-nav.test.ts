@@ -47,12 +47,9 @@ const AGENTS_PAGE = "src/app/(app)/clients/[id]/agents/page.tsx";
 const LAYOUT = "src/app/(app)/layout.tsx";
 const SETTINGS_PAGE = "src/app/(app)/clients/[id]/settings/page.tsx";
 
-const PANEL = "src/components/client-profile-panel.tsx";
-
 const sidebar = source(SIDEBAR);
 const rail = source(RAIL);
 const agentsNav = source(AGENTS_NAV);
-const panelSrc = source(PANEL);
 
 /** A flat route's page module. Every route in play here is a literal segment. */
 const pageOf = (route: string) => source(`src/app/(app)${route}/page.tsx`);
@@ -168,9 +165,22 @@ describe("#137 · the staff shell's client rows lead where a client can go", () 
     // /dashboard redirects a CLIENT_USER to /clients/<clientId> — a notFound()
     // for the only client who reaches this shell — or to /assets, which now
     // bounces on to /calendar (the Workspace board /assets used to land on is
-    // gone, 2026-08). Both wordmarks go through one binding.
-    expect(flat(sidebar)).toContain('const homeHref = isStaff ? "/dashboard" : "/calendar";');
-    expect(flat(sidebar).match(/<Link href=\{homeHref\}/g) ?? []).toHaveLength(2);
+    // gone, 2026-08). Every wordmark goes through one binding.
+    //
+    // THREE ARMS NOW (parity pass 2026-09, ruling D23). In client context the
+    // mark goes where the CLIENT'S mark goes — their own Home — because the
+    // agency dashboard is the one destination in this shell that silently drops
+    // the context a staff member is standing in. `clientHome` is built from the
+    // ACTIVE CLIENT's id, never `user.clientId`, which #137 above still bans.
+    expect(flat(sidebar)).toContain(
+      'const homeHref = clientHome ?? (isStaff ? "/dashboard" : "/calendar");',
+    );
+    expect(flat(sidebar)).toContain(
+      'const clientHome = clientCtx ? `/clients/${clientCtx.client.id}` : null;',
+    );
+    // Three mounts: the shared rail/drawer logo, and one mobile top bar in each
+    // of the two narrow-width arms.
+    expect(flat(sidebar).match(/<Link href=\{homeHref\}/g) ?? []).toHaveLength(3);
     // The staff arm of that binding is the file's only other /dashboard href.
     expect(sidebar.match(/href="\/dashboard"/g) ?? []).toHaveLength(0);
   });
@@ -292,19 +302,26 @@ describe("AF-3 · View-as-Client and the client's own view are the same view", (
     //
     // Portal revamp Surface 01: "AI agents" left the client rail's plain
     // `tabNav` array — it renders as ClientRailAgentsNav (starred rows + the
-    // roster dropdown) instead, positioned right after Home. The staff preview
-    // nav (clientViewNav) keeps it as a plain row, since that shell is a
-    // quick-look strip rather than the client's own interactive rail. Splicing
-    // it back into the client array at its render position is what keeps this
-    // test asserting the thing AF-1 actually cares about — same destinations,
-    // same order — rather than dropping the check because the mechanism split.
+    // roster dropdown) instead, positioned right after Home.
+    //
+    // IT LEFT THE STAFF TABLE TOO (parity pass 2026-09, ruling D3). The staff
+    // nav used to keep it as a plain row on the reasoning that its shell is a
+    // "quick-look strip rather than the client's own interactive rail"; the
+    // product owner ruled the opposite, so both shells now mount the SAME
+    // ClientRailAgentsNav between Home and Calendar and the two label tables
+    // are identical rather than merely equivalent.
     const client = navLabels(rail, "const tabNav: NavItem[] = [");
     const staff = navLabels(sidebar, "function clientViewNav(");
     // Workspace is gone from both shells (the locked decision list retires
     // it — "The Board is replaced by the action list on Home").
     expect(client).toEqual(["Home", "Calendar"]);
+    expect(staff).toEqual(client);
+    // The row that left both tables is a component both shells mount, not a
+    // destination either one dropped.
     expect(agentsNav).toContain('<span className="flex-1 text-left">AI agents</span>');
-    expect(["Home", "AI agents", ...client.slice(1)]).toEqual(staff);
+    for (const [rel, src] of [[RAIL, rail], [SIDEBAR, sidebar]] as const) {
+      expect(src, `${rel} no longer mounts the agents nav`).toContain("<ClientRailAgentsNav");
+    }
   });
 
   it("carries the same wordmark in both shells", () => {
@@ -312,9 +329,14 @@ describe("AF-3 · View-as-Client and the client's own view are the same view", (
     const MARK = 'src="/brand/kairos-head-disc-dark.svg"';
     expect(rail).toContain(MARK);
     expect(sidebar).toContain(MARK);
-    // Both mounts in each shell — desktop and phone — not just the first.
+    // Every mount in each shell — desktop and phone — not just the first. The
+    // staff shell has THREE (parity pass 2026-09, ruling D15): the rail/drawer
+    // logo, plus a mobile top bar in each of its two narrow-width arms. The
+    // client-context arm had no top bar at all before, because the staff shell
+    // dropped it along with the hamburger — so a staff member in client view
+    // got a phone layout with no wordmark on it and the client got one.
     expect(rail.match(/kairos-head-disc-dark\.svg/g) ?? []).toHaveLength(2);
-    expect(sidebar.match(/kairos-head-disc-dark\.svg/g) ?? []).toHaveLength(2);
+    expect(sidebar.match(/kairos-head-disc-dark\.svg/g) ?? []).toHaveLength(3);
   });
 
   it("takes its favicon from the one place either view can reach", () => {
@@ -417,21 +439,34 @@ describe("AF-3 · View-as-Client and the client's own view are the same view", (
   /* ── V4: the accent is rationed the same way in both ─────────────────── */
 
   it("marks the active client-context tab exactly as the client's own rail does", () => {
-    // The one genuine colour divergence between the two views of these four
-    // tabs: the staff shell painted the active row `bg-neon-soft text-neon`
-    // while the client's rail paints it paper. Ember rations orange to a single
-    // CTA and a nav row is not it — so in client context this shell now says it
-    // in the client's own vocabulary, and keeps the agency highlight for the
-    // agency nav, which is the only nav a client never sees.
-    const railActive = rail.match(/active\s*\?\s*"([^"]+)"\s*:\s*"text-muted hover:bg-surface-2/);
-    expect(railActive?.[1]).toBe("bg-surface-2 text-foreground");
-    const staffActive = flat(sidebar).match(
-      /const activeRowClass = clientCtx \? "([^"]+)" : "([^"]+)"/,
-    );
-    expect(staffActive?.[1]).toBe(railActive?.[1]);
-    expect(staffActive?.[2]).toContain("bg-neon-soft");
+    // The one genuine colour divergence between the two views of these tabs:
+    // the staff shell painted the active row `bg-neon-soft text-neon` while the
+    // client's rail paints it paper. Ember rations orange to a single CTA and a
+    // nav row is not it.
+    //
+    // V4 answered that with a ternary in the staff shell — paper in client
+    // context, orange in the agency nav — which held the two treatments in
+    // step by hand. The parity pass 2026-09 (rulings D5/D6/D11) removed the
+    // hand: the row itself is ONE component now, imported by both shells, so
+    // there is no second copy of the treatment left to keep in step. Asserted
+    // as the import plus the mount, because a shared module nobody renders is
+    // not a shared row.
+    const NAV_LINK = 'from "@/components/rail-nav-link"';
+    for (const [rel, src] of [[RAIL, rail], [SIDEBAR, sidebar]] as const) {
+      expect(src, `${rel} does not import the shared nav row`).toContain(NAV_LINK);
+      expect(src, `${rel} imports the shared nav row but renders its own`).toMatch(/<NavLink\b/);
+      // The give-away that a shell has started painting rows by hand again.
+      expect(src, `${rel} declares a NavLink of its own`).not.toMatch(/function NavLink\b/);
+    }
+    // And the shared row paints the active state in paper, in one place.
+    const shared = source("src/components/rail-nav-link.tsx");
+    const sharedActive = shared.match(/active\s*\?\s*"([^"]+)"\s*:\s*"text-muted hover:bg-surface-2/);
+    expect(sharedActive?.[1]).toBe("bg-surface-2 text-foreground");
+    expect(shared).not.toContain("bg-neon-soft");
+    // The agency nav keeps the orange highlight — the only nav a client never
+    // sees, and the one this ruling deliberately leaves alone.
     expect(flat(sidebar)).toContain(
-      'const activeIconClass = clientCtx ? "text-foreground" : "text-neon";',
+      'const activeRowClass = "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]";',
     );
   });
 });
@@ -448,17 +483,21 @@ describe("#141 · one destination, one spelling", () => {
   });
 
   it("labels every nav row leading there with that same heading", () => {
-    // The staff shell's client-context twin still spells it out as a plain nav
-    // row; the client's own rail moved the label into ClientRailAgentsNav's
-    // dropdown button (Surface 01), so that file is read in its place rather
-    // than the rail's own `.../agents\`, label: "..."` object literal, which no
-    // longer exists there.
+    // ONE label, in one file, for both shells (parity pass 2026-09, ruling D3).
+    // The staff shell used to spell it out again in its own nav table — a
+    // second literal that could be re-capitalised without anything noticing,
+    // which is the whole of #141 — and now mounts ClientRailAgentsNav like the
+    // client's rail does, so the dropdown button below is the only nav row
+    // leading there in either shell.
     const labels = [
       ...flat(agentsNav).matchAll(/<span className="flex-1 text-left">([^<]+)<\/span>/g),
       ...flat(sidebar).matchAll(/\/agents`, label: "([^"]+)"/g),
     ].map((m) => m[1]!);
-    expect(labels).toHaveLength(2);
+    expect(labels).toHaveLength(1);
     expect([...new Set(labels)]).toEqual([AGENTS]);
+    // Non-vacuity for the half that went to zero: the staff shell dropped the
+    // literal because it mounts the component, not because it dropped the row.
+    expect(sidebar).toContain("<ClientRailAgentsNav");
   });
 });
 
@@ -494,15 +533,25 @@ describe("#127 · the staff main reserves space only for chrome that is there", 
     expect(flat(source("src/components/staff-chatbot-widget.tsx"))).toContain(
       "if (!activeClient) return null;",
     );
-    // The bar: mounted only inside the truthy arm of the clientCtx branch.
-    const branch = sidebar.indexOf("{clientCtx ? (");
-    expect(branch).toBeGreaterThan(-1);
-    const armOpen = sidebar.indexOf("(", branch);
-    const armClose = matchingParen(sidebar, armOpen);
-    expect(armClose).toBeGreaterThan(armOpen);
+    // The bar: mounted only inside the truthy arm of a clientCtx branch.
+    //
+    // FOUND BY CONTAINMENT, not by position (parity pass 2026-09). The shell
+    // branches on `clientCtx` three times now — the rail body, the rail footer
+    // and the narrow-width arm — because in client context all three ARE the
+    // client's, not staff variants of them. Taking the first occurrence would
+    // pin this rule to whichever branch happens to be written first.
+    const branches = [...sidebar.matchAll(/\{clientCtx \? \(/g)];
+    expect(branches.length).toBeGreaterThan(0);
     const bar = sidebar.indexOf("<MobileTabBar");
-    expect(bar).toBeGreaterThan(armOpen);
-    expect(bar).toBeLessThan(armClose);
+    expect(bar).toBeGreaterThan(-1);
+    const inTruthyArm = branches.some((m) => {
+      const armOpen = m.index! + m[0]!.length - 1; // the `(` the arm opens with
+      const armClose = matchingParen(sidebar, armOpen);
+      return armClose > armOpen && bar > armOpen && bar < armClose;
+    });
+    expect(inTruthyArm, "<MobileTabBar renders outside every clientCtx arm").toBe(true);
+    // Exactly one bar, so "inside a truthy arm" is the whole of its condition.
+    expect(sidebar.match(/<MobileTabBar\b/g) ?? []).toHaveLength(1);
   });
 
   it("leaves the client shell's own main unconditional", () => {

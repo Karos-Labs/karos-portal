@@ -315,9 +315,21 @@ describe("toStaffShellView", () => {
     expect(layout).not.toMatch(/client=\{\s*client\s*\}/);
 
     const app = readFileSync(join(process.cwd(), "src/app/(app)/layout.tsx"), "utf8");
-    expect(app).toMatch(/allClients\s*\.\s*map\(\s*toStaffShellView\s*\)/);
+    // BOTH SOURCES, one projection. The picker's array used to be seeded only
+    // inside the admin branch, so `allClients.map(toStaffShellView)` was the
+    // whole of it; ruling D24 (parity pass 2026-09) fixed an employee's empty
+    // picker by falling back to `staffClients`, which is a second array of raw
+    // `Client` documents arriving at the same "use client" prop. The rule is
+    // unchanged and now has two ways to be broken, so it is asserted against
+    // the expression rather than the admin half of it.
+    expect(app).toMatch(
+      /\(\s*adminData\?\.allClients\s*\?\?\s*staffClients\s*\)\s*\.\s*map\(\s*toStaffShellView\s*\)/,
+    );
     // The regression: the picker's array assigned straight from the fetch.
     expect(app).not.toMatch(/clients\s*=\s*\{?\s*(adminData\.allClients|staffClients)\s*\}?\s*;/);
+    expect(app).not.toMatch(
+      /clients\s*=\s*\(\s*adminData\?\.allClients\s*\?\?\s*staffClients\s*\)\s*;/,
+    );
   });
 });
 

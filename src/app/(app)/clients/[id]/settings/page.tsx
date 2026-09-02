@@ -46,6 +46,7 @@ import { CreditsPanel } from "@/components/credits-panel";
 import { ClientAgentAccessCard } from "@/components/custom-agents";
 import { ScheduledRunsCard } from "@/components/scheduled-runs";
 import { ClientEditor } from "@/components/client-editor";
+import { StaffOnlySection } from "@/components/staff-only-section";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { ClientDocuments } from "@/components/client-documents";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
@@ -261,7 +262,6 @@ export default async function ClientSettingsPage({
   // second editor for the same data.
   const profileSection = (
     <div className="space-y-8">
-      {isStaff && <ClientEditor client={client} />}
       {/* ClientProfilePanel is a "use client" component — the whole prop it is
           handed serializes into the RSC payload whether or not anything it
           renders paints it. A CLIENT_USER (including a group admin) gets the
@@ -295,6 +295,18 @@ export default async function ClientSettingsPage({
           </ul>
         )}
       </Card>
+      {/* PARITY PASS (2026-09). The staff record editor used to open this tab,
+          pushing ClientProfilePanel and everything under it a full form down —
+          so the two readers' Profile tabs began on different content and
+          scrolled out of step for the whole rest of the tab. It is additive
+          staff machinery, not the head of the client's own profile, so it goes
+          last, inside the shared marker frame: same tab, same order, one extra
+          block at the bottom that says what it is. */}
+      {isStaff && (
+        <StaffOnlySection label="Staff only · edit client record">
+          <ClientEditor client={client} />
+        </StaffOnlySection>
+      )}
     </div>
   );
 
@@ -381,12 +393,20 @@ export default async function ClientSettingsPage({
     />
   );
   // A2's other half: the two charts client Home gave up, above the visibility
-  // scores. Client-only — staff still see <ClientAnalytics/> on their own Home
-  // (below the fold), and repeating it here would be the exact duplication
-  // this pass exists to remove. Same viewerIsClient + hideStats the Home mount
-  // used, so the status vocabulary and the counter-row contract don't drift
-  // between the two places this component now lives.
-  const analyticsSection = isClientViewer ? (
+  // scores. Same viewerIsClient + hideStats the Home mount used, so the status
+  // vocabulary and the counter-row contract don't drift between the two places
+  // this component now lives.
+  //
+  // PARITY PASS (2026-09) dropped the `isClientViewer ?` gate. Avoiding a
+  // duplicate of staff Home's own <ClientAnalytics/> was the wrong trade: it
+  // meant the Reporting tab OPENED DIFFERENTLY for the two readers — the
+  // client's first section was Performance, staff's was Visibility scores —
+  // so an operator checking what a client sees was reading a different page.
+  // The duplication is on a surface staff have to scroll to; the divergence
+  // was on the surface they use to preview. `viewerIsClient` still tells the
+  // component which register to speak in, which is a separate question from
+  // whether the section exists at all.
+  const analyticsSection = (
     <section className="space-y-3">
       <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Performance</p>
       <ClientAnalytics
@@ -398,7 +418,7 @@ export default async function ClientSettingsPage({
         hideStats
       />
     </section>
-  ) : null;
+  );
 
   // No snapshot yet: skip straight to the panel's own empty state rather than
   // showing two headed, empty "Visibility scores" / "Action plan" sections
@@ -507,53 +527,65 @@ export default async function ClientSettingsPage({
   const automationSection = (
     <div className="space-y-8">
       <AutoScheduleToggle clientId={client.id} enabled={settings?.autoScheduleEnabled} />
-
-      {/* Agent access (admin) - which custom agents this client may fire themselves */}
-      {isAdmin && (
-        <Card>
-          <CardTitle className="mb-1">AI agent access</CardTitle>
-          <p className="mb-3 text-sm text-muted-2">
-            Agents this client&apos;s users can run from their AI agents page. Each run charges the
-            client&apos;s credits.
-          </p>
-          <ClientAgentAccessCard
-            clientId={client.id}
-            agents={clientAgents}
-            allowedIds={client.customAgentIds ?? []}
-          />
-        </Card>
-      )}
-
-      {/* Scheduled runs (admin) - recurring generators fired on a cadence, draft-first + free */}
-      {isAdmin && (
-        <Card>
-          <CardTitle className="mb-1">Scheduled runs</CardTitle>
-          <p className="mb-3 text-sm text-muted-2">
-            Fire a custom agent for this client on a recurring cadence (e.g. the LinkedIn
-            company-page generator, Tue–Thu). Runs are draft-first and never charge the
-            client&apos;s credits — the model spend is ours and appears in no credit ledger.
-          </p>
-          {/* Where these DON'T show up. A schedule nobody can see is a schedule
-              nobody turns off, and this card creates rows that are absent from
-              the calendar entirely and separate from the pace on the AI agents
-              page — so an agent can be running on both at once. Said here, on
-              the only surface that can create one. */}
-          <p className="mb-3 text-sm text-muted-2">
-            These are separate from an agent&apos;s pace on the AI agents page, and they do not
-            appear on the calendar. An agent can be running on both at once — check the AI agents
-            page, which now lists any schedule set here.
-          </p>
-          <ScheduledRunsCard
-            clientId={client.id}
-            runs={scheduledRuns}
-            agents={clientAgents
-              .filter((a) => a.enabled)
-              .map((a) => ({ id: a.id, name: a.name, entrySkillDir: a.entrySkillDir }))}
-          />
-        </Card>
-      )}
     </div>
   );
+
+  /**
+   * PARITY PASS (2026-09). The two admin cards used to sit INSIDE
+   * `automationSection`, between the client's own auto-schedule toggle and the
+   * Channels/Team blocks around it — styled as ordinary Cards, so an admin
+   * previewing the Settings tab read a strip of controls with no way to tell
+   * which three of them the client would actually find there. They are lifted
+   * out whole (nothing about either card changed) into one marked frame that
+   * closes the tab, after everything the client shares.
+   *
+   * One frame around both rather than one each: they are the same audience and
+   * the same claim, and two adjacent dashed boxes would say it twice.
+   */
+  const adminAutomationSection = isAdmin ? (
+    <StaffOnlySection label="Admin only">
+      {/* Agent access (admin) - which custom agents this client may fire themselves */}
+      <Card>
+        <CardTitle className="mb-1">AI agent access</CardTitle>
+        <p className="mb-3 text-sm text-muted-2">
+          Agents this client&apos;s users can run from their AI agents page. Each run charges the
+          client&apos;s credits.
+        </p>
+        <ClientAgentAccessCard
+          clientId={client.id}
+          agents={clientAgents}
+          allowedIds={client.customAgentIds ?? []}
+        />
+      </Card>
+
+      {/* Scheduled runs (admin) - recurring generators fired on a cadence, draft-first + free */}
+      <Card>
+        <CardTitle className="mb-1">Scheduled runs</CardTitle>
+        <p className="mb-3 text-sm text-muted-2">
+          Fire a custom agent for this client on a recurring cadence (e.g. the LinkedIn
+          company-page generator, Tue–Thu). Runs are draft-first and never charge the
+          client&apos;s credits — the model spend is ours and appears in no credit ledger.
+        </p>
+        {/* Where these DON'T show up. A schedule nobody can see is a schedule
+            nobody turns off, and this card creates rows that are absent from
+            the calendar entirely and separate from the pace on the AI agents
+            page — so an agent can be running on both at once. Said here, on
+            the only surface that can create one. */}
+        <p className="mb-3 text-sm text-muted-2">
+          These are separate from an agent&apos;s pace on the AI agents page, and they do not
+          appear on the calendar. An agent can be running on both at once — check the AI agents
+          page, which now lists any schedule set here.
+        </p>
+        <ScheduledRunsCard
+          clientId={client.id}
+          runs={scheduledRuns}
+          agents={clientAgents
+            .filter((a) => a.enabled)
+            .map((a) => ({ id: a.id, name: a.name, entrySkillDir: a.entrySkillDir }))}
+        />
+      </Card>
+    </StaffOnlySection>
+  ) : null;
 
   /**
    * THE MEETINGS SURFACE A CLIENT REACHES (AF-1).
@@ -646,6 +678,9 @@ export default async function ClientSettingsPage({
       {channelsSection}
       {automationSection}
       {teamSection}
+      {/* PARITY PASS (2026-09): the admin-only pair closes the tab, so
+          everything above it is exactly what the client reads, in their order. */}
+      {adminAutomationSection}
     </div>
   );
 
@@ -684,14 +719,22 @@ export default async function ClientSettingsPage({
         description="Profile, competitors, reporting, documents, archive, credits and meetings: everything that is not daily use, in one place."
         action={
           isStaff ? (
-            <Link
-              href={`/settings?returnTo=${encodeURIComponent(
-                `/clients/${client.id}/settings${initialTab ? `?tab=${initialTab}` : ""}`,
-              )}`}
-              className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
-            >
-              Your account settings
-            </Link>
+            /* Kept (a client reaches their own account through the two tabs at
+               the end of the strip; staff have to hop to /settings), but PARITY
+               PASS (2026-09) marks it: it is the one thing in this header that
+               only one of the two readers has, and unmarked it read as part of
+               the client's own page furniture. */
+            <span className="flex items-center gap-2">
+              <Link
+                href={`/settings?returnTo=${encodeURIComponent(
+                  `/clients/${client.id}/settings${initialTab ? `?tab=${initialTab}` : ""}`,
+                )}`}
+                className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
+              >
+                Your account settings
+              </Link>
+              <Badge tone="neutral">Internal</Badge>
+            </span>
           ) : undefined
         }
       />

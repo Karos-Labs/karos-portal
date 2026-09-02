@@ -190,7 +190,13 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       single = true;
       scopedClient = viewClient;
       defaultClientId = viewClient.id;
-      title = `${viewClient.name} · Calendar`;
+      // PARITY PASS (2026-09). The h1 stays "Calendar", the same word the
+      // client reads on their own page. Prefixing it with the client's name
+      // made staff and client versions of the same screen open on a different
+      // heading, which is exactly the drift this pass removes — and which
+      // client is in scope is already stated by the rail and the URL, so the
+      // name was never the page title's job.
+      title = "Calendar";
       // "View as client" is scoped to this one client — the schedule-run
       // picker must not offer every other client staff can see.
       clientOptions = [{ id: viewClient.id, name: viewClient.name }];
@@ -712,12 +718,23 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     const runway = computeRunway(assets, [], now, undefined, scopedClient?.dailyPace);
     if (runway.activeFamilies.length > 0) {
       const fmt = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      // PARITY PASS (2026-09). The badge stays — it is the one number that
+      // tells an operator whether this account is about to run dry — but it
+      // now SAYS it is staff-only. It sits in the shared header's action slot
+      // rather than in a StaffOnlySection frame (a frame around a single chip
+      // would shift the header layout), so the marker has to be the copy:
+      // "Internal · " on every variant, so nobody previewing an account reads
+      // a backlog figure the client will never be shown.
       if (runway.coveredThroughMs == null) {
-        runwayBadge = <Badge tone="danger">No runway. Calendar is empty ahead</Badge>;
+        runwayBadge = <Badge tone="danger">Internal · No runway. Calendar is empty ahead</Badge>;
       } else if (runway.coveredThroughMs < runway.horizonThroughMs) {
-        runwayBadge = <Badge tone="warning">Short runway. Filled through {fmt(runway.coveredThroughMs)}</Badge>;
+        runwayBadge = (
+          <Badge tone="warning">Internal · Short runway. Filled through {fmt(runway.coveredThroughMs)}</Badge>
+        );
       } else {
-        runwayBadge = <Badge tone="success">Runway: filled through {fmt(runway.coveredThroughMs)}</Badge>;
+        runwayBadge = (
+          <Badge tone="success">Internal · Runway: filled through {fmt(runway.coveredThroughMs)}</Badge>
+        );
       }
     }
   }

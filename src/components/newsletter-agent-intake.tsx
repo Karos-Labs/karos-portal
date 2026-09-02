@@ -416,21 +416,29 @@ function FeedbackBox({
       {runs.length > 0 ? (
         <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => {
-            // A3/A4: staff keep the machinery noun and the exact instant, which
-            // is what they debug with; a client gets the relative language every
-            // other client-facing stamp uses.
-            const label = isStaff
-              ? `Run ${formatDate(r.createdAt)}`
-              : `Worked on your content · ${relativeTime(r.createdAt)}`;
+            /* C2 (parity pass 2026-09). The CLIENT'S sentence is the primary
+               text for BOTH roles. Staff used to read `Run <date>` in its
+               place, so one row said two different things and a staff preview
+               of this page could not be compared with what the client gets.
+               They lose nothing: the exact generation instant they debug with
+               is appended as a muted secondary suffix, and the /jobs link -
+               staff-only, staff-guarded, and outside the client workspace -
+               rides on that suffix behind an Internal marker. The per-day
+               collapse for clients still happens server-side (toRunRowViews). */
+            const label = `Worked on your content · ${relativeTime(r.createdAt)}`;
+            const stamp = `Run ${formatDate(r.createdAt)}`;
             return (
-              <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
-                {r.href ? (
-                  <a href={r.href} className="underline hover:text-foreground">
-                    {label}
-                  </a>
-                ) : (
-                  <span>{label}</span>
-                )}
+              <li key={r.id} className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                <span>{label}</span>
+                {isStaff &&
+                  (r.href ? (
+                    <a href={r.href} className="text-muted-2 underline hover:text-foreground">
+                      {stamp}
+                    </a>
+                  ) : (
+                    <span className="text-muted-2">{stamp}</span>
+                  ))}
+                {isStaff && r.href && <Badge tone="neutral">Internal</Badge>}
                 <JobStatusBadge status={r.status} />
               </li>
             );
