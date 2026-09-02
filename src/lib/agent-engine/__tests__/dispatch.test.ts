@@ -147,6 +147,25 @@ describe("dispatchOnboardingResearchAgents", () => {
     expect(publishAgentEngineRunMock).toHaveBeenCalledWith(expect.objectContaining({ productId: "intel-report-agent", clientSlug: "acme" }));
   });
 
+  /**
+   * SCRUM-388. intel-report-agent's dispatch MUST carry `runKind: "setup"` —
+   * agent-engine's `enforceContextDocPolicy` bootstrap exemption
+   * (`context-doc-policy.ts`) only degrades instead of BLOCKing on a
+   * `runKind: "setup"` run, and this dispatch is what onboarding uses to
+   * produce the very target-audience/market-strategy docs that row checks
+   * for. Pinned as its own assertion (not folded into the test above) so a
+   * regression back to "recurring" — the exact bug this ticket fixes — fails
+   * loudly here instead of silently reintroducing the onboarding deadlock.
+   * seo-geo-agent stays "recurring": its CONTEXT_DOC_POLICY row isn't wired
+   * to any call site, so there's no bootstrap-exemption behavior to opt into.
+   */
+  it("dispatches intel-report-agent with runKind: 'setup' (bootstrap exemption) and seo-geo-agent with runKind: 'recurring' (SCRUM-388)", async () => {
+    await dispatchOnboardingResearchAgents({ id: "client_1", name: "Acme Corp", agentsRepoSlug: "acme" });
+
+    expect(publishAgentEngineRunMock).toHaveBeenCalledWith(expect.objectContaining({ productId: "intel-report-agent", runKind: "setup" }));
+    expect(publishAgentEngineRunMock).toHaveBeenCalledWith(expect.objectContaining({ productId: "seo-geo-agent", runKind: "recurring" }));
+  });
+
   it("skips both, without touching Firestore, when the client has no agentsRepoSlug", async () => {
     const result = await dispatchOnboardingResearchAgents({ id: "client_1", name: "Acme Corp", agentsRepoSlug: undefined });
 
