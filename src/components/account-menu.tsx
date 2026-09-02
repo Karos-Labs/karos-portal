@@ -35,10 +35,30 @@ export function AccountMenu({
   user,
   client,
   settingsHref,
+  staffExtras,
 }: {
   user: AppUser;
-  client: Client;
+  /**
+   * Only the display name is read, so this is a `Pick` rather than a `Client`:
+   * the staff shell's client-context arm mounts this same menu (parity pass
+   * 2026-09, ruling D9) and holds a `StaffShellClientView`, which is a
+   * projection and not a whole document. Widening this back to `Client` is what
+   * would force that shell to re-ship the join token to satisfy a type.
+   */
+  client: Pick<Client, "name">;
   settingsHref: string;
+  /**
+   * ADDITIVE staff-only rows, rendered as their own bordered group under a
+   * "STAFF" caption inside the dropdown (parity pass 2026-09, ruling D10).
+   *
+   * The ruling is that a staff member in client context sees the CLIENT'S
+   * chrome — so the extras a client has no equivalent of ("Your settings",
+   * "Exit client view") cannot be mixed in among the rows the client also has,
+   * or the two shells stop being the same shell. They get a fenced, labelled
+   * group instead: clearly present, clearly internal, and absent entirely for
+   * the client's own mount, which passes nothing.
+   */
+  staffExtras?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -136,6 +156,16 @@ export function AccountMenu({
               <ThemeSwitch />
               <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
             </div>
+
+            {/* Staff extras — fenced and captioned, never interleaved. */}
+            {staffExtras && (
+              <div className="border-t border-border p-1">
+                <p className="px-3 pb-1 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
+                  Staff
+                </p>
+                {staffExtras}
+              </div>
+            )}
 
             {/* Log out */}
             <div className="border-t border-border p-1">

@@ -628,35 +628,50 @@ function ModelPicker({
   value: ChatModelKey | null;
   onChange: (key: ChatModelKey | null) => void;
 }) {
+  /* One segmented control on the composer's footer line (QA 2026-09). It used
+     to be its own bordered band above the input - a `border-t` of its own
+     stacked on the form's `border-t`, three loose text pills and a "Model"
+     word, sitting in the panel like a second toolbar. Now the input row is
+     the composer and this is one quiet line under it: label left, a single
+     track with three segments right. Active segment is paper on the surface
+     ladder, not orange - the accent is rationed to the send button. */
+  const options: { key: ChatModelKey | null; label: string; description: string }[] = [
+    { key: null, label: "Auto", description: "Picks the model per message, by cost." },
+    ...CHAT_MODEL_KEYS.map((key) => ({
+      key,
+      label: CHAT_MODEL_OPTIONS[key].label,
+      description: CHAT_MODEL_OPTIONS[key].description,
+    })),
+  ];
   return (
-    <div className="flex items-center gap-1 border-t border-border px-3 pt-2 text-[11px]">
-      <span className="mr-0.5 text-muted-2">Model</span>
-      <button
-        type="button"
-        onClick={() => onChange(null)}
-        aria-pressed={value === null}
-        className={cn(
-          "rounded-full px-2 py-0.5 transition-colors",
-          value === null ? "bg-neon-soft text-neon" : "text-muted-2 hover:bg-surface-2",
-        )}
+    <div className="mt-2 flex items-center justify-between gap-3">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">Model</span>
+      <div
+        role="group"
+        aria-label="Copilot model"
+        className="flex items-center gap-0.5 rounded-md border border-border bg-surface-2 p-0.5"
       >
-        Auto
-      </button>
-      {CHAT_MODEL_KEYS.map((key) => (
-        <button
-          key={key}
-          type="button"
-          onClick={() => onChange(value === key ? null : key)}
-          aria-pressed={value === key}
-          title={CHAT_MODEL_OPTIONS[key].description}
-          className={cn(
-            "rounded-full px-2 py-0.5 transition-colors",
-            value === key ? "bg-neon-soft text-neon" : "text-muted-2 hover:bg-surface-2",
-          )}
-        >
-          {CHAT_MODEL_OPTIONS[key].label}
-        </button>
-      ))}
+        {options.map((o) => {
+          const active = value === o.key;
+          return (
+            <button
+              key={o.key ?? "auto"}
+              type="button"
+              onClick={() => onChange(o.key === null ? null : value === o.key ? null : o.key)}
+              aria-pressed={active}
+              title={o.description}
+              className={cn(
+                "rounded-[4px] px-2.5 py-1 text-[11px] leading-none transition-colors",
+                active
+                  ? "bg-background text-foreground shadow-[inset_0_0_0_1px_var(--border)]"
+                  : "text-muted-2 hover:text-foreground",
+              )}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1365,7 +1380,6 @@ export function ChatbotWidget({
                   ))}
               </div>
             )}
-            <ModelPicker value={preferredModel} onChange={setPreferredModel} />
             {/* THE ATTACH CONTROL IS ON THE INPUT LINE (2026-09).
                 
                 T-B5 gave the chat a real upload surface — the same signed-URL
@@ -1427,6 +1441,8 @@ export function ChatbotWidget({
                   )}
                 </button>
               </RunAttachments>
+              {/* Footer line of the same composer - see ModelPicker. */}
+              <ModelPicker value={preferredModel} onChange={setPreferredModel} />
             </form>
           </div>
         </div>

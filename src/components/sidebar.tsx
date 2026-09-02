@@ -12,6 +12,9 @@ import { useActiveClient } from "@/lib/active-client-context";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { BrandColorsSection } from "@/components/client-context-sections";
+import { ClientRailAgentsNav } from "@/components/client-rail-agents-nav";
+import { AccountMenu } from "@/components/account-menu";
+import { NavLink } from "@/components/rail-nav-link";
 import {
   NotificationBell,
   useNotificationDismissals,
@@ -103,19 +106,25 @@ const NAV: NavItem[] = [
 // the global Assets page.
 //
 // Portal revamp Surface 01: "Home" replaces "Dashboard" (same destination),
-// matching client-rail.tsx's tabNav. "AI agents" stays a plain link here
-// rather than the client rail's starred-rows +
-// dropdown (ClientRailAgentsNav) — this is a staff quick-preview strip, not
-// the client's own nav, so it trades the interactive roster for one row that
-// still reaches the same page. Workspace is gone from both shells — the
+// matching client-rail.tsx's tabNav. Workspace is gone from both shells — the
 // locked decision list retires it ("The Board is replaced by the action list
 // on Home"); the /tasks route itself is untouched, only its nav entry.
+//
+// "AI AGENTS" IS NOT IN THIS TABLE ANY MORE (parity pass 2026-09, ruling D3).
+// It used to be a plain row here on the reasoning that the staff shell is a
+// "quick-preview strip, not the client's own nav" — the product owner ruled the
+// opposite: the client-context shell IS the client's nav, so this arm mounts
+// the client's real ClientRailAgentsNav (roster, stars and all) between Home
+// and Calendar, exactly where client-rail.tsx puts it. Same reason its absence
+// from `tabNav` is deliberate over there.
+//
+// Calendar keeps the CLIENT-SCOPED route, and that href difference from the
+// client's own `/calendar` is legitimate rather than drift: the flat route is
+// staff's cross-client calendar, and a staff member in client context wants
+// this client's.
 function clientViewNav(clientId: string): NavItem[] {
   return [
     { href: `/clients/${clientId}`, label: "Home", icon: "LayoutDashboard", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"], exact: true },
-    /* Sentence case, like the client rail's own item and both headings on the
-       page they open — one destination, one spelling (#141). */
-    { href: `/clients/${clientId}/agents`, label: "AI agents", icon: "Bot", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
     { href: `/clients/${clientId}/calendar`, label: "Calendar", icon: "CalendarClock", roles: ["KAROS_ADMIN", "KAROS_EMPLOYEE"] },
   ];
 }
@@ -147,6 +156,13 @@ function ClientContextPicker({
   function selectClient(client: StaffShellClientView) {
     setOpen(false);
     setQuery("");
+    // Re-picking the client that is already active is a no-op, not a reset.
+    // The optimistic seed below starts the roster empty and the balance
+    // unknown, and ClientContextSync only re-fills them when one of its
+    // dependency signatures changes - which, on the same client's own page,
+    // nothing does. So the credits pill vanished and the AI-agents dropdown
+    // emptied until the next navigation (alignment review, parity pass 2026-09).
+    if (activeClient?.client.id === client.id) return;
     // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load.
     // isAdmin carries the VIEWER's real role rather than a hardcoded true: the
     // picker renders for every staff member, so an EMPLOYEE who picked a client
@@ -157,7 +173,20 @@ function ClientContextPicker({
     // click would have fired a full pipeline run (the action is requireAdmin
     // now - CD-G5 hardening - closing the server side too). The flag starting
     // out honest closes the UI side.
-    setActiveClient({ client, contextDocs: [], competitors: [], isAdmin });
+    // railAgents/spendableCredits start empty and unknown for the same honesty
+    // reason isAdmin starts from the real role: the picker knows neither, and
+    // ClientContextSync fills both in on the very next render. An empty roster
+    // paints an empty dropdown for one frame; a `null` balance hides the
+    // credits pill rather than flashing a wrong number at a staff member who is
+    // about to read it as the client's (parity pass 2026-09).
+    setActiveClient({
+      client,
+      contextDocs: [],
+      competitors: [],
+      railAgents: [],
+      spendableCredits: null,
+      isAdmin,
+    });
     router.push(`/clients/${client.id}`);
   }
 
@@ -173,8 +202,18 @@ function ClientContextPicker({
     <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
+        /* D12 (parity pass 2026-09): in client context this rail is the
+           client's rail, and this control is the one thing on it a client has
+           no equivalent of. It stays — it is the only way in and out of the
+           context — but it says so, in a word and in a tooltip, so nobody
+           reads it as part of what the client sees. */
+        title={
+          activeClient
+            ? "Internal · you are viewing this client's workspace. Clients never see this control."
+            : "Internal · pick a client to view their workspace."
+        }
         className={cn(
-          "flex w-full items-center gap-3 rounded-[10px] px-3 py-2 text-sm transition-colors",
+          "flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-sm transition-colors",
           open
             ? "bg-surface-2 text-foreground"
             : "text-muted hover:bg-surface-2 hover:text-foreground",
@@ -184,6 +223,16 @@ function ClientContextPicker({
         <span className="min-w-0 flex-1 truncate text-left">
           {activeClient ? activeClient.client.name : "Client context"}
         </span>
+        {/* One row, not a caption line above it: the rail's height is a fixed
+            budget (CD-E3) and this control has to fit the client's footer. */}
+        {activeClient && (
+          <span
+            aria-hidden="true"
+            className="shrink-0 rounded border border-border px-1 font-mono text-[9px] uppercase leading-[1.4] tracking-[0.12em] text-muted-2"
+          >
+            Internal
+          </span>
+        )}
         {activeClient ? (
           <span
             role="button"
@@ -346,7 +395,12 @@ function UserMenu({
               />
             </>
           ) : (
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-neon">
+            /* Paper, not orange (parity pass 2026-09, ruling D10). Ember
+               rations the accent to one CTA and an avatar fallback is not it —
+               the client's own AccountMenu already paints its initials
+               `text-foreground`, so this was also the last thing making the two
+               footers look like different products. */
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3 text-xs font-semibold text-foreground">
               {initials(user.name)}
             </div>
           )}
@@ -490,17 +544,7 @@ export function Sidebar({
     return false;
   });
 
-  // Where the wordmark goes — the same question the nav table above answers,
-  // asked of the one control that is not in it. /dashboard is the STAFF home:
-  // it redirects a CLIENT_USER to /clients/<clientId>, or to /assets when they
-  // have no id. Neither ends anywhere for the client who reaches this shell —
-  // the first is the notFound() described above, and the second now bounces on
-  // to /calendar (the Workspace board /assets used to land on is gone). So the
-  // mark goes to /calendar directly: it already has its own no-clientId empty
-  // state, same as the nav row above.
-  const homeHref = isStaff ? "/dashboard" : "/calendar";
-
-  // In Client View mode show the 4 client-facing tabs; otherwise show the full admin nav.
+  // In Client View mode show the client-facing tabs; otherwise show the full admin nav.
   // Using (isStaff && activeClient) so TS narrows activeClient to non-null in the truthy branch.
   const items: NavItem[] = (isStaff && activeClient) ? clientViewNav(activeClient.client.id) : adminItems;
 
@@ -510,6 +554,27 @@ export function Sidebar({
   // keep the drawer - the full admin nav is more tabs than a bar can hold
   // (flagged, not ruled). Bound once so TS narrows it inside the JSX below.
   const clientCtx = isStaff && activeClient ? activeClient : null;
+
+  // The client-context shell's own routes, built from the ACTIVE CLIENT's id and
+  // never from `user.clientId` — see the note above NAV for why that field is
+  // banned in this file (#137).
+  const clientHome = clientCtx ? `/clients/${clientCtx.client.id}` : null;
+  const clientSettingsHref = clientHome ? `${clientHome}/settings` : null;
+
+  // Where the wordmark goes — the same question the nav table above answers,
+  // asked of the one control that is not in it. /dashboard is the STAFF home:
+  // it redirects a CLIENT_USER to /clients/<clientId>, or to /assets when they
+  // have no id. Neither ends anywhere for the client who reaches this shell —
+  // the first is the notFound() described above, and the second now bounces on
+  // to /calendar (the Workspace board /assets used to land on is gone). So the
+  // mark goes to /calendar directly: it already has its own no-clientId empty
+  // state, same as the nav row above.
+  //
+  // In client context it goes where the CLIENT'S mark goes — their own Home
+  // (parity pass 2026-09, ruling D23). Sending a staff member previewing a
+  // client back to the agency dashboard from the client's own wordmark is the
+  // one navigation in this shell that silently leaves the context behind.
+  const homeHref = clientHome ?? (isStaff ? "/dashboard" : "/calendar");
 
   // The bell has to agree with the nav it sits inside. `clientViewNav` above
   // deliberately drops the Jobs tab, so a review row that deep-linked to
@@ -525,28 +590,18 @@ export function Sidebar({
   // the nav was redundant - three controls for one action, and one more row
   // competing for the rail's fixed height (CD-E3).
   /**
-   * The active row's treatment, and the ONE place the two shells disagreed
-   * about it (V4).
+   * The AGENCY nav's active treatment, and nothing else.
    *
-   * In client context these four rows ARE the client's nav — same labels, same
-   * destinations, same order as client-rail.tsx — and that rail marks its
-   * active row in paper: `bg-surface-2 text-foreground`. This one painted it
-   * `bg-neon-soft text-neon`, so the first thing a staff member saw on
-   * entering client view was an orange tab the client themselves never gets.
-   * Ember's rule is that orange is rationed to one CTA, and a nav row is not
-   * that CTA.
-   *
-   * Scoped to the client context on purpose: `items` above is EITHER the four
-   * client tabs OR the full agency nav, and the agency nav is staff's own
-   * workspace chrome — out of scope here, and not something a client ever
-   * sees. So the same component says "you are looking at the client's app" in
-   * the client's own vocabulary, and keeps saying "you are in the workspace"
-   * in the workspace's.
+   * V4 held this binding to a ternary — paper in client context, orange in the
+   * agency workspace — because both navs were built by the loop below. The
+   * parity pass 2026-09 finished the job the other way round: in client context
+   * the rows are literally the client's rows now (components/rail-nav-link.tsx,
+   * mounted by both shells), so there is no second copy of the active treatment
+   * left to keep in step, and this loop only ever renders the agency nav — the
+   * one nav a client never sees, and the one this ruling leaves alone.
    */
-  const activeRowClass = clientCtx
-    ? "bg-surface-2 text-foreground"
-    : "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]";
-  const activeIconClass = clientCtx ? "text-foreground" : "text-neon";
+  const activeRowClass = "bg-neon-soft text-neon shadow-[inset_0_0_0_1px_rgba(255,107,44,0.15)]";
+  const activeIconClass = "text-neon";
 
   const nav = (
     <nav className="flex flex-col gap-1">
@@ -585,13 +640,76 @@ export function Sidebar({
     </nav>
   );
 
+  /**
+   * The staff-only rows the client's AccountMenu has no equivalent of (parity
+   * pass 2026-09, ruling D10). They ride INSIDE that menu, in its own fenced
+   * "STAFF" group, rather than as extra rail rows: the ruling is that the rail
+   * itself is the client's rail, and every additive staff control has to be
+   * both present and unmistakably marked.
+   *
+   * "Exit client view" is the same body as ClientContextBar's exit — clear the
+   * context, then leave, so ClientContextSync unmounts and cannot re-set it on
+   * the next refresh.
+   */
+  const staffExtras = (
+    <>
+      <Link
+        href="/settings"
+        className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+      >
+        <Icon name="Settings" className="h-4 w-4 text-muted-2" />
+        Your settings
+      </Link>
+      <button
+        onClick={() => {
+          setActiveClient(null);
+          router.push("/clients");
+        }}
+        className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+      >
+        <Icon name="LogOut" className="h-4 w-4 text-muted-2" />
+        Exit client view
+      </button>
+    </>
+  );
+
+  /**
+   * The client's own credits pill, on the staff rail (ruling D7). Same link,
+   * same shape, same number — `spendableCredits`, the balance clipped by the
+   * caps, which is what a run actually costs against.
+   *
+   * The `title` is the one thing the client's copy does not carry, and it is
+   * the whole reason the pill is safe to show here: a staff run is FREE
+   * (`isBillableClientActor()` charges only a real client session), so a staff
+   * member watching this number must know it is the CLIENT'S balance and not a
+   * budget they are spending.
+   */
+  const creditsPill = clientCtx && clientCtx.spendableCredits != null && (
+    <Link
+      href={`${clientSettingsHref}?tab=credits`}
+      title="Client balance · staff runs are free"
+      className="flex min-w-0 flex-1 items-center justify-between rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
+    >
+      <span className="flex items-center gap-1.5">
+        <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
+        Credits
+      </span>
+      <span className="font-mono font-medium text-foreground">{clientCtx.spendableCredits}</span>
+    </Link>
+  );
+
   // `inDrawer` - the same tree serves the desktop rail and the narrow-width
   // drawer, but the drawer is itself one tap deep, so the chrome CD-G9c moved
   // into the account menu is surfaced a level higher there (see the footer).
+  // The drawer is never reached in client context — that arm renders the tab
+  // bar and the Company sheet instead — so every `inDrawer` branch below is
+  // agency chrome by construction.
   const shellContent = (inDrawer: boolean) => (
     <div className="flex h-full flex-col">
-      {/* Logo - fixed top */}
-      <div className="shrink-0 px-4 pb-2 pt-4">
+      {/* Logo - fixed top. No `pb-2` in client context: the client's rail
+          spends that space on the body's own `pt-4`, and the two marks have to
+          sit at the same height or the whole rail reads as shifted. */}
+      <div className={cn("shrink-0 px-4 pt-4", !clientCtx && "pb-2")}>
         <Link href={homeHref} className="flex items-center gap-2.5 px-2 py-1">
           <Image
             src="/brand/kairos-head-disc-dark.svg"
@@ -615,77 +733,141 @@ export function Sidebar({
           for the same reason it came back there, and the parity rule is why it
           is here too: this rail is the staff PREVIEW of that one.
 
-          PINNED ABOVE {"{nav}"} (2026-08, client-zero feedback) — same
-          reorder as client-rail.tsx, for the same parity reason: if a client
-          sees their own brand before their nav, staff previewing that client
-          must see the identical order, not nav-then-brand. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-2">
-        {activeClient && (
-          <>
-            <ClientProfilePanel client={activeClient.client} compact hideDescription />
-            {/* isStaff: this rail is staff-only, and the swatch tooltips carry
-                the internal mix percentage for them (CD-E2). */}
-            <BrandColorsSection
-              guidelines={activeClient.client.brandingGuidelines}
-              clientId={activeClient.client.id}
-              hasWebsite={!!activeClient.client.website}
-              isStaff
-            />
-            <div className="mt-1.5 border-t border-border pt-4">{nav}</div>
-          </>
-        )}
-        {!activeClient && nav}
-      </div>
+          PINNED ABOVE the nav (2026-08, client-zero feedback) — same reorder as
+          client-rail.tsx, for the same parity reason: if a client sees their own
+          brand before their nav, staff previewing that client must see the
+          identical order, not nav-then-brand.
 
-      {/* Bottom - fixed */}
-      <div className="shrink-0 space-y-1.5 border-t border-border px-4 py-2">
-        {/* QA F113: employees get the same context switcher as admins - the
-            picker also carries the X that clears the context. `clients` is
-            already fenced to their assigned clients by the app layout. The
-            LABELLED exit is F60's ClientContextBar, which renders for any
-            staff member the moment a client context is active. */}
-        {isStaff && (
-          <ClientContextPicker clients={clients} isAdmin={user.role === "KAROS_ADMIN"} />
-        )}
-        {/* Notifications / support / theme inline rather than inside the menu:
-            opening the drawer is already one tap, so nesting them would leave
-            them three taps from a page and break CD-G9c's ≤2-click floor. */}
-        {inDrawer && (
-          <div className="space-y-0.5">
-            {/* w-full, not the default w-80: the drawer is w-64 with
-                overflow-y-auto, which forces overflow-x to auto - a 320px
-                panel would be clipped and drag in a horizontal scrollbar. */}
+          The whole block is client-rail.tsx's body VERBATIM now (parity pass
+          2026-09, rulings D3/D5/D6/D11) — wrapper spacing, section order, the
+          `border-t pt-4` nav and the roster between Home and Calendar. It reads
+          as a duplicate on purpose: the two shells serve different data
+          (clientCtx vs. the client's own props) through the same markup, and
+          the shared pieces that CAN be one thing — the nav row, the agents nav,
+          the account menu — are imported rather than copied. */}
+      {clientCtx ? (
+        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-4 pb-0 pt-4">
+          <ClientProfilePanel client={clientCtx.client} compact hideDescription />
+          {/* isStaff: this rail is staff-only, and the swatch tooltips carry
+              the internal mix percentage for them (CD-E2, ruling D14). */}
+          <BrandColorsSection
+            guidelines={clientCtx.client.brandingGuidelines}
+            clientId={clientCtx.client.id}
+            hasWebsite={!!clientCtx.client.website}
+            isStaff
+          />
+          <nav className="flex flex-col gap-0.5 border-t border-border pt-4">
+            <NavLink item={items[0]} pathname={pathname} />
+            <ClientRailAgentsNav
+              clientId={clientCtx.client.id}
+              home={clientHome!}
+              agents={clientCtx.railAgents}
+              starredIds={clientCtx.client.starredAgentIds ?? []}
+            />
+            {items.slice(1).map((item) => (
+              <NavLink key={item.href} item={item} pathname={pathname} />
+            ))}
+          </nav>
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-0 pt-2">{nav}</div>
+      )}
+
+      {/* Bottom - fixed. Two footers, because the two shells' footers are two
+          different objects: in client context this is the CLIENT'S footer
+          (`p-3`, credits pill + bell, then their AccountMenu — rulings
+          D7/D8/D9), with the picker and the staff rows as the only additions. */}
+      {clientCtx ? (
+        <div className="shrink-0 border-t border-border p-3">
+          {/* ABOVE the credits row (ruling D12): the client's footer starts at
+              the pill, so anything that is not theirs sits outside that block
+              rather than between its two halves. QA F113 — employees get the
+              same switcher as admins, and its X is what clears the context. */}
+          <div className="mb-2">
+            <ClientContextPicker clients={clients} isAdmin={user.role === "KAROS_ADMIN"} />
+          </div>
+          {/* The bell sits ON the rail beside the pill, exactly as it does in
+              client-rail.tsx — a badge only signals if it is visible without
+              opening a menu (QA F116). `viewerIsClient` stays FALSE: a staff
+              member IS the Karos team, and the client's reassurance copy would
+              hide work they own. `allowJobDeepLinks` is false here for the
+              opposite reason — this nav has no Jobs tab. */}
+          <div className="mb-2 flex items-center gap-2">
+            {creditsPill}
             <NotificationBell
               actionItems={actionItems}
               reviewJobs={reviewJobs}
               taskAlerts={taskAlerts}
-              variant="row"
+              variant="icon"
               panelPlacement="up"
-              panelClassName="w-full max-h-[45vh]"
               allowJobDeepLinks={allowJobDeepLinks}
               viewerIsClient={viewerIsClient}
               dismissals={dismissals}
-              /* The drawer is `fixed inset-0` and closes only from explicit
-                 handlers, so without this a bell row routes underneath it and
-                 leaves the drawer covering the page it just opened — on every
-                 navigation, not just a same-route tap. */
-              onNavigate={() => setOpen(false)}
             />
-            <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
-            <ThemeSwitch />
           </div>
-        )}
-        <UserMenu
-          user={user}
-          realAdmin={realAdmin}
-          feeds={feeds}
-          dismissals={dismissals}
-          viewerIsClient={viewerIsClient}
-          unreadWithChrome={unread}
-          showChrome={!inDrawer}
-          allowJobDeepLinks={allowJobDeepLinks}
-        />
-      </div>
+          {/* The client's own identity row, so the sub-line reads
+              "{client} · Account Center" and the two affordances (name →
+              Account Center, chevron → menu) match theirs. UserMenu — and the
+              bell inside it — is deliberately NOT mounted in this arm: the bell
+              is on the rail above, and a second one behind a dropdown is the
+              F116 defect twice over. */}
+          <AccountMenu
+            user={user}
+            client={clientCtx.client}
+            settingsHref={clientSettingsHref!}
+            staffExtras={staffExtras}
+          />
+        </div>
+      ) : (
+        <div className="shrink-0 space-y-1.5 border-t border-border px-4 py-2">
+          {/* QA F113: employees get the same context switcher as admins - the
+              picker also carries the X that clears the context. `clients` is
+              already fenced to their assigned clients by the app layout. The
+              LABELLED exit is F60's ClientContextBar, which renders for any
+              staff member the moment a client context is active. */}
+          {isStaff && (
+            <ClientContextPicker clients={clients} isAdmin={user.role === "KAROS_ADMIN"} />
+          )}
+          {/* Notifications / support / theme inline rather than inside the menu:
+              opening the drawer is already one tap, so nesting them would leave
+              them three taps from a page and break CD-G9c's ≤2-click floor. */}
+          {inDrawer && (
+            <div className="space-y-0.5">
+              {/* w-full, not the default w-80: the drawer is w-64 with
+                  overflow-y-auto, which forces overflow-x to auto - a 320px
+                  panel would be clipped and drag in a horizontal scrollbar. */}
+              <NotificationBell
+                actionItems={actionItems}
+                reviewJobs={reviewJobs}
+                taskAlerts={taskAlerts}
+                variant="row"
+                panelPlacement="up"
+                panelClassName="w-full max-h-[45vh]"
+                allowJobDeepLinks={allowJobDeepLinks}
+                viewerIsClient={viewerIsClient}
+                dismissals={dismissals}
+                /* The drawer is `fixed inset-0` and closes only from explicit
+                   handlers, so without this a bell row routes underneath it and
+                   leaves the drawer covering the page it just opened — on every
+                   navigation, not just a same-route tap. */
+                onNavigate={() => setOpen(false)}
+              />
+              <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+              <ThemeSwitch />
+            </div>
+          )}
+          <UserMenu
+            user={user}
+            realAdmin={realAdmin}
+            feeds={feeds}
+            dismissals={dismissals}
+            viewerIsClient={viewerIsClient}
+            unreadWithChrome={unread}
+            showChrome={!inDrawer}
+            allowJobDeepLinks={allowJobDeepLinks}
+          />
+        </div>
+      )}
     </div>
   );
 
@@ -696,6 +878,43 @@ export function Sidebar({
              Twin of the client shell's own mount (components/client-rail.tsx)
              - same bar, same sheet frame, staff-flavoured contents. ── */
         <>
+          {/* ── Mobile top bar (ruling D15) ──
+               The client's own strip: wordmark → their Home, credits pill, and
+               nothing else. The bell lives in the Company sheet at this width
+               in both shells (CD-H5). This arm had no top bar at all before —
+               the staff shell dropped it with the hamburger — so a staff member
+               in client view got a phone layout the client never sees. */}
+          <div className="flex items-center justify-between border-b border-border px-4 py-3 md:hidden">
+            <Link href={homeHref} className="flex items-center gap-2.5">
+              <Image
+                src="/brand/kairos-head-disc-dark.svg"
+                alt=""
+                width={26}
+                height={26}
+                className="h-[26px] w-[26px] shrink-0 rounded-full shadow-[inset_0_0_0_1px_var(--border)]"
+                unoptimized
+              />
+              <span className="font-serif text-xl font-normal leading-none text-foreground">
+                Karos Labs
+              </span>
+            </Link>
+            <div className="flex items-center gap-2">
+              {clientCtx.spendableCredits != null && (
+                <Link
+                  href={`${clientSettingsHref}?tab=credits`}
+                  title="Client balance · staff runs are free"
+                  aria-label={`${clientCtx.spendableCredits} client credits remaining, open credits settings`}
+                  className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
+                >
+                  <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
+                  <span className="font-mono font-medium text-foreground">
+                    {clientCtx.spendableCredits}
+                  </span>
+                </Link>
+              )}
+            </div>
+          </div>
+
           <MobileTabBar
             items={items}
             companyOpen={companyOpen}
@@ -703,37 +922,53 @@ export function Sidebar({
             companyUnread={unread}
           />
 
+          {/* ── Mobile Company sheet ──
+               client-rail.tsx's sheet, section for section (rulings
+               D18/D19): brand card → Brand Colors → the agent roster → the
+               account group. Grouped with the client's `border-t pt-4`, not
+               the `border-b pb-4` this shell used to draw, so the two sheets
+               do not put their rules on opposite sides of the same content. */}
           <MobileCompanySheet open={companyOpen} onClose={() => setCompanyOpen(false)}>
-            {/* Documents/Competitor Track left this sheet with the client's own
-                (portal revamp, Surface 01/06) — reached through Account Center
-                now, same as the real client sees. The full brand card and the
-                Brand Colors row stay, mirroring client-rail.tsx's sheet. */}
-            {clientCtx && (
-              <div className="border-b border-border pb-4">
-                <ClientProfilePanel client={clientCtx.client} hideDescription />
-                <BrandColorsSection
-                  guidelines={clientCtx.client.brandingGuidelines}
-                  clientId={clientCtx.client.id}
-                  hasWebsite={!!clientCtx.client.website}
-                  isStaff
-                />
-              </div>
-            )}
-            <div className="space-y-0.5">
-              {/* Explicit close: the sheet otherwise closes on navigation, and
-                  tapping Settings while already ON /settings routes nowhere -
-                  the sheet just sat there over the page it had reached. */}
+            <ClientProfilePanel client={clientCtx.client} hideDescription />
+            <BrandColorsSection
+              guidelines={clientCtx.client.brandingGuidelines}
+              clientId={clientCtx.client.id}
+              hasWebsite={!!clientCtx.client.website}
+              isStaff
+            />
+
+            {/* "AI agents" has no slot in the 2-icon bottom tab bar (Home,
+                Calendar fill it), so the roster + star toggles live here on
+                mobile — same one-line decision the client's sheet makes. */}
+            <div className="border-t border-border pt-4">
+              <ClientRailAgentsNav
+                clientId={clientCtx.client.id}
+                home={clientHome!}
+                agents={clientCtx.railAgents}
+                starredIds={clientCtx.client.starredAgentIds ?? []}
+              />
+            </div>
+
+            <div className="space-y-0.5 border-t border-border pt-4">
+              {/* The CLIENT'S destination and the client's word for it. This
+                  row used to be "Settings" → /settings, i.e. the staff
+                  member's own account page mounted where the client's Account
+                  Center sits. Explicit close: the sheet otherwise closes on
+                  navigation, and tapping a row for the route already open
+                  routes nowhere - the sheet just sat there over the page. */}
               <Link
-                href="/settings"
+                href={clientSettingsHref!}
                 onClick={() => setCompanyOpen(false)}
                 className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
               >
                 <Icon name="Settings" className="h-4 w-4 text-muted-2" />
-                Settings
+                Account Center
               </Link>
-              {/* onNavigate: same explicit close as the Settings row above —
-                  a bell row pointing at the route already open navigates
-                  nowhere, so the sheet's on-navigation effect never fires. */}
+              {/* No Team row (ruling D21): /team is the CLIENT's group-admin
+                  surface, and a staff member is not in the client's group. */}
+              {/* onNavigate: same explicit close as the row above — a bell row
+                  pointing at the route already open navigates nowhere, so the
+                  sheet's on-navigation effect never fires. */}
               <NotificationBell
                 actionItems={actionItems}
                 reviewJobs={reviewJobs}
@@ -746,15 +981,32 @@ export function Sidebar({
                 dismissals={dismissals}
                 onNavigate={() => setCompanyOpen(false)}
               />
-              <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+              <div className="px-0">
+                <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
+              </div>
               <ThemeSwitch />
-              {/* The staff escape hatch, and STAFF-ONLY - this branch never
-                  renders for a client. At phone width in client context the
-                  nav is five client tabs and nothing else, so the only way
-                  back to the agency workspace was the F60 strip at the top of
-                  the page, which scrolls away. The bar always reaches this.
-                  Same body as the strip's exit: clear the context, then leave
-                  so ClientContextSync cannot re-set it on refresh. */}
+              {/* The two staff extras, in the same order and with the same
+                  bodies as the desktop AccountMenu's "STAFF" group. They are
+                  additive rows at the tail rather than a fenced group because
+                  the sheet has no dropdown to fence them inside — the group
+                  boundary here is the account block they sit at the end of.
+                  STAFF-ONLY: this branch never renders for a client. At phone
+                  width the nav is the client's tabs and nothing else, so the
+                  only way back to the agency workspace was the F60 strip at
+                  the top of the page, which scrolls away. The caption is the
+                  same mono "STAFF" the desktop group wears, so the rows read
+                  as internal here too (alignment review, parity pass 2026-09). */}
+              <p className="mt-2 border-t border-border px-2 pb-1 pt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">
+                Staff
+              </p>
+              <Link
+                href="/settings"
+                onClick={() => setCompanyOpen(false)}
+                className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+              >
+                <Icon name="Settings" className="h-4 w-4 text-muted-2" />
+                Your settings
+              </Link>
               <button
                 onClick={() => {
                   setCompanyOpen(false);
@@ -818,8 +1070,19 @@ export function Sidebar({
         </>
       )}
 
-      {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 border-r border-border bg-background md:block">
+      {/* Desktop sidebar. In client context it is the CLIENT'S rail, down to
+          the width (rulings D1/D2): `w-72` and `relative z-30`, so its menus
+          and notification panel sit above the center column exactly as
+          client-rail.tsx's do. `w-64` stays the agency width — that shell is
+          out of scope, and its narrower column is what the copilot dock's
+          `md:left-64`… no longer needs to match, because the staff dock only
+          ever mounts in client context (see copilot-dock's SHELL_ANCHOR). */}
+      <aside
+        className={cn(
+          "hidden shrink-0 border-r border-border bg-background md:block",
+          clientCtx ? "relative z-30 w-72" : "w-64",
+        )}
+      >
         <div className="sticky top-0 h-screen">{shellContent(false)}</div>
       </aside>
     </>

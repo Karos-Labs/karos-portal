@@ -1462,13 +1462,18 @@ function DayView({
       {empty ? (
         <div className="rounded-md border border-dashed border-border bg-surface-2/50 px-4 py-6 text-center">
           <p className="text-xs text-muted-2">Nothing on this day.</p>
+          {/* PARITY PASS (2026-09), same ruling as the header control above:
+              the day view's empty state is a PAINTED offer, not the silent
+              empty-cell click, and in accent orange it was the only thing on
+              an otherwise identical empty day — so it says "Internal" and
+              gives up the accent. */}
           {canSchedule && (
             <button
               type="button"
               onClick={() => onScheduleAt(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0, 0, 0).getTime())}
-              className="mt-2 text-xs text-neon hover:underline"
+              className="mt-2 text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
             >
-              Schedule a run
+              Internal · Schedule a run
             </button>
           )}
         </div>
@@ -1807,16 +1812,29 @@ export function RunCalendar({
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
+            {/* PARITY PASS (2026-09). Whether a client may schedule their own
+                run is still an open product question, so the control keeps its
+                staff-only gate — but it no longer makes the two versions of
+                this header look like different products. As `variant="accent"`
+                it was the strongest orange on the page and existed for exactly
+                one of the two readers; as a neutral outline button carrying an
+                "Internal" badge it reads as an operator affordance sitting on
+                the client's calendar, which is what it is. Empty-cell click
+                scheduling below is deliberately untouched: it paints nothing,
+                so it shifts nothing. */}
             {canSchedule && (
-              <Button
-                size="sm"
-                variant="accent"
-                className="shrink-0 whitespace-nowrap"
-                onClick={() => setScheduleOpen(true)}
-              >
-                <Icon name="Plus" className="h-3.5 w-3.5" />
-                Schedule a run
-              </Button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 whitespace-nowrap"
+                  onClick={() => setScheduleOpen(true)}
+                >
+                  <Icon name="Plus" className="h-3.5 w-3.5" />
+                  Schedule a run
+                </Button>
+                <Badge tone="neutral">Internal</Badge>
+              </div>
             )}
             {viewMode !== "archive" && (
               <div className="flex items-center gap-1">

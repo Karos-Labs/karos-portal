@@ -85,6 +85,7 @@ import {
 import { summarizeAgentEconomics } from "@/lib/credit-reporting";
 import { ControlRoom } from "@/components/client-agents/control-room";
 import { CurationPane } from "@/components/client-agents/client-agents-section";
+import { StaffOnlySection } from "@/components/staff-only-section";
 import { deriveAgentHealth } from "@/lib/agent-health";
 import { nextRunCountdown } from "@/lib/scheduled-runs";
 import {
@@ -509,11 +510,18 @@ export default async function ClientAgentDetailPage({
   // Portal revamp, Surface 03 — "Run history shows the last three, and opens
   // to all of them." Same toRunRows() the staff rows above use, just with
   // staff=false: it already strips prompt/href/error/runType and excludes
-  // launch/test runs (client-agent-rows.ts) — this was previously computed
-  // for nobody. Client-only; staff read the fuller `agentRuns` in ControlRoom.
-  const clientAgentRuns = viewerIsClient
-    ? toRunRows(jobs, false, umbrellas).filter((run) => run.agentName === agent.name)
-    : [];
+  // launch/test runs (client-agent-rows.ts).
+  //
+  // B1 (parity pass 2026-09): built for BOTH roles now. It was gated on
+  // `viewerIsClient`, so a staff member previewing this page had a card missing
+  // from the middle of the client's column — the run history the client reads
+  // simply was not there, and the fuller staff copy inside ControlRoom sits
+  // below the fold in a different shape. Staff get the client's card AND their
+  // own; the rows here stay the client-safe ones (no prompt, no href, no raw
+  // error), because this is the client's card and it must render identically.
+  const clientAgentRuns = toRunRows(jobs, false, umbrellas).filter(
+    (run) => run.agentName === agent.name,
+  );
   const reviewCount = isStaff
     ? jobs
         .filter(
@@ -706,17 +714,18 @@ export default async function ClientAgentDetailPage({
   // `isInClientArchive` drops published work past the 30-day window - so the
   // number is what is in the Workspace right now, and a label promising a
   // lifetime total would be wrong for exactly the clients who have the most.
-  // Staff see every asset, so for them it is the count without a window.
+  // Staff see every asset, so for them the NUMBER is the count without a
+  // window.
+  //
+  // ONE LABEL, TWO NUMBERS (B3, parity pass 2026-09). The word used to split
+  // too — staff read "Deliverables" where the client reads "In your Workspace"
+  // — which put a different noun in the same slot of the same strip for no
+  // reason a reader could see. The count legitimately differs (the archive
+  // window is a client rule); the label does not have to, and "your" is read
+  // in client context as the client's, which is what a preview is for.
   const statusFacts = [
     ...(lastDelivered !== null ? [{ label: "Last delivered", at: lastDelivered }] : []),
-    ...(produced.length > 0
-      ? [
-          {
-            label: viewerIsClient ? "In your Workspace" : "Deliverables",
-            value: String(produced.length),
-          },
-        ]
-      : []),
+    ...(produced.length > 0 ? [{ label: "In your Workspace", value: String(produced.length) }] : []),
   ];
 
   // ── WHICH AGENTS GET THE RUN BAND (Daniel's ruling, 2026-08-06) ──
@@ -852,14 +861,22 @@ export default async function ClientAgentDetailPage({
       !stored ||
       stored === agent.name ||
       (umbrella?.displayName ? stored === umbrella.displayName : false);
-    const runLabel = asset.meta?.runLabel;
-    if (isStaff && typeof runLabel === "string" && runLabel.trim()) {
-      return { title: `${stored || agent.name} · ${runLabel.trim()}` };
-    }
     if (!generic || !family) return { title: stored || agent.name };
     const topical = draftsDisplayTitle(asset.content);
     if (topical) return { title: topical };
     return { fallbackNoun: FAMILY_BATCH_NOUN[family] };
+  };
+  // B4 (parity pass 2026-09). The run label used to be CONCATENATED into the
+  // title for staff — `${stored || agent.name} · ${runLabel}` — and it did more
+  // than add a word: it took the whole staff branch out of the composer above,
+  // so a row a client reads as "Why founders keep hiring the wrong first
+  // marketer" read to staff as "Instagram Agent · Week 3 refresh". The primary
+  // text is the client's on both, and the operator's run label rides after it
+  // as its own muted span, which is additive rather than substitutive.
+  const rowRunLabel = (asset: (typeof archiveRows)[number]): string | null => {
+    const runLabel = asset.meta?.runLabel;
+    if (!isStaff || typeof runLabel !== "string") return null;
+    return runLabel.trim() || null;
   };
 
   return (
@@ -1065,7 +1082,12 @@ export default async function ClientAgentDetailPage({
               clientId={id}
               agent={summary}
               noun={outputNoun}
-              cost={spendable !== undefined ? runCost : null}
+              // B5 (parity pass 2026-09): passed for BOTH readers now. It was
+              // `spendable !== undefined ? runCost : null`, i.e. billable
+              // client actors only, so the staff copy of this card was one line
+              // shorter than the client's and the band's height did not match.
+              // The panel renders the staff register of the same fact.
+              cost={runCost}
               batchSize={runBatchSize}
               gate={legacyGate}
               // The banner above already made the outage statement; the gate's
@@ -1127,47 +1149,58 @@ export default async function ClientAgentDetailPage({
               fills is that none of those editors ever says WHEN. */}
           {setupFacts.length > 0 && <AgentSetupSection facts={setupFacts} />}
 
-          {/* Portal revamp, Surface 03 — client-facing run history, last three
-              opening to all of them. Staff keep their own fuller copy inside
-              ControlRoom below (prompt/href/error); this is the first time any
-              of these rows have rendered for a client. */}
-          {viewerIsClient && <ClientAgentRunHistory runs={clientAgentRuns} />}
+          {/* Portal revamp, Surface 03 — the client-facing run history, last
+              three opening to all of them. Rendered for BOTH roles since the
+              parity pass (B1, 2026-09): staff used to be the only reader with a
+              hole where this card sits, which is the exact thing a preview is
+              supposed to rule out. Their fuller copy (prompt/href/error) still
+              lives inside ControlRoom below, in the staff-only frame. */}
+          <ClientAgentRunHistory runs={clientAgentRuns} />
 
-          {/* ── CONTROL ROOM (AgentOps upgrade) ──
-              Consolidates what used to be three scattered staff-only sections
-              (StaffAgentControls, AgentRunHistory, AgentEconomicsCard) into one
-              tabbed panel, plus what none of them had: a real (not fabricated)
-              health read, an explicit next-scheduled-execution line, and a
-              Test Run trigger. Staff only - never mounted for a CLIENT_USER,
-              same gate every section it replaces already used. */}
+          {/* ── STAFF ONLY: THE CONTROL ROOM AND THE CURATION GATE ──
+              B2 (parity pass 2026-09). Both were already client-invisible, and
+              both were styled exactly like the cards above and below them, so a
+              staff preview read one continuous column and nothing said where
+              the client's page stopped. ONE frame around the pair rather than
+              two: they are the same block of operator surface, and a second
+              dashed hairline 20px later reads as a second kind of thing.
+
+              CONTROL ROOM (AgentOps upgrade): consolidates what used to be
+              three scattered staff-only sections (StaffAgentControls,
+              AgentRunHistory, AgentEconomicsCard) into one tabbed panel, plus
+              what none of them had: a real (not fabricated) health read, an
+              explicit next-scheduled-execution line, and a Test Run trigger.
+
+              CURATION PANE: where staff confirm the template set before a
+              client ever sees it (the Q3 curation gate). Umbrella-only by
+              nature - it edits the umbrella's registry - and never shown for an
+              unbound agent. */}
           {isStaff && (
-            <ControlRoom
-              health={agentHealth}
-              nextRunLabel={nextRunLabel}
-              clientId={id}
-              agent={summary}
-              {...(schedule ? { schedule } : {})}
-              {...(setup ? { setup } : {})}
-              contextItems={contextItems}
-              reviewCount={reviewCount}
-              reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
-              {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
-              viewer={{ name: user.name, email: user.email }}
-              runs={agentRuns}
-              agents={[summary]}
-              economics={economics}
-              economicsAgentName={umbrella?.displayName ?? agent.name}
-              launchCreditCost={agent.launchCreditCost ?? null}
-              outputs={produced}
-              {...(deepLinkAssetId ? { initialOpenAssetId: deepLinkAssetId } : {})}
-            />
-          )}
-
-          {/* Where staff confirm the template set before a client ever sees it
-              (the Q3 curation gate). Umbrella-only by nature - it edits the
-              umbrella's registry - and never shown for an unbound agent. */}
-          {isStaff && row && umbrella && umbrella.launchState !== "not_launched" && (
-            <CurationPane agent={row} />
+            <StaffOnlySection label="Staff only · control room">
+              <ControlRoom
+                health={agentHealth}
+                nextRunLabel={nextRunLabel}
+                clientId={id}
+                agent={summary}
+                {...(schedule ? { schedule } : {})}
+                {...(setup ? { setup } : {})}
+                contextItems={contextItems}
+                reviewCount={reviewCount}
+                reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
+                {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
+                viewer={{ name: user.name, email: user.email }}
+                runs={agentRuns}
+                agents={[summary]}
+                economics={economics}
+                economicsAgentName={umbrella?.displayName ?? agent.name}
+                launchCreditCost={agent.launchCreditCost ?? null}
+                outputs={produced}
+                {...(deepLinkAssetId ? { initialOpenAssetId: deepLinkAssetId } : {})}
+              />
+              {row && umbrella && umbrella.launchState !== "not_launched" && (
+                <CurationPane agent={row} />
+              )}
+            </StaffOnlySection>
           )}
 
           {/* ── The per-agent archive (common chassis) ──
@@ -1202,11 +1235,15 @@ export default async function ClientAgentDetailPage({
                  three screens up was added to close. Staff keep the
                  generation time. */
               <AgentArchiveRows
-                rows={archiveRows.map((asset) => ({
-                  asset,
-                  at: deliverableStamp(asset, viewerIsClient),
-                  ...rowTitleFields(asset),
-                }))}
+                rows={archiveRows.map((asset) => {
+                  const runLabel = rowRunLabel(asset);
+                  return {
+                    asset,
+                    at: deliverableStamp(asset, viewerIsClient),
+                    ...rowTitleFields(asset),
+                    ...(runLabel ? { runLabel } : {}),
+                  };
+                })}
                 viewerIsClient={viewerIsClient}
               />
             )}

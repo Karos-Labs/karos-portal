@@ -15,6 +15,7 @@ import {
 } from "@/lib/data";
 import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
+import { canViewClient } from "@/lib/client-visibility";
 import type { Client, SocialLinks } from "@/lib/types";
 import { clampClientCategoryValue } from "@/lib/utils";
 import { toStoredPace } from "@/lib/daily-pace";
@@ -221,8 +222,11 @@ export async function updateClientProfileAction(
  * Pin or unpin an agent above the client rail's "AI agents" dropdown
  * (Surface 01, portal revamp). Same self-service rule as
  * `updateClientProfileAction`: a CLIENT_USER may star their own client's
- * agents, staff may star for any client (including from "View as Client" at
- * onboarding). `starred: true` appends to the end of the pinned order;
+ * agents; staff may star for a client they can VIEW (`canViewClient` - an
+ * admin, or an employee assigned to it), including from client context at
+ * onboarding. Any-staff-any-client was the old rule, and it became reachable
+ * from every client page once the staff rail mounted the real star buttons
+ * (parity pass 2026-09). `starred: true` appends to the end of the pinned order;
  * `false` removes it — the dropdown itself decides display order from the
  * stored array, so no explicit position argument is needed.
  */
@@ -239,6 +243,19 @@ export async function toggleStarredAgentAction(
 
   const client = await getClient(clientId);
   if (!client) return { ok: false, error: "Client not found." };
+
+  // ANY-STAFF-ANY-CLIENT was too wide, and the parity pass 2026-09 is what made
+  // it reachable: the staff shell's client-context rail now mounts the client's
+  // real ClientRailAgentsNav, star buttons and all, so an unassigned employee
+  // who opened a client page had a working write into that client's record.
+  // `canViewClient` is the one fence every other /clients/[id] surface asks
+  // (requireVisibleClient resolves through it), so this asks the same question
+  // rather than inventing a second answer. Stars stay LIVE for staff who do
+  // pass it — Karos sets a client's first stars at onboarding, from exactly
+  // this control.
+  if (isStaff && !canViewClient(user, client)) {
+    return { ok: false, error: "You are not assigned to this client." };
+  }
 
   const current = client.starredAgentIds ?? [];
   const next = starred

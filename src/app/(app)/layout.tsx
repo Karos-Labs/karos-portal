@@ -14,7 +14,7 @@ import {
   listCustomAgents,
   updateClient,
 } from "@/lib/data";
-import { agentKeyMatchesClientSlug, isUnlistedAgent } from "@/lib/custom-agent-launch";
+import { railAgentsForClient } from "@/lib/rail-agents";
 import { ActiveClientProvider } from "@/lib/active-client-context";
 import { availableCredits } from "@/lib/credits";
 import { clientSafeTaskAlerts } from "@/lib/notification-rows";
@@ -109,8 +109,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   if (adminData) {
     pendingCount = adminData.allUsers.filter((u) => u.disabled && !u.approvedAt).length;
-    clients = adminData.allClients.map(toStaffShellView);
   }
+  // AN EMPLOYEE'S PICKER WAS EMPTY (ruling D24, parity pass 2026-09). `clients`
+  // was seeded only inside the `adminData` branch above, and `adminData` is
+  // null for a KAROS_EMPLOYEE — so the "Client context" picker at the foot of
+  // their rail listed nothing at all and the whole client-context shell was
+  // unreachable for them. `staffClients` is the same fence every other employee
+  // surface uses (listClients({ employeeId })), already fetched above, so the
+  // fix costs no extra read: admins get every client, employees their assigned
+  // ones, and a CLIENT_USER's `staffClients` is `[]` by construction.
+  clients = (adminData?.allClients ?? staffClients).map(toStaffShellView);
 
   // ── Client portal shell (CLIENT_USER only) ──
   if (user.role === "CLIENT_USER" && user.clientId) {
@@ -128,30 +136,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       ]);
 
       // The rail's "AI agents" dropdown (Surface 01) — GRANTED agents, PLUS any
-      // agent already starred even without a grant (2026-08). The dropdown used
-      // to be granted-only, on the reasoning that an agent that only shows up
-      // via delivered work "will appear here once an admin grants it" — but the
-      // agent's own detail page can be opened, and now starred, by EITHER a
-      // grant OR delivered work (see that page's own gate), and a star that
-      // writes successfully but can never render a pinned row is a broken
-      // control, not a scoped one. Karos Labs' own Instagram Agent is the
-      // flagship case: it predates the umbrella/grant model entirely, so it is
-      // never in `customAgentIds` yet is the most-used agent in the portal —
-      // exactly the agent a client would reach for first to pin.
-      // `enabled`/`isUnlistedAgent`/slug-match stay mandatory regardless of
-      // grant OR star: those are data-integrity fences, not the grant boundary
-      // this loosens.
-      const allowedAgentIds = new Set(client.customAgentIds ?? []);
-      const starredAgentIdSet = new Set(client.starredAgentIds ?? []);
-      const railAgents = customAgents
-        .filter(
-          (a) =>
-            a.enabled &&
-            !isUnlistedAgent(a) &&
-            agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug) &&
-            (allowedAgentIds.has(a.id) || starredAgentIdSet.has(a.id)),
-        )
-        .map((a) => ({ id: a.id, key: a.key, name: a.name, icon: a.icon ?? null }));
+      // agent already starred even without a grant (2026-08). The filter itself
+      // moved to lib/rail-agents.ts in the parity pass 2026-09: the staff
+      // shell's client-context arm renders the same roster for the same client
+      // (ruling D3), and the two must not be able to answer differently. See
+      // that module for why each clause is there.
+      const railAgents = railAgentsForClient(customAgents, client);
 
       // Onboarding default stars ("Karos sets the first stars at onboarding,
       // to steer what they use" — SOW p.4). Checked on `=== undefined`, not

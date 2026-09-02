@@ -296,17 +296,26 @@ describe("a long client description cannot break the no-scroll rail", () => {
 
   it("picks a cap that provably fits one line at the narrower mount", () => {
     // THE ARITHMETIC BEHIND THE NUMBER, so it can be re-derived rather than
-    // trusted. The narrower of the two mounts is the staff sidebar: `w-64`
-    // (256px) minus its 1px border, minus the body's `px-4`, minus the panel's
-    // own `px-1`, leaves 215px for a chip on its own line. The chip spends 38px
-    // of that on its 2px border, `px-2`, 14px mark and `gap-1.5`.
+    // trusted. It was measured at the narrowest mount that existed when the cap
+    // was set: the staff sidebar at `w-64` (256px) minus its 1px border, minus
+    // the body's `px-4`, minus the panel's own `px-1`, leaving 215px for a chip
+    // on its own line. The chip spends 38px of that on its 2px border, `px-2`,
+    // 14px mark and `gap-1.5`.
     //
     // The remaining 177px was measured in a browser at the app's own font
     // (Hanken Grotesk, `text-xs` = 12px): the widest title-case category of 28
     // characters renders at 176.7px and fits; at 29 it renders at 183.7px and
-    // does not. So 28 is the largest cap that holds, and the client rail's
-    // `w-72` has 32px more than the mount the number was measured at.
-    expect(sidebarSrc).toContain("hidden w-64 shrink-0");
+    // does not.
+    //
+    // THAT MOUNT NO LONGER EXISTS, and the cap is now conservative rather than
+    // tight (parity pass 2026-09, rulings D1/D2). ClientProfilePanel — the only
+    // thing that renders this chip — is mounted in the staff rail ONLY in client
+    // context, and in client context that rail is `w-72`, the client rail's own
+    // width. So both surviving mounts have the 32px of headroom the client rail
+    // always had, and 28 is a number that provably fits at a width narrower than
+    // either. The `w-64` below is the agency nav, which never draws a chip.
+    expect(sidebarSrc).toMatch(/clientCtx \? "relative z-30 w-72" : "w-64"/);
+    expect(sidebarSrc).toContain("hidden shrink-0 border-r border-border bg-background md:block");
     expect(railSrc).toContain("hidden w-72 shrink-0");
     expect(flat(code(PANEL))).toContain(
       'const CHIP = "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-muted"',
