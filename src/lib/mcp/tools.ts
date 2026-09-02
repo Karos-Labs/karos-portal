@@ -427,7 +427,7 @@ export const MCP_TOOLS: McpTool[] = [
       // THE SECOND PATH THAT TYPES A DELIVERABLE FROM RUNTIME DATA, and it is
       // the running agent's own choice: `type` is a tool argument, so a Reddit
       // run holding a job token could ask for `social_post` and have its reply
-      // offered to twitter/linkedin/facebook/tiktok. The delivery webhook's fence
+      // offered to twitter/linkedin/tiktok. The delivery webhook's fence
       // is the same one, asked of the same two signals — the deliverable's text
       // and the run's identity (agent-service/deliverable-asset-type.ts).
       //

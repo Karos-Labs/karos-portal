@@ -32,6 +32,8 @@ import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { StaffOnlySection } from "@/components/staff-only-section";
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
+import { TaskKickoffStrip } from "@/components/client-agents/task-kickoff-strip";
+import { buildTaskKickoffView } from "@/lib/task-kickoff";
 import {
   bindableAgents,
   buildAgentSetup,
@@ -67,9 +69,23 @@ const AGENTS_PAGE_DESCRIPTION =
  * does the staff bind dropdown, through bindableAgents (#131) — and the submit
  * core refuses a mismatched pair regardless of how it was launched.
  */
-export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ClientAgentsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  /**
+   * `task` — Home's "Let's do this" for a recommended task that names no single
+   * custom agent (portal feedback round 2, 2026-09): a managed product has no
+   * page of its own, so the roster is where the client lands. The kickoff strip
+   * sits above the roster and carries the same Start / Not for us / Later it
+   * carries on an agent's own page. Validated in lib/task-kickoff.ts.
+   */
+  searchParams: Promise<{ task?: string }>;
+}) {
   const user = await requireUser();
   const { id } = await params;
+  const { task: kickoffTaskId } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
@@ -122,6 +138,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // credit spend windows too; that read left with #130.)
     // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
     const now = Date.now();
+    // The recommended task this page was opened for, if any — fed the client's
+    // already-booked dates (the assets above) so the start date it carries is
+    // the one the calendar would have inferred for the same task.
+    const kickoffTask = await buildTaskKickoffView({
+      clientId: id,
+      taskId: kickoffTaskId,
+      scheduledAt: assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
+      now,
+    });
     // Every agent that could ever appear on this roster: enabled, and bound to
     // this client. The binding wins over both routes in below — a grant and an
     // inherited delivered run are equally unable to move an instance off its
@@ -335,6 +360,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             verbatim ("active AI team" / "always-on AI team"), one in Title Case
             and one in sentence case. This is the surviving one. */}
         <PageHeader title="AI agents" description={AGENTS_PAGE_DESCRIPTION} />
+        {/* Above the roster: the recommended task this page was opened for.
+            Same strip, same three controls, same position relative to the
+            page's main content as on an agent's own page (portal feedback
+            round 2, 2026-09). */}
+        {kickoffTask && (
+          <div className="mb-4">
+            <TaskKickoffStrip clientId={id} task={kickoffTask} />
+          </div>
+        )}
         {/* Two different conditions used to share the never-set-up empty state,
             so an outage or a bad deploy told a client with three live agents
             and a run history that they had never been set up. Only an empty
@@ -479,6 +513,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // whole roster so every card ages a refusal from the same instant.
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const staffNow = Date.now();
+  // Parity pass (2026-09): the kickoff strip is a client-owned surface, so it
+  // renders IDENTICALLY here — a staff viewer following the same link reads the
+  // same task, with the same three controls, in the same slot.
+  const staffKickoffTask = await buildTaskKickoffView({
+    clientId: id,
+    taskId: kickoffTaskId,
+    scheduledAt: assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
+    now: staffNow,
+  });
   // Same delivered-work read the client branch makes, through the same function,
   // so the two rosters cannot call one agent "Not set up yet" and the other
   // "Runs on request". `viewerIsClient: false` keeps every asset in scope —
@@ -659,6 +702,12 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           </MoreActionsMenu>
         }
       />
+      {/* Same slot, same strip as the client branch above. */}
+      {staffKickoffTask && (
+        <div className="mb-4">
+          <TaskKickoffStrip clientId={id} task={staffKickoffTask} />
+        </div>
+      )}
       {/* The outage notice, on the STAFF branch too. It was mounted only for
           clients, so an operator opened a roster of enabled Run controls with
           nothing anywhere on the page saying the service was down - they found

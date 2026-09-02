@@ -215,14 +215,41 @@ describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
     expect(rail.slice(open, close)).not.toContain("/transcripts");
   });
 
-  it("keeps the Settings tab that replaced it", () => {
-    // This tab predates the branch — it is where the ruling points, not
+  it("keeps the settings section that replaced it", () => {
+    // The destination predates the branch — it is where the ruling points, not
     // something built to satisfy it — and it renders the client's own calls,
-    // each row opening the transcript. Asserted because it is now the WHOLE of
-    // a client's route to their meetings: thin it out and the destination goes
+    // each row opening the transcript. Asserted because it is the WHOLE of a
+    // client's route to their meetings: thin it out and the destination goes
     // with it.
-    expect(settingsPage).toContain('{ id: "meetings", label: "Meetings"');
+    //
+    // It stopped being a TAB of its own in portal feedback round 2 (2026-09) —
+    // "Meetings can be a sub-section in, like, account settings" — so what is
+    // asked for now is the section and its anchor, not a row on the tab strip.
+    // Same card, same rows, one level down.
+    expect(settingsPage).toContain('<Card id="meetings">');
+    expect(flat(settingsPage)).toContain('<CardTitle className="mb-3">Meetings</CardTitle>');
     expect(flat(settingsPage)).toContain("href={`/transcripts/${t.id}");
+    // Inside the Settings tab, and last of the client's own sub-sections.
+    const settingsTab = flat(settingsPage).slice(
+      flat(settingsPage).indexOf("const settingsSection = ("),
+      flat(settingsPage).indexOf("const sections: SettingsTab[]"),
+    );
+    expect(settingsTab).toContain("{teamSection} {meetingsSection}");
+    // And the strip no longer carries it, so the section above is the only one.
+    expect(settingsPage).not.toContain('{ id: "meetings", label: "Meetings"');
+  });
+
+  it("keeps the old ?tab=meetings deep link landing on it", () => {
+    // Histories, bookmarks and the transcript page's own `from=` param all
+    // carried `?tab=meetings`. The tab is gone; the link still has to arrive.
+    expect(flat(settingsPage)).toContain('if (initialTab === "meetings")');
+    expect(flat(settingsPage)).toContain("settings?tab=settings#meetings`)");
+    // The transcript page's back link is re-pointed rather than left to the
+    // redirect — a "Back" that bounces through a redirect is a slower answer
+    // to a question this page already knows.
+    expect(source("src/app/(app)/transcripts/[id]/page.tsx")).toContain(
+      "/settings?tab=settings#meetings",
+    );
   });
 
   it("leads to a page that is genuinely built for a client", () => {

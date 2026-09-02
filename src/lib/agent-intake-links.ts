@@ -61,26 +61,31 @@ export function intakeRowHref(pageHref: string, rowId: string): string {
 /**
  * The archive a reader of an intake page can actually reach.
  *
- * BOTH readers land on the SAME route now (2026-08): Account Center's Archive
- * tab, `/clients/<id>/settings?tab=archive`. This used to split — a client's
- * own Workspace board held its own `?tab=archive` view at the flat `/tasks`,
- * and staff had a client-scoped twin at `/clients/<id>/tasks?tab=archive` — but
- * the Workspace board itself is gone (`/tasks` retired entirely, the locked
- * decision "The Board is replaced by the action list on Home" finished playing
- * out), and Account Center's own Archive tab was already the one place either
- * viewer could reach the same list, so this collapses to one destination
- * instead of pointing two readers at two now-deleted pages.
+ * THE ARCHIVE IS A CALENDAR VIEW (portal feedback round 2, 2026-09): "Archive
+ * does not need to be in settings, it's in the calendar." It was Account
+ * Center's `?tab=archive` until this pass, and the Workspace board's own
+ * `/tasks?tab=archive` before that — one list that has now outlived two homes,
+ * which is the whole reason every caller asks this function instead of spelling
+ * a URL.
  *
- * The label still moves with the READER, not the destination: "your archive"
- * is client-voiced copy; pointed at one client's workspace for a STAFF reader
- * it would be telling them this client's archive is theirs.
+ * ONE VIEW, TWO ROUTES TO IT, split on the reader rather than on the list: the
+ * flat `/calendar` scopes itself to the viewer's own client, so it is a
+ * client's own calendar and the staff cross-client overview — which has no one
+ * archive to show. Staff therefore get the client-scoped route. This is the
+ * same split `toClientActions` makes for every other calendar row, and a
+ * CLIENT_USER handed the scoped URL is redirected to the flat one with the
+ * query intact, so a link pasted across readers still lands.
+ *
+ * The label moves with the READER too: "your archive" is client-voiced copy;
+ * pointed at one client's calendar for a STAFF reader it would be telling them
+ * this client's archive is theirs.
  */
 export function clientArchiveLink(args: { clientId: string; isStaff: boolean }): {
   href: string;
   label: string;
 } {
   return {
-    href: `/clients/${args.clientId}/settings?tab=archive`,
+    href: args.isStaff ? `/clients/${args.clientId}/calendar?view=archive` : "/calendar?view=archive",
     label: args.isStaff ? "this client's archive" : "your archive",
   };
 }

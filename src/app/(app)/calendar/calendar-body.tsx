@@ -13,6 +13,7 @@ import { listClientAgents } from "@/lib/data-client-agents";
 import { assetImages } from "@/lib/asset-images";
 import { clientVisibleCalendarAssets } from "@/lib/client-calendar";
 import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
+import { offeredStatesFor } from "@/lib/client-state-domain";
 import {
   contentLabelsByAsset,
   identitiesByClient,
@@ -54,6 +55,10 @@ import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
 import { ClientDownloads } from "@/components/client-downloads";
 import type { SuggestedTaskView } from "@/components/pending-task-suggestions";
 import { inferSuggestionDates } from "@/lib/calendar-suggestion-placement";
+// From the plain module, NOT from run-calendar.tsx (a client module): a server
+// component importing a value across that boundary gets a client reference, and
+// `.find` on it threw on every /calendar render (see lib/calendar-view-modes.ts).
+import { CALENDAR_VIEW_MODES, type CalendarViewMode } from "@/lib/calendar-view-modes";
 import {
   RunCalendar,
   type CalendarClientOption,
@@ -122,9 +127,33 @@ function cleanTitle(title: string): string {
  * browsing a single client's Calendar (/clients/[id]/calendar - the
  * sidebar's "View as client" picker, viewClientId is that client's id), or
  * the staff cross-client overview when no client is in scope.
+ *
+ * `view`/`status` are the RAW search params of whichever page mounted this
+ * (portal feedback round 2, 2026-09), validated here rather than at each of the
+ * two pages: the archive is a URL destination now — Account Center gave its
+ * Archive tab up to this calendar — and one parser is what keeps the flat and
+ * the client-scoped route agreeing on what a link may say.
  */
-export async function CalendarBody({ user, viewClientId }: { user: AppUser; viewClientId?: string }) {
+export async function CalendarBody({
+  user,
+  viewClientId,
+  view,
+  status,
+}: {
+  user: AppUser;
+  viewClientId?: string;
+  /** `?view=` — day/week/month/archive. Anything else is ignored (Week stands). */
+  view?: string;
+  /** `?status=` — the archive's own filter, narrowed below to what it can hold. */
+  status?: string;
+}) {
   const isClient = user.role === "CLIENT_USER";
+  // Unknown values are DROPPED, not defaulted loudly: a stale or typo'd link
+  // opens the ordinary calendar, which is the honest answer to a param this
+  // page cannot honour (same "fail open" rule statusFilterFromParam follows).
+  const initialViewMode: CalendarViewMode | undefined = CALENDAR_VIEW_MODES.find(
+    (mode) => mode === view,
+  );
 
   // ── Resolve scope ──────────────────────────────────────────────────
   let idSet: Set<string> | null = null; // null = every client (admin overview)
@@ -708,6 +737,16 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     );
   }
 
+  // `?status=`, NARROWED THROUGH `offeredStatesFor` — the same function that
+  // builds the archive's own dropdown, so the param can only ever seed a state
+  // this archive can hold. Moved here from Account Center's Archive tab with
+  // the tab itself (portal feedback round 2, 2026-09); the rule is unchanged. A
+  // link to `status=draft` (which a client's archive rejects by design) opens
+  // the unfiltered list rather than an empty one, and the chart that writes
+  // these links already declines to emit that case — this is the second,
+  // mechanical half of the same rule, at the boundary the URL actually crosses.
+  const initialArchiveStatus = offeredStatesFor("archive", isClient).find((s) => s === status);
+
   // Runway indicator (staff single-client scope only - the client's own view
   // hides internal drafts, which would understate the backlog). Reuses the same
   // pure calculator the top-up cron runs, so the badge and the autopilot agree.
@@ -785,6 +824,10 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
           viewerIsBilled={viewerIsBilled}
         />
       )}
+      {/* `initialViewMode`/`initialArchiveStatus` below are seeded from the
+          URL — see CalendarBody's own note. Spread rather than passed as
+          `{undefined}` because of `exactOptionalPropertyTypes`, same as every
+          other optional prop on this element. */}
       <RunCalendar
         runs={runs}
         posts={posts}
@@ -809,6 +852,8 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         defaultClientId={defaultClientId}
         {...(archiveAssets ? { archiveAssets } : {})}
         {...(archiveAgentLabelByAssetId ? { agentLabelByAssetId: archiveAgentLabelByAssetId } : {})}
+        {...(initialViewMode ? { initialViewMode } : {})}
+        {...(initialArchiveStatus ? { initialArchiveStatus } : {})}
       />
       {/* Persistent, always-visible — not tucked inside a day's own detail
           panel, which a client reported not being able to find (2026-08).

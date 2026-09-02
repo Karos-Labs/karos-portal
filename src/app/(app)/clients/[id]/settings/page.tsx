@@ -28,8 +28,7 @@ import {
   isBillableClientActor,
 } from "@/lib/credits";
 import { spendAgentNames, summarizeClientSpend } from "@/lib/credit-reporting";
-import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
-import { contentLabelsByAsset } from "@/lib/agent-identity-map";
+import { getClientLibraryAssets } from "@/lib/asset-visibility";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { SeoGeoPanel, SeoGeoScores, SeoGeoPlan } from "@/components/seo-geo-panel";
 import { ClientAnalytics } from "@/components/client-analytics";
@@ -50,8 +49,6 @@ import { StaffOnlySection } from "@/components/staff-only-section";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { ClientDocuments } from "@/components/client-documents";
 import { CompetitorTrack, BrandColorsSection } from "@/components/client-context-sections";
-import { ArchiveView } from "@/components/archive-view";
-import { offeredStatesFor } from "@/lib/client-state-domain";
 import { clientIntelSchedule } from "@/lib/intel-schedule";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { hasAiProcessingFailure, toClientPortalView } from "@/lib/client-visibility";
@@ -86,10 +83,9 @@ export default async function ClientSettingsPage({
   // tab component free of a Suspense requirement and seeds it from the URL on a
   // hard load, which is what makes a ?tab= link work at all.
   //
-  // `status` rides along for `?tab=archive&status=…`, the deep link the
-  // Reporting tab's "Content by status" chart writes (2026-09). Same reason it
-  // is read here: the Archive tab's list is a client component whose filter is
-  // seeded, once, from this value.
+  // `status` no longer seeds anything ON THIS PAGE — it survives only as the
+  // second half of the `?tab=archive&status=…` deep link this page used to
+  // hold, forwarded to the calendar below (portal feedback round 2, 2026-09).
   searchParams: Promise<{ tab?: string; status?: string }>;
 }) {
   const user = await requireUser();
@@ -100,6 +96,39 @@ export default async function ClientSettingsPage({
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
   } else if (user.role !== "KAROS_ADMIN" && user.role !== "KAROS_EMPLOYEE") {
     redirect("/dashboard");
+  }
+
+  /**
+   * THE TWO TABS THIS PAGE GAVE UP (portal feedback round 2, 2026-09).
+   *
+   * "Archive does not need to be in settings, it's in the calendar. Meetings
+   * can be a sub-section in, like, account settings." Both tabs are gone from
+   * the strip — Archive to the calendar's own archive view, Meetings down into
+   * the Settings tab — and every producer of the old URLs has been re-pointed
+   * (action-list, agent-intake-links, content-status-links, the copilot's
+   * archive link). This block is for the links that are already in histories,
+   * bookmarks and sent emails, which no re-point can reach.
+   *
+   * Answered HERE, before anything renders, rather than by keeping an empty tab
+   * that says where the content went: a deep link that lands on the content is
+   * worth more than one that lands on an apology.
+   */
+  if (initialTab === "archive") {
+    const q = statusParam ? `&status=${encodeURIComponent(statusParam)}` : "";
+    // A CLIENT_USER's calendar is the flat route (the scoped one bounces them
+    // to it anyway); staff read this client's calendar at the scoped route,
+    // because theirs is the cross-client overview, which has no one archive.
+    redirect(
+      user.role === "CLIENT_USER"
+        ? `/calendar?view=archive${q}`
+        : `/clients/${encodeURIComponent(id)}/calendar?view=archive${q}`,
+    );
+  }
+  if (initialTab === "meetings") {
+    // The hash is best-effort: browsers do honour a fragment on a Location
+    // header, but a client-side RSC redirect may drop it — in which case this
+    // still lands on the tab that HOLDS the meetings section, one scroll away.
+    redirect(`/clients/${encodeURIComponent(id)}/settings?tab=settings#meetings`);
   }
 
   const client = await requireVisibleClient(user, id);
@@ -206,29 +235,24 @@ export default async function ClientSettingsPage({
   // - plus which secrets are set, for the form's placeholder.
   const sanitizedIntegrations = sanitizeIntegrations(integrations);
 
-  // Account Center Archive tab (portal revamp, Surface 06). Same recipe
-  // tasks-body.tsx uses for the Workspace's own Archive tab: a client's set is
-  // POSTED work from the last ~30 days only (getClientArchiveAssets), staff
-  // keep the full library — reusing spendJobs/spendUmbrellas already fetched
-  // above rather than a second listJobs/listClientAgents round trip.
-  const archiveViewer = { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin };
-  const archiveAssets = isClientViewer
-    ? getClientLibraryAssets(getClientArchiveAssets(rawAssets, { viewer: archiveViewer }), {
-        forClient: true,
-        viewer: archiveViewer,
-      })
-    : getClientLibraryAssets(rawAssets);
-  const agentLabelByAssetId = contentLabelsByAsset(archiveAssets, spendJobs, spendUmbrellas);
+  // Who is reading the asset rows below. Was `archiveViewer`, built for the
+  // Archive tab that used to live here; the tab moved to the calendar (portal
+  // feedback round 2, 2026-09) and only the Reporting tab's own redaction is
+  // left, so the name says what it still does.
+  const assetViewer = { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin };
 
   // Reporting tab's "Content by status" / "Connected channels" charts (A2,
   // 2026-08 UI/UX pass) — moved here from the client Home, which dropped
   // <ClientAnalytics/> because it was inventory sitting below every
   // actionable widget. Same locked-row recipe Home used for a client viewer
-  // (getClientLibraryAssets + drop future-dated rows) — NOT archiveAssets
-  // above, which is scoped to posted-in-the-last-30-days for the Archive tab
-  // and would undercount here.
+  // (getClientLibraryAssets + drop future-dated rows) — deliberately NOT the
+  // archive projection (getClientArchiveAssets), which is scoped to
+  // posted-in-the-last-30-days and would undercount here. That projection used
+  // to be built on this page for its own Archive tab; the calendar builds it
+  // now (portal feedback round 2, 2026-09) and this line is the reason the two
+  // were never the same list.
   const reportingAnalyticsAssets = isClientViewer
-    ? getClientLibraryAssets(rawAssets, { forClient: true, viewer: archiveViewer }).filter(
+    ? getClientLibraryAssets(rawAssets, { forClient: true, viewer: assetViewer }).filter(
         (a) => !a.locked,
       )
     : rawAssets;
@@ -465,28 +489,14 @@ export default async function ClientSettingsPage({
     />
   );
 
-  // Archive (new tab). The exact component the Workspace's own Archive tab
-  // uses (archive-view.tsx) — reused rather than rebuilt, fed the same way
-  // tasks-body.tsx feeds it.
-  //
-  // NARROWED THROUGH `offeredStatesFor`, the same function that builds the
-  // list's own dropdown, so `?status=` can only ever seed a state this archive
-  // can hold. A link to `status=draft` (which a client's archive rejects by
-  // design) therefore opens the unfiltered list rather than an empty one, and
-  // the chart that writes these links already declines to emit that case —
-  // this is the second, mechanical half of the same rule, at the boundary the
-  // URL actually crosses.
-  const initialArchiveStatus = offeredStatesFor("archive", isClientViewer).find(
-    (option) => option === statusParam,
-  );
-  const archiveSection = (
-    <ArchiveView
-      assets={archiveAssets}
-      agentLabelByAssetId={agentLabelByAssetId}
-      viewerIsClient={isClientViewer}
-      initialStatus={initialArchiveStatus ?? "all"}
-    />
-  );
+  /*
+   * NO ARCHIVE SECTION HERE (portal feedback round 2, 2026-09). It was a tab of
+   * this page, fed by the same ArchiveView the calendar mounts — "Archive does
+   * not need to be in settings, it's in the calendar". The `?status=` narrowing
+   * that used to sit here (through `offeredStatesFor`, so a hand-crafted
+   * `status=draft` degrades to the unfiltered list rather than an empty one)
+   * moved WITH it, to calendar-body.tsx; the rule is unchanged, only its home.
+   */
 
   // `CreditLedgerEntry.actorName`/`.actorUid` are staff-internal — set to the
   // admin's own name+uid on a manual grant/deduct (adjustCreditsAction) — and
@@ -590,14 +600,19 @@ export default async function ClientSettingsPage({
   /**
    * THE MEETINGS SURFACE A CLIENT REACHES (AF-1).
    *
-   * This tab predates the branch and is exactly where the product owner wants
-   * it — "I like that in the settings" — so nothing here changed when the rail
-   * lost its Meetings row. It is named here only because it is now the whole of
-   * a client's route to their calls, and a later edit that thins it out would
-   * be removing the destination rather than a duplicate of one.
+   * It is exactly where the product owner wants it — "I like that in the
+   * settings" — and it is the whole of a client's route to their calls, so a
+   * later edit that thins it out would be removing the destination rather than
+   * a duplicate of one.
+   *
+   * NO LONGER A TAB OF ITS OWN (portal feedback round 2, 2026-09): "Meetings
+   * can be a sub-section in, like, account settings." Same card, same rows,
+   * rendered last inside `settingsSection` below. The `id` is what makes
+   * `?tab=settings#meetings` land on it — the anchor the old `?tab=meetings`
+   * deep link redirects to.
    */
   const meetingsSection = (
-    <Card>
+    <Card id="meetings">
       <CardTitle className="mb-3">Meetings</CardTitle>
       {transcripts.length === 0 ? (
         <p className="text-sm text-muted-2">
@@ -608,7 +623,7 @@ export default async function ClientSettingsPage({
           {transcripts.slice(0, 12).map((t) => (
             <li key={t.id}>
               <Link
-                href={`/transcripts/${t.id}?from=${encodeURIComponent(`/clients/${client.id}/settings?tab=meetings`)}`}
+                href={`/transcripts/${t.id}?from=${encodeURIComponent(`/clients/${client.id}/settings?tab=settings#meetings`)}`}
                 className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-surface-2/40"
               >
                 <div className="min-w-0">
@@ -639,12 +654,14 @@ export default async function ClientSettingsPage({
             {
               id: ACCOUNT_TABS.profile,
               label: "Profile information",
+              group: "Your account",
               icon: "User",
               content: <AccountProfilePanel user={user} clientName={client.name} />,
             },
             {
               id: ACCOUNT_TABS.security,
               label: "Account security",
+              group: "Your account",
               icon: "Shield",
               content: (
                 <AccountSecurityPanel
@@ -673,26 +690,37 @@ export default async function ClientSettingsPage({
   // Automation and Team are all sub-sections of ONE generic Settings tab now,
   // rather than three of Account Center's top-level tabs. Nothing about any
   // of the three sections themselves changed; only which tab they live under.
+  //
+  // Meetings joined them (portal feedback round 2, 2026-09) as the LAST of the
+  // client's own sub-sections: it is a list a client visits occasionally, not a
+  // control they set, so it reads after the three that configure the account —
+  // and still ahead of the admin-only frame, which by the parity rule closes
+  // every tab it appears on.
   const settingsSection = (
     <div className="space-y-8">
       {channelsSection}
       {automationSection}
       {teamSection}
+      {meetingsSection}
       {/* PARITY PASS (2026-09): the admin-only pair closes the tab, so
           everything above it is exactly what the client reads, in their order. */}
       {adminAutomationSection}
     </div>
   );
 
+  // Six tabs, down from eight (portal feedback round 2, 2026-09): Archive left
+  // for the calendar, Meetings folded into Settings above. Both old ids still
+  // resolve — see the redirect block at the top of this page.
   const sections: SettingsTab[] = [
-    { id: "profile", label: "Profile", icon: "Building2", content: profileSection },
-    { id: "competitors", label: "Competitors", icon: "Users", content: competitorsSection },
-    { id: "reporting", label: "Reporting", icon: "Radar", content: reportingSection },
-    { id: "settings", label: "Settings", icon: "Settings", content: settingsSection },
-    { id: "documents", label: "Documents", icon: "FileText", content: documentsSection },
-    { id: "archive", label: "Archive", icon: "Archive", content: archiveSection },
-    { id: "credits", label: "Credits", icon: "Coins", content: creditsSection },
-    { id: "meetings", label: "Meetings", icon: "Mic", content: meetingsSection },
+    // Grouped for the side navigation (portal feedback round 2, 2026-09):
+    // what the company IS, then how the workspace RUNS, then — for a client —
+    // their own account. Order inside a group is by how often it is opened.
+    { id: "profile", label: "Profile", icon: "Building2", group: "Company", content: profileSection },
+    { id: "competitors", label: "Competitors", icon: "Users", group: "Company", content: competitorsSection },
+    { id: "reporting", label: "Reporting", icon: "Radar", group: "Company", content: reportingSection },
+    { id: "documents", label: "Documents", icon: "FileText", group: "Company", content: documentsSection },
+    { id: "settings", label: "Settings", icon: "Settings", group: "Workspace", content: settingsSection },
+    { id: "credits", label: "Credits", icon: "Coins", group: "Workspace", content: creditsSection },
   ].filter((t) => t.content !== null);
 
   /**
@@ -716,7 +744,7 @@ export default async function ClientSettingsPage({
     <>
       <PageHeader
         title="Account Center"
-        description="Profile, competitors, reporting, documents, archive, credits and meetings: everything that is not daily use, in one place."
+        description="Profile, competitors, reporting, documents and credits: everything that is not daily use, in one place."
         action={
           isStaff ? (
             /* Kept (a client reaches their own account through the two tabs at

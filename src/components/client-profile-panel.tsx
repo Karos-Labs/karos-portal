@@ -70,17 +70,26 @@ const SOCIALS: { key: keyof SocialLinks & SocialPlatform; placeholder: string }[
   { key: "linkedin", placeholder: "linkedin handle" },
 ];
 
-/** Anything already stored for the other platforms still renders. */
+/**
+ * Anything already stored for the other platforms still renders.
+ *
+ * NO FACEBOOK (portal feedback round 2, 2026-09: "throughout it all we can
+ * remove Facebook, we don't work with Facebook"). Dropped from what a client is
+ * SHOWN, not from what the app can read: `SocialLinks.facebook`, the
+ * `SocialPlatform` union, the handle parser and the agent-identity matcher all
+ * keep their Facebook arms, because those classify data that already exists.
+ * `PLATFORM_NAME` below keeps its entry too — the Record type requires every
+ * key of the union, and a label is not a list.
+ */
 const DISPLAY_SOCIALS: (keyof SocialLinks & SocialPlatform)[] = [
   "instagram",
   "x",
   "tiktok",
   "linkedin",
   "youtube",
-  "facebook",
 ];
 
-/** For the row's tooltip and its accessible name — the mark itself is decorative. */
+/** For the button's tooltip and its accessible name — the mark itself is decorative. */
 const PLATFORM_NAME: Record<keyof SocialLinks & SocialPlatform, string> = {
   instagram: "Instagram",
   x: "X",
@@ -91,18 +100,40 @@ const PLATFORM_NAME: Record<keyof SocialLinks & SocialPlatform, string> = {
 };
 
 /**
- * ONE chip geometry for the whole meta + socials row.
+ * ONE chip geometry for the meta row.
  *
  * The row used to size each chip on its own and let flex stretch them to the
  * tallest, so a long category turned every handle beside it into a three-line
  * box. The Competitor Track rows a few sections down are the density this rail
  * is built at — px-2, a 14px mark, one text line — so the chips are drawn to
- * the same measurements, and the tag, the plus and the six platform logos all
- * finally draw at one size.
+ * the same measurements, and the tag, the team size and the plus all draw at
+ * one size.
  */
 const CHIP =
   "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-muted";
 const CHIP_ICON = "h-3.5 w-3.5 shrink-0 text-muted-2";
+
+/**
+ * THE SOCIAL ACCOUNTS ARE LOGOS NOW, ON THEIR OWN LINE (portal feedback round
+ * 2, 2026-09: "each logo of each social platform should be just the logo, all
+ * on the same line without the username, and if you click on it it brings you
+ * to their profile. We have the category and below all the social platform
+ * buttons").
+ *
+ * They used to be chips in the same wrapping row as the category — logo plus
+ * @handle each — so five accounts and a category spread over three lines of a
+ * rail that has a no-scroll contract (CD-E3), and the handles were text nobody
+ * reads on their own profile. A square per account fits all of them on one
+ * line at every width this panel mounts at, and the handle survives as the
+ * button's accessible name rather than as pixels.
+ *
+ * Deliberately NOT `cn(CHIP, …)`: CHIP's `px-2` cannot be overridden by a
+ * later class in the same string — Tailwind decides by stylesheet order, not
+ * string order — so a square built that way would silently keep the chip's
+ * padding. Same border, same radius, same ink; its own box.
+ */
+const SOCIAL_SQUARE =
+  "inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-border bg-surface text-muted-2";
 
 /* ── Pill-shaped input ────────────────────────────────────────────────── */
 
@@ -527,7 +558,10 @@ export function ClientProfilePanel({
 
       {!editing ? (
         <>
-          {/* Meta + social chips — ONE wrapping row of equal-height chips.
+          {/* Meta chips — ONE wrapping row of equal-height chips, and NOW IT
+              CARRIES ONLY THE META (portal feedback round 2, 2026-09): the
+              category and the team size, with the social accounts moved to
+              their own line below. See `SOCIAL_SQUARE`.
               It was `flex-nowrap` at the rail's compact mount, on default
               align-items: stretch, and both halves of that hurt. Nothing
               shortened the category, so "Global Startup Pitch Competition"
@@ -538,17 +572,20 @@ export function ClientProfilePanel({
               Nowrap was there to stop a second row growing into the no-scroll
               contract (CD-E3) — but it was buying that with a row three lines
               tall, which costs the contract more than wrapping ever did.
-              The chips are bounded at the SOURCE now (CD-L P3/P4): a category
-              is capped where it is typed, and an account addressed by an id
-              renders as its logo alone. Each chip is `shrink-0`, so a chip
-              that does not fit the line moves to the next one WHOLE rather
-              than being squeezed, and the ordinary case is a single 22px
-              row. */}
+              The chips are bounded at the SOURCE now (CD-L P3): a category is
+              capped where it is typed. Each chip is `shrink-0`, so a chip that
+              does not fit the line moves to the next one WHOLE rather than
+              being squeezed, and with the handles gone the ordinary case is a
+              single 22px row that never wraps at all. `max-w-full` is on BOTH
+              chips rather than only the category: it is the valve for a stored
+              value wider than its own character count suggests, and either of
+              them clipping at the rail's edge beats either of them dragging in
+              a scrollbar. */}
           <div className={cn("flex flex-wrap items-center gap-1", compact ? "mb-1" : "mb-2")}>
             {hasMeta ? (
               <>
                 {client.teamSize && (
-                  <span className={CHIP}>
+                  <span className={cn(CHIP, "max-w-full")}>
                     <Icon name="Users" className={CHIP_ICON} />
                     {client.teamSize}
                   </span>
@@ -584,63 +621,74 @@ export function ClientProfilePanel({
                 Add team size &amp; category
               </button>
             )}
-            {/* THE PLATFORM'S LOGO + @username, and the row opens the profile
-                (AF-4). Same affordance as the brand-colour swatches beneath:
-                a real control, keyboard-reachable, that does the obvious thing
-                with the value it is showing.
-                The mark is the one the agent surfaces and the marketing site
-                use (SocialPlatformMark) — a client's Instagram row and their
-                Instagram agent carry the same logo. An account whose stored
-                text yields no URL still renders, as a plain chip: the handle is
-                the client's own and a panel is not the place to correct it. */}
-            {activeLinks.map(({ key, account }) =>
-              account.url ? (
-                <a
-                  key={key}
-                  href={account.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  /* An id has no name to read out, so the LOGO carries the
-                     platform on its own (CD-L P4) — and then the accessible
-                     name has to say what the row is, since the mark is
-                     decorative and there is no text beside it. */
-                  title={
-                    account.logoOnly
-                      ? PLATFORM_NAME[key]
-                      : `Open ${account.handle} on ${PLATFORM_NAME[key]}`
-                  }
-                  aria-label={
-                    account.logoOnly
-                      ? `Open ${PLATFORM_NAME[key]} in a new tab`
-                      : `Open ${account.handle} on ${PLATFORM_NAME[key]} in a new tab`
-                  }
-                  className={cn(
-                    CHIP,
-                    "max-w-full transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon",
-                  )}
-                >
-                  <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
-                  {!account.logoOnly && <span className="truncate">{account.handle}</span>}
-                </a>
-              ) : (
-                <span
-                  key={key}
-                  title={account.logoOnly ? PLATFORM_NAME[key] : undefined}
-                  /* `role="img"` or the label is not announced at all: the mark
-                     inside is aria-hidden (it is decorative everywhere else it
-                     is used), and an aria-label on a bare span has no element
-                     to name. The chip with text beside it needs neither. */
-                  {...(account.logoOnly
-                    ? { role: "img" as const, "aria-label": PLATFORM_NAME[key] }
-                    : {})}
-                  className={cn(CHIP, "max-w-full")}
-                >
-                  <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
-                  {!account.logoOnly && <span className="truncate">{account.handle}</span>}
-                </span>
-              ),
-            )}
           </div>
+
+          {/* THE SOCIAL ROW — one square per account, logo only, click opens
+              the profile. Same affordance as the brand-colour swatches
+              beneath: a real control, keyboard-reachable, that does the
+              obvious thing with the value it is showing.
+              The mark is the one the agent surfaces and the marketing site use
+              (SocialPlatformMark) — a client's Instagram button and their
+              Instagram agent carry the same logo. The @handle it used to print
+              beside the logo now lives in the accessible name, which is where
+              it was actually useful: the logo already says which platform, and
+              a person reading their own profile does not need to be told their
+              own username five times.
+              An account whose stored text yields no URL still renders, as the
+              same square, unclickable: the handle is the client's own and a
+              panel is not the place to correct it. */}
+          {activeLinks.length > 0 && (
+            <div className={cn("flex flex-wrap items-center gap-1", compact ? "mb-1.5" : "mb-2")}>
+              {activeLinks.map(({ key, account }) =>
+                account.url ? (
+                  <a
+                    key={key}
+                    href={account.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    /* The mark is decorative (aria-hidden wherever it is used),
+                       and there is no text beside it any more, so the
+                       accessible name is the ONLY thing that says what this
+                       square is. An id-shaped value stays out of it — a screen
+                       reader spelling "UC7x9..." helps nobody (CD-L P4). */
+                    title={
+                      account.logoOnly
+                        ? `Open ${PLATFORM_NAME[key]}`
+                        : `Open ${account.handle} on ${PLATFORM_NAME[key]}`
+                    }
+                    aria-label={
+                      account.logoOnly
+                        ? `Open ${PLATFORM_NAME[key]} in a new tab`
+                        : `Open ${account.handle} on ${PLATFORM_NAME[key]} in a new tab`
+                    }
+                    className={cn(
+                      SOCIAL_SQUARE,
+                      "transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon",
+                    )}
+                  >
+                    <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
+                  </a>
+                ) : (
+                  <span
+                    key={key}
+                    role="img"
+                    /* `role="img"` or the label is not announced at all: the
+                       mark inside is aria-hidden and an aria-label on a bare
+                       span has no element to name. */
+                    aria-label={
+                      account.logoOnly
+                        ? PLATFORM_NAME[key]
+                        : `${account.handle} on ${PLATFORM_NAME[key]}`
+                    }
+                    title={account.logoOnly ? PLATFORM_NAME[key] : account.handle}
+                    className={cn(SOCIAL_SQUARE, "opacity-60")}
+                  >
+                    <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
+                  </span>
+                ),
+              )}
+            </div>
+          )}
 
           {/* Free text of unbounded length, in a rail that must keep a
               DETERMINISTIC height (the no-scroll contract, CD-E3). Two lines

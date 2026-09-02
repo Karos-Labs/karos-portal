@@ -38,9 +38,13 @@ import {
   shouldStartExpanded,
   type ActionSignals,
 } from "@/lib/action-list";
-import { computePlatformGaps, gapPlatformNames } from "@/lib/calendar-gaps";
 import { isUpcomingPost } from "@/lib/calendar-kind";
-import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
+import {
+  RecommendedTasksWidget,
+  type RecommendedTaskRow,
+} from "@/components/home-recommended-tasks";
+import { isRecommendedTask, taskExecutorLabel, taskPlatform } from "@/lib/recommended-tasks";
+import { resolveTaskCustomAgentId } from "@/lib/task-agent-link";
 import { CalendarPreviewWidget } from "@/components/home-calendar-preview";
 import { HomeKpisWidget } from "@/components/home-kpis";
 import { HomeStandingWidget, hasStanding } from "@/components/home-standing";
@@ -260,16 +264,42 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   const resolvedActions = resolveActionList(actionSignals, actionStatesById, now);
   const actionListStartExpanded = shouldStartExpanded(resolvedActions);
 
-  // Smart Task Map Fallback (final workflow enhancement) — the same gap math
-  // the swarm itself reasons from (lib/calendar-gaps.ts, shared with
-  // lib/agent-swarm.ts's buildSwarmContext), and the same `pending` rows
-  // calendar-body.tsx surfaces for review — Home only nudges + can trigger
-  // generation, the review cards live on the Calendar page (`reviewHref`).
-  const usablePlatforms = integrations.filter((i) => integrationIsUsable(i)).map((i) => i.platform);
-  const gapPlatforms = gapPlatformNames(computePlatformGaps(assets, usablePlatforms, now));
-  const pendingSuggestedTaskCount = tasks.filter(
-    (t) => t.status === "pending" && t.owner === "karos_managed" && t.source === "copilot",
-  ).length;
+  // ── Recommended tasks (portal feedback round 2, 2026-09) ──
+  //
+  // The set the onboarding swarm proposed, rendered on Home AS A LIST. What
+  // stood here before was CalendarSparseBanner: one line of prose ("9
+  // recommended tasks waiting for your review"), a link to the calendar, and a
+  // "Generate more" button. All three are gone from this page, per the product
+  // owner's ruling — the tasks themselves belong here, the review does not
+  // belong on the calendar (a busy calendar showed ONE of the nine, because the
+  // calendar renders each on its own inferred day), and the number of tasks was
+  // decided once at onboarding rather than being something to make more of.
+  //
+  // The Calendar page still mounts the banner, sparse-nudge and generator
+  // included — this is a change of what HOME says, not a removal of the
+  // Task Map. The gap math (`computePlatformGaps`) went with it: it existed on
+  // this page only to decide whether that banner was sparse enough to render.
+  //
+  // `href` is resolved HERE, on the server, and handed over as a plain string:
+  // the widget crosses the Flight boundary, so it gets data, never a resolver.
+  const recommendedTasks: RecommendedTaskRow[] = tasks.filter(isRecommendedTask).map((t) => {
+    const customAgentId = resolveTaskCustomAgentId(t);
+    const platform = taskPlatform(t);
+    return {
+      id: t.id,
+      title: t.title,
+      ...(t.description ? { description: t.description } : {}),
+      executorLabel: taskExecutorLabel(t),
+      ...(platform ? { platform } : {}),
+      // A task with a linked custom agent lands on that agent's own page, where
+      // its intake forms are; one that names only a managed product has no
+      // single page to land on, so it goes to the roster. Either way the task
+      // id rides along and TaskKickoffStrip picks it up there.
+      href: customAgentId
+        ? `/clients/${id}/agents/${customAgentId}?task=${t.id}`
+        : `/clients/${id}/agents?task=${t.id}`,
+    };
+  });
 
   // Newest job, for the ops strip's "Last run" caption. Staff-only reader — a
   // client's dashboard may not carry the batch timestamp (the churn rule; see
@@ -408,21 +438,13 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     },
   ];
 
-  const calendarBanner = (
-    <CalendarSparseBanner
-      clientId={client.id}
-      gapPlatforms={gapPlatforms}
-      pendingSuggestionCount={pendingSuggestedTaskCount}
-      isAiProcessing={isAiProcessingLockActive(client)}
-      viewerIsBilled={viewerIsBilled}
-      // This element is reused for both branches below (real CLIENT_USER and
-      // staff). The flat /calendar route only resolves to THIS client for a
-      // real CLIENT_USER (calendar-body.tsx's `isClient` branch scopes it via
-      // `user.clientId`); a staff viewer — including "View as client" — lands
-      // on the cross-client overview there instead, so the review link must
-      // carry the scoped route explicitly for them.
-      reviewHref={isClientViewer ? "/calendar" : `/clients/${id}/calendar`}
-    />
+  // ONE element, mounted by both branches below (real CLIENT_USER and staff) —
+  // the parity rule for this page. It takes no viewer-dependent prop at all
+  // now: the old banner needed one (a staff /calendar lands on the cross-client
+  // overview, so its review link had to be scoped), and nothing here links to a
+  // calendar any more.
+  const recommendedTasksWidget = (
+    <RecommendedTasksWidget clientId={client.id} tasks={recommendedTasks} />
   );
 
   /**
@@ -540,7 +562,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
                 (the 2026-08 "unreadable dashboard" defect, reintroduced by the
                 staff branch alone). */}
             <div className="@container space-y-6">
-              {calendarBanner}
+              {recommendedTasksWidget}
               <div className="grid gap-6 @4xl:grid-cols-2">
                 {/* Next actions is mounted for staff too (parity pass,
                     2026-09): the signals and the resolved list are computed
@@ -661,7 +683,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               container query resolve against the width they are actually
               given, at any window size, zoom level or rail width. */}
           <div className="@container space-y-6">
-            {calendarBanner}
+            {recommendedTasksWidget}
             <div className="grid gap-6 @4xl:grid-cols-2">
               <ActionListWidget
                 clientId={client.id}

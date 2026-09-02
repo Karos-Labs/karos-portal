@@ -97,7 +97,11 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     category: "Turn on your first agent",
     label: "See your first output",
     icon: "FileText",
-    hrefFor: (id) => `/clients/${id}/settings?tab=archive`,
+    // The calendar's archive view, not Account Center's retired Archive tab
+    // (portal feedback round 2, 2026-09). Written as the FLAT route so a
+    // client lands on their own calendar with no redirect hop; the staff Home
+    // rewrites it to the client-scoped one through `toClientActions`.
+    hrefFor: () => "/calendar?view=archive",
   },
   {
     id: "06",
@@ -160,7 +164,11 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     category: "Get into the rhythm",
     label: "Give us your feedback on a post",
     icon: "MessageSquare",
-    hrefFor: (id) => `/clients/${id}/settings?tab=archive`,
+    // The calendar's archive view, not Account Center's retired Archive tab
+    // (portal feedback round 2, 2026-09). Written as the FLAT route so a
+    // client lands on their own calendar with no redirect hop; the staff Home
+    // rewrites it to the client-scoped one through `toClientActions`.
+    hrefFor: () => "/calendar?view=archive",
   },
   {
     id: "15",
@@ -400,19 +408,29 @@ export function toClientActions(
   clientId: string,
   opts: {
     /**
-     * Where the flat `/calendar` rows (ids 12, 13, 15) should open instead.
-     * The flat route scopes itself to the viewer's OWN client - which is the
-     * right page for a CLIENT_USER and the cross-client overview for a staff
-     * member previewing that client (calendar-body.tsx's `isClient` branch is
-     * the only one that scopes it, keyed off `user.clientId`). The staff Home
-     * passes `/clients/${id}/calendar` so the same row lands on the same
-     * client's calendar for both readers.
+     * Where the flat `/calendar` rows (ids 05, 12, 13, 14, 15) should open
+     * instead. The flat route scopes itself to the viewer's OWN client - which
+     * is the right page for a CLIENT_USER and the cross-client overview for a
+     * staff member previewing that client (calendar-body.tsx's `isClient`
+     * branch is the only one that scopes it, keyed off `user.clientId`). The
+     * staff Home passes `/clients/${id}/calendar` so the same row lands on the
+     * same client's calendar for both readers.
      */
     calendarHref?: string;
   } = {},
 ): ClientResolvedAction[] {
   return resolved.map(({ hrefFor, ...rest }) => {
     const href = hrefFor(clientId);
-    return { ...rest, href: href === "/calendar" && opts.calendarHref ? opts.calendarHref : href };
+    // PREFIX rewrite, not an exact-string one (portal feedback round 2,
+    // 2026-09). Two rows now point at `/calendar?view=archive` — the archive
+    // moved off Account Center's settings tabs and onto the calendar — and an
+    // `=== "/calendar"` test would have left exactly those two rows on the
+    // cross-client overview for staff, which has no one client's archive to
+    // show. The query is carried across verbatim so the destination keeps the
+    // view (and the status filter) the row asked for.
+    if (!opts.calendarHref || !(href === "/calendar" || href.startsWith("/calendar?"))) {
+      return { ...rest, href };
+    }
+    return { ...rest, href: `${opts.calendarHref}${href.slice("/calendar".length)}` };
   });
 }

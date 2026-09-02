@@ -50,8 +50,8 @@ import type { AssetType, Job, WireTaskType } from "@/lib/types";
  * (`platforms-publishable.test.ts`'s governance scan), and it also applies the
  * Reddit draft-only fence, which now genuinely fires here: `reddit-agent` is a
  * real product in this table, so its `social_post` base is fenced down to a
- * slot-less `note` instead of being offered to twitter/linkedin/facebook/
- * tiktok. That fence was vacuous in this module before and is not any more.
+ * slot-less `note` instead of being offered to twitter/linkedin/tiktok. That
+ * fence was vacuous in this module before and is not any more.
  *
  * WHY `blog-agent`/`newsletter-agent` ARE `custom` PLUS A HINT rather than the
  * `blog_article`/`newsletter_issue` task types whose names match them: both of
@@ -837,7 +837,7 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
     // — applies the Reddit draft-only fence unconditionally, exactly as the webhook and
     // MCP upload_asset paths already do. `reddit-agent` is now a real entry in
     // PRODUCT_DELIVERABLES, so that fence is load-bearing here rather than theoretical:
-    // it is what keeps a reply written for one thread off twitter/linkedin/facebook/tiktok.
+    // it is what keeps a reply written for one thread off twitter/linkedin/tiktok.
     const assetType = deliverableAssetType({
       taskType: spec.taskType,
       hint: spec.assetTypeHint ?? null,
