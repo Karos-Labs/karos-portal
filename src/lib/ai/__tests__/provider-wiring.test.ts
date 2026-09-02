@@ -55,7 +55,7 @@ describe("assertManifestWirable refuses a vendor that cannot serve the manifest"
     expect(() => assertManifestWirable("anthropic")).not.toThrow();
   });
 
-  it("THROWS on vertex, because two roles depend on web_fetch", () => {
+  it("THROWS on vertex, because a role depends on web_fetch", () => {
     expect(() => assertManifestWirable("vertex")).toThrow(ProviderWiringError);
   });
 
@@ -67,19 +67,21 @@ describe("assertManifestWirable refuses a vendor that cannot serve the manifest"
       message = (e as Error).message;
     }
 
-    // Two roles, three sites, all of them web_fetch-dependent. SCRUM-274
-    // (T-B19) deleted "intel.research.agent" and "seo.site_audit" along with
-    // the files that held their only sites (src/lib/intel/pipeline.ts and
-    // src/lib/intel/seo-geo.ts) — see roles.ts's own header comment.
-    for (const role of ["intel.report.pass", "branding.fetch_site"]) {
-      expect(message).toContain(role);
-    }
-    expect(message).toContain("2 roles cannot be wired");
+    // One role, one site, web_fetch-dependent. SCRUM-274 (T-B19) deleted
+    // "intel.research.agent" and "seo.site_audit" along with the files that
+    // held their only sites (src/lib/intel/pipeline.ts and
+    // src/lib/intel/seo-geo.ts); the Phase A cutover then deleted
+    // "intel.report.pass" with the in-process report generation that held its
+    // two — see roles.ts's own header comment.
+    expect(message).toContain("branding.fetch_site");
+    expect(message).toContain("1 role cannot be wired");
+    // Singular, and asserted: the message builds its own plural, so a role
+    // leaving the manifest is exactly when that branch first gets exercised.
+    expect(message).not.toContain("roles cannot be wired");
     // The sites are in the message so the reader does not have to go looking.
     // Taken from the manifest rather than hardcoded: line numbers move whenever
     // a file's imports change, and a test that pins them fails on the sweep
     // rather than on the thing it is meant to police.
-    for (const site of roleSpec("intel.report.pass").sites) expect(message).toContain(site);
     for (const site of roleSpec("branding.fetch_site").sites) expect(message).toContain(site);
   });
 
@@ -166,14 +168,16 @@ describe("aiFor", () => {
 
   it("wires the declared tools for a coupled role", () => {
     // SCRUM-274 (T-B19) deleted "intel.research.agent" along with its only
-    // file (src/lib/intel/pipeline.ts) — "intel.report.pass" declares the
-    // identical requires: ["web_search", "web_fetch"], so it exercises the
-    // same wiring path.
-    const resolved = aiFor("intel.report.pass", {
+    // file (src/lib/intel/pipeline.ts), and the Phase A cutover then deleted
+    // "intel.report.pass" — the last role declaring BOTH web_search and
+    // web_fetch. No surviving role couples two tools, so this now checks the
+    // one-tool case, which is the same wiring path: the budget reaches the
+    // declared tool and nothing undeclared is wired alongside it.
+    const resolved = aiFor("branding.fetch_site", {
       vendor: "anthropic",
-      budgets: { web_search: { maxUses: 8 }, web_fetch: { maxUses: 6 } },
+      budgets: { web_fetch: { maxUses: 6 } },
     });
-    expect(Object.keys(resolved.tools).sort()).toEqual(["web_fetch", "web_search"]);
+    expect(Object.keys(resolved.tools)).toEqual(["web_fetch"]);
   });
 
   it("refuses to wire a web_fetch role to vertex, at wiring time", () => {
@@ -238,7 +242,7 @@ describe("per-vendor model ids", () => {
 });
 
 describe("the manifest does not drift from the tree", () => {
-  it("declares exactly 34 call sites", () => {
+  it("declares exactly 32 call sites", () => {
     // SCRUM-387 (33 -> 34): "intel.condense" collapsed from 2 sites
     // (condense.ts's initial + retry pass, each calling aiFor separately) to
     // 1 (both passes now share one routed call site in
@@ -246,7 +250,13 @@ describe("the manifest does not drift from the tree", () => {
     // ("intel.condense.complexity_escalation", "intel.condense.context_overflow")
     // add one site each for the Opus/Gemini escalation branches — see
     // roles.ts's own header comment.
-    expect(declaredSiteCount()).toBe(34);
+    //
+    // The Phase A cutover (34 -> 32): "intel.report.pass"'s two sites were the
+    // main and continuation report passes in `runIntelReportPipeline`. Both are
+    // deleted along with the in-process generation itself — the report is now
+    // `intel-report-agent`'s deliverable, and this repo makes no model call to
+    // produce it.
+    expect(declaredSiteCount()).toBe(32);
   });
 
   it("names only files that exist", () => {
@@ -284,7 +294,7 @@ describe("the manifest does not drift from the tree", () => {
   it("declares a capability for every coupled site and none for the plain ones", () => {
     const coupled = AI_ROLE_NAMES.filter((r) => (roleSpec(r).requires ?? []).length > 0);
     const sites = coupled.reduce((n, r) => n + roleSpec(r).sites.length, 0);
-    expect(sites).toBe(6); // 1 measurement + 3 web_fetch + 2 web_search-only
+    expect(sites).toBe(4); // 1 measurement + 1 web_fetch + 2 web_search-only
     expect(declaredSiteCount() - sites).toBe(28); // SCRUM-387: 27 -> 28, see roles.ts header
   });
 
@@ -335,14 +345,16 @@ describe("the invariant: nothing reaches a vendor except through the layer", () 
     return out;
   }
 
-  it("keeps the coupled set at exactly the four files that declare a capability", () => {
+  it("keeps the coupled set at exactly the three files that declare a capability", () => {
     // SCRUM-274 (T-B19) removed "src/lib/intel/pipeline.ts" and "src/lib/
     // intel/seo-geo.ts" from this set — both files are deleted (their only
     // roles, "intel.research.agent" and "seo.site_audit", are gone with them).
+    // The Phase A cutover then removed "src/lib/intel/report.ts": the file
+    // survives, but it no longer calls a model at all, which is the whole
+    // point of the cutover and is worth this set noticing.
     expect([...coupledFiles].sort()).toEqual([
       "src/lib/actions/x-agent-actions.ts",
       "src/lib/branding.ts",
-      "src/lib/intel/report.ts",
       "src/lib/intel/seo-geo-providers.ts",
     ]);
   });
