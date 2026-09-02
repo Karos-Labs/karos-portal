@@ -18,6 +18,7 @@ import { MediaUploadButton } from "@/components/media-upload";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { shouldShowEngineHealthBanner } from "@/lib/agent-engine/health";
 import { EngineHealthBanner } from "@/components/engine-health-banner";
+import { RunsPausedNotice } from "@/components/runs-paused-notice";
 import {
   agentKeyMatchesClientSlug,
   isUnlistedAgent,
@@ -375,11 +376,7 @@ export default async function ClientAgentsPage({
             allowlist gets that copy now; an unconfigured service keeps the
             agents, schedules and history on screen behind an honest notice. */}
         {agents.length > 0 && !agentServiceConfigured && (
-          <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-            <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-            Agent runs are paused right now. Starting a new run will not work until this clears.
-            Contact your Karos team if you need a run today. Everything below is unaffected.
-          </p>
+          <RunsPausedNotice viewerIsClient cause="service" />
         )}
         {/* SCRUM-264: a client cut over to agent-engine got no warning of any
             kind when it broke - agentServiceConfigured above has nothing to
@@ -714,11 +711,7 @@ export default async function ClientAgentsPage({
           out by pressing one. Same banner, staff wording: they are the people
           who clear it, so it names the cause rather than promising a call. */}
       {enabledAgents.length > 0 && !agentServiceConfigured && (
-        <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-          <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-          Agent runs are paused. The agent-service environment is not configured, so submitting a
-          run will fail until it is set. Schedules, history and deliverables below are unaffected.
-        </p>
+        <RunsPausedNotice viewerIsClient={false} cause="service" />
       )}
       {/* SCRUM-264: agent-service's counterpart above has nothing to say about
           a client cut over to agent-engine - this roster showed enabled Run

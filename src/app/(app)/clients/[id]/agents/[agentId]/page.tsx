@@ -24,6 +24,7 @@ import {
 } from "@/lib/agent-engine/health";
 import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import { EngineHealthBanner } from "@/components/engine-health-banner";
+import { RunsPausedNotice } from "@/components/runs-paused-notice";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
@@ -1012,12 +1013,7 @@ export default async function ClientAgentDetailPage({
           then what to do, then the reassurance: the reassurance sat between the
           other two and buried the action. */}
       {!agentServiceConfigured && (
-        <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-          <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-          {viewerIsClient
-            ? `Agent runs are paused right now. Starting a new ${outputNoun} will not work until this clears. Contact your Karos team if you need a ${outputNoun} today. Everything below is unaffected.`
-            : `Agent runs are paused. The agent-service environment is not configured, so starting a ${outputNoun} will fail until it is set. Everything below is unaffected.`}
-        </p>
+        <RunsPausedNotice viewerIsClient={viewerIsClient} cause="service" outputNoun={outputNoun} />
       )}
       {/* SCRUM-264: this agent's own run controls are what a cut-over client
           actually presses - the roster's banner (agents/page.tsx) only warns
