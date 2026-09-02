@@ -90,7 +90,7 @@ describe("guessAssetType", () => {
   });
 
   it("keeps Reddit out of the publishable social bucket", () => {
-    // social_post is publishable to twitter/linkedin/facebook/tiktok, so a
+    // social_post is publishable to twitter/linkedin/tiktok, so a
     // Reddit reply typed that way could be pushed to another platform. Reddit is
     // draft-only by hard contract: "note" has an empty publish list.
     expect(guessAssetType("reddit-agent")).toBe("note");

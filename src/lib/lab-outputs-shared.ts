@@ -86,7 +86,7 @@ export function guessAssetType(agentFolder: string): AssetType {
   if (f.includes("newsletter") || f.includes("email")) return "email";
   if (f.includes("blog") || f.includes("seo")) return "article";
   // Reddit is checked BEFORE the social bucket and deliberately lands on "note".
-  // PUBLISHABLE_PLATFORMS maps social_post to twitter/linkedin/facebook/tiktok,
+  // PUBLISHABLE_PLATFORMS maps social_post to twitter/linkedin/tiktok,
   // so typing a Reddit reply social_post would offer it for publishing to those
   // platforms — a reply written for one thread, cross-posted elsewhere. Reddit
   // is draft-only by hard contract and "note" has an empty publish list, which

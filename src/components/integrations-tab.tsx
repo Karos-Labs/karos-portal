@@ -71,7 +71,9 @@ function GoogleLogo() {
  */
 const CONNECT_STYLE: Record<string, { background: string; ring?: boolean }> = {
   instagram: { background: "linear-gradient(45deg, #F58529 0%, #DD2A7B 55%, #8134AF 100%)" },
-  facebook: { background: "#1877F2" },
+  /* No facebook row — this map is keyed by PLATFORM_REGISTRY id and Facebook
+     left that registry (portal feedback round 2, 2026-09), so the entry could
+     only ever be dead style. */
   linkedin: { background: "#0A66C2" },
   linkedin_community: { background: "#0A66C2" },
   twitter: { background: "#000000", ring: true },

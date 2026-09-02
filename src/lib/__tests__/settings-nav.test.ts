@@ -206,6 +206,99 @@ describe("deep links name their tab", () => {
   });
 });
 
+/* ── portal feedback round 2 (2026-09): the strip that lost two tabs ─────── */
+
+describe("Account Center's tab strip", () => {
+  const page = source(SETTINGS_PAGE);
+  const pageCode = code(SETTINGS_PAGE);
+  const tabsCode = code(TABS);
+
+  it("is a grouped side navigation, never a scrolling or wrapping tab row", () => {
+    // Round 2 of the portal feedback (2026-09) went through both tab-row
+    // shapes and rejected each: the `overflow-x-auto` strip ("I don't like
+    // this menu with the slide bar") and then the `flex-wrap` one that grew a
+    // second line ("still don't like the display here"). NN/g's "Tabs, Used
+    // Right" rules out both — a tab row must not become a carousel and tab
+    // lists must not stack — and its vertical-navigation guidance is what
+    // eight growing sections actually call for. Asked of the code, not the
+    // prose: the component's own comment names the shapes it stopped using.
+    expect(tabsCode).not.toContain("overflow-x-auto");
+    expect(tabsCode).not.toContain("w-max");
+    expect(tabsCode).not.toContain("flex-wrap");
+    // A vertical tablist with text labels, headings per group, and a native
+    // picker below md so a phone sees every section in one tap.
+    expect(tabsCode).toContain('aria-orientation="vertical"');
+    expect(tabsCode).toContain('role="tablist"');
+    expect(tabsCode).toContain("<optgroup");
+    expect(tabsCode).toContain("md:grid-cols-[13.5rem_minmax(0,1fr)]");
+    expect(tabsCode).toContain("window.history.replaceState");
+    // Every client section is filed under a heading, so the list reads as
+    // three short groups rather than one long column.
+    for (const id of ["profile", "competitors", "reporting", "documents", "settings", "credits"]) {
+      expect(pageCode).toMatch(new RegExp(`id: "${id}",[^}]*group: "`));
+    }
+    expect(pageCode).toContain('group: "Your account"');
+  });
+
+  it("carries neither an Archive nor a Meetings tab", () => {
+    // "Archive does not need to be in settings, it's in the calendar. Meetings
+    // can be a sub-section in, like, account settings."
+    expect(pageCode).not.toContain('id: "archive"');
+    expect(pageCode).not.toContain('id: "meetings"');
+    expect(pageCode).not.toContain("<ArchiveView");
+    // And the header stops promising what the page no longer holds.
+    const header = page.slice(page.indexOf("<PageHeader"), page.indexOf("<SettingsTabs"));
+    expect(header).not.toContain("archive");
+    expect(header).not.toContain("meetings");
+  });
+
+  it("resolves the retired archive deep link to the calendar, per reader", () => {
+    // THE NEW TEST THIS PASS OWES: `?tab=archive` is in histories, bookmarks
+    // and sent emails, and no re-pointing of producers can reach those. It is
+    // answered server-side, before anything renders, and it keeps `?status=` —
+    // the chart's own second param — rather than dropping the reader on an
+    // unfiltered list.
+    const flatPage = flat(pageCode);
+    expect(flatPage).toContain('if (initialTab === "archive")');
+    expect(flatPage).toContain("`&status=${encodeURIComponent(statusParam)}`");
+    // A CLIENT_USER's calendar is the flat route; staff read this client's
+    // calendar at the scoped one, because theirs is the cross-client overview.
+    expect(flatPage).toContain("`/calendar?view=archive${q}`");
+    expect(flatPage).toContain("`/clients/${encodeURIComponent(id)}/calendar?view=archive${q}`");
+    // The redirect runs BEFORE the page's own reads, not after them.
+    expect(pageCode.indexOf('initialTab === "archive"')).toBeLessThan(
+      pageCode.indexOf("await Promise.all"),
+    );
+  });
+
+  it("keeps the scoped calendar's own redirect from eating the query", () => {
+    // The staff-shaped URL above is routinely pasted to a client, who is
+    // bounced from /clients/<id>/calendar to /calendar — a redirect that
+    // dropped `?view=archive` would land them on an ordinary week.
+    const cal = flat(code("src/app/(app)/clients/[id]/calendar/page.tsx"));
+    expect(cal).toContain("new URLSearchParams(");
+    expect(cal).toContain("`/calendar${suffix}`");
+  });
+
+  it("renders Meetings as the last of the Settings tab's own sections", () => {
+    // A sub-section, with the anchor that makes `?tab=settings#meetings` land
+    // on it — and still ahead of the admin-only frame, which by the parity
+    // rule closes every tab it appears on.
+    expect(page).toContain('<Card id="meetings">');
+    const settingsTab = flat(pageCode).slice(
+      flat(pageCode).indexOf("const settingsSection = ("),
+      flat(pageCode).indexOf("const sections: SettingsTab[]"),
+    );
+    // Order, asked as order: a JSX comment sits between the last two, so the
+    // four are pinned by position rather than by one adjacent string.
+    const order = ["{channelsSection}", "{automationSection}", "{teamSection}", "{meetingsSection}", "{adminAutomationSection}"].map(
+      (s) => settingsTab.indexOf(s),
+    );
+    expect(order.every((i) => i > -1), settingsTab).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+});
+
 describe("the lab repo slug link points at a field that exists", () => {
   it("does not send staff to settings, which has no such field", () => {
     const agents = source("src/app/(app)/clients/[id]/agents/page.tsx");

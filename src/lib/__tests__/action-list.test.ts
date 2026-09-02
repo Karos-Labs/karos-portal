@@ -259,11 +259,47 @@ describe("toClientActions", () => {
     // client's calendar for both readers (parity pass 2026-09).
     const plain = toClientActions(resolved, "c1");
     const scoped = toClientActions(resolved, "c1", { calendarHref: "/clients/c1/calendar" });
-    const flat = plain.filter((r) => r.href === "/calendar").map((r) => r.id);
+    const flat = plain.filter((r) => r.href.startsWith("/calendar")).map((r) => r.id);
     expect(flat.length).toBeGreaterThan(0);
     for (const row of scoped) {
-      if (flat.includes(row.id)) expect(row.href).toBe("/clients/c1/calendar");
-      else expect(row.href).toBe(plain.find((r) => r.id === row.id)?.href);
+      const before = plain.find((r) => r.id === row.id)!.href;
+      if (flat.includes(row.id)) {
+        expect(row.href).toBe(`/clients/c1/calendar${before.slice("/calendar".length)}`);
+      } else {
+        expect(row.href).toBe(before);
+      }
+    }
+  });
+
+  it("carries a calendar row's own query across the rewrite", () => {
+    // Portal feedback round 2 (2026-09): the archive left Account Center's
+    // settings tabs for the calendar, so two rows point at
+    // `/calendar?view=archive`. The rewrite used to be an `=== "/calendar"`
+    // test, which would have left exactly those two on the cross-client
+    // overview — a staff surface with no one client's archive on it.
+    const archiveRows = ACTION_DEFINITIONS.filter(
+      (a) => a.hrefFor("c1") === "/calendar?view=archive",
+    );
+    expect(archiveRows.map((a) => a.id)).toEqual(["05", "14"]);
+    const scoped = toClientActions(resolved, "c1", { calendarHref: "/clients/c1/calendar" });
+    for (const row of archiveRows) {
+      expect(scoped.find((r) => r.id === row.id)?.href).toBe(
+        "/clients/c1/calendar?view=archive",
+      );
+    }
+    // And with no scoped calendar given (the client's own Home), the flat
+    // route survives whole — query included.
+    const plain = toClientActions(resolved, "c1");
+    for (const row of archiveRows) {
+      expect(plain.find((r) => r.id === row.id)?.href).toBe("/calendar?view=archive");
+    }
+  });
+
+  it("sends nobody to the retired Account Center archive tab", () => {
+    // The whole list, not just the two rows above: a third one added later
+    // against the old URL fails here.
+    for (const action of ACTION_DEFINITIONS) {
+      expect(action.hrefFor("c1"), `action ${action.id}`).not.toContain("tab=archive");
     }
   });
 });

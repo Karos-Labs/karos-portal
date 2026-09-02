@@ -256,8 +256,8 @@ export async function importLabRunAction(input: {
        * before its social bucket, so a folder called `reddit-agent` lands on
        * `note`; but a Reddit batch exported under any other folder name (say
        * `social-replies`) was typed `social_post`, and `PUBLISHABLE_PLATFORMS`
-       * then offers a reply written for one thread to twitter, linkedin, facebook
-       * and tiktok. Reddit is draft-only by hard product rule.
+       * then offers a reply written for one thread to twitter, linkedin and
+       * tiktok. Reddit is draft-only by hard product rule.
        *
        * `isDraftOnlyDeliverable` is the same predicate the webhook and the MCP
        * upload ask, and its two halves are independent on purpose: the TEXT (the

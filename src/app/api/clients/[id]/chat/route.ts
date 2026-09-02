@@ -1118,8 +1118,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    *     holds tasks, not deliverables; `client-home-overview.tsx` reasons
    *     exactly that about the same set two screens away ("The Workspace board
    *     holds tasks, not deliverables, so it does not contain these either").
-   *     The archive is a TAB of the same route, and `?tab=archive` is the param
-   *     ProgressView actually reads.
+   *     The archive is a VIEW OF THE CALENDAR — `/calendar?view=archive` for a
+   *     client, the client-scoped calendar for staff (portal feedback round 2,
+   *     2026-09: "Archive does not need to be in settings, it's in the
+   *     calendar"). It was Account Center's `?tab=archive` in between; both
+   *     spellings resolve through `clientArchiveLink`, which is why this branch
+   *     never had to be edited for the move.
    *  2. Adding the param alone would still have lied. `promptAssets` filters out
    *     future-dated, launch and test-run assets and nothing else, so a DRAFT is
    *     reachable by `find_output` — and a draft is excluded from a client's
@@ -1161,8 +1165,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!isInClientArchive(asset, nowMs)) return null;
     if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}`;
     // The Workspace board's own archive tab (`/tasks?tab=archive`) is gone
-    // with the board itself — Account Center's Archive tab is the one place
-    // left, same helper every other archive link in the app now goes through.
+    // with the board itself, and Account Center's Archive tab went with the
+    // 2026-09 feedback pass — the calendar's archive view is the one place
+    // left, same helper every other archive link in the app goes through.
     return clientArchiveLink({ clientId, isStaff: false }).href;
   };
 

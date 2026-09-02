@@ -8,7 +8,7 @@ import { toggleStarredAgentAction } from "@/lib/actions";
 
 /**
  * "Pin to sidebar" on the agent's own page — a direct, unmistakable way to
- * star an agent, alongside the sidebar dropdown's star (client-rail-agents-nav.tsx).
+ * star an agent, alongside the sidebar list's star (client-rail-agents-nav.tsx).
  * Same optimistic-then-refresh pattern as that component and for the same
  * reason: `toggleStarredAgentAction`'s server-side revalidatePath cannot
  * reliably reach the ROOT `(app)/layout.tsx` that renders the pinned rows

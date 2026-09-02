@@ -137,8 +137,8 @@ export function mediaMimeFor(contentType?: string, filename?: string): string {
  *
  * Because the two fields are not independent. `PUBLISHABLE_PLATFORMS`
  * (lib/integrations/platforms) maps asset TYPE to the platforms that type can
- * be pushed to, and `social_post` is `["twitter", "linkedin", "facebook",
- * "tiktok"]` — instagram is NOT in it; it appears only under `instagram_post`.
+ * be pushed to, and `social_post` is `["twitter", "linkedin", "tiktok"]` —
+ * instagram is NOT in it; it appears only under `instagram_post`.
  * The first version of image upload registered `social_post` with
  * `channels: ["instagram"]`, and every consumer of that map then disagreed with
  * the asset about itself:

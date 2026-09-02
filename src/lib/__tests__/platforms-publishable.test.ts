@@ -27,7 +27,7 @@ import { isStringDelimiter, matchingBrace, skipStringLiteral } from "./source-sc
  * Two distinct failures are pinned here, because the second is the one that
  * nearly happened: Reddit does not appear as a publish TARGET, and a Reddit
  * deliverable does not land on an asset type that can be pushed to some OTHER
- * platform. social_post publishes to twitter/linkedin/facebook/tiktok, so a
+ * platform. social_post publishes to twitter/linkedin/tiktok, so a
  * Reddit reply typed social_post would have been offered for cross-posting to
  * a platform it was never written for.
  */
@@ -58,7 +58,7 @@ describe("Reddit stays unpublishable", () => {
  * straight past both: `metadata.asset_type` could name any whitelisted type, so a
  * scheduled Reddit run whose schedule row said `social_post` produced a Reddit
  * reply that every publish surface offered and the auto-publish cron would push to
- * whichever of twitter/linkedin/facebook/tiktok was connected.
+ * whichever of twitter/linkedin/tiktok was connected.
  *
  * One rule written twice, one copy missed. So the question this section asks is not
  * "is the webhook fixed" but "WHICH PATHS CAN SET AN ASSET'S TYPE", answered by

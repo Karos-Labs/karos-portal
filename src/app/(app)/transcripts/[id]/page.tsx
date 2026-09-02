@@ -32,14 +32,18 @@ export default async function TranscriptDetailPage({
   const isAdmin = user.role === "KAROS_ADMIN";
 
   // Where "back" goes: the page that linked here, when it told us (`from`); a
-  // client's only route to this page is the Meetings tab on their own settings,
-  // so a client with no `from` falls back there rather than to /transcripts,
-  // which isn't in their nav at all.
+  // client's only route to this page is the Meetings section of their own
+  // settings, so a client with no `from` falls back there rather than to
+  // /transcripts, which isn't in their nav at all.
+  //
+  // `?tab=settings#meetings` since portal feedback round 2 (2026-09): Meetings
+  // stopped being a tab of its own and became the last sub-section of the
+  // Settings tab ("Meetings can be a sub-section in, like, account settings").
   const backHref =
     from && from.startsWith("/")
       ? from
       : !isStaff && user.clientId
-        ? `/clients/${user.clientId}/settings?tab=meetings`
+        ? `/clients/${user.clientId}/settings?tab=settings#meetings`
         : "/transcripts";
   const backLabel = backHref === "/transcripts" ? "All meetings" : "Back";
 

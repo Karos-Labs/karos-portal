@@ -335,19 +335,48 @@ describe("#85 — every row the band paints has somewhere to land", () => {
 /* ─────────────────────── #90: the archive a reader reaches ──────────────── */
 
 describe("#90 — the archive link resolves for the viewer who is reading it", () => {
-  it("sends both a client and staff to the same Account Center archive tab", () => {
-    // BOTH readers land on the SAME route (2026-08): the Workspace board that
-    // used to split this into a client's own `/tasks?tab=archive` and staff's
-    // client-scoped `/clients/<id>/tasks?tab=archive` is gone entirely, and
-    // Account Center's Archive tab was already reachable by either viewer.
+  it("sends each reader to the calendar archive their own route reaches", () => {
+    // THE ARCHIVE IS A CALENDAR VIEW (portal feedback round 2, 2026-09):
+    // "Archive does not need to be in settings, it's in the calendar." It was
+    // Account Center's `?tab=archive` before this pass and the Workspace
+    // board's `/tasks?tab=archive` before that — one list, three homes, which
+    // is why every caller asks the helper instead of spelling a URL.
+    //
+    // Two routes to the one view, split the way every other calendar link in
+    // the app splits: the flat route scopes itself to the viewer's own client,
+    // so it is a CLIENT's own calendar and STAFF's cross-client overview —
+    // which has no single archive to show.
     expect(clientArchiveLink({ clientId: "c1", isStaff: false })).toEqual({
-      href: "/clients/c1/settings?tab=archive",
+      href: "/calendar?view=archive",
       label: "your archive",
     });
     expect(clientArchiveLink({ clientId: "c1", isStaff: true })).toEqual({
-      href: "/clients/c1/settings?tab=archive",
+      href: "/clients/c1/calendar?view=archive",
       label: "this client's archive",
     });
+  });
+
+  it("names the view the calendar actually reads, on a route that exists", () => {
+    // The failure this guards is silent in exactly the way #90 was: a `?view=`
+    // the calendar does not recognise opens the ordinary week with no error at
+    // all. Both ends are asked — the param the helper writes, and the union
+    // calendar-body validates it against.
+    for (const isStaff of [true, false]) {
+      const { href } = clientArchiveLink({ clientId: "c1", isStaff });
+      const url = new URL(href, "https://example.test");
+      expect(url.pathname.endsWith("/calendar"), href).toBe(true);
+      expect(url.searchParams.get("view")).toBe("archive");
+    }
+    // The list lives in a PLAIN module: calendar-body.tsx is a server component,
+    // and importing the array from the "use client" run-calendar.tsx handed it a
+    // client-reference proxy whose `.find` threw on every /calendar render.
+    const modes = stripComments(read("src/lib/calendar-view-modes.ts"));
+    expect(modes).toContain('export const CALENDAR_VIEW_MODES');
+    expect(modes).toMatch(/"day",\s*"week",\s*"month",\s*"archive",/);
+    const body = stripComments(read("src/app/(app)/calendar/calendar-body.tsx"));
+    expect(body).toContain("CALENDAR_VIEW_MODES.find(");
+    expect(body).toMatch(/import \{[^}]*CALENDAR_VIEW_MODES[^}]*\} from "@\/lib\/calendar-view-modes"/);
+    expect(body).not.toMatch(/import \{[^}]*CALENDAR_VIEW_MODES[^}]*\} from "@\/components\/run-calendar"/);
   });
 
   it("moves the label with the destination", () => {

@@ -263,7 +263,7 @@ describe("the three draft-batch channels hand their reader-shaped string straigh
     expect(asset.content).toBe(envelope);
     expect(parseRedditDrafts(asset.content)).not.toBeNull();
     // THE FENCE. `social_post` would offer a reply written for one thread to
-    // twitter/linkedin/facebook/tiktok; `note` has no publish targets at all.
+    // twitter/linkedin/tiktok; `note` has no publish targets at all.
     expect(asset.type).toBe("note");
     expect(asset.channels).toBeUndefined();
     expect(asset.meta).toMatchObject({ targetSubreddit: "agency", disclosureIncluded: true });
@@ -694,7 +694,7 @@ describe("reputation-pulse", () => {
     const asset = createdAsset();
     // The fence: a review reply is posted from the client's own listing, not
     // through this portal, so this is `note` — never `social_post` offered
-    // to twitter/linkedin/facebook/tiktok.
+    // to twitter/linkedin/tiktok.
     expect(asset.type).toBe("note");
     expect(asset.title).toBe("Reputation pulse 004");
     expect(asset.content).toContain("A crisis trigger fired on this pulse");

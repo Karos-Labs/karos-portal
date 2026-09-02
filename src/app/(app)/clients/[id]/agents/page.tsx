@@ -18,6 +18,7 @@ import { MediaUploadButton } from "@/components/media-upload";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
 import { shouldShowEngineHealthBanner } from "@/lib/agent-engine/health";
 import { EngineHealthBanner } from "@/components/engine-health-banner";
+import { RunsPausedNotice } from "@/components/runs-paused-notice";
 import {
   agentKeyMatchesClientSlug,
   isUnlistedAgent,
@@ -32,6 +33,8 @@ import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { StaffOnlySection } from "@/components/staff-only-section";
 import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
+import { TaskKickoffStrip } from "@/components/client-agents/task-kickoff-strip";
+import { buildTaskKickoffView } from "@/lib/task-kickoff";
 import {
   bindableAgents,
   buildAgentSetup,
@@ -67,9 +70,23 @@ const AGENTS_PAGE_DESCRIPTION =
  * does the staff bind dropdown, through bindableAgents (#131) — and the submit
  * core refuses a mismatched pair regardless of how it was launched.
  */
-export default async function ClientAgentsPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ClientAgentsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  /**
+   * `task` — Home's "Let's do this" for a recommended task that names no single
+   * custom agent (portal feedback round 2, 2026-09): a managed product has no
+   * page of its own, so the roster is where the client lands. The kickoff strip
+   * sits above the roster and carries the same Start / Not for us / Later it
+   * carries on an agent's own page. Validated in lib/task-kickoff.ts.
+   */
+  searchParams: Promise<{ task?: string }>;
+}) {
   const user = await requireUser();
   const { id } = await params;
+  const { task: kickoffTaskId } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
@@ -122,6 +139,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
     // credit spend windows too; that read left with #130.)
     // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
     const now = Date.now();
+    // The recommended task this page was opened for, if any — fed the client's
+    // already-booked dates (the assets above) so the start date it carries is
+    // the one the calendar would have inferred for the same task.
+    const kickoffTask = await buildTaskKickoffView({
+      clientId: id,
+      taskId: kickoffTaskId,
+      scheduledAt: assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
+      now,
+    });
     // Every agent that could ever appear on this roster: enabled, and bound to
     // this client. The binding wins over both routes in below — a grant and an
     // inherited delivered run are equally unable to move an instance off its
@@ -335,17 +361,22 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
             verbatim ("active AI team" / "always-on AI team"), one in Title Case
             and one in sentence case. This is the surviving one. */}
         <PageHeader title="AI agents" description={AGENTS_PAGE_DESCRIPTION} />
+        {/* Above the roster: the recommended task this page was opened for.
+            Same strip, same three controls, same position relative to the
+            page's main content as on an agent's own page (portal feedback
+            round 2, 2026-09). */}
+        {kickoffTask && (
+          <div className="mb-4">
+            <TaskKickoffStrip clientId={id} task={kickoffTask} />
+          </div>
+        )}
         {/* Two different conditions used to share the never-set-up empty state,
             so an outage or a bad deploy told a client with three live agents
             and a run history that they had never been set up. Only an empty
             allowlist gets that copy now; an unconfigured service keeps the
             agents, schedules and history on screen behind an honest notice. */}
         {agents.length > 0 && !agentServiceConfigured && (
-          <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-            <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-            Agent runs are paused right now. Starting a new run will not work until this clears.
-            Contact your Karos team if you need a run today. Everything below is unaffected.
-          </p>
+          <RunsPausedNotice viewerIsClient cause="service" />
         )}
         {/* SCRUM-264: a client cut over to agent-engine got no warning of any
             kind when it broke - agentServiceConfigured above has nothing to
@@ -479,6 +510,15 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
   // whole roster so every card ages a refusal from the same instant.
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const staffNow = Date.now();
+  // Parity pass (2026-09): the kickoff strip is a client-owned surface, so it
+  // renders IDENTICALLY here — a staff viewer following the same link reads the
+  // same task, with the same three controls, in the same slot.
+  const staffKickoffTask = await buildTaskKickoffView({
+    clientId: id,
+    taskId: kickoffTaskId,
+    scheduledAt: assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
+    now: staffNow,
+  });
   // Same delivered-work read the client branch makes, through the same function,
   // so the two rosters cannot call one agent "Not set up yet" and the other
   // "Runs on request". `viewerIsClient: false` keeps every asset in scope —
@@ -659,17 +699,19 @@ export default async function ClientAgentsPage({ params }: { params: Promise<{ i
           </MoreActionsMenu>
         }
       />
+      {/* Same slot, same strip as the client branch above. */}
+      {staffKickoffTask && (
+        <div className="mb-4">
+          <TaskKickoffStrip clientId={id} task={staffKickoffTask} />
+        </div>
+      )}
       {/* The outage notice, on the STAFF branch too. It was mounted only for
           clients, so an operator opened a roster of enabled Run controls with
           nothing anywhere on the page saying the service was down - they found
           out by pressing one. Same banner, staff wording: they are the people
           who clear it, so it names the cause rather than promising a call. */}
       {enabledAgents.length > 0 && !agentServiceConfigured && (
-        <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-          <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-          Agent runs are paused. The agent-service environment is not configured, so submitting a
-          run will fail until it is set. Schedules, history and deliverables below are unaffected.
-        </p>
+        <RunsPausedNotice viewerIsClient={false} cause="service" />
       )}
       {/* SCRUM-264: agent-service's counterpart above has nothing to say about
           a client cut over to agent-engine - this roster showed enabled Run
