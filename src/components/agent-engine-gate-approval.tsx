@@ -6,6 +6,7 @@ import { Button, Spinner, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { normalizeDashes } from "@/lib/text-utils";
 import { resolveAgentEngineGateAction } from "@/lib/actions";
+import type { AgentEngineStyleEdit } from "@/lib/agent-engine/types";
 
 /**
  * The human-approval action for an agent-engine run paused at
@@ -40,9 +41,113 @@ import { resolveAgentEngineGateAction } from "@/lib/actions";
  * Already shown in the page header and the run panel, or rendered by a
  * dedicated block below — repeating any of these as a generic row costs space
  * and tells the reviewer nothing. `slideTemplates`/`images` have their own
- * sections.
+ * sections. `renderTokens`/`styleDirectiveOutcome`/`styleVariation`
+ * (IGSTYLE-6, §2.5) are the Design block and its two banners, below.
  */
-const SUPPRESSED_KEYS = new Set(["runId", "preview", "client", "slideTemplates", "images", "copy"]);
+const SUPPRESSED_KEYS = new Set([
+  "runId",
+  "preview",
+  "client",
+  "slideTemplates",
+  "images",
+  "copy",
+  "renderTokens",
+  "styleDirectiveOutcome",
+  "styleVariation",
+]);
+
+/** The three roles the Design block actually exposes controls for — `AgentEngineStyleEdit` has seven, matching agent-engine's own `StyleEditSchema`, but a reviewer picks a background, a text colour, and an accent; the rest exist so a hand-authored override and a reviewer's pick are indistinguishable to the engine. */
+const DESIGN_ROLES = [
+  { key: "ground", label: "Background" },
+  { key: "fg", label: "Text" },
+  { key: "accent", label: "Accent" },
+] as const satisfies ReadonlyArray<{ key: keyof AgentEngineStyleEdit; label: string }>;
+
+/** Same pattern as agent-engine's own `HEX_COLOR` (`packages/core/src/types/gate.ts`) — 3/4/6/8-digit hex, `#` required. Validated here too so a reviewer sees a bad hex immediately rather than after a round-trip to the server. */
+const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+/**
+ * The gate payload's `renderTokens` (IGSTYLE-6, §2.5) — what this round is
+ * ACTUALLY rendering with right now (Layer 0+1+2 merged), so the Design
+ * block's inputs seed from the real current colours rather than from
+ * nothing. Read defensively, like every other payload field here: an engine
+ * build that does not yet send this key is not an error, it is "this block
+ * doesn't render" (the acceptance line this satisfies verbatim).
+ */
+function readRenderTokens(value: unknown): AgentEngineStyleEdit | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: AgentEngineStyleEdit = {};
+  for (const role of ["ground", "surface", "fg", "fg2", "line", "accentInk", "accent"] as const) {
+    const v = value[role];
+    if (typeof v === "string") out[role] = v;
+  }
+  return out;
+}
+
+/**
+ * One refusal from `StyleRefusal` (agent-engine's `style-directive.ts`),
+ * read defensively — same shape, not imported (separate repos).
+ */
+interface StyleRefusalInfo {
+  role: string;
+  requested: string;
+  reason: string;
+  contrastRatio?: number;
+}
+
+/**
+ * This round's resolved style directive (IGSTYLE-3's `styleDirectiveOutcome`
+ * gate-payload field) — "loud refusals" made visible here rather than only
+ * in the run's own event log, which is the whole point of IGSTYLE-3's own
+ * §2.3 requirement carried through to the reviewer's screen.
+ */
+interface StyleDirectiveOutcomeInfo {
+  source: string;
+  refusals: StyleRefusalInfo[];
+}
+
+function readStyleDirectiveOutcome(value: unknown): StyleDirectiveOutcomeInfo | undefined {
+  if (!isRecord(value) || typeof value["source"] !== "string") return undefined;
+  const refusalsRaw = value["refusals"];
+  const refusals: StyleRefusalInfo[] = Array.isArray(refusalsRaw)
+    ? refusalsRaw.flatMap((r) => {
+        if (!isRecord(r) || typeof r["role"] !== "string" || typeof r["requested"] !== "string" || typeof r["reason"] !== "string") return [];
+        return [
+          {
+            role: r["role"],
+            requested: r["requested"],
+            reason: r["reason"],
+            ...(typeof r["contrastRatio"] === "number" ? { contrastRatio: r["contrastRatio"] } : {}),
+          },
+        ];
+      })
+    : [];
+  return { source: value["source"], refusals };
+}
+
+/**
+ * IGSTYLE-10's own variation report, rendered here (IGSTYLE-6, §2.5) even
+ * though nothing produces it yet — the same "shape now, wire later" move
+ * this whole programme has made repeatedly (e.g. IGSTYLE-1's unwired
+ * `renderTokens.accent`). Absent payload key, absent banner; no engine
+ * change required for this ticket to ship.
+ */
+interface StyleVariationEntry {
+  role: string;
+  prior: string;
+  used: string;
+  reason: string;
+}
+
+function readStyleVariation(value: unknown): StyleVariationEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((v) => {
+    if (!isRecord(v) || typeof v["role"] !== "string" || typeof v["prior"] !== "string" || typeof v["used"] !== "string" || typeof v["reason"] !== "string") {
+      return [];
+    }
+    return [{ role: v["role"], prior: v["prior"], used: v["used"], reason: v["reason"] }];
+  });
+}
 
 /**
  * The editable projection an instagram-agent gate carries under `copy`
@@ -198,6 +303,15 @@ export function AgentEngineGateApproval({
   const [captionDraft, setCaptionDraft] = useState<string | null>(null);
   const [fieldDrafts, setFieldDrafts] = useState<Record<number, Record<string, string>>>({});
   const [styleDrafts, setStyleDrafts] = useState<Record<number, { fontScale?: FontScale; textAlign?: TextAlign }>>({});
+  /**
+   * The Design block's own draft state (IGSTYLE-6, §2.5) — deliberately a
+   * flat `role -> typed text` map, not per-slide like `styleDrafts` above
+   * (a color pick is for the whole post, not one slide). Holds whatever the
+   * reviewer typed, valid or not, so a mid-edit invalid hex stays visible
+   * rather than silently reverting — `hasInvalidDesignInput` below is what
+   * blocks submission until it's fixed or cleared.
+   */
+  const [designDrafts, setDesignDrafts] = useState<Partial<Record<(typeof DESIGN_ROLES)[number]["key"], string>>>({});
 
   const fields = isRecord(payload) ? payload : {};
   const slideTemplates = readSlideTemplates(fields["slideTemplates"]);
@@ -206,29 +320,67 @@ export function AgentEngineGateApproval({
   const loadableImages = images.filter((img): img is SlideImage & { url: string } => Boolean(img.url?.startsWith("https://")));
   const editableCopy = readEditableCopy(fields["copy"]);
   const imageByN = new Map(images.map((img) => [img.n, img]));
+  const renderTokens = readRenderTokens(fields["renderTokens"]);
+  const styleDirectiveOutcome = readStyleDirectiveOutcome(fields["styleDirectiveOutcome"]);
+  const styleVariation = readStyleVariation(fields["styleVariation"]);
 
-  /** The edits object to submit — undefined when nothing actually changed. */
-  function collectEdits(): { caption?: string; slides?: Array<{ n: number; fields?: Record<string, string>; fontScale?: FontScale; textAlign?: TextAlign }> } | undefined {
-    if (!editableCopy) return undefined;
+  /** A typed-but-invalid hex in the Design block — blocks every decision until fixed or reset, rather than silently dropping the pick server-side. */
+  const hasInvalidDesignInput = DESIGN_ROLES.some(({ key }) => {
+    const draft = designDrafts[key];
+    if (draft === undefined) return false;
+    const trimmed = draft.trim();
+    return trimmed.length > 0 && !HEX_COLOR_RE.test(trimmed);
+  });
+
+  /** Only the roles the reviewer actually changed from the seeded baseline, and only when validly formatted — an invalid draft is excluded here (its own row shows the error; `hasInvalidDesignInput` is what stops the submit entirely). */
+  function collectStyleEdits(): AgentEngineStyleEdit | undefined {
+    const style: AgentEngineStyleEdit = {};
+    for (const { key } of DESIGN_ROLES) {
+      const draft = designDrafts[key];
+      if (draft === undefined) continue;
+      const trimmed = draft.trim();
+      if (trimmed.length === 0 || !HEX_COLOR_RE.test(trimmed)) continue;
+      if (trimmed === (renderTokens?.[key] ?? "")) continue;
+      style[key] = trimmed;
+    }
+    return Object.keys(style).length > 0 ? style : undefined;
+  }
+
+  /**
+   * The edits object to submit — undefined when nothing actually changed.
+   * `style` is included regardless of `decision`; which decisions actually
+   * forward it is `resolveAgentEngineGateAction`'s own call (IGSTYLE-6,
+   * §2.5 point 3 — `caption`/`slides` approve-only, `style` approve+revise),
+   * not this component's.
+   */
+  function collectEdits():
+    | { caption?: string; slides?: Array<{ n: number; fields?: Record<string, string>; fontScale?: FontScale; textAlign?: TextAlign }>; style?: AgentEngineStyleEdit }
+    | undefined {
+    const style = collectStyleEdits();
+    if (!editableCopy) return style !== undefined ? { style } : undefined;
     const slides: Array<{ n: number; fields?: Record<string, string>; fontScale?: FontScale; textAlign?: TextAlign }> = [];
     for (const slide of editableCopy.slides) {
       const changedFields = Object.fromEntries(
         Object.entries(fieldDrafts[slide.n] ?? {}).filter(([key, value]) => value !== slide.fields[key] && value.trim().length > 0),
       );
-      const style = styleDrafts[slide.n] ?? {};
+      const slideStyle = styleDrafts[slide.n] ?? {};
       const entry = {
         n: slide.n,
         ...(Object.keys(changedFields).length > 0 ? { fields: changedFields } : {}),
-        ...(style.fontScale !== undefined ? { fontScale: style.fontScale } : {}),
-        ...(style.textAlign !== undefined ? { textAlign: style.textAlign } : {}),
+        ...(slideStyle.fontScale !== undefined ? { fontScale: slideStyle.fontScale } : {}),
+        ...(slideStyle.textAlign !== undefined ? { textAlign: slideStyle.textAlign } : {}),
       };
       if (Object.keys(entry).length > 1) slides.push(entry);
     }
     const originalCaption = editableCopy.caption ?? "";
     const caption =
       captionDraft !== null && captionDraft.trim().length > 0 && captionDraft !== originalCaption ? captionDraft : undefined;
-    if (caption === undefined && slides.length === 0) return undefined;
-    return { ...(caption !== undefined ? { caption } : {}), ...(slides.length > 0 ? { slides } : {}) };
+    if (caption === undefined && slides.length === 0 && style === undefined) return undefined;
+    return {
+      ...(caption !== undefined ? { caption } : {}),
+      ...(slides.length > 0 ? { slides } : {}),
+      ...(style !== undefined ? { style } : {}),
+    };
   }
 
   function slideHasEdits(n: number): boolean {
@@ -254,8 +406,12 @@ export function AgentEngineGateApproval({
           note: templateNotes[s.n]!.trim(),
           promote: decision === "approve" && promote[s.n] === true,
         }));
-      // Edits ship only with an approve — a redraft supersedes hand edits.
-      const edits = decision === "approve" ? collectEdits() : undefined;
+      // Always collected regardless of `decision` — `caption`/`slides` only
+      // matter on `approve` (a redraft supersedes hand edits) and `style`
+      // matters on `approve` AND `revise` (IGSTYLE-6, §2.5); which of those
+      // actually reach the engine is `resolveAgentEngineGateAction`'s own
+      // per-field, per-decision split, not this component's job to encode.
+      const edits = collectEdits();
       const result = await resolveAgentEngineGateAction(jobId, gateId, {
         decision,
         ...(notes ? { notes } : {}),
@@ -335,6 +491,108 @@ export function AgentEngineGateApproval({
         <div className="rounded-md border border-border bg-surface p-3">
           <p className="mb-1.5 text-xs text-muted-2">Awaiting your approval</p>
           <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{normalizeDashes(preview)}</p>
+        </div>
+      )}
+
+      {/* The Design block (IGSTYLE-6, §2.5) — ground/text/accent colour
+          controls, seeded from `renderTokens` (what this round is ACTUALLY
+          rendering with, Layers 0+1+2 merged). Renders only when the
+          payload carries that key — an engine build that doesn't send it
+          yet leaves this exactly as it was before this ticket, per that
+          field's own read helper. Unlike the copy editor below, `style`
+          ships on `revise` too, so this block is not gated behind an
+          approve-only disclosure. */}
+      {renderTokens && (
+        <div className="space-y-2 rounded-md border border-border bg-surface p-3">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">Design</span>
+            {styleDirectiveOutcome && styleDirectiveOutcome.source !== "none" && (
+              <Badge tone="neutral">{labelForKey(styleDirectiveOutcome.source)}</Badge>
+            )}
+          </div>
+
+          {/* Loud refusals (IGSTYLE-3, §2.3) made visible to the person who
+              can actually act on them, not only the run's own event log. */}
+          {styleDirectiveOutcome && styleDirectiveOutcome.refusals.length > 0 && (
+            <div className="space-y-1 rounded-md border border-warning/40 bg-warning/10 p-2">
+              {styleDirectiveOutcome.refusals.map((r, i) => (
+                <p key={i} className="text-xs text-warning">
+                  {labelForKey(r.role)} &ldquo;{r.requested}&rdquo; refused — {r.reason}
+                  {r.contrastRatio !== undefined ? ` (contrast ${r.contrastRatio.toFixed(2)}:1)` : ""}. Kept the previous colour.
+                </p>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            {DESIGN_ROLES.map(({ key, label }) => {
+              const baseline = renderTokens[key] ?? "";
+              const draft = designDrafts[key];
+              const current = draft ?? baseline;
+              const trimmed = current.trim();
+              const valid = trimmed.length === 0 || HEX_COLOR_RE.test(trimmed);
+              return (
+                <div key={key} className="flex flex-wrap items-center gap-2">
+                  <span className="w-20 shrink-0 text-xs text-muted-2">{label}</span>
+                  <input
+                    type="color"
+                    value={/^#[0-9a-fA-F]{6}$/.test(trimmed) ? trimmed : "#000000"}
+                    onChange={(e) => setDesignDrafts((prev) => ({ ...prev, [key]: e.target.value }))}
+                    disabled={pending}
+                    className="h-8 w-10 shrink-0 cursor-pointer rounded border border-border bg-transparent p-0.5"
+                    aria-label={`${label} colour picker`}
+                  />
+                  <input
+                    type="text"
+                    value={current}
+                    onChange={(e) => setDesignDrafts((prev) => ({ ...prev, [key]: e.target.value }))}
+                    placeholder="#000000"
+                    disabled={pending}
+                    className={`w-28 rounded-md border p-1.5 text-xs ${valid ? "border-border bg-surface-2" : "border-danger bg-danger/10"}`}
+                    aria-label={`${label} hex value`}
+                  />
+                  {draft !== undefined && draft !== baseline && (
+                    <button
+                      type="button"
+                      className="text-xs text-muted-2 underline"
+                      disabled={pending}
+                      onClick={() =>
+                        setDesignDrafts((prev) => {
+                          const next = { ...prev };
+                          delete next[key];
+                          return next;
+                        })
+                      }
+                    >
+                      Reset
+                    </button>
+                  )}
+                  {!valid && <span className="text-xs text-danger">Not a valid hex colour</span>}
+                </div>
+              );
+            })}
+          </div>
+
+          <p className="text-xs text-muted-2">
+            Applies to this post — sent with Approve or Request changes — and is remembered so future drafts lean
+            toward it.
+          </p>
+
+          {/* IGSTYLE-10's variation report — nothing produces this yet, but
+              the payload key is read defensively so this banner lights up
+              the moment a future engine build starts sending it, with no
+              portal change required. */}
+          {styleVariation.length > 0 && (
+            <p className="text-xs text-muted-2">
+              Varied from the usual pick:{" "}
+              {styleVariation.map((v, i) => (
+                <span key={i}>
+                  {i > 0 ? "; " : ""}
+                  {labelForKey(v.role)} {v.prior} → {v.used} ({v.reason})
+                </span>
+              ))}
+            </p>
+          )}
         </div>
       )}
 
@@ -502,8 +760,9 @@ export function AgentEngineGateApproval({
             </span>
           </div>
           <p className="text-xs text-muted-2">
-            This layout has not been approved before. Tell us what you think of the design, and tick
-            &ldquo;keep it&rdquo; to add it to the template library for future runs.
+            This layout has not been approved before. Tell us what you think of the LAYOUT, and tick
+            &ldquo;keep it&rdquo; to add it to the template library for future runs — for this post&apos;s colours, use
+            the Design panel {renderTokens ? "above" : "controls, when available"} instead.
           </p>
           {experimental.map((slide) => (
             <div key={slide.n} className="space-y-1.5 rounded-md border border-border/60 bg-surface p-2.5">
@@ -512,10 +771,18 @@ export function AgentEngineGateApproval({
                 {slide.template && <Badge tone="neutral">{slide.template}</Badge>}
                 {slide.templateSource && <Badge tone="neutral">{labelForKey(slide.templateSource)}</Badge>}
               </div>
+              {/* IGSTYLE-6, §2.5 point 4 — retitled from "Feedback on slide
+                  N's design", which read as an invitation to describe THIS
+                  post's colours here; this note only ever steers which
+                  LAYOUT future runs pick for this archetype. */}
+              <label className="text-xs text-muted-2" htmlFor={`template-note-${slide.n}`}>
+                Note on this template — steers which layouts future runs get
+              </label>
               <textarea
+                id={`template-note-${slide.n}`}
                 value={templateNotes[slide.n] ?? ""}
                 onChange={(e) => setTemplateNotes((prev) => ({ ...prev, [slide.n]: e.target.value }))}
-                placeholder={`Feedback on slide ${slide.n}'s design (optional)`}
+                placeholder="What did you think of this layout? (optional)"
                 rows={2}
                 className="w-full rounded-md border border-border bg-surface-2 p-2 text-sm"
                 disabled={pending}
@@ -552,16 +819,24 @@ export function AgentEngineGateApproval({
       </div>
       {error && <span className="text-xs text-danger">{error}</span>}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" disabled={pending} onClick={() => resolve("approve")}>
+        <Button variant="primary" disabled={pending || hasInvalidDesignInput} onClick={() => resolve("approve")}>
           {pending ? <Spinner className="h-4 w-4" /> : "Approve"}
         </Button>
         {/* The middle path, and the reason this panel exists in this shape:
             "close, but change X" used to have to be spelled Reject, which
             threw the whole run away. */}
-        <Button variant="outline" disabled={pending || notes.trim().length === 0} onClick={() => resolve("revise")}>
+        <Button
+          variant="outline"
+          disabled={pending || notes.trim().length === 0 || hasInvalidDesignInput}
+          onClick={() => resolve("revise")}
+        >
           {pending ? <Spinner className="h-4 w-4" /> : "Request changes"}
         </Button>
-        <Button variant="danger" disabled={pending || notes.trim().length === 0} onClick={() => resolve("reject")}>
+        <Button
+          variant="danger"
+          disabled={pending || notes.trim().length === 0 || hasInvalidDesignInput}
+          onClick={() => resolve("reject")}
+        >
           {pending ? <Spinner className="h-4 w-4" /> : "Reject"}
         </Button>
       </div>
@@ -569,6 +844,9 @@ export function AgentEngineGateApproval({
         <p className="text-xs text-muted-2">
           Requesting changes or rejecting needs a note above.
         </p>
+      )}
+      {hasInvalidDesignInput && (
+        <p className="text-xs text-danger">Fix or reset the invalid colour above before continuing.</p>
       )}
     </div>
   );
