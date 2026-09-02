@@ -16,7 +16,11 @@ import { Icon } from "@/components/icon";
 import { AgentIdentity } from "@/components/agent-identity";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
-import { shouldShowEngineHealthBanner } from "@/lib/agent-engine/health";
+import {
+  resolveDispatchedAgentEngineProductId,
+  shouldShowEngineHealthBanner,
+} from "@/lib/agent-engine/health";
+import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import { EngineHealthBanner } from "@/components/engine-health-banner";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
@@ -277,6 +281,29 @@ export default async function ClientAgentDetailPage({
   }
 
   const summary = toSummary(agent);
+  // WOULD A RUN PRESSED ON THIS PAGE ACTUALLY REACH AGENT-ENGINE? (T-B21)
+  //
+  // Resolved HERE, on the server, and handed to the three components that mount
+  // the run dialog. `resolveDispatchedAgentEngineProductId` is the same call
+  // `submit-custom.ts` makes per run — dispatch enabled, this client on
+  // `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS`, this agent key routable — and it is
+  // the single definition of that predicate, deliberately not re-derived
+  // anywhere else (see its own doc comment). It reads `process.env` behind
+  // `server-only`, so the dialog physically cannot ask it and has to be told.
+  //
+  // Until this existed the dialog asked the KEY-ONLY resolver instead, which is
+  // blind to both flags: every client not yet cut over was shown "Direction for
+  // this run" and, on the media products, "Source media" — for a run that then
+  // went to agent-service, which reads neither, so both answers were dropped in
+  // silence. The same defect SCRUM-249/T-B5 closed in the copilot chat route;
+  // this was its second call site.
+  //
+  // One pair, so a one-row map: an absent entry means the legacy path, which is
+  // what the shape means everywhere it is read.
+  const engineProductId = resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug);
+  const engineDispatch: EngineDispatchMap = engineProductId
+    ? { [id]: { [agent.key]: engineProductId } }
+    : {};
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
   const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
   // What ONE PRESS of "create" actually charges: the per-output base × what a
@@ -1007,6 +1034,7 @@ export default async function ClientAgentDetailPage({
             <AgentSetupHero
               agent={summary}
               clientId={id}
+              engineDispatch={engineDispatch}
               contextItems={contextItems}
               viewerIsClient={viewerIsClient}
               setup={setup!}
@@ -1064,6 +1092,7 @@ export default async function ClientAgentDetailPage({
             <LegacyAgentPanel
               clientId={id}
               agent={summary}
+              engineDispatch={engineDispatch}
               noun={outputNoun}
               cost={spendable !== undefined ? runCost : null}
               batchSize={runBatchSize}
@@ -1146,6 +1175,7 @@ export default async function ClientAgentDetailPage({
               nextRunLabel={nextRunLabel}
               clientId={id}
               agent={summary}
+              engineDispatch={engineDispatch}
               {...(schedule ? { schedule } : {})}
               {...(setup ? { setup } : {})}
               contextItems={contextItems}

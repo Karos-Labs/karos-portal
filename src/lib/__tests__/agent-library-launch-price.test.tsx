@@ -78,6 +78,10 @@ function libraryMarkup(agents: CustomAgent[]): string {
     <CustomAgentsHub
       agents={agents}
       clients={[{ id: "c1", name: "Acme", agentsRepoSlug: "acme" }]}
+      // No pair dispatches to agent-engine here (T-B21): this suite is about
+      // the launch price, and an empty map is the legacy dialog these cases
+      // have always been written against.
+      engineDispatch={{}}
       isAdmin
             serviceConfigured
     />,

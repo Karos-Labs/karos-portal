@@ -13,6 +13,7 @@ import {
   type ClientAgentScheduleRow,
   type RunnableAgentSummary,
 } from "@/components/custom-agents";
+import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import type { ContextItem } from "@/lib/types";
 
 import type { LegacyRunGateResult } from "@/lib/client-agent-runs";
@@ -60,6 +61,7 @@ import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 export function LegacyAgentPanel({
   clientId,
   agent,
+  engineDispatch,
   cost,
   batchSize = 1,
   gate,
@@ -73,6 +75,12 @@ export function LegacyAgentPanel({
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
+  /**
+   * Forwarded to the run dialog — see `EngineDispatchMap` (T-B21). This is the
+   * one mount a CLIENT reaches, so it is where the dialog painting a field the
+   * legacy path drops was actually seen.
+   */
+  engineDispatch: EngineDispatchMap;
   /**
    * The price of ONE PRESS — the base × defaultRunBatchSize (which is 1 for
    * every agent today, so today this IS the per-run base). Null for staff -
@@ -205,6 +213,7 @@ export function LegacyAgentPanel({
         <RunCustomAgentModal
           agent={agent}
           clientId={clientId}
+          engineDispatch={engineDispatch}
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
           {...(setup ? { setup } : {})}

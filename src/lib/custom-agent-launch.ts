@@ -1670,6 +1670,34 @@ export function initialAgentBrief(profile: AgentLaunchProfile): Record<string, s
   );
 }
 
+/**
+ * Re-seed a brief already in progress against a DIFFERENT profile, keeping
+ * every answer the new profile still has a field for.
+ *
+ * T-B21. The run dialog's field set stopped being fixed for the life of the
+ * dialog: which engine-only fields it paints now depends on whether the
+ * SELECTED CLIENT is cut over to agent-engine (see `EngineDispatchMap` in
+ * custom-agents.tsx), and the staff picker can change that selection mid-brief.
+ * `initialAgentBrief` alone would throw away whatever had been typed; keeping
+ * the old values wholesale is worse, because an answer to a field the new
+ * profile does not declare is one nothing paints, nothing can undo, and
+ * `briefValues` still submits — a hidden value the reader cannot see or
+ * correct, which is precisely the class of silent drop this ticket exists to
+ * close, reintroduced from the other direction.
+ *
+ * So: defaults from the new profile, then every prior answer whose key the new
+ * profile still declares laid back over the top. An answer deliberately cleared
+ * stays cleared — an empty string is an answer, not a missing one.
+ */
+export function reseedAgentBrief(
+  previous: Record<string, string>,
+  profile: AgentLaunchProfile,
+): Record<string, string> {
+  const declared = new Set(profile.fields.map((field) => field.key));
+  const preserved = Object.entries(previous).filter(([key]) => declared.has(key));
+  return { ...initialAgentBrief(profile), ...Object.fromEntries(preserved) };
+}
+
 /** Extracts a positive integer batch size from brief field values, or undefined if absent/invalid. */
 export function batchSizeFrom(values: Record<string, string>): number | undefined {
   const raw = values[BATCH_SIZE_FIELD_KEY];

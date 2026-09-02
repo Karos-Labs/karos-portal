@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { Button, Card } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { RunCustomAgentModal, type AgentSetupState, type RunnableAgentSummary } from "@/components/custom-agents";
+import {
+  RunCustomAgentModal,
+  type AgentSetupState,
+  type RunnableAgentSummary,
+} from "@/components/custom-agents";
+import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import type { ContextItem } from "@/lib/types";
 
 /**
@@ -23,6 +28,7 @@ import type { ContextItem } from "@/lib/types";
 export function AgentSetupHero({
   agent,
   clientId,
+  engineDispatch,
   contextItems,
   viewerIsClient,
   setup,
@@ -30,6 +36,8 @@ export function AgentSetupHero({
 }: {
   agent: RunnableAgentSummary;
   clientId: string;
+  /** Forwarded to the run dialog — see `EngineDispatchMap` (T-B21). */
+  engineDispatch: EngineDispatchMap;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
   setup: AgentSetupState;
@@ -64,6 +72,7 @@ export function AgentSetupHero({
         <RunCustomAgentModal
           agent={agent}
           clientId={clientId}
+          engineDispatch={engineDispatch}
           contextItems={contextItems}
           viewerIsClient={viewerIsClient}
           setup={setup}

@@ -117,6 +117,9 @@ function gateMarkup(entry: {
         enabled: true,
       }}
       clientId="c1"
+      // The setup gate is upstream of any engine routing, and these agents'
+      // clients are not cut over: the legacy dialog, as before (T-B21).
+      engineDispatch={{}}
       contextItems={[]}
       viewerIsClient
       setup={entry.setup}
