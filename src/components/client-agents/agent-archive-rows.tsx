@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
+import { ContextGroundingNotice } from "@/components/context-grounding-notice";
 import { Badge, Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
@@ -70,6 +71,12 @@ export function AgentArchiveRows({
             {/* B4: additive, and after the shared title rather than inside it. */}
             {runLabel && <span className="shrink-0 text-[11px] text-muted-2">{runLabel}</span>}
             {asset.templateName && <Badge tone="neutral">{asset.templateName}</Badge>}
+            {/* SCRUM-404: on the ROW, not only inside the modal. A list that
+                hides this until you click reads as though every row were
+                equally grounded, which is the thing the marker exists to stop.
+                The full note (reason + missing documents) is in the modal this
+                row opens. */}
+            {asset.contextGrounding && <ContextGroundingNotice grounding={asset.contextGrounding} variant="chip" />}
             <span className="shrink-0 text-[11px] text-muted-2">{relativeTime(at)}</span>
             {/* Orange-outline, not variant="accent": the accent is THE one
                 rationed solid-orange CTA per screen ("Create a new post" on

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
 import { Badge, TabButton } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { ContextGroundingNotice } from "@/components/context-grounding-notice";
 import { AudienceSimulation } from "@/components/audience-simulation";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
 import { parseLiDrafts } from "@/lib/li-drafts";
@@ -294,6 +295,14 @@ export function AssetDetailModal({
             {asset.type.replace(/_/g, " ")}
           </span>
         </div>
+
+        {/* SCRUM-404: the context-grounding note, ABOVE the content it
+            qualifies rather than footnoted below it. This modal is the only
+            deliverable viewer a client can reach, so it is the one place the
+            note has to land for the marker to be genuinely visible — the same
+            argument that put the draft-batch readers here. Absent on the normal
+            path: a fully-grounded deliverable renders nothing new. */}
+        {asset.contextGrounding && <ContextGroundingNotice grounding={asset.contextGrounding} />}
 
         {/* Metadata grid */}
         <div className="grid gap-3 rounded-md border border-border bg-surface-2 p-3 sm:grid-cols-2">

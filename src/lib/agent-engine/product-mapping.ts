@@ -102,9 +102,23 @@ export function resolveAgentEngineProductId(taskType: ManagedTaskType, brief: Re
  * generators' inputs, which agent-engine had neither a scheduler nor a write
  * path for; product ruled it gone rather than left dormant awaiting one.
  *
- * Everything absent from this map stays on agent-service, which is still the
- * executor for the overwhelming majority of production jobs. This is a
- * per-agent cutover, not a switch.
+ * Everything absent from this map stays on agent-service. This is a per-agent
+ * cutover, not a switch.
+ *
+ * ⚠️ **AND AS OF 2026-09-02, AGENT-SERVICE NO LONGER EXISTS.** This comment used
+ * to end "…which is still the executor for the overwhelming majority of
+ * production jobs", and that stopped being true the day the whole stack
+ * (`agent-service-api`, `agent-service-worker`, the `agent-runner` job,
+ * `agent-redis`, the VPC connector, NAT and egress proxy) was deleted from both
+ * `karoscmo` and `karoscmo-prep`. The portal's `AGENT_SERVICE_URL` in both
+ * environments still points at the deleted service.
+ *
+ * So a run that falls through this map does not go to a slower executor — it
+ * goes nowhere. That is not a reason to delete the fall-through branch
+ * (SCRUM-276 was refused on exactly this evidence: see the Batch 15 handoff),
+ * because deleting it removes the only route those runs have without giving
+ * them another. It IS a reason to finish the per-client cutover, which is the
+ * work this map is waiting on.
  */
 /**
  * SCRUM-213 (C5)'s build-time guard: every value here must be a key of
@@ -591,8 +605,17 @@ export function parseMediaAssets(raw: string | undefined): Array<Record<string, 
  * Per-agent routing alone is not enough to cut over safely, and production
  * shows why: all seven clients are granted the X agent, but only one has an
  * `xHandle` in the engine's workspace store. Routing on the agent key alone
- * would send six clients' X jobs to `blocked_intake` — work that succeeds on
- * agent-service today.
+ * would send six clients' X jobs to `blocked_intake`.
+ *
+ * That sentence used to end "— work that succeeds on agent-service today", and
+ * it does not any more: agent-service was deleted on 2026-09-02 (see
+ * `ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY`'s note above). The trade this allowlist
+ * was protecting has therefore inverted. It was "do not break six clients whose
+ * work succeeds elsewhere"; it is now "six clients have no working route
+ * either way, and opening the allowlist without filling in their engine-side
+ * context only changes the error they get." Verified live 2026-09-02: seven
+ * active clients in each of prep and prod, and this allowlist naming exactly
+ * one (`karoslabs`) in both.
  *
  * `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS` is a comma-separated list of
  * `agentsRepoSlug` values, or `*` for all. Unset means NOBODY, so deploying
