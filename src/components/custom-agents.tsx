@@ -1,5 +1,4 @@
 "use client";
-import { resolveAgentEngineProductIdForCustomAgent } from "@/lib/agent-engine/product-mapping";
 
 import { type ComponentProps, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
@@ -62,6 +61,7 @@ import {
   isLinkedInAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
+  reseedAgentBrief,
   withEngineRunFields,
   perClientAgentSlug,
   withLinkedInIdentityOptions,
@@ -76,10 +76,15 @@ import {
   groupAgentsByParent,
   isSupersededAgentKey,
 } from "@/lib/custom-agent-launch";
+import {
+  engineProductIdForPair,
+  type EngineDispatchMap,
+} from "@/lib/agent-engine/engine-dispatch-map";
 import type { ContextItem, CustomAgent, JobRunType, JobStatus } from "@/lib/types";
 import { cn, formatDate, relativeTime } from "@/lib/utils";
 
 /* ═══════════════════════ shared bits ═══════════════════════ */
+
 
 /**
  * The slice of a CustomAgent that may be serialized to client-user browsers.
@@ -807,6 +812,7 @@ function SubAgentRow({
 export function CustomAgentsHub({
   agents,
   clients,
+  engineDispatch,
   isAdmin,
   serviceConfigured,
   controlPlane,
@@ -827,6 +833,13 @@ export function CustomAgentsHub({
    * and let the server refuse - after the whole brief has been written (F38).
    */
   clients: Array<{ id: string; name: string; agentsRepoSlug?: string | null }>;
+  /**
+   * The dispatch answer for every (client, agent) pair this hub can pair up,
+   * resolved server-side — see `EngineDispatchMap`. The hub is the surface that
+   * pairs an ARBITRARY agent with an arbitrary client, so it needs the whole
+   * matrix rather than one row of it.
+   */
+  engineDispatch: EngineDispatchMap;
   isAdmin: boolean;
   serviceConfigured: boolean;
 }) {
@@ -1122,6 +1135,7 @@ export function CustomAgentsHub({
           clients={clients.filter((c) =>
             agentKeyMatchesClientSlug(runAgent.key, c.agentsRepoSlug),
           )}
+          engineDispatch={engineDispatch}
           contextItems={[]}
           viewerIsClient={false}
           onClose={() => setRunAgent(null)}
@@ -1182,6 +1196,7 @@ function refusalNamesSetup(refusal: string): boolean {
 export function StaffAgentControls({
   clientId,
   agent,
+  engineDispatch,
   schedule,
   setup,
   contextItems,
@@ -1192,6 +1207,8 @@ export function StaffAgentControls({
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
+  /** This client's dispatch answer for this agent, resolved server-side. */
+  engineDispatch: EngineDispatchMap;
   schedule?: ClientAgentScheduleRow;
   setup?: AgentSetupState;
   contextItems: ContextItem[];
@@ -1352,6 +1369,7 @@ export function StaffAgentControls({
         <RunCustomAgentModal
           agent={agent}
           clientId={clientId}
+          engineDispatch={engineDispatch}
           contextItems={contextItems}
           viewerIsClient={false}
           {...(setup ? { setup } : {})}
@@ -2160,6 +2178,7 @@ export function RunCustomAgentModal({
   agent,
   clientId,
   clients,
+  engineDispatch,
   contextItems,
   viewerIsClient,
   setup,
@@ -2172,6 +2191,16 @@ export function RunCustomAgentModal({
   clientId?: string;
   /** … or a picker (staff hub flow). */
   clients?: Array<{ id: string; name: string }>;
+  /**
+   * Which (client, agent) pairs actually dispatch to agent-engine, resolved
+   * server-side — see `EngineDispatchMap`. REQUIRED, and deliberately not
+   * optional-with-a-fallback: the fallback that used to stand here was the
+   * key-only resolver, which is the bug. A mount that cannot answer the
+   * question passes `{}` and gets the legacy dialog, and a mount that forgets
+   * the prop entirely fails `tsc` instead of quietly painting fields whose
+   * values the server would drop.
+   */
+  engineDispatch: EngineDispatchMap;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
   /**
@@ -2216,8 +2245,26 @@ export function RunCustomAgentModal({
     setup?.kind === "linkedin"
       ? withLinkedInIdentityOptions(launchProfileFor(agent), setup.data.seats)
       : launchProfileFor(agent);
-  const profile = withEngineRunFields(baseProfile, resolveAgentEngineProductIdForCustomAgent(agent.key));
+  // The SERVER's answer for this exact pair, never a second derivation of it
+  // here: the two flags this depends on are readable only in a `server-only`
+  // module, and the key-only resolver that used to stand in for it is blind to
+  // both (see `EngineDispatchMap`). Undefined — the normal state for a client
+  // not yet cut over — leaves the profile untouched, so the dialog offers no
+  // field the legacy path would drop.
+  const engineProductId = engineProductIdForPair(engineDispatch, selectedClientId, agent.key);
+  const profile = withEngineRunFields(baseProfile, engineProductId);
   const [fields, setFields] = useState<Record<string, string>>(() => initialAgentBrief(profile));
+  // WHICH CLIENT THE BRIEF WAS SEEDED FOR. `fields` is seeded once, but with a
+  // picker the profile is no longer fixed for the life of the dialog — the
+  // engine-only fields appear or vanish as the selection moves between a
+  // cut-over client and one still on the legacy path. Without this, switching
+  // away from a cut-over client left the answers to fields that are no longer
+  // painted sitting in `briefValues` for the submit to carry.
+  const [seededFor, setSeededFor] = useState(selectedClientId);
+  if (seededFor !== selectedClientId) {
+    setSeededFor(selectedClientId);
+    setFields((current) => reseedAgentBrief(current, profile));
+  }
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   // Has anyone put work into the brief that a stray click would throw away?
   const [briefTouched, setBriefTouched] = useState(false);

@@ -57,10 +57,38 @@ export interface AgentEngineSlideEdit {
   textAlign?: "start" | "center" | "end";
 }
 
+/**
+ * A reviewer's colour pick for this post — the same seven roles
+ * agent-engine's own `StyleEditSchema` (`packages/core/src/types/gate.ts`)
+ * accepts, mirrored here rather than imported (the portal and the engine are
+ * separate repos/deploys). `ground`/`fg`/`accent` are the three the Design
+ * block's inputs actually expose; the rest exist so a hand-authored
+ * `client/brand.json` override and a reviewer's pick are indistinguishable
+ * to the engine, exactly like every other layer of style resolution.
+ *
+ * IGSTYLE-6, §2.5. Unlike `caption`/`slides` (below), a style pick is
+ * meaningful on `revise` as much as `approve` — a redraft supersedes
+ * hand-edited PROSE, but must not discard a colour a person deliberately
+ * chose, since that choice IS the instruction for the redraft. See
+ * `resolveAgentEngineGateAction`'s own doc comment for where that split is
+ * actually enforced.
+ */
+export interface AgentEngineStyleEdit {
+  ground?: string;
+  surface?: string;
+  fg?: string;
+  fg2?: string;
+  line?: string;
+  accentInk?: string;
+  accent?: string;
+}
+
 /** Everything a reviewer hand-changed before approving — changes TO the post, shipped as written, distinct from `feedback` (words ABOUT it). */
 export interface AgentEngineReviewEdits {
   caption?: string;
   slides?: AgentEngineSlideEdit[];
+  /** See `AgentEngineStyleEdit`'s own doc comment — meaningful on `approve` AND `revise`, unlike `caption`/`slides`. */
+  style?: AgentEngineStyleEdit;
 }
 
 /**
@@ -80,6 +108,11 @@ export interface AgentEngineGateResolution {
   /** Required by the engine on `revise`; optional guidance on `approve`. */
   feedback?: string;
   templateFeedback?: AgentEngineTemplateFeedback[];
-  /** In-place edits, meaningful on `approve` only — a redraft supersedes hand edits. */
+  /**
+   * In-place edits. `caption`/`slides` are meaningful on `approve` only — a
+   * redraft supersedes hand edits. `style` (IGSTYLE-6) is the exception:
+   * meaningful on `approve` AND `revise` — see `AgentEngineStyleEdit`'s own
+   * doc comment.
+   */
   edits?: AgentEngineReviewEdits;
 }

@@ -50,7 +50,17 @@ describe("the roster page (clients/[id]/agents) mounts the engine health banner"
 describe("an agent's own detail page (clients/[id]/agents/[agentId]) mounts the engine health banner", () => {
   it("imports EngineHealthBanner and its gate", () => {
     expect(detailSource).toMatch(/import\s*\{\s*EngineHealthBanner\s*\}\s*from\s*"@\/components\/engine-health-banner"/);
-    expect(detailSource).toMatch(/import\s*\{\s*shouldShowEngineHealthBanner\s*\}\s*from\s*"@\/lib\/agent-engine\/health"/);
+    // The name and the module are still both pinned; what is no longer
+    // required is that it be the ONLY name in the braces. T-B21 gave this page
+    // a second thing to take from the same module —
+    // `resolveDispatchedAgentEngineProductId`, the gate it must resolve
+    // server-side for the run dialog — and one import statement for two names
+    // from one module is the same fact this test was always asserting, not a
+    // weaker one. (The roster page above still imports the gate alone, and its
+    // assertion is left exact.)
+    expect(detailSource).toMatch(
+      /import\s*\{[^}]*\bshouldShowEngineHealthBanner\b[^}]*\}\s*from\s*"@\/lib\/agent-engine\/health"/,
+    );
   });
 
   it("renders <EngineHealthBanner ...> gated by shouldShowEngineHealthBanner", () => {
