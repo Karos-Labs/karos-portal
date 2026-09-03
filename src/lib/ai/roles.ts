@@ -102,9 +102,13 @@ export const AI_ROLES = {
   "branding.fetch_site": {
     tier: "HAIKU",
     requires: ["web_fetch"],
-    // Re-pinned from :346 — SCRUM-394 (IGSTYLE-9) inserted the role-based
-    // palette resolver earlier in branding.ts, shifting every later line down.
-    sites: ["src/lib/branding.ts:507"],
+    // Re-pinned twice: from :346 by SCRUM-394 (IGSTYLE-9), which inserted the
+    // role-based palette resolver earlier in branding.ts, and again when
+    // `normalizeHex` moved out to `branding-hex.ts` and the verified-palette
+    // observer was wired in. Line pins are load-bearing here and drift with
+    // any edit above them — that is the cost of pinning, and the sweep test
+    // is what makes the cost visible instead of silent.
+    sites: ["src/lib/branding.ts:500"],
   },
 
   /* ── COUPLED · web_search only · 2 sites ─────────────────────────────────
@@ -120,7 +124,7 @@ export const AI_ROLES = {
     tier: "HAIKU",
     requires: ["web_search"],
     // Re-pinned from :386 — see branding.fetch_site's own comment above.
-    sites: ["src/lib/branding.ts:547"],
+    sites: ["src/lib/branding.ts:540"],
   },
 
   /* ── PLAIN · no vendor-specific surface · 27 sites ───────────────────────
@@ -205,7 +209,7 @@ export const AI_ROLES = {
     // SCRUM-394 (IGSTYLE-9) inserted the role-based palette resolver above
     // this call in branding.ts, shifting these two line numbers down from
     // 736/751 — re-pinned against the real file, not carried over stale.
-    sites: ["src/lib/branding.ts:897", "src/lib/branding.ts:912"],
+    sites: ["src/lib/branding.ts:917", "src/lib/branding.ts:932"],
   },
   "execution.sonnet": { tier: "SONNET", sites: ["src/lib/execution-engine.ts:36"] },
   "execution.haiku": { tier: "HAIKU", sites: ["src/lib/execution-engine.ts:37"] },
