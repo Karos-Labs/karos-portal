@@ -1,5 +1,11 @@
 import "server-only";
 
+import { normalizeHex } from "@/lib/branding-hex";
+import { observeSitePalette, describeObservedPalette, snapToObservedPalette, type ObservedColor } from "@/lib/branding-site-palette";
+
+// Re-exported so this module stays the one import site callers already know.
+export { normalizeHex };
+
 import { generateObject, generateText, stepCountIs } from "ai";
 import { z } from "zod";
 import {
@@ -12,19 +18,6 @@ import type { BrandColor, BrandingGuidelines, Client } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import { logger, readWebSearchCount } from "@/services/logger";
 import { aiFor, usageFor } from "@/lib/ai/provider";
-
-/* ─────────────────────────────────────────────────────────────────────────
-   Color helper
-   ──────────────────────────────────────────────────────────────────────── */
-
-/** Expand 3-digit hex to 6-digit, strip alpha from 8-digit. Returns null if invalid. */
-export function normalizeHex(raw: string): string | null {
-  const h = raw.trim().toLowerCase();
-  if (/^#[0-9a-f]{3}$/.test(h)) return "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
-  if (/^#[0-9a-f]{6}$/.test(h)) return h;
-  if (/^#[0-9a-f]{8}$/.test(h)) return h.slice(0, 7);
-  return null;
-}
 
 /* ─────────────────────────────────────────────────────────────────────────
    Palette helpers — new + legacy compat
@@ -689,6 +682,7 @@ function buildBrandingPrompt(
   description?: string,
   siteIntelligence?: string | null,
   logoContext?: LogoContext,
+  observedPalette: readonly ObservedColor[] = [],
 ): string {
   const safeName = name.slice(0, MAX_NAME_LEN);
   const safeDesc = description?.slice(0, MAX_DESC_LEN);
@@ -776,9 +770,22 @@ function buildBrandingPrompt(
     );
   }
 
+  // Last, so it is the closest instruction to the answer, and unconditional on
+  // the branches above: whichever sources were available, a hex that is not on
+  // the site is wrong. See `branding-site-palette.ts` for what this costs and
+  // what it caught.
+  const verified = describeObservedPalette(observedPalette);
+  if (verified) lines.push("", verified);
+
   lines.push(
     "",
     "## Palette rules (strictly enforced)",
+    ...(verified
+      ? [
+          "- EVERY hex in `dominantColors` must be copied exactly from Source C. No other value is acceptable.",
+          "- Choose which of those colours matter and what each one's role is — that judgment is yours. The hex digits are not.",
+        ]
+      : []),
     "- Order colors by visual dominance — Color 1 must be the most visually prominent.",
     "- No dark/light role constraints: Colors 3 and 4 are simply the 3rd/4th most dominant, regardless of lightness.",
     "- Never include a color just to fill a slot. A 2-color brand gets exactly 2 colors.",
@@ -856,8 +863,8 @@ export async function applyBrandingForClient(
 
   const logoUrl = client.logoUrl ?? client.brandingGuidelines?.logoUrl;
 
-  // ── Tiers 1+2 (site intelligence) and logo fetch run in parallel ─
-  const [siteIntelligence, logoContext] = await Promise.all([
+  // ── Tiers 1+2 (site intelligence), the verified palette, and the logo ─
+  const [siteIntelligence, observedPalette, logoContext] = await Promise.all([
     (async (): Promise<string | null> => {
       if (!domain) return null;
       const access = await checkSiteAccess(`https://${domain}`);
@@ -868,8 +875,20 @@ export async function applyBrandingForClient(
       }
       return intel;
     })(),
+    // Deterministic, and deliberately NOT part of `gatherSiteIntelligence`
+    // above: that is a model browsing the site and reporting what it saw, which
+    // is where `#6366f1` came from for a site whose CSS contains no such value.
+    // This reads the same site with a regex. Costs one page fetch plus up to
+    // four stylesheets, and gives the extraction below a list of hexes that
+    // provably exist.
+    domain ? observeSitePalette(domain) : Promise.resolve<ObservedColor[]>([]),
     logoUrl ? prepareLogoContext(logoUrl) : Promise.resolve<LogoContext>(null),
   ]);
+
+  if (observedPalette.length > 0) {
+    const named = observedPalette.filter((c) => c.cssVars.length > 0).length;
+    console.info(`[branding] ${domain} — verified palette: ${observedPalette.length} colours (${named} named by CSS custom properties)`);
+  }
 
   if (logoContext) {
     console.info(`[branding] Logo loaded — kind: ${logoContext.kind}`);
@@ -883,6 +902,7 @@ export async function applyBrandingForClient(
     client.description,
     siteIntelligence,
     logoContext,
+    observedPalette,
   );
 
   const paletteUsageMeta = {
@@ -929,11 +949,26 @@ export async function applyBrandingForClient(
   });
 
   // ── Normalize and assemble guidelines ───────────────────────────
-  const dominantColors: BrandColor[] = object.dominantColors.map((c, i) => ({
+  const extracted: BrandColor[] = object.dominantColors.map((c, i) => ({
     hex: normalizeHex(c.hex) ?? c.hex.toLowerCase(),
     dominanceRank: i + 1,
     role: c.role,
   }));
+
+  // The last word on the VALUES, never on the roles or the ranking. A hex the
+  // site does not contain cannot be the brand's, whatever the model believed —
+  // this is what stops another `#6366f1` reaching a client's brand guidelines.
+  // With no observations it is a no-op; see `snapToObservedPalette`.
+  const dominantColors = snapToObservedPalette(extracted, observedPalette);
+  const repairs = extracted
+    .map((before, i) => ({ before: before.hex, after: dominantColors[i]!.hex }))
+    .filter((r) => r.before !== r.after);
+  if (repairs.length > 0) {
+    console.warn(
+      `[branding] ${domain ?? client.name} — ${repairs.length} extracted colour(s) absent from the live site, snapped to the nearest observed value: ` +
+        repairs.map((r) => `${r.before} -> ${r.after}`).join(", "),
+    );
+  }
 
   const now = Date.now();
 
