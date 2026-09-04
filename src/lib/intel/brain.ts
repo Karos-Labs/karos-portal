@@ -185,6 +185,22 @@ You are condensing an internal analyst document into a client-facing version.
  * Master Intel Report generation prompt.
  * Variables: {COMPANY_NAME}, {WEBSITE_URL}, {INDUSTRY}, {DESCRIPTION}, {DATE},
  *            {BRAND_VOICE}, {BRANDING_CONTEXT}
+ *
+ * NOTHING EXECUTES THIS ANY MORE, and that is deliberate rather than residue.
+ * The Phase A cutover deleted `runIntelReportPipeline`'s in-process generation;
+ * `intel-report-agent` writes the report now, from its own engine prompt
+ * (`intel-report-craft`). The variables above are consequently no longer
+ * substituted by anything — `compilePrompt` and its layer helpers went with the
+ * generation.
+ *
+ * It stays because it is still the RUBRIC, and two tests read it as one:
+ * `deliverable-to-report.test.ts` pins the eight dimension labels and weights
+ * to the Dimension Scores table below (those strings are what every stored
+ * `ClientReport` uses), and `intel-rubric-engine-roster.test.ts` pins the
+ * tracked SEO/GEO engine roster to it. agent-engine's port was measured against
+ * this text too (RFC-05 §4, ported "verbatim" by its own account). Deleting it
+ * would not remove a code path — it would remove the specification the code
+ * path that replaced it is checked against.
  */
 export const DEFAULT_INTEL_PROMPT = `You are the Karos Intel AI — the elite intelligence engine of a world-class marketing agency, running on Claude Sonnet at maximum analytical depth. Apply your full reasoning, pattern recognition, and cross-referencing capabilities. Your output is a boardroom-grade competitive report consumed directly by agency leadership and senior strategists. Every word carries professional weight.
 

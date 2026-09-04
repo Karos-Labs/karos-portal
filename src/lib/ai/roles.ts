@@ -86,24 +86,29 @@ export const AI_ROLES = {
     sites: ["src/lib/intel/seo-geo-providers.ts:234"],
   },
 
-  /* ── COUPLED · needs web_fetch · 3 sites ─────────────────────────────────
-     None of these can run on a vendor without web fetch. Not "runs worse" —
-     each one's prompt instructs it to report only what it observed.
+  /* ── COUPLED · needs web_fetch · 1 site ──────────────────────────────────
+     This cannot run on a vendor without web fetch. Not "runs worse" — its
+     prompt instructs it to report only what it observed.
      SCRUM-274 (T-B19) removed "intel.research.agent" (5 sites) and
      "seo.site_audit" (1 site) — both lived exclusively in files this ticket
      deleted (`src/lib/intel/pipeline.ts`, `src/lib/intel/seo-geo.ts`); see
-     this file's header comment. */
-  "intel.report.pass": {
-    tier: "SONNET",
-    requires: ["web_search", "web_fetch"],
-    sites: ["src/lib/intel/report.ts:301", "src/lib/intel/report.ts:381"],
-  },
+     this file's header comment. The Phase A cutover then removed
+     "intel.report.pass" (2 sites) the same way: both lived in
+     `runIntelReportPipeline`'s in-process report generation, which is deleted
+     — the report now comes from `intel-report-agent`'s deliverable, so the
+     live-web tools those sites needed are agent-engine's problem and no longer
+     a vendor constraint on this repo. It was the last role requiring BOTH
+     web_search and web_fetch. */
   "branding.fetch_site": {
     tier: "HAIKU",
     requires: ["web_fetch"],
-    // Re-pinned from :346 — SCRUM-394 (IGSTYLE-9) inserted the role-based
-    // palette resolver earlier in branding.ts, shifting every later line down.
-    sites: ["src/lib/branding.ts:507"],
+    // Re-pinned twice: from :346 by SCRUM-394 (IGSTYLE-9), which inserted the
+    // role-based palette resolver earlier in branding.ts, and again when
+    // `normalizeHex` moved out to `branding-hex.ts` and the verified-palette
+    // observer was wired in. Line pins are load-bearing here and drift with
+    // any edit above them — that is the cost of pinning, and the sweep test
+    // is what makes the cost visible instead of silent.
+    sites: ["src/lib/branding.ts:500"],
   },
 
   /* ── COUPLED · web_search only · 2 sites ─────────────────────────────────
@@ -119,7 +124,7 @@ export const AI_ROLES = {
     tier: "HAIKU",
     requires: ["web_search"],
     // Re-pinned from :386 — see branding.fetch_site's own comment above.
-    sites: ["src/lib/branding.ts:547"],
+    sites: ["src/lib/branding.ts:540"],
   },
 
   /* ── PLAIN · no vendor-specific surface · 27 sites ───────────────────────
@@ -204,10 +209,11 @@ export const AI_ROLES = {
     // SCRUM-394 (IGSTYLE-9) inserted the role-based palette resolver above
     // this call in branding.ts, shifting these two line numbers down from
     // 736/751 — re-pinned against the real file, not carried over stale.
-    // Shifted again from 897/912 by the flow audit 2026-09 (R14), which added
-    // four reported fields to `BrandingGenResult` above these calls; same
-    // re-pinning rule, and provider-wiring.test.ts is what catches the drift.
-    sites: ["src/lib/branding.ts:911", "src/lib/branding.ts:926"],
+    // Re-pinned twice in 2026-09: the flow audit (R14) added reported fields
+    // to `BrandingGenResult` above these calls, and main's "stop inventing
+    // colours" change moved them again. Both merged; provider-wiring.test.ts
+    // is what catches the drift.
+    sites: ["src/lib/branding.ts:931", "src/lib/branding.ts:946"],
   },
   // Shifted 36/37 → 37/38 by the credits rework (2026-09), which added one
   // import above them. Re-pinned against the real file, per the rule above.
