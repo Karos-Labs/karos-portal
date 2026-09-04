@@ -680,13 +680,47 @@ async function awaitDeliverable(
   pollIntervalMs: number,
 ): Promise<unknown> {
   const deadline = deps.now() + timeoutMs;
+  let lastTransient: unknown;
   for (;;) {
-    const deliverable = await deps.getDeliverable(runId, kind);
+    let deliverable: unknown;
+    try {
+      deliverable = await deps.getDeliverable(runId, kind);
+      lastTransient = undefined;
+    } catch (e) {
+      // A POLL FAILURE IS NOT A RUN FAILURE.
+      //
+      // This loop runs for up to 70 minutes at 15-second intervals — around
+      // 280 requests to a Cloud Run service that scales to zero and is
+      // redeployed during the day. Any single one of them failing used to
+      // abort the whole pipeline, and on 2026-09-03 exactly that happened: a
+      // deploy of agent-engine restarted the service mid-wait, one poll came
+      // back `fetch failed`, and a run whose agents were both still working
+      // was recorded against the client as `aiProcessingError: "fetch
+      // failed"`. Over that many attempts a transient failure is not an edge
+      // case, it is the expected weather.
+      //
+      // The deadline is still the only thing that ends this loop, so a
+      // genuinely unreachable engine fails at the same moment it always did —
+      // it just carries the reason with it now, instead of the timeout
+      // message pretending the deliverable merely never arrived.
+      // A credential failure is NOT transient — retrying it for 70 minutes
+      // just delays a misconfiguration by 70 minutes. Matched by name rather
+      // than `instanceof`: this module takes every runtime dependency through
+      // injected `deps` precisely so the run stays drivable in a test with no
+      // Firestore and no engine client, and importing the error class to
+      // narrow one branch would give that up for nothing.
+      if (e instanceof Error && e.name === "AgentEngineCredentialError") throw e;
+      lastTransient = e;
+    }
     if (deliverable !== undefined && deliverable !== null) return deliverable;
     if (deps.now() >= deadline) {
+      const because =
+        lastTransient !== undefined
+          ? ` The last poll failed with: ${lastTransient instanceof Error ? lastTransient.message : String(lastTransient)}`
+          : "";
       throw new Error(
         `Agent-based onboarding timed out waiting for the "${kind}" deliverable of agent-engine run ${runId} ` +
-          `after ${Math.round(timeoutMs / 1000)}s. Refusing to write context documents without it.`,
+          `after ${Math.round(timeoutMs / 1000)}s. Refusing to write context documents without it.${because}`,
       );
     }
     await deps.sleep(pollIntervalMs);
