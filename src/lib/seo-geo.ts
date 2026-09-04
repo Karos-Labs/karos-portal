@@ -1536,25 +1536,43 @@ export interface ClientSuggestionsResult {
 }
 
 /**
- * Is this gap's fix the client's to make?
+ * The ids whose fix is the client's to make. AN EXPLICIT SET, and that is the
+ * whole of the round-6 ruling (2026-09).
  *
- * Read off the SAME derivation the plan used: `deliveryForBucket` marks the
- * off-site entity bucket "advisory", `computeVisibilityGaps` hardcodes the same
- * delivery + an "off-site" target for every competitor-visibility gap, and
- * `actionKindFor` turns exactly those into "guided_manual" — the one action kind
- * whose owner line (`ownerFor`) already said a person outside this product ships
- * it: "Advisory · we draft the kit, a person ships it".
+ * It used to be derived: `deliveryForBucket` marks the off-site entity bucket
+ * "advisory", `computeVisibilityGaps` hardcodes the same delivery on every
+ * competitor-visibility gap, and `actionKindFor` turned exactly those into
+ * "guided_manual". So ownership was read off WHERE A CHECK SITS IN A SCORING
+ * TABLE rather than off who can act on it — and that is how three OUTCOMES
+ * (share of voice GEO-27, named-mention rate GEO-35, never cited GEO-11) plus
+ * one coverage count (GEO-04) came to be printed as client homework. Albert's
+ * ruling: "only structural things the client is doing wrong AND our agents
+ * cannot fix (accounts, records, relationships they own)". A bucket cannot
+ * express "accounts and records"; a named set can.
  *
- * DELIBERATELY NOT "connect" (the `indexReach` bucket). Its owner line is "You
- * connect · we handle the rest", which sounds client-owned, but the bucket is
- * keyed on the REGISTRY position rather than on the work: BOTH-09 ("publish a
- * clean map of your site") sits in it, and that is a file on the client's site
- * that Karos writes. One contaminated id in a five-row list is exactly the kind
- * of "this is not true" the ruling was about, so the cut is the honest one:
- * off-site reputation, entity and outreach work only.
+ * The three that survive, and why each is genuinely theirs:
+ *  · GEO-25 — the public company record, created and confirmed in the
+ *    business's name.
+ *  · GEO-07 — the official-website field on that record; changing it needs the
+ *    account that owns the record.
+ *  · GEO-14 — listings on independent review platforms, opened in the
+ *    business's name (the Reputation agent drafts replies, it cannot open an
+ *    account and it cannot ask a customer).
+ *
+ * The four that left are the levers our agents exist to move, and they now
+ * appear on Reporting under "What we are doing to improve your SEO and GEO"
+ * (`lib/visibility-levers.ts`) instead of as a task for the reader. They keep
+ * their REC_COPY entries: the plan catalogue is the cross-repo contract
+ * (`docs/routable-recommendation-contract.md`) and is a different audience.
+ *
+ * Keyed on the id before the `:` so a per-engine instance (`GEO-27:chatgpt`)
+ * is judged as its check, the same split every other reader here uses.
  */
+const CLIENT_OWNED_IDS: ReadonlySet<string> = new Set(["GEO-25", "GEO-07", "GEO-14"]);
+
+/** Is this gap's fix the client's to make? The set above is the only way in. */
 function isClientOwnedGap(gap: VisibilityGap): boolean {
-  return actionKindFor(gap) === "guided_manual";
+  return CLIENT_OWNED_IDS.has(gap.id.split(":")[0]);
 }
 
 /**
@@ -1564,56 +1582,30 @@ function isClientOwnedGap(gap: VisibilityGap): boolean {
  * The catalog entry in REC_COPY was written for a row with an Approve button and
  * a Karos owner, so it describes the FIX; these describe the ASK, in one sentence,
  * and say why it has to come from the client. Every `why` here is either a
- * statement of ownership (only your team holds that account, those relationships)
- * or a fact this report itself measured. None of them assert how an engine will
+ * statement of ownership (only your team holds that account or that record) or a
+ * fact this report itself measured. None of them assert how an engine will
  * react, which is what most of the catalog's second sentences did.
  *
- * Ids not listed here fall back to REC_COPY's title plus the first sentence of its
- * description, so a new advisory check still renders rather than disappearing.
+ * NO FALLBACK ANY MORE (round 6, 2026-09). An id with no entry here is dropped,
+ * full stop: rule 6 below always claimed that, and the code then named the id
+ * with REC_COPY's plan copy first, so a future advisory check would have leaked
+ * in wearing the voice of a row Karos owns. The keys here are exactly
+ * `CLIENT_OWNED_IDS`, and a test pins that they stay in step.
  */
 const CLIENT_SUGGESTION_COPY: Record<string, { title: string; why: string }> = {
   "GEO-25": {
     title: "Claim your public company record",
-    why: "Only your team can create and verify a public entry for your business, and it is one of the off-site checks behind your AI readiness score.",
+    why: "It is the entry the engines look your company up in, and it has to be created and confirmed in your business's name.",
   },
   "GEO-07": {
-    title: "Point your public record at your own site",
-    why: "Correcting the official website on that entry needs the account that owns it, which sits with you and not with us.",
-  },
-  "GEO-04": {
-    title: "Get named on sites you don't own",
-    why: "Coverage, partnerships and mentions on other people's sites come out of your relationships, not out of anything we can change on your website.",
+    title: "Point your public record at your own website",
+    why: "The official website on that entry is missing or points elsewhere, and changing it needs the account that owns the entry, which is yours.",
   },
   "GEO-14": {
-    title: "Ask your customers to review you",
-    why: "Only you can ask real customers for a review, and the review platforms need accounts in your business name.",
-  },
-  "GEO-27": {
-    // SHARE OF VOICE, SAID AS SHARE OF VOICE (review wave, 2026-09). Both lines
-    // used to say the rival was "named more often than you", which is a mention
-    // count and not what GEO-27 measures: the gap fires on shareOfVoice, the
-    // rival's share of all the brand mentions in those answers. A brand named in
-    // fewer answers can still hold the larger share, so the old sentence was a
-    // claim this report had not made.
-    title: "Catch up with the competitor leading these answers",
-    why: "A competitor you track took a bigger share of the brand mentions than you did in the answers we measured, and closing that means being written about in the same places they are.",
-  },
-  "GEO-35": {
-    title: "Get your name in front of buyers researching your category",
-    why: "The engines answered category questions without naming you, and what changes that is coverage on sites we do not publish.",
-  },
-  "GEO-11": {
-    title: "Get quoted where the engines are already looking",
-    why: "Your site was not used as a source in the answers we measured, and the third-party write-ups that get quoted are yours to earn.",
+    title: "Open your listings on the review platforms",
+    why: "Reviews on independent sites are one of the off-site checks in your AI readiness score; the listings have to be opened in your business's name, and the asking has to come from you.",
   },
 };
-
-/** First sentence of a description, for the REC_COPY fallback. */
-function firstSentence(text: string): string {
-  const trimmed = (text ?? "").trim();
-  const end = trimmed.search(/[.!?](\s|$)/);
-  return end === -1 ? trimmed : trimmed.slice(0, end + 1);
-}
 
 /**
  * The client-facing "Things only you can do" list.
@@ -1637,9 +1629,12 @@ function firstSentence(text: string): string {
  *     engines produce five rows of one sentence; the survivor is the strongest
  *     measured instance, and its evidence names the engine it was measured on.
  *  5. CAPPED AT 5, ordered by `scoreLift`. "Reduce it" was half the ruling.
- *  6. AN ID WE CANNOT NAME IS DROPPED. `resolveRecCopy`'s fallback ("a technical
- *     finding your team is reviewing") is an honest thing to say about a row Karos
- *     owns and a useless thing to hand a client as a task.
+ *  6. AN ID WE CANNOT NAME IS DROPPED — and since round 6 that is true rather
+ *     than aspirational. `resolveRecCopy`'s fallback ("a technical finding your
+ *     team is reviewing") is an honest thing to say about a row Karos owns and a
+ *     useless thing to hand a client as a task; REC_COPY's own title and first
+ *     sentence are no better, because they were written for a row with an
+ *     Approve button behind it. Only `CLIENT_SUGGESTION_COPY` gets a row in.
  */
 export function buildClientSuggestions(
   gaps: VisibilityGap[],
@@ -1674,17 +1669,18 @@ export function buildClientSuggestions(
   for (const gap of ordered) {
     const recId = gap.id.split(":")[0];
     const known = CLIENT_SUGGESTION_COPY[recId];
-    const catalog = REC_COPY[recId];
-    // Rule 6: only copy we actually wrote for this id, never the neutral fallback.
-    if (!known && !catalog) continue;
-    const title = known?.title ?? catalog!.title;
-    const key = title.toLowerCase().trim();
+    // Rule 6: only copy we actually wrote FOR THIS SECTION. No REC_COPY
+    // fallback (round 6): the plan catalogue's voice belongs to a row with an
+    // Approve button and a Karos owner, so borrowing it here would hand a
+    // client a task described as work we are about to do.
+    if (!known) continue;
+    const key = known.title.toLowerCase().trim();
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({
       id: gap.id,
-      title,
-      why: known?.why ?? firstSentence(catalog!.description),
+      title: known.title,
+      why: known.why,
       evidence: evidenceNamingEngine(gap),
     });
     if (out.length >= limit) break;

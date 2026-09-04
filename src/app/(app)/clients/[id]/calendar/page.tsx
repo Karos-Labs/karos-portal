@@ -30,11 +30,13 @@ export default async function ClientCalendarPage({
     agent?: string;
     q?: string;
     hidden?: string;
+    /** One deliverable to open on load (round 6, decision 8). */
+    asset?: string;
   }>;
 }) {
   const user = await requireUser();
   const { id } = await params;
-  const { view, status, date, agent, q, hidden } = await searchParams;
+  const { view, status, date, agent, q, hidden, asset } = await searchParams;
   const query = new URLSearchParams({
     ...(view ? { view } : {}),
     ...(status ? { status } : {}),
@@ -42,6 +44,7 @@ export default async function ClientCalendarPage({
     ...(agent ? { agent } : {}),
     ...(q ? { q } : {}),
     ...(hidden ? { hidden } : {}),
+    ...(asset ? { asset } : {}),
   }).toString();
   const suffix = query ? `?${query}` : "";
 
@@ -70,6 +73,7 @@ export default async function ClientCalendarPage({
       {...(agent ? { agent } : {})}
       {...(q ? { q } : {})}
       {...(hidden ? { hidden } : {})}
+      {...(asset ? { asset } : {})}
     />
   );
 }

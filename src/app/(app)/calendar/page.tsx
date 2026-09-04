@@ -27,10 +27,12 @@ export default async function CalendarPage({
     agent?: string;
     q?: string;
     hidden?: string;
+    /** One deliverable to open on load (round 6, decision 8). */
+    asset?: string;
   }>;
 }) {
   const user = await requireUser();
-  const { view, status, date, agent, q, hidden } = await searchParams;
+  const { view, status, date, agent, q, hidden, asset } = await searchParams;
   return (
     <CalendarBody
       user={user}
@@ -40,6 +42,7 @@ export default async function CalendarPage({
       {...(agent ? { agent } : {})}
       {...(q ? { q } : {})}
       {...(hidden ? { hidden } : {})}
+      {...(asset ? { asset } : {})}
     />
   );
 }

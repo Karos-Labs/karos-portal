@@ -37,7 +37,7 @@ function GapCard({ gap }: { gap: GapView }) {
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-start justify-between gap-2 rounded-md px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+        className="focus-ring flex w-full items-start justify-between gap-2 rounded-md px-3 py-2 text-left"
       >
         <span className="min-w-0">
           <span className="flex flex-wrap items-center gap-1.5">
@@ -126,7 +126,7 @@ export function GapList({ gaps }: { gaps: GapView[] }) {
               aria-pressed={filter === f.id}
               onClick={() => setFilter(f.id)}
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
+                "focus-ring rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
                 filter === f.id
                   ? "bg-surface text-foreground shadow-[0_1px_4px_rgba(0,0,0,0.3)]"
                   : "text-muted hover:text-foreground",
@@ -156,7 +156,7 @@ export function GapList({ gaps }: { gaps: GapView[] }) {
             <button
               type="button"
               onClick={() => setShowAll(true)}
-              className="mt-2 inline-flex items-center gap-1 rounded-md text-xs text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+              className="focus-ring mt-2 inline-flex items-center gap-1 rounded-md text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
             >
               Show all {filtered.length} · {hidden} more
               <Icon name="ChevronDown" className="h-3.5 w-3.5" />

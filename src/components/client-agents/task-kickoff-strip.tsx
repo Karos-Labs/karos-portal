@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { updateTaskStatusAction, deleteTaskAction } from "@/lib/actions";
 import { platformLabel } from "@/lib/integrations/platforms";
@@ -33,8 +34,8 @@ export interface TaskKickoffView {
  * particular agent) whenever `?task=<id>` names a pending karos_managed/copilot
  * task of this client.
  *
- * PORTAL FEEDBACK ROUND 2, 2026-09. Home's "Let's do this" no longer starts a
- * run: it brings the client "to the page where they put in the input needed"
+ * PORTAL FEEDBACK ROUND 2, 2026-09. Home's recommended-task press no longer
+ * starts a run: it brings the client "to the page where they put in the input needed"
  * (product owner, verbatim). That landing needs to say WHY the client is here
  * and carry the start gesture, or the deep link drops them on a generic agent
  * page with no memory of what they clicked. Hence a strip rather than a modal:
@@ -88,8 +89,10 @@ export function TaskKickoffStrip({
 
   if (state === "started") {
     return (
-      <div className="flex items-center gap-2.5 rounded-[var(--radius)] border border-neon/25 bg-neon-soft px-4 py-3 text-sm text-foreground">
-        <Icon name="CircleCheck" className="h-4 w-4 shrink-0 text-neon" />
+      // Judgment scale, not orange (round 6 rule 2): a confirmation is a status,
+      // and the page's one rationed accent is the run control.
+      <div className="flex items-center gap-2.5 rounded-[var(--radius)] border border-success/30 bg-success/5 px-4 py-3 text-sm text-foreground">
+        <Icon name="CircleCheck" className="h-4 w-4 shrink-0 text-success" />
         {/* A period, not an em dash: client-copy-boundary.test.ts forbids one in
             copy a client's browser renders. */}
         <p className="font-medium">Started. It will appear on your calendar.</p>
@@ -98,7 +101,10 @@ export function TaskKickoffStrip({
   }
 
   return (
-    <section className="rounded-[var(--radius)] border border-neon/25 bg-neon-soft px-4 py-3.5">
+    // Info tone: this band explains why the reader landed here. Orange stays on
+    // the one control that moves them forward, which on this page is the run /
+    // setup / launch button below (round 6 rule 2).
+    <section className="rounded-[var(--radius)] border border-info/30 bg-info/5 px-4 py-3.5">
       <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
         Recommended task
       </p>
@@ -114,20 +120,20 @@ export function TaskKickoffStrip({
       <p className="mt-1.5 text-xs text-muted">Add any context below first, then start it.</p>
       {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={start}
-          disabled={isPending}
-          className="inline-flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_color-mix(in_srgb,var(--neon)_55%,transparent)] disabled:pointer-events-none disabled:opacity-50"
-        >
+        {/* PAPER, not orange (round 6, B2). The page's one accent is the run /
+            setup / launch control; this is the second-strongest gesture on the
+            screen, so it takes the primary ink. The Button primitive also
+            brings the shared focus ring and drops the lift-and-bloom hover
+            this hand-rolled control had. */}
+        <Button size="sm" variant="primary" onClick={start} disabled={isPending}>
           <Icon name="Play" className="h-3 w-3" />
           Start this task
-        </button>
+        </Button>
         <button
           type="button"
           onClick={skip}
           disabled={isPending}
-          className="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-40"
+          className="focus-ring rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-40"
         >
           Not for us
         </button>
@@ -135,7 +141,7 @@ export function TaskKickoffStrip({
           type="button"
           onClick={() => setState("gone")}
           disabled={isPending}
-          className="rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-2 transition-colors hover:text-foreground disabled:opacity-40"
+          className="focus-ring rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-2 transition-colors hover:text-foreground disabled:opacity-40"
         >
           Later
         </button>

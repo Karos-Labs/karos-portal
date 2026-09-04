@@ -16,10 +16,16 @@ import {
   clientSafeRunError,
   initialAgentBrief,
   launchProfileFor,
+  postCountFrom,
+  quoteMultiplierFrom,
+  quoteIsEstimate,
+  BATCH_SIZE_FIELD_KEY,
+  POST_COUNT_FIELD_KEY,
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
-import { CREDIT_DENIAL_PREFIX } from "@/lib/credits";
+import { CREDIT_DENIAL_PREFIX, creditsLabel, estimatedCreditsLabel } from "@/lib/credits";
 import { intakePageHref } from "@/lib/agent-intake-links";
+import { stripComments } from "./source-scan";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import * as data from "@/lib/data";
 import { buildAgentSetup } from "@/lib/client-agent-rows";
@@ -141,6 +147,127 @@ describe("custom agent launch profiles", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  /**
+   * ROUND 6, DECISION 5: THE DIALOG'S PRICE MUST MATCH THE DIALOG'S DEFAULTS.
+   *
+   * "Number of posts" defaulted to 3 and was never the multiplier of anything a
+   * client could read: the footer quoted `cost × batch_size`, `batch_size` is
+   * hidden on every profile that has one, so 1 post, 3 posts and 10 posts all
+   * quoted the same flat per-run price. The count is now what the quote
+   * multiplies by, and the default is 1 so the opening quote is the price of the
+   * run the dialog is actually set up to do.
+   */
+  describe("the visible post count is the quote's multiplier", () => {
+    const instagram = launchProfileFor({
+      key: "karos-instagram-tiktok-content-agent",
+      name: "Instagram + TikTok Content Agent",
+    });
+
+    it("opens on one post", () => {
+      // round 6: was "3". The count is the quote's multiplier now, and a default
+      // above 1 makes the first number a client reads a number they did not ask
+      // for.
+      const postCount = instagram.fields.find((field) => field.key === POST_COUNT_FIELD_KEY);
+      expect(postCount?.defaultValue).toBe("1");
+      expect(postCountFrom(initialAgentBrief(instagram))).toBe(1);
+      expect(quoteMultiplierFrom(initialAgentBrief(instagram))).toBe(1);
+    });
+
+    it("follows the count the reader can see", () => {
+      expect(quoteMultiplierFrom({ ...initialAgentBrief(instagram), post_count: "4" })).toBe(4);
+      // The defect itself: this used to be 1 for every count, because the count
+      // and the multiplier were different keys.
+      expect(quoteMultiplierFrom({ post_count: "10" })).toBe(10);
+    });
+
+    it("multiplies exactly once, and never by a count it cannot trust", () => {
+      // No profile declares both keys, but the helper must not double-count if
+      // one ever does - and batch_size wins, because that is also what the
+      // submit sends as the charge multiplier.
+      expect(quoteMultiplierFrom({ [BATCH_SIZE_FIELD_KEY]: "3", [POST_COUNT_FIELD_KEY]: "5" })).toBe(3);
+      for (const bad of ["0", "-2", "2.5", "three", ""]) {
+        expect(quoteMultiplierFrom({ [POST_COUNT_FIELD_KEY]: bad })).toBe(1);
+      }
+      expect(quoteMultiplierFrom({})).toBe(1);
+    });
+
+    it("leaves an agent with no visible count quoting one run", () => {
+      // The X and LinkedIn writers carry a HIDDEN batch_size. Hidden means inert
+      // for pricing (2026-08-05), and they have no post_count at all, so their
+      // quote stays the flat per-run price.
+      for (const key of ["karos-x-agent-v2", "karos-linkedin-writer-v2"]) {
+        const profile = launchProfileFor({ key, name: "Agent" });
+        const visible = Object.fromEntries(
+          Object.entries(initialAgentBrief(profile)).filter(
+            ([field]) => !profile.fields.find((f) => f.key === field)?.hidden,
+          ),
+        );
+        expect(quoteMultiplierFrom(visible)).toBe(1);
+      }
+    });
+
+    /**
+     * ROUND 6 REVIEW (D6): A COUNT-BASED QUOTE IS AN ESTIMATE BY NATURE.
+     *
+     * The multiplication above is honest and unchanged; the WORDING was not.
+     * `post_count` multiplies the quote and never reaches the submit's
+     * `chargeMultiplier`, so on a deploy with settlement off the footer printed
+     * an exact "75 credits" for three posts against a flat one-run hold. Two
+     * independent reasons to hedge, and only the absence of BOTH earns "N
+     * credits": settlement on for the deploy, or the count as the multiplier.
+     */
+    it("hedges a count-based quote whatever the deploy's settlement setting is", () => {
+      expect(quoteIsEstimate({ [POST_COUNT_FIELD_KEY]: "3" })).toBe(true);
+      // batch_size IS the charge multiplier, so that quote equals the hold.
+      expect(quoteIsEstimate({ [BATCH_SIZE_FIELD_KEY]: "3" })).toBe(false);
+      expect(
+        quoteIsEstimate({ [BATCH_SIZE_FIELD_KEY]: "3", [POST_COUNT_FIELD_KEY]: "5" }),
+        "batch_size won the multiplier but not the wording",
+      ).toBe(false);
+      // Nothing to hedge: no key, or a count the multiplier refused.
+      expect(quoteIsEstimate({})).toBe(false);
+      for (const bad of ["0", "-2", "2.5", "three", ""]) {
+        expect(quoteIsEstimate({ [POST_COUNT_FIELD_KEY]: bad })).toBe(false);
+      }
+    });
+
+    it("prints the two label forms the footer is allowed to print", () => {
+      // The same composition `briefQuoteLabel` performs, asserted on the strings
+      // a client actually reads. "About" is capitalized by the footer's own
+      // `sentenceStart`, so the helpers stay lower case here.
+      const perRun = 25;
+      const counted = { [POST_COUNT_FIELD_KEY]: "3" };
+      const batched = { [BATCH_SIZE_FIELD_KEY]: "3" };
+      const label = (values: Record<string, string>, settlementOn: boolean) => {
+        const amount = perRun * quoteMultiplierFrom(values);
+        return settlementOn || quoteIsEstimate(values)
+          ? estimatedCreditsLabel(amount)
+          : creditsLabel(amount);
+      };
+      // The defect: this used to read "75 credits".
+      expect(label(counted, false)).toBe("about 75 credits");
+      expect(label(counted, true)).toBe("about 75 credits");
+      // The exact form survives exactly where the quote is the charge.
+      expect(label(batched, false)).toBe("75 credits");
+      expect(label(batched, true)).toBe("about 75 credits");
+      expect(label({}, false)).toBe("25 credits");
+    });
+
+    it("is the label the run dialog's footer actually calls", () => {
+      const src = stripComments(
+        readFileSync(join(__dirname, "..", "..", "components", "custom-agents.tsx"), "utf8"),
+      );
+      // The footer must not go back to `runPriceLabel`, which knows only about
+      // settlement.
+      expect(src).toContain("[briefQuoteLabel(agent, visibleBriefValues)]");
+      const at = src.indexOf("function briefQuoteLabel");
+      expect(at, "the footer's label helper moved").toBeGreaterThan(-1);
+      const body = src.slice(at, at + 500);
+      expect(body).toContain("agentRunCost(agent) * quoteMultiplierFrom(values)");
+      expect(body).toMatch(/agent\.priceIsEstimate \|\| quoteIsEstimate\(values\)/);
+    });
   });
 
   it("serializes guided answers into the service prompt without losing labels", () => {

@@ -53,7 +53,7 @@ function InfoTip({ text }: { text: string }) {
       <button
         type="button"
         aria-label="What this means"
-        className="flex h-4 w-4 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+        className="focus-ring flex h-4 w-4 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground"
       >
         <Icon name="Info" className="h-3 w-3" />
       </button>
@@ -334,7 +334,12 @@ function EngineCard({ view }: { view: EngineView }) {
                     className="h-full rounded-sm"
                     style={{
                       width: `${b.pctOfMax}%`,
-                      background: b.isClient ? "var(--neon)" : "var(--info)",
+                      // Ink for you, slate for them (round 6, rule 7): your bar
+                      // was --neon, so a tab with three engine cards on it drew
+                      // three orange meter fills. The contrast that makes your
+                      // bar findable is the pair of hues plus the weight on the
+                      // name, and ink carries both.
+                      background: b.isClient ? "var(--foreground)" : "var(--info)",
                       opacity: b.isClient ? 1 : 0.55,
                     }}
                   />
@@ -414,12 +419,16 @@ export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
           <p className="mt-1 text-xs text-muted">{trust.description}</p>
         </div>
       )}
-      <MeasurementStamp view={measurement} />
       <div className="grid grid-cols-1 gap-4 @xl:grid-cols-2 @4xl:grid-cols-3">
         {scores.map((view) => (
           <ScoreTile key={view.key} view={view} />
         ))}
       </div>
+      {/* UNDER the tiles (round 6, think-reporting §3 · handoffs/E.md): it is
+          the caption of the numbers, not a preface to them. The legacy banner
+          above keeps its place, because it qualifies the numbers before they
+          are read. */}
+      <MeasurementStamp view={measurement} />
     </div>
   );
 }
@@ -652,7 +661,11 @@ export function SeoGeoPanel({
           {/* QA F20: an in-place refreshing state, so a stale snapshot never sits
               there looking current while a run is rewriting it. */}
           {strip.refreshing && (
-            <p className="inline-flex items-center gap-1.5 text-[11px] text-neon">
+            /* round 6 (ruling 2): `text-neon`. Orange never signals status —
+               "a run is rewriting these numbers" is a status, and the judgment
+               scale is the one that says it. The band two lines below already
+               reads `info` for the same class of fact. */
+            <p className="inline-flex items-center gap-1.5 text-[11px] text-info">
               <Icon name="Loader" className="h-3 w-3 animate-spin" />
               Refreshing this snapshot now. The numbers below are the previous run.
             </p>
@@ -686,8 +699,14 @@ export function SeoGeoPanel({
         </StaffOnlySection>
       )}
 
-      {/* 3 · Presence split: the branded-vs-category story + roster share */}
-      <Card>
+      {/* 3 · Presence split: the branded-vs-category story + roster share.
+
+          `id="presence"` and the `#share` anchor below are where Home's two SEO
+          cells land (round 6, home-standing.tsx): each cell opens the section
+          its own number is computed in, the same device `#visibility-scores`
+          already gave the KPI card's visibility cell. `scroll-mt-24` clears the
+          sticky chrome, as the other anchored sections do. */}
+      <Card id="presence" className="scroll-mt-24">
         <CardTitle className="mb-1">Do buyers find you?</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
           Whether AI engines name you when buyers ask by name versus when they ask open category
@@ -715,7 +734,7 @@ export function SeoGeoPanel({
                       srLabel={`${tile.heading}: ${tile.pctLabel}. See how this was measured.`}
                     />
                   </div>
-                  <Meter pct={tile.pct ?? 0} color="var(--neon)" className="mt-1.5" />
+                  <Meter pct={tile.pct ?? 0} color="var(--foreground)" className="mt-1.5" />
                 </>
               ) : (
                 <p className="mt-2 text-xs text-muted-2">{tile.emptyLine}</p>
@@ -725,7 +744,7 @@ export function SeoGeoPanel({
         </div>
         {presence.takeaway && <p className="mt-3 text-sm text-muted">{presence.takeaway}</p>}
         {presence.rosterShare && (
-          <div className="mt-4 border-t border-border pt-3">
+          <div id="share" className="mt-4 scroll-mt-24 border-t border-border pt-3">
             <div className="flex items-center gap-1.5">
               <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
                 Your share of the conversation
@@ -738,7 +757,7 @@ export function SeoGeoPanel({
               <span className="stat-number text-lg font-medium text-foreground">
                 {presence.rosterShare.value}
               </span>
-              <Meter pct={presence.rosterShare.pct} color="var(--neon)" className="flex-1" />
+              <Meter pct={presence.rosterShare.pct} color="var(--foreground)" className="flex-1" />
             </div>
             <p className="mt-1 text-[11px] text-muted-2">{presence.rosterShare.caption}</p>
           </div>

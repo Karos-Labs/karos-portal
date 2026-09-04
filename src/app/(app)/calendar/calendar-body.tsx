@@ -48,7 +48,7 @@ import { isAiProcessingLockActive } from "@/lib/constants";
 import { isBillableClientActor } from "@/lib/credits";
 import { computePlatformGaps, gapPlatformNames } from "@/lib/calendar-gaps";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
-import { PageHeader, EmptyState, Badge } from "@/components/ui";
+import { PageHeader, EmptyState, Badge, buttonClass } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
@@ -149,6 +149,7 @@ export async function CalendarBody({
   agent,
   q,
   hidden,
+  asset,
 }: {
   user: AppUser;
   viewClientId?: string;
@@ -164,6 +165,13 @@ export async function CalendarBody({
   q?: string;
   /** `?hidden=` — the legend chips this reader has dimmed (review wave, 2026-09). */
   hidden?: string;
+  /**
+   * `?asset=` — ONE deliverable to open on load (round 6, decision 8). Passed
+   * through untouched: what the archive may show is `isInClientArchive`'s
+   * answer, not this page's, and the archive refuses an id it does not hold
+   * rather than opening an empty modal.
+   */
+  asset?: string;
 }) {
   const isClient = user.role === "CLIENT_USER";
   // Unknown values are DROPPED, not defaulted loudly: a stale or typo'd link
@@ -894,9 +902,13 @@ export async function CalendarBody({
             title="No runs on the calendar yet"
             description="Schedules are set on the AI agents page. Once an agent has one, its runs and everything they produce show up here."
             action={
+              /* round 6 (rule 3): the accent recipe was restated here by hand,
+                 with `transition-all` and a lift. `buttonClass` is the one copy
+                 of the button voice, and this stays `accent` because on an empty
+                 calendar it IS the screen's single forward move. */
               <Link
                 href={`/clients/${scopedClientId}/agents`}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-neon px-4 text-sm font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5"
+                className={buttonClass({ variant: "accent" })}
               >
                 <Icon name="Bot" className="h-4 w-4" />
                 Set up an agent schedule
@@ -955,6 +967,7 @@ export async function CalendarBody({
         {...(initialArchiveAgent ? { initialArchiveAgent } : {})}
         {...(initialArchiveSearch ? { initialArchiveSearch } : {})}
         {...(initialHiddenStatuses.length > 0 ? { initialHiddenStatuses } : {})}
+        {...(asset ? { initialAssetId: asset } : {})}
       />
       {/* Persistent, always-visible — not tucked inside a day's own detail
           panel, which a client reported not being able to find (2026-08).

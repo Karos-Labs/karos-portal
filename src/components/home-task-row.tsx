@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/icon";
+import { buttonClass } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 /** The one row shell — shared by the live row and by the undo row that stands
@@ -10,6 +11,24 @@ import { cn } from "@/lib/utils";
  *  reader's cursor. */
 const ROW_BASE =
   "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
+
+/**
+ * THE ACCENT CONTROL, AND WHY IT IS AN ANCHOR (round 6, rule 2).
+ *
+ * `Button variant="accent"` in components/ui.tsx renders a `<button>`, and this
+ * control NAVIGATES — the ladder's one press opens the field, the document or
+ * the run panel that completes the step. So it is a Link wearing the accent
+ * recipe, the same device impl-brief §3.E asks for on Reporting ("`Button
+ * variant="outline"` as a Link"): a real anchor keeps middle-click, copy-link
+ * and the browser's own focus behaviour, which a click handler on a button
+ * throws away.
+ *
+ * The recipe itself is READ, not restated: `buttonClass` (ui.tsx, added for
+ * this handoff) is the same function `Button` calls, so a change to the accent
+ * voice reaches this anchor for free. `shrink-0` is the only thing this call
+ * site adds, because it sits in a flex row beside the row's own text.
+ */
+const ACCENT_LINK = buttonClass({ variant: "accent", size: "sm", className: "shrink-0" });
 
 /**
  * How long a skipped row stays undoable (flow audit 2026-09, R4).
@@ -60,7 +79,7 @@ export const UNDO_WINDOW_MS = 6000;
  *
  * It was one answer for both lists — cancel everything — and that was wrong for
  * one of them in a way a client meets immediately: X three rows in "Next
- * actions", then press "Let's do this" on a fourth, and the navigation unmounts
+ * actions", then press the primary control on a fourth, and the navigation unmounts
  * this hook mid-window and silently un-skips all three. The three rows are back
  * on Home when they return, having been told they were gone.
  *
@@ -73,7 +92,7 @@ export const UNDO_WINDOW_MS = 6000;
  *    disappear, and the cost of being wrong is one row reappearing.
  *  · `commitOnUnmount: true` — Next actions. The commit is
  *    `markActionNotRelevantAction`, a reversible per-client flag on a checklist
- *    row, and this list's own primary control ("Let's do this") NAVIGATES — so
+ *    row, and this list's own primary control NAVIGATES — so
  *    an unmount inside the window is the ordinary case here rather than an
  *    abandonment, and the honest reading of the X is "I meant it".
  *
@@ -207,7 +226,10 @@ export function HomeTaskUndoRow({
         ref={undoRef}
         type="button"
         onClick={onUndo}
-        className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:border-neon/50 hover:text-neon focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon"
+        // round 6: the outline voice, in ink. It tinted its border orange and
+        // turned its label orange on hover, which spends the one rationed
+        // colour on an undo.
+        className="focus-ring shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:border-foreground/30 hover:bg-foreground/[0.04]"
       >
         Undo
       </button>
@@ -230,7 +252,7 @@ export function HomeTaskUndoRow({
  *
  * PORTAL FEEDBACK ROUND 2, 2026-09. The product owner's ruling collapsed the
  * lists onto the same two gestures: "It shouldn't be just Approve or Skip: it
- * should be an X-out or a 'Let's do this' button". Two lists that sit inches
+ * should be an X-out or a button that starts it". Two lists that sit inches
  * apart on the same screen and offer the same pair of gestures must not render
  * them at two sizes, in two orders or with two hover behaviours — so the row is
  * built ONCE here and the widgets pass data into it, rather than each keeping
@@ -253,6 +275,7 @@ export function HomeTaskRow({
   trailing,
   dismiss,
   start,
+  href,
   busy = false,
 }: {
   /** Lucide icon name, rendered in the leading disc. Omit for a disc-less row. */
@@ -265,27 +288,37 @@ export function HomeTaskRow({
   error?: string;
   /** Done / snoozed rows: same chrome, dimmed, usually with no controls. */
   muted?: boolean;
-  /** A status word (e.g. "Snoozed") shown where the controls would be. */
+  /** A status word ("Not started", "After step 3") shown where a control would be. */
   trailing?: ReactNode;
   /** The X. `label` is the accessible name — the button is icon-only. */
   dismiss?: { label: string; onClick: () => void };
-  /** "Let's do this" — a Link, because it navigates to the task's inputs. */
-  start?: { href: string; label?: string };
+  /**
+   * The row's one accent control: a Link, because it navigates to the inputs
+   * that finish the step. `label` names the action and the missing thing
+   * ("Add a short description"), never one phrase for every row.
+   */
+  start?: { href: string; label: string };
+  /**
+   * THE WHOLE ROW IS THE LINK (round 6, rule 3 · §2.1).
+   *
+   * Passed instead of `start` on a row that has a destination but not the
+   * press: it renders as one `<Link>` over the whole row, hovers one fill step
+   * with the accent hairline (`row-lift`), and ends in ONE static
+   * `ChevronRight`. Four of the ladder's six rows were not clickable at all
+   * before this, while the module that built them claimed every row was a
+   * destination.
+   *
+   * MUTUALLY EXCLUSIVE WITH `start` AND `dismiss`, deliberately: an anchor may
+   * not contain interactive content, so a row-wide link with a button inside it
+   * would be the nested-control problem the old hover overlay was invented for.
+   * The current step keeps the button and stays a static container; every other
+   * incomplete step is the link.
+   */
+  href?: string;
   busy?: boolean;
 }) {
-  return (
-    <div
-      className={cn(
-        // NO HOVER TREATMENT (flow audit 2026-09, R8). The row itself opens
-        // nothing — its two buttons do — and the audit's rule is that a row
-        // which opens something is the whole row, carries `row-lift` and ends
-        // in one trailing ChevronRight, while a row that opens nothing carries
-        // neither. This row used to light its border on hover, which is the
-        // second of the two hover treatments F12 counted for one meaning.
-        ROW_BASE,
-        muted && "opacity-60",
-      )}
-    >
+  const body = (
+    <>
       {icon && (
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-3">
           <Icon name={icon} className="h-3.5 w-3.5 text-muted-2" />
@@ -297,8 +330,43 @@ export function HomeTaskRow({
         {description && <p className="mt-0.5 line-clamp-2 text-xs text-muted-2">{description}</p>}
         {error && <p className="mt-1 text-xs text-danger">{error}</p>}
       </div>
+    </>
+  );
+
+  if (href && !start && !dismiss) {
+    return (
+      <Link
+        href={href}
+        className={cn(ROW_BASE, "row-lift focus-ring", muted && "opacity-60")}
+      >
+        {body}
+        {trailing && (
+          <span className="shrink-0 whitespace-nowrap text-xs text-muted-2">{trailing}</span>
+        )}
+        {/* The product's one trailing glyph: static, `muted-2`, no slide and no
+            colour change on hover (rule 3). */}
+        <Icon name="ChevronRight" className="h-4 w-4 shrink-0 text-muted-2" />
+      </Link>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        // NO HOVER TREATMENT (flow audit 2026-09, R8). This branch is the row
+        // that opens nothing by itself — a done row, or the current step, whose
+        // own control is the affordance — and the rule is that a row which
+        // opens something is the whole row (the branch above), while a row that
+        // opens nothing carries no fill change, no hairline and no chevron.
+        ROW_BASE,
+        muted && "opacity-60",
+      )}
+    >
+      {body}
       <div className="flex shrink-0 items-center gap-1.5">
-        {trailing}
+        {trailing && (
+          <span className="whitespace-nowrap text-xs text-muted-2">{trailing}</span>
+        )}
         {dismiss && (
           <button
             type="button"
@@ -306,17 +374,14 @@ export function HomeTaskRow({
             title={dismiss.label}
             onClick={dismiss.onClick}
             disabled={busy}
-            className="rounded p-1.5 text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-40"
+            className="focus-ring rounded p-1.5 text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground disabled:opacity-40"
           >
             <Icon name="X" className="h-3.5 w-3.5" />
           </button>
         )}
         {start && (
-          <Link
-            href={start.href}
-            className="inline-flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_color-mix(in_srgb,var(--neon)_55%,transparent)]"
-          >
-            {start.label ?? "Let's do this"}
+          <Link href={start.href} className={ACCENT_LINK}>
+            {start.label}
           </Link>
         )}
       </div>

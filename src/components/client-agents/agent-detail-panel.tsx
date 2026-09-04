@@ -188,13 +188,15 @@ export function AgentDetailPanel({
                 {/* Two registers, one line (review wave, 2026-09). The line used
                     to be absent for staff, because the row carried no price for
                     them — so this card and LegacyAgentPanel, on the same page,
-                    disagreed about whether a run has a cost worth stating. The
-                    orange coin stays with the reader who is actually spending;
-                    the staff copy names whose credits move. */}
-                <Icon
-                  name="Coins"
-                  className={`h-3 w-3 ${viewerIsClient ? "text-neon" : "text-muted-2"}`}
-                />
+                    disagreed about whether a run has a cost worth stating. Only
+                    the copy differs now: the staff register names whose credits
+                    move.
+
+                    round 6 (ruling 2): the coin was `text-neon` for a client, a
+                    second orange inches from this card's one accent button, and
+                    an icon chip is ink or grey by rule. One class for both
+                    readers, so there is no per-viewer branch left to drift. */}
+                <Icon name="Coins" className="h-3 w-3 text-muted-2" />
                 {/* "About" only when the price is a hold that settles to real
                     usage (credits rework, 2026-09) — resolved on the server and
                     carried on the row, because a client component cannot read a
@@ -235,11 +237,13 @@ export function AgentDetailPanel({
             {/* The intake rung links the page that fixes it, the same way the
                 launch card does for its own intake block. */}
             {firstBlock?.code === "setup_missing" && agent.setupHref && (
+              // A quiet text link, and no arrow character after the label
+              // (round 6 rule 3).
               <a
                 href={agent.setupHref}
-                className="mt-1 inline-block text-xs text-neon hover:underline"
+                className="focus-ring mt-1 inline-block text-xs text-muted hover:text-foreground hover:underline"
               >
-                {agent.setupLabel ?? "Your agent details"} →
+                {agent.setupLabel ?? "Your agent details"}
               </a>
             )}
             {firstBlock?.code === "credits_short" && viewer && (

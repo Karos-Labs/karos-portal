@@ -77,6 +77,17 @@ const DOCUMENTS_AND_IMAGES =
 export const BATCH_SIZE_FIELD_KEY = "batch_size";
 
 /**
+ * A field key reserved to mean "how many posts this run should produce".
+ *
+ * NOT the charge multiplier - `BATCH_SIZE_FIELD_KEY` is, and only the server
+ * reads that. This one is the social content system's own visible count (1 to
+ * 10, mapped to agent-engine's `postCount` in agent-engine/product-mapping.ts),
+ * and it is named here so the run dialog can QUOTE it without any surface being
+ * tempted to send it as a multiplier. See `quoteMultiplierFrom`.
+ */
+export const POST_COUNT_FIELD_KEY = "post_count";
+
+/**
  * The LinkedIn v2 writer's brief-field key for which identity a run posts as.
  *
  * Duplicated from the server module's LI_IDENTITY_FIELD_KEY rather than imported,
@@ -275,8 +286,12 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           ],
         },
         {
+          // "What should this post be about?" (round 6): the dialog asks ONE
+          // question above the fold and this is it, so the label has to be the
+          // question a client would ask themselves rather than the operator's
+          // noun phrase ("Content goal or campaign").
           key: "request",
-          label: "Content goal or campaign",
+          label: "What should this post be about?",
           type: "textarea",
           required: true,
           placeholder: "Create content that introduces the new offer to first-time buyers.",
@@ -293,7 +308,19 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
             { value: "tiktok", label: "TikTok" },
           ],
         },
-        { key: "post_count", label: "Number of posts", type: "number", min: 1, max: 10, defaultValue: "3" },
+        {
+          // ONE POST PER PRESS (round 6, decision 5). It defaulted to 3 while
+          // the footer quoted the flat per-run price, so the dialog opened on a
+          // choice the price it showed did not describe. The count is now the
+          // quote's multiplier (quoteMultiplierFrom), and a default of 1 is the
+          // only default a per-post quote can be honest about.
+          key: POST_COUNT_FIELD_KEY,
+          label: "Number of posts",
+          type: "number",
+          min: 1,
+          max: 10,
+          defaultValue: "1",
+        },
         {
           key: "audience",
           label: "Audience or segment",
@@ -1704,6 +1731,65 @@ export function batchSizeFrom(values: Record<string, string>): number | undefine
   if (!raw) return undefined;
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/** The same read for the visible post count, or undefined if absent/invalid. */
+export function postCountFrom(values: Record<string, string>): number | undefined {
+  const raw = values[POST_COUNT_FIELD_KEY];
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * How many outputs the brief in front of the reader asks for, FOR QUOTING.
+ *
+ * Round 6, decision 5. The dialog used to quote `cost × batch_size`, and
+ * `batch_size` is hidden on every agent that has one - so a client raising
+ * "Number of posts" from 1 to 10 read the same "about 25 credits" throughout.
+ * The two keys cannot both be answered: no profile declares both, so this reads
+ * whichever one the brief has and multiplies by it exactly once. `batch_size`
+ * wins where a profile ever declares both, because that one is also what the
+ * submit sends as `chargeMultiplier` - a quote must never be lower than the
+ * hold.
+ *
+ * Pass VISIBLE field values only (the dialog does): a hidden `batch_size` is a
+ * UI removal and stays inert for pricing, which is the 2026-08-05 ruling this
+ * helper must not quietly reverse.
+ *
+ * WHAT IT DOES NOT CHANGE: what the server charges. `post_count` is not a
+ * multiplier and is not sent as one. Under settlement (`priceIsEstimate`) a run
+ * reconciles to what it actually used, and ten posts use about ten times what
+ * one post uses, so this is the honest number to quote; with settlement off the
+ * hold stays flat per run, so a client who raises the count is quoted the
+ * ceiling and charged less than that. Overstating a price is the only direction
+ * of error this line is allowed to make.
+ */
+export function quoteMultiplierFrom(values: Record<string, string>): number {
+  return batchSizeFrom(values) ?? postCountFrom(values) ?? 1;
+}
+
+/**
+ * IS THE QUOTE ABOVE AN ESTIMATE, WHATEVER THIS DEPLOY'S SETTLEMENT SETTING?
+ *
+ * Round 6 review, D6. `priceIsEstimate` answers a different question — "does
+ * this deploy reconcile a run to what it used" — and with it off the footer
+ * printed the exact form, "N credits", for a `post_count` quote. That number
+ * is NOT what the client is charged and cannot be: only `batch_size` reaches
+ * the submit's `chargeMultiplier`, so a flat-hold deploy quoting ten posts
+ * holds one run's price and prints ten. The multiplier being a count the
+ * charge never sees is exactly what makes the figure an estimate, so it says
+ * "about N credits" on its own terms.
+ *
+ * `batch_size` keeps the exact form: it IS the charge multiplier, so the quote
+ * equals the hold. Neither key present means a multiplier of 1 and nothing to
+ * hedge. Reads the same two keys, in the same precedence, as
+ * `quoteMultiplierFrom` — one function decides the number and this one decides
+ * how it is worded, from the same input, so they cannot disagree about which
+ * key won.
+ */
+export function quoteIsEstimate(values: Record<string, string>): boolean {
+  return batchSizeFrom(values) === undefined && postCountFrom(values) !== undefined;
 }
 
 /**

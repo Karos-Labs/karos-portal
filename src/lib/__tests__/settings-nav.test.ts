@@ -315,6 +315,27 @@ describe("Account Center's tab strip", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 
+  /* ── round 6 (2026-09): the Seats card leaves Profile ────────────────── */
+
+  it("carries no Seats card on Profile, and no read to feed one", () => {
+    // "Remove the Seats card from Profile (not useful)." It was a read-only
+    // list of names whose own copy pointed at two OTHER pages, and those pages
+    // are the editors: a seat is a per-agent input, edited on the X and
+    // LinkedIn intake pages, both reached from the agent detail page's "What it
+    // runs on" band. Nothing linked to the card — no `#seats` anchor exists
+    // anywhere in `src` — so this is a removal with no landing to re-point.
+    //
+    // Comment-stripped, because the page explains at length what it used to do.
+    const stripped = stripComments(pageCode);
+    expect(stripped).not.toMatch(/<CardTitle[^>]*>Seats/);
+    expect(stripped, "the seat roster read is still paid for").not.toContain("listClientSeats");
+    expect(stripped, "seatSetupLinks outlived the card it fed").not.toContain("seatSetupLinks");
+    // The OTHER seats object is untouched: the Settings tab's "Manage employee
+    // seats" is the LinkedIn OAuth `EmployeeSeat`, which this page still reads
+    // and sanitizes.
+    expect(stripped).toContain("sanitizeLinkedinSeats");
+  });
+
   it("resolves the retired documents deep link onto the block that holds them", () => {
     // Same reasoning as the archive redirect above: histories, bookmarks and
     // sent emails hold `?tab=documents`, and a deep link that lands on the
@@ -567,8 +588,14 @@ describe("the Brand Profile sheet asks for four things", () => {
     // The form object IS the action payload (`updateClientProfileAction(client.id,
     // form)`), so the state shape is the write contract. Brand Voice is a
     // DOCUMENT and the sheet must not keep a second copy of it.
-    expect(modal).toContain(
-      "useState({ contactEmail: client.contactEmail ?? \"\", website: client.website ?? \"\", description: client.description ?? \"\", })",
+    // round 6: `description` now falls back to the legacy `brief` field when a
+    // client has no description yet (the ladder's "Complete your profile" step
+    // lands on this field and has to show what is actually stored). The three
+    // KEYS are the contract this test is about, so they are asked for as keys
+    // rather than as one frozen initialiser string that any legitimate default
+    // rewrites.
+    expect(modal).toMatch(
+      /useState\(\{ contactEmail: client\.contactEmail \?\? "", website: client\.website \?\? "", description: [^}]*, \}\)/,
     );
     for (const gone of ["brandVoice", "industry", "domainsCsv"]) {
       expect(modal, `the sheet still writes ${gone}`).not.toContain(gone);

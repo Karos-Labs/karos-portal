@@ -35,10 +35,16 @@ import {
   isSubAgent,
 } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
 import { selectAgentSchedules, weeklyFireDays } from "@/lib/agent-schedule-selection";
 import { runRowLabel, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
-import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
+import {
+  dateKeyInZone,
+  evaluateLaunchGate,
+  isOptionsMode,
+  type RosterStatusTone,
+} from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
 import { canNoteSlot } from "@/lib/slot-notes";
 import { parseXDrafts } from "@/lib/x-drafts";
@@ -109,6 +115,117 @@ export function toSummary(
     ...(pricing?.runCostEstimate != null ? { runCostEstimate: pricing.runCostEstimate } : {}),
     ...(pricing?.priceIsEstimate ? { priceIsEstimate: true } : {}),
   };
+}
+
+/* ──────────────── the roster row's derived labels (round 6) ──────────────── */
+
+/**
+ * Which fix an "attention" row points a client at.
+ *
+ * The status WORD is unchanged by this (round 6 ruling 4 keeps the seven words,
+ * and one exported badge renders them): "Needs attention" and "Setup needs
+ * attention" are both a state, and this is the reason behind the state, which is
+ * what decides the verb the row offers. Resolved once, by
+ * `buildClientRosterEntries`, never re-derived by a component.
+ *
+ * IT MUST NAME WHAT PRODUCED THE TONE (round 6 review, D7). `"credits"` is a
+ * real answer and not an aspiration: the roster does not read the credit balance
+ * (#130), but it does not need to — the SCHEDULER stored the denial it refused
+ * with in `PlannedScheduledRun.lastError`, `clientSafeRefusal` passes credit
+ * denials through verbatim, and `isCreditDenialMessage` recognises them under
+ * all three of the house styles that line has been minted in. That refusal is
+ * also the rung that OUTRANKS everything else in `rosterStatus`, so it is asked
+ * first: an agent badged "Needs attention" over a credit denial was being
+ * offered "Set up" whenever its intake happened to be incomplete as well, which
+ * is the wrong lever on the one state the client can fix themselves.
+ */
+export type RosterAttentionReason = "intake" | "launch" | "credits";
+
+/**
+ * The one idle word that means "set up, just not asked yet".
+ *
+ * Spelled out rather than imported so the mapping below fails SAFE: any other
+ * idle word (today only "Not set up yet") falls through to "Request setup", and
+ * offering a setup request on an agent that is already running is a smaller
+ * error than offering a run on one the server would refuse (F131).
+ */
+const RUNS_ON_REQUEST_LABEL = "Runs on request";
+
+/**
+ * What ONE run of this agent makes, as the roster's verb.
+ *
+ * Off `agentArchetype` + `OUTPUT_NOUN`, which is where every other surface reads
+ * the noun from: a roster that says "Create post" above a Reddit agent
+ * contradicts the one rule that product is built around (a human always posts the
+ * reply from their own account), and a clip maker makes no posts at all.
+ */
+export function rosterRunVerb(identity: string): string {
+  const space = identity.indexOf(" ");
+  const key = space < 0 ? identity : identity.slice(0, space);
+  const name = space < 0 ? "" : identity.slice(space + 1);
+  const noun = OUTPUT_NOUN[agentArchetype({ key, name })];
+  return noun === "reply" ? "Draft reply" : `Create ${noun}`;
+}
+
+/**
+ * The verb a roster row offers, per status (round 6, think-agents §4).
+ *
+ * Null means the row has no verb, no chevron and no destination: a paused agent
+ * ("Coming Soon") has nowhere to go, which is the state the roster already
+ * rendered as a static box rather than a link.
+ *
+ * It is a LABEL on a whole-row link, never a nested button, so it can only ever
+ * promise the page it opens rather than fire anything from here.
+ */
+export function rosterRowVerb(input: {
+  status: { tone: RosterStatusTone; label: string };
+  /** `"<key> <name>"`, the same string the platform mark reads. */
+  identity: string;
+  attentionReason?: RosterAttentionReason | null;
+}): string | null {
+  const { tone, label } = input.status;
+  if (tone === "disabled") return null;
+  if (tone === "progress") return "Open";
+  if (tone === "attention") {
+    // "Open" when the reason is unknown: the page behind the row is where the
+    // reason and its fix both live, so it is the honest offer, and naming a fix
+    // we cannot see would send a client to the wrong lever.
+    switch (input.attentionReason) {
+      case "intake":
+        return "Set up";
+      case "launch":
+        return "Launch";
+      case "credits":
+        // The stored scheduler denial, still inside its freshness window. The
+        // agent's own page carries the balance and the top-up route.
+        return "Add credits";
+      default:
+        return "Open";
+    }
+  }
+  if (tone === "live" || label === RUNS_ON_REQUEST_LABEL) return rosterRunVerb(input.identity);
+  return "Request setup";
+}
+
+/**
+ * The next planned DAY, as the roster prints it: "Today", "Tomorrow", "Thu 5".
+ *
+ * A DAY and nothing else. What is planned for it, how many items sit on it and
+ * when they were generated are the calendar's business, and a roster that named
+ * a future post's title would publish the batch shape the archive filter exists
+ * to keep out of a client's view (A3/A4).
+ *
+ * Composed rather than handed to one `toLocaleDateString` call: the en-US
+ * `{ weekday, day }` pattern renders "5 Thu", which reads as a quantity.
+ */
+export function rosterNextLabel(at: number, now: number): string {
+  const day = new Date(at);
+  const startOfDay = (value: Date) =>
+    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const days = Math.round((startOfDay(day) - startOfDay(new Date(now))) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  return `${day.toLocaleDateString("en-US", { weekday: "short" })} ${day.getDate()}`;
 }
 
 /**

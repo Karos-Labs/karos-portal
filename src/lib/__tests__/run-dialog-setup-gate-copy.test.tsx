@@ -164,6 +164,9 @@ describe("the run dialog's setup gate, for an agent whose form was not prefetche
     const text = textOf(gateMarkup(ready));
 
     expect(text).not.toContain("Set up the X agent data first.");
-    expect(text).toContain("Start run");
+    // round 6: the brief's confirm was "Start run" and is now the same words as
+    // the trigger and the dialog title, noun-aware per agent (F1's three
+    // vocabularies). The X agent makes a post, so its dialog says "Create post".
+    expect(text).toContain("Create post");
   });
 });

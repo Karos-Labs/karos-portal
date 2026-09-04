@@ -25,8 +25,8 @@ import type { ClientSuggestion, ClientSuggestionsEmptyReason } from "@/lib/seo-g
  * Server component: `FlagButton` is the one client leaf.
  */
 /**
- * The three ways this list can be empty, said one at a time (review wave,
- * 2026-09).
+ * The two ways this list can be empty, said one at a time (review wave,
+ * 2026-09; rewritten round 6).
  *
  * It used to say "everything this snapshot found is work your Karos team owns"
  * in all three, including the case where client-owned findings existed and were
@@ -34,13 +34,19 @@ import type { ClientSuggestion, ClientSuggestionsEmptyReason } from "@/lib/seo-g
  * nobody has checked — the same untrue-by-default problem this section replaced
  * "What we're fixing" to get away from. `buildClientSuggestions` says which
  * case it is; each sentence claims only that.
+ *
+ * ROUND 6: the sentence is about THEM, not about us. "Everything this snapshot
+ * found is work your Karos team owns" is a sentence about Karos on the one
+ * section of the report that is about the reader, and it made an absence read
+ * like an apology. `karosOwned` and `none` are the same fact from the reader's
+ * side — nothing here is waiting on you — so they say it in the same words.
+ * `lowConfidence` is a different fact and keeps its own line.
  */
 const EMPTY_COPY: Record<ClientSuggestionsEmptyReason, string> = {
-  karosOwned:
-    "Nothing is waiting on you right now. Everything this snapshot found is work your Karos team owns.",
+  karosOwned: "Nothing on your side is holding you back right now.",
   lowConfidence:
-    "Nothing to ask you for yet. This snapshot turned up a couple of things that would be yours to fix, but we have not confirmed them well enough to hand over.",
-  none: "This snapshot did not turn up anything for you to act on.",
+    "Nothing to ask you for yet. We saw something on your side that we have not confirmed well enough to hand over.",
+  none: "Nothing on your side is holding you back right now.",
 };
 
 export function ClientSuggestions({
@@ -51,6 +57,9 @@ export function ClientSuggestions({
   /** Why the list is empty. Ignored when there is anything to show. */
   emptyReason?: ClientSuggestionsEmptyReason | null;
 }) {
+  // THE HEADING RENDERS WHETHER OR NOT THERE IS A ROW (round 6). The absence is
+  // the finding the reader is paying for, and a section that disappears when it
+  // finds nothing reads as a section that failed to load.
   return (
     <section className="space-y-3">
       <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
@@ -62,8 +71,8 @@ export function ClientSuggestions({
         ) : (
           <>
             <p className="mb-4 text-xs text-muted-2">
-              Short, confirmed things we measured that we cannot do from our side. Your team
-              owns the accounts and the relationships these need.
+              Confirmed on this snapshot, and yours rather than ours: each needs an account
+              or a record only your business can act on.
             </p>
             <ul>
               {suggestions.map((s) => (

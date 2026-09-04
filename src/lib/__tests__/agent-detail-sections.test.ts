@@ -549,8 +549,11 @@ describe("wiring", () => {
   const route = () => source("src/app/(app)/clients/[id]/agents/[agentId]/page.tsx");
 
   it("mounts all three bands on the agent's own page", () => {
+    // round 6: the tinted status STRIP is one plain status LINE now (decision
+    // 10), so the symbol changed; the assertion is still that all three of the
+    // page's own bands are mounted.
     const src = route();
-    for (const symbol of ["AgentStatusStrip", "AgentInputsSection", "AgentSetupSection"]) {
+    for (const symbol of ["AgentStatusLine", "AgentInputsSection", "AgentSetupSection"]) {
       expect(src, symbol).toContain(symbol);
     }
   });
@@ -587,7 +590,7 @@ describe("wiring", () => {
     const src = route();
     // Whitespace-tolerant: the element gained AF-5's staff note and wraps over
     // several lines now, and this test is about where the value COMES FROM.
-    expect(src).toMatch(/<AgentStatusStrip\s+status=\{status\}/);
+    expect(src).toMatch(/<AgentStatusLine\s+status=\{status\}/);
     expect(code(source("src/components/client-agents/agent-sections.tsx"))).not.toContain(
       "launchState",
     );
@@ -602,6 +605,26 @@ describe("wiring", () => {
     expect(src).toMatch(/isStaff && status\.staffNote \? \{ staffNote: status\.staffNote \}/);
     const strip = source("src/components/client-agents/agent-sections.tsx");
     expect(strip).toContain("{staffNote}");
+  });
+
+  it("says the state ONCE, in the status line and not in a header chip", () => {
+    // round 6, decision 10. The header stacked a mono uppercase status Badge
+    // beside the identity tile and the strip repeated the same word a hundred
+    // pixels lower, in a second typographic voice. The chip and the page's
+    // private copy of `RosterStatusBadge` are both gone; the line is the
+    // statement, and the tile now sits beside the h1 rather than out in the
+    // action slot.
+    const src = route();
+    expect(src, "the duplicated StatusBadge is back").not.toContain("StatusBadge");
+    expect(src).toMatch(/<AgentIdentity[\s\S]{0,200}<h1/);
+    // And the pace CARD (with its "No schedule yet" aside) is the line's
+    // trailing control now.
+    expect(src).toContain("<SchedulePaceControl");
+    expect(src).not.toContain("SchedulePaceCard");
+    expect(
+      code(source("src/components/client-agents/legacy-agent-panel.tsx")),
+      "the pace card's no-schedule aside is back",
+    ).not.toContain("No schedule yet");
   });
 
   it("links the existing intake pages instead of forking their forms", () => {

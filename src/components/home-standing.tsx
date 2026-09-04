@@ -5,16 +5,28 @@ import { Icon } from "@/components/icon";
 import type { PresenceView } from "@/components/seo-geo/presenter";
 
 /**
- * One percentage as a headline + meter. Deliberately not a `StatCard`: the bar
- * is the whole point here, because both numbers on this card are shares and a
- * share without its remainder is just a digit.
+ * One percentage as a headline + meter, AND A LINK TO THE SECTION THAT SHOWS
+ * THE WORKING (round 6).
  *
- * The bar draws the REMAINDER too (2026-09). It used to be an accent fill on a
- * `surface-3` track, and at 8% that is a two-pixel sliver against a tone the eye
- * reads as "empty card", so the one graphic on the card carried almost no signal
- * at the values that matter most. The track is now tinted with the same accent
- * at low alpha: the filled part is still the number, and the unfilled part is
- * visibly the same measurement rather than background.
+ * IT WAS A STATIC `div` IN THE KPI CELL'S EXACT SHELL — same border, same
+ * `surface-2`, same eyebrow, same big figure — sitting one card below three
+ * cells that light up and navigate. That is the finding the product owner
+ * reported in his own words: the KPI cells light up and these do not. Two
+ * readings: either these numbers are dead, or the affordance is decoration. So
+ * the whole cell is the target now (rule 1), it hovers one fill step with
+ * `row-lift`'s hairline, it ends in one static `ChevronRight`, and it carries
+ * `.focus-ring` like every other interactive surface.
+ *
+ * Deliberately not a `StatCard`: the bar is the whole point here, because both
+ * numbers on this card are shares and a share without its remainder is just a
+ * digit.
+ *
+ * THE BAR IS INK (round 6, rule 7). It was an accent fill on an accent-tinted
+ * track — two more orange things on the screen whose one orange is supposed to
+ * be the ladder's button. The fill is `foreground` and the track is the same
+ * decorative grey the KPI card's daily bars use, so the filled part is still
+ * the number and the unfilled part is still visibly the same measurement rather
+ * than background.
  */
 function ShareMeter({
   icon,
@@ -22,18 +34,25 @@ function ShareMeter({
   caption,
   pct,
   emptyLine,
+  href,
 }: {
   icon: string;
   label: string;
   caption: string;
   pct: number | null;
   emptyLine: string;
+  /** The Reporting section this number is computed in. Required: see rule 1. */
+  href: string;
 }) {
   return (
-    <div className="rounded-md border border-border bg-surface-2 p-3.5">
+    <Link
+      href={href}
+      className="row-lift focus-ring block rounded-md border border-border bg-surface-2 p-3.5"
+    >
       <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
-        <span className="min-w-0 truncate">{label}</span>
+        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
       </p>
       {pct == null ? (
         <p className="mt-2 text-sm text-muted-2">{emptyLine}</p>
@@ -43,16 +62,16 @@ function ShareMeter({
             {pct}
             <span className="ml-0.5 text-lg font-medium text-muted-2">%</span>
           </p>
-          <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-neon/15">
+          <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-muted-3/20">
             <div
-              className="h-full rounded-full bg-neon"
+              className="h-full rounded-full bg-foreground"
               style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
             />
           </div>
           <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{caption}</p>
         </>
       )}
-    </div>
+    </Link>
   );
 }
 
@@ -103,6 +122,15 @@ export function HomeStandingWidget({
    * `hasStanding` and never reaches the empty branch — see that function.
    */
   presence: PresenceView | null;
+  /**
+   * The Reporting tab, un-anchored. THE CELLS APPEND THEIR OWN FRAGMENTS
+   * (round 6): `#presence` and `#share`, the two ids seo-geo-panel.tsx writes on
+   * the sections these numbers are computed in, by the same device
+   * `#visibility-scores` already used for the KPI card's visibility cell. Built
+   * here rather than threaded as two more props, because the fragment is a fact
+   * about the panel this card is a projection of, not a routing decision the
+   * caller makes.
+   */
   href: string;
   /**
    * Where the empty-roster prompt below sends a client to actually track one
@@ -134,18 +162,20 @@ export function HomeStandingWidget({
   return (
     <Card>
       <div className="mb-1 flex items-center justify-between gap-3">
+        {/* Bare glyph, no orange chip — same demotion as the KPI card's. */}
         <CardTitle className="flex min-w-0 items-center gap-2">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
-            <Icon name="Radar" className="h-3.5 w-3.5 text-neon" />
-          </span>
+          <Icon name="Radar" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
           <span className="min-w-0 truncate">SEO &amp; AI visibility</span>
         </CardTitle>
+        {/* A QUIET TEXT LINK, AND IT NAMES WHERE IT GOES (round 6). It said
+            "See the breakdown" and carried a chevron: rows carry chevrons, text
+            links do not, and "the breakdown" names no destination. Quiet links
+            hover muted to foreground with an underline, and nothing else. */}
         <Link
           href={href}
-          className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
+          className="focus-ring shrink-0 whitespace-nowrap text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
         >
-          See the breakdown
-          <Icon name="ChevronRight" className="h-3.5 w-3.5" />
+          Open the full report
         </Link>
       </div>
       {/* No em dash: client-facing copy is held to the plain-language rules in
@@ -164,6 +194,7 @@ export function HomeStandingWidget({
             caption={presence.category.caption}
             pct={presence.category.pct}
             emptyLine={presence.category.emptyLine ?? "Not measured yet."}
+            href={`${href}#presence`}
           />
           {presence.rosterShare ? (
             <ShareMeter
@@ -172,6 +203,7 @@ export function HomeStandingWidget({
               caption={presence.rosterShare.caption}
               pct={presence.rosterShare.pct}
               emptyLine="Not measured yet."
+              href={`${href}#share`}
             />
           ) : (
             /* No competitors tracked ⇒ there is no denominator, so this is a
@@ -179,11 +211,15 @@ export function HomeStandingWidget({
                of an empty roster. */
             <Link
               href={competitorsHref}
-              className="row-lift flex flex-col justify-center rounded-md border border-dashed border-border p-3"
+              className="row-lift focus-ring flex flex-col justify-center rounded-md border border-dashed border-border p-3"
             >
               <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
                 <Icon name="ChartPie" className="h-3.5 w-3.5 shrink-0 text-muted-3" />
-                Your share of the conversation
+                <span className="min-w-0 flex-1">Your share of the conversation</span>
+                {/* It was a link with `row-lift` and no chevron and no focus
+                    style: the same shell as the two cells beside it, minus both
+                    halves of the affordance. */}
+                <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
               </p>
               <p className="mt-1.5 text-sm text-muted-2">
                 Track a competitor and we&apos;ll measure your share of the answers against
@@ -202,9 +238,14 @@ export function HomeStandingWidget({
         </div>
       )}
 
+      {/* THE TAKEAWAY IS A SENTENCE, NOT AN ALERT (round 6, rule 7). It sat in
+          an orange-washed, orange-bordered band with an orange sparkle, which
+          on a card of grey numbers read as the most important thing on Home —
+          and it does nothing: there is no control in it and nowhere to press.
+          A `surface-2` band with the glyph in `muted-2` says the same words. */}
       {presence?.takeaway && (
-        <p className="mt-3 flex items-start gap-2 rounded-md border border-neon/20 bg-neon/[0.06] px-3 py-2.5 text-sm leading-relaxed text-muted">
-          <Icon name="Sparkles" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon" />
+        <p className="mt-3 flex items-start gap-2 rounded-md bg-surface-2 px-3 py-2.5 text-sm leading-relaxed text-muted">
+          <Icon name="Sparkles" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-2" />
           {presence.takeaway}
         </p>
       )}

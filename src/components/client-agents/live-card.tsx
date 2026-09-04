@@ -172,7 +172,7 @@ export function TemplateRows({
                       type="button"
                       aria-expanded={open}
                       onClick={() => setOpenKey(open ? null : template.key)}
-                      className="flex min-w-0 items-center gap-1 text-left"
+                      className="focus-ring flex min-w-0 items-center gap-1 rounded-md text-left"
                     >
                       <Icon
                         name="ChevronRight"
@@ -182,7 +182,10 @@ export function TemplateRows({
                         )}
                         aria-hidden="true"
                       />
-                      <span className="truncate text-sm text-foreground hover:text-neon">
+                      {/* round 6 (rule 3): a quiet text link hovers muted to
+                          foreground with an underline. `hover:text-neon` is
+                          not a rule, and orange never marks a plain link. */}
+                      <span className="truncate text-sm text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline">
                         {template.name}
                       </span>
                     </button>
@@ -294,12 +297,13 @@ export function TemplateRows({
                   {/* Both registers, like the two other cards that quote a run
                       (review wave, 2026-09): the row carried no price for staff,
                       so this chip vanished for them while LegacyAgentPanel
-                      printed the staff line for the same fact. The rationed
-                      accent belongs to the reader who is spending. */}
-                  <Icon
-                    name="Coins"
-                    className={`h-3 w-3 ${viewerIsClient ? "text-neon" : "text-muted-2"}`}
-                  />
+                      printed the staff line for the same fact.
+
+                      round 6 (ruling 2): the client's copy of the coin was
+                      `text-neon`. Same fix as its two siblings on this page -
+                      an icon chip is ink or grey, and this page's one orange is
+                      the run control. */}
+                  <Icon name="Coins" className="h-3 w-3 text-muted-2" />
                   {agent.runCostIsEstimate ? "about " : ""}
                   {agent.runCost} credit{agent.runCost === 1 ? "" : "s"}
                   {!viewerIsClient && " · billed to the client"}
@@ -362,12 +366,15 @@ export function TemplateRows({
                     already live, and it is the same href the page's archive
                     section links, so the two cannot drift apart. */}
                 {detail.postCount > detail.posts.length && (
+                  /* round 6 (rule 3 + Ember): a quiet link, and no glyph after
+                     the label. It was orange with a trailing ArrowRight - the
+                     accent spent on an aside, and an arrow where the rule
+                     allows only a row's own ChevronRight. */
                   <a
                     href={`/clients/${agent.clientId}/assets`}
-                    className="inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                    className="focus-ring inline-flex rounded-md text-[11px] text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
                   >
                     See all in your Workspace
-                    <Icon name="ArrowRight" className="h-3 w-3" />
                   </a>
                 )}
                 <p className="text-[11px] text-muted-2">

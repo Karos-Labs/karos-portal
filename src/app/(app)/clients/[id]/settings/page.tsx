@@ -5,16 +5,18 @@ import { adminAuth } from "@/lib/firebase/admin";
 import {
   getClientCredits,
   getClientSeoGeo,
+  listAssets,
   listClientIntegrations,
   listCreditLedger,
   listCustomAgents,
   listJobs,
+  listPlannedScheduledRuns,
   listScheduledRuns,
   listTranscripts,
   getClientSettings,
   listClientContextDocs,
   listClientCompetitors,
-  listClientSeats,
+  listClientActionStates,
 } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
@@ -36,6 +38,27 @@ import { MONTHLY_ALLOWANCE, isCreditsPlanV2Enabled } from "@/lib/credits";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
 import { SeoGeoPanel, SeoGeoScores } from "@/components/seo-geo-panel";
 import { ClientSuggestions } from "@/components/seo-geo/client-suggestions";
+import { VisibilityWork, type VisibilityWorkRow } from "@/components/seo-geo/visibility-work";
+import { buildClientRosterEntries } from "@/lib/client-roster";
+import type { RosterStatus } from "@/lib/client-agents";
+import {
+  citationDomainFor,
+  sortVisibilityWorkRows,
+  visibilityLeverFamilies,
+  visibilityLeverFor,
+} from "@/lib/visibility-levers";
+
+/**
+ * The three action-list rows the document foot can write, keyed by id (round 6,
+ * decision 3). The inverse of `ACTION_ID_BY_DOC_TYPE` in
+ * `components/client-documents.tsx`, which is where the press writes them;
+ * this page only reads them back so the foot knows what has been answered.
+ */
+const CONFIRMABLE_DOC_TYPE_BY_ACTION_ID: Record<string, ContextDocType | undefined> = {
+  "21": "brand-voice",
+  "22": "target-audience",
+  "23": "competitor-analysis",
+};
 
 /** Rows the "Recent activity" feed shows. */
 const LEDGER_FEED_LIMIT = 15;
@@ -61,28 +84,33 @@ import { hasAiProcessingFailure, toClientPortalView } from "@/lib/client-visibil
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
 import { AccountProfilePanel, AccountSecurityPanel } from "@/components/settings-form";
 import { ACCOUNT_TABS } from "@/lib/account-settings-tabs";
-import {
-  agentKeyMatchesClientSlug,
-  isLinkedInAgentIdentity,
-  isReputationAgentIdentity,
-  isXAgentIdentity,
-} from "@/lib/custom-agent-launch";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import { relativeTime } from "@/lib/utils";
 import type {
+  Asset,
   ClientIntegration,
   Transcript,
   ClientCredits,
   CreditLedgerEntry,
   CustomAgent,
+  ClientAgent,
   ClientSettings,
   EmployeeSeat,
+  Job,
   JobRunType,
+  PlannedScheduledRun,
   ScheduledRun,
   ClientContextDoc,
   ClientCompetitor,
-  ClientSeat,
+  ClientActionState,
+  ContextDocType,
 } from "@/lib/types";
-import { buildClientSuggestions, categoryMetrics, type SeoGeoInsights } from "@/lib/seo-geo";
+import {
+  buildClientSuggestions,
+  categoryMetrics,
+  rootDomain,
+  type SeoGeoInsights,
+} from "@/lib/seo-geo";
 
 export default async function ClientSettingsPage({
   params,
@@ -153,6 +181,18 @@ export default async function ClientSettingsPage({
   const isAdmin = user.role === "KAROS_ADMIN";
   const isStaff = isAdmin || user.role === "KAROS_EMPLOYEE";
   const isClientViewer = user.role === "CLIENT_USER";
+  /**
+   * THE PAGE'S CLOCK, read once (round 6, alignment fix 5).
+   *
+   * `buildClientRosterEntries` took its own `Date.now()` where it was awaited,
+   * which is a second clock on a page that derives statuses, windows and
+   * relative times from data read in one wave — and two clocks on one render is
+   * how two surfaces end up disagreeing about the same instant. The credits
+   * card still takes its month from `credits.monthKey` rather than from here,
+   * deliberately: see its own note.
+   */
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const now = Date.now();
   const [
     integrations,
     transcripts,
@@ -163,8 +203,12 @@ export default async function ClientSettingsPage({
     scheduledRuns,
     contextDocs,
     competitors,
-    seats,
+    plannedRuns,
+    rosterAssets,
     seoGeo,
+    actionStates,
+    spendJobs,
+    spendUmbrellas,
   ] = (await Promise.all([
     listClientIntegrations(id),
     // FILTERED FOR A CLIENT READER, the same way /transcripts filters its own
@@ -196,8 +240,34 @@ export default async function ClientSettingsPage({
     // allowInternalFallback has something to fall back to.
     listClientContextDocs(id, isClientViewer ? "client" : undefined),
     listClientCompetitors(id),
-    listClientSeats(id),
+    // THE TWO READS THE REPORTING TAB'S AGENT SECTION ADDS (round 6, 2026-09).
+    // "What we are doing to improve your SEO and GEO" names each agent with the
+    // status word the roster gives it, and that derivation
+    // (`buildClientRosterEntries`) needs the client's planned runs and their
+    // assets. Both join this Promise.all rather than being awaited later, so
+    // the section costs latency once rather than serially (ruling 8). The
+    // page's other three inputs to it — the agent catalogue, the jobs and the
+    // umbrellas — are already read below for the credits breakdown, so nothing
+    // is read twice. The `listAssets` cost note on the agents page's own call
+    // applies here too: unbounded per client, fine at pilot volume.
+    listPlannedScheduledRuns({ clientId: id }),
+    listAssets({ clientId: id }),
     getClientSeoGeo(id),
+    // Which context documents this client has already told us look right
+    // (round 6, decision 3 · handoffs/C.md). The document foot writes action
+    // rows 21 / 22 / 23 on "Looks right", and without this read it would ask
+    // the same question again on the next visit. Home reads the same
+    // collection for the setup ladder; here it joins the page's existing
+    // Promise.all rather than being awaited later (ruling 8).
+    listClientActionStates(id),
+    // THE CREDITS BREAKDOWN'S TWO READS, MOVED UP A WAVE (round 6, alignment
+    // fix 5). They were a second serial `Promise.all` below, and the Reporting
+    // tab's roster derivation — which needs both of them — was a THIRD serial
+    // await after that. Nothing here depends on them, so they belong in the
+    // first wave and the derivation moves into the second, which turns three
+    // round trips into two (ruling 8).
+    listJobs({ clientId: id }),
+    listClientAgents({ clientId: id }),
   ])) as [
     ClientIntegration[],
     Transcript[],
@@ -208,8 +278,12 @@ export default async function ClientSettingsPage({
     ScheduledRun[],
     ClientContextDoc[],
     ClientCompetitor[],
-    ClientSeat[],
+    PlannedScheduledRun[],
+    Asset[],
     SeoGeoInsights | null,
+    ClientActionState[],
+    Job[],
+    ClientAgent[],
   ];
 
   /**
@@ -232,20 +306,51 @@ export default async function ClientSettingsPage({
    */
   const recentTranscripts = transcripts.slice(0, MEETING_ROWS);
 
-  // §6.2(a). The split between a scheduled fire and a run the client started
-  // lives on the JOB, not the ledger row, so the jobs are joined here on the
-  // server - the browser never needs them and a client payload carrying every
-  // job would be both wasteful and a staff-detail leak.
-  //
-  // The viewer's own Firebase Auth record rides along (review wave, 2026-09):
-  // the account tabs at the end of this page need it, it depends on nothing
-  // above, and awaited on its own further down it was a serial round trip
-  // between this page and Firebase for no reason. Client viewers only, which is
-  // the only reader those tabs are built for.
-  const [spendJobs, spendUmbrellas, viewerAuthRecord] = await Promise.all([
-    listJobs({ clientId: id }),
-    listClientAgents({ clientId: id }),
+  /**
+   * WAVE TWO: what needs wave one's answers, and nothing else (round 6,
+   * alignment fix 5).
+   *
+   *  · The viewer's own Firebase Auth record, for the account tabs at the end
+   *    of this page. It depends on nothing above; awaited on its own further
+   *    down it was a serial round trip to Firebase for no reason. Client
+   *    viewers only, which is the only reader those tabs are built for.
+   *  · The Reporting tab's roster entries — "What we are doing to improve your
+   *    SEO and GEO" names each agent with the word the roster gives it, and
+   *    `buildClientRosterEntries` needs five things wave one read plus this
+   *    page's clock. It was a THIRD serial await, at the point of use, and it
+   *    fires its own per-agent intake reads inside, so leaving it there put a
+   *    whole read wave behind two that had already finished (ruling 8).
+   *
+   * The jobs and the umbrellas the credits breakdown reads moved INTO wave one
+   * to make that possible: the derivation needs them, and nothing in wave one
+   * did.
+   */
+  const [viewerAuthRecord, rosterEntries] = await Promise.all([
     isClientViewer ? adminAuth().getUser(user.uid) : Promise.resolve(null),
+    buildClientRosterEntries({
+      clientId: id,
+      client,
+      // The CLIENT scope for both readers, deliberately: the status word is the
+      // client-facing one by ruling, so staff in client context read exactly
+      // what the client reads rather than a staff-flavoured answer that could
+      // disagree with it. (Since the review pass the scope cannot change the
+      // word at all — see `lib/client-roster.ts` — so this now only says which
+      // agents the section lists.)
+      viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
+      // NO ROW FACTS (round 6 review, E11). This section prints a mark, a name,
+      // a lever sentence and the status word. The newest deliverable and the
+      // next planned day are a full attribution pass per agent for two values
+      // nothing on this tab renders.
+      withRowFacts: false,
+      now,
+      data: {
+        allAgents: customAgents,
+        jobs: spendJobs,
+        plannedRuns,
+        umbrellas: spendUmbrellas,
+        assets: rosterAssets,
+      },
+    }),
   ]);
   const runTypeByJobId: Record<string, JobRunType | undefined> = {};
   for (const job of spendJobs) runTypeByJobId[job.id] = job.runType;
@@ -310,12 +415,26 @@ export default async function ClientSettingsPage({
   // - plus which secrets are set, for the form's placeholder.
   const sanitizedIntegrations = sanitizeIntegrations(integrations);
 
-  // NO ASSET READ ON THIS PAGE ANY MORE (portal feedback round 4, 2026-09).
-  // `listAssets` was fetched, then narrowed to a client-visible library slice
-  // (`assetViewer` + getClientLibraryAssets), for exactly one consumer: the
-  // Reporting tab's "Content by status" chart. Reporting no longer carries
-  // Performance at all, so the query, its viewer and its redaction all go with
-  // it rather than sitting here unread. Staff Home still builds its own.
+  // THE ASSET READ, AND WHY IT IS BACK (round 6, corrected in the review pass).
+  //
+  // Round 4 removed it: it had been narrowed to a client-visible library slice
+  // for exactly one consumer, the Reporting tab's "Content by status" chart, and
+  // Reporting stopped carrying Performance. Round 6 gave this page a NEW reason
+  // to need it — `rosterAssets` in the first wave above — and the comment that
+  // stood here still said there was no asset read, which is the opposite of the
+  // truth two hundred lines further up.
+  //
+  // WHAT IT IS FOR NOW: "What we are doing to improve your SEO and GEO" names
+  // each agent with the status word the roster gives it, and both halves of that
+  // word need assets — the delivered-work join (a lab import has no job at all)
+  // and the AF-5 upcoming-content rung. No projection or window is applied,
+  // because `listAssets` offers neither: it is an unbounded `where clientId ==`
+  // read with an in-process sort (data.ts), so the only cheaper shapes are a
+  // `.select(...)` projection of the fields attribution and the archive filter
+  // touch or a date-bounded query — both changes to the data layer, not to this
+  // page, and both stated in full on the agents page's own call. It is read once
+  // and joined into the page's existing first wave, and `withRowFacts: false`
+  // keeps it from being walked for facts this tab never prints.
 
   // Price + refusal for a targeted document correction, for the Documents
   // tab's Correct Info modal — moved here from the app layout (portal revamp):
@@ -340,28 +459,18 @@ export default async function ClientSettingsPage({
   // Portal revamp, Surface 06: Profile now ALSO carries the identity a client
   // edits themselves — logo, social handles, bio — which used to live in the
   // rail (ClientProfilePanel, non-compact here: this tab has no no-scroll
-  // contract to clamp it under) — plus a read-only seat roster ("seat
-  // information"). Editing a seat's own intake fields (LinkedIn URL, role, CV)
-  // stays on that agent's own setup page; this is the consolidated LIST, not a
-  // second editor for the same data.
-  /**
-   * The setup pages the Seats card points at (flow audit 2026-09, R17).
-   *
-   * The card told the client to "add or edit a seat's details from that agent's
-   * own setup page" and linked nothing — a named destination with no way to
-   * reach it. Seats are shared across agents and carry no agent of their own, so
-   * the honest link is not per row: it is the two families that HAVE seat forms,
-   * and only the ones this client actually has. A client with neither keeps the
-   * sentence without a promise it cannot keep.
-   */
-  const seatSetupLinks = [
-    clientAgents.some((a) => isLinkedInAgentIdentity(a.key))
-      ? { label: "LinkedIn agent details", href: `/clients/${client.id}/linkedin-agent` }
-      : null,
-    clientAgents.some((a) => isXAgentIdentity(a.key))
-      ? { label: "X agent details", href: `/clients/${client.id}/x-agent` }
-      : null,
-  ].filter((l): l is { label: string; href: string } => l !== null);
+  // contract to clamp it under).
+  //
+  // NO SEATS CARD ANY MORE (round 6, 2026-09). "Remove the Seats card from
+  // Profile (not useful)." It was a read-only list of names that pointed at two
+  // other pages, and those pages are the editors: a seat is a per-agent INPUT,
+  // edited on the X intake page and the LinkedIn intake page, both reached from
+  // the agent detail page's "What it runs on" band, which already lists one row
+  // per seat with an anchor into its own card. Nothing linked to the card — no
+  // `#seats` anchor exists anywhere in `src` — so nothing is orphaned by taking
+  // it out, and the `listClientSeats` read left with it. Not to be confused with
+  // the Settings tab's "Manage employee seats", which is the LinkedIn OAuth
+  // `EmployeeSeat`, a different object, untouched.
 
   // Documents (moved off the rail). Same component, same reading experience
   // (bullet-summary-first via DocPanel's "In short" panel) — just a full-width
@@ -372,6 +481,18 @@ export default async function ClientSettingsPage({
   // documents can live in Profile." They are what the company IS, written down,
   // so they close the Profile tab rather than competing with it for a slot in
   // the side navigation. `?tab=documents` redirects to the anchor below.
+  //
+  // WHICH DOCUMENTS THIS CLIENT HAS ALREADY CONFIRMED (round 6, decision 3).
+  // "Looks right" at the foot of an opened document writes the checklist row
+  // the setup ladder's step 2 reads; handed back here, the foot says
+  // "Confirmed" on a later visit instead of asking again. `not_relevant`
+  // counts as answered: the row is a question the client has settled either
+  // way, and re-asking a settled question is the thing this closes.
+  const confirmedDocTypes: ContextDocType[] = actionStates
+    .filter((row) => row.status === "done" || row.status === "not_relevant")
+    .map((row) => CONFIRMABLE_DOC_TYPE_BY_ACTION_ID[row.actionId])
+    .filter((docType): docType is ContextDocType => docType !== undefined);
+
   const documentsSection = (
     <ClientDocuments
       contextDocs={contextDocs}
@@ -382,7 +503,8 @@ export default async function ClientSettingsPage({
       intelSchedule={clientIntelSchedule(client)}
       allowInternalFallback={isStaff}
       correctionPricing={correctionPricing}
-      viewerIsClient={isClientViewer}
+      confirmedDocTypes={confirmedDocTypes}
+      canConfirm={isClientViewer}
     />
   );
 
@@ -402,39 +524,6 @@ export default async function ClientSettingsPage({
         hasWebsite={!!client.website}
         isStaff={isStaff}
       />
-      <Card>
-        <CardTitle className="mb-1">Seats</CardTitle>
-        <p className="mb-3 text-sm text-muted-2">
-          Everyone your agents draft as, shared across every agent that supports seats. Add or
-          edit a seat&apos;s details on that agent&apos;s own setup page.
-        </p>
-        {seatSetupLinks.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1.5">
-            {seatSetupLinks.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-neon"
-              >
-                {link.label}
-                <Icon name="ChevronRight" className="h-3.5 w-3.5" />
-              </Link>
-            ))}
-          </div>
-        )}
-        {seats.length === 0 ? (
-          <p className="text-sm text-muted-2">No seats set up yet.</p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {seats.map((s) => (
-              <li key={s.id} className="flex items-center justify-between gap-3 py-2.5">
-                <span className="text-sm font-medium text-foreground">{s.name}</span>
-                <span className="text-xs text-muted-2">Added {relativeTime(s.createdAt)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
       {/* Documents, last of the client's own Profile blocks (portal feedback
           round 4, 2026-09). The `id` is what makes `?tab=profile#documents`
           land here — the anchor the retired `?tab=documents` deep link
@@ -537,38 +626,14 @@ export default async function ClientSettingsPage({
     name: c.company,
     ...(c.url ? { url: c.url } : {}),
   }));
-  // The Reputation agent has no report view of its own yet (its client
-  // surface today is just the intake form + run-status rows) — this is a
-  // short pointer into its own page, not a second report to build.
-  const reputationAgent = clientAgents.find((a) => isReputationAgentIdentity(a.key)) ?? null;
-  const reputationGranted = reputationAgent
-    ? (client.customAgentIds ?? []).includes(reputationAgent.id)
-    : false;
-  const reputationHref = reputationAgent
-    ? `/clients/${client.id}/agents/${reputationAgent.id}`
-    : `/clients/${client.id}/agents`;
-  const reputationBubble = (
-    <Card>
-      <div className="mb-1 flex items-center gap-2">
-        <CardTitle>Reputation</CardTitle>
-        <Badge tone="neon">Beta</Badge>
-      </div>
-      <p className="mb-3 text-sm text-muted-2">
-        Review requests, responses and monitoring for what people say about you online.
-      </p>
-      <Link
-        href={reputationHref}
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-neon"
-      >
-        {reputationAgent
-          ? reputationGranted
-            ? "Open the Reputation agent"
-            : "Set up the Reputation agent"
-          : "Find it on your agents page"}
-        <Icon name="ChevronRight" className="h-3.5 w-3.5" />
-      </Link>
-    </Card>
-  );
+  // NO REPUTATION BUBBLE ANY MORE (round 6, 2026-09). A hand-built card for ONE
+  // agent sat after the report with a three-way label and a green "Beta" badge
+  // (`Badge tone="neon"`, which renders success green), and it was the only
+  // "what Karos does" pointer on a tab full of scores. The Reputation agent is
+  // now row 7 of <VisibilityWork/> below, beside every other agent that moves
+  // these numbers, with the roster's own status word instead of a label invented
+  // here. The beta marker does not carry over: it belongs on the agent's page if
+  // anywhere.
   const visibilityPanel = (
     <SeoGeoPanel
       insights={seoGeo}
@@ -619,18 +684,104 @@ export default async function ClientSettingsPage({
       })
     : { suggestions: [], emptyReason: "none" as const };
 
+  /**
+   * "What we are doing to improve your SEO and GEO" (round 6, 2026-09).
+   *
+   * ONE DERIVATION, TWO READERS. The rows come out of the same
+   * `buildClientRosterEntries` the Agents page renders, so the status word here
+   * is the word there and on the agent's own page — the fix for the bug Albert
+   * named ("we pre-created content ... yet the page says runs on request"), and
+   * the reason the roster build was extracted out of that page at all.
+   *
+   * The entries themselves are read in wave two above (round 6, alignment fix
+   * 5), on the page's own clock — this block only shapes them into rows. There
+   * is no staff-only branch on this tab beyond the panel's own
+   * refresh-schedule frame.
+   *
+   * An agent with no lever never renders (the SEO/GEO agent IS the measurement;
+   * a setup skill is a step of another agent), which is also what keeps an
+   * unreviewed test agent off a client's report.
+   */
+  const clientDomain = rootDomain(client.website);
+  const citationsByDomain = new Map(
+    (seoGeo?.citationLeaderboard ?? []).map((row) => [row.domain, row.citations] as const),
+  );
+  const rosterVisibilityRows = rosterEntries.flatMap((entry) => {
+    const lever = visibilityLeverFor({ key: entry.agentKey, name: entry.agentName });
+    if (!lever) return [];
+    const domain = citationDomainFor({ key: entry.agentKey, name: entry.agentName }, clientDomain);
+    return [
+      {
+        key: entry.customAgentId,
+        /**
+         * WHAT THE ROW OPENS, and the one thing `granted` decides here (round 6
+         * review, D4). A client opening an ungranted agent's page gets
+         * `notFound()`, so an ungranted row loses its DESTINATION and keeps
+         * Support — but it keeps its status WORD, because the agent has a real
+         * state on this account (it has delivered work; that is why it is on the
+         * roster at all) and "Not on your plan" over a shelf of delivered posts
+         * is the section contradicting the Workspace.
+         */
+        customAgentId: entry.granted ? entry.customAgentId : null,
+        identity: entry.identity,
+        icon: entry.icon ?? null,
+        displayName: entry.displayName,
+        agentName: entry.agentName,
+        lever,
+        quotedCount: domain ? citationsByDomain.get(domain) ?? null : null,
+        status: entry.status as RosterStatus | null,
+      },
+    ];
+  });
+  // THE CATALOGUE HALF (decision 7). A family this account has no row for at
+  // all reads "Not on your plan" with Support, in the family's own words. It is
+  // keyed on the FAMILY rather than on the agent key, so the one product that
+  // spans several matcher rules contributes ONE row rather than one per regex.
+  // Static table, no read.
+  //
+  // `status: null` IS the "Not on your plan" state (round 6 review, D4): the
+  // section's own word is the absence of a roster word, not a flag beside one,
+  // so there is no placeholder status for the badge to accidentally paint and no
+  // second field for the two to disagree through. `customAgentId: null` removes
+  // the Open control for the same reason it does above: there is nothing on this
+  // account to open.
+  const coveredFamilies = new Set(rosterVisibilityRows.map((row) => row.lever.family));
+  const catalogueVisibilityRows = visibilityLeverFamilies()
+    .filter((family) => !coveredFamilies.has(family.family))
+    .map((family) => ({
+      key: `family:${family.family}`,
+      customAgentId: null as string | null,
+      identity: family.markIdentity,
+      icon: null,
+      displayName: family.name,
+      agentName: family.name,
+      lever: family.lever,
+      quotedCount: null as number | null,
+      status: null as RosterStatus | null,
+    }));
+  // NO RE-SHAPING PASS (round 6 review, E4). `sortVisibilityWorkRows` returns
+  // its input rows, so the `.map` that used to sit here rebuilt each row field
+  // by field only to strip `lever` — the field the sort itself orders by, and
+  // the field that carries the sentence the row prints. The duplicated
+  // `sentence` beside it went with it: one source, read as `row.lever.sentence`.
+  const visibilityWorkRows: VisibilityWorkRow[] = sortVisibilityWorkRows([
+    ...rosterVisibilityRows,
+    ...catalogueVisibilityRows,
+  ]);
+  const visibilityWork = <VisibilityWork clientId={client.id} rows={visibilityWorkRows} />;
+
   // No snapshot yet: skip straight to the panel's own empty state rather than
   // showing a headed, empty "Visibility scores" section above it (F23's "no
   // disclosure that opens onto an empty box", applied to headers instead of a
   // disclosure).
   //
-  // ORDER (portal feedback round 4, 2026-09): where you stand, what only you
-  // can do about it, then the evidence. Scores first because they are the
-  // answer to the question the tab is named after; the suggestions next,
-  // because they are the only thing on the page that asks the reader to act;
-  // the panel last, because it is the working behind both and nobody reads it
-  // first. Reputation is a pointer to another page, so it sits after the
-  // report rather than interrupting it.
+  // ORDER (round 6, 2026-09): where you stand, what we are doing about it,
+  // where you stand against competitors, the working, and last what only you
+  // can do. Albert: "Move 'Things only you can do' to the very bottom of
+  // Reporting" and "ADD above it a section". So the scores answer the question
+  // the tab is named after, the agent rows say what is moving them, the panel
+  // is the comparison and the evidence behind both, and the one section that
+  // asks the READER for anything closes the tab rather than interrupting it.
   const reportingSection = seoGeo ? (
     <div className="space-y-8">
       {/* The anchor Home's Visibility KPI links to (portal feedback round 5,
@@ -643,17 +794,21 @@ export default async function ClientSettingsPage({
         </p>
         <SeoGeoScores insights={seoGeo} />
       </section>
+      {visibilityWork}
+      {visibilityPanel}
       <ClientSuggestions
         suggestions={clientSuggestions.suggestions}
         emptyReason={clientSuggestions.emptyReason}
       />
-      {visibilityPanel}
-      {reputationBubble}
     </div>
   ) : (
+    // No snapshot: the panel's empty state leads, and the agent rows still
+    // stand — what we are doing does not depend on having measured it yet. The
+    // suggestions stay unrendered without a snapshot, as before: every row in
+    // them is a finding OF one.
     <div className="space-y-8">
       {visibilityPanel}
-      {reputationBubble}
+      {visibilityWork}
     </div>
   );
 
@@ -837,14 +992,18 @@ export default async function ClientSettingsPage({
         </ul>
       )}
       {transcripts.length > 0 && (
+        /* A quiet TEXT link, not a row (round 6, rule 2): the rows above it
+           carry the chevron because each one is a whole-surface destination,
+           and a glyph after a text link is the "one row affordance, four
+           spellings" finding. `hover:text-neon` was a fourth hover recipe on
+           one card and is not a rule anywhere in globals.css. */
         <Link
           href={isStaff ? `/transcripts?client=${encodeURIComponent(client.id)}` : "/transcripts"}
-          className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-neon"
+          className="focus-ring mt-3 inline-block rounded-[4px] text-sm font-medium text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
         >
           {transcripts.length > MEETING_ROWS
             ? `See all ${transcripts.length} meetings`
             : "See all meetings"}
-          <Icon name="ChevronRight" className="h-3.5 w-3.5" />
         </Link>
       )}
     </Card>

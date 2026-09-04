@@ -29,7 +29,7 @@ export function Disclosure({
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-2 rounded-md text-left text-xs text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+        className="focus-ring flex w-full items-center justify-between gap-2 rounded-md text-left text-xs text-muted transition-colors hover:text-foreground"
       >
         <span>{summary}</span>
         <Icon

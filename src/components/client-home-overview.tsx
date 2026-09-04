@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, CardTitle, Badge } from "@/components/ui";
+import { Badge, buttonClass, Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
@@ -451,10 +451,10 @@ export function ClientHomeOverview({
       {/* Recent activity */}
       <Card className="flex min-w-0 flex-col">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          {/* Bare glyph, no orange chip (round 6, rule 7) — the third of the
+              three `bg-neon/10` chips Home carried. */}
           <CardTitle className="flex min-w-0 items-center gap-2">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
-              <Icon name="Activity" className="h-3.5 w-3.5 text-neon" />
-            </span>
+            <Icon name="Activity" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
             Recent activity
           </CardTitle>
         </div>
@@ -507,16 +507,32 @@ export function ClientHomeOverview({
                   </Badge>
                 </>
               );
-              const base =
-                "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2";
+              /* TWO SHAPES, NOT ONE (round 6, rules 1 and 3). A row that opens
+                 the archive and a row that opens nothing wore the identical
+                 shell — border, `surface-2`, same padding — and the only
+                 difference was that one of them answered the mouse. The opener
+                 is now a full link row with the trailing chevron and
+                 `.focus-ring`; the inert row drops the border and the fill and
+                 sits on a divider, which is what rule 3 says a static box does
+                 when it cannot be a link. */
               return (
                 <li key={a.id}>
                   {inArchive ? (
-                    <Link href={archive.href} className={`${base} row-lift`}>
+                    <Link
+                      href={archive.href}
+                      className="row-lift focus-ring flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
+                    >
                       {body}
+                      <Icon
+                        name="ChevronRight"
+                        className="h-3.5 w-3.5 shrink-0 text-muted-2"
+                        aria-hidden
+                      />
                     </Link>
                   ) : (
-                    <div className={base}>{body}</div>
+                    <div className="flex items-center gap-3 border-b border-border px-3 py-2 last:border-b-0">
+                      {body}
+                    </div>
                   )}
                 </li>
               );
@@ -540,9 +556,14 @@ export function ClientHomeOverview({
             R8: ChevronRight, the one trailing glyph a row that opens something
             may carry. */}
         <div className="mt-auto border-t border-border pt-3">
+          {/* FILL-ONLY HOVER (round 6). It carried `row-lift`, whose whole job
+              is to lift a HAIRLINE to the accent — on a row whose border is
+              `transparent`, so the hover tinted a border that is not drawn and
+              the accent was spent on nothing. This row has no border, so its
+              hover is the fill step alone. */}
           <Link
             href={archive.href}
-            className="row-lift flex items-center justify-between gap-2 rounded-md border border-transparent px-3 py-2 text-xs font-medium text-muted hover:text-foreground"
+            className="focus-ring flex items-center justify-between gap-2 rounded-md px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
             <span className="min-w-0">
               {archive.linkLabel}
@@ -599,6 +620,13 @@ export function failedPublishText(asset: Asset, viewerIsClient: boolean): string
  * rows below, which is the hierarchy doing the work rather than the copy.
  *
  * The button renders only with a destination — see `AttentionItem.href`.
+ *
+ * IT IS AN `outline` CONTROL, WITH NO GLYPH (round 6, rule 2). It was a
+ * hand-rolled box whose border turned orange on hover, with an `ArrowRight`
+ * after its label — a third trailing glyph for one meaning, on a screen whose
+ * one orange belongs to the ladder's button. Home has no accent control once the
+ * ladder is done, and that is deliberate: nothing on this card is the step that
+ * moves the client forward.
  */
 function PrimaryAttention({ item }: { item: AttentionItem }) {
   const tone = TONE_CLASS[item.tone];
@@ -615,35 +643,39 @@ function PrimaryAttention({ item }: { item: AttentionItem }) {
         </div>
       </div>
       {item.href && item.action && (
-        <Link
-          href={item.href}
-          className={`mt-3 inline-flex items-center gap-1.5 rounded-md border ${tone.border} bg-surface px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/50 hover:bg-surface-2`}
-        >
+        <Link href={item.href} className={`mt-3 ${OUTLINE_LINK_CLASS}`}>
           {item.action}
-          <Icon name="ArrowRight" className="h-3.5 w-3.5" />
         </Link>
       )}
     </div>
   );
 }
 
+/** `Button variant="outline"`'s own recipe on an anchor: `Button` is a real
+ *  <button> and an anchor cannot nest one. READ from `buttonClass` (round 6)
+ *  rather than restated. */
+const OUTLINE_LINK_CLASS = buttonClass({ variant: "outline", size: "sm" });
+
+/** The shell a row that OPENS something wears. A row that opens nothing does not
+ *  wear it — see `AttentionRow`. */
 const ATTENTION_ROW_BASE =
   "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
 
 /**
- * A secondary attention item: one compact line, count first.
+ * A secondary attention item: the count, and the one line saying why.
  *
- * The HINT IS GONE from these rows (2026-09) and that is the "less text-heavy"
- * half of the pass. Below the primary panel the hints were four more sentences
- * of explanation for items the reader has already been told are not the urgent
- * one; the count and its icon are what a scan needs, and the full sentence
- * arrives when the item reaches the top slot. It is kept as the row's `title`
- * so it is still one hover away and reaches a screen reader.
+ * THE HINT IS RENDERED (round 6). It was moved into the row's `title` in
+ * 2026-09 to make the card less text-heavy, which is hover-only for anyone
+ * reading with their eyes on a mouse and invisible on a phone — and on the two
+ * rows that have NO destination it was the only thing on the card explaining
+ * why nothing happens when you press them. A row that reports has to say what
+ * it is reporting.
  *
  * `href` is still optional and still honest: a row whose items have no screen
- * this reader can open is a plain status line, with no arrow and no hover
- * affordance, so it does not promise a destination it cannot deliver
- * (F97 × F149).
+ * this reader can open is a plain status line, with no chevron and no hover
+ * affordance, and per rule 3 it does not wear the link's shell either — it
+ * drops the border and the fill and sits on a divider, so it does not promise a
+ * destination it cannot deliver (F97 × F149).
  */
 function AttentionRow({ item }: { item: AttentionItem }) {
   const tone = TONE_CLASS[item.tone];
@@ -652,7 +684,10 @@ function AttentionRow({ item }: { item: AttentionItem }) {
       <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${tone.chip}`}>
         <Icon name={item.icon} className={`h-3.5 w-3.5 ${tone.text}`} />
       </div>
-      <p className="min-w-0 flex-1 text-sm text-foreground">{item.label}</p>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-foreground">{item.label}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-2">{item.hint}</p>
+      </div>
       {/* R8 (flow audit 2026-09): ChevronRight, not ArrowRight. The portal had
           three trailing glyphs for one meaning; a row that opens something now
           carries exactly one, and it is the chevron the action rows and the
@@ -664,11 +699,11 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   return (
     <li>
       {item.href ? (
-        <Link href={item.href} title={item.hint} className={`${ATTENTION_ROW_BASE} row-lift`}>
+        <Link href={item.href} className={`${ATTENTION_ROW_BASE} row-lift focus-ring`}>
           {body}
         </Link>
       ) : (
-        <div title={item.hint} className={ATTENTION_ROW_BASE}>
+        <div className="flex items-center gap-3 border-b border-border px-3 py-2.5 last:border-b-0">
           {body}
         </div>
       )}

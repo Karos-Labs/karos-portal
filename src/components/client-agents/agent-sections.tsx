@@ -12,7 +12,7 @@ import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
  *
  * Albert: everything about an agent - inputs, outputs, settings - laid out on
  * the agent's own page, in sections, with dates, and an unmistakable LIVE mark
- * when it is running. `AgentStatusStrip` is the mark; `AgentInputsSection` is
+ * when it is running. `AgentStatusLine` is the mark; `AgentInputsSection` is
  * what it runs on; `AgentSetupSection` is what the launch decided. The archive
  * below them is the outputs band and already existed.
  *
@@ -30,34 +30,62 @@ import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 /* ────────────────────────────── status ─────────────────────────────────── */
 
+/** One fact the status line states, already worded by the page. */
+export interface AgentStatusFact {
+  /**
+   * The whole phrase, as the line says it: "Next post Thu 5", "12 in your
+   * Workspace". Not a label/value pair — this is a sentence of facts separated
+   * by middots, and a `dt`/`dd` grid was the shape the tinted band had.
+   */
+  text: string;
+  /**
+   * Where this fact LIVES, when it has somewhere. "Next post Thu 5" opens the
+   * calendar on that day; "12 in your Workspace" opens the archive. A fact with
+   * no destination renders as plain text and wears no link affordance (round 6
+   * rule 3: a static box may not wear the shell of a link).
+   */
+  href?: string;
+}
+
 /**
- * The agent's state, unmistakably.
+ * The agent's state, said ONCE (round 6, decision 10).
  *
- * The header badge says the same word, and that is deliberate rather than
- * redundant: the badge is a chip in a row of chrome, and Albert's directive was
- * that "if something's running it must say LIVE" - a claim about how loudly the
- * page says it, not about whether the word appears somewhere. So the strip
- * leads the content column with a breathing halo, and the badge above it stays
- * the compact form for anyone scanning the header.
+ * It replaces the tinted status strip and the header chip that repeated its word
+ * a hundred pixels above it — the same answer twice, in two typographic voices,
+ * which is the duplication Albert asked about ("is the badge necessary at all").
+ * What is left is one 13px line under the page header: a tone dot, the word, the
+ * facts that answer "what happens next", and the page's own trailing control.
+ * No border, no tint, no mono uppercase.
+ *
+ * THE DOT CARRIES THE TONE, and only from the judgment scale (success, warning,
+ * info, muted). Orange never signals status. The WORD stays ink, so the line
+ * reads as a sentence rather than as a coloured alarm.
  *
  * The STATUS ITSELF is not re-derived here. It arrives already resolved by
  * `rosterStatus`, which is where the rule lives that a schedule refusal
  * outranks Live (F24/F129) - an agent whose every fire is turned away is not
- * live, whatever its umbrella says. A strip that decided its own tone from
+ * live, whatever its umbrella says. A line that decided its own tone from
  * `launchState === "live"` would be the second answer that quietly disagrees.
+ *
+ * IT ALWAYS RENDERS. The old strip stood down unless it had facts, an aside or a
+ * live word, so a not-set-up agent had no status statement in the column at all
+ * and the chip in the header was the only place the state was said. There is no
+ * chip now, so the line is the statement.
  */
-export function AgentStatusStrip({
+export function AgentStatusLine({
   status,
   running,
+  noun = "post",
   facts,
   staffNote,
-  aside,
+  trailing,
 }: {
   /** From `rosterStatus` - never re-derived. The real union, so a tone typo
       is a type error rather than a silent fall-through to idle grey. */
   status: RosterStatus;
   /**
-   * `RosterStatus.staffNote`, passed by the page ONLY for a staff viewer (AF-5).
+   * `RosterStatus.staffNote`, passed by the page ONLY for a staff viewer — AF-5's
+   * operational truth and, since round 6, a last run that failed.
    *
    * Taken as its own prop rather than read off `status` here, because this is a
    * server component and "who may read this" is a decision for the boundary that
@@ -72,43 +100,18 @@ export function AgentStatusStrip({
    * loud that production is not day-of (A3/A4).
    */
   running: boolean;
-  facts: AgentSetupFact[];
+  /** What one run of this agent makes, in the client's words (OUTPUT_NOUN). */
+  noun?: string;
+  facts: AgentStatusFact[];
   /**
-   * An optional secondary card the page seats INSIDE the strip, on the right —
-   * the legacy shape's pace summary (schedule state). It used to float
-   * mid-column as its own unstyled section; status and pace are both "how this
-   * agent runs" facts, so they share the banner. A ReactNode rather than data
-   * because what goes here is the page's call — this strip stays a dumb frame
-   * and re-derives nothing.
+   * The page's own control at the END of the line — "Adjust pace" when a
+   * schedule exists. A ReactNode because the control is interactive and this
+   * file is a server component; what goes here stays the page's call, and this
+   * line re-derives nothing.
    */
-  aside?: React.ReactNode;
+  trailing?: React.ReactNode;
 }) {
-  // AN EMPTY BAND IS WORSE THAN NO BAND. With no facts, no aside and no run in
-  // flight, this strip says one word — and the header badge said the same word
-  // a hundred pixels above it, so a not-set-up agent got a full-width bar
-  // repeating itself over blank space. A LIVE agent keeps its strip whatever
-  // else it has: the breathing mark is the point of it, and dropping that would
-  // be losing a signal rather than removing a duplicate.
-  //
-  // AND A STAFF NOTE ALONE MAY NOT CONJURE ONE (B6, parity pass 2026-09).
-  // `Boolean(staffNote)` used to sit in this disjunction, so an agent with no
-  // facts, no aside and no live badge grew a full-width status band for staff
-  // and none at all for the client — a whole element in the column that shifted
-  // everything under it, which is exactly the divergence the pass exists to
-  // remove. The note still renders whenever the band is here on its own merits;
-  // it just cannot be the reason the band exists.
-  const saysSomething = running || facts.length > 0 || Boolean(aside) || status.tone === "live";
-  if (!saysSomething) return null;
-
   const live = status.tone === "live";
-  const tone =
-    live
-      ? "border-success/30 bg-success/5"
-      : status.tone === "attention"
-        ? "border-warning/30 bg-warning/5"
-        : status.tone === "progress"
-          ? "border-info/30 bg-info/5"
-          : "border-border bg-surface-2/50";
   const dot =
     live
       ? "bg-success"
@@ -117,63 +120,53 @@ export function AgentStatusStrip({
         : status.tone === "progress"
           ? "bg-info"
           : "bg-muted-2";
-  const text =
-    live
-      ? "text-success"
-      : status.tone === "attention"
-        ? "text-warning"
-        : status.tone === "progress"
-          ? "text-info"
-          : "text-muted";
 
   return (
-    <section className={`animate-fade-up rounded-[var(--radius)] border px-4 py-3 ${tone}`}>
-      {/* Same wrap idiom as the "Create a new post" band (basis + grow, no
-          viewport breakpoints — CD-H7a): the status block keeps a readable
-          preferred width, the aside card sits to its right, and in a narrow
-          column the CARD wraps to its own full row instead of squeezing. */}
-      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
-        <div className="min-w-0 basis-72 grow-[3]">
-          <div className="flex flex-wrap items-center gap-2">
-            <span
-              className={`h-2 w-2 rounded-full ${dot} ${live ? "animate-pulse-ring" : ""}`}
-              aria-hidden="true"
-            />
-            <span className={`font-mono text-[11px] uppercase tracking-[0.12em] ${text}`}>
-              {/* "working now" rides `running` alone: a legacy agent can have a run
-                  in flight while its status reads "Not set up yet", and a spinner
-                  beside a label that denies any work is a contradiction. */}
-              {running ? `${status.label} · working now` : status.label}
+    <section className="space-y-1">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full ${dot} ${live ? "animate-pulse-ring" : ""}`}
+          aria-hidden="true"
+        />
+        <span className="text-foreground">{status.label}</span>
+        {facts.map((fact) => (
+          <span key={fact.text} className="flex items-center gap-2">
+            <span className="text-muted-2" aria-hidden="true">
+              ·
             </span>
-            {running && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-2">
-                <Icon name="LoaderCircle" className="h-3 w-3 animate-spin-slow" aria-hidden="true" />
-                This takes {RUN_ESTIMATE_SENTENCE}
-              </span>
+            {fact.href ? (
+              // A quiet text link: muted to foreground with an underline, no
+              // glyph after it, and the one shared focus ring (round 6 rule 3).
+              <Link href={fact.href} className="focus-ring text-muted hover:text-foreground hover:underline">
+                {fact.text}
+              </Link>
+            ) : (
+              <span className="text-muted">{fact.text}</span>
             )}
-          </div>
-          {facts.length > 0 && (
-            <dl className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-              {facts.map((fact) => (
-                <div key={fact.label} className="flex items-center gap-1.5">
-                  <dt className="text-[11px] text-muted-2">{fact.label}</dt>
-                  <dd className="text-[11px] text-foreground">
-                    {fact.at !== undefined ? relativeTime(fact.at) : fact.value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          )}
-        </div>
-        {aside && <div className="min-w-0 basis-56 grow">{aside}</div>}
+          </span>
+        ))}
+        {/* `ml-auto` on a wrapping row: the control sits at the end of the line
+            when there is room and drops to its own line when there is not. */}
+        {trailing && <span className="ml-auto">{trailing}</span>}
       </div>
-      {/* The operational truth beside the client-facing word (AF-5). It sits
-          UNDER the strip's own line rather than replacing it: the badge is what
-          the client sees and staff need to know that, so the fix is a second
-          sentence, not a different first one. */}
+      {/* N8's run tray, in its smallest form: the one thing a reader who just
+          pressed the button wants to know, on its own line so it cannot push
+          the facts around. */}
+      {running && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-2">
+          <Icon name="LoaderCircle" className="h-3 w-3 animate-spin-slow" aria-hidden="true" />
+          Working on your next {noun}. This takes {RUN_ESTIMATE_SENTENCE}. You can leave this page.
+        </p>
+      )}
+      {/* The operational truth beside the client-facing word. It sits UNDER the
+          line rather than replacing anything in it: the word is what the client
+          sees and staff need to know that, so the fix is a second sentence, not
+          a different first one. */}
       {staffNote && (
-        <p className="mt-2 border-t border-border/60 pt-2 text-[11px] text-muted-2">
-          <Icon name="Info" className="mr-1 inline h-3 w-3" aria-hidden="true" />
+        <p className="text-[11px] text-muted-2">
+          <Badge tone="neutral" className="mr-1.5 align-middle">
+            Internal
+          </Badge>
           {staffNote}
         </p>
       )}
@@ -249,8 +242,10 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
         {view.rows.map((row) =>
           row.answers ? (
             <li key={row.id}>
-              <details className="group rounded-[var(--radius)] border border-border bg-surface-2/50 transition-colors open:border-neon/30 hover:border-neon/40">
-                <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2">
+              {/* `row-lift` is the one hover for a bordered, interactive row
+                  (round 6 rule 3): one fill step plus the accent hairline. */}
+              <details className="group row-lift rounded-[var(--radius)] border border-border bg-surface-2/50">
+                <summary className="focus-ring flex cursor-pointer list-none items-center gap-3 px-3 py-2">
                   <Icon
                     name="ChevronRight"
                     className="h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform group-open:rotate-90"
@@ -278,11 +273,13 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
                       the page that owns the writes — a second editor for a
                       document that has one is how two screens start disagreeing
                       about the same record. */}
+                  {/* A quiet text link (round 6 rule 3): muted to foreground
+                      with an underline, and no glyph after the label. */}
                   <Link
                     href={intakeRowHref(view.href, row.id)}
-                    className="inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                    className="focus-ring inline-flex items-center text-[11px] text-muted hover:text-foreground hover:underline"
                   >
-                    Change this <Icon name="ArrowRight" className="h-3 w-3" />
+                    Change this
                   </Link>
                 </div>
               </details>
@@ -291,7 +288,7 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
             <li key={row.id}>
               <Link
                 href={intakeRowHref(view.href, row.id)}
-                className="flex items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2 transition-colors hover:border-neon/40"
+                className="focus-ring row-lift flex items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"
               >
                 <Icon name={row.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
                 <RowFace row={row} />
@@ -302,13 +299,13 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
       </ul>
       <Link
         href={view.href}
-        className="mt-2 inline-flex items-center gap-1 text-xs text-neon hover:underline"
+        className="focus-ring mt-2 inline-flex items-center text-xs text-muted hover:text-foreground hover:underline"
       >
         {/* The label is already a full noun phrase in the reader's words
             ("Your X details"), so it stands alone rather than being prefixed
             with a verb that would read as a second imperative next to the
-            band's own badge. */}
-        {view.label} <Icon name="ArrowRight" className="h-3 w-3" />
+            band's own badge — and no glyph follows it (round 6 rule 3). */}
+        {view.label}
       </Link>
       {missing > 0 && (
         <p className="mt-1.5 text-[11px] text-muted-2">

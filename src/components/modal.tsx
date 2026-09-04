@@ -158,7 +158,7 @@ export function Modal({
       >
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 z-10 text-muted-2 transition-colors hover:text-foreground"
+          className="focus-ring absolute right-4 top-4 z-10 rounded-md text-muted-2 transition-colors hover:text-foreground"
           aria-label="Close"
         >
           <Icon name="X" className="h-5 w-5" />

@@ -96,11 +96,13 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
       onClick={onClick}
       disabled={loading}
       className={cn(
-        "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200",
-        "hover:-translate-y-px hover:brightness-110 hover:shadow-md",
+        // round 6 (rule 2): these keep the platform's own brand fill, but the
+        // hover is a colour change and nothing else - no lift, no shadow step -
+        // and focus is the portal's one `.focus-ring`.
+        "focus-ring relative inline-flex w-full items-center justify-center gap-2.5 rounded-md px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150",
+        "hover:brightness-110",
         style?.ring && "ring-1 ring-inset ring-white/25",
         "disabled:pointer-events-none disabled:opacity-60",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
       )}
       style={{ background: style?.background ?? "var(--surface-3)" }}
     >
@@ -925,10 +927,11 @@ function GoogleUnifiedCard({
             onClick={onOAuthConnect}
             disabled={isConnecting}
             className={cn(
-              "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] shadow-sm transition-all duration-200",
-              "hover:-translate-y-px hover:shadow-md hover:brightness-[0.97]",
+              // round 6 (rule 2): see BrandedConnectButton's note - Google's
+              // own fill, a colour-only hover, and the one `.focus-ring`.
+              "focus-ring relative inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] shadow-sm transition-colors duration-150",
+              "hover:brightness-[0.97]",
               "disabled:pointer-events-none disabled:opacity-60",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
             )}
           >
             {isConnecting ? (

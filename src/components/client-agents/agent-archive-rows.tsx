@@ -86,7 +86,7 @@ export function AgentArchiveRows({
                 type="button"
                 onClick={() => setOpenAssetId(asset.id)}
                 aria-label={`Open ${rowTitle}`}
-                className="row-lift flex w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2 text-left"
+                className="row-lift focus-ring flex w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2 text-left"
               >
                 <span className="min-w-0 flex-1 basis-40 truncate text-xs text-foreground">
                   {rowTitle}

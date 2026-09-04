@@ -40,7 +40,11 @@ export function NavLink({ item, pathname }: { item: RailNavItem; pathname: strin
     <Link
       href={item.href}
       className={cn(
-        "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+        /* `.focus-ring` (round 6): the primary navigation had NO focus style at
+           all — the one place in the product where a keyboard reader cannot be
+           allowed to lose their place. Applied on the base string, outside the
+           active ternary, which is what client-shell-nav.test.ts reads. */
+        "focus-ring group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
         active ? "bg-surface-2 text-foreground" : "text-muted hover:bg-surface-2 hover:text-foreground",
       )}
     >

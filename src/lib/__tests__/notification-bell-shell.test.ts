@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { ReviewJobRow } from "@/components/notification-bell";
+import { stripComments } from "./source-scan";
 import type { AgentReviewNotification } from "@/lib/types";
 
 /**
@@ -97,6 +98,73 @@ describe("a review row never leads where the surrounding nav does not go", () =>
     expect(renderRow({ viewerIsClient: false, deepLink: false })).not.toContain(
       "hover:bg-surface-2",
     );
+  });
+});
+
+/**
+ * WHAT A CLIENT'S BELL HOLDS AFTER ROUND 6 (2026-09).
+ *
+ * Albert: every notification row must be clickable and lead somewhere. Three of
+ * the four row kinds a client could see were inert — two task summary lines and
+ * one review summary line, each naming work with nowhere to go — and the header
+ * carried a static "N unread" chip beside the badge that had just been pressed
+ * to open the panel. What is left is the meeting action items, which have a real
+ * destination, and an empty state that offers one.
+ *
+ * Read from source for the same reason the wiring assertions below are: the
+ * panel only mounts after a click on the trigger, which a node test run cannot
+ * perform, and `NotificationBell` renders it closed.
+ */
+describe("a client's bell holds only rows that lead somewhere", () => {
+  const b = flat(bell);
+  /**
+   * Comment-stripped, for the assertions that say a thing is GONE: this
+   * component explains at length what it used to do and why it stopped, and
+   * prose above a fix must not satisfy a test that the fix happened.
+   */
+  const code = flat(stripComments(bell));
+
+  it("has no inert summary row left to render", () => {
+    // Deleted rather than hidden: a component nobody mounts is how the last
+    // three of these came back.
+    expect(code).not.toContain("ReviewSummaryRow");
+    expect(code).not.toContain("TaskSummaryRow");
+  });
+
+  it("makes the meeting action item a whole-row link with one trailing chevron", () => {
+    // It used to hover as one surface while only the 11px meeting title inside
+    // it was clickable (rule 1: the whole surface is the target).
+    expect(b).toContain('href={`/transcripts/${n.transcriptId}`}');
+    expect(b).toMatch(/href=\{`\/transcripts\/\$\{n\.transcriptId\}`\}[\s\S]*?focus-ring/);
+    expect(b).toMatch(/name="ChevronRight"[^>]*text-muted-2/);
+    // Static: no slide and no colour change on the glyph.
+    expect(b).not.toContain("group-hover:translate-x");
+  });
+
+  it("names the completion control instead of an X that says delete", () => {
+    // The row's one control was an X whose tooltip read "Mark complete" — a
+    // destructive glyph for a completion, and a hint hidden in a `title`.
+    expect(code).toContain("> Done <");
+    expect(code).not.toContain('aria-label="Mark complete and dismiss"');
+    expect(b).toContain("dismissals.dismiss(n.transcriptId, n.itemIndex)");
+  });
+
+  it("prints one number, the badge's", () => {
+    // The "N unread" chip was a second number for the same set, beside the
+    // control the reader had just pressed. Think-home §3.2 replaces it with
+    // "Mark all as read", which needs a persisted seen-marker; no such field
+    // exists, so the chip is gone rather than replaced by a control that could
+    // not honour itself.
+    expect(code).not.toContain("{badgeLabel} unread");
+    expect(code).not.toContain("Mark all as read");
+  });
+
+  it("offers somewhere to go when there is nothing to show", () => {
+    expect(code).toContain("Nothing needs you right now.");
+    expect(code).not.toContain("All caught up!");
+    // Client only: /calendar is the client route, and a staff member's calendar
+    // is per client. Staff keep their own footer links, asserted below.
+    expect(code).toMatch(/viewerIsClient && \( <Link href="\/calendar"/);
   });
 });
 
@@ -237,14 +305,19 @@ describe("a bell inside a dismissible container closes it", () => {
     // takes no close callback at all: `onClose={closeAfterNavigate}` no longer
     // appears anywhere in this file.
     expect(b).not.toContain("onClose={closeAfterNavigate}");
-    expect(b.match(/onClick=\{closeAfterNavigate\}/g) ?? []).toHaveLength(3); // transcript + 2 footer
+    // round 6: FOUR now, not three. The meeting action item became a whole-row
+    // link (rule 1 — the row was hovering as one surface while only the 11px
+    // title inside it was clickable), and the empty state gained the quiet
+    // "Open your calendar" link that replaced "All caught up!" with somewhere
+    // to go. Both navigate, so both run the one closer.
+    expect(b.match(/onClick=\{closeAfterNavigate\}/g) ?? []).toHaveLength(4); // meeting row + calendar + 2 footer
     expect(b).toContain("onNavigate={closeAfterNavigate}"); // review rows
     // Closed loop: every Link in the file runs one of those two handlers left
-    // (the footer/transcript's onClick, or ReviewJobRow's own onNavigate — the
-    // one row component still capable of navigating). So no navigable element
-    // can close the panel and leave the sheet standing.
-    expect(b.match(/<Link\b/g) ?? []).toHaveLength(4); // 3 in the panel + ReviewJobRow's
-    expect(b.match(/onClick=\{(closeAfterNavigate|onClose|onNavigate)\}/g) ?? []).toHaveLength(4);
+    // (the row/footer's onClick, or ReviewJobRow's own onNavigate — the one row
+    // component still capable of navigating). So no navigable element can close
+    // the panel and leave the sheet standing.
+    expect(b.match(/<Link\b/g) ?? []).toHaveLength(5); // 4 in the panel + ReviewJobRow's
+    expect(b.match(/onClick=\{(closeAfterNavigate|onClose|onNavigate)\}/g) ?? []).toHaveLength(5);
 
     // Dismissal is NOT navigation: the backdrop closes the panel and leaves the
     // sheet where it was, or a stray tap would tear down the whole sheet.

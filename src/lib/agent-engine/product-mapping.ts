@@ -512,7 +512,8 @@ export function toEngineRunInput(
   }
 
   // `post_count` is the social dialog's own VISIBLE "Number of posts" (1-10,
-  // default 3) and is not `batch_size`: it multiplies no bill and is not
+  // default 1 — round 6 review corrected a stale "default 3" here; decision 5
+  // set it to one) and is not `batch_size`: it multiplies no bill and is not
   // hidden, so a client who moves it is asking for something and must be heard.
   // Sent as a number rather than the form's string, because a count is a count.
   const postCount = at("post_count");

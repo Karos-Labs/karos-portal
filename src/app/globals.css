@@ -75,6 +75,14 @@
 
   --radius: 6px;           /* Ember squares things off */
 
+  /* THE focus colour (round 6). Ink, not orange, and one token for the whole
+     product: --neon measures 2.84:1 on paper, so an orange ring fails WCAG
+     1.4.11 in light mode, while --foreground passes in both. Written as a
+     reference rather than a literal so it reverses with the mode for free —
+     custom properties substitute where they are USED, so .light's --foreground
+     is what a light-mode ring resolves to. See .focus-ring below. */
+  --focus: var(--foreground);
+
   /* Elevation (2026-09). NOT a fourth surface tone - the ladder above is still
      three tones and these add no fill, only a cast shadow, so nothing here
      competes with --surface-2/-3.
@@ -260,6 +268,27 @@ body {
   background: var(--surface);
 }
 
+/* THE focus ring — one utility, every interactive element, inputs included
+   (round 6).
+
+   It replaces seven hand-rolled recipes. The portal had `ring-foreground/25`
+   (2.16:1 on charcoal, 1.70:1 on paper), `ring-neon` on Home's KPI cells,
+   `ring-neon/40` on a dialog close, three `focus-visible:ring-2` variants in
+   the reporting leaves, and forty-two elements that set `outline-none` and put
+   nothing back — WCAG 2.4.13 fails on all of them, and a keyboard reader could
+   not tell which input they were in.
+
+   ONE RULE, UNLAYERED, on purpose: unlayered CSS beats every Tailwind utility,
+   so `.focus-ring` cannot be silently cancelled by an `outline-none` that
+   arrives later in a class list. Scoped to :focus-visible so a mouse press
+   draws nothing; the outline (not a ring, i.e. not a box-shadow) is what keeps
+   it visible over a card's own shadow and outside an overflow-hidden parent.
+   Colour is --focus, which is ink in both modes. */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 /* An interactive ROW inside a card — an attention item, a status bar, a recent
    deliverable. Its hairline lifts to the accent on hover, which §6 lists as a
    sanctioned orange use ("markers, eyebrows, hovers, live signals").
@@ -424,5 +453,19 @@ body {
   .animate-slide-in-right,
   .animate-shimmer {
     animation: none;
+  }
+
+  /* TRANSITIONS TOO (round 6). The block above covered the seven keyframes and
+     nothing else, so a reader who asked the OS for less motion still got every
+     hover fade, every disclosure rotation and the dialog's fade-up transition.
+     Near-zero rather than `none` so `transitionend` still fires for anything
+     that waits on it. Duration ONLY: killing `animation-duration` here as well
+     would spin every animation this file does not name (Tailwind's own
+     `animate-spin`, `animate-pulse`) at one iteration per hundredth of a
+     millisecond, which is more motion than it started with. */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
   }
 }

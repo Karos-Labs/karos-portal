@@ -65,7 +65,11 @@ const suggest = (...args: Parameters<typeof buildClientSuggestions>) =>
   buildClientSuggestions(...args).suggestions;
 
 describe("buildClientSuggestions — only what the client owns", () => {
-  it("keeps the advisory / off-site work and drops everything Karos executes", () => {
+  // round 6: the whole GEO registry now yields exactly three ids, because
+  // ownership is an explicit allow-list rather than a derivation off the
+  // scoring bucket. "Only structural things the client is doing wrong AND our
+  // agents cannot fix (accounts, records, relationships they own)."
+  it("takes the three accounts and records, and nothing else in the registry", () => {
     const gaps = computeCheckGaps(
       GEO_READINESS_CHECKS,
       allFailing(GEO_READINESS_CHECKS),
@@ -73,9 +77,14 @@ describe("buildClientSuggestions — only what the client owns", () => {
     );
     const ids = suggest(gaps, { limit: 99 }).map((s) => s.id);
 
-    // Off-site entity + reputation: nothing in this product can ship these.
-    expect(ids).toContain("GEO-25");
-    expect(ids).toContain("GEO-04");
+    // A record, the account that owns it, and listings opened in the business's
+    // name: nothing in this product can create, verify or ask for these.
+    expect(ids.sort()).toEqual(["GEO-07", "GEO-14", "GEO-25"]);
+    // round 6: GEO-04 is OUT. "≥10 authoritative domains mentioning the brand"
+    // is coverage, which the LinkedIn and Reddit agents partly move, and its
+    // ask ("get named on sites you don't own") is the general advice the ruling
+    // rejected outright.
+    expect(ids).not.toContain("GEO-04");
     // Karos-owned page work must never appear under this heading.
     expect(ids).not.toContain("GEO-02");
     expect(ids).not.toContain("GEO-17");
@@ -96,7 +105,12 @@ describe("buildClientSuggestions — only what the client owns", () => {
     }
   });
 
-  it("takes the competitor-visibility gaps, which are off-site by construction", () => {
+  // round 6: INVERTED. These three are OUTCOMES our agents exist to move
+  // (share of voice, named-mention rate, never cited as a source), and they
+  // were the three lines Albert quoted back as wrong. They now appear on
+  // Reporting under "What we are doing to improve your SEO and GEO", as the
+  // lever each agent moves, rather than as homework for the reader.
+  it("never takes a competitor-visibility gap, whatever its delivery says", () => {
     const gaps = computeVisibilityGaps([
       {
         engine: "chatgpt",
@@ -121,8 +135,12 @@ describe("buildClientSuggestions — only what the client owns", () => {
         },
       },
     ] as unknown as Parameters<typeof computeVisibilityGaps>[0]);
-    const out = suggest(gaps, { limit: 99 });
-    expect(out.map((s) => s.id.split(":")[0]).sort()).toEqual(["GEO-11", "GEO-27", "GEO-35"]);
+    // The producer still emits them (the plan catalogue is the cross-repo
+    // contract), and every one of them is hardcoded `delivery: "advisory"` —
+    // which is exactly why a derivation off delivery could not express the
+    // ruling and an explicit set can.
+    expect(gaps.length).toBeGreaterThan(0);
+    expect(suggest(gaps, { limit: 99 })).toEqual([]);
   });
 });
 
@@ -140,11 +158,13 @@ describe("buildClientSuggestions — the confidence cut", () => {
   });
 
   it("widens only when a caller names the wider threshold", () => {
+    // round 6: re-fixtured onto GEO-07 — GEO-04 is no longer a client-owned id,
+    // so the confidence rule could not be observed through it.
     const out = suggest(
-      [gap({ id: "GEO-04", confidence: "LIKELY" }), gap({ id: "GEO-14", confidence: "HYPOTHESIS" })],
+      [gap({ id: "GEO-07", confidence: "LIKELY" }), gap({ id: "GEO-14", confidence: "HYPOTHESIS" })],
       { minConfidence: "LIKELY" },
     );
-    expect(out.map((s) => s.id)).toEqual(["GEO-04"]);
+    expect(out.map((s) => s.id)).toEqual(["GEO-07"]);
   });
 });
 
@@ -153,49 +173,54 @@ describe("buildClientSuggestions — measured only", () => {
     // Both producers already emit measured gaps exclusively; a snapshot written
     // by an older pipeline is not covered by that, so the caller's checks
     // re-assert it.
+    // round 6: re-fixtured onto GEO-07 for the same reason as the confidence
+    // cut above.
     const checks: SeoGeoCheck[] = [
       { id: "GEO-25", bucket: "offsiteEntity", label: "x", evidence: "e", norm: 0, tier: "ESTIMATED", confidence: "CONFIRMED" },
-      { id: "GEO-04", bucket: "offsiteEntity", label: "y", evidence: "e", norm: 0, tier: "MEASURED", confidence: "CONFIRMED" },
+      { id: "GEO-07", bucket: "offsiteEntity", label: "y", evidence: "e", norm: 0, tier: "MEASURED", confidence: "CONFIRMED" },
     ];
-    const out = suggest([gap({ id: "GEO-25" }), gap({ id: "GEO-04" })], { checks });
-    expect(out.map((s) => s.id)).toEqual(["GEO-04"]);
+    const out = suggest([gap({ id: "GEO-25" }), gap({ id: "GEO-07" })], { checks });
+    expect(out.map((s) => s.id)).toEqual(["GEO-07"]);
   });
 });
 
 describe("buildClientSuggestions — length and shape", () => {
-  it("caps the list at five, highest lift first", () => {
-    const gaps = [
+  it("orders by lift, highest first", () => {
+    // round 6: with three ids the cap of five cannot bite, so what is worth
+    // pinning is the ORDER — and the cap is asked of `limit` directly below,
+    // because it is still the contract this list is built on ("reduce it" was
+    // half the ruling).
+    const out = suggest([
       gap({ id: "GEO-25", scoreLift: 1 }),
-      gap({ id: "GEO-04", scoreLift: 9 }),
       gap({ id: "GEO-07", scoreLift: 5 }),
       gap({ id: "GEO-14", scoreLift: 7 }),
-      gap({ id: "GEO-27:chatgpt", scoreLift: 8 }),
-      gap({ id: "GEO-35:gemini", scoreLift: 6 }),
-      gap({ id: "GEO-11:claude", scoreLift: 4 }),
-    ];
-    const out = suggest(gaps);
-    expect(out).toHaveLength(5);
-    expect(out.map((s) => s.id)).toEqual([
-      "GEO-04",
-      "GEO-27:chatgpt",
-      "GEO-14",
-      "GEO-35:gemini",
-      "GEO-07",
     ]);
+    expect(out.map((s) => s.id)).toEqual(["GEO-14", "GEO-07", "GEO-25"]);
+    expect(out.length).toBeLessThanOrEqual(5);
   });
 
-  it("collapses the per-engine gaps that say the same sentence", () => {
-    // Five engines produce five copies of one finding; the survivor is the
-    // strongest measured instance, and its evidence names the engine it was
-    // measured on.
+  it("honours the cap a caller names", () => {
+    const out = suggest(
+      [
+        gap({ id: "GEO-25", scoreLift: 1 }),
+        gap({ id: "GEO-07", scoreLift: 5 }),
+        gap({ id: "GEO-14", scoreLift: 7 }),
+      ],
+      { limit: 2 },
+    );
+    expect(out.map((s) => s.id)).toEqual(["GEO-14", "GEO-07"]);
+  });
+
+  it("collapses two instances of one finding, keeping the strongest", () => {
+    // Rule 4, deduped BY COPY: one sentence, one row, whatever produced it.
+    // round 6: re-fixtured off the per-engine gaps, which are no longer
+    // client-owned, onto two instances of one client-owned id.
     const out = suggest([
-      gap({ id: "GEO-35:chatgpt", scoreLift: 4, measured: "Named in 1 of 12 ChatGPT category answers" }),
-      gap({ id: "GEO-35:gemini", scoreLift: 9, measured: "Named in 0 of 12 Gemini category answers" }),
-      gap({ id: "GEO-35:claude", scoreLift: 6, measured: "Named in 0 of 9 Claude category answers" }),
+      gap({ id: "GEO-14", scoreLift: 4, measured: "Found on 2 review platforms." }),
+      gap({ id: "GEO-14", scoreLift: 9, measured: "Found on 1 review platform." }),
     ]);
     expect(out).toHaveLength(1);
-    expect(out[0].id).toBe("GEO-35:gemini");
-    expect(out[0].evidence).toBe("Named in 0 of 12 Gemini category answers");
+    expect(out[0].evidence).toBe("Found on 1 review platform.");
   });
 
   it("carries what was found, never the benchmark or the registry label", () => {
@@ -224,6 +249,19 @@ describe("buildClientSuggestions — length and shape", () => {
     expect(out.map((s) => s.id)).toEqual(["GEO-25"]);
   });
 
+  it("drops an id with no client copy even when the plan catalogue has some", () => {
+    // round 6: the REC_COPY fallback is gone. GEO-04 keeps its catalogue entry
+    // for the cross-repo plan contract, so before this an advisory id with no
+    // client copy rendered with the voice of a row that has an Approve button
+    // and a Karos owner behind it. Rule 6 always claimed the drop; now the code
+    // does it. Asked at the widest threshold, so only the copy rule can be what
+    // removes the row.
+    expect(REC_COPY["GEO-04"]).toBeDefined();
+    expect(
+      suggest([gap({ id: "GEO-04", confidence: "CONFIRMED" })], { minConfidence: "HYPOTHESIS" }),
+    ).toEqual([]);
+  });
+
   it("says nothing at all when nothing is the client's to do", () => {
     const gaps = computeCheckGaps(SEO_CHECKS, allFailing(SEO_CHECKS), "SEO");
     expect(suggest(gaps)).toEqual([]);
@@ -244,8 +282,10 @@ describe("an empty list says which kind of empty it is", () => {
   });
 
   it("calls it lowConfidence when the client-owned findings were not confirmed", () => {
+    // round 6: GEO-04 is not client-owned any more, so the fixture says
+    // lowConfidence with two ids that are.
     const out = buildClientSuggestions([
-      gap({ id: "GEO-04", confidence: "LIKELY" }),
+      gap({ id: "GEO-07", confidence: "LIKELY" }),
       gap({ id: "GEO-14", confidence: "HYPOTHESIS" }),
     ]);
     expect(out.suggestions).toEqual([]);
@@ -275,23 +315,27 @@ describe("the evidence names the engine it was measured on", () => {
    * the per-engine dedupe stands for a finding measured on several engines, so
    * a line with no engine in it is a number with no measurement attached.
    */
+  // round 6: re-fixtured onto a client-owned id carrying an engine suffix. None
+  // of the three ids is per-engine TODAY, and the rule is kept anyway because
+  // the allow-list is deliberately keyed on the id before the `:` — so a future
+  // per-engine instance of one of them is client-owned and must still say which
+  // engine it was measured on.
   it("appends the engine when the producer's measured line does not carry it", () => {
-    // GEO-27's own `measured` is a bare share-of-voice pair.
     const [only] = suggest([
       gap({
-        id: "GEO-27:chatgpt",
-        measured: "8% share of voice (vs Rival at 41%)",
+        id: "GEO-14:chatgpt",
+        measured: "Found on 1 review platform",
         evidence: "Measured across 12 category questions answered by ChatGPT",
       }),
     ]);
-    expect(only.evidence).toBe("8% share of voice (vs Rival at 41%), measured on ChatGPT");
+    expect(only.evidence).toBe("Found on 1 review platform, measured on ChatGPT");
   });
 
   it("leaves a line that already names its engine exactly as the producer wrote it", () => {
     const [only] = suggest([
-      gap({ id: "GEO-35:gemini", measured: "Named in 0 of 12 Gemini category answers" }),
+      gap({ id: "GEO-14:gemini", measured: "Named on 0 of 12 Gemini review platforms" }),
     ]);
-    expect(only.evidence).toBe("Named in 0 of 12 Gemini category answers");
+    expect(only.evidence).toBe("Named on 0 of 12 Gemini review platforms");
   });
 
   it("adds nothing to a finding that is not per engine", () => {
@@ -300,17 +344,11 @@ describe("the evidence names the engine it was measured on", () => {
   });
 });
 
-describe("GEO-27 says share of voice, because that is what it measures", () => {
-  it("does not claim the rival was named more often", () => {
-    // The gap fires on `shareOfVoice`, the rival's share of the brand mentions
-    // in those answers. A brand named in fewer answers can still hold the
-    // larger share, so "named more often than you" was a claim this report had
-    // not made (review wave, 2026-09).
-    const [only] = suggest([gap({ id: "GEO-27:chatgpt" })]);
-    expect(only.why).toContain("share of the brand mentions");
-    expect(`${only.title} ${only.why}`).not.toMatch(/named (more often|most often)/i);
-  });
-});
+// round 6: GEO-27's wording moved to seo-geo.test.ts. It is no longer a client
+// suggestion at all (it is an outcome our agents move), but `REC_COPY["GEO-27"]`
+// still exists for the cross-repo plan contract and still must not claim the
+// rival was "named more often" — so the assertion follows the copy rather than
+// being deleted with the row.
 
 describe("the copy a client is asked to act on", () => {
   it("never quotes an internal registry label", () => {
@@ -322,14 +360,28 @@ describe("the copy a client is asked to act on", () => {
     }
   });
 
-  it("keeps the audited catalogue free of the claims a check cannot support", () => {
+  it("keeps the audited copy free of the claims a check cannot support", () => {
     // The ruling was that these items "are not true". A check measures the state
     // of a page or a public record; it does not observe an engine deciding
     // anything, so the copy may not report one as fact.
+    //
+    // round 6: the same regex, now applied to the three ids this section can
+    // actually render AND to the strings it renders for them, rather than to
+    // seven REC_COPY descriptions the section no longer reads.
     const speculative =
       /\b(engines? (stop|start|will|would|repeat|favour|favor|prefer|treat|credit)|get(s)? passed over|far more readily|is what makes an engine|days rather than weeks|no other fix covers|stops confusing)\b/i;
+    const gaps = computeCheckGaps(GEO_READINESS_CHECKS, allFailing(GEO_READINESS_CHECKS), "GEO");
+    const rendered = suggest(gaps, { limit: 99 });
+    expect(rendered).toHaveLength(3);
+    for (const s of rendered) {
+      expect(speculative.test(`${s.title} ${s.why}`), `${s.id}: ${s.why}`).toBe(false);
+      // Nor a percentage, nor a promise: this section describes an ASK, and the
+      // scores are the only thing on the tab that reports an effect.
+      expect(s.why).not.toMatch(/\d+\s*%/);
+      expect(`${s.title} ${s.why}`).not.toMatch(/\b(guarantee|boost|will rank)\b/i);
+    }
     const offenders = Object.entries(REC_COPY)
-      .filter(([id]) => ["GEO-25", "GEO-07", "GEO-04", "GEO-14", "GEO-27", "GEO-35", "GEO-11"].includes(id))
+      .filter(([id]) => ["GEO-25", "GEO-07", "GEO-14"].includes(id))
       .filter(([, c]) => speculative.test(c.description))
       .map(([id]) => id);
     expect(offenders).toEqual([]);

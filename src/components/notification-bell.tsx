@@ -167,24 +167,21 @@ export function NotificationBell({
   // that lies (QA F121). listReviewJobs queries status == "review", so the row
   // clears by itself the moment the job is approved, exactly like the task rows.
   //
-  // ONE row for a client, one per job for staff (A3/A4 — see notification-rows.ts).
+  // NO row for a client, one per job for staff (A3/A4 and round 6 — see
+  // notification-rows.ts for the whole argument).
   const reviewRows = reviewFeedRows(reviewJobs, { viewerIsClient });
 
   // Task alerts: review_pending tasks are surfaced first (need immediate
   // attention), then pending tasks. No local dismissal - they disappear when
   // status changes.
   //
-  // ONE ROW PER TASK FOR STAFF, ONE SUMMARY LINE PER GROUP FOR A CLIENT — the
-  // grain is decided in notification-rows.ts (R10, flow audit 2026-09), beside
-  // the review queue's, because the count in the badge has to be built from the
-  // same answer the panel renders.
+  // ONE ROW PER TASK FOR STAFF, AND NONE AT ALL FOR A CLIENT — the grain is
+  // decided in notification-rows.ts (round 6), beside the review queue's,
+  // because the count in the badge has to be built from the same answer the
+  // panel renders.
   const taskRows = taskAlertRows(taskAlerts, { viewerIsClient });
-  const reviewPendingRows = taskRows.filter((r) =>
-    r.kind === "summary" ? r.status === "review_pending" : r.task.status === "review_pending",
-  );
-  const pendingRows = taskRows.filter((r) =>
-    r.kind === "summary" ? r.status === "pending" : r.task.status === "pending",
-  );
+  const reviewPendingRows = taskRows.filter((r) => r.task.status === "review_pending");
+  const pendingRows = taskRows.filter((r) => r.task.status === "pending");
 
   // The product's only "how many unread" — the shells' dots read the very same
   // function off the very same feeds and dismissal set (#105).
@@ -199,12 +196,12 @@ export function NotificationBell({
   const jobDeepLinks = allowJobDeepLinks && !viewerIsClient;
 
   // The Workspace board is gone entirely (2026-08) and nothing replaced it as
-  // an aggregate view of TASKS, so task alerts no longer earn a footer link —
-  // TaskAlertRow above is a status line for the same reason (F97 × F149). A
-  // staff review queue still has a real aggregate destination: /jobs, the
-  // staff-only dashboard these AgentReviewNotification rows are drawn from. A
-  // client's queue collapses to one ReviewSummaryRow with no /jobs to offer
-  // them (viewerIsClient excludes it here, same as jobDeepLinks above).
+  // an aggregate view of TASKS, so task alerts earn no footer link — and since
+  // round 6 a client has no task rows here at all. A staff review queue still
+  // has a real aggregate destination: /jobs, the staff-only dashboard these
+  // AgentReviewNotification rows are drawn from. A client has no review rows
+  // and no /jobs to be offered (viewerIsClient excludes it here, same as
+  // jobDeepLinks above).
   const showJobsLink = reviewRows.length > 0 && !viewerIsClient;
   // ONE ROUTE TO MEETINGS FOR A CLIENT, NOT THREE (flow audit 2026-09, R11 ·
   // F14). `/transcripts` had three inconsistent reachability states for a
@@ -247,6 +244,9 @@ export function NotificationBell({
           className={cn(
             "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
             "text-muted hover:bg-surface-2 hover:text-foreground",
+            // round 6 (rule 3): the rail register had no focus treatment at all,
+            // so the one keyboard route to the notification panel was invisible.
+            "focus-ring",
             open && "bg-surface-2 text-foreground",
           )}
         >
@@ -263,8 +263,12 @@ export function NotificationBell({
           onClick={() => setOpen((o) => !o)}
           className={cn(
             "relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
-            "text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40",
+            "text-muted transition-colors duration-150 hover:bg-surface-2 hover:text-foreground",
+            // round 6 (rule 3): was `focus-visible:outline-none` plus an orange
+            // ring, which is the bug the rule names by construction — the
+            // portal has ONE focus treatment, and orange is not a status or a
+            // focus colour. `transition-all` went with it: the hover is a fill.
+            "focus-ring",
             open && "bg-surface-2 text-foreground",
           )}
           aria-label={`Notifications${total > 0 ? ` (${total} unread)` : ""}`}
@@ -306,131 +310,143 @@ export function NotificationBell({
               panelClassName,
             )}
           >
-            {/* Header */}
-            <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+            {/* Header. ONE NUMBER, AND IT IS THE BADGE'S (round 6): the "N
+                unread" chip that used to sit here was a second number beside
+                the badge that had just been pressed to open this panel, and it
+                was static — a count wearing the shell of a control. Think-home
+                §3.2 replaces it with a quiet "Mark all as read", but that
+                control needs a persisted seen-marker (`notificationsSeenAt`)
+                and no such field exists; adding one is the deferred phase-2
+                feed, not this round. So the chip is gone rather than replaced
+                by a control that could not honour itself, and nothing but the
+                heading sits here. */}
+            <div className="flex shrink-0 items-center border-b border-border px-4 py-3">
               <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
-              {total > 0 ? (
-                <span className="rounded-full bg-surface-3 px-2 py-0.5 text-[11px] font-semibold text-muted">
-                  {badgeLabel} unread
-                </span>
-              ) : (
-                <span className="text-[11px] text-muted-2">All clear</span>
-              )}
             </div>
 
             {/* Feed */}
             <div className="min-h-0 flex-1 max-h-[480px] overflow-y-auto">
               {total === 0 ? (
+                /* NOT A DEAD END (round 6, B6f). "All caught up!" with a second
+                   line about tasks and reviews described feeds a client no
+                   longer has, and offered nothing to do next. The sentence says
+                   what is true of the reader, and the one control goes where
+                   the reader's own work actually is. Client only: /calendar is
+                   the client route, and a staff member's calendar is per client
+                   — their footer links below are their aggregate destinations. */
                 <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
                     <Icon name="CircleCheck" className="h-6 w-6 text-success" />
                   </div>
-                  <p className="text-sm font-medium text-foreground">All caught up!</p>
-                  <p className="text-xs text-muted-2">No pending tasks or reviews.</p>
+                  <p className="text-sm font-medium text-foreground">Nothing needs you right now.</p>
+                  {viewerIsClient && (
+                    <Link
+                      href="/calendar"
+                      onClick={closeAfterNavigate}
+                      className="focus-ring rounded-[4px] text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
+                    >
+                      Open your calendar
+                    </Link>
+                  )}
                 </div>
               ) : (
                 <div className="divide-y divide-border">
 
                   {/* ── Review-pending tasks (highest priority) ──
-                      The section HEADING is staff-only too: a group caption
-                      that counts ("Ready for review (9)") over a single summary
-                      line is the same batch tell and the same second number the
-                      summary itself refuses to print (R10). */}
+                      STAFF ONLY, feed and caption both: `taskAlertRows` returns
+                      nothing for a client (round 6), so these two blocks and
+                      their group headings render for the reader whose own queue
+                      they are. */}
                   {reviewPendingRows.length > 0 && (
                     <>
-                      {!viewerIsClient && (
-                        <div className="bg-warning/5 px-4 py-1.5">
-                          <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-warning">
-                            Ready for review ({reviewPendingRows.length})
-                          </p>
-                        </div>
-                      )}
-                      {reviewPendingRows.map((row) =>
-                        row.kind === "summary" ? (
-                          <TaskSummaryRow key="task-summary-review" status="review_pending" />
-                        ) : (
-                          <TaskAlertRow key={row.task.id} task={row.task} now={now} />
-                        ),
-                      )}
+                      <div className="bg-warning/5 px-4 py-1.5">
+                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-warning">
+                          Ready for review ({reviewPendingRows.length})
+                        </p>
+                      </div>
+                      {reviewPendingRows.map((row) => (
+                        <TaskAlertRow key={row.task.id} task={row.task} now={now} />
+                      ))}
                     </>
                   )}
 
                   {/* ── Pending tasks ── */}
                   {pendingRows.length > 0 && (
                     <>
-                      {!viewerIsClient && (
-                        <div className="bg-surface-2 px-4 py-1.5">
-                          <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">
-                            Pending tasks ({pendingRows.length})
-                          </p>
-                        </div>
-                      )}
-                      {pendingRows.map((row) =>
-                        row.kind === "summary" ? (
-                          <TaskSummaryRow key="task-summary-pending" status="pending" />
-                        ) : (
-                          <TaskAlertRow key={row.task.id} task={row.task} now={now} />
-                        ),
-                      )}
+                      <div className="bg-surface-2 px-4 py-1.5">
+                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">
+                          Pending tasks ({pendingRows.length})
+                        </p>
+                      </div>
+                      {pendingRows.map((row) => (
+                        <TaskAlertRow key={row.task.id} task={row.task} now={now} />
+                      ))}
                     </>
                   )}
 
                   {/* ── Agent review jobs ──
-                      One summary row for a client, one row per job for staff —
-                      the grain is decided in notification-rows.ts, not here. */}
-                  {reviewRows.map((row) =>
-                    row.kind === "summary" ? (
-                      <ReviewSummaryRow key="review-summary" />
-                    ) : (
-                      <ReviewJobRow
-                        key={row.job.jobId}
-                        job={row.job}
-                        now={now}
-                        viewerIsClient={viewerIsClient}
-                        deepLink={jobDeepLinks}
-                        onNavigate={closeAfterNavigate}
-                      />
-                    ),
-                  )}
+                      One row per job for staff and none for a client — the
+                      grain is decided in notification-rows.ts, not here. */}
+                  {reviewRows.map((row) => (
+                    <ReviewJobRow
+                      key={row.job.jobId}
+                      job={row.job}
+                      now={now}
+                      viewerIsClient={viewerIsClient}
+                      deepLink={jobDeepLinks}
+                      onNavigate={closeAfterNavigate}
+                    />
+                  ))}
 
-                  {/* ── Transcript action items ── */}
+                  {/* ── Transcript action items ──
+                      THE WHOLE ROW IS THE LINK (round 6, rule 1). It used to
+                      hover as one surface while only the 11px meeting title
+                      inside it was clickable, and the row's one control was an
+                      X whose tooltip said "Mark complete" — a destructive glyph
+                      for a completion. Now: the row opens the meeting it is
+                      about and ends in one static `ChevronRight`, and finishing
+                      the item is a named control in the right slot, outside the
+                      link (an interactive element inside an <a> is invalid
+                      markup, so the two sit side by side rather than nested). */}
                   {visibleActions.map((n) => (
                     <div
                       key={`${n.transcriptId}-${n.itemIndex}`}
                       className={cn(
-                        "flex gap-3 px-4 py-3 transition-colors hover:bg-surface-2",
+                        "flex items-start gap-1",
                         n.meetingDate != null && now - n.meetingDate > STALE_MS && "opacity-60",
                       )}
                     >
-                      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10">
-                        <Icon name="SquareCheck" className="h-3.5 w-3.5 text-success" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-foreground">
-                          A meeting assigned you an action item
-                        </p>
-                        <p className="mt-0.5 line-clamp-3 break-words text-[11px] text-muted">
-                          {n.text}
-                        </p>
-                        <Link
-                          href={`/transcripts/${n.transcriptId}`}
-                          onClick={closeAfterNavigate}
-                          className="mt-0.5 inline-block text-[11px] text-muted-2 hover:text-foreground"
-                        >
-                          {n.transcriptTitle}
-                          {n.meetingDate ? ` · ${relativeTime(n.meetingDate)}` : ""}
-                        </Link>
-                      </div>
+                      <Link
+                        href={`/transcripts/${n.transcriptId}`}
+                        onClick={closeAfterNavigate}
+                        className="focus-ring flex min-w-0 flex-1 gap-3 px-4 py-3 transition-colors hover:bg-surface-2"
+                      >
+                        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10">
+                          <Icon name="SquareCheck" className="h-3.5 w-3.5 text-success" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-foreground">
+                            A meeting assigned you an action item
+                          </p>
+                          <p className="mt-0.5 line-clamp-3 break-words text-[11px] text-muted">
+                            {n.text}
+                          </p>
+                          <p className="mt-0.5 text-[11px] text-muted-2">
+                            {n.transcriptTitle}
+                            {n.meetingDate ? ` · ${relativeTime(n.meetingDate)}` : ""}
+                          </p>
+                        </div>
+                        <Icon
+                          name="ChevronRight"
+                          className="mt-0.5 h-4 w-4 shrink-0 text-muted-2"
+                          aria-hidden="true"
+                        />
+                      </Link>
                       <button
                         onClick={() => dismissals.dismiss(n.transcriptId, n.itemIndex)}
-                        className={cn(
-                          "mt-0.5 shrink-0 rounded-[6px] p-1 text-muted-2",
-                          "transition-colors hover:bg-surface-3 hover:text-foreground",
-                        )}
-                        aria-label="Mark complete and dismiss"
-                        title="Mark complete"
+                        className="focus-ring mr-2 mt-3 shrink-0 rounded-[6px] px-1.5 py-0.5 text-[11px] text-muted transition-colors hover:bg-surface-3 hover:text-foreground"
                       >
-                        <Icon name="X" className="h-3.5 w-3.5" />
+                        Done
                       </button>
                     </div>
                   ))}
@@ -470,100 +486,6 @@ export function NotificationBell({
   );
 }
 
-/* ── Agent review summary row (clients) ──────────────────────────── */
-
-/**
- * The whole review queue, told to a client as one status line (#118, A3/A4).
- *
- * Deliberately holds NO job, NO count and NO timestamp, and takes no props that
- * could supply one:
- *
- *  · No per-item rows, because a runway sweep mints up to fourteen jobs in one
- *    minute and fourteen identically-stamped rows on the chrome of every page
- *    announce that a fortnight of content came out of a single fire.
- *  · No count, because the dashboard one screen over already prints one ("N
- *    deliverables in review") and it counts a DIFFERENT set — deliverables in
- *    `draft`, against this feed's jobs in `review`. Two numbers answering one
- *    question is the defect; the honest fix is one number, on the card that
- *    counts the thing the client is waiting for.
- *  · No destination, for the reason the dashboard row has none either: nothing
- *    a client can open lists a draft.
- *
- * Copy is the dashboard's, near enough to read as the same fact twice rather
- * than two facts (client-home-overview.tsx, "Your Karos team is reviewing
- * these — they'll appear in the archive when ready").
- *
- * Exported for test: the panel only mounts after a click on the trigger, which
- * a node test run cannot perform.
- */
-export function ReviewSummaryRow() {
-  return (
-    <div className="flex gap-3 px-4 py-3">
-      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10">
-        <Icon name="Sparkles" className="h-3.5 w-3.5 text-info" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-foreground">
-          Your Karos team is reviewing new work
-        </p>
-        <p className="mt-0.5 text-[11px] text-muted">
-          It&apos;ll appear in the archive when it&apos;s ready.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* ── Task summary row (clients) ──────────────────────────────────── */
-
-/**
- * A client's whole task feed, one status group at a time, as a status LINE
- * (flow audit 2026-09, R10). `ReviewSummaryRow` above is the model this
- * follows, and `taskAlertRows` (notification-rows.ts) is where the decision to
- * use it is made and tested.
- *
- * Holds no task, no count, no stamp and no destination — the same four
- * refusals, for the same four reasons, plus one of its own: the dashboard's
- * matching rows ("N tasks ready for review", "N pending tasks") are explicitly
- * not links either, so a link here would put the bell and Home in disagreement
- * about whether the reader can act.
- *
- * The words are the dashboard's hints verbatim, so the two surfaces read as one
- * fact stated twice rather than as two facts.
- *
- * Exported for test: the panel only mounts after a click on the trigger, which
- * a node test run cannot perform.
- */
-export function TaskSummaryRow({ status }: { status: TaskAlert["status"] }) {
-  const isReview = status === "review_pending";
-  return (
-    <div className="flex gap-3 px-4 py-3">
-      <div
-        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-        style={{
-          background: `color-mix(in srgb, ${isReview ? "var(--neon)" : "var(--muted)"} 10%, transparent)`,
-        }}
-      >
-        <Icon
-          name={isReview ? "Eye" : "Circle"}
-          className="h-3.5 w-3.5"
-          style={{ color: isReview ? "var(--neon)" : "var(--muted)" }}
-        />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-foreground">
-          {isReview ? "Work is ready for your review" : "Tasks are in progress"}
-        </p>
-        <p className="mt-0.5 text-[11px] text-muted">
-          {isReview
-            ? "Completed work waiting for your sign-off."
-            : "Your Karos team is working through these."}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 /* ── Agent review row ────────────────────────────────────────────── */
 
 /**
@@ -576,13 +498,14 @@ export function TaskSummaryRow({ status }: { status: TaskAlert["status"] }) {
  * (approveAssetAction calls requireStaff), so "Waiting for your review" was
  * asking the client for a sign-off the server would refuse.
  *
- * A REAL CLIENT NO LONGER REACHES THIS ROW AT ALL: `reviewFeedRows` collapses
- * their whole queue to one ReviewSummaryRow above (#118), because a per-job
- * list of any length publishes the generation batch. The `viewerIsClient`
- * branch below stays anyway, and stays fail-closed rather than dead: the prop
- * is still threaded from every mount, and a caller that ever hands this row a
- * client again must get the client's words, not a request for a sign-off the
- * server refuses.
+ * A REAL CLIENT NO LONGER REACHES THIS ROW AT ALL: `reviewFeedRows` returns
+ * nothing for them (#118 collapsed the queue to one stampless line because a
+ * per-job list of any length publishes the generation batch; round 6 removed
+ * the line too, because it led nowhere). The `viewerIsClient` branch below
+ * stays anyway, and stays fail-closed rather than dead: the prop is still
+ * threaded from every mount, and a caller that ever hands this row a client
+ * again must get the client's words, not a request for a sign-off the server
+ * refuses.
  *
  * `deepLink` is a separate question from `viewerIsClient`, because a shell can
  * withdraw the destination without changing who is looking: staff in Client
@@ -651,12 +574,17 @@ export function ReviewJobRow({
 
 /**
  * A task alert is a STATUS LINE, not a destination, same ruling as
- * ReviewJobRow/ReviewSummaryRow above (F97 × F149): it used to open the
+ * ReviewJobRow's client branch above (F97 × F149): it used to open the
  * Workspace board on the tab holding the task (QA F64's fix), and the board is
  * gone entirely (2026-08). No screen replaced it — this row's data still
  * surfaces on Home as an AttentionRow count, which carries the same "no
  * destination" ruling for the identical reason (see client-home-overview.tsx).
  * No arrow, no hover affordance: it must not promise a click it cannot honour.
+ *
+ * STAFF ONLY since round 6: `taskAlertRows` returns nothing for a client, whose
+ * bell may hold no inert row at all. It survives because for the reader whose
+ * own queue this is, a status line beside their per-job review rows is the
+ * forensic detail they work from.
  */
 function TaskAlertRow({ task, now }: { task: TaskAlert; now: number }) {
   const isReview = task.status === "review_pending";

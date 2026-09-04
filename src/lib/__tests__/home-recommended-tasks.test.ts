@@ -43,11 +43,33 @@ describe("the shared Home row (home-task-row.tsx)", () => {
     );
   });
 
-  it("still offers exactly one X and one 'Let's do this', and no third verb", () => {
-    expect(row).toContain("Let's do this");
+  // round 6 (§2.2): INVERTED. "Let's do this" was one label for six different
+  // actions, so it predicted nothing about where the press went — which is why
+  // "Complete your profile" landed on a page with no clue what to do. The label
+  // is the caller's now and names the action and the missing thing, and the
+  // fallback is gone rather than left as a default nobody may rely on.
+  it("takes its control label from the caller, and offers no generic one", () => {
+    expect(row).not.toContain("Let's do this");
+    expect(row).toContain("{start.label}");
     expect(row).toContain('<Icon name="X"');
     // The snooze clock stays gone: a two-verb row.
     expect(withoutComments(row)).not.toContain('name="Clock"');
+  });
+
+  // round 6 (rule 3 · §2.1): four of six rows were not clickable at all, while
+  // the module that resolved them claimed every row was a destination.
+  it("makes a row with a destination the whole link, with one static chevron", () => {
+    const body = withoutComments(row);
+    expect(body, "no row-wide link").toContain("<Link");
+    expect(body).toContain("row-lift");
+    expect(body).toContain('name="ChevronRight"');
+    // One chevron in the file, and it does not move: rows carry exactly one
+    // trailing glyph and hover is a fill, never a slide.
+    expect([...body.matchAll(/name="ChevronRight"/g)]).toHaveLength(1);
+    expect(body).not.toContain("group-hover:translate");
+    // The row-link and the button are mutually exclusive: an anchor may not
+    // contain a control, which is what the old hover overlay was invented for.
+    expect(body).toContain("if (href && !start && !dismiss)");
   });
 
   it("keeps both controls reachable without a pointer", () => {
