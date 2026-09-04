@@ -15,6 +15,7 @@ import {
   updateClientTask,
   listEmployeeSeats,
   getClientPerformanceBenchmarks,
+  stampChargeSettlesJob,
 } from "@/lib/data";
 import { sendEmail } from "@/lib/email";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
@@ -263,6 +264,14 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
       }).catch((e) => ({ jobId: undefined, error: e instanceof Error ? e.message : "submit failed" }));
 
       if (result.jobId && !result.error) {
+        // The hold for this run was taken under the TASK id, before this job
+        // existed — so this is the first moment anything knows which run it is
+        // paying for. Stamping it here is what lets a settlement pick the right
+        // hold when the same task has two runs in flight; see
+        // `CreditLedgerEntry.settlesJobId`. Best-effort and un-awaited-for-
+        // correctness: an unstamped hold still settles by the newest-unpaired
+        // rule, which is exactly the pre-rework behaviour.
+        await stampChargeSettlesJob(taskId, result.jobId);
         await updateClientTask(taskId, {
           metadata: {
             ...(task.metadata ?? {}),
@@ -313,6 +322,8 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
       }).catch((e) => ({ jobId: undefined, error: e instanceof Error ? e.message : "submit failed" }));
 
       if (result.jobId && !result.error) {
+        // Same stamp as the custom-agent branch above, for the same reason.
+        await stampChargeSettlesJob(taskId, result.jobId);
         await updateClientTask(taskId, {
           metadata: {
             ...(task.metadata ?? {}),

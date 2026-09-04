@@ -202,11 +202,13 @@ describe("the pages thread the param through", () => {
     // when it declines to emit that link at all.
     expect(src).toMatch(/offeredStatesFor\(\s*"archive"/);
     expect(src).toMatch(/initialArchiveStatus \? \{ initialArchiveStatus \} : \{\}/);
-    // …and the calendar hands it to the same ArchiveView prop the settings tab
-    // used to seed, so the param still means one thing end to end.
-    expect(code(read("components/run-calendar.tsx"))).toMatch(
-      /initialStatus=\{initialArchiveStatus \?\? "all"\}/,
-    );
+    // …and the calendar seeds the filter the archive renders from, so the
+    // param still means one thing end to end. The archive's filters are held by
+    // the calendar since the review wave (2026-09) — the prop the settings tab
+    // used to seed is now the seed of that state.
+    const cal = code(read("components/run-calendar.tsx"));
+    expect(cal).toMatch(/status: initialArchiveStatus \?\? "all"/);
+    expect(cal).toMatch(/status=\{archiveFilters\.status\}/);
   });
 
   it("leaves no producer pointing at the retired settings archive tab", () => {

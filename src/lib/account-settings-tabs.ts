@@ -27,9 +27,16 @@
 export const ACCOUNT_TABS = {
   /**
    * Not "profile": the client settings page already has a Profile tab, and it
-   * is the CLIENT's company profile (ClientEditor). That one is staff-only and
-   * so never renders beside this one — but two tabs a role away from sharing an
-   * id is not a distinction worth keeping in one's head.
+   * is the CLIENT's company profile.
+   *
+   * THE TWO DO RENDER SIDE BY SIDE (review wave, 2026-09). This note used to say
+   * the company Profile tab was staff-only "and so never renders beside this
+   * one", which stopped being true at the parity pass: a client reads their own
+   * company profile there and only the record editor inside it is staff-gated
+   * (settings/page.tsx's `StaffOnlySection`). So a CLIENT_USER's tab strip
+   * carries Profile and Account at once, and the id split is not a nicety — two
+   * tabs sharing a `?tab=` value would resolve to whichever the strip found
+   * first.
    */
   profile: "account",
   security: "security",

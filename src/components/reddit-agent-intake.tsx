@@ -24,6 +24,7 @@ import { SavedFormCard } from "@/components/saved-form-card";
 import { JobStatusBadge } from "@/components/job-status";
 import { formatDate, relativeTime } from "@/lib/utils";
 import type { JobStatus } from "@/lib/types";
+import { IntakeNoRuns } from "@/components/intake-no-runs";
 import { clientArchiveLink, intakeAnchorId } from "@/lib/agent-intake-links";
 import { intakeSave } from "@/lib/intake-save";
 import {
@@ -131,7 +132,11 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
   return (
     <SavedFormCard
       title="Your Reddit account"
-      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>}
+      /* R7 (flow audit 2026-09): "Not set up" is the roster's phrase for an
+         agent whose stand-up run has not happened. This badge answers a
+         different question — is the form saved — and its five sibling intakes
+         now all say so in these words. */
+      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not saved yet</Badge>}
       summary={[
         { label: "Account we draft as", value: intake?.handle ?? "" },
         { label: "Account history", value: accountHistory },
@@ -363,7 +368,9 @@ function FeedbackBox({
             );
           })}
         </ul>
-      ) : null}
+      ) : (
+        <IntakeNoRuns clientId={clientId} noun="replies" />
+      )}
       <div className="mt-4 space-y-3">
         <Textarea
           rows={5}

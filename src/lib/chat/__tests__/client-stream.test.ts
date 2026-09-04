@@ -62,9 +62,35 @@ describe("readChatStream", () => {
       { type: "tool-output-available", toolCallId: "call-1", output: "Created 2 tasks in your task board." },
     );
     const events = await collect(responseFromChunks([body]));
+    // The INPUT rides along with the result now (flow audit 2026-09, R12): it
+    // is the only place `edit_output`/`reschedule_output` name the asset they
+    // acted on, and it was being read for the tool's name and then dropped.
     expect(events).toEqual([
-      { type: "tool-result", toolName: "create_tasks", output: "Created 2 tasks in your task board." },
+      {
+        type: "tool-result",
+        toolName: "create_tasks",
+        output: "Created 2 tasks in your task board.",
+        input: {},
+      },
     ]);
+  });
+
+  it("carries the arguments a tool was called with through to its result", async () => {
+    const body = sse(
+      {
+        type: "tool-input-available",
+        toolCallId: "call-9",
+        toolName: "edit_output",
+        input: { assetId: "asset-77", newContent: "…" },
+      },
+      { type: "tool-output-available", toolCallId: "call-9", output: "Saved." },
+    );
+    const [event] = await collect(responseFromChunks([body]));
+    expect(event).toMatchObject({
+      type: "tool-result",
+      toolName: "edit_output",
+      input: { assetId: "asset-77" },
+    });
   });
 
   it("drops a tool-output-available chunk whose call id was never seen (no name to attach)", async () => {

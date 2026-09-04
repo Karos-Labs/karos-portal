@@ -40,65 +40,151 @@ function Sparkline({ counts }: { counts: number[] }) {
 }
 
 /**
- * The weekly-throughput bars (2026-09).
+ * The published-content chart: one bar per day of the reported window (portal
+ * feedback round 5, 2026-09).
  *
- * Bars rather than a second sparkline: these are four discrete counts, and a
- * line between them implies a reading in between that nobody took. An empty
- * week still draws its track, so a quiet fortnight looks quiet.
+ * IT REPLACES FOUR WEEKLY BARS, which the product owner read as decoration
+ * rather than a chart, and he was right on both counts: four bars cannot show a
+ * posting cadence (the only thing a client wants from this number), and they
+ * spanned 28 days beside a "last 30 days" figure, so the picture and the number
+ * above it were measuring different stretches of time. The bars now sum to the
+ * headline count by construction (see lib/content-throughput.ts).
+ *
+ * NO ACCENT. The orange is rationed to markers and hovers, and thirty bars of
+ * it is neither; the fill is the decorative grey the meter tracks already use.
+ * The one EMPHASIZED bar is the most recent day that actually has a post, in
+ * full ink, because "when did I last go out" is the second question this cell
+ * gets asked and the chart can answer it for free. Emphasizing the last COLUMN
+ * instead would have highlighted an empty day on most accounts.
+ *
+ * A DAY WITH NOTHING KEEPS ITS PLACE as a hairline on the baseline, so a gap
+ * reads as a measured zero rather than as missing data, and the run of days is
+ * continuous left to right.
  */
-function WeeklyBars({ counts }: { counts: number[] }) {
-  const max = Math.max(1, ...counts);
+function DailyBars({ counts }: { counts: number[] }) {
+  const max = Math.max(...counts);
+  // Nothing at all is not a chart. Drawing thirty empty tracks under a zero
+  // would be a picture of no information; the empty state says so in words.
+  if (max === 0) {
+    return (
+      <div className="mt-2.5 flex h-9 items-center rounded-md border border-dashed border-border px-2.5">
+        <p className="text-[11px] leading-snug text-muted-2">
+          Nothing went live in the last {THROUGHPUT_WINDOW_DAYS} days.
+        </p>
+      </div>
+    );
+  }
+  const newest = counts.reduce((last, c, i) => (c > 0 ? i : last), -1);
+
   return (
-    <div className="mt-2 flex h-9 items-end gap-1" aria-hidden="true">
-      {counts.map((c, i) => (
-        <div key={i} className="flex h-full flex-1 items-end rounded-sm bg-neon/10">
-          <div
-            className="w-full rounded-sm bg-neon"
-            style={{ height: `${Math.max(c > 0 ? 12 : 0, (c / max) * 100)}%` }}
-          />
-        </div>
-      ))}
-    </div>
+    <>
+      <div
+        className="mt-2.5 flex h-9 items-end gap-px"
+        role="img"
+        aria-label={`Posts published each day over the last ${THROUGHPUT_WINDOW_DAYS} days, oldest first.`}
+      >
+        {counts.map((c, i) => (
+          <div key={i} className="flex h-full flex-1 items-end">
+            <div
+              className={cn(
+                "w-full rounded-[1px]",
+                c === 0 ? "bg-border" : i === newest ? "bg-foreground" : "bg-muted-3",
+              )}
+              // A day with one post out of a busiest day of six is still a day
+              // somebody posted, so the floor keeps it above a hairline.
+              style={{ height: c === 0 ? "1px" : `${Math.max(16, (c / max) * 100)}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex items-center justify-between text-[10px] leading-none text-muted-2">
+        <span>{THROUGHPUT_WINDOW_DAYS} days ago</span>
+        <span>Today</span>
+      </div>
+    </>
   );
 }
 
 /**
- * A signed percentage in the success/danger ink, or nothing at all when it is
- * null. `text` is the already-formatted magnitude (the two callers round to
- * different precisions), `note` the quiet basis clause after it.
+ * A signed percentage in the success/danger ink, with a small arrow, or the
+ * quiet reason there is no percentage to state.
+ *
+ * `text` is the already-formatted magnitude (the two callers round to different
+ * precisions), `note` the quiet basis clause after it, and `noBasis` the line to
+ * print instead when `pct` is null. Muted, not coloured, in that case: "we have
+ * nothing to compare this against" is not good news or bad news.
  */
-function Delta({ pct, text, note }: { pct: number | null; text: string; note?: string }) {
-  if (pct == null) return null;
+function Delta({
+  pct,
+  text,
+  note,
+  noBasis,
+}: {
+  pct: number | null;
+  text: string;
+  note?: string;
+  noBasis?: string;
+}) {
+  if (pct == null) {
+    return noBasis ? <p className="mt-0.5 text-xs text-muted-2">{noBasis}</p> : null;
+  }
   return (
     <p className={`mt-0.5 text-xs ${pct >= 0 ? "text-success" : "text-danger"}`}>
-      <Icon name={pct >= 0 ? "TrendingUp" : "TrendingDown"} className="mr-1 inline h-3 w-3" />
-      {pct >= 0 ? "+" : ""}
-      {text}
+      <Icon name={pct >= 0 ? "ArrowUp" : "ArrowDown"} className="mr-1 inline h-3 w-3" />
+      <span className="tabular">
+        {pct >= 0 ? "+" : ""}
+        {text}
+      </span>
       {note ? <span className="ml-1 text-muted-2">{note}</span> : null}
     </p>
   );
 }
 
-/** The shared shell of a KPI cell: an accented eyebrow, then whatever the cell is. */
+/**
+ * The shared shell of a KPI cell: an accented eyebrow, a chevron, then whatever
+ * the cell is.
+ *
+ * EVERY CELL IS A LINK (portal feedback round 5, 2026-09) — "all the KPIs
+ * should be interactive and clickable". So `href` is required rather than
+ * optional: a KPI with nowhere honest to go does not belong on this card at
+ * all, and making the prop optional is how the next cell quietly becomes the
+ * one dead number in a row of live ones. The whole cell is the hit target, it
+ * takes focus like any link, and `row-lift` is the app's own affordance for a
+ * navigating row.
+ */
 function Cell({
   icon,
   label,
+  href,
   children,
   className,
 }: {
   icon: string;
   label: string;
+  /** Somewhere that shows MORE about THIS number. See each call site. */
+  href: string;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
-    <div className={cn("rounded-md border border-border bg-surface-2 p-3.5", className)}>
+    <Link
+      href={href}
+      className={cn(
+        "row-lift group block h-full rounded-md border border-border bg-surface-2 p-3.5",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon",
+        className,
+      )}
+    >
       <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
         <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
-        <span className="min-w-0 truncate">{label}</span>
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <Icon
+          name="ChevronRight"
+          className="h-3.5 w-3.5 shrink-0 text-muted-3 transition-transform group-hover:translate-x-0.5"
+        />
       </p>
       {children}
-    </div>
+    </Link>
   );
 }
 
@@ -124,7 +210,7 @@ function ScoreCell({ view }: { view: ScoreView }) {
   const color = TONE_COLORS[view.tone];
   return (
     <>
-      <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+      <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
         {measured ? view.value : "–"}
         {measured && <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>}
       </p>
@@ -193,6 +279,21 @@ function ScoreCell({ view }: { view: ScoreView }) {
  * on this page is "N need attention". That did not vanish either — it is an
  * attention row in "Needs your attention" now, which is where a thing that
  * asks the reader to act belongs.
+ *
+ * ── EVERY CELL NAVIGATES (portal feedback round 5, 2026-09) ───────────────
+ *
+ * "All the KPIs should be interactive and clickable, bringing them to the
+ * report", and the card-level "Full report" link is gone because it promised
+ * more about the number beside it and delivered a page about a different
+ * subject entirely.
+ *
+ * The rule that replaced it is per cell, not per card: a cell links to the
+ * screen that shows MORE ABOUT ITS OWN NUMBER, which is a different screen for
+ * each of the three. Followers open the channel list they are summed from;
+ * published content opens the posts themselves; the visibility score opens the
+ * report it is a headline of. Two of those are not "the report", and that is
+ * the point — sending all three there would be the same broken promise, made
+ * three times.
  */
 export function HomeKpisWidget({
   audienceTotal,
@@ -200,40 +301,67 @@ export function HomeKpisWidget({
   audienceSeries,
   throughput,
   visibilityScore,
-  reportHref,
+  audienceHref,
   contentHref,
+  visibilityHref,
 }: {
-  /** Real stored follower snapshots only — an empty series hides the cell entirely. */
-  audienceTotal: number;
-  audienceGrowthPct: number | null;
-  audienceSeries: FollowerPoint[];
+  /**
+   * Real stored follower snapshots only — an empty (or absent) series hides the
+   * cell entirely.
+   *
+   * OPTIONAL SINCE THE REVIEW WAVE, 2026-09, and the reason is the same rule
+   * that keeps the cell hidden: nothing writes `clientFollowerSnapshots` today,
+   * so every caller was reading a collection that is empty for every client and
+   * threading four props into a cell that never rendered. The page stopped
+   * reading it; this component did NOT lose the ability to draw it, so the
+   * ingestion cron that lands the data re-enables the cell by passing these
+   * again rather than by rebuilding it.
+   */
+  audienceTotal?: number;
+  audienceGrowthPct?: number | null;
+  audienceSeries?: FollowerPoint[];
   /** Live-deliverable throughput — see lib/content-throughput.ts. */
   throughput: ContentThroughput;
   /** The one ScoreView D6 kept — null when there is no snapshot to score yet. */
   visibilityScore: ScoreView | null;
-  reportHref: string;
-  /** Where the throughput cell opens the content it counts. */
+  /**
+   * The channel list. This total is the SUM of the per-channel follower counts,
+   * and that list is the only screen in the product that breaks it back down,
+   * so it is where "more about this number" actually lives. The Reporting tab
+   * would have been the wrong answer for exactly the reason this whole revision
+   * exists: it holds nothing about followers.
+   *
+   * Optional with the three above, and required WITH them: no href, no cell.
+   */
+  audienceHref?: string;
+  /** The published deliverables themselves, filtered to what this cell counted. */
   contentHref: string;
+  /** The Reporting tab, at its scores section — the working behind this meter. */
+  visibilityHref: string;
 }) {
-  // A single point is a reading, not a trend — the sparkline needs two.
-  const showAudience = audienceSeries.length >= 2;
+  // A single point is a reading, not a trend — the sparkline needs two. And a
+  // cell with nowhere to go is not a cell on this card (see `Cell`), so the
+  // href is part of the same test rather than a second one.
+  const series = audienceSeries ?? [];
+  const showAudience = series.length >= 2 && Boolean(audienceHref);
 
   return (
     <Card>
-      <div className="mb-3 flex items-center justify-between gap-3">
+      {/* NO CARD-LEVEL "Full report" LINK (portal feedback round 5, 2026-09).
+          It sat at the top right of a card whose headline number is posts
+          published and opened the Search & AI visibility report, which says
+          nothing about them: "there should not be a button on the right that
+          says See more when it will not show more about the posts published".
+          Every cell now carries its own destination instead, so the promise is
+          made three times, next to the number it is about, and each one is
+          kept. */}
+      <div className="mb-3">
         <CardTitle className="flex min-w-0 items-center gap-2">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
             <Icon name="ChartColumn" className="h-3.5 w-3.5 text-neon" />
           </span>
           <span className="min-w-0 truncate">Your numbers</span>
         </CardTitle>
-        <Link
-          href={reportHref}
-          className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
-        >
-          Full report
-          <Icon name="ChevronRight" className="h-3.5 w-3.5" />
-        </Link>
       </div>
 
       {/* Container queries, not viewport breakpoints (2026-08). `sm:`/`lg:` ask
@@ -247,55 +375,42 @@ export function HomeKpisWidget({
       <div className={cn("grid gap-4", showAudience ? "@xl:grid-cols-3" : "@xl:grid-cols-2")}>
         {/* Audience — the D6 cell, real snapshots only; absent when there are none */}
         {showAudience && (
-          <Cell icon="Users" label="Total followers">
-            <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-              {audienceTotal.toLocaleString()}
+          <Cell icon="Users" label="Total followers" href={audienceHref as string}>
+            <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+              {(audienceTotal ?? 0).toLocaleString()}
             </p>
             <Delta
-              pct={audienceGrowthPct}
+              pct={audienceGrowthPct ?? null}
               text={audienceGrowthPct == null ? "" : `${audienceGrowthPct.toFixed(1)}%`}
             />
             <div className="mt-2">
-              <Sparkline counts={audienceSeries.map((p) => p.count)} />
+              <Sparkline counts={series.map((p) => p.count)} />
             </div>
           </Cell>
         )}
 
         {/* Content published — the cell the duplicated channel list vacated */}
-        <Link href={contentHref} className="block">
-          <Cell
-            icon="Send"
-            label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`}
-            className="row-lift h-full"
-          >
-            <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-              {throughput.count.toLocaleString()}
-            </p>
-            {throughput.deltaPct == null ? (
-              <p className="mt-0.5 text-xs text-muted-2">
-                {throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
-              </p>
-            ) : (
-              <Delta
-                pct={throughput.deltaPct}
-                text={`${throughput.deltaPct}%`}
-                note="vs previous 30 days"
-              />
-            )}
-            <WeeklyBars counts={throughput.weekly} />
-          </Cell>
-        </Link>
+        <Cell icon="Send" label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`} href={contentHref}>
+          <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+            {throughput.count.toLocaleString()}
+          </p>
+          <Delta
+            pct={throughput.deltaPct}
+            text={`${throughput.deltaPct}%`}
+            note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
+            noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
+          />
+          <DailyBars counts={throughput.daily} />
+        </Cell>
 
         {/* AI visibility — the one score D6 kept, of the three buildScoreViews returns */}
-        <Link href={reportHref} className="block">
-          <Cell icon="Radar" label="Visibility" className="row-lift h-full">
-            {visibilityScore ? (
-              <ScoreCell view={visibilityScore} />
-            ) : (
-              <p className="mt-2 text-sm text-muted-2">Not measured yet.</p>
-            )}
-          </Cell>
-        </Link>
+        <Cell icon="Radar" label="Visibility" href={visibilityHref}>
+          {visibilityScore ? (
+            <ScoreCell view={visibilityScore} />
+          ) : (
+            <p className="mt-2 text-sm text-muted-2">Not measured yet.</p>
+          )}
+        </Cell>
       </div>
     </Card>
   );

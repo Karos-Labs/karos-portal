@@ -11,6 +11,16 @@ import type { AppUser } from "@/lib/types";
  * [SCRUM-259/T-B14] THE NEW CALL PATH: turn a client's most recent SEO/GEO
  * report into task-board rows.
  *
+ * UNCHANGED BY THE 2026-09 REPORT RULING, and this note exists so that stays
+ * deliberate. The product owner ruled the client-facing "What we're fixing"
+ * plan untrue and it is no longer rendered on the Reporting tab (see
+ * `buildClientSuggestions` in lib/seo-geo.ts, and `SeoGeoPlan`). This module is
+ * the OTHER consumer of the same recommendations: staff-initiated, task-board
+ * bound, and the repo half of the cross-repo contract in
+ * docs/routable-recommendation-contract.md. The engine keeps emitting them and
+ * this keeps routing them; what went away is the client-facing list of promises
+ * on top.
+ *
  * Neither `clientReports` (`getClientReport`) nor `clientSeoGeo`
  * (`getClientSeoGeo`) is the read path here — traced both, per this ticket's
  * own instruction not to assume. `clientReports`/`clientSeoGeo` are the

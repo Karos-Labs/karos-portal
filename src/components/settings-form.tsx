@@ -208,10 +208,32 @@ export function AccountProfilePanel({
 
 /* ── Account security panel ───────────────────────────────────────────── */
 
-const PROVIDER_META: Record<string, { label: string; sub: string; mark: React.ReactNode }> = {
+/**
+ * `sub` is a NODE rather than a string since the flow audit (2026-09, R17):
+ * this row is the whole of what a Google-only account is told about changing
+ * its password, and it named `myaccount.google.com` as plain text — the one
+ * remedy the panel offers, spelled out for the reader to retype. It is a link
+ * now. `rel="noopener noreferrer"` because it opens a credential surface in a
+ * new tab, and `target="_blank"` because losing the portal's own page mid-way
+ * through an account change is not an improvement.
+ */
+const PROVIDER_META: Record<string, { label: string; sub: React.ReactNode; mark: React.ReactNode }> = {
   "google.com": {
     label: "Signed in via Google",
-    sub: "Your credentials are managed by Google. Visit myaccount.google.com to change your password.",
+    sub: (
+      <>
+        Your credentials are managed by Google. Visit{" "}
+        <a
+          href="https://myaccount.google.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline hover:text-foreground"
+        >
+          myaccount.google.com
+        </a>{" "}
+        to change your password.
+      </>
+    ),
     mark: <GoogleMark />,
   },
 };

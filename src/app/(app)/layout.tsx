@@ -17,11 +17,12 @@ import {
 import { railAgentsForClient } from "@/lib/rail-agents";
 import { ActiveClientProvider } from "@/lib/active-client-context";
 import { availableCredits } from "@/lib/credits";
-import { clientSafeTaskAlerts } from "@/lib/notification-rows";
+import { clientSafeTaskAlerts, type TaskAlert } from "@/lib/notification-rows";
+import { orderSetupLadderAgents, rankSetupLadder } from "@/lib/setup-ladder";
 import {
   toClientPortalView,
-  toStaffShellView,
-  type StaffShellClientView,
+  toStaffPickerView,
+  type StaffPickerClientView,
 } from "@/lib/client-visibility";
 import { integrationIsUsable } from "@/lib/integration-status";
 import { shouldBlockForOnboarding } from "@/lib/onboarding";
@@ -48,8 +49,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // The PROJECTION, not the documents: this array is a prop of the Sidebar, a
   // "use client" component that renders on every staff page, so a whole Client
   // here puts every client's join token into every one of those RSC payloads.
-  // StaffShellClientView carries exactly what the picker rows and the rail read.
-  let clients: StaffShellClientView[] = [];
+  // StaffPickerClientView carries exactly what a picker ROW paints — a favicon
+  // and a name — and nothing else. The wider StaffShellClientView belongs to
+  // the ONE client whose context is open, which ClientContextSync supplies from
+  // the /clients/[id] layout; see both notes in client-visibility.ts.
+  let clients: StaffPickerClientView[] = [];
 
   // Staff bell feeds are cross-client, so they need the viewer's client scope:
   // admins see every client, an employee only their assigned ones - the same
@@ -61,12 +65,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const staffClientNames = new Map(staffClients.map((c) => [c.id, c.name]));
 
   const [adminData, actionItems, reviewJobs, taskAlerts] = await Promise.all([
-    user.role === "KAROS_ADMIN"
-      ? Promise.all([listUsers(), listClients()]).then(([allUsers, allClients]) => ({
-          allUsers,
-          allClients,
-        }))
-      : Promise.resolve(null),
+    // ONE listClients() PER REQUEST (review wave, 2026-09). This branch used to
+    // fetch the whole client collection a second time for an admin, and
+    // `listClients(undefined)` is exactly what `staffClients` already holds for
+    // that role — the same read, the same answer, paid for twice on every staff
+    // page. Only the user list is admin-specific now.
+    user.role === "KAROS_ADMIN" ? listUsers().then((allUsers) => ({ allUsers })) : Promise.resolve(null),
     // CLIENT_USER notifications are strictly scoped to their own client account;
     // a client user with no clientId has no company context, so no items at all.
     user.role === "CLIENT_USER"
@@ -92,7 +96,20 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             limit: 50,
           })
         : Promise.resolve([] as ClientTask[])
-      : listClientTasks({ status: ["pending", "review_pending"], limit: 200 }),
+      : // THE SCOPE GOES INTO THE QUERY, not into a filter after it (review
+        // wave, 2026-09). A global "newest 200" read fenced afterwards is the
+        // right answer for an admin, whose scope IS every client — but an
+        // employee is fenced to their assignments, so their bell showed only
+        // the tasks that happened to make the agency-wide top 200. An employee
+        // at a busy agency could have every one of their clients' tasks fall
+        // outside it and be told "All caught up!". `listClientTasks` chunks the
+        // id list into `in` queries itself; the admin keeps the single global
+        // read, which is cheaper than 30-at-a-time over the whole roster.
+        listClientTasks({
+          ...(user.role === "KAROS_EMPLOYEE" ? { clientIds: [...staffClientNames.keys()] } : {}),
+          status: ["pending", "review_pending"],
+          limit: 200,
+        }),
   ]);
 
   // Annotate staff rows with the client name (same pattern as tasks-body) and
@@ -100,12 +117,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const scopedReviewJobs: AgentReviewNotification[] = isStaffViewer
     ? reviewJobs.map((j) => ({ ...j, clientName: staffClientNames.get(j.clientId) ?? undefined }))
     : reviewJobs;
-  const scopedTaskAlerts: (ClientTask & { _clientName?: string })[] = isStaffViewer
+  // Staff keep the full ClientTask per row (the forensic detail is their job);
+  // the OTHER arm of this ternary is a CLIENT_USER who fell through to the staff
+  // shell because their client document would not resolve, and they were being
+  // handed the raw documents (review wave, 2026-09). That shell is "use client",
+  // so a raw ClientTask there ships `metadata.executionError`, `sourceLabel`,
+  // `metadata.aiPlan`, `adjustmentFeedback`, `externalJobId` and a `createdBy`
+  // uid into a client viewer's RSC payload — the exact leak `clientSafeTaskAlerts`
+  // exists to close, applied one branch short. Same call the resolvable-client
+  // branch below already makes.
+  const scopedTaskAlerts: TaskAlert[] = isStaffViewer
     ? taskAlerts
         .filter((t) => staffClientNames.has(t.clientId))
         .slice(0, 20)
         .map((t) => ({ ...t, _clientName: staffClientNames.get(t.clientId) }))
-    : taskAlerts;
+    : clientSafeTaskAlerts(taskAlerts);
 
   if (adminData) {
     pendingCount = adminData.allUsers.filter((u) => u.disabled && !u.approvedAt).length;
@@ -117,8 +143,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // unreachable for them. `staffClients` is the same fence every other employee
   // surface uses (listClients({ employeeId })), already fetched above, so the
   // fix costs no extra read: admins get every client, employees their assigned
-  // ones, and a CLIENT_USER's `staffClients` is `[]` by construction.
-  clients = (adminData?.allClients ?? staffClients).map(toStaffShellView);
+  // ones, and a CLIENT_USER's `staffClients` is `[]` by construction. It is now
+  // the ONLY source too: the admin branch above used to fetch its own copy of
+  // the same list (review wave, 2026-09).
+  clients = staffClients.map(toStaffPickerView);
 
   // ── Client portal shell (CLIENT_USER only) ──
   if (user.role === "CLIENT_USER" && user.clientId) {
@@ -155,8 +183,41 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       // get the same one-time default. Awaited, not fire-and-forget: it only
       // runs once per client ever, and awaiting means THIS render already
       // reflects it, instead of the pinned rows appearing a navigation later.
+      //
+      // WHICH two, decided rather than taken off the top (review wave,
+      // 2026-09). `railAgents` inherits `listCustomAgents()`'s name sort today,
+      // so `slice(0, 2)` was quietly alphabetical — a pick nothing in this file
+      // stated and any change to that upstream sort would silently rewrite. The
+      // order is now the SETUP LADDER's, the same ranking the client's own Home
+      // uses to decide which agent to walk them through first (setup-ladder.ts):
+      // stored at onboarding when it exists, recomputed deterministically when
+      // it does not, ties broken by position so the answer is stable either way.
+      // Two default stars that disagree with the first step of "Get set up"
+      // would be steering the client two ways at once.
+      //
+      // AND THIS IS A WRITE DURING RENDER, deliberately kept. It fires at most
+      // once per client ever (the `=== undefined` guard above), and awaiting it
+      // is what puts the pinned rows in THIS paint instead of a navigation
+      // later. Anything that made it fire repeatedly would be a write on every
+      // page load of every staff and client session — so the guard above is
+      // load-bearing, not defensive.
       if (client.starredAgentIds === undefined && railAgents.length > 0) {
-        const defaultStarredIds = railAgents.slice(0, 2).map((a) => a.id);
+        const ladderOrder = client.setupLadderOrder?.length
+          ? client.setupLadderOrder
+          : rankSetupLadder({
+              agents: railAgents.map((a) => ({ id: a.id, key: a.key, name: a.name })),
+              category: client.category,
+              socialLinks: client.socialLinks,
+              connectedPlatformIds: integrations
+                .filter(integrationIsUsable)
+                .map((i) => i.platform),
+              starredAgentIds: client.starredAgentIds,
+              website: client.website,
+              brandVoice: client.brandVoice,
+            });
+        const defaultStarredIds = orderSetupLadderAgents(railAgents, ladderOrder)
+          .slice(0, 2)
+          .map((a) => a.id);
         await updateClient(client.id, { starredAgentIds: defaultStarredIds });
         client.starredAgentIds = defaultStarredIds;
       }

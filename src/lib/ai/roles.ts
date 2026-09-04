@@ -165,7 +165,7 @@ export const AI_ROLES = {
     tier: "HAIKU",
     sites: [
       "src/lib/actions/intel-actions.ts:129",
-      "src/lib/actions/intel-actions.ts:528",
+      "src/lib/actions/intel-actions.ts:539",
     ],
   },
   "task.generation": {
@@ -209,21 +209,31 @@ export const AI_ROLES = {
     // SCRUM-394 (IGSTYLE-9) inserted the role-based palette resolver above
     // this call in branding.ts, shifting these two line numbers down from
     // 736/751 — re-pinned against the real file, not carried over stale.
-    sites: ["src/lib/branding.ts:917", "src/lib/branding.ts:932"],
+    // Re-pinned twice in 2026-09: the flow audit (R14) added reported fields
+    // to `BrandingGenResult` above these calls, and main's "stop inventing
+    // colours" change moved them again. Both merged; provider-wiring.test.ts
+    // is what catches the drift.
+    sites: ["src/lib/branding.ts:931", "src/lib/branding.ts:946"],
   },
-  "execution.sonnet": { tier: "SONNET", sites: ["src/lib/execution-engine.ts:36"] },
-  "execution.haiku": { tier: "HAIKU", sites: ["src/lib/execution-engine.ts:37"] },
+  // Shifted 36/37 → 37/38 by the credits rework (2026-09), which added one
+  // import above them. Re-pinned against the real file, per the rule above.
+  "execution.sonnet": { tier: "SONNET", sites: ["src/lib/execution-engine.ts:37"] },
+  "execution.haiku": { tier: "HAIKU", sites: ["src/lib/execution-engine.ts:38"] },
   "chat.client": {
     tier: "caller",
     // T-B3 picks the model here, T-B4 captures the full `aiFor` resolution at
     // the same call and T-B23 prices off it — three tickets moved this line, so
     // it is recomputed against the merged file rather than carried over from
     // any one branch.
-    sites: ["src/app/api/clients/[id]/chat/route.ts:187"],
+    // Shifted 187 → 188 by the credits rework (2026-09), which added one import
+    // above it. Re-pinned against the real file, per the rule above.
+    sites: ["src/app/api/clients/[id]/chat/route.ts:188"],
   },
   "chat.followups": {
     tier: "HAIKU",
-    sites: ["src/app/api/clients/[id]/chat/route.ts:825"],
+    // Shifted 825 → 834 by the credits rework's copy change to the copilot's
+    // price appendix, which sits above this call.
+    sites: ["src/app/api/clients/[id]/chat/route.ts:834"],
   },
   "insights.summary": {
     tier: "HAIKU",

@@ -5,119 +5,102 @@ import { isRecommendedTask, taskExecutorLabel, taskPlatform } from "@/lib/recomm
 import type { ClientTask } from "@/lib/types";
 
 /**
- * PORTAL FEEDBACK ROUND 2, 2026-09 — the contract Home's two task lists now
- * share, and the one the product owner's ruling replaced.
+ * WHAT A "RECOMMENDED TASK" IS, AND WHERE IT IS ALLOWED TO APPEAR.
  *
- * The ruling, verbatim: "I don't want the 'Generate more recommended tasks'
- * here. We set, after onboarding, a set number of tasks. I want the tasks to
- * show here on Home, and users to be able to X them if they don't want them, or
- * click a button that brings them to where they have to fill in the inputs
- * needed to kick off the task. It shouldn't be linked to the calendar. […] It
- * shouldn't be just Approve or Skip: it should be an X-out or a 'Let's do this'
- * button, and 'Let's do this' brings them to the page where they put in the
- * input needed."
+ * PORTAL FEEDBACK ROUND 2, 2026-09 put the swarm's proposals on Home as a list
+ * with an X and a "Let's do this". ROUND 4 TOOK THAT LIST OFF HOME AGAIN, and
+ * the ruling says why: "recommended tasks" on Home must be a fixed, small set
+ * of SETUP STEPS that get the client to a first result with our agents, ordered
+ * per client at onboarding — not the swarm's content ideas, which are not setup
+ * steps and are not linked to an agent by construction.
  *
- * Four of those are structural claims a source sweep can hold, and each one is
- * a regression that has already happened once on this page: a banner that
- * counted the tasks instead of showing them, a generator button on a set that
- * was decided at onboarding, calendar language on a widget that no longer has a
- * calendar behind it, and controls hidden behind `:hover` — which on touch and
- * for keyboard nav is the same as not having them (#89).
+ * So `RecommendedTasksWidget` (and `ActionListWidget` beside it) are gone, and
+ * what this file still pins is everything that DID survive:
+ *  · the predicate and the label helpers — the Calendar's review cards, the
+ *    sparse banner and the `?task=` kickoff strip all still read them;
+ *  · the shared Home row, which the setup ladder now renders;
+ *  · Home's mount contract, on BOTH branches (staff and client), which is the
+ *    regression that has already happened once on this page in each direction.
  */
 
 const src = (rel: string) => readSource(path.resolve(__dirname, "../..", rel));
 
 const row = src("components/home-task-row.tsx");
-const recommended = src("components/home-recommended-tasks.tsx");
-const actionList = src("components/home-action-list.tsx");
+const getSetUp = src("components/home-get-set-up.tsx");
 const home = src("app/(app)/clients/[id]/page.tsx");
 
-/** JSX bodies only — the file's own comments explain the rules and may name
+/** JSX bodies only — the files' own comments explain the rules and may name
  *  the very words the rules forbid. */
 function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 }
 
 describe("the shared Home row (home-task-row.tsx)", () => {
-  it("is the only row chrome either widget renders", () => {
-    for (const [name, source] of [
-      ["home-action-list.tsx", actionList],
-      ["home-recommended-tasks.tsx", recommended],
-    ] as const) {
-      expect(source, `${name} must render the shared row`).toContain("<HomeTaskRow");
-      expect(source, `${name} must import the shared row`).toContain(
-        'from "@/components/home-task-row"',
-      );
-    }
+  it("is the row chrome Home's list renders", () => {
+    expect(getSetUp, "the setup ladder must render the shared row").toContain("<HomeTaskRow");
+    expect(getSetUp, "the setup ladder must import the shared row").toContain(
+      'from "@/components/home-task-row"',
+    );
   });
 
-  it("offers exactly one X and one 'Let's do this', and no third verb", () => {
+  it("still offers exactly one X and one 'Let's do this', and no third verb", () => {
     expect(row).toContain("Let's do this");
     expect(row).toContain('<Icon name="X"');
-    // The snooze clock is gone from both lists: a two-verb row.
+    // The snooze clock stays gone: a two-verb row.
     expect(withoutComments(row)).not.toContain('name="Clock"');
-    expect(withoutComments(actionList)).not.toContain("dismissActionAction");
   });
 
   it("keeps both controls reachable without a pointer", () => {
-    // The touch-reach intent (#89), pinned harder than before: the controls
-    // used to be revealed on `group-hover` with an `[@media(hover:none)]`
-    // fallback. They are now the row's PRIMARY gesture — the row itself is no
-    // longer a link — so no visibility gate of any kind may return.
+    // The touch-reach intent (#89): the controls used to be revealed on
+    // `group-hover` with an `[@media(hover:none)]` fallback. They are the row's
+    // PRIMARY gesture now — the row itself is not a link — so no visibility
+    // gate of any kind may return.
     const body = withoutComments(row);
     for (const gate of ["group-hover", "group-focus-within", "opacity-0", "hover:none"]) {
       expect(body, `home-task-row.tsx must not gate its controls on ${gate}`).not.toContain(gate);
     }
-    // Every control carries an accessible name; the X is icon-only.
+    // The X is icon-only, so it carries an accessible name.
     expect(row).toContain("aria-label={dismiss.label}");
-    expect(recommended).toContain('label: "Not for us"');
-    expect(actionList).toContain('label: "Not relevant for me"');
   });
 
-  it("does not nest the controls inside a row-wide link", () => {
+  it("does not nest controls inside a row-wide link", () => {
     // A row that is itself a <Link> cannot hold buttons without nesting
     // interactive elements — which is what forced the old hover overlay.
-    expect(withoutComments(actionList)).not.toContain("<Link");
-  });
-});
-
-describe("Home's Recommended tasks widget", () => {
-  it("offers no Approve and no generator", () => {
-    const body = withoutComments(recommended);
-    expect(body).not.toContain("Approve");
-    expect(body).not.toContain("RefreshTaskMapButton");
-    expect(body).not.toContain("Generate");
-  });
-
-  it("says nothing about the calendar", () => {
-    // "It shouldn't be linked to the calendar." The widget renders every
-    // pending task at once; the calendar rendered each on its own inferred day,
-    // which is why a busy client saw one of nine.
-    expect(withoutComments(recommended).toLowerCase()).not.toContain("calendar");
-  });
-
-  it("takes its rows as plain data, hrefs resolved server-side", () => {
-    // Flight cannot pass a function across the boundary, so the agent link is
-    // built on the page (it needs resolveTaskCustomAgentId) and arrives as a
-    // string.
-    expect(recommended).toContain("href: string");
-    expect(home).toContain("resolveTaskCustomAgentId");
-    expect(home).toContain("/agents/${customAgentId}?task=${t.id}");
-    expect(home).toContain("/agents?task=${t.id}");
+    expect(withoutComments(getSetUp)).not.toContain("<Link");
   });
 });
 
 describe("Home itself", () => {
-  it("no longer mounts the calendar sparse banner or its gap plumbing", () => {
-    const body = withoutComments(home);
+  const body = withoutComments(home);
+
+  it("mounts ONE list, and it is the setup ladder", () => {
+    expect(body, "the content-idea list is back on Home").not.toContain(
+      "RecommendedTasksWidget",
+    );
+    expect(body, "the 24-row checklist widget is back on Home").not.toContain(
+      "ActionListWidget",
+    );
+    expect(body).toContain("<GetSetUpWidget");
+  });
+
+  it("mounts it on BOTH branches, staff and client (parity, 2026-09)", () => {
+    const mounts = [...body.matchAll(/\{getSetUpWidget\}/g)];
+    expect(mounts, "one mount per branch of clients/[id]/page.tsx").toHaveLength(2);
+  });
+
+  it("no longer builds the content-idea rows at all", () => {
+    // The swarm's proposals still reach the Calendar and the kickoff strip;
+    // Home stopped resolving them, so the row builder and its agent-link
+    // resolver left with the widget.
+    expect(body).not.toContain("resolveTaskCustomAgentId");
+    expect(body).not.toContain("isRecommendedTask");
+    expect(body).not.toContain("taskExecutorLabel");
+  });
+
+  it("still does not mount the calendar sparse banner or its gap plumbing", () => {
     expect(body).not.toContain("CalendarSparseBanner");
     expect(body).not.toContain("computePlatformGaps");
     expect(body).not.toContain("gapPlatformNames");
-  });
-
-  it("mounts the widget on BOTH branches, staff and client (parity, 2026-09)", () => {
-    const mounts = [...home.matchAll(/\{recommendedTasksWidget\}/g)];
-    expect(mounts, "one mount per branch of clients/[id]/page.tsx").toHaveLength(2);
   });
 });
 

@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -159,7 +159,29 @@ function componentClosure(from: string[]): string[] {
     seen.add(rel);
     for (const m of read(rel).matchAll(/from\s+"@\/components\/([\w./-]+)"/g)) {
       const base = `src/components/${m[1]}`;
-      stack.push(base.endsWith(".tsx") || base.endsWith(".ts") ? base : `${base}.tsx`);
+      // BOTH EXTENSIONS, tried in the order TypeScript resolves them. An
+      // extensionless import used to be assumed `.tsx`, so the first `.ts`
+      // module under components/ — a hook with no JSX in it — made this suite
+      // throw ENOENT rather than scan it: a guard that crashes on a new file
+      // shape is a guard that stops guarding at exactly the wrong moment.
+      const resolved = [base, `${base}.tsx`, `${base}.ts`].find(
+        (candidate) =>
+          /\.tsx?$/.test(candidate) && existsSync(path.join(REPO, candidate)),
+      );
+      // THROWS RATHER THAN SKIPS (review wave, 2026-09). `if (resolved)` meant
+      // an import this probe cannot resolve — a directory index, a third
+      // extension, a module moved without its importer being updated — dropped
+      // that whole subtree from the closure IN SILENCE, and this suite's only
+      // job is to walk every write on every intake surface. A guard that
+      // quietly stops guarding is worse than one that crashes: the crash names
+      // the file, and the extension list is two lines away.
+      if (!resolved) {
+        throw new Error(
+          `intake-save-funnel: cannot resolve "@/components/${m[1]}" imported by ${rel}. ` +
+            "Add its extension to the probe above if this is a shape the closure should follow.",
+        );
+      }
+      stack.push(resolved);
     }
   }
   return [...seen].sort();
@@ -362,6 +384,13 @@ describe("#86 — every intake write goes through the funnel", () => {
       "src/components/blog-agent-intake.tsx",
       "src/components/client-seat-remove.tsx",
       "src/components/company-news-box.tsx",
+      // The support dialog joined the closure when the intake surfaces began
+      // mounting it as the way out their own failure copy names (flow audit
+      // 2026-09, R17) — and joined the funnel with it, for the reason rule 2
+      // states: `sendSupportEmailAction` rejects on a lapsed session like any
+      // other, and this is the dialog a client opens when something is already
+      // wrong.
+      "src/components/contact-us-modal.tsx",
       "src/components/linkedin-agent-intake.tsx",
       "src/components/linkedin-seats-workspace.tsx",
       "src/components/newsletter-agent-intake.tsx",

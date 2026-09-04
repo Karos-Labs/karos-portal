@@ -1,11 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as data from "@/lib/data";
 import {
   CLIENT_PRICE_ROWS,
   CREDIT_COSTS,
+  CREDIT_DEFAULTS,
+  MONTHLY_ALLOWANCE,
+  USD_PER_CREDIT,
   CREDIT_OPERATION_LABEL,
   TASK_EXECUTION_COSTS,
   NEWSLETTER_RUN_CREDITS,
@@ -106,6 +109,7 @@ function installDataMocks() {
   });
   (data.getCustomAgent as any).mockResolvedValue(agentDoc());
   (data.listJobs as any).mockResolvedValue([]);
+  (data.listJobsByClientAndAgent as any).mockResolvedValue([]);
   (data.createJob as any).mockResolvedValue("job-1");
   (data.updateJob as any).mockResolvedValue(undefined);
   (data.updateScheduledRun as any).mockResolvedValue(undefined);
@@ -472,5 +476,244 @@ describe("the settings page hands the breakdown a complete name map", () => {
     // CLIENT_USER is exactly the reader who needs it.
     expect(page).toContain("listCustomAgents()");
     expect(page).not.toMatch(/isAdmin \? listCustomAgents\(\)/);
+  });
+});
+
+/**
+ * ONE ROUNDING RULE, NOT TWO (credits rework, 2026-09).
+ *
+ * `creditsForUsd` is the only place our USD cost is turned into credits, and
+ * the reason it has to be the only place is that the rule is a DECISION, not
+ * arithmetic: round up, floor at one credit, and never treat a missing cost as
+ * zero. A second site writing `usd * 20` inline would get the multiplication
+ * right and the three decisions wrong, silently.
+ *
+ * A source scan, in the shape chat-route-model-pricing.test.ts already uses for
+ * the same class of rule: the question is not "does the number match" but "is
+ * the constant being read from where it lives".
+ */
+describe("the credit multiple is applied in exactly one place", () => {
+  const CREDIT_MATHS_FILES = [
+    "src/lib/credit-settle.ts",
+    "src/lib/credit-reporting.ts",
+    "src/lib/credit-estimate.ts",
+    "src/app/api/agent-service/webhook/route.ts",
+    "src/lib/agent-engine/reconcile.ts",
+    "src/components/credits-panel.tsx",
+  ];
+
+  it("no settlement or reporting site multiplies by the rate itself", () => {
+    for (const file of CREDIT_MATHS_FILES) {
+      const text = source(file);
+      expect(text, `${file} multiplies by the credit rate inline`).not.toMatch(
+        /\*\s*(?:20|CREDITS_PER_USD)\b/,
+      );
+      expect(text, `${file} divides by the credit price inline`).not.toMatch(
+        /\/\s*(?:0\.05|USD_PER_CREDIT)\b/,
+      );
+    }
+  });
+
+  it("the settlement path reads the shared helpers rather than its own maths", () => {
+    // Non-vacuity for the scan above: if credit-settle stopped converting cost
+    // to credits at all, every assertion up there would pass trivially.
+    const settle = source("src/lib/credit-settle.ts");
+    expect(settle).toContain("settlementFor(");
+    expect(settle).toContain("applySettlement(");
+  });
+
+  it("pins the $130 line against the two constants that produce it", () => {
+    // The ruling fixes 2600 and $130; $0.05 follows. Editing any one of the
+    // three alone breaks a promise, and this is where it says so.
+    expect(MONTHLY_ALLOWANCE * USD_PER_CREDIT).toBe(130);
+    expect(CREDIT_DEFAULTS.monthlyLimit).toBe(MONTHLY_ALLOWANCE);
+  });
+});
+
+/**
+ * D4 — THE BATCH MULTIPLIER APPLIES TO THE CONSTANT, NEVER TO A MEASUREMENT.
+ *
+ * `CREDIT_COSTS.customAgentRun` prices ONE output, so a three-post batch is 3×
+ * it — that is the clamp block above. A measured median is a different KIND of
+ * number: it is `ceil(actualUsd × 20)` over real runs of this agent, and those
+ * runs already produced whatever batch size they were asked for. Multiplying it
+ * again bills a three-post batch at nine posts.
+ *
+ * Driven through the REAL submit core with the data layer mocked, so the
+ * assertion is on the actual `chargeClientCredits` call — the same shape the
+ * clamp block uses, because this is the same argument about the same number.
+ */
+describe("a measured estimate is not multiplied by the batch size again", () => {
+  /** A job this client already ran of this agent, with a reported cost. */
+  function pastRun(id: string, usd: number) {
+    return {
+      id,
+      clientId: "c1",
+      customAgentId: AGENT_ID,
+      agentName: "Instagram agent",
+      status: "review",
+      runType: "manual",
+      assetIds: [],
+      input: {},
+      events: [],
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      external: { serviceJobId: `s-${id}`, taskType: "custom", totalCostUsd: usd },
+    };
+  }
+
+  async function submit(input: Record<string, any> = {}) {
+    const { submitCustomAgentJob } = await import("@/lib/jobs/submit-custom");
+    return submitCustomAgentJob(CLIENT_USER, {
+      clientId: "c1",
+      agentId: AGENT_ID,
+      prompt: "Three posts about the launch.",
+      ...input,
+    } as any);
+  }
+
+  beforeEach(() => {
+    process.env.CREDITS_PLAN_V2_ENABLED = "1";
+  });
+  afterEach(() => {
+    delete process.env.CREDITS_PLAN_V2_ENABLED;
+  });
+
+  it("holds the median itself for a batch, not the median times the batch", async () => {
+    // Three runs at $1.00 ⇒ a 20-credit median. A 3-output batch must hold 20,
+    // not 60: those runs already produced their own batches.
+    // The submit path reads the NARROWED query now (this client + this agent,
+    // bounded), not the client's whole job list — see listJobsByClientAndAgent.
+    (data.listJobsByClientAndAgent as any).mockResolvedValue([
+      pastRun("a", 1),
+      pastRun("b", 1),
+      pastRun("c", 1),
+    ]);
+
+    await submit({ chargeMultiplier: 3 });
+
+    expect(charge()).toMatchObject({ amount: 20 });
+  });
+
+  it("still multiplies the CONSTANT when nothing has been measured", async () => {
+    // Under the minimum sample the price is the per-output constant, and a
+    // three-post batch really is three of them.
+    (data.listJobsByClientAndAgent as any).mockResolvedValue([pastRun("a", 1)]);
+
+    await submit({ chargeMultiplier: 3 });
+
+    expect(charge()).toMatchObject({ amount: UNIT * 3 });
+  });
+
+  it("charges the constant, unmultiplied, while the rework is switched off", async () => {
+    delete process.env.CREDITS_PLAN_V2_ENABLED;
+    (data.listJobsByClientAndAgent as any).mockResolvedValue([
+      pastRun("a", 1),
+      pastRun("b", 1),
+      pastRun("c", 1),
+    ]);
+
+    await submit();
+
+    expect(charge()).toMatchObject({ amount: UNIT });
+  });
+});
+
+/**
+ * D1 — THE QUOTE AND THE HOLD ARE ONE NUMBER.
+ *
+ * They were two: the agent page and the card projection read
+ * `agent.creditCost ?? CREDIT_COSTS.customAgentRun` while `submitCustomAgentJob`
+ * had already moved to the measured median, so a client read 25 credits on the
+ * card and watched 18 leave their balance. A quote that does not match the
+ * charge is worse than a quote that is merely stale, and it is worse still on
+ * the gate: a card offering a Run at a price the server will not charge is the
+ * same defect class as one offering a Run the server refuses.
+ *
+ * A source scan, because the property is "both sides call the same function"
+ * and no runtime assertion over one of them can see the other.
+ */
+describe("the price a client is quoted is the price the server holds", () => {
+  /**
+   * WHICH SURFACES quote a price is not pinned here, deliberately. That set
+   * moves with the product (the roster stopped showing one), and a list of
+   * filenames in this file would go stale as a red test on somebody else's
+   * change rather than on a real divergence. What is pinned is the thing that
+   * cannot move: there is ONE ladder, it is built on the shared estimator, and
+   * the submit core resolves a hold through the same one.
+   */
+  it("the shared ladder is built on the shared estimate, not a second one", () => {
+    const ladder = source("src/lib/run-price.ts");
+    expect(/estimateRunCredits(FromJobs|ByAgent)\(/.test(ladder)).toBe(true);
+    // …and it gates on the flag, which is the half a direct call to the
+    // estimator skips: with the rework OFF the server charges the constant, so
+    // quoting a measured median splits the quote from the charge again.
+    expect(ladder).toContain("isCreditsPlanV2Enabled()");
+  });
+
+  it("no quoting ladder invents a fallback the submit core does not use", () => {
+    // The submit core's fallback has three rungs — the admin override, the
+    // family's carried default, then the generic rate. A ladder with two of
+    // them quotes a newsletter run at 25 and charges 10.
+    const ladder = source("src/lib/run-price.ts");
+    expect(ladder).toContain("NEWSLETTER_RUN_CREDITS");
+    expect(ladder).toContain("BLOG_RUN_CREDITS");
+    expect(ladder).toContain("CREDIT_COSTS.customAgentRun");
+  });
+
+  /**
+   * THE NEGATIVE, which is the half a shape assertion cannot cover (review
+   * wave, 2026-09). The two tests above pin that the ladder exists and is
+   * built correctly; neither of them notices a page that walks straight past
+   * it, which is exactly what all four quoting sites were doing. And that is
+   * not a filename list going stale — it names no surface at all, only the two
+   * modules that ARE allowed to call the raw estimator, so a seventh surface
+   * quoting a price is covered on the day it is written.
+   *
+   * `estimateRunCreditsByAgent` is in the same net: it is the same arithmetic
+   * with the same two outer rungs missing.
+   */
+  it("nothing outside the two resolvers calls the raw estimator", () => {
+    const RAW = /\bestimateRunCredits(?:FromJobs|ByAgent)\b/;
+    // The estimator's own module, the ladder over it, and the read-and-resolve
+    // version the submit core calls. Tests are excluded because a suite may
+    // legitimately import the arithmetic to assert on it.
+    const ALLOWED = new Set([
+      "src/lib/credit-reporting.ts",
+      "src/lib/run-price.ts",
+      "src/lib/credit-estimate.ts",
+    ]);
+    const offenders: string[] = [];
+    const scanned: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(join(REPO, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`;
+        if (entry.isDirectory()) {
+          if (entry.name === "__tests__" || entry.name === "node_modules") continue;
+          walk(rel);
+          continue;
+        }
+        if (!/\.tsx?$/.test(entry.name) || entry.name.includes(".test.")) continue;
+        if (ALLOWED.has(rel)) continue;
+        scanned.push(rel);
+        if (RAW.test(source(rel))) offenders.push(rel);
+      }
+    };
+    walk("src");
+    expect(offenders).toEqual([]);
+    // NON-VACUITY, both halves. The walker must have reached the surfaces this
+    // is about — a green tick from a walk that visited nothing is worse than no
+    // walk — and the pattern must still match a real call after the comment
+    // strip has run over it.
+    expect(scanned).toContain("src/lib/client-agent-rows.ts");
+    expect(scanned).toContain("src/app/(app)/clients/[id]/agents/[agentId]/page.tsx");
+    expect(RAW.test(source("src/lib/run-price.ts"))).toBe(true);
+  });
+
+  it("the submit core resolves the same estimate before it holds", () => {
+    const submit = source("src/lib/jobs/submit-custom.ts");
+    expect(submit).toContain("estimateAgentRunCredits(");
+    // …and that resolver is the same arithmetic, over the same jobs.
+    expect(source("src/lib/credit-estimate.ts")).toContain("estimateRunCreditsFromJobs(");
   });
 });

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
+import { isBillableClientActor } from "@/lib/credits";
 import { buildXAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
 import { IntakePageActionLink } from "@/components/intake-page-action-link";
@@ -25,7 +26,13 @@ export default async function XAgentPage({ params }: { params: Promise<{ id: str
   // client's grant list and lab slug to resolve the agent's own page (#82).
   const client = await requireVisibleClient(user, id);
 
-  const view = await buildXAgentIntakeView(id, { isStaff });
+  // FLOW AUDIT 2026-09, R3: the metered controls on this page quote a price,
+  // and this is the answer to "whose money" — an unbilled reader still reads
+  // the client's figure, marked as theirs (see CreditPriceNote).
+  const view = await buildXAgentIntakeView(id, {
+    isStaff,
+    viewerIsBilled: isBillableClientActor(user),
+  });
   // Resolved for BOTH roles. It used to be skipped for staff "whose destination is
   // the roster either way" — but the roster carries no run control for staff
   // either (CD-I1 moved every staff run gesture to the agent's own page), so

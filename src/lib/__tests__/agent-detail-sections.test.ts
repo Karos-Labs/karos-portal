@@ -657,7 +657,12 @@ describe("wiring", () => {
     // maintain a system's records. AgentSetupState carries both names; the
     // client-facing surfaces read clientLabel and the staff ones keep `label`.
     const rows = source("src/lib/client-agent-rows.ts");
-    expect(rows).toContain('const clientLabel = "Your X details"');
+    // Flow audit 2026-09, R7: the label now opens with the destination page's
+    // own <h1> ("X agent" → "X agent details") so the link and the page it
+    // lands on say the same thing. The rule this test guards is unchanged —
+    // client surfaces read `clientLabel`, staff ones keep `label` — so only the
+    // string moved.
+    expect(rows).toContain('const clientLabel = "X agent details"');
     expect(rows).toContain("setupLabel: setup.clientLabel");
     const strip = source("src/components/client-agents/agent-sections.tsx");
     expect(strip).not.toContain("Manage {view.label}");

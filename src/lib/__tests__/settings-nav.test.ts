@@ -234,7 +234,9 @@ describe("Account Center's tab strip", () => {
     expect(tabsCode).toContain("window.history.replaceState");
     // Every client section is filed under a heading, so the list reads as
     // three short groups rather than one long column.
-    for (const id of ["profile", "competitors", "reporting", "documents", "settings", "credits"]) {
+    // Documents left this list in round 4 (2026-09) — see the Profile-tab
+    // block below for where it went and what still points at it.
+    for (const id of ["profile", "competitors", "reporting", "settings", "credits"]) {
       expect(pageCode).toMatch(new RegExp(`id: "${id}",[^}]*group: "`));
     }
     expect(pageCode).toContain('group: "Your account"');
@@ -246,10 +248,15 @@ describe("Account Center's tab strip", () => {
     expect(pageCode).not.toContain('id: "archive"');
     expect(pageCode).not.toContain('id: "meetings"');
     expect(pageCode).not.toContain("<ArchiveView");
-    // And the header stops promising what the page no longer holds.
+    // And the header offers neither as a destination of its own. It DOES name
+    // meetings (review wave, 2026-09): they are content of the Settings tab and
+    // the description has to say what the five tabs hold, so what is refused
+    // here is a link or a tab id, not the word — "archive" is not even that,
+    // because that content left the page entirely.
     const header = page.slice(page.indexOf("<PageHeader"), page.indexOf("<SettingsTabs"));
     expect(header).not.toContain("archive");
-    expect(header).not.toContain("meetings");
+    expect(header).not.toContain("tab=meetings");
+    expect(header).not.toMatch(/href=[^>]*meetings/);
   });
 
   it("resolves the retired archive deep link to the calendar, per reader", () => {
@@ -280,11 +287,75 @@ describe("Account Center's tab strip", () => {
     expect(cal).toContain("`/calendar${suffix}`");
   });
 
+  /* ── portal feedback round 4 (2026-09): documents move into Profile ────── */
+
+  it("carries no Documents tab, and holds the documents on Profile instead", () => {
+    // "And the documents can live in Profile."
+    expect(pageCode).not.toContain('id: "documents"');
+    // Not gone from the page — re-homed. The anchor is what a deep link lands
+    // on, and it sits AFTER the client's own profile blocks and BEFORE the
+    // staff-only editor frame, which by the parity rule closes every tab.
+    const flatPage = flat(pageCode);
+    // `scroll-mt-24` since the review wave (2026-09), so the anchor clears the
+    // sticky chrome the way #visibility-scores already did — hence a match on
+    // the anchor and its content rather than on one exact line.
+    expect(flatPage).toMatch(/<section id="documents"[^>]*>\s*\{documentsSection\}\s*<\/section>/);
+    expect(flatPage).toMatch(/<section id="documents" className="scroll-mt-24">/);
+    const profileTab = flatPage.slice(
+      flatPage.indexOf("const profileSection = ("),
+      flatPage.indexOf("const competitorAiVisibility"),
+    );
+    const order = [
+      "<ClientProfilePanel",
+      "<BrandColorsSection",
+      '<section id="documents"',
+      "<StaffOnlySection",
+    ].map((s) => profileTab.indexOf(s));
+    expect(order.every((i) => i > -1), profileTab).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it("resolves the retired documents deep link onto the block that holds them", () => {
+    // Same reasoning as the archive redirect above: histories, bookmarks and
+    // sent emails hold `?tab=documents`, and a deep link that lands on the
+    // content is worth more than one that lands on an apology.
+    const flatPage = flat(pageCode);
+    expect(flatPage).toContain('if (initialTab === "documents")');
+    expect(flatPage).toContain(
+      "`/clients/${encodeURIComponent(id)}/settings?tab=profile#documents`",
+    );
+    expect(pageCode.indexOf('initialTab === "documents"')).toBeLessThan(
+      pageCode.indexOf("await Promise.all"),
+    );
+    // And the header stops listing it as a destination of its own.
+    const header = page.slice(page.indexOf("<PageHeader"), page.indexOf("<SettingsTabs"));
+    expect(header).toContain("Profile and documents");
+  });
+
+  it("opens the Competitors tab on every competitor, with no collapse", () => {
+    // "Since it's only competitors now we can show all of them right off the
+    // bat." `limit={null}` was already the rule (nothing is dropped); what
+    // round 4 removed is the six-row `collapseTo`, so the tab no longer opens
+    // on a subset of a list it holds in full.
+    const flatPage = flat(pageCode);
+    const mount = flatPage.slice(
+      flatPage.indexOf("<CompetitorTrack"),
+      flatPage.indexOf("<CompetitorTrack") + 400,
+    );
+    expect(mount).toContain("limit={null}");
+    expect(mount).not.toContain("collapseTo");
+    // And the rows are fed the client's own AI-answer count, which is the only
+    // number the competitor rows cannot carry themselves.
+    expect(mount).toContain("aiVisibility={competitorAiVisibility}");
+  });
+
   it("renders Meetings as the last of the Settings tab's own sections", () => {
     // A sub-section, with the anchor that makes `?tab=settings#meetings` land
     // on it — and still ahead of the admin-only frame, which by the parity
     // rule closes every tab it appears on.
-    expect(page).toContain('<Card id="meetings">');
+    expect(page).toMatch(/<Card id="meetings"/);
+    // Same anchor-offset rule as #documents and #visibility-scores.
+    expect(flat(pageCode)).toContain('<Card id="meetings" className="scroll-mt-24">');
     const settingsTab = flat(pageCode).slice(
       flat(pageCode).indexOf("const settingsSection = ("),
       flat(pageCode).indexOf("const sections: SettingsTab[]"),

@@ -38,7 +38,7 @@ const call = (user: typeof CLIENT_USER | typeof STAFF | typeof VIEW_AS_CLIENT) =
 });
 
 beforeEach(() => {
-  vi.mocked(chargeClientCredits).mockReset().mockResolvedValue({ balance: 95 });
+  vi.mocked(chargeClientCredits).mockReset().mockResolvedValue({ balance: 95, entryId: "charge-1" });
   vi.mocked(creditClientCredits).mockReset().mockResolvedValue({ balance: 100 });
 });
 
@@ -54,13 +54,13 @@ describe("who pays", () => {
 
   it("charges staff nothing at all — no ledger row, not a zero one", async () => {
     const out = await chargeClientModelCall(call(STAFF));
-    expect(out).toEqual({ denied: null, chargedAt: null });
+    expect(out).toEqual({ denied: null, chargedAt: null, chargeEntryId: null });
     expect(chargeClientCredits).not.toHaveBeenCalled();
   });
 
   it("charges an admin in View as Client nothing", async () => {
     const out = await chargeClientModelCall(call(VIEW_AS_CLIENT));
-    expect(out).toEqual({ denied: null, chargedAt: null });
+    expect(out).toEqual({ denied: null, chargedAt: null, chargeEntryId: null });
     expect(chargeClientCredits).not.toHaveBeenCalled();
   });
 
@@ -84,7 +84,9 @@ describe("a denial", () => {
   it("comes back as a message instead of throwing", async () => {
     vi.mocked(chargeClientCredits).mockRejectedValueOnce(denial);
     const out = await chargeClientModelCall(call(CLIENT_USER));
-    expect(out).toEqual({ denied: denial.message, chargedAt: null });
+    // `chargeEntryId` joins the outcome with two-phase charging (credits rework,
+    // 2026-09): a denial wrote no ledger row, so there is no hold to settle.
+    expect(out).toEqual({ denied: denial.message, chargedAt: null, chargeEntryId: null });
   });
 
   it("stops the model call from running at all", async () => {

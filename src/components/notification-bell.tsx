@@ -9,6 +9,7 @@ import { dismissAssignedActionItemAction } from "@/lib/actions";
 import {
   actionItemKey,
   reviewFeedRows,
+  taskAlertRows,
   unreadNotificationCount,
   visibleActionItems,
   type NotificationFeeds,
@@ -169,10 +170,21 @@ export function NotificationBell({
   // ONE row for a client, one per job for staff (A3/A4 — see notification-rows.ts).
   const reviewRows = reviewFeedRows(reviewJobs, { viewerIsClient });
 
-  // Task alerts: review_pending tasks are surfaced first (need immediate attention),
-  // then pending tasks. No local dismissal - they disappear when status changes.
-  const reviewPendingTasks = taskAlerts.filter((t) => t.status === "review_pending");
-  const pendingTasks = taskAlerts.filter((t) => t.status === "pending");
+  // Task alerts: review_pending tasks are surfaced first (need immediate
+  // attention), then pending tasks. No local dismissal - they disappear when
+  // status changes.
+  //
+  // ONE ROW PER TASK FOR STAFF, ONE SUMMARY LINE PER GROUP FOR A CLIENT — the
+  // grain is decided in notification-rows.ts (R10, flow audit 2026-09), beside
+  // the review queue's, because the count in the badge has to be built from the
+  // same answer the panel renders.
+  const taskRows = taskAlertRows(taskAlerts, { viewerIsClient });
+  const reviewPendingRows = taskRows.filter((r) =>
+    r.kind === "summary" ? r.status === "review_pending" : r.task.status === "review_pending",
+  );
+  const pendingRows = taskRows.filter((r) =>
+    r.kind === "summary" ? r.status === "pending" : r.task.status === "pending",
+  );
 
   // The product's only "how many unread" — the shells' dots read the very same
   // function off the very same feeds and dismissal set (#105).
@@ -194,7 +206,18 @@ export function NotificationBell({
   // client's queue collapses to one ReviewSummaryRow with no /jobs to offer
   // them (viewerIsClient excludes it here, same as jobDeepLinks above).
   const showJobsLink = reviewRows.length > 0 && !viewerIsClient;
-  const showMeetingsLink = visibleActions.length > 0;
+  // ONE ROUTE TO MEETINGS FOR A CLIENT, NOT THREE (flow audit 2026-09, R11 ·
+  // F14). `/transcripts` had three inconsistent reachability states for a
+  // client: no rail row by ruling, individual meeting rows in Account Center's
+  // Settings tab, and THIS footer — which appeared only when the client
+  // happened to have an assigned action item, so the same client saw the route
+  // exist and then not exist from one week to the next. The rows above it still
+  // open the meeting they name (`/transcripts/{id}`), which is the destination
+  // those rows are actually about; the aggregate list belongs to Account
+  // Center's Meetings section, which is where the "see all" control is going.
+  // Staff keep it — their shell's own nav lists Meetings, so the footer agrees
+  // with the nav around it.
+  const showMeetingsLink = visibleActions.length > 0 && !viewerIsClient;
 
   // CD-H7b: one number, one noun. The badge clamped at "9+" while the panel
   // header read "32 active" - the same set, described two ways, so opening the
@@ -308,31 +331,47 @@ export function NotificationBell({
               ) : (
                 <div className="divide-y divide-border">
 
-                  {/* ── Review-pending tasks (highest priority) ── */}
-                  {reviewPendingTasks.length > 0 && (
+                  {/* ── Review-pending tasks (highest priority) ──
+                      The section HEADING is staff-only too: a group caption
+                      that counts ("Ready for review (9)") over a single summary
+                      line is the same batch tell and the same second number the
+                      summary itself refuses to print (R10). */}
+                  {reviewPendingRows.length > 0 && (
                     <>
-                      <div className="bg-warning/5 px-4 py-1.5">
-                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-warning">
-                          Ready for review ({reviewPendingTasks.length})
-                        </p>
-                      </div>
-                      {reviewPendingTasks.map((t) => (
-                        <TaskAlertRow key={t.id} task={t} now={now} />
-                      ))}
+                      {!viewerIsClient && (
+                        <div className="bg-warning/5 px-4 py-1.5">
+                          <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-warning">
+                            Ready for review ({reviewPendingRows.length})
+                          </p>
+                        </div>
+                      )}
+                      {reviewPendingRows.map((row) =>
+                        row.kind === "summary" ? (
+                          <TaskSummaryRow key="task-summary-review" status="review_pending" />
+                        ) : (
+                          <TaskAlertRow key={row.task.id} task={row.task} now={now} />
+                        ),
+                      )}
                     </>
                   )}
 
                   {/* ── Pending tasks ── */}
-                  {pendingTasks.length > 0 && (
+                  {pendingRows.length > 0 && (
                     <>
-                      <div className="bg-surface-2 px-4 py-1.5">
-                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">
-                          Pending tasks ({pendingTasks.length})
-                        </p>
-                      </div>
-                      {pendingTasks.map((t) => (
-                        <TaskAlertRow key={t.id} task={t} now={now} />
-                      ))}
+                      {!viewerIsClient && (
+                        <div className="bg-surface-2 px-4 py-1.5">
+                          <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">
+                            Pending tasks ({pendingRows.length})
+                          </p>
+                        </div>
+                      )}
+                      {pendingRows.map((row) =>
+                        row.kind === "summary" ? (
+                          <TaskSummaryRow key="task-summary-pending" status="pending" />
+                        ) : (
+                          <TaskAlertRow key={row.task.id} task={row.task} now={now} />
+                        ),
+                      )}
                     </>
                   )}
 
@@ -452,7 +491,7 @@ export function NotificationBell({
  *
  * Copy is the dashboard's, near enough to read as the same fact twice rather
  * than two facts (client-home-overview.tsx, "Your Karos team is reviewing
- * these — they'll appear in your archive when ready").
+ * these — they'll appear in the archive when ready").
  *
  * Exported for test: the panel only mounts after a click on the trigger, which
  * a node test run cannot perform.
@@ -468,7 +507,57 @@ export function ReviewSummaryRow() {
           Your Karos team is reviewing new work
         </p>
         <p className="mt-0.5 text-[11px] text-muted">
-          It&apos;ll appear in your archive when it&apos;s ready.
+          It&apos;ll appear in the archive when it&apos;s ready.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ── Task summary row (clients) ──────────────────────────────────── */
+
+/**
+ * A client's whole task feed, one status group at a time, as a status LINE
+ * (flow audit 2026-09, R10). `ReviewSummaryRow` above is the model this
+ * follows, and `taskAlertRows` (notification-rows.ts) is where the decision to
+ * use it is made and tested.
+ *
+ * Holds no task, no count, no stamp and no destination — the same four
+ * refusals, for the same four reasons, plus one of its own: the dashboard's
+ * matching rows ("N tasks ready for review", "N pending tasks") are explicitly
+ * not links either, so a link here would put the bell and Home in disagreement
+ * about whether the reader can act.
+ *
+ * The words are the dashboard's hints verbatim, so the two surfaces read as one
+ * fact stated twice rather than as two facts.
+ *
+ * Exported for test: the panel only mounts after a click on the trigger, which
+ * a node test run cannot perform.
+ */
+export function TaskSummaryRow({ status }: { status: TaskAlert["status"] }) {
+  const isReview = status === "review_pending";
+  return (
+    <div className="flex gap-3 px-4 py-3">
+      <div
+        className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+        style={{
+          background: `color-mix(in srgb, ${isReview ? "var(--neon)" : "var(--muted)"} 10%, transparent)`,
+        }}
+      >
+        <Icon
+          name={isReview ? "Eye" : "Circle"}
+          className="h-3.5 w-3.5"
+          style={{ color: isReview ? "var(--neon)" : "var(--muted)" }}
+        />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-foreground">
+          {isReview ? "Work is ready for your review" : "Tasks are in progress"}
+        </p>
+        <p className="mt-0.5 text-[11px] text-muted">
+          {isReview
+            ? "Completed work waiting for your sign-off."
+            : "Your Karos team is working through these."}
         </p>
       </div>
     </div>

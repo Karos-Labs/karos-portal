@@ -76,18 +76,79 @@ export function intakeRowHref(pageHref: string, rowId: string): string {
  * CLIENT_USER handed the scoped URL is redirected to the flat one with the
  * query intact, so a link pasted across readers still lands.
  *
- * The label moves with the READER too: "your archive" is client-voiced copy;
- * pointed at one client's calendar for a STAFF reader it would be telling them
- * this client's archive is theirs.
+ * The label moves with the READER too: pointed at one client's calendar for a
+ * STAFF reader, a client-voiced noun would be telling them this client's
+ * archive is theirs.
+ *
+ * TWO LABELS, AND THAT IS THE POINT (flow audit 2026-09, R7 · GOV.UK *Write
+ * effective links*: "do not use different link text for the same destination").
+ * The destination had eight spellings across the portal — "your archive", "Open
+ * your archive", "See all activity", "Open archive" — and a reader cannot tell
+ * that four differently-worded links land in one place.
+ *
+ *  · `linkLabel` is what a CONTROL says, and it is the same three words for
+ *    every reader: "Open archive". The one vocabulary.
+ *  · `label` is the noun for a link sitting INSIDE a sentence ("it appears in
+ *    the archive"), where a bare control label will not parse. The client's
+ *    "your archive" is gone with the rest of the spellings; only the staff/
+ *    client scoping split survives, because that is about whose archive it is.
  */
 export function clientArchiveLink(args: { clientId: string; isStaff: boolean }): {
   href: string;
   label: string;
+  linkLabel: string;
 } {
   return {
     href: args.isStaff ? `/clients/${args.clientId}/calendar?view=archive` : "/calendar?view=archive",
-    label: args.isStaff ? "this client's archive" : "your archive",
+    label: args.isStaff ? "this client's archive" : "the archive",
+    linkLabel: "Open archive",
   };
+}
+
+/* ──────────── the one family → intake page table, for both sides ──────────── */
+
+/**
+ * The six lab intake families, as one union.
+ *
+ * `custom-agents.tsx`'s `IntakeKind` is an alias of this rather than a second
+ * spelling of the same six words: a seventh family has to be added here, and a
+ * table that then fails to answer for it is a type error rather than a link
+ * that silently goes nowhere.
+ */
+export type IntakeFamily = "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation";
+
+/** Route segment of each family's own data page under `/clients/[id]`. */
+const INTAKE_PAGE_SEGMENT: Record<IntakeFamily, string> = {
+  x: "x-agent",
+  linkedin: "linkedin-agent",
+  reddit: "reddit-agent",
+  newsletter: "newsletter-agent",
+  blog: "blog-agent",
+  reputation: "reputation-agent",
+};
+
+/**
+ * A family's intake page for one client.
+ *
+ * THE ONE TABLE (flow audit 2026-09, R16). There were two: `buildAgentSetup`
+ * spelled these six routes inline while `custom-agents.tsx` kept a private
+ * `INTAKE_ROUTE` copy for the run dialog's error-recovery link, and nothing
+ * connected them — a moved route would have fixed one and left the other
+ * pointing at a 404. Deleting the copy alone was not enough: `buildAgentSetup`
+ * runs on the SERVER (it reads Firestore to answer `ready`), so a client
+ * component that only knows the family and a client id cannot ask it, which is
+ * exactly the position the run dialog's client picker is in — the client is
+ * chosen inside the dialog, so no server render upstream can have resolved a
+ * setup object for the pair.
+ *
+ * So the table lives here, in the module that is already client-safe by design
+ * and already owns where intake surfaces point, and BOTH sides read it:
+ * `buildAgentSetup` builds `AgentSetupState.href` from it, and the dialog falls
+ * back to it when it was handed no setup object. One table, two readers, and
+ * the fallback can no longer drift from the real thing.
+ */
+export function intakePageHref(clientId: string, family: IntakeFamily): string {
+  return `/clients/${clientId}/${INTAKE_PAGE_SEGMENT[family]}`;
 }
 
 /* ────────── the one control that offers a viewer their agent ───────── */

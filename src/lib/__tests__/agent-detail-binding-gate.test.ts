@@ -102,10 +102,15 @@ describe("every surface under /clients/[id] that resolves an agent filters on th
     // (ruling D3). That is exactly the property this describe block is about —
     // a surface under /clients/[id] resolving agents for the client in the URL
     // — so it belongs here rather than being excused as "not a page".
+    // HOME joined the list in portal feedback round 4, 2026-09: its "Get set
+    // up" ladder reads the catalogue to find the family (and therefore the
+    // intake page) of each granted agent. It goes through `railAgentsForClient`
+    // for exactly the reason this block exists.
     expect(surfaces.map((s) => s.rel).sort()).toEqual([
       "app/(app)/clients/[id]/agents/[agentId]/page.tsx",
       "app/(app)/clients/[id]/agents/page.tsx",
       "app/(app)/clients/[id]/layout.tsx",
+      "app/(app)/clients/[id]/page.tsx",
       "app/(app)/clients/[id]/settings/page.tsx",
     ]);
   });

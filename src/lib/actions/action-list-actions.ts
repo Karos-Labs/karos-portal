@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { upsertClientActionState } from "@/lib/data";
 import { requireUser } from "@/lib/auth";
 import { ACTION_DEFINITIONS } from "@/lib/action-list";
+import { SETUP_LADDER_HIDDEN_ACTION_ID } from "@/lib/setup-ladder";
 
 /**
  * Self-service, same auth shape as `updateClientProfileAction` — a CLIENT_USER
@@ -19,7 +20,19 @@ async function authorize(clientId: string): Promise<{ ok: true } | { ok: false; 
   return { ok: true };
 }
 
+/**
+ * The ids these actions will write a row for.
+ *
+ * `ACTION_DEFINITIONS` plus ONE reserved id (portal feedback round 4, 2026-09):
+ * the setup ladder's "Hide this", which stores the client's dismissal of the
+ * finished "Get set up" card. It is not an `ACTION_DEFINITIONS` row because it
+ * has no label, no href and no place in any list — it is a per-client flag that
+ * happens to want exactly the storage, authorization and permanence
+ * `markActionNotRelevantAction` already provides. Allow-listed by name rather
+ * than by loosening the check, so an unknown id is still refused.
+ */
 function isKnownAction(actionId: string): boolean {
+  if (actionId === SETUP_LADDER_HIDDEN_ACTION_ID) return true;
   return ACTION_DEFINITIONS.some((a) => a.id === actionId);
 }
 

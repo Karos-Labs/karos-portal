@@ -22,6 +22,8 @@ import {
 import { checkDanglingReferences } from "@/lib/dynamic-agent-reference-check";
 import { generateDynamicAgentDraft, MAX_GENERATION_DESCRIPTION_CHARS } from "@/lib/dynamic-agent-generation";
 import { submitDynamicAgentJob } from "@/lib/jobs/submit-custom";
+import { clientSafeRunError } from "@/lib/custom-agent-launch";
+import { isBillableClientActor } from "@/lib/credits";
 import { requireAdmin, requireClientAccess } from "./_shared";
 
 /**
@@ -238,5 +240,18 @@ export async function runDynamicAgentAction(
   inputs: Record<string, DynamicAgentInputValue>,
 ): Promise<{ jobId?: string; error?: string }> {
   const user = await requireClientAccess(clientId);
-  return submitDynamicAgentJob(user, { specId, clientId, inputs });
+  const result = await submitDynamicAgentJob(user, { specId, clientId, inputs });
+  // FLOW AUDIT 2026-09, R2/F17. This was the one client-pressable run whose
+  // failure crossed to the browser verbatim, so the submit core's internal
+  // strings — service URLs and env var names, e.g. "Agent service is not
+  // configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." — could be printed
+  // to a client. Same allowlist and same gate its five siblings use
+  // (runBlogSetupAction and friends): setup refusals and credit denials are
+  // written for the client and pass through; everything else collapses to one
+  // plain sentence. Applied SERVER-SIDE, before the value is serialized — a
+  // string that never leaves the server cannot be read out of the RSC payload.
+  if (result.error && isBillableClientActor(user)) {
+    return { error: clientSafeRunError(result.error) };
+  }
+  return result;
 }

@@ -130,6 +130,7 @@ export function ClientHomeOverview({
   channelsNeedingAttention = 0,
   channelsHref,
   draftsHref,
+  now: nowProp,
 }: {
   /**
    * Whose account this page is. Needed so `clientArchiveLink` resolves the
@@ -195,6 +196,12 @@ export function ClientHomeOverview({
    * caller that passes nothing gets the reporting row it always had.
    */
   draftsHref?: string;
+  /**
+   * The caller's own render clock, in epoch millis. Optional: a caller with
+   * nothing to synchronise against omits it and gets today's behaviour. See the
+   * note beside its one use below for why the page passes one.
+   */
+  now?: number;
 }) {
   const archive = clientArchiveLink({ clientId, isStaff: !viewerIsClient });
   // Counted off the deliverables themselves, not off agent runs in `review` —
@@ -231,16 +238,20 @@ export function ClientHomeOverview({
    */
   const more = tasksHitLimit ? "+" : "";
 
-  // Date.now() intentional: the archive is a time-windowed view (30 days) and a
-  // future-dated post is not in it yet, so "does this row have a destination"
-  // can only be answered against the current moment. Read once per render.
+  // The archive is a time-windowed view (30 days) and a future-dated post is not
+  // in it yet, so "does this row have a destination" can only be answered
+  // against the current moment. Read once per render, and preferably read by the
+  // CALLER (review wave, 2026-09): the page that hands this component its
+  // already-projected assets computed that projection against a clock of its
+  // own, and two clocks a few milliseconds apart can disagree about a row that
+  // unlocks between them.
   //
   // The directive has to be the LAST line before the statement - it applies to
   // the next SOURCE line, so with the explanation underneath it was suppressing
   // a comment and the rule fired anyway (an error in the tree since this
   // comment was written, and the "unused directive" warning beside it).
   // eslint-disable-next-line react-hooks/purity
-  const now = Date.now();
+  const now = nowProp ?? Date.now();
 
   /**
    * THE PRIORITY ORDER, and it is the array's order.
@@ -323,7 +334,7 @@ export function ClientHomeOverview({
       // so for a client this row reports status rather than asking for a
       // sign-off, and carries no destination — see `draftsHref`.
       hint: viewerIsClient
-        ? "Your Karos team is reviewing these. They'll appear in your archive when ready."
+        ? "Your Karos team is reviewing these. They'll appear in the archive when ready."
         : "Waiting on your approval before they can be scheduled.",
       ...(draftsHref ? { href: draftsHref, action: "Review drafts" } : {}),
     });
@@ -513,24 +524,31 @@ export function ClientHomeOverview({
           </ul>
         )}
 
-        {/* "See all activity", moved out of the header (2026-09).
-            It was a 12px "Open archive" beside the heading — the least
-            prominent thing on the card and the only way off it — while the list
-            silently stopped at its limit with nothing saying more existed. At
-            the foot of a list it reads as the list's continuation, which is
-            what it is, and it names how many rows are behind it when it knows.
+        {/* The archive link, moved out of the header (2026-09).
+            It was a 12px link beside the heading — the least prominent thing on
+            the card and the only way off it — while the list silently stopped
+            at its limit with nothing saying more existed. At the foot of a list
+            it reads as the list's continuation, which is what it is, and it
+            names how many rows are behind it when it knows.
             `mt-auto` so it sits at the bottom edge whichever card in the pair is
-            taller. */}
+            taller.
+
+            R7 (flow audit 2026-09): it said "See all activity", which is a
+            fifth name for the destination eight other controls call the
+            archive — and it goes to the same `/calendar?view=archive` as every
+            one of them. One vocabulary: `clientArchiveLink().linkLabel`.
+            R8: ChevronRight, the one trailing glyph a row that opens something
+            may carry. */}
         <div className="mt-auto border-t border-border pt-3">
           <Link
             href={archive.href}
             className="row-lift flex items-center justify-between gap-2 rounded-md border border-transparent px-3 py-2 text-xs font-medium text-muted hover:text-foreground"
           >
             <span className="min-w-0">
-              See all activity
+              {archive.linkLabel}
               {olderCount > 0 ? ` (${olderCount} more)` : ""}
             </span>
-            <Icon name="ArrowRight" className="h-3.5 w-3.5 shrink-0" />
+            <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0" />
           </Link>
         </div>
       </Card>
@@ -635,7 +653,11 @@ function AttentionRow({ item }: { item: AttentionItem }) {
         <Icon name={item.icon} className={`h-3.5 w-3.5 ${tone.text}`} />
       </div>
       <p className="min-w-0 flex-1 text-sm text-foreground">{item.label}</p>
-      {item.href && <Icon name="ArrowRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />}
+      {/* R8 (flow audit 2026-09): ChevronRight, not ArrowRight. The portal had
+          three trailing glyphs for one meaning; a row that opens something now
+          carries exactly one, and it is the chevron the action rows and the
+          agent cards already use. */}
+      {item.href && <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />}
     </>
   );
 

@@ -50,7 +50,7 @@ export function HomeOpsStrip({ stats }: { stats: OpsStat[] }) {
             <p className="mt-0.5 flex items-baseline gap-1.5">
               <span
                 className={cn(
-                  "font-mono text-lg font-semibold leading-none",
+                  "stat-number text-lg font-semibold leading-none",
                   warn ? "text-warning" : "text-foreground",
                 )}
               >

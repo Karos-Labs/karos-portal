@@ -21,6 +21,16 @@ export function AvatarUploader({
 }) {
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
+  /**
+   * Two-step inline confirm on "Remove" (flow audit 2026-09, R4).
+   *
+   * This is the ONE-OFF destructive press, not a repeatable one, so it takes
+   * the confirm the codebase already has (`client-key-inline.tsx`'s
+   * replace-key block) rather than the undo window Home's task lists took: an
+   * undone avatar delete would need the old file back, and the DELETE is
+   * immediate and unversioned.
+   */
+  const [confirming, setConfirming] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -55,6 +65,7 @@ export function AvatarUploader({
       const res = await fetch("/api/users/avatar", { method: "DELETE" });
       if (!res.ok) throw new Error("Could not remove avatar");
       onChange(null);
+      setConfirming(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not remove avatar");
     } finally {
@@ -112,14 +123,41 @@ export function AvatarUploader({
           {value && (
             <button
               type="button"
-              onClick={remove}
-              disabled={uploading || removing}
+              onClick={() => setConfirming(true)}
+              disabled={uploading || removing || confirming}
               className="rounded-[6px] border border-border px-2.5 py-1.5 text-xs font-medium text-muted-2 transition-colors hover:border-danger/50 hover:text-danger disabled:pointer-events-none disabled:opacity-50"
             >
               Remove
             </button>
           )}
         </div>
+        {/* R4 — the same two-step block client-key-inline.tsx uses: the
+            question names what goes, and the commit is a second, differently
+            labelled press rather than a repeat of the first. */}
+        {confirming && (
+          <div className="rounded-[6px] border border-warning/30 bg-warning/10 px-2.5 py-2">
+            <p className="text-[11px] leading-relaxed text-foreground">
+              Remove your photo? Your initials go back on your avatar until you upload another.
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={remove}
+                disabled={removing}
+                className="rounded-[6px] border border-warning/40 bg-warning/15 px-2.5 py-1 text-[11px] font-medium text-warning disabled:opacity-50"
+              >
+                Remove photo
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className="rounded-[6px] border border-border px-2.5 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         <p className="text-[11px] text-muted-2">PNG, JPG, or WEBP · max 4 MB</p>
         {error && <p className="text-xs text-danger">{error}</p>}
       </div>

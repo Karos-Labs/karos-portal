@@ -16,6 +16,25 @@
   Chip fills may also use bg-foreground/[0.04], which renders one step above
   its parent — visually equivalent to the ladder, never a new tone.
 */
+/*
+  Type — three faces, three jobs (§5):
+    --font-serif  Spectral       display: h1-h3, pull quotes
+    --font-sans   Hanken Grotesk body, UI, AND ALL NUMBERS
+    --font-mono   DM Mono        labels, eyebrows, ids, code — never numbers
+
+  NUMBERS ARE SANS. A figure is set in Hanken with tabular digits (the
+  .stat-number / .tabular helpers below), not in the mono. This is the rule
+  that changed in 2026-09: the visibility scores on the reporting cards were
+  mono while the same-sized figures on Home were sans, so two screens showing
+  the same kind of number disagreed about what a number looks like. Mono keeps
+  the jobs where monospacing is the point — an id you might copy, a code
+  block, a short uppercase label — and gives up numerals everywhere else.
+
+  The mono face itself moved from JetBrains Mono to DM Mono at the same time:
+  lighter, rounder, closer in colour to Hanken, and it reads as a label rather
+  than a terminal. It is also wider, so eyebrow tracking came down (see
+  .eyebrow).
+*/
 :root {
   --background: #1a1a1a;   /* warm charcoal ground */
   --surface: #242429;      /* raised surfaces, cards, panels */
@@ -95,7 +114,10 @@
   --color-warning: var(--warning);
   --color-info: var(--info);
   --font-sans: var(--font-hanken), system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  /* Swapping the mono face is THIS line plus the matching next/font/google
+     declaration in src/app/layout.tsx — nothing else in the app names a face.
+     Put JetBrains_Mono / --font-jetbrains back in both places to revert. */
+  --font-mono: var(--font-dm-mono), ui-monospace, monospace;
   --font-serif: var(--font-spectral), Georgia, "Times New Roman", serif;
 }
 
@@ -191,13 +213,35 @@ body {
 
 /* ── Utility helpers ──────────────────────────────────────────────────── */
 
-/* Mono eyebrow label (§5) */
+/* Mono eyebrow label (§5). 0.14em, down from the 0.18em JetBrains wanted —
+   DM Mono sets wider, and uppercase mono at 0.18em started to come apart into
+   separate letters at 12px. */
 .eyebrow {
   font-family: var(--font-mono);
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   color: var(--neon);
+}
+
+/* ── Numbers (§5) ─────────────────────────────────────────────────────── */
+
+/* Digits that need to line up column-to-column or not jitter as they tick —
+   table cells, timers, counters, meter readouts. Sets nothing but the
+   numerals, so it composes with whatever type the element already has. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* THE big figure: a score, a count, a currency total — the number a card is
+   built around. Sans, not mono (see the type note at the top of this file),
+   with tabular digits so a 1 is as wide as an 8 and the figure does not shift
+   when it updates. Size and colour stay with the component; this class only
+   settles which face and which numerals. */
+.stat-number {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 /* Warm keyline glow — replaces the old neon glow. One per screen, subtle. */

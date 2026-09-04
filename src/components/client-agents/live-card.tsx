@@ -273,6 +273,14 @@ export function TemplateRows({
                 variant="ghost"
                 disabled={!allowed || busy}
                 loading={busy}
+                // The visible label stays "Run now" — it sits inside the
+                // format's own row, so the format is named right above it. The
+                // accessible name is not: read out of order, every row on this
+                // page announced the identical "Run now", which is the same
+                // "you cannot predict the output" defect the primary button had
+                // (flow audit 2026-09, R15). Both controls name their format
+                // now; only one of them has to spend pixels on it.
+                aria-label={`Run ${template.name} now`}
                 onClick={() => run(template)}
               >
                 <Icon name="Play" className="h-3.5 w-3.5" />
@@ -283,8 +291,18 @@ export function TemplateRows({
                   button's own label. */}
               {agent.runCost != null && (
                 <span className="flex items-center gap-1 text-[11px] text-muted-2">
-                  <Icon name="Coins" className="h-3 w-3 text-neon" />
+                  {/* Both registers, like the two other cards that quote a run
+                      (review wave, 2026-09): the row carried no price for staff,
+                      so this chip vanished for them while LegacyAgentPanel
+                      printed the staff line for the same fact. The rationed
+                      accent belongs to the reader who is spending. */}
+                  <Icon
+                    name="Coins"
+                    className={`h-3 w-3 ${viewerIsClient ? "text-neon" : "text-muted-2"}`}
+                  />
+                  {agent.runCostIsEstimate ? "about " : ""}
                   {agent.runCost} credit{agent.runCost === 1 ? "" : "s"}
+                  {!viewerIsClient && " · billed to the client"}
                 </span>
               )}
               <Button size="sm" variant="ghost" onClick={() => onFeedback(template)}>

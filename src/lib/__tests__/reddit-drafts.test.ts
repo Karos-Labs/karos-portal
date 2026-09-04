@@ -448,7 +448,9 @@ describe("Reddit is registered as an intake-driven agent", () => {
     const fn = rows.slice(rows.indexOf("export async function buildAgentSetup"));
     expect(fn).toContain("isRedditAgentIdentity(agent.key)");
     expect(fn).toContain("hasRedditAgentIntake(clientId)");
-    expect(fn).toContain("reddit-agent");
+    // The route comes from the one shared family→route table now (R16), so what
+    // this asks is that the family resolves one — not that this file spells it.
+    expect(fn).toContain('intakePageHref(clientId, "reddit")');
     expect(fn).toContain('"Reddit agent data"');
     // And the pane, so the staff dialog can collect the account form in place.
     expect(fn).toContain('kind: "reddit", data: panes.reddit');

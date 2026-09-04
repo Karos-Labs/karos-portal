@@ -398,7 +398,19 @@ function ExportMenu({
   );
 }
 
-/* ── Full-document slide-over (50% width) ─────────────────────────────── */
+/* ── Full-document reader — an EXPANDED PANEL on the Documents tab ──────
+   (flow audit 2026-09, R13.)
+
+   It was a 50%-width slide-over rendered through a portal, with the
+   "Correct Info" dialog stacked on top of it: page → tab → slide-over →
+   modal, four levels of disclosure for one document. And the reader failed
+   three of the four "use a page, not an overlay" tests outright — it has its
+   own scrolling, its own table of contents and its own export menu, which is
+   a second navigation system inside an overlay.
+
+   So it renders in place of the list now, on the tab it belongs to, with a
+   "All documents" control back. Nothing about the route changes; "Correct
+   Info" stays a modal, and is now the ONLY one. ── */
 
 /** Any body text sitting before the first `##` heading - parseDocSections drops it. */
 function leadIn(content: string): string {
@@ -413,7 +425,7 @@ function sectionId(heading: string, i: number): string {
   return `doc-section-${i}-${slug || "untitled"}`;
 }
 
-function DocOverlay({
+function DocPanel({
   doc,
   label,
   clientId,
@@ -429,8 +441,18 @@ function DocOverlay({
   onDocUpdated?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [correcting, setCorrecting] = useState(false);
   const [summary, setSummary] = useState<string[] | null>(null);
+  /**
+   * The correction this reader just paid for, kept on screen (flow audit
+   * 2026-09, R13). "Apply Correction" used to close the modal AND the
+   * document, dropping the client back on the list with no diff and no
+   * acknowledgement of a billable AI rewrite. The action returns no diff to
+   * render, so this shows the two things that are actually known: what they
+   * asked for, verbatim, and that the document moved a version.
+   */
+  const [applied, setApplied] = useState<{ text: string; fromVersion: number } | null>(null);
   // renderFullDoc("") returns "" - with no branch here the panel used to open
   // onto a completely blank body with no message and no explanation.
   const body = renderFullDoc(doc.content);
@@ -442,21 +464,26 @@ function DocOverlay({
   const indexed = sections.length >= 2;
   const lead = leadIn(doc.content);
 
+  // No body-scroll lock any more: this is a panel on the page, not an overlay
+  // over it, and freezing the page behind a panel that IS the page is what made
+  // the old reader feel like a fourth level. Escape still returns to the list —
+  // the habit is cheap to keep and costs nothing here.
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && !correcting) onClose();
     }
     document.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("keydown", onKey);
   }, [onClose, correcting]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    // …and take focus with it. The panel REPLACES the list rather than opening
+    // over it, so the button that was pressed is gone from the DOM and focus
+    // would otherwise fall back to <body>: a screen reader announces nothing
+    // and the next Tab restarts from the top of the page. `preventScroll`
+    // because the line above has just decided where this panel starts.
+    headingRef.current?.focus({ preventScroll: true });
   }, [doc.id]);
 
   // Executive summary: already built on the server, with caching keyed on the
@@ -478,19 +505,45 @@ function DocOverlay({
     };
   }, [clientId, doc.docType, doc.tier, doc.version]);
 
-  return createPortal(
+  return (
     <>
-      <div
-        className="fixed inset-0 z-[10000] flex justify-end"
-        style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(3px)" }}
-        onClick={(e) => {
-          if (e.target === e.currentTarget) onClose();
-        }}
-      >
-        <div className="flex h-full w-full max-w-[92%] flex-col border-l border-border bg-surface shadow-2xl animate-slide-in-right md:max-w-[50%]">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-6 py-3.5">
+      <div className="rounded-[var(--radius)] border border-border bg-surface">
+        {/* `relative` is here for the absolutely-positioned bits inside this
+            box, NOT for the sticky header below it (review wave, 2026-09):
+            `position: sticky` is resolved against the nearest scrolling
+            ancestor, which is the page, and no containing block changes that. */}
+        <div className="relative flex flex-col">
+          {/* STICKY INSIDE THE SCROLLER (flow audit 2026-09, R13 follow-up).
+              The slide-over pinned its header above a flex-1 body; a panel in
+              the page flow has no such column, so on a phone — where the panel
+              is the whole screen and the reader scrolls a long document — the
+              header, the way back and "Correct Info" all scrolled away. Sticky
+              keeps every one of them one thumb away at any scroll depth, and
+              `bg-surface` keeps the document from showing through it. */}
+          <div className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-6 py-3.5">
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-foreground">{label}</p>
+              {/* The way back, named. The slide-over's only exit was a bare X
+                  (and the backdrop), which says "put this away" and not "return
+                  to the list" — flow audit 2026-09, R13. */}
+              <button
+                onClick={onClose}
+                className="mb-1 inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+              >
+                <Icon name="ChevronLeft" className="h-3.5 w-3.5" />
+                All documents
+              </button>
+              {/* The focus target for the list -> panel swap below, and a real
+                  heading rather than a styled paragraph: the panel replaces the
+                  list in place, so without this a screen reader is left where
+                  the pressed row used to be and a keyboard reader's next Tab
+                  starts from the top of the page. */}
+              <h2
+                ref={headingRef}
+                tabIndex={-1}
+                className="truncate text-sm font-semibold text-foreground focus:outline-none"
+              >
+                {label}
+              </h2>
               {/* "Is this current?" is the first question a document with a
                   recurring regeneration schedule has to answer. */}
               {/* Carries a date and a version number, so it takes the readable
@@ -509,17 +562,31 @@ function DocOverlay({
                 <Icon name="PenLine" className="h-3.5 w-3.5" />
                 Correct Info
               </button>
-              <button
-                onClick={onClose}
-                className="flex h-8 w-8 items-center justify-center rounded-[8px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-                aria-label="Close document"
-              >
-                <Icon name="X" className="h-4 w-4" />
-              </button>
             </div>
           </div>
 
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
+          {/* What the correction actually did (flow audit 2026-09, R13).
+              `role="status"` because this appears without the reader moving:
+              the modal above it closes and this arrives in its place, which is
+              a change nobody is looking at unless it is announced. */}
+          {applied && (
+            <div role="status" className="border-b border-neon/20 bg-neon-soft/30 px-6 py-3">
+              <p className="text-xs font-medium text-neon">
+                {doc.version > applied.fromVersion
+                  ? `Correction applied. This document is now v${doc.version}.`
+                  : "Correction applied."}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                You asked us to correct: “{applied.text}”. Only the facts you named changed;
+                everything else is identical.
+              </p>
+            </div>
+          )}
+
+          {/* A capped height rather than the viewport: the document keeps its
+              own scroll (it is long, and it has a table of contents pinned
+              beside it) without swallowing the tab it sits on. */}
+          <div ref={scrollRef} className="max-h-[70vh] min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
             {body && summary && (
               <div className="mx-auto mb-6 w-full max-w-3xl rounded-[10px] border border-border bg-surface-2 px-4 py-3">
                 <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
@@ -608,20 +675,29 @@ function DocOverlay({
         </div>
       </div>
 
+      {/* The one modal a CLIENT meets in this flow now (flow audit 2026-09,
+          R13): a short, user-initiated, billable decision — the case a dialog
+          is actually for — over a document that is no longer itself an
+          overlay. It is not the only dialog this component mounts:
+          RegenerateModal is still here, on the list behind an `isAdmin &&
+          clientId` gate, and staff keep it. What went is the STACK — page ->
+          tab -> slide-over -> modal is now page -> tab -> panel -> modal
+          minus a level, and no dialog opens over another. */}
       <CorrectInfoModal
         documentId={doc.id}
         docLabel={label}
         correctionPricing={correctionPricing}
         open={correcting}
         onClose={() => setCorrecting(false)}
-        onSuccess={() => {
+        onSuccess={(correction) => {
+          // The document STAYS OPEN. It used to close both layers and land the
+          // client on the list with nothing to show for a paid rewrite.
           setCorrecting(false);
-          onClose();
+          setApplied({ text: correction, fromVersion: doc.version });
           onDocUpdated?.();
         }}
       />
-    </>,
-    document.body,
+    </>
   );
 }
 
@@ -837,7 +913,18 @@ export function ClientDocuments({
   viewerIsClient?: boolean;
 }) {
   const router = useRouter();
-  const [openDoc, setOpenDoc] = useState<{ doc: ClientContextDoc; label: string } | null>(null);
+  /**
+   * The doc TYPE being read, not a snapshot of the document (flow audit
+   * 2026-09, R13). The reader stays open across a correction now, and a
+   * correction rewrites the document — so holding the object here would leave
+   * the panel rendering the pre-correction copy after `router.refresh()`
+   * delivered the new one. The type is stable; the document is re-picked from
+   * the fresh props below.
+   */
+  // Typed as the union it actually holds (review wave, 2026-09): every value
+  // put in it comes from DOC_TABS, and `string` let a typo compile into a
+  // reader that silently opens nothing.
+  const [openDocType, setOpenDocType] = useState<ContextDocType | null>(null);
   const [regenModalOpen, setRegenModalOpen] = useState(false);
 
   const available = DOC_TABS.map((t) => ({
@@ -845,11 +932,35 @@ export function ClientDocuments({
     pick: pickDoc(contextDocs, t.docType, allowInternalFallback),
   })).filter((i) => i.pick.kind !== "none");
 
+  const openItem = openDocType ? available.find((i) => i.docType === openDocType) : undefined;
+  const openDoc =
+    openItem && openItem.pick.kind === "doc"
+      ? { doc: (openItem.pick as { kind: "doc"; doc: ClientContextDoc }).doc, label: openItem.label }
+      : null;
+
   // Asked ONCE, here, and read by both the empty state and every unavailable
   // row — so the list and the rows in it cannot disagree about whether anything
   // is happening.
   const pipeline = docsPipelineState({ isAiProcessing, aiProcessingFailed });
   const unavailable = unavailableDocCopy(pipeline);
+
+  // THE READER REPLACES THE LIST rather than floating over it (flow audit
+  // 2026-09, R13) — one thing on the tab at a time, and "All documents" inside
+  // the panel is the way back.
+  if (openDoc) {
+    return (
+      <div>
+        <DocPanel
+          doc={openDoc.doc}
+          label={openDoc.label}
+          clientId={clientId}
+          correctionPricing={correctionPricing}
+          onClose={() => setOpenDocType(null)}
+          onDocUpdated={() => router.refresh()}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -890,10 +1001,7 @@ export function ClientDocuments({
               <li key={item.docType}>
                 <button
                   onClick={() => {
-                    setOpenDoc({
-                      doc: (item.pick as { kind: "doc"; doc: ClientContextDoc }).doc,
-                      label: item.label,
-                    });
+                    setOpenDocType(item.docType);
                     // Event-tracked action-list ids (21/22/23, lib/action-list.ts) —
                     // these three docs have nothing to query for "has the client
                     // looked at this" beyond the moment they open it.
@@ -947,19 +1055,6 @@ export function ClientDocuments({
           (buildAgentSetup in clients/[id]/agents/page.tsx), which is also the
           only place that knows whether the client HAS that agent (CD-E1). */}
 
-      {openDoc && (
-        <DocOverlay
-          doc={openDoc.doc}
-          label={openDoc.label}
-          clientId={clientId}
-          correctionPricing={correctionPricing}
-          onClose={() => setOpenDoc(null)}
-          onDocUpdated={() => {
-            setOpenDoc(null);
-            router.refresh();
-          }}
-        />
-      )}
 
       {clientId && (
         <RegenerateModal

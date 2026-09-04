@@ -1,14 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { updateJobMock, refundJobChargeMock, materializeMock } = vi.hoisted(() => ({
-  updateJobMock: vi.fn(),
-  refundJobChargeMock: vi.fn(),
-  materializeMock: vi.fn(),
-}));
+const { updateJobMock, refundJobChargeMock, materializeMock, settleJobChargeMock, logUsageMock } =
+  vi.hoisted(() => ({
+    updateJobMock: vi.fn(),
+    refundJobChargeMock: vi.fn(),
+    materializeMock: vi.fn(),
+    settleJobChargeMock: vi.fn(),
+    logUsageMock: vi.fn(),
+  }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/data", () => ({ updateJob: updateJobMock }));
 vi.mock("@/lib/credit-reconcile", () => ({ refundJobCharge: refundJobChargeMock }));
+vi.mock("@/lib/credit-settle", () => ({ settleJobCharge: settleJobChargeMock }));
+vi.mock("@/services/logger", () => ({ logger: { logUsage: logUsageMock } }));
 // Mocked EXPLICITLY rather than left to run for real against a half-mocked
 // `@/lib/data`. It happened to no-op before (the fixtures carry no
 // `agentEngineProductId`, so it returned early), which meant this suite's
@@ -234,5 +239,162 @@ describe("refunds on a failed agent-engine run", () => {
     );
 
     expect(refundJobChargeMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * THE ONE TELEMETRY GAP THE CREDITS REWORK HAD TO CLOSE (2026-09).
+ *
+ * agent-engine has always reported what a run cost, and the portal has always
+ * rendered it live — but this sync wrote only status/error/assetIds, so nothing
+ * was ever PERSISTED. Every other execution path stored a cost; this family did
+ * not, which meant it could not be settled against actual spend at all and read
+ * as free on every staff cost surface. These pin the fix in both directions: the
+ * cost lands on the job, and a delivered run settles its hold against it.
+ */
+describe("what an agent-engine run cost us", () => {
+  beforeEach(() => {
+    updateJobMock.mockReset();
+    refundJobChargeMock.mockReset();
+    materializeMock.mockReset();
+    settleJobChargeMock.mockReset();
+    logUsageMock.mockReset();
+  });
+
+  it("persists the run's own reported total onto job.external", async () => {
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "running" }),
+      view("completed", { totalCostUsd: 1.4 }),
+    );
+    expect(updateJobMock).toHaveBeenCalledTimes(1);
+    expect(updateJobMock.mock.calls[0]![1].external).toMatchObject({ totalCostUsd: 1.4 });
+  });
+
+  it("falls back to the sum of the steps when the run total is missing", async () => {
+    // A run that finished before the run-level total was written still has its
+    // per-step costs, and they are the same dollars.
+    const v = view("completed");
+    v.steps = [{ costUsd: 0.4 }, { costUsd: 0.6 }, {}] as never;
+    await syncAgentEngineJobStatusFromView(job({ status: "running" }), v);
+    expect(updateJobMock.mock.calls[0]![1].external.totalCostUsd).toBeCloseTo(1);
+  });
+
+  it("treats a run that reported nothing as unknown, not as free", async () => {
+    // Writing 0 would make a whole product family read as costless on the staff
+    // cost line and would let a settlement refund the entire hold.
+    await syncAgentEngineJobStatusFromView(job({ status: "running" }), view("completed"));
+    expect(updateJobMock.mock.calls[0]![1].external).toBeUndefined();
+    expect(settleJobChargeMock).not.toHaveBeenCalled();
+  });
+
+  it("logs the run's usage so this family is not invisible to cost reporting", async () => {
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "running" }),
+      view("completed", { totalCostUsd: 1.4 }),
+    );
+    expect(logUsageMock).toHaveBeenCalledTimes(1);
+    // Already priced by the engine — passing tokens here would be inventing them.
+    expect(logUsageMock.mock.calls[0]![0]).toMatchObject({ costUsd: 1.4, jobId: "job_1" });
+  });
+
+  it("settles the client's hold against that cost on a DELIVERED run", async () => {
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "running" }),
+      view("completed", { totalCostUsd: 1.4 }),
+    );
+    // The delivering job is named twice: once as the pairing key, once as the
+    // run doing the settling, so a task key carrying two live holds hands back
+    // the right one (CreditLedgerEntry.settlesJobId).
+    expect(settleJobChargeMock).toHaveBeenCalledWith(
+      "job_1",
+      1.4,
+      "Social posts (IG/TikTok)",
+      "job_1",
+    );
+    expect(refundJobChargeMock).not.toHaveBeenCalled();
+  });
+
+  it("refunds a failed run and does NOT also settle it", async () => {
+    // A charge is either refunded or settled, never both. The settlement path
+    // re-checks this inside its own transaction; this is the caller-side half.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "running" }),
+      view("failed", { failureReason: "step 09 crashed", totalCostUsd: 1.4 }),
+    );
+    expect(refundJobChargeMock).toHaveBeenCalledTimes(1);
+    expect(settleJobChargeMock).not.toHaveBeenCalled();
+  });
+
+  it("neither refunds nor settles a HELD run", async () => {
+    // It can still resume and deliver, and it must then settle against its FULL
+    // cost — not against the partial one it had while held.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "running" }),
+      view("held", { reason: "cap reached", totalCostUsd: 0.4 }),
+    );
+    expect(refundJobChargeMock).not.toHaveBeenCalled();
+    expect(settleJobChargeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not re-settle on every later view of the same job", async () => {
+    // This function runs on every page view of a terminal job. Without the
+    // cost-changed gate, each one would open a Firestore transaction to learn
+    // that the hold is already settled.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "review", external: { totalCostUsd: 1.4 } } as never),
+      view("completed", { totalCostUsd: 1.4 }),
+    );
+    expect(settleJobChargeMock).not.toHaveBeenCalled();
+    expect(updateJobMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * D6 — ONE USAGE ROW PER OUTCOME, not one per time the total moves.
+ *
+ * An agent-engine run is genuinely re-enterable (`RESUMABLE_FROM_STATUSES`
+ * admits `held`), so a run that is held and then resumed passes through this
+ * sync twice with a bigger number each time. Logging on `costChanged` alone
+ * billed the leaderboard for the same run twice and inflated every dashboard
+ * that sums `usageLogs`.
+ */
+describe("usage logging across a hold and a resume", () => {
+  beforeEach(() => {
+    updateJobMock.mockReset();
+    refundJobChargeMock.mockReset();
+    materializeMock.mockReset();
+    settleJobChargeMock.mockReset();
+    logUsageMock.mockReset();
+  });
+
+  it("logs once for the hold and once for the delivery, never twice for one", async () => {
+    // Held at $0.40 — a terminal outcome of its own, so it logs what it burned.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "running" }),
+      view("held", { reason: "cap reached", totalCostUsd: 0.4 }),
+    );
+    expect(logUsageMock).toHaveBeenCalledTimes(1);
+
+    // Resumed and delivered at $1.40 — a NEW outcome, and the row carries the
+    // full cost rather than the delta.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "held", heldReason: "cap reached", external: { totalCostUsd: 0.4 } } as never),
+      view("completed", { totalCostUsd: 1.4 }),
+    );
+    expect(logUsageMock).toHaveBeenCalledTimes(2);
+    expect(logUsageMock.mock.calls[1]![0]).toMatchObject({ costUsd: 1.4 });
+  });
+
+  it("does not log again when only the cost moves under an unchanged status", async () => {
+    // The live shape of the double-log: a still-`review` job whose engine total
+    // was topped up after delivery. The cost is persisted; the usage row is not
+    // written a second time.
+    await syncAgentEngineJobStatusFromView(
+      job({ status: "review", external: { totalCostUsd: 1.4 } } as never),
+      view("completed", { totalCostUsd: 1.5 }),
+    );
+    expect(updateJobMock).toHaveBeenCalledTimes(1);
+    expect(updateJobMock.mock.calls[0]![1].external.totalCostUsd).toBe(1.5);
+    expect(logUsageMock).not.toHaveBeenCalled();
   });
 });

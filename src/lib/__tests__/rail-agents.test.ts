@@ -1,6 +1,13 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { railAgentsForClient } from "@/lib/rail-agents";
 import type { Client, CustomAgent } from "@/lib/types";
+
+/** Source read for wiring assertions: the rail is a "use client" module whose
+ *  import graph reaches the Admin SDK, and the action is `"use server"`. */
+const src = (rel: string) => readFileSync(join(process.cwd(), "src", rel), "utf8");
+const flat = (s: string) => s.replace(/\s+/g, " ");
 
 /**
  * ONE ROSTER, TWO SHELLS (parity pass 2026-09, ruling D3).
@@ -133,5 +140,111 @@ describe("railAgentsForClient", () => {
     // stable about.
     const rail = railAgentsForClient(ALL, client({ customAgentIds: ["a-ungranted", "a-granted"] }));
     expect(ids(rail)).toEqual(["a-granted", "a-ungranted"]);
+  });
+});
+
+/**
+ * THE STAR IS A WRITE, AND THE READ RULE IS THE WRITE RULE (review wave,
+ * 2026-09).
+ *
+ * `toggleStarredAgentAction` authorized the WRITER — a client for their own
+ * client, staff who pass `canViewClient` — and then took the `agentId` on
+ * trust. Nothing broke visibly, because `railAgentsForClient` above re-applies
+ * its fences on every read and silently drops what does not pass; the ids just
+ * accumulated in the document, unpaintable and unremovable through the UI (a
+ * row that never renders has no star to click).
+ */
+describe("toggleStarredAgentAction validates what is being pinned", () => {
+  const action = flat(src("lib/actions/client-actions.ts"));
+
+  it("asks the same three questions the rail's own read asks", () => {
+    expect(action).toContain("const agent = await getCustomAgent(agentId);");
+    expect(action).toContain(
+      "if (!agent || !agent.enabled || !agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug))",
+    );
+    // The same fence, from the same module, as the read helper this file tests.
+    expect(src("lib/rail-agents.ts")).toContain("agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug)");
+  });
+
+  it("caps the pinned array, which nothing downstream bounds", () => {
+    // UNSTARRED_AGENT_CAP bounds the OTHER group; pinned rows are deliberately
+    // uncapped in the rail, so the ceiling has to be at the write.
+    expect(action).toContain("const MAX_STARRED_AGENTS = 24;");
+    expect(action).toContain(
+      "if (!current.includes(agentId) && current.length >= MAX_STARRED_AGENTS)",
+    );
+    expect(src("components/client-rail-agents-nav.tsx")).toContain("const UNSTARRED_AGENT_CAP = 6;");
+  });
+
+  it("never blocks an UNPIN", () => {
+    // Refusing to remove a pin because the agent behind it was disabled or
+    // retired is exactly how a document gets stuck with one. The whole
+    // validation block is inside `if (starred)`.
+    expect(action).toMatch(/if \(starred\) \{ const agent = await getCustomAgent/);
+  });
+});
+
+/**
+ * The rail's own two defects behind that same star (review wave, 2026-09).
+ */
+describe("the rail's agent list", () => {
+  const nav = src("components/client-rail-agents-nav.tsx");
+
+  it("writes a settled star back into the staff shell's client context", () => {
+    // H3. `useOptimistic` holds its override only until the transition settles,
+    // and what replaces it in the staff shell is `starredIds` — read from the
+    // active-client CONTEXT, which ClientContextSync only refreshes from the
+    // `/clients/[id]` layout. Client context persists off that subtree, so on
+    // /jobs, /assets or /dashboard the `router.refresh()` re-rendered from a
+    // context nothing had updated and the pin flipped back a beat after the
+    // click.
+    expect(flat(nav)).toContain("const { activeClient, setActiveClient } = useActiveClient();");
+    expect(flat(nav)).toContain("if (activeClient && activeClient.client.id === clientId)");
+    // The SAME reducer the optimistic value uses, over the same array, so the
+    // context and the server cannot end up disagreeing about the result.
+    expect(flat(nav)).toContain(
+      "starredAgentIds: applyStarAction(starredIds, { agentId, starred: nextStarred }),",
+    );
+    // After the action resolves, not before it: an optimistic context write
+    // would survive a refusal.
+    expect(flat(nav)).toMatch(
+      /await toggleStarredAgentAction\(clientId, agentId, nextStarred\);[\s\S]*?setActiveClient\(\{[\s\S]*?router\.refresh\(\);/,
+    );
+  });
+
+  it("counts the rows the 'View all' control actually reveals", () => {
+    // L4. It counted `agents.length` — the whole roster, pinned rows included —
+    // so a client with 4 pinned and 8 unpinned was offered "View all 12 agents"
+    // by a button that uncovers 2 more rows on a list already showing 10.
+    expect(nav).toContain("`View all ${unstarredAgents.length} agents`");
+    expect(nav).not.toContain("`View all ${agents.length} agents`");
+    // The cap it is paired with is the unstarred group's, which is the reason.
+    expect(nav).toContain("unstarredAgents.length > UNSTARRED_AGENT_CAP");
+  });
+});
+
+/**
+ * The one-time onboarding default stars — WHICH two, and said out loud.
+ */
+describe("the layout's default-star pick", () => {
+  const layout = flat(readFileSync(join(process.cwd(), "src/app/(app)/layout.tsx"), "utf8"));
+
+  it("orders the roster before taking the first two", () => {
+    // L6. `railAgents.slice(0, 2)` was quietly alphabetical — it inherits
+    // listCustomAgents()'s name sort — a pick nothing stated and any change to
+    // that upstream sort would silently rewrite. The order is the setup
+    // ladder's now, the same ranking the client's own Home walks them through.
+    expect(layout).toContain("orderSetupLadderAgents(railAgents, ladderOrder) .slice(0, 2)");
+    expect(layout).not.toContain("railAgents.slice(0, 2)");
+    // Stored at onboarding when it exists; recomputed deterministically when it
+    // does not, which is the same answer a moment later, not a second policy.
+    expect(layout).toContain("client.setupLadderOrder?.length ? client.setupLadderOrder : rankSetupLadder(");
+  });
+
+  it("still fires exactly once per client, and says that it is a render write", () => {
+    // `=== undefined`, not `.length === 0`: a client who unpins back down to
+    // zero has made a choice, and the action always writes a real array.
+    expect(layout).toContain("if (client.starredAgentIds === undefined && railAgents.length > 0)");
+    expect(layout).toContain("AND THIS IS A WRITE DURING RENDER, deliberately kept.");
   });
 });

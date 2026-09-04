@@ -327,7 +327,11 @@ function renderPage(p: {
             <p className="text-xs font-medium uppercase tracking-widest text-muted">
               {k.label}
             </p>
-            <p className="font-mono text-3xl font-semibold tabular-nums">{k.value}</p>
+            {/* .stat-number: sans with tabular digits. DM Mono ships 400/500 only, so
+                font-semibold here was synthesising a bold the face does not have —
+                and a KPI figure is a number, which the type rule sets in Hanken
+                (globals.css §5). */}
+            <p className="stat-number text-3xl font-medium">{k.value}</p>
             <p className="text-xs text-muted-2">{k.sub}</p>
           </Card>
         ))}

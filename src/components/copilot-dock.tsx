@@ -33,18 +33,24 @@ export type CopilotShell = "client" | "staff";
  * that nav is a left column instead. `right-0` is unconditional - running to
  * the viewport's right edge is the whole point of the contract.
  */
-const SHELL_ANCHOR: Record<CopilotShell, string> = {
-  client: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-72`,
-  /* IDENTICAL TO THE CLIENT'S, and that is not a copy-paste slip (parity pass
-     2026-09, ruling D22). The staff dock is mounted by StaffCopilotDock, which
-     returns null unless a client context is active — so the only staff shell it
-     ever anchors to is the client-context one, whose rail is `w-72` like the
-     client's. `md:left-64` was the AGENCY rail's width, i.e. the width of a
-     shell this dock is never painted in, and it left a 32px strip of page
-     showing under the rail's right edge. The two keys stay separate because the
-     `shell` prop is still what the two layouts declare. */
-  staff: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-72`,
-};
+/**
+ * ONE ANCHOR, BOTH SHELLS (parity pass 2026-09, ruling D22; collapsed to a
+ * single constant in the review wave, 2026-09).
+ *
+ * The two entries of the old `Record<CopilotShell, string>` were the same
+ * string, character for character, with a comment on the second explaining that
+ * this was deliberate — which is a lot of machinery for a value that does not
+ * vary. The staff dock is mounted by StaffCopilotDock, which returns null unless
+ * a client context is active, so the only staff shell it ever anchors to is the
+ * client-context one, whose rail is `w-72` like the client's. `md:left-64` was
+ * the AGENCY rail's width, i.e. the width of a shell this dock is never painted
+ * in, and it left a 32px strip of page showing under the rail's right edge.
+ *
+ * `CopilotShell` and the `shell` prop STAY: each layout still declares which
+ * shell it is, and the day the two rails differ again this is where the fork
+ * goes back.
+ */
+const DOCK_ANCHOR = `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-72`;
 
 /**
  * Whether an element is actually painted. The shell swaps its two dock surfaces
@@ -77,7 +83,7 @@ interface Props {
  * it, so nothing jumps or resizes. The chat stays mounted (state preserved) and
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
-export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, report, shell = "client" }: Props) {
+export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, report }: Props) {
   // Closed by default (client-zero feedback, ship-Sunday ask): a first-time
   // viewer gets the collapsed w-12 strip, not the full 380px panel claiming
   // screen real estate before they've asked for it. The localStorage restore
@@ -85,13 +91,24 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
   // default only governs the very first render, before that effect runs.
   const [collapsed, setCollapsed] = useState(true);
   const [sheetOpen, setSheetOpen] = useState(false);
-  /** Blocks the write-back below until the restore pass has run. */
-  const hydratedRef = useRef(false);
+  /**
+   * Blocks the write-back below until the restore pass has run — and it has to
+   * be STATE, not a ref (review wave, 2026-09).
+   *
+   * A ref gate here was inert. Effects run in mount order, so the restore
+   * effect below had already set `hydratedRef.current = true` before the
+   * persist effect ran for the first time; the guard was never false when it
+   * was read, and the "don't write back what we just read" it claimed to do was
+   * not happening. Harmless in practice — the value written equals the value
+   * restored — but a guard that cannot fire is a guard the next reader trusts
+   * for a case it does not cover. A state flag re-runs the persist effect on
+   * the transition instead of silently passing on the first pass.
+   */
+  const [hydrated, setHydrated] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
-  const anchor = SHELL_ANCHOR[shell];
+  const anchor = DOCK_ANCHOR;
 
   useEffect(() => {
-    hydratedRef.current = false;
     try {
       const raw = localStorage.getItem(DOCK_STATE_KEY);
       const saved: unknown = raw ? JSON.parse(raw) : null;
@@ -104,17 +121,17 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
     } catch {
       /* unreadable / disabled storage - keep the defaults */
     }
-    hydratedRef.current = true;
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!hydratedRef.current) return;
+    if (!hydrated) return;
     try {
       localStorage.setItem(DOCK_STATE_KEY, JSON.stringify({ collapsed, sheetOpen }));
     } catch {
       /* quota or private mode - state stays in memory */
     }
-  }, [collapsed, sheetOpen]);
+  }, [hydrated, collapsed, sheetOpen]);
 
   /**
    * Dismiss the sheet on any click outside it (CD-G9b): it stays open only
@@ -195,7 +212,18 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
             !sheetOpen && "hidden",
           )}
         >
-          <ChatbotWidget docked defaultOpen onCollapse={() => setSheetOpen(false)} {...widgetProps} />
+          {/* `active`: the sheet is hidden with `display:none` rather than
+              unmounted, so the widget's mount-time focus pass fires once and
+              never again. This is the surface's real open/closed state, and the
+              widget focuses its input on its RISING edge — see the widget's own
+              note (review wave, 2026-09). */}
+          <ChatbotWidget
+            docked
+            defaultOpen
+            active={sheetOpen}
+            onCollapse={() => setSheetOpen(false)}
+            {...widgetProps}
+          />
         </div>
 
         <button
@@ -265,7 +293,10 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
               takes the whole chat out of the tab order and out of the
               accessibility tree, which is what "collapsed" should mean. */}
           <div className="h-full w-[380px]" inert={collapsed}>
-            <ChatbotWidget docked defaultOpen {...widgetProps} />
+            {/* `active` is the mirror of `inert` above: expanding the rail is
+                the moment this chat becomes reachable, and the widget takes
+                focus then rather than only on mount. */}
+            <ChatbotWidget docked defaultOpen active={!collapsed} {...widgetProps} />
           </div>
 
           {/* Collapsed strip. The WHOLE strip is the expand control (product
@@ -292,7 +323,10 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
               title="Expand AI Copilot"
             >
               <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
-              <span className="font-mono text-[10px] uppercase tracking-[0.18em] [writing-mode:vertical-rl]">
+              {/* .eyebrow's tracking (0.14em), not a one-off 0.18em: DM Mono
+                  is wider than the face this figure was set for, and this was
+                  the last surface in the app still carrying the old value. */}
+              <span className="font-mono text-[10px] uppercase tracking-[0.14em] [writing-mode:vertical-rl]">
                 AI Copilot
               </span>
             </button>

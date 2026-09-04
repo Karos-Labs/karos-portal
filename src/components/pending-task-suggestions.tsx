@@ -45,12 +45,32 @@ export interface SuggestedTaskView {
  * live on a real client's calendar (2026-08) as "shown up 3 times." Removed:
  * the grid is now the one place a suggestion lives, exactly like every other
  * calendar item (a run or post has no separate flat-list twin either).
+ *
+ * ONE INTERACTIVE ROW EACH, which the sentence above claimed and the grid did
+ * not deliver (review wave, 2026-09): in Week, a suggestion drew a chip in the
+ * cell, a full row in the day-by-day list AND a third row in the day-detail
+ * panel. The panel now defers to that list in Week and keeps its rows only for
+ * Month and Day, where nothing else offers them.
+ *
+ * PENDING IS PER TASK. `useTransition`'s flag is one boolean for the hook, so
+ * approving one proposal greyed out Approve and Skip on every other row on the
+ * page — including rows for other days — until the action returned. The ids in
+ * flight are tracked instead, and a row asks about itself.
  */
 export function useSuggestionActions(clientId: string) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const markPending = (taskId: string, pending: boolean) =>
+    setPendingIds((prev) => {
+      const next = new Set(prev);
+      if (pending) next.add(taskId);
+      else next.delete(taskId);
+      return next;
+    });
 
   /**
    * `targetDate` is the suggestion's own inferred placement (`task.at`) — the
@@ -61,8 +81,10 @@ export function useSuggestionActions(clientId: string) {
    */
   function approve(taskId: string, targetDate?: number) {
     setErrors((prev) => ({ ...prev, [taskId]: "" }));
+    markPending(taskId, true);
     startTransition(async () => {
       const res = await updateTaskStatusAction(taskId, "in_progress", clientId, targetDate);
+      markPending(taskId, false);
       if (res.ok) {
         setRemovedIds((prev) => new Set(prev).add(taskId));
         router.refresh();
@@ -74,8 +96,10 @@ export function useSuggestionActions(clientId: string) {
 
   function skip(taskId: string) {
     setErrors((prev) => ({ ...prev, [taskId]: "" }));
+    markPending(taskId, true);
     startTransition(async () => {
       const res = await deleteTaskAction(taskId, clientId);
+      markPending(taskId, false);
       if (res.ok) {
         setRemovedIds((prev) => new Set(prev).add(taskId));
         router.refresh();
@@ -85,7 +109,7 @@ export function useSuggestionActions(clientId: string) {
     });
   }
 
-  return { isPending, removedIds, errors, approve, skip };
+  return { pendingIds, removedIds, errors, approve, skip };
 }
 
 /**

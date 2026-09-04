@@ -302,4 +302,21 @@ describe("toClientActions", () => {
       expect(action.hrefFor("c1"), `action ${action.id}`).not.toContain("tab=archive");
     }
   });
+
+  it("sends the two document tasks into Profile, not the retired Documents tab", () => {
+    // Portal feedback round 4 (2026-09): "the documents can live in Profile."
+    // The page still redirects `?tab=documents`, but a checklist this repo owns
+    // should link the live URL rather than lean on that redirect — and the
+    // anchor is what makes the link land ON the documents rather than at the
+    // top of a tab that now has four blocks above them.
+    for (const id of ["21", "22"]) {
+      const action = ACTION_DEFINITIONS.find((a) => a.id === id);
+      expect(action?.hrefFor("c1"), `action ${id}`).toBe(
+        "/clients/c1/settings?tab=profile#documents",
+      );
+    }
+    for (const action of ACTION_DEFINITIONS) {
+      expect(action.hrefFor("c1"), `action ${action.id}`).not.toContain("tab=documents");
+    }
+  });
 });

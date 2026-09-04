@@ -192,6 +192,10 @@ const CARD_ROW_KEYS = [
   "templates",
   "optionsMode",
   "runCost",
+  // Wording only: whether `runCost` is a hold that settles to real usage or the
+  // charge itself. A boolean the server resolves because the card cannot read
+  // the env var (credits rework, 2026-09) — it carries no client data.
+  "runCostIsEstimate",
   "templateGates",
   "week",
   "today",
@@ -1473,15 +1477,26 @@ describe("toClientAgentRows — the card projection", () => {
 
   /* ───────────────── A5: the cost split ───────────────── */
 
-  it("quotes no price to a viewer who never pays, and no balance either", async () => {
+  it("quotes no launch price and no balance to a viewer who never pays", async () => {
     const fresh = [umbrella({ launchState: "not_launched" })];
     const staffArgs = cardArgs({ umbrellas: fresh, viewerIsClient: false, viewerIsStaff: true });
     delete staffArgs.spendable;
 
     const [staffRow] = await toClientAgentRows(staffArgs);
     expect(staffRow.launchCost).toBeNull();
-    expect(staffRow.runCost).toBeNull();
     expect("availableCredits" in staffRow).toBe(false);
+    // THE RUN PRICE IS THE EXCEPTION, and it is deliberate (review wave,
+    // 2026-09). It used to be nulled here with the launch price, which left the
+    // two cards that read it (AgentDetailPanel, the live card's format rows)
+    // with no cost line for staff while LegacyAgentPanel, on the same page,
+    // printed "· billed to the client" for the same fact. Whose money it is
+    // belongs in the sentence, not in whether the number arrives — so the row
+    // carries the CLIENT's price for both readers and the components say so.
+    //
+    // The launch price stays null because nothing on the staff side renders a
+    // staff register for it: a bare figure in front of a reader who is not
+    // charged it is the thing this test is really about.
+    expect(staffRow.runCost).toBe(25);
     // …and no price can block them.
     expect(staffRow.gate.allowed).toBe(true);
 

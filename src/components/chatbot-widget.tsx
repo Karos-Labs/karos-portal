@@ -9,9 +9,10 @@ import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
 import { renderSectionBody } from "@/lib/doc-render";
 import { readChatStream, type ChatStreamEvent } from "@/lib/chat/client-stream";
-import type { ClientReport } from "@/lib/types";
+import type { Asset, ClientReport } from "@/lib/types";
 import { CHAT_MODEL_KEYS, CHAT_MODEL_OPTIONS, type ChatModelKey } from "@/lib/ai/chat-models";
 import { RunAttachments, type RunAttachment } from "@/components/agents/run-attachments";
+import { AssetDetailModal } from "@/components/asset-detail-modal";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
 
@@ -48,6 +49,23 @@ interface Message {
    * keeps `content` (isPersistedMessage below validates the shape on restore).
    */
   feedbackNotes?: FeedbackNote[];
+  /**
+   * Deliverables this turn's tool calls resolved to (flow audit 2026-09, R12).
+   *
+   * The copilot had exactly ONE link out of itself — the feedback chip — so a
+   * client who asked it to find, edit or reschedule an output was handed a
+   * description of a deliverable and no way to open it, while the product has a
+   * perfectly good `AssetDetailModal` with eight other openers. These are the
+   * ids the tools already name (see `deliverableFromToolCall`), rendered as the
+   * chip that opens that same modal.
+   */
+  deliverables?: Deliverable[];
+}
+
+/** One asset a turn's tools touched: the id, and the best name we were given for it. */
+interface Deliverable {
+  assetId: string;
+  title?: string;
 }
 
 /** One of this client's LIVE agents, offered in the `@mention` dropdown. */
@@ -79,6 +97,50 @@ interface FocusAgent {
   name: string;
 }
 
+/**
+ * The asset one finished tool call resolved to, or null (flow audit 2026-09, R12).
+ *
+ * NOTHING NEW IS ASKED OF THE SERVER. Three of the copilot's tools already name
+ * an asset by id, and this reads the id from wherever that tool happens to put
+ * it:
+ *  · `find_output` prints `id: <id>` on its own line, under a `**Title**` line
+ *    (chat/route.ts's findOutputTool) — the whole point of the tool is to hand
+ *    back an exact id, so it is in the RESULT.
+ *  · `edit_output` and `reschedule_output` take `{ assetId }` as their INPUT
+ *    and answer with prose ("Saved.", "Moved to …"), so the id is in the call,
+ *    which `client-stream.ts` now carries through with the result.
+ *
+ * Both are matched conservatively: an unrecognised tool, a multi-match
+ * `find_output` ("Found 4 matching outputs…", which prints several ids and
+ * therefore resolves to no single deliverable) and a refusal string all return
+ * null, so the chip appears only where there is exactly one thing to open.
+ */
+function deliverableFromToolCall(evt: {
+  toolName: string;
+  output: unknown;
+  input?: unknown;
+}): Deliverable | null {
+  const input = (evt.input ?? {}) as Record<string, unknown>;
+  if (evt.toolName === "edit_output" || evt.toolName === "reschedule_output") {
+    // A refusal is still a tool result; only a save/move actually landed on an
+    // asset the reader can be sent to.
+    const output = typeof evt.output === "string" ? evt.output : "";
+    const landed = /^(Saved\.|Moved to )/.test(output.trim());
+    if (!landed) return null;
+    const assetId = typeof input.assetId === "string" ? input.assetId : null;
+    if (!assetId) return null;
+    const title = typeof input.newTitle === "string" ? input.newTitle : undefined;
+    return { assetId, ...(title ? { title } : {}) };
+  }
+  if (evt.toolName !== "find_output" || typeof evt.output !== "string") return null;
+  const ids = [...evt.output.matchAll(/^id: (\S+)$/gm)].map((m) => m[1]!);
+  // The multi-match branch lists `· id: …` inline on several lines and never on
+  // its own; a single confident answer is the only one with exactly one.
+  if (ids.length !== 1) return null;
+  const title = /^\*\*(.+?)\*\*/m.exec(evt.output)?.[1];
+  return { assetId: ids[0]!, ...(title && title !== "Untitled" ? { title } : {}) };
+}
+
 /* ── Transcript persistence ──────────────────────────────────────────── */
 
 /**
@@ -103,6 +165,13 @@ function isPersistedFeedbackNote(v: unknown): v is FeedbackNote {
   );
 }
 
+/** One persisted `deliverables` entry — same field-by-field rule as the notes above. */
+function isPersistedDeliverable(v: unknown): v is Deliverable {
+  if (!v || typeof v !== "object") return false;
+  const d = v as Record<string, unknown>;
+  return typeof d.assetId === "string" && (d.title === undefined || typeof d.title === "string");
+}
+
 function isPersistedMessage(v: unknown): v is Message {
   if (!v || typeof v !== "object") return false;
   const m = v as Record<string, unknown>;
@@ -118,7 +187,9 @@ function isPersistedMessage(v: unknown): v is Message {
     // (or one written by a pre-T-B18 build in the same session) is dropped
     // rather than handed to render as a malformed chip.
     (m.feedbackNotes === undefined ||
-      (Array.isArray(m.feedbackNotes) && m.feedbackNotes.every(isPersistedFeedbackNote)))
+      (Array.isArray(m.feedbackNotes) && m.feedbackNotes.every(isPersistedFeedbackNote))) &&
+    (m.deliverables === undefined ||
+      (Array.isArray(m.deliverables) && m.deliverables.every(isPersistedDeliverable)))
   );
 }
 
@@ -481,6 +552,10 @@ function useCopilot(
         // provide_feedback is one call - but not assumed to be, same as
         // stream-protocol.ts's own comment on the `job` part above it).
         const feedbackNotes: FeedbackNote[] = [];
+        // R12: the deliverables this turn's tools resolved to, deduped — a
+        // find-then-edit sequence names the same asset twice and is still one
+        // thing to open.
+        const deliverables: Deliverable[] = [];
 
         for await (const evt of readChatStream(response)) {
           switch (evt.type) {
@@ -504,6 +579,12 @@ function useCopilot(
               if (evt.toolName === "create_tasks" && typeof evt.output === "string" && evt.output.startsWith("Created ")) {
                 tasksCreated = true;
               }
+              {
+                const deliverable = deliverableFromToolCall(evt);
+                if (deliverable && !deliverables.some((d) => d.assetId === deliverable.assetId)) {
+                  deliverables.push(deliverable);
+                }
+              }
               break;
             case "feedback":
               // Structural confirmation that standing feedback was recorded -
@@ -520,6 +601,12 @@ function useCopilot(
         if (feedbackNotes.length > 0) {
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantId ? { ...m, feedbackNotes } : m)),
+          );
+        }
+
+        if (deliverables.length > 0) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, deliverables } : m)),
           );
         }
 
@@ -731,6 +818,38 @@ function FeedbackChip({ clientId, note }: { clientId: string; note: FeedbackNote
   );
 }
 
+/**
+ * The copilot's way OUT (flow audit 2026-09, R12).
+ *
+ * Same shape as `FeedbackChip` above — this is deliberately one visual family,
+ * not a second one — but it opens `AssetDetailModal`, the product's one
+ * deliverable viewer, rather than navigating. The audit's complaint was that
+ * `/edit-output`, `/inspect-job`, `/reschedule-post` and `find_output` all
+ * terminate as prose in the transcript: the client is handed a description of
+ * their post with nothing to press.
+ */
+function DeliverableChip({
+  deliverable,
+  onOpen,
+}: {
+  deliverable: Deliverable;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group flex w-fit max-w-full items-center gap-1.5 self-start rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-border-strong hover:bg-surface-3 hover:text-foreground"
+    >
+      <Icon name="FileText" className="h-3 w-3 shrink-0 text-muted-2 group-hover:text-foreground" />
+      <span className="truncate">{deliverable.title ?? "This output"}</span>
+      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
+        Open
+      </span>
+    </button>
+  );
+}
+
 /* ── Action chips ────────────────────────────────────────────────────── */
 
 /**
@@ -921,8 +1040,33 @@ interface Props {
   docked?: boolean;
   /** When provided (docked mode), shows a collapse control in the header. */
   onCollapse?: () => void;
+  /**
+   * Docked mode only: whether the dock's surface is actually OPEN right now —
+   * the lg+ rail expanded, or the narrow-viewport sheet showing.
+   *
+   * Docked mode is permanently `panelOpen`, and neither dock surface unmounts
+   * this widget when it closes (the rail clips it, the sheet hides it with
+   * `display:none`), so the focus pass below fired once on mount and never
+   * again. Re-opening the sheet or expanding the rail left the reader with no
+   * caret and no way to type without reaching for the mouse. Defaults to `true`
+   * so the floating (non-docked) mount is unaffected.
+   */
+  active?: boolean;
   /** Position classes for the floating bubble + panel (non-docked mode). */
   floatingPosition?: string;
+}
+
+/**
+ * Why the deliverable fetch failed, in the one bit the reader's message depends
+ * on: a 403 is the day-not-arrived gate and has its own sentence; everything
+ * else is a fault and gets the retry line. A `.catch` sees only a rejection, so
+ * the distinction has to be carried on the error itself.
+ */
+class AssetOpenError extends Error {
+  constructor(readonly notAllowed: boolean) {
+    super(notAllowed ? "forbidden" : "unavailable");
+    this.name = "AssetOpenError";
+  }
 }
 
 export function ChatbotWidget({
@@ -934,6 +1078,7 @@ export function ChatbotWidget({
   hasGoogleIntegration = false,
   docked = false,
   onCollapse,
+  active = true,
   floatingPosition = "bottom-6 right-6",
 }: Props) {
   const router = useRouter();
@@ -963,10 +1108,74 @@ export function ChatbotWidget({
     if (panelOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, panelOpen]);
 
-  // Focus input on open
+  // Focus the input when the panel OPENS — on the rising edge of "is this chat
+  // actually on screen", which is `panelOpen` for the floating mount and
+  // `active` for a docked one (the dock never unmounts this widget, so
+  // `panelOpen` is a constant `true` there and this effect fired only on mount;
+  // review wave, 2026-09, L5). Both conditions are ANDed so neither surface can
+  // steal focus while it is hidden.
+  const visible = panelOpen && active;
   useEffect(() => {
-    if (panelOpen) setTimeout(() => inputRef.current?.focus(), 50);
-  }, [panelOpen]);
+    if (!visible) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [visible]);
+
+  /* ── The deliverable a chip opened (flow audit 2026-09, R12) ───────── */
+  // The dock is mounted by the (app) layout with a clientId and nothing else,
+  // so unlike the modal's eight other openers it has no asset in hand — only
+  // the id its own tools named. `/api/assets/[id]` answers with the asset the
+  // SERVER says this viewer may read, already redacted, plus which register to
+  // speak in; the modal is mounted from that and from nothing else.
+  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
+  const [openAsset, setOpenAsset] = useState<{ asset: Asset; viewerIsClient: boolean } | null>(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  /**
+   * Every press gets its own attempt.
+   *
+   * `openAssetId` alone is not enough to key the fetch: after a failure the id
+   * stays set, so pressing the SAME chip again set state to the value it
+   * already had, React bailed out, and the effect never re-ran — the chip went
+   * dead for the rest of the session over one dropped request. The nonce
+   * changes on every press, so a retry is always a new effect run.
+   */
+  const [assetRequest, setAssetRequest] = useState(0);
+  const openDeliverable = useCallback((assetId: string) => {
+    setAssetError(null);
+    setOpenAssetId(assetId);
+    setAssetRequest((n) => n + 1);
+  }, []);
+  useEffect(() => {
+    if (!openAssetId) return;
+    let cancelled = false;
+    fetch(`/api/assets/${encodeURIComponent(openAssetId)}`)
+      .then(async (r) => {
+        // ONE MESSAGE PER CAUSE (review wave, 2026-09). Every failure used to
+        // land on "isn't available to open yet", which is the sentence for a
+        // 403 — a post whose day has not arrived, withheld from a client by the
+        // same gate the download route uses. A dropped connection, a 500 or a
+        // deleted asset got that same line, and it tells the reader to wait for
+        // a day that will never make any difference. `notAllowed` carries the
+        // distinction out of the fetch, since a rejection is all a `.catch` sees.
+        if (!r.ok) throw new AssetOpenError(r.status === 403);
+        return (await r.json()) as { asset: Asset; viewerIsClient: boolean };
+      })
+      .then((data) => {
+        if (!cancelled) setOpenAsset({ asset: data.asset, viewerIsClient: data.viewerIsClient });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setAssetError(
+          err instanceof AssetOpenError && err.notAllowed
+            ? "That output isn't available to open yet."
+            : "Couldn't open this output. Try again.",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `assetRequest` is the retry key — see openDeliverable.
+  }, [openAssetId, assetRequest]);
 
   /* ── @mention roster ──────────────────────────────────────────────── */
   // Fetched independently of a chat turn - the `@` dropdown has to be ready
@@ -1256,6 +1465,20 @@ export function ChatbotWidget({
                         ))}
                       </>
                     )}
+                    {/* R12: one chip per deliverable this turn's tools resolved
+                        to, opening the same modal the calendar, the archive and
+                        the agent pages open. */}
+                    {msg.role === "assistant" && msg.deliverables && msg.deliverables.length > 0 && (
+                      <>
+                        {msg.deliverables.map((deliverable) => (
+                          <DeliverableChip
+                            key={deliverable.assetId}
+                            deliverable={deliverable}
+                            onOpen={() => openDeliverable(deliverable.assetId)}
+                          />
+                        ))}
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1297,6 +1520,16 @@ export function ChatbotWidget({
             <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
               <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger" />
               <p className="text-xs text-danger">{error}</p>
+            </div>
+          )}
+
+          {/* R12: a chip that resolved to something this reader may not open
+              (a post whose day has not arrived) says so, rather than being a
+              control that does nothing when pressed. */}
+          {assetError && (
+            <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
+              <Icon name="Lock" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+              <p className="text-xs text-muted">{assetError}</p>
             </div>
           )}
 
@@ -1447,6 +1680,19 @@ export function ChatbotWidget({
           </div>
         </div>
       )}
+
+      {/* R12: the copilot's one way into a deliverable. The SAME component the
+          calendar, the archive and the agent pages open — mounted once here,
+          not a second viewer written for the chat. */}
+      <AssetDetailModal
+        asset={openAsset?.asset ?? null}
+        open={openAsset != null}
+        onClose={() => {
+          setOpenAssetId(null);
+          setOpenAsset(null);
+        }}
+        viewerIsClient={openAsset?.viewerIsClient ?? true}
+      />
 
       <style>{`
         @keyframes bounce {

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isStringDelimiter, matchingBrace, skipStringLiteral, stripComments } from "./source-scan";
 import type { Job, JobStatus } from "@/lib/types";
@@ -60,6 +60,20 @@ const read = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 /** Same calendar day, so the collapse has something to collapse. */
 const at = (hour: number) => new Date(2026, 6, 20, hour, 0, 0).getTime();
 
+/**
+ * The clock these fixtures are read against, pinned (review wave, 2026-09).
+ *
+ * "In flight" is now bounded by AGE as well as by status — a `running` row
+ * nothing has updated for hours is a job whose webhook never came back, not work
+ * under way (IN_FLIGHT_MAX_AGE_MS in agent-intake-views.ts). These fixtures sit
+ * on a fixed July date, so against the real clock every one of them is months
+ * stale and the whole suite would assert `false` for reasons that have nothing
+ * to do with what it is about. Half past ten on that morning is the reader's
+ * "now": the 09:00 run below is ninety minutes old, which is in flight by
+ * anybody's reckoning, and the bound still has room to be tested on its own.
+ */
+const NOW = at(10) + 30 * 60_000;
+
 function job(over: { id: string; agentName: string; status: JobStatus; createdAt: number }): Job {
   return {
     clientId: "c1",
@@ -96,6 +110,8 @@ const SURFACES = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
   D.getAgentIntake.mockResolvedValue(null);
   D.getCustomAgentByKey.mockResolvedValue(null);
   D.listAgentIntake.mockResolvedValue([]);
@@ -111,6 +127,10 @@ beforeEach(() => {
   D.listXNewsUpdates.mockResolvedValue([]);
   D.listXTakes.mockResolvedValue([]);
   D.getAgentProfileDocData.mockResolvedValue({ company: null, seats: {} });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe.each(SURFACES)("$family — the in-flight warning the client is shown", (surface) => {
@@ -160,6 +180,36 @@ describe.each(SURFACES)("$family — the in-flight warning the client is shown",
     D.listJobs.mockResolvedValue([
       delivered(),
       job({ id: "j-run", agentName: surface.agentName, status: "running", createdAt: at(9) }),
+    ]);
+    expect((await surface.build(false)).runInFlight).toBe(true);
+  });
+
+  it("stops counting a run nothing has touched for hours", async () => {
+    // A `queued`/`running` row is moved only by the webhook, so a run whose
+    // webhook never arrives stays in flight in Firestore for ever. Left
+    // unbounded, one such row warns about work that ended this morning — and,
+    // on the setup bands that read the same helper, hides "Set it up"
+    // permanently and pins a four-second full-page poll (review wave, 2026-09).
+    D.listJobs.mockResolvedValue([
+      job({
+        id: "j-stuck",
+        agentName: surface.agentName,
+        status: "running",
+        createdAt: NOW - 5 * 60 * 60_000,
+      }),
+    ]);
+    expect((await surface.build(false)).runInFlight).toBe(false);
+    // Non-vacuous: the same row, freshly updated, still counts.
+    D.listJobs.mockResolvedValue([
+      {
+        ...job({
+          id: "j-stuck",
+          agentName: surface.agentName,
+          status: "running",
+          createdAt: NOW - 5 * 60 * 60_000,
+        }),
+        updatedAt: NOW - 60_000,
+      },
     ]);
     expect((await surface.build(false)).runInFlight).toBe(true);
   });

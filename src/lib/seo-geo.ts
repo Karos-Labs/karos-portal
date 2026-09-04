@@ -1321,13 +1321,18 @@ export const REC_COPY: Record<string, { title: string; description: string }> = 
   "GEO-09": { title: "Put a real author and real numbers on your pages", description: "Pages that say who wrote them, show where their facts came from, and include at least one figure of your own get trusted and credited. Anonymous pages get passed over." },
   "BOTH-16": { title: "Break your pages into short, scannable sections", description: "Long unbroken text gives engines nothing clean to pull out. Shorter sections, each opening with a one-line explanation, are what they lift answers from." },
   "GEO-22": { title: "Use your buyers' questions as your headings", description: "Phrase key headings as the questions people actually ask, each followed by a short direct answer. That's how an AI matches your page to what someone asked it." },
-  "GEO-25": { title: "Establish a clear public record of who you are", description: "Create a Wikidata entry (and a Wikipedia article once you qualify) so every engine knows which company you are and stops confusing you with similarly-named ones." },
-  "GEO-04": { title: "Get talked about on sites engines trust", description: "Get named on independent, reputable sites. Engines repeat what trusted third parties say about you far more readily than what you say about yourself." },
+  "GEO-25": { title: "Establish a clear public record of who you are", description: "Create and verify a public reference entry for your company, listing your real name, website and basics. It is the record other sites and engines look your company up in." },
+  "GEO-04": { title: "Get talked about on sites you don't own", description: "Get named on independent, reputable sites. What other people publish about you is the part of your reputation your own website cannot supply." },
   "GEO-14": { title: "Build a review presence you don't own", description: "Get reviews across several independent platforms, so \"are they any good?\" is answered by more than your own website." },
   "BOTH-01": { title: "Make sure your pages can be listed at all", description: "Some pages are either failing to load for engines or carrying an instruction telling them not to list the page. Until that's cleared, no other work can make those pages appear." },
-  "GEO-27": { title: "Close the gap with the competitor engines name most", description: "A competitor you track is named far more often than you on the questions buyers actually ask. Earning mentions in the sources those answers draw from is what closes it." },
-  "GEO-35": { title: "Get named when buyers ask about your category", description: "Buyers asking about your category — without naming you — rarely hear about you. Comparison pages of your own, plus getting mentioned on other people's sites, is what changes that." },
-  "GEO-11": { title: "Get the engines quoting your site", description: "The engines don't yet use your site as a source when they answer questions about your category. Pages with clear facts and clear sourcing are the ones they quote." },
+  // SHARE OF VOICE, SAID AS SHARE OF VOICE (review wave, 2026-09) — the same
+  // correction the client-facing copy for this id already carries, applied to
+  // the catalogue entry that feeds every other surface. GEO-27 fires on
+  // `shareOfVoice`, so "named more often than you" reported a mention count the
+  // check never measured.
+  "GEO-27": { title: "Close the share of voice gap with the competitor leading these answers", description: "A competitor you track took a bigger share of the brand mentions than you did on the questions buyers actually ask. Earning mentions in the places those answers draw on is how that gap closes." },
+  "GEO-35": { title: "Get named when buyers ask about your category", description: "Buyers asking about your category without naming you rarely heard about you in the answers we measured. Comparison pages of your own, plus mentions on other people's sites, is what changes that." },
+  "GEO-11": { title: "Get the engines quoting your site", description: "The engines did not use your site as a source when they answered questions about your category. Being quoted starts with pages that state their facts and name where those facts came from." },
   // ── QA F9: the 22 registry ids that used to fall through to their engineering label ──
   "BOTH-01b": { title: "Clear the hidden 'do not list' flags", description: "Some pages carry an instruction telling engines not to list or quote them. Remove it from the pages you want buyers to find." },
   "BOTH-02": { title: "Serve your main content as plain HTML", description: "Content that only appears after a login, behind a paywall, or once scripts run is invisible to engines. They read the raw page, so anything they can't see doesn't count." },
@@ -1342,7 +1347,7 @@ export const REC_COPY: Record<string, { title: string; description: string }> = 
   "SEO-04b": { title: "Make your pages respond faster to taps", description: "When someone taps or clicks, the page should react almost immediately. Lag here frustrates visitors and counts against you in search." },
   "SEO-04c": { title: "Stop your pages jumping while they load", description: "Content that shifts as images and banners arrive makes people mis-tap. Reserve the space they'll occupy so the page settles as it loads." },
   "GEO-01": { title: "Let search engines and AI assistants read your site", description: "One settings file on your site decides who is allowed to read it. If the search engines and AI assistants are turned away there, nothing else you do can make you appear." },
-  "GEO-07": { title: "Point your public record at your own website", description: "Your Wikidata entry should list your real website as the official one. While it doesn't, engines credit your work to whichever site is listed instead." },
+  "GEO-07": { title: "Point your public record at your own website", description: "Your public company entry should list your real website as the official one. While it lists a different address, that is where anyone reading the entry is sent." },
   "GEO-08": { title: "Get listed where ChatGPT looks", description: "ChatGPT finds pages through Bing and through its own reader. Missing from either means it can't surface you even when you're the right answer." },
   "GEO-10": { title: "Let AI assistants read your about pages", description: "Your about and company pages are where engines learn who you are. Blocking them leaves the assistants guessing at your identity." },
   "GEO-18": { title: "Name the things you're actually talking about", description: "Use the real names of your products, places, people, and partners instead of vague wording, so engines can connect your pages to what buyers ask about. Naturally — not stuffed in." },
@@ -1421,6 +1426,22 @@ function ownerFor(actionKind: ActionKind): string {
  * Derive the client-safe action plan from the internal gaps. Deduped, ordered by score
  * lift (highest impact first). The internal gap fields never cross into the returned
  * objects — only the §3b render contract does; titles/descriptions are plain-English.
+ *
+ * NOT RENDERED ON THE CLIENT REPORT ANY MORE (portal feedback round 4, 2026-09).
+ * The product owner's ruling on "What we're fixing" was that the list is not true:
+ * every failing check became a row promising Karos would fix it, on a page with an
+ * Approve button, whatever the confidence behind the measurement and whether or not
+ * anything in this product can act on it. The Reporting tab now renders
+ * `buildClientSuggestions` instead — the small, confirmed subset whose fix is the
+ * CLIENT's to make, with no owner line and no Approve control.
+ *
+ * This function stays, and is still called by the capture path
+ * (`src/lib/agent-engine/seo-geo-insights-mapping.ts`), because the persisted
+ * `recommendations[]` is a cross-repo contract: `docs/routable-recommendation-contract.md`
+ * consumes it engine-side. What changed is who reads it, not whether it is produced.
+ * Its render surfaces (`SeoGeoPlan`, `seo-geo-action-plan.tsx`,
+ * `lib/actions/seo-geo-task-actions.ts`) are likewise kept and unmounted rather than
+ * deleted, so re-enabling them is a decision someone takes on purpose.
  */
 /** Display order for the plan's impact badges (QA F22). */
 const SEVERITY_ORDER: Record<GapSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -1462,6 +1483,246 @@ export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recomme
     if (out.length >= limit) break;
   }
   return out;
+}
+
+/* ── "Things only you can do" (portal feedback round 4, 2026-09) ─── */
+
+/** The confidence ladder on a check, strongest first. */
+const CONFIDENCE_RANK: Record<SeoGeoCheck["confidence"], number> = {
+  CONFIRMED: 2,
+  LIKELY: 1,
+  HYPOTHESIS: 0,
+};
+
+/**
+ * A suggestion the CLIENT acts on. Deliberately smaller than {@link Recommendation}:
+ * no owner line, no action kind, no impact badge, nothing that implies a Karos
+ * workflow, because nothing here starts one.
+ */
+export interface ClientSuggestion {
+  /** Stable rec id. Used as a React key and to prefill support; never rendered as prose. */
+  id: string;
+  /** Short, verb-first. */
+  title: string;
+  /** ONE sentence: why it is worth doing, and why it has to be them. */
+  why: string;
+  /** What the audit actually observed on this snapshot. Rendered as muted evidence. */
+  evidence: string;
+}
+
+/**
+ * WHY the list is empty, when it is (review wave, 2026-09).
+ *
+ * The section's empty state used to say one thing — "everything this snapshot
+ * found is work your Karos team owns" — for three different situations, and it
+ * was only true in one of them. A snapshot whose client-owned findings were all
+ * dropped for confidence has NOT been checked and cleared; saying it was is the
+ * same class of untrue statement the whole section was rewritten to remove.
+ *
+ *  · `none`          — the snapshot produced no gaps at all.
+ *  · `karosOwned`    — there were findings, and every one of them is ours to fix.
+ *  · `lowConfidence` — there were client-owned findings, and none of them cleared
+ *                      the confirmed/measured bar this list requires before it
+ *                      asks a client for work. (The same value covers a finding
+ *                      we have no copy for: in both cases we saw something and
+ *                      cannot responsibly hand it over.)
+ */
+export type ClientSuggestionsEmptyReason = "none" | "karosOwned" | "lowConfidence";
+
+export interface ClientSuggestionsResult {
+  suggestions: ClientSuggestion[];
+  /** Null whenever there is at least one suggestion. */
+  emptyReason: ClientSuggestionsEmptyReason | null;
+}
+
+/**
+ * Is this gap's fix the client's to make?
+ *
+ * Read off the SAME derivation the plan used: `deliveryForBucket` marks the
+ * off-site entity bucket "advisory", `computeVisibilityGaps` hardcodes the same
+ * delivery + an "off-site" target for every competitor-visibility gap, and
+ * `actionKindFor` turns exactly those into "guided_manual" — the one action kind
+ * whose owner line (`ownerFor`) already said a person outside this product ships
+ * it: "Advisory · we draft the kit, a person ships it".
+ *
+ * DELIBERATELY NOT "connect" (the `indexReach` bucket). Its owner line is "You
+ * connect · we handle the rest", which sounds client-owned, but the bucket is
+ * keyed on the REGISTRY position rather than on the work: BOTH-09 ("publish a
+ * clean map of your site") sits in it, and that is a file on the client's site
+ * that Karos writes. One contaminated id in a five-row list is exactly the kind
+ * of "this is not true" the ruling was about, so the cut is the honest one:
+ * off-site reputation, entity and outreach work only.
+ */
+function isClientOwnedGap(gap: VisibilityGap): boolean {
+  return actionKindFor(gap) === "guided_manual";
+}
+
+/**
+ * Short client-owned copy, audited line by line against what the check can
+ * actually support (the ruling: "all these items are not true").
+ *
+ * The catalog entry in REC_COPY was written for a row with an Approve button and
+ * a Karos owner, so it describes the FIX; these describe the ASK, in one sentence,
+ * and say why it has to come from the client. Every `why` here is either a
+ * statement of ownership (only your team holds that account, those relationships)
+ * or a fact this report itself measured. None of them assert how an engine will
+ * react, which is what most of the catalog's second sentences did.
+ *
+ * Ids not listed here fall back to REC_COPY's title plus the first sentence of its
+ * description, so a new advisory check still renders rather than disappearing.
+ */
+const CLIENT_SUGGESTION_COPY: Record<string, { title: string; why: string }> = {
+  "GEO-25": {
+    title: "Claim your public company record",
+    why: "Only your team can create and verify a public entry for your business, and it is one of the off-site checks behind your AI readiness score.",
+  },
+  "GEO-07": {
+    title: "Point your public record at your own site",
+    why: "Correcting the official website on that entry needs the account that owns it, which sits with you and not with us.",
+  },
+  "GEO-04": {
+    title: "Get named on sites you don't own",
+    why: "Coverage, partnerships and mentions on other people's sites come out of your relationships, not out of anything we can change on your website.",
+  },
+  "GEO-14": {
+    title: "Ask your customers to review you",
+    why: "Only you can ask real customers for a review, and the review platforms need accounts in your business name.",
+  },
+  "GEO-27": {
+    // SHARE OF VOICE, SAID AS SHARE OF VOICE (review wave, 2026-09). Both lines
+    // used to say the rival was "named more often than you", which is a mention
+    // count and not what GEO-27 measures: the gap fires on shareOfVoice, the
+    // rival's share of all the brand mentions in those answers. A brand named in
+    // fewer answers can still hold the larger share, so the old sentence was a
+    // claim this report had not made.
+    title: "Catch up with the competitor leading these answers",
+    why: "A competitor you track took a bigger share of the brand mentions than you did in the answers we measured, and closing that means being written about in the same places they are.",
+  },
+  "GEO-35": {
+    title: "Get your name in front of buyers researching your category",
+    why: "The engines answered category questions without naming you, and what changes that is coverage on sites we do not publish.",
+  },
+  "GEO-11": {
+    title: "Get quoted where the engines are already looking",
+    why: "Your site was not used as a source in the answers we measured, and the third-party write-ups that get quoted are yours to earn.",
+  },
+};
+
+/** First sentence of a description, for the REC_COPY fallback. */
+function firstSentence(text: string): string {
+  const trimmed = (text ?? "").trim();
+  const end = trimmed.search(/[.!?](\s|$)/);
+  return end === -1 ? trimmed : trimmed.slice(0, end + 1);
+}
+
+/**
+ * The client-facing "Things only you can do" list.
+ *
+ * PURE, and the rules are the whole point (portal feedback round 4, 2026-09):
+ *
+ *  1. CLIENT-OWNED ONLY — see `isClientOwnedGap`. A row Karos executes has no
+ *     business under this heading.
+ *  2. MEASURED ONLY. Both producers already emit measured gaps exclusively
+ *     (`computeCheckGaps` filters `tier === "MEASURED"`; `computeVisibilityGaps`
+ *     skips an UNAVAILABLE capture), but a snapshot persisted by an older
+ *     pipeline is not covered by that, so pass `opts.checks` and any gap whose
+ *     check is not MEASURED is dropped here too.
+ *  3. CONFIRMED CONFIDENCE by default. The old plan rendered a HYPOTHESIS gap
+ *     with the same Approve button as a confirmed one, softened only by a
+ *     footnote. Here there is no Karos verification step between the row and the
+ *     client acting on it, so anything we have not confirmed does not get to ask
+ *     them for work. `minConfidence` exists so a staff surface can widen it
+ *     knowingly, not so a caller can drift.
+ *  4. DEDUPED BY COPY. The competitor-visibility gaps are per engine, so five
+ *     engines produce five rows of one sentence; the survivor is the strongest
+ *     measured instance, and its evidence names the engine it was measured on.
+ *  5. CAPPED AT 5, ordered by `scoreLift`. "Reduce it" was half the ruling.
+ *  6. AN ID WE CANNOT NAME IS DROPPED. `resolveRecCopy`'s fallback ("a technical
+ *     finding your team is reviewing") is an honest thing to say about a row Karos
+ *     owns and a useless thing to hand a client as a task.
+ */
+export function buildClientSuggestions(
+  gaps: VisibilityGap[],
+  opts: {
+    limit?: number;
+    minConfidence?: SeoGeoCheck["confidence"];
+    /** The snapshot's raw checks, when the caller has them: re-asserts rule 2. */
+    checks?: SeoGeoCheck[];
+  } = {},
+): ClientSuggestionsResult {
+  const limit = opts.limit ?? 5;
+  const floor = CONFIDENCE_RANK[opts.minConfidence ?? "CONFIRMED"];
+  const tierById = new Map((opts.checks ?? []).map((c) => [c.id, c.tier] as const));
+
+  const deduped = [...dedupeGapsByRecId(gaps)];
+  // Kept so an empty list can say WHICH kind of empty it is (review wave,
+  // 2026-09): a snapshot that found client-owned work we have not confirmed is
+  // not the same as one where every finding belongs to Karos, and the old copy
+  // claimed the second whatever the truth was.
+  const clientOwned = deduped.filter(isClientOwnedGap);
+
+  const seen = new Set<string>();
+  const out: ClientSuggestion[] = [];
+  const ordered = clientOwned
+    .filter((gap) => {
+      const tier = tierById.get(gap.id.split(":")[0]);
+      if (tier !== undefined && tier !== "MEASURED") return false;
+      return (CONFIDENCE_RANK[gap.confidence] ?? -1) >= floor;
+    })
+    .sort((a, b) => b.scoreLift - a.scoreLift);
+
+  for (const gap of ordered) {
+    const recId = gap.id.split(":")[0];
+    const known = CLIENT_SUGGESTION_COPY[recId];
+    const catalog = REC_COPY[recId];
+    // Rule 6: only copy we actually wrote for this id, never the neutral fallback.
+    if (!known && !catalog) continue;
+    const title = known?.title ?? catalog!.title;
+    const key = title.toLowerCase().trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: gap.id,
+      title,
+      why: known?.why ?? firstSentence(catalog!.description),
+      evidence: evidenceNamingEngine(gap),
+    });
+    if (out.length >= limit) break;
+  }
+  return {
+    suggestions: out,
+    emptyReason:
+      out.length > 0
+        ? null
+        : clientOwned.length > 0
+          ? "lowConfidence"
+          : deduped.length > 0
+            ? "karosOwned"
+            : "none",
+  };
+}
+
+/**
+ * Rule 4's second half, made true (review wave, 2026-09).
+ *
+ * The evidence line is the producer's own words for what was FOUND — never the
+ * benchmark and never the registry label — and for a per-engine gap it also has
+ * to say WHICH engine, because the survivor of the dedupe is one engine's
+ * instance standing for a finding measured on several.
+ *
+ * Two of the three per-engine producers already name the engine inside
+ * `measured` ("Named in 2 of 12 ChatGPT category answers"). GEO-27's does not:
+ * it reads "8% share of voice (vs Rival at 41%)", which is a number with no
+ * measurement attached. Rather than reach for `evidence` — which for GEO-27 is
+ * about how many questions were asked, not what was found — the engine is
+ * appended to the found line, so every row keeps the same shape.
+ */
+function evidenceNamingEngine(gap: VisibilityGap): string {
+  const base = (gap.measured || gap.evidence || "").trim();
+  const suffix = gap.id.split(":")[1];
+  const label = suffix && isEngineId(suffix) ? ENGINE_LABELS[suffix] : null;
+  if (!base || !label || base.includes(label)) return base;
+  return `${base}, measured on ${label}`;
 }
 
 /* ── Answer grid + citation leaderboard (PDF/report contract) ─────── */

@@ -35,11 +35,205 @@ export function isBillableClientActor(
 
 /* ── Pricing ─────────────────────────────────────────────────────── */
 
+/* ── What a credit IS (credits rework, 2026-09) ───────────────────── */
+
 /**
- * Flat credit prices per client-triggered AI action. Scaled to relative real
- * cost (1 credit ≈ one Haiku-sized call): a Sonnet task execution burns ~5× a
- * chat message; a global doc correction rewrites every context doc (~13
- * Sonnet calls) so it costs 3× a task execution.
+ * THE KILL SWITCH FOR THE WHOLE REWORK. Off unless `CREDITS_PLAN_V2_ENABLED=1`.
+ *
+ * WHY A FLAG AT ALL, when the maths is tested and the invariants hold: this
+ * change moves real money in a live database, and local development points at
+ * production Firestore. Nothing here is a schema migration that can be rolled
+ * back with a deploy — a settlement writes a ledger row and moves a balance, and
+ * `rollCreditWindows` tops a client up to 2600 the first time anybody so much as
+ * READS their credits doc in a new month. Shipping that implicitly, on a merge,
+ * is not a decision anyone gets to take back. So it ships dark and is turned on
+ * deliberately, per environment, the same way `RUNWAY_AUTOGEN_ENABLED` and
+ * `TASKMAP_AUTOGEN_ENABLED` already gate their own irreversible sweeps.
+ *
+ * WHAT "OFF" MEANS, precisely — the pre-rework product, with no residue. Every
+ * WRITE this rework introduced is behind the flag, not merely every charge:
+ *   - `creditDefaults()` returns the old 200/150/400, and `rollCreditWindows`
+ *     neither migrates a doc's caps nor tops a balance up;
+ *   - `settleJobCharge` / `settleChargeEntry` return without writing anything,
+ *     so no ledger row of kind `"settlement"` can exist;
+ *   - the reconcile route runs neither the unsettled-hold LISTING nor the
+ *     `holdSettledAt` bookmark — bookmarking while dark would mark every
+ *     delivered job "decided" before a single settlement could run, so flipping
+ *     the flag on later would find an empty candidate set;
+ *   - `chargeClientCredits` does not stamp `phase: "hold"`, and
+ *     `stampChargeSettlesJob` does not stamp `settlesJobId`: nothing will settle
+ *     those rows, so labelling them would be a claim the ledger cannot keep;
+ *   - `estimateAgentRunCredits` returns the constant, so the hold is the price
+ *     it has always been;
+ *   - every price surface says "Costs N credits", with no hedge, and the staff
+ *     cost-to-us block is not rendered or even sent to the browser.
+ * The one thing that still happens under OFF is the agent-engine run cost being
+ * persisted onto the job (and logged as usage). That is a MEASUREMENT — it
+ * charges nobody, it closes the telemetry gap the rework needs whether or not
+ * the rework is on, and having it already collected is what makes flipping the
+ * flag an informed decision rather than a blind one.
+ *
+ * SERVER-READ ONLY, deliberately NOT `NEXT_PUBLIC_`. A public flag is baked
+ * into the client bundle and cannot be flipped without a rebuild, which defeats
+ * the point of a switch you might need to throw in a hurry. In a client
+ * component `process.env.CREDITS_PLAN_V2_ENABLED` compiles to `undefined`, so
+ * this would silently read OFF there and disagree with the server that rendered
+ * the page — a hydration mismatch on a price. Client components therefore take
+ * the answer as a BOOLEAN PROP threaded from their server page, never by calling
+ * this. `credits.ts` stays client-safe because reading a missing `process.env`
+ * key is not an error; calling this from the browser is just always false.
+ */
+export function isCreditsPlanV2Enabled(): boolean {
+  return process.env.CREDITS_PLAN_V2_ENABLED === "1";
+}
+
+/**
+ * Our own cost, in USD, that ONE credit recovers.
+ *
+ * THE RULING, and the arithmetic that pins it: a client account gets 2600
+ * credits a month, and a month of 2600 credits must never cost Karos more than
+ * $130. $130 ÷ 2600 = $0.05. There is no third number to choose — fix any two
+ * of {allowance, ceiling, price} and the third follows — which is why this
+ * constant is written as the quotient it is rather than as a rate someone
+ * picked.
+ *
+ * This is what a credit COSTS US, not what it sells for. Margin is a
+ * commercial decision made where the plan is priced; it is deliberately not
+ * modelled here, because the guarantee this module has to keep is a spend
+ * ceiling, and a ceiling has to be measured in the currency the spend happens
+ * in.
+ */
+export const USD_PER_CREDIT = 0.05;
+
+/**
+ * Credits per USD of our own cost — the inverse of `USD_PER_CREDIT`, spelled
+ * out because it is the multiple every settlement applies and a reader should
+ * not have to divide by 0.05 in their head to check a ledger row. Pinned equal
+ * to `1 / USD_PER_CREDIT` by credits.test.ts so the pair cannot drift.
+ */
+export const CREDITS_PER_USD = 20;
+
+/**
+ * One client account's monthly credit allowance. `MONTHLY_ALLOWANCE ×
+ * USD_PER_CREDIT` is the $130 line, and credits.test.ts asserts that product
+ * outright so the ceiling lives in code rather than in a ticket.
+ *
+ * It is BOTH the monthly cap and the monthly top-up target (see
+ * `CREDIT_DEFAULTS` and `rollCreditWindows`): a cap alone would let a client
+ * run out permanently, and a top-up alone would let a rollover balance spend
+ * past $130 in one month. Together they say "2600 a month, every month,
+ * neither more nor stockpiled".
+ */
+export const MONTHLY_ALLOWANCE = 2600;
+
+/**
+ * The floor on a settled run. `Math.ceil` already floors any non-zero cost at
+ * 1, so this is really a statement about ZERO: a run we have no cost for is a
+ * telemetry gap, not a free run, and the settlement path refuses to settle it
+ * at all rather than settling it to nothing.
+ */
+export const MIN_SETTLED_CREDITS = 1;
+
+/**
+ * A settlement may not deduct more than this multiple of the estimate that was
+ * held. One runaway run must not eat a client's month before anybody has
+ * looked at it: past the cap we settle AT the cap, record the uncapped figure
+ * on the ledger row and flag it (`settlementCapped`) for staff. The estimate
+ * is self-calibrating (`estimateRunCredits`), so a product that keeps hitting
+ * the cap re-prices itself upward within ten runs rather than staying capped
+ * forever.
+ */
+export const SETTLEMENT_CAP_FACTOR = 2;
+
+/**
+ * Operations whose price is a MONETIZATION decision rather than a measure of
+ * compute, and which therefore never settle against actual USD.
+ *
+ * - `seat_purchase` (`CREDIT_COSTS.employeeSeat`) buys a LinkedIn
+ *   employee-advocacy seat. No model call happens; settling it would refund
+ *   ~100 credits against $0 of tokens that were never spent.
+ * - `agent_launch` keeps its admin-set price, which `calibrateLaunchPrice`
+ *   already derives from a MEASURED cross-client USD ratio. Settling a setup
+ *   per-run would replace one deliberate number with a per-client lottery —
+ *   one client's unlucky setup costing 3× another's for the same product.
+ * - `manual` is an admin grant/deduction. There is no run to measure.
+ *
+ * Everything else settles, including the small in-app actions: a copilot turn,
+ * a Task Map refresh and an audience simulation all cost real tokens, and the
+ * 1-credit floor is what keeps the cheapest of them from settling to nothing.
+ */
+export const UNSETTLED_OPERATIONS: ReadonlySet<CreditOperation> = new Set<CreditOperation>([
+  "seat_purchase",
+  "agent_launch",
+  "manual",
+]);
+
+/**
+ * Credits for a measured USD cost: `ceil(usd × 20)`, floored at one credit.
+ *
+ * THE ONLY PLACE THIS MULTIPLICATION HAPPENS. A second site computing
+ * `usd * 20` inline is how a rounding rule quietly becomes two rounding rules,
+ * so credit-attribution.test.ts source-scans for one.
+ *
+ * Rounds UP, deliberately and in Karos's favour by at most $0.05: the ceiling
+ * this module guarantees is on OUR cost, and a floor would let a thousand
+ * sub-cent actions accumulate real spend against zero credits.
+ *
+ * A non-finite or non-positive cost returns the floor rather than 0. Callers
+ * must not reach here with "cost unknown" at all — see `settlementFor`, which
+ * refuses that case outright — but if one does, charging the floor is the
+ * honest failure and refunding the whole hold is not.
+ */
+export function creditsForUsd(usd: number): number {
+  if (!Number.isFinite(usd) || usd <= 0) return MIN_SETTLED_CREDITS;
+  return Math.max(MIN_SETTLED_CREDITS, Math.ceil(usd * CREDITS_PER_USD));
+}
+
+/** What a settlement resolved to, and whether the cap had to hold it back. */
+export interface Settlement {
+  /** Credits the run should have cost — what the client ends up charged. */
+  credits: number;
+  /** hold − credits. Positive hands credits back; negative takes more. */
+  delta: number;
+  /** True when `creditsForUsd(actualUsd)` exceeded the 2× cap and was clipped. */
+  capped: boolean;
+  /** The uncapped figure, recorded even when capped so staff see the real number. */
+  uncappedCredits: number;
+}
+
+/**
+ * Resolve one hold against what the run actually cost us.
+ *
+ * Pure and total: the caller decides WHETHER to settle (operation exempt?
+ * charge already refunded? cost telemetry missing?) and this decides what the
+ * settlement IS. Keeping the two apart is what lets the arithmetic be unit
+ * tested without a Firestore fake anywhere near it.
+ */
+export function settlementFor(hold: number, actualUsd: number): Settlement {
+  const uncappedCredits = creditsForUsd(actualUsd);
+  const ceiling = Math.max(MIN_SETTLED_CREDITS, hold * SETTLEMENT_CAP_FACTOR);
+  const credits = Math.min(uncappedCredits, ceiling);
+  return { credits, delta: hold - credits, capped: uncappedCredits > ceiling, uncappedCredits };
+}
+
+/**
+ * Flat credit prices per client-triggered AI action.
+ *
+ * THESE ARE ESTIMATES NOW (credits rework, 2026-09), and that is a change of
+ * meaning rather than of value. Each still prices its action at dispatch — the
+ * HOLD — and each is still the number a client is quoted before they press.
+ * What changed is what happens after: the run reports what it cost us, and
+ * `settlementFor` reconciles the hold to `ceil(actualUsd × 20)`. So a number
+ * here is a starting quote and a fallback for a product with no measured
+ * history, never the final word on a bill.
+ *
+ * They are kept as the FALLBACK rung of `estimateRunCredits`'s ladder rather
+ * than deleted: a client running an agent for the first time has no median to
+ * quote, and quoting nothing is worse than quoting the figure that has been
+ * roughly right all year. Scaled to relative real cost (1 credit ≈ one
+ * Haiku-sized call): a Sonnet task execution burns ~5× a chat message; a
+ * global doc correction rewrites every context doc (~13 Sonnet calls) so it
+ * costs 3× a task execution.
  */
 export const CREDIT_COSTS = {
   /**
@@ -245,6 +439,48 @@ export function creditsLabel(amount: number): string {
 }
 
 /**
+ * "about 25 credits" — a price QUOTED BEFORE a run, which is now an estimate
+ * (credits rework, 2026-09).
+ *
+ * ONE HELPER RATHER THAN EIGHT INLINE "about"s, for the reason `creditsLabel`
+ * itself exists: the surfaces that quote a price must not each get the hedge
+ * right or wrong separately, and a reprice of the WORD is exactly as likely as
+ * a reprice of the number. It wraps `creditsLabel` rather than re-spelling the
+ * pluralisation, so "about 1 credit" cannot come out as "about 1 credits".
+ *
+ * "about", not "~" or "approx.": this is read by a client in a sentence, and
+ * the two shorter spellings are a lab register. Never "tokens" — that word
+ * belongs to PATs and LLM counts, and this is the phrase most tempted by it,
+ * since the reason the price is an estimate IS token usage.
+ */
+export function estimatedCreditsLabel(amount: number): string {
+  return `about ${creditsLabel(amount)}`;
+}
+
+/**
+ * "18 credits (estimated 25)" — a price AFTER the run, on a ledger row or a run
+ * history line, where both numbers matter: what the client actually paid, and
+ * what they were quoted. Showing only the first makes a settled row look like a
+ * reprice nobody announced; showing only the second is the old, wrong number.
+ *
+ * "estimated", not "est." — the row has the width, and an abbreviation on a
+ * money line reads as jargon.
+ */
+export function settledCreditsLabel(actual: number, estimate: number): string {
+  return `${creditsLabel(actual)} (estimated ${estimate})`;
+}
+
+/**
+ * The one sentence that explains, wherever a price is quoted, why it is an
+ * estimate — in the client's own terms and without naming tokens or dollars.
+ *
+ * Lives here beside the numbers rather than at each control, so the eleven
+ * surfaces that quote a price cannot describe the same billing rule eleven
+ * ways. No em dash (AF-8).
+ */
+export const ESTIMATED_PRICE_NOTE = "You're charged what the run actually uses.";
+
+/**
  * What ONE PRESS of a metered control costs the reader looking at it, or null
  * when it costs them nothing.
  *
@@ -276,7 +512,14 @@ export function creditsLabel(amount: number): string {
  * fourth, un-called way to spell a price would be a shared rule nothing asks.
  */
 function pressPrice(amount: number, viewerIsBilled: boolean): string | null {
-  return viewerIsBilled ? creditsLabel(amount) : null;
+  if (!viewerIsBilled) return null;
+  // HEDGED ONLY UNDER v2. All four of these presses settle to actual cost when
+  // the rework is on, so the quote is an estimate and has to say so; with the
+  // flag off the charge is exactly this figure and "about" would be a lie in
+  // the other direction. Resolved here rather than at the control because these
+  // helpers are already server-called (see the docstring above) — a client
+  // component cannot read the flag, and must not try.
+  return isCreditsPlanV2Enabled() ? estimatedCreditsLabel(amount) : creditsLabel(amount);
 }
 
 /**
@@ -301,6 +544,20 @@ export function taskMapRefreshPrice(viewerIsBilled: boolean): string | null {
 
 /** One AI Insights "Refresh" press · GET /api/clients/[id]/insights?force=1. */
 export function insightsRefreshPrice(viewerIsBilled: boolean): string | null {
+  return pressPrice(CREDIT_COSTS.chatMessage, viewerIsBilled);
+}
+
+/**
+ * One X "Propose accounts" / "Refresh proposal" press · proposeXRosterAction.
+ *
+ * A FOURTH quote, added by the flow audit (2026-09, R3): the press charges
+ * `CREDIT_COSTS.chatMessage` — the nearest operation's rate, see the action's
+ * own docstring — and quoted nothing, on a button a client re-presses to
+ * refresh a list. It joins the three above rather than assembling the phrase at
+ * the control for the reason stated there: the quote is read off the constant
+ * the action charges from, so a reprice moves both together.
+ */
+export function xRosterProposalPrice(viewerIsBilled: boolean): string | null {
   return pressPrice(CREDIT_COSTS.chatMessage, viewerIsBilled);
 }
 
@@ -553,20 +810,123 @@ const PER_AGENT_PRICE = "set per agent";
  * the card's price column leaves it off because its own heading already says
  * credits. Both branches go through the same three cases, which is the point.
  */
-export function clientPriceText(row: ClientPriceRow, opts?: { withUnit?: boolean }): string {
+export function clientPriceText(
+  row: ClientPriceRow,
+  opts?: { withUnit?: boolean; approx?: boolean },
+): string {
   if (row.credits == null) return PER_AGENT_PRICE;
   const amount = opts?.withUnit ? creditsLabel(row.credits) : String(row.credits);
-  return row.from ? `from ${amount}` : amount;
+  // `from` already says the number is a floor, and "about, from 25" says two
+  // hedges about one figure. The floor is the stronger claim, so it wins.
+  if (row.from) return `from ${amount}`;
+  return opts?.approx ? `about ${amount}` : amount;
 }
 
-/** Applied to new clients on their first charge/grant (lazy doc creation). */
+/**
+ * Applied to new clients on their first charge/grant (lazy doc creation).
+ *
+ * ALL THREE MOVED in the credits rework (2026-09): 200/150/400 → 2600/null/2600.
+ * The allowance IS the cap and the cap IS the balance, so a fresh client starts
+ * the month able to spend exactly their allowance and no more.
+ *
+ * The weekly cap is gone, not lowered. It was a burst limiter under a 400/month
+ * ceiling; pro-rata under 2600 it would be ~600/week, and a client who wants to
+ * run their whole month in week one is not abusing anything. A second cap is a
+ * second denial message to explain, for no ceiling it enforces that the monthly
+ * one does not. `ClientCredits.weeklyLimit` and `weekSpent` STAY — the field is
+ * still honoured when an admin sets one deliberately (`setClientCreditLimits`),
+ * and the week meter still shows spend — but nothing sets one by default.
+ */
 export const CREDIT_DEFAULTS = {
-  startingBalance: 200,
-  /** Default weekly spend cap; null would mean uncapped. */
-  weeklyLimit: 150,
+  startingBalance: MONTHLY_ALLOWANCE,
+  /** Default weekly spend cap; null means uncapped, which is now the default. */
+  weeklyLimit: null,
   /** Default monthly spend cap; null would mean uncapped. */
+  monthlyLimit: MONTHLY_ALLOWANCE,
+} as const;
+
+/**
+ * The defaults every `clientCredits` doc written before the credits rework
+ * carries — the migration's "untouched" fingerprint.
+ *
+ * THERE IS NO BATCH MIGRATION SCRIPT, deliberately. Every read of a credits doc
+ * already passes through `rollCreditWindows` (`getClientCredits` rolls on read,
+ * and `assessCharge`/`applyCredit` roll inside their transactions), so the
+ * cheapest safe migration is to do it there, per doc, on the next touch — the
+ * same lazy-creation shape `defaultClientCredits` already uses for a client that
+ * has never been charged.
+ *
+ * Matched by VALUE rather than applied blindly, because an admin-set cap is a
+ * decision and this must not overwrite one: a doc still reading exactly 150/400
+ * is one nobody has configured, and only that doc is migrated. A client whose
+ * monthly cap an admin deliberately set to 400 keeps it, and staff can raise it
+ * from the credits panel like any other.
+ */
+export const LEGACY_CREDIT_DEFAULTS = {
+  startingBalance: 200,
+  weeklyLimit: 150,
   monthlyLimit: 400,
 } as const;
+
+/**
+ * The plan in force RIGHT NOW — the new one when `CREDITS_PLAN_V2_ENABLED=1`,
+ * the pre-rework one otherwise.
+ *
+ * A FUNCTION, NOT A CONSTANT, because the answer depends on an env var and a
+ * module-level constant would freeze whichever value was set when the module
+ * first loaded — which in a test file is whatever the previous test left behind.
+ * Every consumer of a default (`defaultClientCredits`, the migration, the
+ * top-up) goes through here, so the switch cannot be half-thrown.
+ */
+export function creditDefaults(): {
+  startingBalance: number;
+  weeklyLimit: number | null;
+  monthlyLimit: number | null;
+} {
+  return isCreditsPlanV2Enabled() ? CREDIT_DEFAULTS : LEGACY_CREDIT_DEFAULTS;
+}
+
+/**
+ * The plan a credits doc is on. Bumped when the defaults themselves change, and
+ * stamped on every doc the migration below touches so the value-matching heuristic
+ * runs AT MOST ONCE per client — see `ClientCredits.planVersion`.
+ */
+export const CREDIT_PLAN_VERSION = 2;
+
+/**
+ * Bring a pre-rework credits doc onto the new plan, in place and idempotently.
+ * Returns the SAME object when there is nothing to migrate, so the identity
+ * check callers rely on ("did anything change?") still holds.
+ *
+ * Balance is deliberately NOT touched here — a top-up is a monthly event, not a
+ * migration, and it belongs with the window roll below where the month key says
+ * it is due.
+ */
+function migrateCreditPlan(credits: ClientCredits): ClientCredits {
+  if (!isCreditsPlanV2Enabled()) return credits;
+  if (credits.planVersion === CREDIT_PLAN_VERSION) return credits;
+  // BOTH CAPS, OR NEITHER. The docstring above says an untouched doc is one
+  // "still reading exactly 150/400", and checking the two independently did not
+  // implement that sentence: a client whose monthly cap an admin had raised to
+  // 900 still carried the default 150 weekly, so the weekly half fired and
+  // silently removed a burst limiter on an account somebody had deliberately
+  // configured. A doc with ANY admin fingerprint on its caps is a configured
+  // doc, and the migration's business is only with the ones nobody has touched.
+  //
+  // It is still STAMPED either way, which is the point of stamping: a
+  // half-legacy doc is recognised as "seen, decided, leave alone" and never
+  // re-inspected, rather than being re-judged by this heuristic forever.
+  const untouched =
+    credits.weeklyLimit === LEGACY_CREDIT_DEFAULTS.weeklyLimit &&
+    credits.monthlyLimit === LEGACY_CREDIT_DEFAULTS.monthlyLimit;
+  return {
+    ...credits,
+    ...(untouched
+      ? { weeklyLimit: CREDIT_DEFAULTS.weeklyLimit, monthlyLimit: CREDIT_DEFAULTS.monthlyLimit }
+      : {}),
+    planVersion: CREDIT_PLAN_VERSION,
+  };
+}
 
 /* ── Spend windows ───────────────────────────────────────────────── */
 
@@ -593,30 +953,74 @@ export function creditMonthKey(ts: number): string {
 
 /** Fresh credits doc for a client that has never been charged or granted. */
 export function defaultClientCredits(clientId: string, now: number): ClientCredits {
+  const plan = creditDefaults();
   return {
     clientId,
-    balance: CREDIT_DEFAULTS.startingBalance,
-    weeklyLimit: CREDIT_DEFAULTS.weeklyLimit,
-    monthlyLimit: CREDIT_DEFAULTS.monthlyLimit,
+    balance: plan.startingBalance,
+    weeklyLimit: plan.weeklyLimit,
+    monthlyLimit: plan.monthlyLimit,
     weekKey: creditWeekKey(now),
     weekSpent: 0,
     monthKey: creditMonthKey(now),
     monthSpent: 0,
     updatedAt: now,
+    // Born on the current plan, so the migration heuristic never inspects it.
+    // Only under v2: stamping a doc created while the flag is OFF would tell a
+    // later migration that a 200/150/400 doc had already been considered.
+    ...(isCreditsPlanV2Enabled() ? { planVersion: CREDIT_PLAN_VERSION } : {}),
   };
 }
 
-/** Reset week/month spend counters whose window key has rolled over. */
+/**
+ * Reset week/month spend counters whose window key has rolled over, top the
+ * balance up to the monthly allowance when the month rolled, and migrate a
+ * pre-rework doc onto the new plan.
+ *
+ * ── THE MONTHLY TOP-UP (credits rework, 2026-09) ─────────────────────────────
+ * `balance = max(balance, MONTHLY_ALLOWANCE)` on a month roll. Three things
+ * that phrasing settles, each of which was a real option:
+ *
+ *   - NOTHING ROLLS OVER. A client who spent 100 of their 2600 starts the new
+ *     month on 2600, not 5100. Rollover would let one month legitimately cost
+ *     us far more than $130, which is the whole line this rework exists to
+ *     hold.
+ *   - NOTHING IS TAKEN AWAY. `max`, never assignment: a client sitting on 4000
+ *     because an admin granted a paid top-up keeps all 4000. Robbing a client
+ *     of credits they bought, in a function called "roll the windows", would be
+ *     the worst possible place to hide that.
+ *   - IT IS A CONSEQUENCE OF THE CALENDAR, NOT OF A CRON. This is the first
+ *     monthly refill the product has ever had, and putting it behind a
+ *     scheduled route would mean a missed tick silently costs a client their
+ *     month. Computing it from `creditMonthKey` makes it true the moment anyone
+ *     reads the doc, and PERSISTED by the first charge/grant of the new month
+ *     (`assessCharge` and `applyCredit` both roll before they write) — the
+ *     identical guarantee the spend counters have always had.
+ *
+ * Pure, so a read-only caller (`availableCredits`, `bindingCreditLimit`, the
+ * balance pills) sees the topped-up figure immediately even before anything
+ * writes it. That is the same read/write split the counters already have; the
+ * displayed number and the number the next charge assesses against are computed
+ * by this one function, so they cannot disagree.
+ */
 export function rollCreditWindows(credits: ClientCredits, now: number): ClientCredits {
+  const migrated = migrateCreditPlan(credits);
   const weekKey = creditWeekKey(now);
   const monthKey = creditMonthKey(now);
-  if (weekKey === credits.weekKey && monthKey === credits.monthKey) return credits;
+  const weekRolled = weekKey !== migrated.weekKey;
+  const monthRolled = monthKey !== migrated.monthKey;
+  if (!weekRolled && !monthRolled) return migrated;
   return {
-    ...credits,
+    ...migrated,
     weekKey,
-    weekSpent: weekKey === credits.weekKey ? credits.weekSpent : 0,
+    weekSpent: weekRolled ? 0 : migrated.weekSpent,
     monthKey,
-    monthSpent: monthKey === credits.monthKey ? credits.monthSpent : 0,
+    monthSpent: monthRolled ? 0 : migrated.monthSpent,
+    // Gated: under the old plan there was never a monthly refill, and adding
+    // one on a merge would hand every client in the product a free month.
+    balance:
+      monthRolled && isCreditsPlanV2Enabled()
+        ? Math.max(migrated.balance, MONTHLY_ALLOWANCE)
+        : migrated.balance,
   };
 }
 
@@ -826,6 +1230,54 @@ export function applyCredit(
     if (creditMonthKey(at) === rolled.monthKey) {
       next.monthSpent = Math.max(0, rolled.monthSpent - amount);
     }
+  }
+  return next;
+}
+
+/**
+ * Pure settlement application: move the balance by `delta` and move the hold's
+ * window spend the OPPOSITE way, scoped to the windows the hold accrued in.
+ *
+ * A SETTLEMENT IS NEITHER A REFUND NOR AN ADJUSTMENT, which is why it cannot
+ * reuse `applyCredit` (credits rework, 2026-09):
+ *
+ *   - `"refund"` only ever hands credits BACK; a settlement can go either way,
+ *     and `applyCredit`'s refund branch would subtract a negative from
+ *     `weekSpent` (i.e. add to it) only after `Math.max(0, …)` had already made
+ *     the arithmetic mean something else.
+ *   - `"adjustment"` moves the balance WITHOUT touching window spend. A
+ *     settlement that took more credits and left `monthSpent` alone would let a
+ *     client spend past 2600 while the monthly cap read as unbreached — the
+ *     exact ceiling this rework exists to keep.
+ *
+ * `chargedAt` is the hold's own `createdAt`, and the window guards are the same
+ * ones `applyCredit`'s refund branch uses: a settlement landing after a month
+ * rollover corrects nothing in the NEW month, because the spend it is
+ * correcting was never counted there. The credits still move on the balance —
+ * only the window bookkeeping is scoped.
+ *
+ * CAPS ARE NOT RE-CHECKED, and that is deliberate. The work is already
+ * delivered; refusing the settlement would either strand the difference or
+ * retry forever. A settlement is allowed to push `balance` negative and
+ * `monthSpent` past the cap; the NEXT charge is then correctly denied by
+ * `assessCharge` through the existing `insufficient_balance` path, with no new
+ * UI state, and `availableCredits` already floors at 0 so no pill renders a
+ * negative. `SETTLEMENT_CAP_FACTOR` is what bounds how far past zero one run
+ * can push it.
+ */
+export function applySettlement(
+  current: ClientCredits,
+  delta: number,
+  now: number,
+  chargedAt: number,
+): ClientCredits {
+  const rolled = rollCreditWindows(current, now);
+  const next: ClientCredits = { ...rolled, balance: rolled.balance + delta, updatedAt: now };
+  if (creditWeekKey(chargedAt) === rolled.weekKey) {
+    next.weekSpent = Math.max(0, rolled.weekSpent - delta);
+  }
+  if (creditMonthKey(chargedAt) === rolled.monthKey) {
+    next.monthSpent = Math.max(0, rolled.monthSpent - delta);
   }
   return next;
 }

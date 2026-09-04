@@ -7,7 +7,7 @@ import { Icon } from "@/components/icon";
 import { sendSupportEmailAction } from "@/lib/actions";
 
 /**
- * "Flag to the Karos team" affordance (SCRUM-52 fix 4): a prefilled support
+ * The prefilled support affordance (SCRUM-52 fix 4): a prefilled support
  * dialog wired to the existing sendSupportEmailAction. Sender identity comes
  * from the session inside the action, so only subject/message cross the wire.
  * Dialog anatomy follows contact-us-modal.tsx.
@@ -15,7 +15,15 @@ import { sendSupportEmailAction } from "@/lib/actions";
 export function FlagButton({
   subject,
   message,
-  label = "Flag to the Karos team",
+  /**
+   * Trigger text. Defaults to the ONE word every support trigger in the
+   * portal now uses (flow audit 2026-09, R7) — this control opens the same
+   * `sendSupportEmailAction` dialog the account menu does, and a reader cannot
+   * be expected to know that "Flag to the Karos team" and "Support" are the
+   * same thing. Callers pass a different label only where the surrounding copy
+   * would not otherwise say what is being asked.
+   */
+  label = "Support",
 }: {
   subject: string;
   message: string;
@@ -71,7 +79,11 @@ export function FlagButton({
         onClick={() => setOpen(true)}
         className="inline-flex items-center gap-1 rounded-md text-xs text-muted underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
       >
-        <Icon name="Flag" className="h-3 w-3" />
+        {/* The same mark and the same word as every other support trigger in
+            the portal (review wave, 2026-09). The flag icon was left over from
+            when this control was "Flag to the Karos team"; a reader has no way
+            to know a flag and a headset open the same dialog. */}
+        <Icon name="Headphones" className="h-3 w-3" />
         {label}
       </button>
 
@@ -93,11 +105,11 @@ export function FlagButton({
               <div className="flex items-center justify-between border-b border-border px-6 py-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
-                    <Icon name="Flag" className="h-4 w-4" />
+                    <Icon name="Headphones" className="h-4 w-4" />
                   </div>
                   <div>
                     <p id="seo-geo-flag-title" className="text-sm font-semibold text-foreground">
-                      Flag to the Karos team
+                      Support
                     </p>
                     <p className="text-[11px] text-muted">We typically respond within 24 hours</p>
                   </div>
@@ -117,7 +129,9 @@ export function FlagButton({
                     <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
                       <Icon name="CircleCheck" className="h-6 w-6" />
                     </div>
-                    <p className="text-sm font-semibold text-foreground">Flag sent</p>
+                    {/* contact-us-modal.tsx's own words: one dialog, one
+                        confirmation, whichever trigger opened it. */}
+                    <p className="text-sm font-semibold text-foreground">Message sent!</p>
                     <p className="max-w-[280px] text-sm text-muted">
                       The Karos team has your note and will reply to your email.
                     </p>

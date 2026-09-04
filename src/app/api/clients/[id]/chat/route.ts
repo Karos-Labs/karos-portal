@@ -28,6 +28,7 @@ import { findDuplicateReason, queueCapacitySkipNote } from "@/lib/task-dedup";
 import {
   CLIENT_PRICE_ROWS,
   CREDIT_COSTS,
+  ESTIMATED_PRICE_NOTE,
   availableCredits,
   chatMessageCreditCost,
   chatPricingFor,
@@ -445,9 +446,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `quote THIS figure when asked what they have; it is the balance already clipped by their spend caps. ` +
       `Used ${credits.weekSpent}${credits.weeklyLimit != null ? ` of ${credits.weeklyLimit}` : ""} this week, ` +
       `${credits.monthSpent}${credits.monthlyLimit != null ? ` of ${credits.monthlyLimit}` : ""} this month.\n` +
-      `What each action costs. This is the same price list the client reads on their settings page:\n${priceLines}\n` +
+      // "typical" and "estimate", not "exact" (credits rework, 2026-09). Every
+      // figure below is a HOLD reserved when the work starts; the charge is then
+      // reconciled to what the run actually used, so a client's ledger can show
+      // less than the price quoted here. The prompt has to say so, because the
+      // block closes by forbidding the model to invent figures — which would
+      // otherwise make it defend a quote the bill contradicts. The old line
+      // called the per-agent prices "the exact price of one run of each".
+      `What each action typically costs. This is the same price list the client reads on their settings page:\n${priceLines}\n` +
+      `These are estimates. ${ESTIMATED_PRICE_NOTE} A run that uses less is charged less, and the client's ledger shows both figures.\n` +
       (agentPriceLines
-        ? `This client's agents and the exact price of one run of each:\n${agentPriceLines}\n`
+        ? `This client's agents and the typical price of one run of each:\n${agentPriceLines}\n`
         : `This client has no AI agents assigned yet.\n`) +
       `If spendable credits are under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
     : "";

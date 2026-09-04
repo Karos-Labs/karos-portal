@@ -8,13 +8,70 @@ import {
   upsertUser,
   completeOnboarding,
   clearUserPhone,
+  getClient,
+  listClientIntegrations,
+  listCustomAgents,
   tryAcquireAiProcessingLock,
   releaseAiProcessingLock,
   updateClient,
 } from "@/lib/data";
 import { adminAuth } from "@/lib/firebase/admin";
+import { integrationIsUsable } from "@/lib/integration-status";
+import { rankSetupLadder } from "@/lib/setup-ladder";
 import { clampClientCategoryValue } from "@/lib/utils";
 import { addEmployeeSeatAction } from "./seat-actions";
+
+/**
+ * Decide and store the order Home's "Get set up" ladder walks this client
+ * through their agents (portal feedback round 4, 2026-09).
+ *
+ * "Ordered per client at onboarding" is the product ruling, and this is the one
+ * moment every input it ranks on is fresh and in one place: the category and
+ * brand voice were typed a second ago, the channels were connected in wizard
+ * step 3, and the grants and pins were set by an admin before the client ever
+ * signed in.
+ *
+ * IT NEVER THROWS. The order is a preference, not a fact: `rankSetupLadder` is
+ * pure and deterministic, so a client with no stored order gets the SAME answer
+ * computed on the fly by Home. Failing here therefore costs nothing a reader
+ * can see, and letting it fail the caller would turn a cosmetic ordering into a
+ * reason to report the whole post-onboarding pipeline as broken.
+ *
+ * The optional LLM permutation the audit describes is out of scope; the seam is
+ * documented on `rankSetupLadder` itself, and would post-process this array
+ * inside this same lock rather than replace it.
+ */
+async function writeSetupLadderOrder(clientId: string): Promise<void> {
+  try {
+    const client = await getClient(clientId);
+    if (!client) return;
+    const grantedIds = client.customAgentIds ?? [];
+    if (grantedIds.length === 0) return;
+    const [allAgents, integrations] = await Promise.all([
+      listCustomAgents(),
+      listClientIntegrations(clientId),
+    ]);
+    const byId = new Map(allAgents.map((a) => [a.id, a]));
+    // In `customAgentIds` order — the plan's own order, and what ties break on.
+    const agents = grantedIds
+      .map((id) => byId.get(id))
+      .filter((a): a is NonNullable<typeof a> => Boolean(a))
+      .map((a) => ({ id: a.id, key: a.key, name: a.name }));
+    if (agents.length === 0) return;
+    const order = rankSetupLadder({
+      agents,
+      category: client.category,
+      socialLinks: client.socialLinks,
+      connectedPlatformIds: integrations.filter(integrationIsUsable).map((i) => i.platform),
+      starredAgentIds: client.starredAgentIds,
+      website: client.website,
+      brandVoice: client.brandVoice,
+    });
+    await updateClient(clientId, { setupLadderOrder: order, setupLadderOrderAt: Date.now() });
+  } catch (e) {
+    console.error("[onboarding] Could not store the setup ladder order:", e);
+  }
+}
 
 /** Step 1 — persisted on "Next" (and before any LinkedIn OAuth redirect) so no
  * draft state is lost on the full-page round trip. */
@@ -123,6 +180,16 @@ export async function completeOnboardingAction(input: {
     try {
       const { runIntelReportPipeline } = await import("@/lib/intel");
       const { buildSwarmContext, runSwarmToCompletion } = await import("@/lib/agent-swarm");
+      // FIRST, not last. It consumes NOTHING either of the two AI passes below
+      // produces — its inputs are the client's grants, their brand voice and
+      // their connected channels, all of which were written before this
+      // `after()` was even scheduled. Running it last put a cosmetic ordering
+      // behind two model pipelines that between them take minutes and can
+      // throw (out of credits, a provider 500), so the one cheap deterministic
+      // thing in this block was the first casualty of the expensive ones
+      // failing — and Home then had to recompute it on every render for a
+      // client whose onboarding had "succeeded".
+      await writeSetupLadderOrder(clientId);
       await runIntelReportPipeline(clientId);
       await updateClient(clientId, { lastIntelReportAt: Date.now() });
       const context = await buildSwarmContext(clientId);

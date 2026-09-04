@@ -33,7 +33,17 @@ import type { ChatDataParts } from "./stream-protocol";
 export type ChatStreamEvent =
   | { type: "text-delta"; delta: string }
   | { type: "agent-focus"; focusAgent: { id: string; name: string } | null }
-  | { type: "tool-result"; toolName: string; output: unknown }
+  /**
+   * A finished tool call: its real name, what it returned, and — added for the
+   * flow audit's R12 (2026-09) — what it was CALLED WITH. The input is where
+   * `edit_output` and `reschedule_output` name the asset they acted on
+   * (`{ assetId }`); their result strings do not. Carrying it costs nothing (the
+   * protocol already sends a `tool-input-available` chunk for every call, and
+   * this module was throwing the payload away after reading the name off it)
+   * and it is what lets the widget offer a way INTO the deliverable a turn just
+   * touched instead of describing it and stopping.
+   */
+  | { type: "tool-result"; toolName: string; output: unknown; input?: unknown }
   | { type: "feedback"; feedback: ChatDataParts["feedback"] }
   | { type: "error"; errorText?: string };
 
@@ -67,6 +77,7 @@ function parseSseLine(line: string): Record<string, unknown> | null {
 function mapChunk(
   chunk: Record<string, unknown>,
   toolNameByCallId: Map<string, string>,
+  toolInputByCallId: Map<string, unknown>,
 ): ChatStreamEvent | null {
   switch (chunk.type) {
     case "text-delta":
@@ -74,12 +85,22 @@ function mapChunk(
     case "tool-input-available":
       if (typeof chunk.toolCallId === "string" && typeof chunk.toolName === "string") {
         toolNameByCallId.set(chunk.toolCallId, chunk.toolName);
+        // Held for the matching output chunk below, which carries neither the
+        // tool's name nor its arguments.
+        if (chunk.input !== undefined) toolInputByCallId.set(chunk.toolCallId, chunk.input);
       }
       return null;
     case "tool-output-available": {
       const toolCallId = chunk.toolCallId;
       const toolName = typeof toolCallId === "string" ? toolNameByCallId.get(toolCallId) : undefined;
-      return toolName ? { type: "tool-result", toolName, output: chunk.output } : null;
+      if (!toolName) return null;
+      const input = typeof toolCallId === "string" ? toolInputByCallId.get(toolCallId) : undefined;
+      return {
+        type: "tool-result",
+        toolName,
+        output: chunk.output,
+        ...(input !== undefined ? { input } : {}),
+      };
     }
     case "data-agentFocus":
       return {
@@ -125,6 +146,7 @@ export async function* readChatStream(response: Response): AsyncGenerator<ChatSt
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const toolNameByCallId = new Map<string, string>();
+  const toolInputByCallId = new Map<string, unknown>();
   let buffer = "";
   try {
     while (true) {
@@ -136,7 +158,7 @@ export async function* readChatStream(response: Response): AsyncGenerator<ChatSt
       for (const line of lines) {
         const chunk = parseSseLine(line);
         if (!chunk) continue;
-        const event = mapChunk(chunk, toolNameByCallId);
+        const event = mapChunk(chunk, toolNameByCallId, toolInputByCallId);
         if (event) yield event;
       }
     }
@@ -145,7 +167,7 @@ export async function* readChatStream(response: Response): AsyncGenerator<ChatSt
     // intermediary) would otherwise be silently dropped in `buffer`.
     const chunk = parseSseLine(buffer);
     if (chunk) {
-      const event = mapChunk(chunk, toolNameByCallId);
+      const event = mapChunk(chunk, toolNameByCallId, toolInputByCallId);
       if (event) yield event;
     }
   } finally {

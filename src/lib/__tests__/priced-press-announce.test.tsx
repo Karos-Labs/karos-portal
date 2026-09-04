@@ -54,16 +54,27 @@ describe("the Task Map's Refresh Task Map button announces its price", () => {
    * control, and only this one. It used to paint no price at all, which made
    * staff's copy of the Task Map a visibly shorter button than the client's.
    * The ruling is that staff read the client's page as the client gets it, so
-   * the suffix stays — attributed, in muted type, with a tooltip saying whose
-   * money it is. The thing still worth pinning is that it is not presented as
-   * a charge to the reader.
+   * the suffix stays — attributed, in muted type, and named in the button's own
+   * tooltip. The thing still worth pinning is that it is not presented as a
+   * charge to the reader.
+   *
+   * The attribution moved into the BUTTON's title in the review wave (2026-09):
+   * it used to hang on a `title` of the price span, nested inside the button's
+   * own, so the two halves of the sentence had two different tooltips and the
+   * button's said nothing about the client's price at all.
    */
   it("still quotes the client's price to a reader who is never charged, marked as the client's", () => {
     const markup = refreshButtonMarkup(false);
     // Same figure the billed client is quoted — a staff preview that showed a
     // different number would be worse than showing none.
     expect(textOf(markup)).toContain(creditsLabel(CREDIT_COSTS.taskExecution));
-    expect(markup).toContain("What the client is charged");
+    // Rendered, for a touch device that has no hover at all…
+    expect(textOf(markup)).toContain("client");
+    // …and in the button's ONE title, which quotes the client's figure.
+    expect(markup).toContain(`${creditsLabel(CREDIT_COSTS.taskExecution)} a press for the client, free for staff`);
+    // Exactly one title on this control: a tooltip inside a tooltip is a
+    // coin toss about which one the reader gets.
+    expect(markup.match(/title="/g)?.length ?? 0).toBe(1);
   });
 
   it("never tells the unbilled reader the press costs THEM anything", () => {

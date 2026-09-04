@@ -189,7 +189,11 @@ export function LegacyAgentPanel({
                   name="Coins"
                   className={`h-3 w-3 ${viewerIsClient ? "text-neon" : "text-muted-2"}`}
                 />
-                Costs {cost} credit{cost === 1 ? "" : "s"}
+                {/* "About" only when the price is a hold that settles to real
+                    usage — the flag rides on the agent summary because a client
+                    component cannot read it (credits rework, 2026-09). */}
+                {agent.priceIsEstimate ? "About" : "Costs"} {cost} credit
+                {cost === 1 ? "" : "s"}
                 {!viewerIsClient && " · billed to the client"}
               </p>
             )}

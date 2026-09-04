@@ -1,6 +1,8 @@
 import "server-only";
 
 import { chargeClientCredits, creditClientCredits } from "@/lib/data";
+import { settleChargeEntry } from "@/lib/credit-settle";
+import { refundEntryIdFor } from "@/lib/credit-reconcile-shared";
 import { CreditError, isBillableClientActor } from "@/lib/credits";
 import type { AppUser, CreditOperation } from "@/lib/types";
 import type { ProviderId } from "@/lib/models/usage-log";
@@ -28,6 +30,30 @@ import type { ProviderId } from "@/lib/models/usage-log";
  * THE PRICE IS NOT DECIDED HERE. Callers pass an `amount` from `CREDIT_COSTS`
  * and name which existing operation class they picked, at their own call site.
  * This module owns the mechanism only: who pays, and the charge/refund pairing.
+ *
+ * ── SETTLEMENT ON THIS PATH IS BUILT BUT NOT YET WIRED (credits rework, 2026-09)
+ * `ctx.settle(usd)` and `settleClientModelCall` are here and covered by tests,
+ * and no in-app site calls them yet. That is a scoping decision, not an
+ * oversight, and it is written down because an unused seam otherwise reads as
+ * dead code:
+ *
+ *   - the agent-run paths (agent-service webhook, agent-engine reconcile) DO
+ *     settle, and they are where the money is — a run is $0.50-2 against a
+ *     copilot turn's fraction of a cent;
+ *   - every in-app site here computes its cost INSIDE an engine
+ *     (`simulation-engine`, `agent-swarm`, `intel`), which logs usage itself and
+ *     returns a domain object. Handing the USD back out means changing each
+ *     engine's return type, its route, and their tests — a wide change across
+ *     files this rework does not otherwise touch;
+ *   - and the effect is bounded and known: with the 1-credit floor, every action
+ *     priced at 1 (copilot turn, task assist, X roster proposal) settles to
+ *     exactly what it already charges. Only the 5-credit presses (audience
+ *     simulation, Task Map refresh) and the 15-credit global correction would
+ *     move, and they would move DOWN — a client is over-charged, never under,
+ *     while this stays unwired.
+ *
+ * The next step is one engine at a time: return the measured USD, pass it to
+ * `ctx.settle`. Nothing else has to change.
  *
  * WHAT THIS DOES *NOT* GUARANTEE, stated because the guard is easy to over-read:
  * it makes the refund fire on the failure paths that stay inside `run`. A
@@ -82,6 +108,17 @@ export interface ChargeOutcome {
   denied: string | null;
   /** When the charge landed; null when this actor was not billable. */
   chargedAt: number | null;
+  /**
+   * The ledger row this charge wrote, so the caller can settle it against what
+   * the call actually cost us (credits rework, 2026-09). Null when nothing was
+   * charged — a staff actor, or a zero-amount charge.
+   *
+   * THE CHARGE ROW'S OWN ID, not a lookup key, and that is what makes
+   * settlement safe on this path: most in-request charges carry no `jobId` (a
+   * copilot turn finishes inside one request), so a key-based lookup would
+   * either find nothing or, worse, find a different press by the same client.
+   */
+  chargeEntryId: string | null;
 }
 
 /**
@@ -93,10 +130,12 @@ export interface ChargeOutcome {
  * silently letting the call through would be a free model run.
  */
 export async function chargeClientModelCall(call: ClientModelCall): Promise<ChargeOutcome> {
-  if (!isBillableClientActor(call.user)) return { denied: null, chargedAt: null };
+  if (!isBillableClientActor(call.user)) {
+    return { denied: null, chargedAt: null, chargeEntryId: null };
+  }
   const chargedAt = Date.now();
   try {
-    await chargeClientCredits({
+    const charged = await chargeClientCredits({
       clientId: call.clientId,
       amount: call.amount,
       operation: call.operation,
@@ -108,11 +147,57 @@ export async function chargeClientModelCall(call: ClientModelCall): Promise<Char
       actorUid: call.user.uid,
       actorName: call.user.name,
     });
-    return { denied: null, chargedAt };
+    // `?? null` because the data layer returns no entry id for a zero-amount
+    // charge, which writes no ledger row at all — there is no hold to settle.
+    return { denied: null, chargedAt, chargeEntryId: charged?.entryId ?? null };
   } catch (e) {
-    if (e instanceof CreditError) return { denied: e.message, chargedAt: null };
+    if (e instanceof CreditError) return { denied: e.message, chargedAt: null, chargeEntryId: null };
     throw e;
   }
+}
+
+/**
+ * Reconcile an in-request charge to what the call actually cost Karos.
+ *
+ * THE SAME FIGURE THE SITE ALREADY HANDS `logUsage`, and that is the point: a
+ * client-triggered model call already computes its own USD cost for the usage
+ * log, so settlement needs no new measurement, only the number passed one extra
+ * place. A site that cannot produce one simply does not call this and its
+ * estimate stands (`settleChargeEntry` refuses a missing cost outright).
+ *
+ * NEVER THROWS, for the reason `refundClientModelCall` does not: a settlement
+ * failing must not turn a delivered result into an error for the client. A lost
+ * settlement leaves the estimate standing, which is the pre-rework behaviour and
+ * therefore a safe floor.
+ *
+ * MUTUALLY EXCLUSIVE WITH THE REFUND, structurally rather than by convention:
+ * `withClientModelCharge` hands a caller `settle` and `refund` from one
+ * single-shot latch, so a run that refunded cannot then settle and vice versa —
+ * and even if a caller reached past that, `settleChargeEntry` reads the
+ * `refund_<id>` doc inside its own transaction and declines.
+ */
+export async function settleClientModelCall(
+  call: ClientModelCall,
+  chargeEntryId: string | null,
+  actualUsd: number | null | undefined,
+): Promise<void> {
+  if (chargeEntryId == null) return;
+  try {
+    await settleChargeEntry(chargeEntryId, actualUsd, settlementLabelFor(call.reason));
+  } catch (e) {
+    console.error("[client-model-charge] settlement failed:", e);
+  }
+}
+
+/**
+ * The subject of a settlement's ledger line, taken from the charge's own reason
+ * so the two rows name the same purchase. The charge reason is already a
+ * composed phrase ("Audience simulation · Spring launch"); only its head is
+ * kept, because the settlement line spends most of its 120 characters on the
+ * two figures.
+ */
+function settlementLabelFor(chargeReason: string): string {
+  return chargeReason.split(" · ")[0]!.slice(0, 60);
 }
 
 /**
@@ -125,10 +210,27 @@ export async function refundClientModelCall(
   call: ClientModelCall,
   chargedAt: number | null,
   reason: string,
+  /**
+   * The ledger row the charge wrote. When supplied, the refund is written at
+   * `refund_<chargeEntryId>` — idempotent across runs, and VISIBLE to the
+   * settlement path, which decides "was this charge already handed back" by
+   * looking for exactly that doc (credits rework, 2026-09).
+   *
+   * OPTIONAL, AND WHO ACTUALLY PASSES IT: `withClientModelCharge`'s `ctx.refund`
+   * and `refundOnce` do, because they hold the outcome the charge returned. The
+   * ~15 sites that call this function directly destructure only `{ denied,
+   * chargedAt }` and do NOT — they keep the pre-rework auto-id behaviour, where
+   * the only guard is the per-run `refundOnce` latch and the settlement path's
+   * count guard over the charge's pairing group. Stated plainly because the
+   * earlier wording ("whenever it was given the charge id") read as a
+   * guarantee that every refund carries one, which is not the case.
+   */
+  chargeEntryId?: string | null,
 ): Promise<void> {
   if (chargedAt == null) return;
   try {
     await creditClientCredits({
+      ...(chargeEntryId ? { entryId: refundEntryIdFor(chargeEntryId) } : {}),
       clientId: call.clientId,
       amount: call.amount,
       kind: "refund",
@@ -165,12 +267,13 @@ export async function refundClientModelCall(
 export function refundOnce(
   call: ClientModelCall,
   chargedAt: number | null,
+  chargeEntryId?: string | null,
 ): (reason: string) => Promise<void> {
   let done = false;
   return async (reason: string) => {
     if (done) return;
     done = true;
-    await refundClientModelCall(call, chargedAt, reason);
+    await refundClientModelCall(call, chargedAt, reason, chargeEntryId);
   };
 }
 
@@ -203,20 +306,44 @@ export type ChargedRun<T> = { ok: false; denied: string } | { ok: true; result: 
  */
 export async function withClientModelCharge<T>(
   call: ClientModelCall,
-  run: (ctx: { refund: (reason: string) => Promise<void> }) => Promise<T>,
+  run: (ctx: {
+    refund: (reason: string) => Promise<void>;
+    /**
+     * Reconcile the estimate to what this call actually cost Karos (credits
+     * rework, 2026-09) — the same USD figure the site hands `logUsage`.
+     *
+     * Optional to call. A site that never settles keeps the old behaviour: the
+     * estimate is the charge. Calling it AFTER `refund`, or refunding after
+     * settling, is a no-op rather than an error — see the latch below.
+     */
+    settle: (actualUsd: number | null | undefined) => Promise<void>;
+  }) => Promise<T>,
 ): Promise<ChargedRun<T>> {
-  const { denied, chargedAt } = await chargeClientModelCall(call);
+  const { denied, chargedAt, chargeEntryId } = await chargeClientModelCall(call);
   if (denied !== null) return { ok: false, denied };
 
-  let refunded = false;
+  /**
+   * ONE LATCH FOR BOTH, which is what makes "a charge is either refunded or
+   * settled, never both" true on this path by construction rather than by the
+   * caller remembering. `refund` was already once-only for its own reason
+   * (a stream emitting two error parts); sharing the flag with `settle` extends
+   * that guarantee across the pair, and the crash path below can therefore
+   * refund a run that already settled without paying the client twice.
+   */
+  let resolved = false;
   const refund = async (reason: string) => {
-    if (refunded) return;
-    refunded = true;
-    await refundClientModelCall(call, chargedAt, reason);
+    if (resolved) return;
+    resolved = true;
+    await refundClientModelCall(call, chargedAt, reason, chargeEntryId);
+  };
+  const settle = async (actualUsd: number | null | undefined) => {
+    if (resolved) return;
+    resolved = true;
+    await settleClientModelCall(call, chargeEntryId, actualUsd);
   };
 
   try {
-    return { ok: true, result: await run({ refund }) };
+    return { ok: true, result: await run({ refund, settle }) };
   } catch (e) {
     // The client is not paying for our crash. Rethrown unchanged afterwards so
     // the caller's own error handling — logging, taxonomy, the message it shows

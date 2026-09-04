@@ -46,8 +46,11 @@ import {
   CREDIT_BLOCK_REASON,
   CREDIT_COSTS,
   creditsLabel,
+  estimatedCreditsLabel,
+  ESTIMATED_PRICE_NOTE,
   scheduledAgentWeeklyCost,
 } from "@/lib/credits";
+import { intakePageHref, type IntakeFamily } from "@/lib/agent-intake-links";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { validateScheduleTiming } from "@/lib/scheduling";
@@ -103,6 +106,25 @@ export type RunnableAgentSummary = Pick<
   "id" | "key" | "name" | "clientBlurb" | "icon" | "color" | "enabled"
 > & {
   creditCost?: number | null;
+  /**
+   * What ONE run of this agent will actually be HELD at — the measured median
+   * of this client's recent runs of it, or `creditCost` when there is nothing
+   * measured yet (credits rework, 2026-09). Resolved server-side, on the same
+   * jobs the submit core resolves it from, so the price a dialog quotes and the
+   * price the server charges are one number rather than two files agreeing.
+   * Absent on staff-library mounts, which have no client to measure against and
+   * fall back to `creditCost`.
+   */
+  runCostEstimate?: number | null;
+  /**
+   * Whether the credits rework is switched on for this deployment
+   * (`CREDITS_PLAN_V2_ENABLED`), carried as a PROP because a client component
+   * cannot read a non-`NEXT_PUBLIC_` env var — see `isCreditsPlanV2Enabled`.
+   * Decides only the WORDING: with it on, a price is a hold reconciled to real
+   * usage and every quote says so; off, the quoted figure is exactly the charge
+   * and hedging it would be the same lie pointed the other way.
+   */
+  priceIsEstimate?: boolean;
 };
 
 /**
@@ -210,8 +232,18 @@ function countOptions(max: number): number[] {
   return Array.from({ length: max }, (_, i) => i + 1);
 }
 
-function agentRunCost(agent: Pick<RunnableAgentSummary, "creditCost">): number {
-  return agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+function agentRunCost(
+  agent: Pick<RunnableAgentSummary, "creditCost" | "runCostEstimate">,
+): number {
+  // The server-resolved estimate wins when there is one: it is the figure the
+  // submit core will hold, and a dialog quoting anything else is quoting a
+  // price the client will not be charged.
+  return agent.runCostEstimate ?? agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+}
+
+/** "25 credits", or "about 25 credits" when settlement is on for this deploy. */
+function runPriceLabel(agent: Pick<RunnableAgentSummary, "priceIsEstimate">, amount: number): string {
+  return agent.priceIsEstimate ? estimatedCreditsLabel(amount) : creditsLabel(amount);
 }
 
 /**
@@ -442,7 +474,13 @@ export interface ReputationAgentSetup {
  * Removed from code and the db, do not reintroduce.
  */
 
-type IntakeKind = "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation";
+/**
+ * An alias, not a second spelling: the six families are declared once, beside
+ * the one table that maps them to their pages (lib/agent-intake-links.ts). A
+ * seventh family added there is a type error in every Record below rather than
+ * a link that quietly goes nowhere (R16).
+ */
+type IntakeKind = IntakeFamily;
 
 type AgentIntakeContext =
   | { kind: "x"; setup: XAgentSetup }
@@ -461,15 +499,15 @@ const INTAKE_LABEL: Record<IntakeKind, string> = {
   reputation: "Reputation",
 };
 
-/** Route segment of the full agent data page, for callers with no inline payload. */
-const INTAKE_ROUTE: Record<IntakeKind, string> = {
-  x: "x-agent",
-  linkedin: "linkedin-agent",
-  reddit: "reddit-agent",
-  newsletter: "newsletter-agent",
-  blog: "blog-agent",
-  reputation: "reputation-agent",
-};
+/* `INTAKE_ROUTE` used to sit here: a second, independent copy of the
+   family→route table, used by exactly one link. Two tables that can drift, and
+   the one down here had no way of knowing when the other moved a route.
+   Deleted by the flow audit (2026-09, R16). The one call site now reads
+   `setup.href` — the same table's answer for this exact agent, resolved
+   server-side — and falls back to `intakePageHref` for the one mount that
+   cannot have a setup object: the staff hub's dialog picks its client INSIDE
+   the dialog, so no server render upstream could have resolved one for the
+   pair. Both come from the same table now. */
 
 /**
  * What the agent drafts from, in the client's words - the run dialog says this
@@ -924,7 +962,7 @@ export function CustomAgentsHub({
               <div className="flex items-start gap-3">
                 <AgentChip agent={agent} />
                 <div className="min-w-0 flex-1">
-                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">AI agent</p>
+                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">AI agent</p>
                   <p className="truncate text-base font-medium">{agent.name}</p>
                   <p className="mt-0.5 truncate font-mono text-[10px] text-muted-2">
                     {agent.entrySkillDir}
@@ -1098,7 +1136,7 @@ export function CustomAgentsHub({
                   nests here with no change to this file. */}
               {children.length > 0 && (
                 <div className="mt-4">
-                  <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">
+                  <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
                     Steps of this agent
                   </p>
                   <div className="mt-1">
@@ -2069,7 +2107,9 @@ export function AgentScheduleModal({
         <div className="rounded-md border border-neon/20 bg-neon-soft/40 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-foreground">Estimated weekly cost</span>
-            <span className="font-mono text-sm text-neon">{creditsLabel(weeklyCost)}</span>
+            <span className="font-mono text-sm text-neon">
+              {runPriceLabel(agent, weeklyCost)}
+            </span>
           </div>
           {paceOnly ? (
             /* The weekly total above is computed from the STORED multiplier, so
@@ -2093,16 +2133,17 @@ export function AgentScheduleModal({
                branch below may promise the credits back for a missing post. */
             <p className="mt-1 text-[11px] text-muted-2">
               {outputsPerRun === 1
-                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${creditsLabel(costPerOutput)} each. A post's credits are charged when the agent starts drafting it, not when it goes out; if the post never arrives, they are handed back.`
-                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. A day's credits are charged in full when the agent starts drafting for it, not as posts go out.`}
+                ? `${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"} a week at ${runPriceLabel(agent, costPerOutput)} each. A post's credits are set aside when the agent starts drafting it, not when it goes out${agent.priceIsEstimate ? ", and settled to what it actually used" : ""}; if the post never arrives, they are handed back.`
+                : `${postsPerWeek} posting day${postsPerWeek === 1 ? "" : "s"} a week. A day's credits are set aside when the agent starts drafting for it, not as posts go out${agent.priceIsEstimate ? ", and settled to what the run actually used" : ""}.`}
             </p>
           ) : (
             <>
               <p className="mt-1 text-[11px] text-muted-2">
                 {postsPerWeek} run{postsPerWeek === 1 ? "" : "s"} × {outputsPerRun} output
-                {outputsPerRun === 1 ? "" : "s"} × {creditsLabel(costPerOutput)}.
-                Credits are charged in full when each scheduled run starts, and refunded
-                if it delivers nothing.
+                {outputsPerRun === 1 ? "" : "s"} × {runPriceLabel(agent, costPerOutput)}.
+                {agent.priceIsEstimate
+                  ? " Credits are set aside when each scheduled run starts, settled to what the run actually used, and refunded in full if it delivers nothing."
+                  : " Credits are charged in full when each scheduled run starts, and refunded if it delivers nothing."}
               </p>
               <p className="mt-1 text-[11px] text-foreground">
                 {postsPerWeek * outputsPerRun} new draft
@@ -2596,11 +2637,18 @@ export function RunCustomAgentModal({
                        line used to quote the per-output base regardless of
                        the selector, understating a multi-output pick. */
                     <span className="ml-1">
+                      {/* "about" (credits rework, 2026-09): this figure is the
+                          hold, and the run settles to what it actually uses.
+                          The sentence that follows is the one place the whole
+                          rule is stated to a client at the moment they press,
+                          and it is read off the shared constant so it cannot be
+                          worded differently at the next control. */}
                       Costs{" "}
-                      {creditsLabel(
+                      {runPriceLabel(
+                        agent,
                         agentRunCost(agent) * (batchSizeFrom(visibleBriefValues) ?? 1),
                       )}
-                      .
+                      .{agent.priceIsEstimate ? ` ${ESTIMATED_PRICE_NOTE}` : ""}
                     </span>
                   )}
                 </p>
@@ -2846,9 +2894,18 @@ export function RunCustomAgentModal({
                   Open {INTAKE_LABEL[setupErrorKind]} agent data →
                 </button>
               ) : (
-                selectedClientId && (
+                /* R16: the destination is the setup object's own href — the
+                   one `buildAgentSetup` resolved for THIS agent — not a route
+                   re-derived from the family. A mount that passed no setup has
+                   no data page to name, so the sentence stands alone rather
+                   than linking a guess. */
+                /* R16: the setup object's own href when the mount had one —
+                   resolved for THIS agent — and otherwise the shared table's
+                   answer for the family and the client chosen in the picker.
+                   Never a route re-derived from a second copy of the mapping. */
+                (setup?.href ?? (selectedClientId ? intakePageHref(selectedClientId, setupErrorKind) : null)) && (
                   <a
-                    href={`/clients/${selectedClientId}/${INTAKE_ROUTE[setupErrorKind]}`}
+                    href={setup?.href ?? intakePageHref(selectedClientId, setupErrorKind)}
                     className="ml-1.5 underline"
                   >
                     Open {INTAKE_LABEL[setupErrorKind]} agent data →

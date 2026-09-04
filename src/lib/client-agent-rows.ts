@@ -2,7 +2,10 @@ import "server-only";
 
 import { getAsset, listClientSeats, listPlannedScheduledRuns } from "@/lib/data";
 import { matchAccountTitleToSeat } from "@/lib/client-seats";
-import { CREDIT_COSTS } from "@/lib/credits";
+import { isCreditsPlanV2Enabled } from "@/lib/credits";
+import { runPriceQuotes } from "@/lib/run-price";
+// The one family→route table, shared with the run dialog's recovery link (R16).
+import { intakePageHref } from "@/lib/agent-intake-links";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
 import {
   hasLinkedInAgentIntake,
@@ -83,7 +86,17 @@ export const WEEK_STRIP_DAYS = 7;
  * module's doctrine says redaction belongs at the boundary rather than at
  * render, and a field nothing paints is exactly the case that rule is for.
  */
-export function toSummary(agent: CustomAgent): RunnableAgentSummary {
+export function toSummary(
+  agent: CustomAgent,
+  /**
+   * What one run of this agent will actually be HELD at for this client, and
+   * whether the settle-to-actual rework is on for this deployment. Both are
+   * server-resolved and both are optional: a STAFF-LIBRARY mount has no client
+   * to measure against and no price to hedge, and falls back to `creditCost`
+   * with the pre-rework wording (credits rework, 2026-09).
+   */
+  pricing?: { runCostEstimate?: number | null; priceIsEstimate?: boolean },
+): RunnableAgentSummary {
   return {
     id: agent.id,
     key: agent.key,
@@ -93,6 +106,8 @@ export function toSummary(agent: CustomAgent): RunnableAgentSummary {
     color: agent.color,
     creditCost: agent.creditCost ?? null,
     enabled: agent.enabled,
+    ...(pricing?.runCostEstimate != null ? { runCostEstimate: pricing.runCostEstimate } : {}),
+    ...(pricing?.priceIsEstimate ? { priceIsEstimate: true } : {}),
   };
 }
 
@@ -310,6 +325,21 @@ export interface AgentIntakePanes {
   reputation?: ComponentProps<typeof ReputationAgentIntake>;
 }
 
+/**
+ * THE LINK LABEL AND THE PAGE TITLE ARE ONE VOCABULARY (flow audit 2026-09, R7 ·
+ * GOV.UK *Write effective links*, NN/g *Better Link Labels*).
+ *
+ * `clientLabel` is what every control that opens an intake page says, and it
+ * used to be a different phrase from the `<h1>` it lands on: "Your review
+ * details" opened a page headed "Reputation agent", "Your blog details" opened
+ * "Blog agent" — and was ALSO the title of a card on that page, so one phrase
+ * named two things. A reader cannot confirm they arrived where the link said.
+ *
+ * Every label now opens with its destination's own title verbatim ("Blog agent"
+ * → "Blog agent details"), so the page answers the link. It still reads as a
+ * noun phrase in the two sentences that embed it — the run gate's "{label} are
+ * missing." and the inputs band's "{label} →".
+ */
 export async function buildAgentSetup(
   clientId: string,
   agents: Array<{ id: string; key: string }>,
@@ -319,9 +349,9 @@ export async function buildAgentSetup(
     agents.map(async (agent): Promise<[string, AgentSetupState] | null> => {
       if (isXAgentIdentity(agent.key)) {
         const ready = await hasXAgentIntake(clientId);
-        const href = `/clients/${clientId}/x-agent`;
+        const href = intakePageHref(clientId, "x");
         const label = "X agent data";
-        const clientLabel = "Your X details";
+        const clientLabel = "X agent details";
         // No stand-up run exists for X — it drafts from its form directly.
         return [
           agent.id,
@@ -349,9 +379,9 @@ export async function buildAgentSetup(
             ? hasLinkedInV2Setup(clientId)
             : Promise.resolve(true),
         ]);
-        const href = `/clients/${clientId}/linkedin-agent`;
+        const href = intakePageHref(clientId, "linkedin");
         const label = "LinkedIn agent data";
-        const clientLabel = "Your LinkedIn details";
+        const clientLabel = "LinkedIn agent details";
         return [
           agent.id,
           panes?.linkedin
@@ -364,9 +394,9 @@ export async function buildAgentSetup(
         // its card computes `ready: true` by omission, which is the one answer
         // that cannot be right for an agent the submit core hard-gates.
         const ready = await hasRedditAgentIntake(clientId);
-        const href = `/clients/${clientId}/reddit-agent`;
+        const href = intakePageHref(clientId, "reddit");
         const label = "Reddit agent data";
-        const clientLabel = "Your Reddit details";
+        const clientLabel = "Reddit agent details";
         // No stand-up run exists for Reddit either.
         return [
           agent.id,
@@ -389,9 +419,9 @@ export async function buildAgentSetup(
           hasNewsletterAgentIntake(clientId),
           hasNewsletterV2Setup(clientId),
         ]);
-        const href = `/clients/${clientId}/newsletter-agent`;
+        const href = intakePageHref(clientId, "newsletter");
         const label = "Newsletter agent data";
-        const clientLabel = "Your newsletter details";
+        const clientLabel = "Newsletter agent details";
         return [
           agent.id,
           // `standUpDone: true` even though this family HAS a stand-up run, and
@@ -423,9 +453,9 @@ export async function buildAgentSetup(
           hasBlogAgentIntake(clientId),
           hasBlogV2Setup(clientId),
         ]);
-        const href = `/clients/${clientId}/blog-agent`;
+        const href = intakePageHref(clientId, "blog");
         const label = "Blog agent data";
-        const clientLabel = "Your blog details";
+        const clientLabel = "Blog agent details";
         return [
           agent.id,
           // Same as the newsletter above: `ready` already folds `isSetUp` in, so
@@ -444,9 +474,9 @@ export async function buildAgentSetup(
           hasReputationAgentIntake(clientId),
           hasReputationV2Setup(clientId),
         ]);
-        const href = `/clients/${clientId}/reputation-agent`;
+        const href = intakePageHref(clientId, "reputation");
         const label = "Reputation agent data";
-        const clientLabel = "Your review details";
+        const clientLabel = "Reputation agent details";
         return [
           agent.id,
           // `standUpDone: true`, the newsletter and blog idiom rather than
@@ -584,6 +614,28 @@ export async function toClientAgentRows(args: {
 }): Promise<ClientAgentCardRow[]> {
   const scheduleByAgentId = new Map(args.scheduleRows.map((row) => [row.agentId, row]));
   const rows: ClientAgentCardRow[] = [];
+  // Read once for the whole roster, on the server, and carried onto each
+  // row/summary for the client components that paint the price — they cannot
+  // read a non-NEXT_PUBLIC_ env var and must not try.
+  const planV2 = isCreditsPlanV2Enabled();
+  // One pass over `args.jobs` for the page, rather than one per agent card. Same
+  // arithmetic and the same rows as the submit core's own estimate — see
+  // runPriceQuotes. `args.jobs` is this client's own jobs, already loaded by
+  // every caller for the in-flight-run check, so the shared number costs no
+  // extra read.
+  //
+  // THROUGH run-price.ts, not `estimateRunCreditsByAgent` directly (review wave,
+  // 2026-09). The grouper is the arithmetic; the LADDER around it is what the
+  // submit core actually resolves a hold from, and calling the arithmetic alone
+  // dropped both of its outer rungs: the flag gate (with the rework off the
+  // server charges the constant, so quoting a measured median split the quote
+  // from the charge again) and the family's carried default (a newsletter run
+  // quoted at 25 and charged at 10).
+  const priceFor = runPriceQuotes({
+    clientId: args.umbrellas[0]?.clientId ?? "",
+    jobs: args.jobs,
+    agentFor: (id) => args.agentsById.get(id),
+  });
   // Fetched at most once per client, and only when a plain (non-staff,
   // non-group-admin) client viewer could actually be handed someone else's
   // personal option below — most page loads need it zero times.
@@ -621,7 +673,21 @@ export async function toClientAgentRows(args: {
     // sure of that if the same pure gate decided both.
     const live = umbrella.launchState === "live";
     const optionsMode = isOptionsMode(umbrella);
-    const runCost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+    // Read once per row, on the server, and carried onto the row/summary for
+    // the client components that paint the price — they cannot read a
+    // non-NEXT_PUBLIC_ env var and must not try.
+    // THE ESTIMATE, matching what the submit core will actually hold (credits
+    // rework, 2026-09). This is the number the card prints, the number the
+    // template gate refuses on, and the number the ledger row will name, and
+    // they have to be one number: a card that offers a Run at 25 which the
+    // server holds 18 for is the same class of defect as a card that offers a
+    // Run the server refuses, which is why this gate is computed on the server
+    // at all.
+    //
+    // Resolved through the roster-wide quote resolver hoisted above the loop:
+    // same ladder as the submit core, same rows, one pass over `args.jobs` for
+    // the whole page instead of one per agent.
+    const runCost = priceFor(agent.id).credits;
     const templateGates: ClientAgentCardRow["templateGates"] = {};
     if (live) {
       for (const template of umbrella.templates) {
@@ -776,9 +842,24 @@ export async function toClientAgentRows(args: {
         args.viewerIsClient && umbrella.launchState !== "live" ? [] : (umbrella.templates ?? []),
 
       optionsMode,
-      // Staff never pay for a run, so quoting them a price would be a lie —
-      // the same rule the launch price already follows.
-      runCost: args.spendable !== undefined ? runCost : null,
+      // CARRIED FOR BOTH READERS (review wave, 2026-09), which is the opposite
+      // of what this line used to do. It was `args.spendable !== undefined ?
+      // runCost : null` — billable client actors only — so the two cards that
+      // read it (AgentDetailPanel, the live card's format rows) simply dropped
+      // their cost line for staff, while LegacyAgentPanel next door had already
+      // been given both registers by B5 and printed "· billed to the client".
+      // One page, two cards, two answers to "does a run have a price". The
+      // FIGURE is not a lie to staff — it is what the client will be held — and
+      // the components say whose money it is rather than hiding the fact.
+      //
+      // The LAUNCH price above still nulls for staff, deliberately: nothing on
+      // the staff side prints a staff register for it, so carrying it would put
+      // a bare price in front of a reader who is not charged it.
+      runCost,
+      // Wording only — see RunnableAgentSummary.priceIsEstimate. The FIGURE is
+      // the same for both readers; what changes is whether it is presented as a
+      // hold that settles or as the charge itself.
+      runCostIsEstimate: planV2,
       templateGates,
       week: slots.map((slot) => ({
         dateKey: slot.dateKey,
@@ -845,7 +926,9 @@ export async function toClientAgentRows(args: {
               : null,
           }
         : null,
-      runnable: live ? toSummary(agent) : null,
+      runnable: live
+        ? toSummary(agent, { runCostEstimate: runCost, priceIsEstimate: planV2 })
+        : null,
       schedule: scheduleByAgentId.get(agent.id) ?? null,
       ...(args.spendable !== undefined ? { availableCredits: args.spendable } : {}),
     });

@@ -46,7 +46,18 @@ export interface ContentIdentity {
   platform?: string;
 }
 
-function byId(agents: ClientAgentIdentity[]): Map<string, ClientAgentIdentity> {
+/**
+ * The umbrella index rule 1 looks a linked id up in.
+ *
+ * EXPORTED AND HOISTABLE (review wave, 2026-09). It used to be built inside
+ * `resolveContentIdentity`, which is called once per row by surfaces that render
+ * many rows — a fresh Map over the client's whole umbrella list per asset, for a
+ * lookup that never changes within a render. Callers with a loop build it once
+ * and pass it; callers with a single row still pass nothing and pay for one.
+ */
+export function clientAgentsById(
+  agents: readonly ClientAgentIdentity[],
+): Map<string, ClientAgentIdentity> {
   return new Map(agents.map((agent) => [agent.id, agent]));
 }
 
@@ -121,8 +132,10 @@ function familyOf(input: ContentIdentityInput): ChainFamily | null {
 export function resolveContentIdentity(
   input: ContentIdentityInput,
   clientAgents: ClientAgentIdentity[],
+  /** A prepared `clientAgentsById(clientAgents)`, for callers in a loop. */
+  agentsByIdIndex?: ReadonlyMap<string, ClientAgentIdentity>,
 ): ContentIdentity {
-  const agentsById = byId(clientAgents);
+  const agentsById = agentsByIdIndex ?? clientAgentsById(clientAgents);
 
   const linkedId = input.clientAgentId ?? input.job?.clientAgentId ?? input.scheduledRun?.clientAgentId;
   if (linkedId) {
@@ -223,10 +236,12 @@ export function contentLabelsByAsset(
   clientAgents: ClientAgentIdentity[],
 ): Record<string, string> {
   const jobById = new Map(jobs.map((job) => [job.id, job]));
+  // Both indexes hoisted out of the loop — see `clientAgentsById`.
+  const agentsById = clientAgentsById(clientAgents);
   const labels: Record<string, string> = {};
   for (const asset of assets) {
     const job = asset.jobId ? (jobById.get(asset.jobId) ?? null) : null;
-    labels[asset.id] = resolveContentIdentity({ asset, job }, clientAgents).label;
+    labels[asset.id] = resolveContentIdentity({ asset, job }, clientAgents, agentsById).label;
   }
   return labels;
 }

@@ -6,7 +6,15 @@ import {
   reconcileStuckTaskExecution,
   type ReconcileResult,
 } from "@/lib/credit-reconcile";
+import {
+  UNSETTLED_AFTER_MS,
+  listUnsettledHolds,
+  markHoldSwept,
+  settleJobCharge,
+} from "@/lib/credit-settle";
 import { archiveStaleCompletedTasks } from "@/lib/data";
+import { findDispatchingTask } from "@/lib/task-sync";
+import { isCreditsPlanV2Enabled } from "@/lib/credits";
 import { requireCronSecret } from "@/lib/cron-auth";
 
 export const maxDuration = 60;
@@ -80,6 +88,71 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Unsettled holds (credits rework, 2026-09) ──
+  //
+  // The webhook settles inline, AFTER its single-use claim — so a crash between
+  // the two loses the settlement and webhook redelivery cannot recover it (a
+  // redelivery short-circuits at "Already processed"). This is that retry, and
+  // it is the reason the settlement is allowed to sit after the claim at all.
+  //
+  // Safe to run forever and safe to overlap with itself or with the webhook:
+  // the settlement doc id is `settle_<chargeEntryId>` written with tx.create(),
+  // so a duplicate aborts rather than pays, and a charge that was refunded in
+  // the meantime is declined inside the same transaction.
+  //
+  // GATED ON THE FLAG, and the gate covers the LISTING and the BOOKMARK as well
+  // as the settlement itself. `settleJobCharge` refuses on its own while the
+  // rework is dark, but `markHoldSwept` is a production write to the `jobs`
+  // collection, and performing it for a feature that is switched off is exactly
+  // the contract `isCreditsPlanV2Enabled` promises not to break — worse, it
+  // would bookmark every delivered job as "decided" before a single settlement
+  // could run, so flipping the flag on later would find an empty candidate set.
+  const settleBefore = Date.now() - UNSETTLED_AFTER_MS;
+  let settled = 0;
+  let settledJobs = 0;
+  let holdsChecked = 0;
+  if (isCreditsPlanV2Enabled()) {
+    let candidates: Awaited<ReturnType<typeof listUnsettledHolds>> = [];
+    try {
+      candidates = await listUnsettledHolds(settleBefore);
+    } catch (e) {
+      console.error("[reconcile] unsettled-hold listing failed:", e);
+    }
+    holdsChecked = candidates.length;
+    for (const job of candidates) {
+      // PER CANDIDATE, not around the loop. A settlement racing the webhook
+      // aborts with ALREADY_EXISTS by design — that is the deterministic id
+      // doing its job — and a single such race must not abandon every remaining
+      // candidate, which is what a try around the whole loop did.
+      try {
+        // BOTH PAIRING KEYS, exactly as the webhook passes them. A board-task
+        // dispatch is charged under the TASK id before the job exists, and the
+        // job itself is submitted by the non-billable task engine, so nothing
+        // is ever filed under `job.id` for it. Sweeping on the job id alone
+        // found no hold for the ordinary way a client spends agent credits —
+        // and then, before the fix below, bookmarked the job as decided.
+        const task = await findDispatchingTask(job.id, job.clientId).catch(() => null);
+        const r = await settleJobCharge(
+          [job.id, task?.id],
+          job.external?.totalCostUsd,
+          job.agentName,
+          job.id,
+        );
+        if (r.settled) {
+          settledJobs += 1;
+          settled += r.delta ?? 0;
+        }
+        // ONLY when the hold's fate is decided — settled, refunded, already
+        // settled, or exempt. "No hold found" is not a verdict, it is a lookup
+        // that came back empty, and bookmarking on it is how a stranded hold
+        // becomes permanently unreachable.
+        if (r.definitive) await markHoldSwept(job.id);
+      } catch (e) {
+        console.error(`[reconcile] settlement failed for job ${job.id}:`, e);
+      }
+    }
+  }
+
   // Task-board archiving sweep rides the same maintenance cron: the active
   // view already hides tasks Done ≥7d at query level (listClientTasks), so
   // this just catches the stored documents up — detached from any page load.
@@ -93,6 +166,10 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     checked: { tasks: tasks.length, jobs: jobs.length },
     creditsRefunded: refunded,
+    // Signed: positive means holds were over-estimates and credits went back.
+    holdsChecked,
+    holdsSettled: settledJobs,
+    creditsSettled: settled,
     tasksArchived: archived,
     results,
   });

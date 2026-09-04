@@ -185,8 +185,25 @@ export function AgentDetailPanel({
                 treatment legacy-agent-panel.tsx already uses. */}
             {agent.runCost != null && (
               <p className="mt-1 flex items-center gap-1 text-xs text-muted-2">
-                <Icon name="Coins" className="h-3 w-3 text-neon" />
-                Costs {agent.runCost} credit{agent.runCost === 1 ? "" : "s"}
+                {/* Two registers, one line (review wave, 2026-09). The line used
+                    to be absent for staff, because the row carried no price for
+                    them — so this card and LegacyAgentPanel, on the same page,
+                    disagreed about whether a run has a cost worth stating. The
+                    orange coin stays with the reader who is actually spending;
+                    the staff copy names whose credits move. */}
+                <Icon
+                  name="Coins"
+                  className={`h-3 w-3 ${viewerIsClient ? "text-neon" : "text-muted-2"}`}
+                />
+                {/* "About" only when the price is a hold that settles to real
+                    usage (credits rework, 2026-09) — resolved on the server and
+                    carried on the row, because a client component cannot read a
+                    non-NEXT_PUBLIC_ env var. With the rework off the quoted
+                    figure IS the charge and hedging it would mislead the other
+                    way. */}
+                {agent.runCostIsEstimate ? "About" : "Costs"} {agent.runCost} credit
+                {agent.runCost === 1 ? "" : "s"}
+                {!viewerIsClient && " · billed to the client"}
               </p>
             )}
           </div>
@@ -197,7 +214,16 @@ export function AgentDetailPanel({
             onClick={createPost}
           >
             <Icon name="Sparkles" className="h-4 w-4" />
-            Create new {noun}
+            {/* THE LABEL NAMES THE FORMAT (flow audit 2026-09, R15). Two
+                controls start a run on this page — this one and each format
+                row's "Run now" — and this one used to read "Create new post"
+                while silently picking the first runnable format, so a reader
+                could not predict which of their four formats they were about
+                to spend a run on. The sentence beside it already named the
+                format; the button, which is the thing people actually read
+                before pressing, did not. "Run now" stays exactly as it is:
+                that one has always named its format by sitting on it. */}
+            {runnableTemplate ? `New ${runnableTemplate.name} ${noun}` : `Create new ${noun}`}
           </Button>
         </div>
         {/* The reason it is off, PAINTED. The Button primitive sets

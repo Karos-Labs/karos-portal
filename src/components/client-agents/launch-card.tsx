@@ -82,7 +82,7 @@ export function ClientAgentLaunchCard({
       <div className="flex items-start gap-3">
         <AgentIdentity identity={agent.identity} icon={agent.icon} />
         <div className="min-w-0 flex-1">
-          <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
             AI agent
           </p>
           <div className="flex flex-wrap items-center gap-2">

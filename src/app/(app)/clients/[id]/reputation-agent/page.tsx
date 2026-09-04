@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
+import { isBillableClientActor } from "@/lib/credits";
 import { buildReputationAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
 import { IntakePageActionLink } from "@/components/intake-page-action-link";
@@ -32,7 +33,11 @@ export default async function ReputationAgentPage({
   // client's grant list and lab slug to resolve the agent's own page (#82).
   const client = await requireVisibleClient(user, id);
 
-  const view = await buildReputationAgentIntakeView(id, { isStaff });
+  // FLOW AUDIT 2026-09, R3: the metered controls on this page quote a price,
+  // and this is the answer to "whose money" — an unbilled reader still reads
+  // the client's figure, marked as theirs (see CreditPriceNote).
+  const viewerIsBilled = isBillableClientActor(user);
+  const view = await buildReputationAgentIntakeView(id, { isStaff, viewerIsBilled });
   // SERIAL, and the VIEW IS BUILT FIRST, for the reason the Reddit page states:
   // this same call is the page's client gate (#114), and the rung it asks second
   // — has this family already worked for them — can only be read off the view's

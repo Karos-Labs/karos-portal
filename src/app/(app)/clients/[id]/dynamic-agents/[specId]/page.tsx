@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
+import { isBillableClientActor, isCreditsPlanV2Enabled } from "@/lib/credits";
 import { getDynamicAgentSpec } from "@/lib/data";
 import { PageHeader } from "@/components/ui";
 import { DynamicAgentRun } from "@/components/dynamic-agent-run";
@@ -28,7 +29,21 @@ export default async function ClientDynamicAgentRunPage({
   return (
     <>
       <PageHeader title={spec.name} description={spec.description} />
-      <DynamicAgentRun specId={spec.id} clientId={client.id} inputSchema={spec.inputSchema} />
+      {/* Flow audit 2026-09, R2/R3: the run resolves in place (no push to the
+          staff-only /jobs route) and the press quotes its own price — the
+          figure the submit core freezes onto this run's specSnapshot. */}
+      <DynamicAgentRun
+        specId={spec.id}
+        clientId={client.id}
+        inputSchema={spec.inputSchema}
+        creditsCost={spec.creditsCost}
+        // Wording only, resolved here because a client component cannot read a
+        // non-NEXT_PUBLIC_ env var. A dynamic run settles like any other
+        // (review wave, 2026-09) — see DynamicAgentRun.priceIsEstimate.
+        priceIsEstimate={isCreditsPlanV2Enabled()}
+        viewerIsBilled={isBillableClientActor(user)}
+        isStaff={isStaff}
+      />
     </>
   );
 }

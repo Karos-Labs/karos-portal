@@ -106,6 +106,7 @@ import {
 import { orderKeyForCreatedAt } from "@/lib/post-chain";
 import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { settleJobCharge } from "@/lib/credit-settle";
 import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
 import { getClientAgent } from "@/lib/data-client-agents";
 import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
@@ -2155,6 +2156,50 @@ export async function POST(req: NextRequest) {
     }
   } catch (e) {
     console.error("[webhook] task sync failed:", e);
+  }
+
+  // ── Settle the hold against what the run actually cost us ──
+  //
+  // Phase two of the two-phase charge (credits rework, 2026-09): the client was
+  // charged an ESTIMATE at dispatch, and this reconciles it to
+  // ceil(usage.totalCostUsd × 20), handing back the difference or taking the
+  // extra in one ledger row.
+  //
+  // AFTER THE SINGLE-USE CLAIM, unlike the refund at the top of this handler,
+  // and the difference is forced rather than chosen: the refund can run before
+  // the claim because it only needs `payload.status`, while a settlement needs
+  // the FINAL status — the zero-deliverable branch above corrects a "done" run
+  // to "failed" and refunds it, and settling a run that is about to be refunded
+  // is the one thing this design may never do. So it reads `status`, which by
+  // here is the corrected value.
+  //
+  // The cost of sitting after the claim is that a crash between the two loses
+  // this settlement, since a redelivery short-circuits at "Already processed".
+  // That is why /api/credits/reconcile sweeps unsettled holds: the deterministic
+  // `settle_<chargeEntryId>` id makes the retry free, so the sweep is the real
+  // retry path rather than webhook redelivery.
+  //
+  // BOTH LEDGER KEYS, for the reason the zero-deliverable refund above states at
+  // length: a task-dispatched run was charged under the TASK id before this job
+  // existed, and pairing on the job alone would leave most real client runs
+  // holding an estimate forever.
+  if (status === "review") {
+    try {
+      const settleTask = await findDispatchingTask(
+        job.id,
+        job.clientId,
+        payload.metadata?.karos_task_id,
+      ).catch(() => null);
+      await settleJobCharge(
+        [job.id, settleTask?.id],
+        payload.usage?.totalCostUsd,
+        job.agentName,
+      );
+    } catch (e) {
+      // Never fails the delivery. A lost settlement leaves the estimate
+      // standing, which is the pre-rework behaviour, and the sweep retries it.
+      console.error("[webhook] settlement failed:", e);
+    }
   }
 
   const jobId = job.id;

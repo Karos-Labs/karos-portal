@@ -218,10 +218,20 @@ describe("the fourth intake family", () => {
     }
     // Every per-kind table answers for all four, or the Record type is a lie
     // the way a trailing return was.
-    for (const table of ["INTAKE_LABEL", "INTAKE_ROUTE", "INTAKE_ASKS", "INTAKE_FIRST_STEP"]) {
+    //
+    // INTAKE_ROUTE IS NO LONGER ONE OF THEM (flow audit 2026-09, R16). It was a
+    // second copy of the family→route table `buildAgentSetup` already owns, and
+    // two tables that can drift are worse than one that a family can be missing
+    // from — so it was deleted rather than completed. Its one call site reads
+    // `setup.href`, the same table's own answer for that exact agent, which is
+    // asserted below so this file still guards the link that used to need it.
+    for (const table of ["INTAKE_LABEL", "INTAKE_ASKS", "INTAKE_FIRST_STEP"]) {
       const body = hub.slice(hub.indexOf(`const ${table}: Record<IntakeKind`));
       expect(body.slice(0, body.indexOf("};")), table).toContain("newsletter:");
     }
+    expect(hub).not.toContain("const INTAKE_ROUTE");
+    expect(hub).toContain("intakePageHref(selectedClientId, setupErrorKind)");
+    expect(hub).toContain('from "@/lib/agent-intake-links"');
   });
 
   it("treats the newsletter's stand-up like LinkedIn's, not like Reddit's", () => {

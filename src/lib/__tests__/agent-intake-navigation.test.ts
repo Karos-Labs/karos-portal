@@ -346,14 +346,47 @@ describe("#90 — the archive link resolves for the viewer who is reading it", (
     // the app splits: the flat route scopes itself to the viewer's own client,
     // so it is a CLIENT's own calendar and STAFF's cross-client overview —
     // which has no single archive to show.
+    //
+    // TWO LABELS since the flow audit (2026-09, R7 · GOV.UK "do not use
+    // different link text for the same destination"): `linkLabel` is what a
+    // CONTROL says and is the same three words for every reader, `label` is the
+    // noun for a link inside a sentence, where a control label will not parse.
+    // The client's "your archive" is gone with the other seven spellings this
+    // destination had grown; only the staff/client scoping split survives,
+    // because that is about whose archive it is.
     expect(clientArchiveLink({ clientId: "c1", isStaff: false })).toEqual({
       href: "/calendar?view=archive",
-      label: "your archive",
+      label: "the archive",
+      linkLabel: "Open archive",
     });
     expect(clientArchiveLink({ clientId: "c1", isStaff: true })).toEqual({
       href: "/clients/c1/calendar?view=archive",
       label: "this client's archive",
+      linkLabel: "Open archive",
     });
+  });
+
+  it("gives every control that offers the archive the same three words", () => {
+    // R7's actual claim: one vocabulary per destination. The control label does
+    // NOT move with the reader — a staff member and a client press a button
+    // that says the same thing; only the sentence-noun and the route differ.
+    for (const isStaff of [true, false]) {
+      expect(clientArchiveLink({ clientId: "c1", isStaff }).linkLabel).toBe("Open archive");
+    }
+    // …and the surfaces that carry a control use it rather than composing one.
+    // "Open your archive" on the agent page and "See all activity" on Home were
+    // two of the eight names this one destination answered to.
+    for (const rel of [
+      "src/app/(app)/clients/[id]/agents/[agentId]/page.tsx",
+      "src/components/client-home-overview.tsx",
+    ]) {
+      const code = stripComments(read(rel));
+      expect(code, `${rel} composes its own archive control label`).toContain(
+        "{archive.linkLabel}",
+      );
+      expect(code, `${rel} still says "See all activity"`).not.toContain("See all activity");
+      expect(code, `${rel} still says "Open your archive"`).not.toContain("Open your archive");
+    }
   });
 
   it("names the view the calendar actually reads, on a route that exists", () => {

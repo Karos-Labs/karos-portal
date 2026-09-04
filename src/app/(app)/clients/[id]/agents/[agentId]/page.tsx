@@ -10,7 +10,7 @@ import {
   listJobs,
   listPlannedScheduledRuns,
 } from "@/lib/data";
-import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import { availableCredits, creditBlockReason, isBillableClientActor } from "@/lib/credits";
 import { Badge, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AgentIdentity, socialPlatformsFor, type SocialPlatform } from "@/components/agent-identity";
@@ -91,6 +91,7 @@ import {
   launchProfileFor,
 } from "@/lib/custom-agent-launch";
 import { summarizeAgentEconomics } from "@/lib/credit-reporting";
+import { resolveRunPriceQuote } from "@/lib/run-price";
 import { ControlRoom } from "@/components/client-agents/control-room";
 import { CurationPane } from "@/components/client-agents/client-agents-section";
 import { StaffOnlySection } from "@/components/staff-only-section";
@@ -303,7 +304,41 @@ export default async function ClientAgentDetailPage({
     notFound();
   }
 
-  const summary = toSummary(agent);
+  // THE SAME NUMBER THE SUBMIT CORE WILL HOLD (credits rework, 2026-09), not
+  // the constant behind it. This quoted the raw `agent.creditCost` while
+  // `submitCustomAgentJob` had already moved to the measured median, so a client
+  // read one price on the card and watched a different one leave their balance.
+  // Both sides now resolve through the SAME ladder over this client's own jobs —
+  // which this page has already loaded — so the quote, the credit gate below and
+  // the hold are one number by construction rather than by two files agreeing.
+  //
+  // THROUGH run-price.ts (review wave, 2026-09). It called
+  // `estimateRunCreditsFromJobs` directly, which is the estimator's inner half:
+  // no `CREDITS_PLAN_V2_ENABLED` gate (so with the rework off it quoted a
+  // measured median against a constant charge) and no family carried default (so
+  // a newsletter run was quoted at 25 and charged at 10).
+  const price = resolveRunPriceQuote({
+    agent: { id: agent.id, key: agent.key, creditCost: agent.creditCost ?? null },
+    clientId: id,
+    jobs,
+  });
+  const cost = price.credits;
+  // RESOLVED BEFORE THE SUMMARY, and that is the whole point of its position
+  // (review wave, 2026-09). `toSummary(agent)` used to be called with no pricing
+  // at all, so the three surfaces that take it — the run dialog's footer, the
+  // schedule modal's weekly total and LegacyAgentPanel — fell back to
+  // `creditCost ?? CREDIT_COSTS.customAgentRun` and quoted a DIFFERENT number
+  // from the panel eight lines below them, on the same screen, for the same
+  // press. They also never hedged: `priceIsEstimate` was absent, so with the
+  // rework on a client read "Costs 25 credits" for a hold that settles.
+  //
+  // The figure carried is the PER-OUTPUT one: the dialog multiplies it by the
+  // visible batch size itself (agentRunCost × batchSizeFrom), so handing it the
+  // already-multiplied `runCost` would square the batch.
+  const summary = toSummary(agent, {
+    runCostEstimate: cost,
+    priceIsEstimate: price.isEstimate,
+  });
   // WOULD A RUN PRESSED ON THIS PAGE ACTUALLY REACH AGENT-ENGINE? (T-B21)
   //
   // Resolved HERE, on the server, and handed to the three components that mount
@@ -328,7 +363,6 @@ export default async function ClientAgentDetailPage({
     ? { [id]: { [agent.key]: engineProductId } }
     : {};
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
-  const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
   // What ONE PRESS of "create" actually charges: the per-output base × what a
   // fresh dialog submits (visible batch defaults only — 1 for every agent
   // today, so today runCost === cost). The gate, the block reason and the
@@ -526,9 +560,16 @@ export default async function ClientAgentDetailPage({
   // company view by whitelist (toRedditIntakeView), so what lands in the RSC
   // payload is the client's own answers and nothing else from the shared
   // intake document.
+  //
+  // BUILT ONCE PER RENDER (review wave, 2026-09). The staff branch above has
+  // already built exactly this view for the intake pane, and this line built a
+  // second one — two reads of the intake document and two of the feedback log,
+  // per staff page load, for one projection of the same rows. The pane's copy is
+  // the same function over the same arguments, so it is reused where it exists
+  // and only a client render (no panes) pays for the build.
   const finderIntake =
     archetype === "daily_finder"
-      ? (await buildRedditAgentIntakeView(id, { isStaff, jobs })).company
+      ? (panes?.reddit ?? (await buildRedditAgentIntakeView(id, { isStaff, jobs }))).company
       : null;
 
   // The clip maker's source material: what it has to cut FROM. `mimeType` is
@@ -824,10 +865,12 @@ export default async function ClientAgentDetailPage({
   // ── Which platform this agent's page is ABOUT, for the connectors card ──
   // An intake-driven agent (X/LinkedIn/Reddit) drafts for one platform, and
   // its sidebar listing Google Analytics beside "Connected accounts" answered
-  // a question nobody on this page asked. Scoped to the agent's own family;
-  // an agent with no family (the generic/legacy shapes) keeps the full list,
-  // exactly as before. Display-only: connectedPlatformNames above still
-  // carries every platform, because publish targets are not page-scoped.
+  // a question nobody on this page asked. Scoped to the agent's own family, and
+  // an agent with no family falls back to its OWN detected identity rather than
+  // to the full list — see the note on `detectedPlatforms` below, which is where
+  // that fallback stopped being "show everything" (review wave, 2026-09).
+  // Display-only: connectedPlatformNames above still carries every platform,
+  // because publish targets are not page-scoped.
   const family = intakeFamilyFor(agent.key);
   const FAMILY_PLATFORMS: Record<NonNullable<typeof family>, string[]> = {
     x: ["twitter"],
@@ -836,9 +879,9 @@ export default async function ClientAgentDetailPage({
     // The newsletter and the blog have NO platform connection, and an empty
     // list is the honest answer rather than an omission. Neither product holds
     // a credential: an issue is sent from the client's own email platform and
-    // an article is published on their own CMS, both by them. So the connectors
-    // card shows none — which is different from the generic/legacy shapes
-    // below, where a null family deliberately keeps the FULL list.
+    // an article is published on their own CMS, both by them. So these three
+    // families get NO connectors section at all — see the length check below,
+    // which is what an empty list here means.
     newsletter: [],
     blog: [],
     // EMPTY, and for a different reason than the two above — which is why it is
@@ -881,16 +924,24 @@ export default async function ClientAgentDetailPage({
   const identityPlatformIds = socialPlatformsFor(`${agent.key} ${agent.name}`).flatMap(
     (platform) => SOCIAL_TO_INTEGRATION_IDS[platform],
   );
-  const familyPlatforms: string[] | null = family
-    ? FAMILY_PLATFORMS[family]
-    : identityPlatformIds.length > 0
-      ? identityPlatformIds
-      : null;
-  // An agent with no family AND no detectable platform gets NO connectors
-  // section at all — not an empty one, and not the "Manage connections" link
-  // either. There is no honest sentence to write there: the page cannot name
-  // the account it would be talking about, so it says nothing instead of
-  // listing every unrelated connection the client happens to hold.
+  // EMPTY IS THE SAME ANSWER AS NONE (review wave, 2026-09). This resolved to
+  // `[]` for the newsletter, the blog and reputation — and `[]` is truthy, so
+  // the section below mounted for all three and printed its no-account
+  // sentence: "No account connected yet. Posts are delivered to your Workspace
+  // for you to publish." Those products do not post, have no account to connect
+  // and, for two of them, produce no posts at all. A card that exists only to
+  // say something false about the product is worse than no card.
+  //
+  // Null, not `[]`, so the one condition below covers both ways of having
+  // nothing to name: a family that owns no connector, and an agent with no
+  // family AND no detectable platform. Neither gets a section — not an empty
+  // one, and not the "Manage connections" link either. There is no honest
+  // sentence to write in either case: the page cannot name the account it would
+  // be talking about, so it says nothing instead of listing every unrelated
+  // connection the client happens to hold.
+  const detectedPlatforms = family ? FAMILY_PLATFORMS[family] : identityPlatformIds;
+  const familyPlatforms: string[] | null =
+    detectedPlatforms.length > 0 ? detectedPlatforms : null;
   const scopedConnections = familyPlatforms
     ? connections.filter((connection) => familyPlatforms.includes(connection.platform))
     : [];
@@ -1361,7 +1412,13 @@ export default async function ClientAgentDetailPage({
               href={archive.href}
               className="mt-2 inline-flex items-center gap-1 text-xs text-neon hover:underline"
             >
-              Open {archive.label} <Icon name="ArrowRight" className="h-3 w-3" />
+              {/* R7 (flow audit 2026-09): the CONTROL's words, identical
+                  everywhere the archive is offered — "Open your archive" was
+                  one of eight spellings of one destination. */}
+              {/* R8: ChevronRight, the one trailing glyph. Home renders the
+                  identical control (client-home-overview.tsx) and the two must
+                  not differ by a glyph as well as having differed by a name. */}
+              {archive.linkLabel} <Icon name="ChevronRight" className="h-3 w-3" />
             </Link>
           </section>
         </div>
@@ -1447,9 +1504,11 @@ export default async function ClientAgentDetailPage({
             <SectionHeading title="Connected accounts" />
             {scopedConnections.length === 0 ? (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
-                {familyPlatforms && familyPlatforms.length > 0
-                  ? `No ${platformLabel(familyPlatforms[0])} account connected yet. Posts are delivered to your Workspace for you to publish.`
-                  : "No accounts connected yet. Posts are delivered to your Workspace for you to publish."}
+                {/* The platform can always be named here: a null-or-empty
+                    familyPlatforms took the whole section away above, so the
+                    generic "No accounts connected yet" fallback that used to
+                    sit here had no reachable case left to serve. */}
+                {`No ${platformLabel(familyPlatforms[0]!)} account connected yet. Posts are delivered to your Workspace for you to publish.`}
               </p>
             ) : (
               <ul className="space-y-1.5">
