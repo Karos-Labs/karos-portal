@@ -46,6 +46,19 @@ export interface ActionDefinition {
  * SOW event, for the same reason: no click/open is tracked today. Each is
  * called out at its own action definition below.
  */
+/**
+ * ── THE OPTIONAL THREE (review wave, 2026-09) ────────────────────────────
+ *
+ * `hasManualCompetitor` (07), `seatCount` (11) and `hasBillingConfigured` (24)
+ * are optional, and that is a statement about the ONE caller left. Home renders
+ * the setup ladder, which reads five of these rows (01, 04, 05, 21, 22); the
+ * other nineteen are still resolved — the engine is whole, and the follow-up
+ * list the audit sketched will want them — but nothing on the page renders them
+ * today. Requiring all three made the page read a competitor list, a seat list
+ * and a credit doc per load to compute rows nobody sees, and a required field is
+ * how a dead read defends itself against deletion. Absent reads as "not yet",
+ * which is exactly what an unanswered checklist row is.
+ */
 export interface ActionSignals {
   profileComplete: boolean;
   hasGrantedAgent: boolean;
@@ -54,13 +67,18 @@ export interface ActionSignals {
   runCount: number;
   hasOutput: boolean;
   hasStarredAgent: boolean;
-  hasManualCompetitor: boolean;
+  /** Id 07's proxy. Optional: no rendered surface asks it today. */
+  hasManualCompetitor?: boolean;
   hasUsableChannel: boolean;
-  seatCount: number;
+  /** Id 11. Optional: no rendered surface asks it today. */
+  seatCount?: number;
   /** Usable (connected + healthy) platform ids — drives ids 16-20's per-platform "done". */
   connectedPlatformIds: string[];
-  /** An admin has actually touched this client's credit limits/balance away from CREDIT_DEFAULTS — drives id 24. */
-  hasBillingConfigured: boolean;
+  /**
+   * An admin has actually touched this client's credit limits/balance away from
+   * CREDIT_DEFAULTS — drives id 24. Optional: no rendered surface asks it today.
+   */
+  hasBillingConfigured?: boolean;
 }
 
 export const ACTION_DEFINITIONS: ActionDefinition[] = [
@@ -106,7 +124,12 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
   {
     id: "06",
     category: "Make it yours",
-    label: "Star the agents you use most",
+    // R7 (flow audit 2026-09): PIN. The control this row sends a client to
+    // says "Pin to sidebar" on the agent page and "Pin {name} to the sidebar"
+    // in the rail; a checklist item naming it a third way is a third feature
+    // as far as the reader is concerned. The glyph stays a star — it is the
+    // conventional signifier, and it is what they will be looking for.
+    label: "Pin the agents you use most",
     icon: "Star",
     hrefFor: (id) => `/clients/${id}/agents`,
   },
@@ -219,19 +242,23 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
     icon: "MapPin",
     hrefFor: (id) => `/clients/${id}/settings?tab=settings`,
   },
+  // Both document tasks point INTO the Profile tab now (portal feedback round
+  // 4, 2026-09): "the documents can live in Profile", so `?tab=documents` is a
+  // tab that no longer exists. The page still redirects the old id, but a
+  // checklist we own should not be leaning on a redirect to work.
   {
     id: "21",
     category: "Make it yours",
     label: "Set your brand voice",
     icon: "Sparkles",
-    hrefFor: (id) => `/clients/${id}/settings?tab=documents`,
+    hrefFor: (id) => `/clients/${id}/settings?tab=profile#documents`,
   },
   {
     id: "22",
     category: "Make it yours",
     label: "Set up your target persona",
     icon: "Users",
-    hrefFor: (id) => `/clients/${id}/settings?tab=documents`,
+    hrefFor: (id) => `/clients/${id}/settings?tab=profile#documents`,
   },
   {
     id: "23",
@@ -310,17 +337,19 @@ export function computeActionDone(signals: ActionSignals): Record<string, boolea
     "04": signals.hasRun,
     "05": signals.hasOutput,
     "06": signals.hasStarredAgent,
-    "07": signals.hasManualCompetitor,
+    // The optional three (see ActionSignals): an unanswered signal is "not yet",
+    // never "done" — the safe direction for a checklist row is to keep asking.
+    "07": signals.hasManualCompetitor ?? false,
     "08": signals.grantedAgentCount >= 2,
     "09": signals.hasGrantedAgent && signals.runCount >= signals.grantedAgentCount,
     "10": signals.hasUsableChannel,
-    "11": signals.seatCount >= 2,
+    "11": (signals.seatCount ?? 0) >= 2,
     "16": signals.connectedPlatformIds.includes("linkedin"),
     "17": signals.connectedPlatformIds.includes("twitter"),
     "18": signals.connectedPlatformIds.includes("instagram"),
     "19": signals.connectedPlatformIds.includes("youtube"),
     "20": signals.connectedPlatformIds.includes("google_business_profile"),
-    "24": signals.hasBillingConfigured,
+    "24": signals.hasBillingConfigured ?? false,
   };
 }
 

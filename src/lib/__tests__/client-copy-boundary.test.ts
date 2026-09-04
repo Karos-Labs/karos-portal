@@ -1,3 +1,8 @@
+import {
+  STAFF_ONLY_LEDGER_FIELDS,
+  redactLedgerForClient,
+} from "@/lib/credit-reporting";
+import type { CreditLedgerEntry } from "@/lib/types";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import ts from "typescript";
@@ -2800,5 +2805,85 @@ describe("the client copy that travels through the database", () => {
       [...new Set([...panelNouns, ...ledgerNouns])],
       "the panel and the ledger rows it renders use two different nouns for one purchase",
     ).toHaveLength(1);
+  });
+});
+
+/**
+ * THE SWEEP ABOVE CANNOT SEE NUMBERS, and two-phase charging put a staff-only
+ * NUMBER on rows a client's own ledger renders (credits rework, 2026-09).
+ *
+ * Everything above this point is a string scan: it finds literals written to
+ * Firestore and demands an audience for each. `CreditLedgerEntry.actualUsd` is
+ * what a run cost KAROS, in dollars, and `settlementCapped` says it cost us more
+ * than double what we quoted — neither is a literal, neither is prose, and
+ * neither would ever have tripped that scan. They are also exactly the figure
+ * the two-audience split exists to keep from clients: `agent-economics.tsx` is
+ * hard-gated on `viewerIsStaff` for this one number, and settlement rows now
+ * carry it on the objects the client's own feed is built from.
+ *
+ * So the boundary for them is asked structurally instead: one named list, one
+ * redactor, and a check that the list is complete against the type rather than
+ * against somebody's memory.
+ */
+describe("staff-only NUMERIC ledger fields never reach a client's payload", () => {
+  const staffRow: CreditLedgerEntry = {
+    id: "settle_charge-1",
+    clientId: "c1",
+    delta: 7,
+    balanceAfter: 507,
+    kind: "settlement",
+    operation: "custom_agent_run",
+    reason: "Settled · cost less · charged 18 credits, estimated 25 · Instagram agent",
+    actorUid: "system",
+    actorName: "Credit settlement",
+    createdAt: 1_000,
+    phase: "settlement",
+    settlesEntryId: "charge-1",
+    estimateCredits: 25,
+    actualUsd: 0.9,
+    settlementCapped: true,
+  };
+
+  it("strips our dollar cost and the cap flag, alongside staff identity", () => {
+    const [row] = redactLedgerForClient([staffRow]);
+    expect(row!.actualUsd).toBeUndefined();
+    expect(row!.settlementCapped).toBeUndefined();
+    expect(row!.actorName).toBeUndefined();
+    expect(row!.actorUid).toBe("");
+  });
+
+  it("keeps everything the client's own row is built from", () => {
+    // Non-vacuity, and the actual product requirement: a settled row still has
+    // to render "18 credits (estimated 25)" and its reason line.
+    const [row] = redactLedgerForClient([staffRow]);
+    expect(row!.estimateCredits).toBe(25);
+    expect(row!.delta).toBe(7);
+    expect(row!.kind).toBe("settlement");
+    expect(row!.reason).toBe(staffRow.reason);
+  });
+
+  it("redacts every field the list names, and the list names every one it should", () => {
+    // The failure mode is ADDITION: the next staff-only field on
+    // CreditLedgerEntry has to be refused somewhere, and a hand-written object
+    // literal on a page is not where anyone looks.
+    const [row] = redactLedgerForClient([staffRow]) as unknown as Array<Record<string, unknown>>;
+    for (const field of STAFF_ONLY_LEDGER_FIELDS) {
+      expect(row![field], `${field} survived redaction`).toBeFalsy();
+    }
+    expect(STAFF_ONLY_LEDGER_FIELDS).toContain("actualUsd");
+    expect(STAFF_ONLY_LEDGER_FIELDS).toContain("settlementCapped");
+  });
+
+  it("the settings page hands a client viewer the redactor's output, not its own literal", () => {
+    // Where the decision has to be made: CreditsPanel is a "use client"
+    // component, so a field passed to it is in the RSC payload whether or not it
+    // is painted. A second, hand-rolled strip on the page is how one gets
+    // forgotten.
+    const page = readFileSync(
+      join(process.cwd(), "src/app/(app)/clients/[id]/settings/page.tsx"),
+      "utf8",
+    );
+    expect(page).toContain("redactLedgerForClient(");
+    expect(page).toMatch(/ledger=\{isStaff \? creditLedger/);
   });
 });

@@ -26,13 +26,19 @@ export function ClientAgentRunHistory({ runs }: { runs: CustomAgentRunRow[] }) {
     <Card>
       <div className="mb-3 flex items-center justify-between">
         <CardTitle>Run history</CardTitle>
-        {!expanded && runs.length > SHOWN_COLLAPSED && (
+        {/* Rendered whenever the list is collapsible in EITHER direction (flow
+            audit 2026-09, R19's shape): "Show all" used to disappear once
+            pressed, leaving a client scrolling a list they could not close
+            again. Same one-control-both-ways rule the competitor list keeps
+            (client-context-sections.tsx). */}
+        {runs.length > SHOWN_COLLAPSED && (
           <button
             type="button"
-            onClick={() => setExpanded(true)}
+            onClick={() => setExpanded((e) => !e)}
+            aria-expanded={expanded}
             className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
           >
-            Show all
+            {expanded ? "Show fewer" : "Show all"}
           </button>
         )}
       </div>
@@ -42,6 +48,12 @@ export function ClientAgentRunHistory({ runs }: { runs: CustomAgentRunRow[] }) {
           return (
             <li
               key={run.id}
+              /* INERT, AND DRESSED AS INERT (flow audit 2026-09, R8). A client's
+                 run row has no destination — /jobs/[id] is staff-only and this
+                 view is built from client-safe rows with no href on them — so it
+                 carries neither `row-lift` nor a trailing chevron, which is the
+                 other half of the rule the rows that DO open now keep. Do not
+                 add a hover treatment here without adding somewhere to go. */
               className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5"
             >
               <div className="min-w-0 flex-1">

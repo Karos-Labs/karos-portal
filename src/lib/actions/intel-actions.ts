@@ -220,6 +220,17 @@ export async function generateClientBriefAction(
  * `upsertClientSeoGeo` deliberately carries `approvedRecIds` across
  * re-captures so a refresh cannot silently un-approve work that was already
  * authorized.
+ *
+ * NO CLIENT SURFACE CALLS THIS TODAY (portal feedback round 4, 2026-09). Its
+ * only caller is `seo-geo-action-plan.tsx`, whose Approve buttons render inside
+ * `SeoGeoPlan` — and the product owner ruled that plan off the client-facing
+ * report ("all these 'what we're fixing' items are not true"), so Account
+ * Center's Reporting tab renders `<ClientSuggestions/>` instead: things the
+ * CLIENT owns, with nothing to approve. This action, its dispatch split and the
+ * `approvedRecIds` carry-over are kept intact rather than deleted, because the
+ * plan behind them is still produced and persisted on every capture for the
+ * cross-repo contract in docs/routable-recommendation-contract.md. Nothing here
+ * needs changing to bring the surface back; a caller does.
  */
 export async function approveSeoGeoRecommendationAction(
   clientId: string,

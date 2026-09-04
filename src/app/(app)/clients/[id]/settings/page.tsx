@@ -15,7 +15,6 @@ import {
   listClientContextDocs,
   listClientCompetitors,
   listClientSeats,
-  listAssets,
 } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { getOAuthEnabledPlatforms, googleBusinessProfileRequested } from "@/lib/integrations/oauth";
@@ -27,14 +26,21 @@ import {
   creditBlockReason,
   isBillableClientActor,
 } from "@/lib/credits";
-import { spendAgentNames, summarizeClientSpend } from "@/lib/credit-reporting";
-import { getClientLibraryAssets } from "@/lib/asset-visibility";
+import {
+  redactLedgerForClient,
+  spendAgentNames,
+  summarizeClientMonthlyCost,
+  summarizeClientSpend,
+} from "@/lib/credit-reporting";
+import { MONTHLY_ALLOWANCE, isCreditsPlanV2Enabled } from "@/lib/credits";
 import { computeTrackedCompetitors } from "@/lib/competitor-priority";
-import { SeoGeoPanel, SeoGeoScores, SeoGeoPlan } from "@/components/seo-geo-panel";
-import { ClientAnalytics } from "@/components/client-analytics";
+import { SeoGeoPanel, SeoGeoScores } from "@/components/seo-geo-panel";
+import { ClientSuggestions } from "@/components/seo-geo/client-suggestions";
 
 /** Rows the "Recent activity" feed shows. */
 const LEDGER_FEED_LIMIT = 15;
+/** Rows the Meetings card shows before "See all N meetings" takes over. */
+const MEETING_ROWS = 12;
 import { Badge, Card, CardTitle, PageHeader } from "@/components/ui";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
 import AutoScheduleToggle from "@/components/auto-schedule-toggle";
@@ -55,7 +61,12 @@ import { hasAiProcessingFailure, toClientPortalView } from "@/lib/client-visibil
 import { SettingsTabs, type SettingsTab } from "@/components/settings-tabs";
 import { AccountProfilePanel, AccountSecurityPanel } from "@/components/settings-form";
 import { ACCOUNT_TABS } from "@/lib/account-settings-tabs";
-import { agentKeyMatchesClientSlug, isReputationAgentIdentity } from "@/lib/custom-agent-launch";
+import {
+  agentKeyMatchesClientSlug,
+  isLinkedInAgentIdentity,
+  isReputationAgentIdentity,
+  isXAgentIdentity,
+} from "@/lib/custom-agent-launch";
 import { relativeTime } from "@/lib/utils";
 import type {
   ClientIntegration,
@@ -70,9 +81,8 @@ import type {
   ClientContextDoc,
   ClientCompetitor,
   ClientSeat,
-  Asset,
 } from "@/lib/types";
-import type { SeoGeoInsights } from "@/lib/seo-geo";
+import { buildClientSuggestions, categoryMetrics, type SeoGeoInsights } from "@/lib/seo-geo";
 
 export default async function ClientSettingsPage({
   params,
@@ -130,6 +140,13 @@ export default async function ClientSettingsPage({
     // still lands on the tab that HOLDS the meetings section, one scroll away.
     redirect(`/clients/${encodeURIComponent(id)}/settings?tab=settings#meetings`);
   }
+  if (initialTab === "documents") {
+    // THE THIRD TAB THIS PAGE GAVE UP (portal feedback round 4, 2026-09): "the
+    // documents can live in Profile." Same treatment as the two above, and for
+    // the same reason — the old id is in the onboarding checklist's own links,
+    // in histories and in sent emails.
+    redirect(`/clients/${encodeURIComponent(id)}/settings?tab=profile#documents`);
+  }
 
   const client = await requireVisibleClient(user, id);
 
@@ -147,11 +164,16 @@ export default async function ClientSettingsPage({
     contextDocs,
     competitors,
     seats,
-    rawAssets,
     seoGeo,
   ] = (await Promise.all([
     listClientIntegrations(id),
-    listTranscripts({ clientId: id }),
+    // FILTERED FOR A CLIENT READER, the same way /transcripts filters its own
+    // list (transcripts/page.tsx): a transcript marked `hiddenFromClient` is one
+    // staff took off this client's record, and it must not be counted or listed
+    // here either. It used to be read unfiltered, so the Meetings card rendered
+    // hidden calls as rows — and, once that card gained a "See all N meetings"
+    // link, quoted a total the client's own list could never reach.
+    listTranscripts({ clientId: id, ...(isClientViewer ? { excludeHiddenFromClient: true } : {}) }),
     getClientCredits(id),
     // The WHOLE ledger, uncapped. The feed below slices it to 15, but the
     // per-agent breakdown (§6.2a) sums it, and "where your credits went"
@@ -175,7 +197,6 @@ export default async function ClientSettingsPage({
     listClientContextDocs(id, isClientViewer ? "client" : undefined),
     listClientCompetitors(id),
     listClientSeats(id),
-    listAssets({ clientId: id }),
     getClientSeoGeo(id),
   ])) as [
     ClientIntegration[],
@@ -188,17 +209,43 @@ export default async function ClientSettingsPage({
     ClientContextDoc[],
     ClientCompetitor[],
     ClientSeat[],
-    Asset[],
     SeoGeoInsights | null,
   ];
+
+  /**
+   * The rows the Meetings card actually renders, cut here rather than in the
+   * JSX (review wave, 2026-09) — and the cut is the cheap half of a fix.
+   *
+   * `listTranscripts` returns whole transcript documents, `rawText` and all, to
+   * render twelve titles and dates: a year of calls is megabytes of transcript
+   * body crossing Firestore, this server component and the RSC payload for a
+   * card that shows a title, a date and a chevron. Only the SLICE is in hand
+   * here; the read itself cannot be narrowed from this file.
+   *
+   * TODO(perf): give `listTranscripts` a projection —
+   * `.select("title", "meetingDate", "createdAt", "clientId", "archived",
+   * "hiddenFromClient")` behind an opt-in flag (`listTranscripts({ clientId,
+   * fields: "summary" })`), and have this page and /transcripts' own list use
+   * it. Both surfaces render row metadata only; `getTranscript` stays the one
+   * caller that needs the body. Deliberately not done here: `src/lib/data.ts`
+   * is the shared data layer and is owned by another change in flight.
+   */
+  const recentTranscripts = transcripts.slice(0, MEETING_ROWS);
 
   // §6.2(a). The split between a scheduled fire and a run the client started
   // lives on the JOB, not the ledger row, so the jobs are joined here on the
   // server - the browser never needs them and a client payload carrying every
   // job would be both wasteful and a staff-detail leak.
-  const [spendJobs, spendUmbrellas] = await Promise.all([
+  //
+  // The viewer's own Firebase Auth record rides along (review wave, 2026-09):
+  // the account tabs at the end of this page need it, it depends on nothing
+  // above, and awaited on its own further down it was a serial round trip
+  // between this page and Firebase for no reason. Client viewers only, which is
+  // the only reader those tabs are built for.
+  const [spendJobs, spendUmbrellas, viewerAuthRecord] = await Promise.all([
     listJobs({ clientId: id }),
     listClientAgents({ clientId: id }),
+    isClientViewer ? adminAuth().getUser(user.uid) : Promise.resolve(null),
   ]);
   const runTypeByJobId: Record<string, JobRunType | undefined> = {};
   for (const job of spendJobs) runTypeByJobId[job.id] = job.runType;
@@ -215,6 +262,34 @@ export default async function ClientSettingsPage({
       umbrellas: spendUmbrellas,
     }),
   });
+  // What this client has actually cost Karos this month, for the staff-only
+  // line on the credits card. STAFF ONLY AND GATED HERE, not in the panel:
+  // CreditsPanel is a "use client" component, so a figure passed to it is in the
+  // page payload whether or not it is painted. The same structural gate
+  // agent-economics.tsx applies to the same class of number.
+  //
+  // Computed from `spendJobs` — already loaded above for the per-agent
+  // breakdown, so this costs no extra read — and deliberately including failed
+  // and staff-fired runs, which is the whole point: those are the dollars the
+  // credit ledger cannot see. No `usageLogs` rows are passed: agent runs are the
+  // dominant cost and querying a month of usage rows on every settings render
+  // would not pay for the pennies of in-app model spend it would add.
+  // Staff AND the rework switched on: with it off there is no settle-to-actual
+  // model, so "of $130" would be measuring against a budget nothing enforces.
+  const monthlyCost =
+    isStaff && isCreditsPlanV2Enabled()
+    ? summarizeClientMonthlyCost({
+        jobs: spendJobs,
+        // THE CREDITS DOC'S OWN WINDOW, not a fresh clock. The two lines on
+        // the staff card are only comparable if they cover the same month, and
+        // `getClientCredits` has already rolled this doc's windows on read — so
+        // taking the key from it makes that true by construction rather than by
+        // two clocks agreeing. (It is also the only pure option in a server
+        // component: `Date.now()` during render is refused outright.)
+        monthKey: credits.monthKey,
+        monthlyAllowance: MONTHLY_ALLOWANCE,
+      })
+    : undefined;
   const oauthEnabledPlatforms = getOAuthEnabledPlatforms();
 
   // Both agent controls below act on THIS client, so neither may offer a
@@ -235,27 +310,12 @@ export default async function ClientSettingsPage({
   // - plus which secrets are set, for the form's placeholder.
   const sanitizedIntegrations = sanitizeIntegrations(integrations);
 
-  // Who is reading the asset rows below. Was `archiveViewer`, built for the
-  // Archive tab that used to live here; the tab moved to the calendar (portal
-  // feedback round 2, 2026-09) and only the Reporting tab's own redaction is
-  // left, so the name says what it still does.
-  const assetViewer = { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin };
-
-  // Reporting tab's "Content by status" / "Connected channels" charts (A2,
-  // 2026-08 UI/UX pass) — moved here from the client Home, which dropped
-  // <ClientAnalytics/> because it was inventory sitting below every
-  // actionable widget. Same locked-row recipe Home used for a client viewer
-  // (getClientLibraryAssets + drop future-dated rows) — deliberately NOT the
-  // archive projection (getClientArchiveAssets), which is scoped to
-  // posted-in-the-last-30-days and would undercount here. That projection used
-  // to be built on this page for its own Archive tab; the calendar builds it
-  // now (portal feedback round 2, 2026-09) and this line is the reason the two
-  // were never the same list.
-  const reportingAnalyticsAssets = isClientViewer
-    ? getClientLibraryAssets(rawAssets, { forClient: true, viewer: assetViewer }).filter(
-        (a) => !a.locked,
-      )
-    : rawAssets;
+  // NO ASSET READ ON THIS PAGE ANY MORE (portal feedback round 4, 2026-09).
+  // `listAssets` was fetched, then narrowed to a client-visible library slice
+  // (`assetViewer` + getClientLibraryAssets), for exactly one consumer: the
+  // Reporting tab's "Content by status" chart. Reporting no longer carries
+  // Performance at all, so the query, its viewer and its redaction all go with
+  // it rather than sitting here unread. Staff Home still builds its own.
 
   // Price + refusal for a targeted document correction, for the Documents
   // tab's Correct Info modal — moved here from the app layout (portal revamp):
@@ -273,9 +333,9 @@ export default async function ClientSettingsPage({
     : undefined;
 
   // Grouped by task instead of stacked. Sections keep their existing markup -
-  // only where they live changes. A tab whose content is entirely staff-gated
-  // collapses to null and is dropped below, so a client is never shown an empty
-  // tab.
+  // only where they live changes. Staff-only material inside a tab is a marked
+  // frame within it (StaffOnlySection), not a tab of its own, so no tab is
+  // built for one reader and empty for the other.
   //
   // Portal revamp, Surface 06: Profile now ALSO carries the identity a client
   // edits themselves — logo, social handles, bio — which used to live in the
@@ -284,6 +344,48 @@ export default async function ClientSettingsPage({
   // information"). Editing a seat's own intake fields (LinkedIn URL, role, CV)
   // stays on that agent's own setup page; this is the consolidated LIST, not a
   // second editor for the same data.
+  /**
+   * The setup pages the Seats card points at (flow audit 2026-09, R17).
+   *
+   * The card told the client to "add or edit a seat's details from that agent's
+   * own setup page" and linked nothing — a named destination with no way to
+   * reach it. Seats are shared across agents and carry no agent of their own, so
+   * the honest link is not per row: it is the two families that HAVE seat forms,
+   * and only the ones this client actually has. A client with neither keeps the
+   * sentence without a promise it cannot keep.
+   */
+  const seatSetupLinks = [
+    clientAgents.some((a) => isLinkedInAgentIdentity(a.key))
+      ? { label: "LinkedIn agent details", href: `/clients/${client.id}/linkedin-agent` }
+      : null,
+    clientAgents.some((a) => isXAgentIdentity(a.key))
+      ? { label: "X agent details", href: `/clients/${client.id}/x-agent` }
+      : null,
+  ].filter((l): l is { label: string; href: string } => l !== null);
+
+  // Documents (moved off the rail). Same component, same reading experience
+  // (bullet-summary-first via DocPanel's "In short" panel) — just a full-width
+  // block now instead of a compact rail list. The reader is a panel here, not
+  // the slide-over it used to be (`DocOverlay`), so the name moved with it.
+  //
+  // NO LONGER A TAB OF ITS OWN (portal feedback round 4, 2026-09): "the
+  // documents can live in Profile." They are what the company IS, written down,
+  // so they close the Profile tab rather than competing with it for a slot in
+  // the side navigation. `?tab=documents` redirects to the anchor below.
+  const documentsSection = (
+    <ClientDocuments
+      contextDocs={contextDocs}
+      isAdmin={isAdmin}
+      clientId={client.id}
+      isAiProcessing={isAiProcessingLockActive(client)}
+      aiProcessingFailed={hasAiProcessingFailure(client)}
+      intelSchedule={clientIntelSchedule(client)}
+      allowInternalFallback={isStaff}
+      correctionPricing={correctionPricing}
+      viewerIsClient={isClientViewer}
+    />
+  );
+
   const profileSection = (
     <div className="space-y-8">
       {/* ClientProfilePanel is a "use client" component — the whole prop it is
@@ -304,8 +406,22 @@ export default async function ClientSettingsPage({
         <CardTitle className="mb-1">Seats</CardTitle>
         <p className="mb-3 text-sm text-muted-2">
           Everyone your agents draft as, shared across every agent that supports seats. Add or
-          edit a seat&apos;s details from that agent&apos;s own setup page.
+          edit a seat&apos;s details on that agent&apos;s own setup page.
         </p>
+        {seatSetupLinks.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1.5">
+            {seatSetupLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-neon"
+              >
+                {link.label}
+                <Icon name="ChevronRight" className="h-3.5 w-3.5" />
+              </Link>
+            ))}
+          </div>
+        )}
         {seats.length === 0 ? (
           <p className="text-sm text-muted-2">No seats set up yet.</p>
         ) : (
@@ -319,6 +435,17 @@ export default async function ClientSettingsPage({
           </ul>
         )}
       </Card>
+      {/* Documents, last of the client's own Profile blocks (portal feedback
+          round 4, 2026-09). The `id` is what makes `?tab=profile#documents`
+          land here — the anchor the retired `?tab=documents` deep link
+          redirects to. ClientDocuments prints its own "Documents" heading, so
+          this section deliberately does not stack a second one on top of it. */}
+      {/* `scroll-mt-24` for the same reason #visibility-scores has it: the
+          anchor jump would otherwise park this heading under the sticky page
+          chrome (review wave, 2026-09). */}
+      <section id="documents" className="scroll-mt-24">
+        {documentsSection}
+      </section>
       {/* PARITY PASS (2026-09). The staff record editor used to open this tab,
           pushing ClientProfilePanel and everything under it a full form down —
           so the two readers' Profile tabs began on different content and
@@ -340,22 +467,64 @@ export default async function ClientSettingsPage({
   // TRACKED_COMPETITOR_LIMIT unchanged, so raising what this tab shows does not
   // silently double that pipeline's per-capture cost.
   //
-  // `collapseTo` is the readability half of that, added 2026-08: the auto-seed
-  // pool grows every capture, so "everything we gather" opened as a wall of
-  // names in which the six that matter were indistinguishable from the twenty
-  // that do not. The tab still HOLDS all of them — one click away, never
-  // dropped — but it opens on the top six by measured AI-answer presence (see
-  // CompetitorTrack's `collapseTo` note for why that ranking and not another).
-  // Six rather than five so this list is visibly not the tracked-5 measurement
-  // roster it would otherwise be mistaken for.
+  // NO COLLAPSE ANY MORE (portal feedback round 4, 2026-09): "since it's
+  // only competitors now we can show all of them right off the bat." The
+  // 2026-08 six-row collapse was there because "everything we gather" opened as
+  // an undifferentiated wall of names; the answer this round is to make each row
+  // worth reading rather than to hide most of them. Each row now carries what we
+  // already stored about that rival, so a long list scans instead of piling up.
+  //
+  // Everything below comes off data already in hand. No research, no network:
+  // positioning, overlap, tier, strengths and weaknesses are on the competitor
+  // row itself, and the AI-answer counts were written back onto those rows by
+  // the last SEO/GEO capture (lib/intel/competitor-sync.ts).
+  //
+  // The one number the rows cannot hold themselves is the CLIENT's own count,
+  // which is what turns "named in 4 answers" into a comparison. It is summed
+  // here from the snapshot this page already read, over the same category
+  // probes and the same run that produced every row's `llmMentions` — the brand
+  // and navigational questions name the client by construction and would make
+  // any share-of-conversation bar meaningless (the CD-B3 rule).
+  //
+  // AND ONLY FROM A SNAPSHOT THAT REALLY HAS THE CATEGORY SPLIT (review wave,
+  // 2026-09). `categoryMetrics` falls back to an engine row's FULL-PROMPT
+  // figures when it predates the `category` field, which is the right degrade
+  // for a score but the wrong one here: those figures include the brand and
+  // navigational questions, which name the client by construction, so a legacy
+  // snapshot handed the rows an inflated client count and made every rival's
+  // bar read shorter than it is. A capture we cannot split is no measurement of
+  // share, so it renders no meter at all.
+  const competitorAiVisibility = seoGeo
+    ? (() => {
+        const perEngine = seoGeo.perEngine ?? [];
+        if (perEngine.some((engine) => !engine.category)) return null;
+        let clientMentions = 0;
+        let answersMeasured = 0;
+        for (const engine of perEngine) {
+          const cat = categoryMetrics(engine);
+          answersMeasured += cat.promptsMeasured;
+          clientMentions += cat.brandMentions.find((b) => b.isClient)?.mentions ?? 0;
+        }
+        // A capture that measured nothing is not a zero share, it is no
+        // measurement — hand the component null so it renders no meter at all.
+        //
+        // `capturedAt` travels with the two counts so a row can check that its
+        // own stored `llmMentions` came from THIS run before standing beside
+        // them (see `CompetitorAiVisibility`).
+        return answersMeasured > 0
+          ? { clientMentions, answersMeasured, capturedAt: seoGeo.capturedAt }
+          : null;
+      })()
+    : null;
+
   const competitorsSection = (
     <CompetitorTrack
       competitors={competitors}
       clientId={client.id}
       isStaff={isStaff}
       limit={null}
-      collapseTo={6}
       title="Competitors"
+      aiVisibility={competitorAiVisibility}
     />
   );
 
@@ -409,84 +578,83 @@ export default async function ClientSettingsPage({
       intelScheduleEnabled={client.intelScheduleEnabled ?? false}
       intelScheduleNextRunAt={client.intelScheduleNextRunAt ?? null}
       isRefreshing={isAiProcessingLockActive(client)}
-      // The scores and the plan are already lifted to the top of this tab
-      // below when there is a snapshot to lift them from, so the panel must
-      // not repeat them (same rule the dashboard tab followed before the move).
+      // The scores are lifted to the top of this tab below when there is a
+      // snapshot to lift them from, so the panel must not repeat them (same
+      // rule the dashboard tab followed before the move).
       hideScores={!!seoGeo}
-      hidePlan={!!seoGeo}
+      // UNCONDITIONAL (portal feedback round 4, 2026-09). "What we're fixing"
+      // is not rendered on a client-facing report any more, with or without a
+      // snapshot to build it from: the ruling is that its rows are not true.
+      // <ClientSuggestions/> below is what replaced it. Passed by name even
+      // though the prop now defaults to true, so this page states the rule
+      // rather than inheriting it.
+      hidePlan
     />
   );
-  // A2's other half: the two charts client Home gave up, above the visibility
-  // scores. Same viewerIsClient + hideStats the Home mount used, so the status
-  // vocabulary and the counter-row contract don't drift between the two places
-  // this component now lives.
+  // NO PERFORMANCE / CONNECTED CHANNELS HERE (portal feedback round 4,
+  // 2026-09). ClientAnalytics mounted "Content by status" and "Connected
+  // channels" at the top of this tab for both readers; the product owner's
+  // ruling is that neither belongs under Reporting. Content by status is
+  // inventory, and the channel list is a settings question that already has a
+  // detailed home one tab away, next to the control that fixes a broken one.
+  // Staff Home keeps its own ClientAnalytics mount, which is untouched.
   //
-  // PARITY PASS (2026-09) dropped the `isClientViewer ?` gate. Avoiding a
-  // duplicate of staff Home's own <ClientAnalytics/> was the wrong trade: it
-  // meant the Reporting tab OPENED DIFFERENTLY for the two readers — the
-  // client's first section was Performance, staff's was Visibility scores —
-  // so an operator checking what a client sees was reading a different page.
-  // The duplication is on a surface staff have to scroll to; the divergence
-  // was on the surface they use to preview. `viewerIsClient` still tells the
-  // component which register to speak in, which is a separate question from
-  // whether the section exists at all.
-  const analyticsSection = (
-    <section className="space-y-3">
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Performance</p>
-      <ClientAnalytics
-        clientId={client.id}
-        assets={reportingAnalyticsAssets}
-        jobs={spendJobs}
-        integrations={integrations}
-        viewerIsClient={isClientViewer}
-        hideStats
-      />
-    </section>
-  );
+  // The tab is now one subject end to end: how visible you are, what only you
+  // can change about that, and the measurement behind both.
+
+  // The client-owned suggestions that replaced "What we're fixing" (portal
+  // feedback round 4, 2026-09). Built here, on the server, from the same
+  // snapshot the scores read: pure, capped at five, confirmed findings only,
+  // and only the ones whose fix nobody at Karos can ship. See
+  // `buildClientSuggestions` for the exact rules.
+  //
+  // `?? []` on both check arrays for the same reason `perEngine` already has
+  // one (review wave, 2026-09): these are fields of a stored document, and a
+  // snapshot written by an older pipeline can be missing either one. Spreading
+  // undefined here would throw during render of a page that is otherwise
+  // perfectly able to show the rest of the report.
+  const clientSuggestions = seoGeo
+    ? buildClientSuggestions(seoGeo.gaps ?? [], {
+        checks: [...(seoGeo.seoChecks ?? []), ...(seoGeo.geoChecks ?? [])],
+      })
+    : { suggestions: [], emptyReason: "none" as const };
 
   // No snapshot yet: skip straight to the panel's own empty state rather than
-  // showing two headed, empty "Visibility scores" / "Action plan" sections
-  // above it (F23's "no disclosure that opens onto an empty box", applied to
-  // headers instead of a disclosure).
+  // showing a headed, empty "Visibility scores" section above it (F23's "no
+  // disclosure that opens onto an empty box", applied to headers instead of a
+  // disclosure).
+  //
+  // ORDER (portal feedback round 4, 2026-09): where you stand, what only you
+  // can do about it, then the evidence. Scores first because they are the
+  // answer to the question the tab is named after; the suggestions next,
+  // because they are the only thing on the page that asks the reader to act;
+  // the panel last, because it is the working behind both and nobody reads it
+  // first. Reputation is a pointer to another page, so it sits after the
+  // report rather than interrupting it.
   const reportingSection = seoGeo ? (
     <div className="space-y-8">
-      {analyticsSection}
-      <section className="space-y-3">
+      {/* The anchor Home's Visibility KPI links to (portal feedback round 5,
+          2026-09): that cell is a headline of these scores, so it opens the
+          section it is a headline OF rather than the top of the tab.
+          `scroll-mt` keeps the heading clear of the sticky page chrome. */}
+      <section id="visibility-scores" className="scroll-mt-24 space-y-3">
         <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
           Visibility scores
         </p>
         <SeoGeoScores insights={seoGeo} />
       </section>
-      <section className="space-y-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Action plan</p>
-        <SeoGeoPlan insights={seoGeo} isClientViewer={isClientViewer} />
-      </section>
-      {reputationBubble}
+      <ClientSuggestions
+        suggestions={clientSuggestions.suggestions}
+        emptyReason={clientSuggestions.emptyReason}
+      />
       {visibilityPanel}
+      {reputationBubble}
     </div>
   ) : (
     <div className="space-y-8">
-      {analyticsSection}
-      {reputationBubble}
       {visibilityPanel}
+      {reputationBubble}
     </div>
-  );
-
-  // Documents (moved off the rail). Same component, same reading experience
-  // (bullet-summary-first via DocOverlay's "In short" panel) — just a full tab
-  // now instead of a compact rail list.
-  const documentsSection = (
-    <ClientDocuments
-      contextDocs={contextDocs}
-      isAdmin={isAdmin}
-      clientId={client.id}
-      isAiProcessing={isAiProcessingLockActive(client)}
-      aiProcessingFailed={hasAiProcessingFailure(client)}
-      intelSchedule={clientIntelSchedule(client)}
-      allowInternalFallback={isStaff}
-      correctionPricing={correctionPricing}
-      viewerIsClient={isClientViewer}
-    />
   );
 
   /*
@@ -506,9 +674,22 @@ export default async function ClientSettingsPage({
   // NOT_ON_A_CLIENT_SCREEN/CLIENT_READ sweep; actor identity is not, so it is
   // stripped before a client viewer's slice is built rather than left to the
   // panel to withhold at render.
-  const clientLedgerFeed = creditLedger
-    .slice(0, LEDGER_FEED_LIMIT)
-    .map((row) => ({ ...row, actorName: undefined, actorUid: "" }));
+  //
+  // `actualUsd` AND `settlementCapped` JOIN THE STRIP (credits rework, 2026-09),
+  // and they are the reason this list is worth re-reading rather than extending
+  // by habit. `actualUsd` is OUR COST IN DOLLARS for that run — the single
+  // number the two-audience split exists to keep away from clients (it is what
+  // the staff-only economics card is hard-gated for), and settlement rows now
+  // carry it on the same objects this feed is built from. `settlementCapped`
+  // says a run cost us more than double what we quoted, which is the same
+  // disclosure in weaker form.
+  //
+  // Stripped rather than withheld at render for the reason the actor fields
+  // are: CreditsPanel is a "use client" component, so anything crossing this
+  // boundary sits in the page payload and is readable from view-source whether
+  // the panel paints it or not. Staff keep both fields; a client viewer's slice
+  // never carries them.
+  const clientLedgerFeed = redactLedgerForClient(creditLedger.slice(0, LEDGER_FEED_LIMIT));
 
   const creditsSection = (
     <CreditsPanel
@@ -516,6 +697,8 @@ export default async function ClientSettingsPage({
       credits={credits}
       ledger={isStaff ? creditLedger.slice(0, LEDGER_FEED_LIMIT) : clientLedgerFeed}
       spendByAgent={spendByAgent}
+      monthlyCost={monthlyCost}
+      pricesAreEstimates={isCreditsPlanV2Enabled()}
       role={user.role}
       viewer={{ name: user.name, email: user.email }}
     />
@@ -610,9 +793,26 @@ export default async function ClientSettingsPage({
    * rendered last inside `settingsSection` below. The `id` is what makes
    * `?tab=settings#meetings` land on it — the anchor the old `?tab=meetings`
    * deep link redirects to.
+   *
+   * AND IT NOW CARRIES THE ROUTE TO THE LIST (flow audit 2026-09, R11/F14).
+   * This card shows the 12 most recent calls and used to stop there, so an
+   * older meeting was unreachable from here; `/transcripts` itself had no rail
+   * row by ruling and was reachable only through the notification bell's
+   * footer, which appeared only when the client happened to have meeting action
+   * items — three inconsistent states for one page. That footer link is gone,
+   * so this is the client's one route to the full list, and it renders whenever
+   * there is a list to open rather than only past the truncation: the count is
+   * what changes, not whether the way through exists.
+   *
+   * THE LINK IS SCOPED FOR STAFF (review wave, 2026-09). "See all 34 meetings"
+   * pointed at the bare `/transcripts`, which for a staff reader is the
+   * CROSS-CLIENT list: the count came from this client's calls and the
+   * destination showed everyone's. `?client=` scopes it (see that page); a
+   * client reader's own list is already scoped by their session, so their link
+   * is unchanged.
    */
   const meetingsSection = (
-    <Card id="meetings">
+    <Card id="meetings" className="scroll-mt-24">
       <CardTitle className="mb-3">Meetings</CardTitle>
       {transcripts.length === 0 ? (
         <p className="text-sm text-muted-2">
@@ -620,7 +820,7 @@ export default async function ClientSettingsPage({
         </p>
       ) : (
         <ul className="divide-y divide-border">
-          {transcripts.slice(0, 12).map((t) => (
+          {recentTranscripts.map((t) => (
             <li key={t.id}>
               <Link
                 href={`/transcripts/${t.id}?from=${encodeURIComponent(`/clients/${client.id}/settings?tab=settings#meetings`)}`}
@@ -636,6 +836,17 @@ export default async function ClientSettingsPage({
           ))}
         </ul>
       )}
+      {transcripts.length > 0 && (
+        <Link
+          href={isStaff ? `/transcripts?client=${encodeURIComponent(client.id)}` : "/transcripts"}
+          className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-neon"
+        >
+          {transcripts.length > MEETING_ROWS
+            ? `See all ${transcripts.length} meetings`
+            : "See all meetings"}
+          <Icon name="ChevronRight" className="h-3.5 w-3.5" />
+        </Link>
+      )}
     </Card>
   );
 
@@ -648,8 +859,9 @@ export default async function ClientSettingsPage({
    */
   const accountTabs: SettingsTab[] | null =
     user.role === "CLIENT_USER"
-      ? await (async () => {
-          const firebaseUser = await adminAuth().getUser(user.uid);
+      ? (() => {
+          // Read in the Promise.all above, so this branch only shapes it.
+          const providers = viewerAuthRecord?.providerData.map((p) => p.providerId) ?? [];
           return [
             {
               id: ACCOUNT_TABS.profile,
@@ -663,11 +875,7 @@ export default async function ClientSettingsPage({
               label: "Account security",
               group: "Your account",
               icon: "Shield",
-              content: (
-                <AccountSecurityPanel
-                  providers={firebaseUser.providerData.map((p) => p.providerId)}
-                />
-              ),
+              content: <AccountSecurityPanel providers={providers} />,
             },
           ];
         })()
@@ -708,9 +916,10 @@ export default async function ClientSettingsPage({
     </div>
   );
 
-  // Six tabs, down from eight (portal feedback round 2, 2026-09): Archive left
-  // for the calendar, Meetings folded into Settings above. Both old ids still
-  // resolve — see the redirect block at the top of this page.
+  // Five tabs, down from eight: Archive left for the calendar and Meetings
+  // folded into Settings (portal feedback round 2, 2026-09), then Documents
+  // moved into Profile (round 4). All three old ids still resolve — see the
+  // redirect block at the top of this page.
   const sections: SettingsTab[] = [
     // Grouped for the side navigation (portal feedback round 2, 2026-09):
     // what the company IS, then how the workspace RUNS, then — for a client —
@@ -718,10 +927,16 @@ export default async function ClientSettingsPage({
     { id: "profile", label: "Profile", icon: "Building2", group: "Company", content: profileSection },
     { id: "competitors", label: "Competitors", icon: "Users", group: "Company", content: competitorsSection },
     { id: "reporting", label: "Reporting", icon: "Radar", group: "Company", content: reportingSection },
-    { id: "documents", label: "Documents", icon: "FileText", group: "Company", content: documentsSection },
     { id: "settings", label: "Settings", icon: "Settings", group: "Workspace", content: settingsSection },
     { id: "credits", label: "Credits", icon: "Coins", group: "Workspace", content: creditsSection },
-  ].filter((t) => t.content !== null);
+  ];
+  // NO `.filter(t => t.content !== null)` (review wave, 2026-09). It was here
+  // for a tab whose content could collapse to null when everything in it was
+  // staff-gated; none of the five can any more (each builds an element
+  // unconditionally, and the staff-only parts are frames INSIDE them), so the
+  // filter dropped nothing and only claimed a rule this list had stopped
+  // following. A tab that really does become empty should stop being built,
+  // not be swept up here.
 
   /**
    * THE VIEWER'S OWN ACCOUNT, AS TABS ON THIS PAGE (AF-2).
@@ -744,7 +959,11 @@ export default async function ClientSettingsPage({
     <>
       <PageHeader
         title="Account Center"
-        description="Profile, competitors, reporting, documents and credits: everything that is not daily use, in one place."
+        /* Names what the five tabs actually hold now (review wave, 2026-09).
+           The old line stopped at "reporting and credits", which left the
+           Settings tab — channels, automation, your team and every meeting a
+           client can read — unannounced under a word that could mean anything. */
+        description="Profile and documents, competitors, reporting, settings for channels, automation, your team and meetings, and credits: everything that is not daily use, in one place."
         action={
           isStaff ? (
             /* Kept (a client reaches their own account through the two tabs at

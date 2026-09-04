@@ -34,10 +34,6 @@ import type { Asset } from "@/lib/types";
 /** Days in the window this card reports, and in the one it compares against. */
 export const THROUGHPUT_WINDOW_DAYS = 30;
 
-/** Bars in the mini chart, and the length of each in days. */
-export const THROUGHPUT_BUCKETS = 4;
-export const THROUGHPUT_BUCKET_DAYS = 7;
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** A deliverable is counted here only once it has reached the audience. */
@@ -59,11 +55,25 @@ export interface ContentThroughput {
    */
   deltaPct: number | null;
   /**
-   * THROUGHPUT_BUCKETS weekly counts, oldest first, for the mini chart. Always
-   * that length, zeros included: a chart that drops its empty weeks redraws its
-   * own x-axis every render and a quiet fortnight reads as a busy one.
+   * One count per day of the reported window, oldest first, for the mini chart.
+   * Always THROUGHPUT_WINDOW_DAYS long, zeros included: a chart that drops its
+   * empty days redraws its own x-axis every render, and a quiet fortnight then
+   * reads as a busy one.
+   *
+   * DAILY, AND OVER EXACTLY THE WINDOW THE HEADLINE COUNTS (portal feedback
+   * round 5, 2026-09). It was four weekly buckets, which spanned 28 days beside
+   * a "last 30 days" number: the chart and the figure above it were measuring
+   * different stretches of time, so `daily` sums to `count` by construction and
+   * the invariant is pinned by a test. Four bars also could not show a cadence,
+   * which is the only thing this chart is for; thirty can.
+   *
+   * A "day" is a rolling 24 hours back from `now`, not a calendar day in the
+   * client's timezone. The window itself is already rolling (`count` is "the
+   * last 30 days", not "this month"), so calendar buckets would have the chart
+   * and the count disagreeing again, and would need a timezone this pure
+   * function does not take.
    */
-  weekly: number[];
+  daily: number[];
 }
 
 /**
@@ -76,12 +86,10 @@ export interface ContentThroughput {
  */
 export function contentThroughput(assets: readonly Asset[], now: number): ContentThroughput {
   const windowMs = THROUGHPUT_WINDOW_DAYS * DAY_MS;
-  const bucketMs = THROUGHPUT_BUCKET_DAYS * DAY_MS;
-  const chartStart = now - THROUGHPUT_BUCKETS * bucketMs;
 
   let count = 0;
   let previousCount = 0;
-  const weekly = new Array<number>(THROUGHPUT_BUCKETS).fill(0);
+  const daily = new Array<number>(THROUGHPUT_WINDOW_DAYS).fill(0);
 
   for (const asset of assets) {
     if (!LIVE_STATUSES.has(asset.status)) continue;
@@ -89,16 +97,13 @@ export function contentThroughput(assets: readonly Asset[], now: number): Conten
     // A stamp in the future is a scheduling artifact, not throughput.
     if (at > now) continue;
     const age = now - at;
-    if (age < windowMs) count += 1;
-    else if (age < 2 * windowMs) previousCount += 1;
-
-    if (at >= chartStart) {
-      // Clamped rather than trusted: `at === now` lands one past the last
-      // bucket by exact division, and an off-by-one here silently drops today's
-      // post from today's bar.
-      const index = Math.min(THROUGHPUT_BUCKETS - 1, Math.floor((at - chartStart) / bucketMs));
-      weekly[index] = (weekly[index] ?? 0) + 1;
-    }
+    if (age < windowMs) {
+      count += 1;
+      // Same branch as the count, on purpose: every row the headline counts
+      // lands in a bar, and no row outside the window can. Age is in [0,
+      // windowMs) here, so the index is in range without a clamp.
+      daily[THROUGHPUT_WINDOW_DAYS - 1 - Math.floor(age / DAY_MS)] += 1;
+    } else if (age < 2 * windowMs) previousCount += 1;
   }
 
   return {
@@ -106,6 +111,6 @@ export function contentThroughput(assets: readonly Asset[], now: number): Conten
     previousCount,
     deltaPct:
       previousCount > 0 ? Math.round(((count - previousCount) / previousCount) * 100) : null,
-    weekly,
+    daily,
   };
 }

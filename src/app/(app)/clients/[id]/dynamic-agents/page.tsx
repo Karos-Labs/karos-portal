@@ -3,6 +3,7 @@ import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { listDynamicAgentSpecs } from "@/lib/data";
 import { Badge, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { ContactUsButton } from "@/components/contact-us-modal";
 
 /**
  * Client-facing entry point for Dynamic Agent Studio agents — the run
@@ -57,6 +58,13 @@ export default async function ClientDynamicAgentsPage({ params }: { params: Prom
             icon={<Icon name="Sparkles" className="h-6 w-6" />}
             title="No dynamic agents yet"
             description="Your Karos team hasn't made a dynamic agent available to you yet."
+            /* Flow audit 2026-09, R9 · NN/g *Empty States*: an empty region owes
+               the reader a control that starts the work it describes. The only
+               thing that fills this list is the Karos team making an agent
+               available, so the one honest action is the way to ask them — the
+               same dialog, under its one name, that the rest of the portal
+               opens. */
+            action={<ContactUsButton variant="row" />}
           />
         ) : (
           <div className="space-y-2">

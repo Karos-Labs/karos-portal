@@ -347,6 +347,24 @@ export function formatCaptured(capturedAt: number): string {
   });
 }
 
+/**
+ * The same date, compact, for the one-line measurement stamp under the
+ * Visibility scores eyebrow (portal feedback round 4, 2026-09). Same fixed
+ * locale + UTC discipline as `formatCaptured` above, and the same reason: this
+ * string is server-rendered and pinned by tests, so it must not drift with the
+ * render host. en-GB because the stamp reads as a date, not as a sentence
+ * ("4 Aug 2026"), and the long form is still what prose uses.
+ */
+export function formatCapturedShort(capturedAt: number): string {
+  if (!Number.isFinite(capturedAt)) return "an earlier run";
+  return new Date(capturedAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 const DAY_MS = 86_400_000;
 /** Past this, a snapshot is old enough that the panel says so (monthly cadence + slack). */
 export const SNAPSHOT_STALE_DAYS = 45;
@@ -688,6 +706,92 @@ export interface EngineView {
  * an old snapshot.
  */
 const ENGINE_ORDER: EngineId[] = ["chatgpt", "perplexity", "gemini", "claude", "copilot"];
+
+/* ── The measurement stamp (portal feedback round 4, 2026-09) ─────── */
+
+export interface MeasuredEngineView {
+  engine: EngineId;
+  name: string;
+}
+
+export interface MeasurementLineView {
+  /**
+   * "Measured 4 Aug 2026 on 20 buyer questions" — one line, no fractions, and
+   * the count is what the engines ANSWERED rather than what we asked (review
+   * wave, 2026-09): every number under this line is computed from the answers.
+   */
+  line: string;
+  /** Engines that actually answered this run, in display order. */
+  measured: MeasuredEngineView[];
+  /**
+   * Engines we ASKED that came back with nothing. An engine with no row at all
+   * (every pre-T-B16 snapshot has none for Perplexity or Copilot) is absent from
+   * both lists: it was never asked on that run, and "returned no answers" would
+   * be a claim about a request nobody made.
+   */
+  missingNote: string | null;
+}
+
+/**
+ * Folds the old capture strip into one sentence.
+ *
+ * IT USED TO BE A CARD: "Snapshot from August 4, 2026 (3 days ago) · 20 real
+ * buyer questions · 3 of 3 AI engines measured", then a "No refresh is scheduled
+ * yet" line, then five engine chips each carrying a status badge and an info
+ * tooltip — including the two that measured nothing, which is a lot of furniture
+ * to say that two engines were quiet. The product owner's read was that the box
+ * repeats what the report says elsewhere and buries the one fact worth keeping:
+ * when this was measured and on what.
+ *
+ * So: the date, the question count, and the engines that ANSWERED (rendered as
+ * logo marks beside the line). The ones that did not are a note on the line
+ * rather than a chip of their own, and the fraction is gone — "3 of 3" invited
+ * a reader to wonder which two of five were missing without telling them.
+ */
+export function buildMeasurementLine(insights: SeoGeoInsights): MeasurementLineView {
+  const asked = insights.promptSet?.length ?? 0;
+  const byEngine = new Map((insights.perEngine ?? []).map((e) => [e.engine, e] as const));
+  const measured: MeasuredEngineView[] = [];
+  const silent: string[] = [];
+  /**
+   * The most questions any one engine actually ANSWERED — which is what "on N
+   * buyer questions" has to count (review wave, 2026-09).
+   *
+   * `promptSet.length` is what we asked. A run in which an engine timed out
+   * halfway, or the pipeline was cut short, asked 20 and measured 12, and the
+   * line said 20 above a report built entirely from the 12. Every engine gets
+   * the same prompt set, so the largest per-engine count is the number of
+   * questions this snapshot has any answer for at all.
+   */
+  let answered = 0;
+  for (const engine of ENGINE_ORDER) {
+    const row = byEngine.get(engine);
+    if (!row) continue;
+    const name = ENGINE_LABELS[engine] ?? "Engine";
+    if (row.captureTier !== "UNAVAILABLE" && row.promptsMeasured > 0) {
+      measured.push({ engine, name });
+      answered = Math.max(answered, row.promptsMeasured);
+    } else silent.push(name);
+  }
+  // Never MORE than we asked: a stored count that overshoots the prompt set is
+  // a broken record, not a reason to claim a bigger sample.
+  const counted = answered > 0 ? Math.min(answered, asked || answered) : asked;
+  const stamp = `Measured ${formatCapturedShort(insights.capturedAt)}`;
+  return {
+    line: counted > 0 ? `${stamp} on ${counted} buyer question${counted === 1 ? "" : "s"}` : stamp,
+    measured,
+    missingNote:
+      silent.length === 0
+        ? null
+        : `${listPhrase(silent)} returned no answers this run.`,
+  };
+}
+
+/** "a", "a and b", "a, b and c" — client copy, so no serial comma and no dashes. */
+function listPhrase(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
 
 /** Closed provider → "measured through …" phrase (provenance without badges). */
 const PROVIDER_PHRASES: Record<string, string> = {

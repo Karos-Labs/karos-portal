@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  contentThroughput,
-  THROUGHPUT_BUCKETS,
-  THROUGHPUT_BUCKET_DAYS,
-  THROUGHPUT_WINDOW_DAYS,
-} from "@/lib/content-throughput";
+import { contentThroughput, THROUGHPUT_WINDOW_DAYS } from "@/lib/content-throughput";
 import { clientDeliveryStamp } from "@/lib/asset-visibility";
 import type { Asset } from "@/lib/types";
 
@@ -103,28 +98,36 @@ describe("the delta", () => {
   });
 });
 
-describe("the weekly bars", () => {
-  it("always has the same number of buckets, zeros included", () => {
-    // A chart that drops its empty weeks redraws its own x-axis every render,
+describe("the daily bars", () => {
+  it("always has one bar per day of the window, zeros included", () => {
+    // A chart that drops its empty days redraws its own x-axis every render,
     // and a quiet fortnight then reads as a busy one.
     const t = contentThroughput([at(1)], NOW);
-    expect(t.weekly).toHaveLength(THROUGHPUT_BUCKETS);
-    expect(t.weekly.filter((n) => n === 0)).toHaveLength(THROUGHPUT_BUCKETS - 1);
+    expect(t.daily).toHaveLength(THROUGHPUT_WINDOW_DAYS);
+    expect(t.daily.filter((n) => n === 0)).toHaveLength(THROUGHPUT_WINDOW_DAYS - 1);
   });
 
-  it("runs oldest first, so the newest week is the rightmost bar", () => {
-    const oldest = THROUGHPUT_BUCKETS * THROUGHPUT_BUCKET_DAYS - 1;
-    const t = contentThroughput([at(oldest), at(0)], NOW);
-    expect(t.weekly[0]).toBe(1);
-    expect(t.weekly[THROUGHPUT_BUCKETS - 1]).toBe(1);
+  it("runs oldest first, so today is the rightmost bar", () => {
+    const t = contentThroughput([at(THROUGHPUT_WINDOW_DAYS - 1), at(0)], NOW);
+    expect(t.daily[0]).toBe(1);
+    expect(t.daily[THROUGHPUT_WINDOW_DAYS - 1]).toBe(1);
   });
 
-  it("keeps a post stamped this instant in the newest bucket", () => {
-    // Exact division lands `at === now` one PAST the last bucket; the clamp is
-    // what stops today's post falling off today's bar.
+  it("keeps a post stamped this instant in today's bar", () => {
     const t = contentThroughput([live({ publishedAt: NOW })], NOW);
-    expect(t.weekly[THROUGHPUT_BUCKETS - 1]).toBe(1);
-    expect(t.weekly.reduce((a, b) => a + b, 0)).toBe(1);
+    expect(t.daily[THROUGHPUT_WINDOW_DAYS - 1]).toBe(1);
+    expect(t.daily.reduce((a, b) => a + b, 0)).toBe(1);
+  });
+
+  it("charts exactly what the headline counts (portal feedback round 5, 2026-09)", () => {
+    // The bars used to span 28 days beside a "last 30 days" figure, so the
+    // chart and the number above it measured different stretches of time. This
+    // is that invariant, with a fixture that reaches both edges of the window
+    // and one row on either side of it.
+    const assets = [at(0), at(1), at(15), at(THROUGHPUT_WINDOW_DAYS - 1), at(THROUGHPUT_WINDOW_DAYS + 1), at(-2)];
+    const t = contentThroughput(assets, NOW);
+    expect(t.count).toBe(4);
+    expect(t.daily.reduce((a, b) => a + b, 0)).toBe(t.count);
   });
 });
 
@@ -146,9 +149,20 @@ describe("which instant it reads (the churn rule)", () => {
     // Non-vacuity: the fixture's two stamps really do disagree, so a pass here
     // is a statement about WHICH one was read.
     expect(assets.every((a) => a.createdAt !== clientDeliveryStamp(a))).toBe(true);
-    expect(t.weekly, "the generation instant was read, not the delivery one").toEqual([
-      1, 1, 1, 1,
-    ]);
+    // Bucketed by `createdAt` these four would stack into ONE bar (they share a
+    // generation instant one day old); bucketed by delivery they are four.
+    //
+    // THE EXACT BUCKETS, not `daily.filter((n) => n > 0)` (review wave,
+    // 2026-09). Filtering to the non-zero bars threw away the only thing that
+    // distinguishes the two readings' SHAPES: four ones in a row pass that
+    // assertion whether they sit on days 0/8/16/24 or anywhere else, so a
+    // bucketing bug that kept the count and moved every bar was invisible to it.
+    // The window runs oldest-first over THROUGHPUT_WINDOW_DAYS, so a post
+    // delivered `d` days ago lands at index `WINDOW - 1 - d`.
+    const last = THROUGHPUT_WINDOW_DAYS - 1;
+    const expected = new Array<number>(THROUGHPUT_WINDOW_DAYS).fill(0);
+    for (const daysAgo of [0, 8, 16, 24]) expected[last - daysAgo] = 1;
+    expect(t.daily, "the generation instant was read, not the delivery one").toEqual(expected);
   });
 
   it("falls back down the same ladder the archive sorts by", () => {

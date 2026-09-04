@@ -9,6 +9,7 @@ import {
 } from "@/lib/data";
 import { Badge, EmptyState, PageHeader } from "@/components/ui";
 import { MoreActionsMenu } from "@/components/more-actions-menu";
+import { ContactUsButton } from "@/components/contact-us-modal";
 import { Icon } from "@/components/icon";
 import { AgentRunHistory } from "@/components/custom-agents";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -177,6 +178,18 @@ export default async function ClientAgentsPage({
       viewerIsClient: true,
       now,
     });
+    // NO PRICE IS RESOLVED ON THIS PAGE (review wave, 2026-09). It used to
+    // compute a per-agent run estimate for every card and thread it into
+    // `toSummary`, and nothing on either roster branch renders one: a roster
+    // entry carries a mark, a name, a blurb and a status word (see
+    // AgentRosterEntry, which is deliberately not the card row), and
+    // AgentRunHistory reads its `agents` for the platform mark alone. The
+    // comment that justified it named "the dialog it opens" — this page mounts
+    // no run dialog; CD-I1 moved every run gesture to the agent detail page,
+    // which is where the quote now lives and where the press it prices is.
+    //
+    // The reads it cost were not free either: a pass over this client's whole
+    // job history per card, for a number with no reader.
     // The other half of the same read: which agents' most recent finished run
     // FAILED. A schedule refusal cannot see that — it only records a fire the
     // scheduler turned away before a job existed — so without this a green
@@ -194,9 +207,13 @@ export default async function ClientAgentsPage({
       clientSlug: client.agentsRepoSlug,
       now,
     });
+    // NOT `.map(toSummary)`: `toSummary` takes pricing as its OPTIONAL second
+    // argument and `Array.map` would hand it the index — a summary priced at
+    // whatever position the agent happened to sit in. Wrapped explicitly, with
+    // no pricing, for the reason given above the roster reads.
     const agents = candidateAgents
       .filter((agent) => allowedIds.has(agent.id) || completedAgentIds.has(agent.id))
-      .map(toSummary);
+      .map((agent) => toSummary(agent));
     // A8 (parity pass 2026-09). NEITHER roster branch passed `readyToRun`, so a
     // configured agent that had simply never been asked yet read "Not set up
     // yet" on its card and "Runs on request" on the page that card opens — the
@@ -231,7 +248,8 @@ export default async function ClientAgentsPage({
     });
     const disabledAgents = disabledBound
       .filter((agent) => allowedIds.has(agent.id) || disabledDeliveredIds.has(agent.id))
-      .map(toSummary);
+      // A paused agent could not be run even if something here quoted a price.
+      .map((agent) => toSummary(agent));
     // ── Card selection: exactly one card per agent ──
     // An umbrella owns its agent's card as soon as it is bound - the launch
     // card while it is being set up, the live card once it is producing. The
@@ -387,10 +405,20 @@ export default async function ClientAgentsPage({
         {allRosterEntries.length > 0 ? (
           <ClientAgentRoster clientId={id} entries={allRosterEntries} />
         ) : (
+          /* R9 (flow audit 2026-09 · NN/g *Empty States*): this told a client
+             what would eventually happen and gave them nothing to do about it —
+             and there is no self-serve way to add an agent, so the only honest
+             control is the one that reaches the people who can. `EmptyState`
+             has taken an `action` node all along (ui.tsx); not one client-facing
+             empty state passed one.
+             Labelled "Support", not "Talk to your Karos team": R7's one word
+             for this dialog, wherever it is opened from. The description is
+             where the ask goes. */
           <EmptyState
             icon={<Icon name="Bot" className="h-7 w-7" />}
             title="No active agents yet"
-            description="After your Karos team completes the first agent run, that agent will appear here."
+            description="After your Karos team completes the first agent run, that agent will appear here. Ask them which agents are on your plan."
+            action={<ContactUsButton variant="row" userName={user.name} userEmail={user.email} />}
           />
         )}
       </>
@@ -420,6 +448,10 @@ export default async function ClientAgentsPage({
   // client branch above: a per-client instance runs an entry skill baked under
   // one client's lab folder, so offering it here would build a run both submit
   // cores refuse. A second unfiltered list was exactly how that regressed.
+  // NO PRICE HERE EITHER — see the client branch above. The staff roster paints
+  // the same four things the client's does and mounts no run dialog, so a
+  // per-agent estimate threaded through `toSummary` had no reader on this
+  // branch either. Parity is preserved by both branches doing the same nothing.
   const enabledAgents = customAgents
     .filter(
       (a) =>
@@ -427,7 +459,7 @@ export default async function ClientAgentsPage({
         !isUnlistedAgent(a) &&
         agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
     )
-    .map(toSummary);
+    .map((a) => toSummary(a));
   // Paused agents stay ON the roster too (same reasoning as the client branch
   // above) rather than just disappearing from the operator's view the moment
   // they're toggled off - an admin needs to see it's actually there, paused,
@@ -439,7 +471,7 @@ export default async function ClientAgentsPage({
         !isUnlistedAgent(a) &&
         agentKeyMatchesClientSlug(a.key, client.agentsRepoSlug),
     )
-    .map(toSummary);
+    .map((a) => toSummary(a));
 
   // (The jobPreviews block that used to live here fed <ManagedProducts />,
   // which nothing imported - it read every managed asset for this client on

@@ -209,6 +209,12 @@ export function toClientPortalView(c: Client): Client {
  * The Client fields the STAFF shell's own client components read — the whole
  * list of them, and nothing else.
  *
+ * THIS ONE IS THE ACTIVE CLIENT'S, NOT THE PICKER'S (review wave, 2026-09).
+ * `StaffPickerClientView` below is the narrower thing the picker LIST carries,
+ * one row per client, on every staff page; this view is what the shell holds
+ * for the ONE client whose context is open. Both are documented together so the
+ * next reader can see which surface is being paid for.
+ *
  * The staff shell serialises a client into "use client" components from two
  * places: the `/clients/[id]` nested layout (ClientContextSync → the sidebar's
  * client rail, the context bar, the staff copilot dock) and the app layout's
@@ -321,5 +327,46 @@ export function toStaffShellView(c: Client): StaffShellClientView {
       ? { intelScheduleNextRunAt: c.intelScheduleNextRunAt }
       : {}),
     ...(c.lastIntelReportAt != null ? { lastIntelReportAt: c.lastIntelReportAt } : {}),
+  };
+}
+
+/**
+ * ONE ROW OF THE CLIENT-CONTEXT PICKER — every client the viewer may open, on
+ * every staff page (review wave, 2026-09).
+ *
+ * The picker's array and the ACTIVE client's projection were one type, so every
+ * staff page's RSC payload carried a full `StaffShellClientView` — company
+ * profile, brand voice, the whole `brandingGuidelines` object, the intel
+ * schedule — multiplied by the client list. None of that is painted by a picker
+ * row: the row draws a favicon and a name, and that is the whole surface. So
+ * the list gets the four values those two elements read, and the active client
+ * keeps the wide projection it actually renders from.
+ *
+ * `logoUrl` IS THE FALLBACK, RESOLVED HERE, the same way `toClientPortalView`
+ * resolves `category`: the row's BrandFavicon asked
+ * `logoUrl || brandingGuidelines?.logoUrl`, and shipping a whole
+ * BrandingGuidelines so one nested string could win that `||` is the over-fetch
+ * this type exists to end. One field crosses, already answered.
+ *
+ * Assignable to `StaffShellClientView` on purpose — the picker's optimistic
+ * seed puts the row it just clicked into the active-client context, and
+ * ClientContextSync replaces it with the full projection on the very next
+ * render. Same honesty rule the seed's empty `railAgents` and null
+ * `spendableCredits` already follow: one paint of "not known yet", never a
+ * wrong value.
+ */
+export type StaffPickerClientView = Pick<
+  StaffShellClientView,
+  "id" | "name" | "logoUrl" | "website" | "accentColor"
+>;
+
+export function toStaffPickerView(c: Client): StaffPickerClientView {
+  const logoUrl = c.logoUrl || c.brandingGuidelines?.logoUrl;
+  return {
+    id: c.id,
+    name: c.name,
+    ...(logoUrl ? { logoUrl } : {}),
+    ...(c.website ? { website: c.website } : {}),
+    ...(c.accentColor ? { accentColor: c.accentColor } : {}),
   };
 }

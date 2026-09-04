@@ -18,12 +18,15 @@ import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
 import { SavedFormCard } from "@/components/saved-form-card";
 import { ClientSeatRemove } from "@/components/client-seat-remove";
+import { IntakeNoRuns } from "@/components/intake-no-runs";
 import {
   clientArchiveLink,
   intakeAnchorId,
   intakeSeatAnchorId,
 } from "@/lib/agent-intake-links";
 import { intakeSave } from "@/lib/intake-save";
+import { CreditPriceNote } from "@/components/credit-price-note";
+import { xRosterProposalPrice } from "@/lib/credits";
 import {
   addXDraftFeedbackAction,
   addXSeatAction,
@@ -162,6 +165,7 @@ function RosterInput({
   onChange,
   idPrefix,
   helper,
+  viewerIsBilled,
 }: {
   clientId: string;
   seatName?: string;
@@ -169,6 +173,8 @@ function RosterInput({
   onChange: (v: string) => void;
   idPrefix: string;
   helper: string;
+  /** `isBillableClientActor()` — decides whose money the quote names, not the figure. */
+  viewerIsBilled: boolean;
 }) {
   const [proposing, startProposing] = useTransition();
   const [why, setWhy] = useState<Array<{ handle: string; why: string }> | null>(null);
@@ -213,6 +219,14 @@ function RosterInput({
         placeholder="@handle, @handle. Or let us propose a list"
       />
       <p className="mt-1 text-xs text-muted">{helper}</p>
+      {/* R3: the press charges a credit the moment it is made — there is no
+          confirm step and re-pressing to refresh charges again — and it used to
+          quote nothing. Quoted from the same constant the action charges from. */}
+      <CreditPriceNote
+        price={xRosterProposalPrice(true)}
+        viewerIsBilled={viewerIsBilled}
+        className="mt-1"
+      />
       {fieldError(error)}
       {why && why.length > 0 ? (
         <ul className="mt-2 space-y-1 rounded-md border border-border bg-surface-2 p-3">
@@ -229,7 +243,16 @@ function RosterInput({
 
 /* ─────────────────────── company page form ─────────────────────── */
 
-function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeView | null }) {
+function CompanyForm({
+  clientId,
+  intake,
+  viewerIsBilled,
+}: {
+  clientId: string;
+  intake: XIntakeView | null;
+  /** Threaded to RosterInput, whose "Propose accounts" press charges. */
+  viewerIsBilled: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -272,7 +295,10 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
   return (
     <SavedFormCard
       title="Company page"
-      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>}
+      /* R7: "Not set up" is the roster's phrase for an agent whose stand-up has
+         not run. This badge answers a different question — is the form saved —
+         and one vocabulary must not carry two states. */
+      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not saved yet</Badge>}
       summary={[
         { label: "Company X handle", value: handle },
         { label: "How you come across on X", value: comeAcross },
@@ -329,6 +355,7 @@ function CompanyForm({ clientId, intake }: { clientId: string; intake: XIntakeVi
           value={roster}
           onChange={setRoster}
           idPrefix="xc"
+          viewerIsBilled={viewerIsBilled}
           helper="Optional; this turns on the engagement lane. We propose from what we already know about your business. You approve or edit. Every handle is verified live before any engagement."
         />
         {!intake ? (
@@ -446,11 +473,14 @@ function SeatCard({
   clientId,
   seat,
   runInFlight,
+  viewerIsBilled,
 }: {
   clientId: string;
   seat: XSeatView;
   /** Passed through to the remove confirm — see ClientSeatRemove. */
   runInFlight: boolean;
+  /** Threaded to RosterInput, whose "Propose accounts" press charges. */
+  viewerIsBilled: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -540,6 +570,7 @@ function SeatCard({
             value={roster}
             onChange={setRoster}
             idPrefix={`xs-${seat.id}`}
+            viewerIsBilled={viewerIsBilled}
             helper="Optional; this turns on your engagement lane. We propose people worth being near. You approve or edit."
           />
         </div>
@@ -578,7 +609,14 @@ function SeatCard({
   );
 }
 
-function AddSeatForm({ clientId }: { clientId: string }) {
+function AddSeatForm({
+  clientId,
+  viewerIsBilled,
+}: {
+  clientId: string;
+  /** Threaded to RosterInput, whose "Propose accounts" press charges. */
+  viewerIsBilled: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
@@ -660,6 +698,7 @@ function AddSeatForm({ clientId }: { clientId: string }) {
           value={roster}
           onChange={setRoster}
           idPrefix="xa"
+          viewerIsBilled={viewerIsBilled}
           helper="Optional; this turns on your engagement lane. We propose people worth being near. You approve or edit."
         />
         <PremiumField idPrefix="xa" value={premium} onChange={setPremium} />
@@ -781,7 +820,9 @@ function FeedbackBox({
             );
           })}
         </ul>
-      ) : null}
+      ) : (
+        <IntakeNoRuns clientId={clientId} noun="posts" />
+      )}
       <div className="mt-4 space-y-3">
         <div className="max-w-xs">
           <Label htmlFor="xf-account">This is about</Label>
@@ -834,6 +875,7 @@ export function XAgentIntake({
   feedback,
   runs,
   runInFlight,
+  viewerIsBilled = true,
   isStaff,
 }: {
   clientId: string;
@@ -853,6 +895,12 @@ export function XAgentIntake({
    * unfiltered scan (see `anyRunInFlight` in lib/agent-intake-views.ts).
    */
   runInFlight: boolean;
+  /**
+   * `isBillableClientActor()` for this session. Decides whose money the
+   * "Propose accounts" quote names — never whether a figure appears at all,
+   * which is the parity rule refresh-task-map-button.tsx set.
+   */
+  viewerIsBilled?: boolean;
   /** Whose vocabulary the run rows are written in — see FeedbackBox. */
   isStaff: boolean;
 }) {
@@ -863,7 +911,7 @@ export function XAgentIntake({
           intakeAnchorId, so a row cannot end up pointing at a hash that
           matches nothing — which scrolls nowhere and raises nothing. */}
       <div id={intakeAnchorId("company")} className="scroll-mt-24">
-        <CompanyForm clientId={clientId} intake={company} />
+        <CompanyForm clientId={clientId} intake={company} viewerIsBilled={viewerIsBilled} />
       </div>
       {/* The takes row is client-wide (its count is every seat's takes) and the
           take boxes live one per seat card, so the seat LIST is where that row
@@ -871,10 +919,15 @@ export function XAgentIntake({
       <div id={intakeAnchorId("takes")} className="space-y-4 scroll-mt-24">
         {seats.map((seat) => (
           <div key={seat.id} id={intakeSeatAnchorId(seat.id)} className="scroll-mt-24">
-            <SeatCard clientId={clientId} seat={seat} runInFlight={runInFlight} />
+            <SeatCard
+              clientId={clientId}
+              seat={seat}
+              runInFlight={runInFlight}
+              viewerIsBilled={viewerIsBilled}
+            />
           </div>
         ))}
-        <AddSeatForm clientId={clientId} />
+        <AddSeatForm clientId={clientId} viewerIsBilled={viewerIsBilled} />
       </div>
       <div id={intakeAnchorId("news")} className="scroll-mt-24">
         <CompanyNewsBox clientId={clientId} rows={news} />

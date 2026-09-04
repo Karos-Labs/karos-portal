@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 import {
   hasAiProcessingFailure,
   toClientPortalView,
+  toStaffPickerView,
   toStaffShellView,
 } from "@/lib/client-visibility";
-import type { StaffShellClientView } from "@/lib/client-visibility";
+import type { StaffPickerClientView, StaffShellClientView } from "@/lib/client-visibility";
 // Type-only: `active-client-context.tsx` is a "use client" module, and this
 // import is erased before vitest ever resolves it. `tsc` still checks it.
 import type { ActiveClientData } from "@/lib/active-client-context";
@@ -315,23 +316,92 @@ describe("toStaffShellView", () => {
     expect(layout).not.toMatch(/client=\{\s*client\s*\}/);
 
     const app = readFileSync(join(process.cwd(), "src/app/(app)/layout.tsx"), "utf8");
-    // BOTH SOURCES, one projection. The picker's array used to be seeded only
-    // inside the admin branch, so `allClients.map(toStaffShellView)` was the
-    // whole of it; ruling D24 (parity pass 2026-09) fixed an employee's empty
-    // picker by falling back to `staffClients`, which is a second array of raw
-    // `Client` documents arriving at the same "use client" prop. The rule is
-    // unchanged and now has two ways to be broken, so it is asserted against
-    // the expression rather than the admin half of it.
-    expect(app).toMatch(
-      /\(\s*adminData\?\.allClients\s*\?\?\s*staffClients\s*\)\s*\.\s*map\(\s*toStaffShellView\s*\)/,
-    );
+    // ONE SOURCE, ONE PROJECTION — and it is the PICKER'S, not the rail's.
+    // The array used to be seeded only inside the admin branch, so
+    // `allClients.map(toStaffShellView)` was the whole of it; ruling D24
+    // (parity pass 2026-09) fixed an employee's empty picker by falling back to
+    // `staffClients`. The review wave 2026-09 then removed the admin branch's
+    // duplicate `listClients()` read entirely — `staffClients` IS
+    // `listClients(undefined)` for an admin — and narrowed the rows to what a
+    // picker row paints. Both halves are asserted against the expression.
+    expect(app).toMatch(/clients\s*=\s*staffClients\s*\.\s*map\(\s*toStaffPickerView\s*\)/);
     // The regression: the picker's array assigned straight from the fetch.
-    expect(app).not.toMatch(/clients\s*=\s*\{?\s*(adminData\.allClients|staffClients)\s*\}?\s*;/);
-    expect(app).not.toMatch(
-      /clients\s*=\s*\(\s*adminData\?\.allClients\s*\?\?\s*staffClients\s*\)\s*;/,
-    );
+    expect(app).not.toMatch(/clients\s*=\s*\{?\s*staffClients\s*\}?\s*;/);
+    // And the read that was paid for twice is gone: `listClients` is CALLED
+    // once in this file, by the `staffClients` binding. Asked of the code, with
+    // the prose stripped — the comments naming the fix mention it too.
+    const appCode = app.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(appCode.match(/\blistClients\(/g) ?? []).toHaveLength(1);
+    expect(appCode).not.toContain("allClients");
   });
 });
+
+/**
+ * The picker's own projection — the one that renders on EVERY staff page, once
+ * per client the viewer may open (review wave, 2026-09).
+ *
+ * `toStaffShellView` is the ACTIVE client's view, and the picker was using it:
+ * company profile, brand voice, intel schedule and the whole
+ * `brandingGuidelines` object, multiplied by the client list, in a payload
+ * where a picker row draws a favicon and a name.
+ */
+describe("toStaffPickerView", () => {
+  it("carries only what a picker row paints", () => {
+    const view = toStaffPickerView(
+      makeClient({
+        logoUrl: "https://cdn.test/acme.png",
+        accentColor: "#7c3aed",
+        category: "Martech",
+        teamSize: "11–50",
+        brandingGuidelines: { dominantColors: [{ hex: "#111", dominanceRank: 1 }], updatedAt: 9 },
+        intelScheduleEnabled: true,
+      }),
+    );
+    expect(Object.keys(view).sort()).toEqual(["accentColor", "id", "logoUrl", "name", "website"]);
+  });
+
+  it("resolves the logo fallback HERE, so branding never crosses at all", () => {
+    // The row asked `logoUrl || brandingGuidelines?.logoUrl`, which is the only
+    // reason a whole BrandingGuidelines was being shipped. One field crosses,
+    // already answered — same shape as toClientPortalView's `category`.
+    const generated = toStaffPickerView(
+      makeClient({
+        logoUrl: undefined,
+        brandingGuidelines: { logoUrl: "https://cdn.test/generated.png", updatedAt: 9 },
+      }),
+    );
+    expect(generated.logoUrl).toBe("https://cdn.test/generated.png");
+    expect("brandingGuidelines" in generated).toBe(false);
+    // The uploaded logo still wins, and the row's own BrandFavicon fallback
+    // chain (website favicon, then initials) is untouched by either.
+    const uploaded = toStaffPickerView(
+      makeClient({
+        logoUrl: "https://cdn.test/acme.png",
+        brandingGuidelines: { logoUrl: "https://cdn.test/generated.png", updatedAt: 9 },
+      }),
+    );
+    expect(uploaded.logoUrl).toBe("https://cdn.test/acme.png");
+    // Neither stored: absent, not an empty string — the favicon branches on it.
+    expect("logoUrl" in toStaffPickerView(makeClient())).toBe(false);
+  });
+
+  it("ships no secret, by construction like the other two", () => {
+    const withFuture = { ...makeClient(), someNewSecret: "leak-me" } as unknown as Client;
+    const json = JSON.stringify(toStaffPickerView(withFuture));
+    expect(json).not.toContain("ck_supersecretjointoken");
+    expect(json).not.toContain("leak-me");
+  });
+});
+
+/**
+ * Red at `tsc` if the picker row stops being assignable to the active-client
+ * context. The picker seeds that context with the row it just clicked, and
+ * ClientContextSync replaces it with the full projection on the next render —
+ * so the narrow view has to satisfy the wide one's optional fields, which is
+ * also what stops anyone widening this type by accident.
+ */
+const _pickerSeedsTheContext: (row: StaffPickerClientView) => StaffShellClientView = (row) => row;
+void _pickerSeedsTheContext;
 
 /* ── CD-L P5: the two views of one client's company panel ────────────────── */
 

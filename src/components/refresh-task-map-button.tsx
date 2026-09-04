@@ -55,9 +55,17 @@ export function RefreshTaskMapButton({
   // this is the CLIENT's price, quoted to staff as information.
   const clientPrice = taskMapRefreshPrice(true);
 
+  // ONE TITLE, ON THE BUTTON (review wave, 2026-09). The price suffix carried a
+  // `title` of its own inside the button's, so hovering the number and hovering
+  // the words gave two different tooltips and neither told an unbilled reader
+  // both facts. The button says everything now, in the register of whoever is
+  // reading it, and the suffix says the rest in RENDERED words — which is the
+  // half a touch device can actually see.
   const description = locked
     ? "Locked. A workspace build is already running"
-    : `Rebuild your task map from calendar gaps and past performance${price ? ` · costs ${price} a press` : ""}`;
+    : viewerIsBilled
+      ? `Rebuild your task map from calendar gaps and past performance${price ? ` · costs ${price} a press` : ""}`
+      : `Rebuild this client's task map from calendar gaps and past performance${clientPrice ? ` · ${clientPrice} a press for the client, free for staff` : ""}`;
 
   return (
     <>
@@ -80,10 +88,7 @@ export function RefreshTaskMapButton({
         </span>
         {label}
         {clientPrice && !locked && (
-          <span
-            className="text-xs font-normal text-muted-2"
-            title={viewerIsBilled ? undefined : "What the client is charged · staff runs are free"}
-          >
+          <span className="text-xs font-normal text-muted-2">
             {/* The unbilled reader gets the same figure at the same width, and
                 a RENDERED word saying whose charge it is - a tooltip is the one
                 marker in the parity pass a touch device cannot see. */}

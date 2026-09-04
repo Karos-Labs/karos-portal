@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { createPortal } from "react-dom";
 import { applyTargetedDocCorrectionAction } from "@/lib/actions";
 import { Icon } from "@/components/icon";
+import { Modal } from "@/components/modal";
 import { Button, Textarea } from "@/components/ui";
 
 export function CorrectInfoModal({
@@ -26,7 +26,13 @@ export function CorrectInfoModal({
   correctionPricing?: { cost: number; blockReason?: string };
   open: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  /**
+   * Called with the correction the client actually typed (flow audit 2026-09,
+   * R13). The caller keeps the document open and shows what was asked for; the
+   * action itself returns no diff, so this text is the most specific true thing
+   * there is to put on screen.
+   */
+  onSuccess: (correction: string) => void;
 }) {
   const [corrections, setCorrections] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -44,15 +50,6 @@ export function CorrectInfoModal({
     }
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !pending) onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, pending, onClose]);
-
   // Credits won't cover it - the server would refuse the charge before the model
   // runs, so don't let the client spend a keystroke on the attempt.
   const shortfall = correctionPricing?.blockReason != null;
@@ -68,100 +65,39 @@ export function CorrectInfoModal({
           setError(res.error);
           return;
         }
-        onSuccess();
+        onSuccess(trimmed);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to apply correction. Please try again.");
       }
     });
   }
 
-  if (!open) return null;
+  /**
+   * Escape and a backdrop click are ignored while the correction is in flight
+   * — the charge and the model call have already been committed, so dismissing
+   * the dialog would only hide the outcome. A no-op `onClose` is how that is
+   * expressed to the shared shell, which owns both gestures.
+   */
+  const close = pending ? () => {} : onClose;
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[20000] flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(4px)" }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !pending) onClose();
-      }}
-    >
-      <div className="w-full max-w-lg rounded-xl border border-border bg-surface shadow-2xl">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
-          <div>
-            <p className="font-semibold text-foreground">Correct Information</p>
-            <p className="mt-0.5 text-xs text-muted">
-              Only the <span className="font-medium text-foreground">{docLabel}</span> document will be updated.
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            disabled={pending}
-            className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none"
-            aria-label="Close"
-          >
-            <Icon name="X" className="h-3.5 w-3.5" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="space-y-3 p-5">
-          <label className="block text-sm font-medium text-foreground">
-            What needs to be corrected?
-          </label>
-          <Textarea
-            ref={textareaRef}
-            value={corrections}
-            onChange={(e) => setCorrections(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit();
-            }}
-            placeholder={
-              'e.g. "Our pricing is $49/mo, not $99/mo" or\n"Our head office is in Tel Aviv, not London"'
-            }
-            rows={5}
-            disabled={pending}
-            className="resize-none"
-          />
-          {/* The charge happens before the model call, so a client used to learn
-              the price only by watching the rail drop by 2 - or, if they were
-              short, by a red error after committing. Every other billable action
-              states its cost up front ("Costs N credits." on the run dialog);
-              this surface was the one that stayed silent. */}
-          <p className="text-[11px] text-muted-2">
-            Be specific. Only the facts you name will change. Everything else stays identical.
-            Tip: {"⌘"}Enter to submit.
-            {correctionPricing && (
-              <span className="ml-1 text-muted">Costs {correctionPricing.cost} credits.</span>
-            )}
-          </p>
-
-          {shortfall && (
-            <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5">
-              <Icon name="Lock" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-              <p className="text-sm text-muted">{correctionPricing?.blockReason}</p>
-            </div>
-          )}
-
-          {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2.5">
-              <Icon name="CircleAlert" className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
-              <p className="text-sm text-danger">{error}</p>
-            </div>
-          )}
-
-          {pending && (
-            <div className="flex items-center gap-2 rounded-lg border border-neon/20 bg-neon/5 px-3 py-2.5">
-              <Icon name="Loader" className="h-4 w-4 shrink-0 animate-spin text-neon" />
-              <p className="text-sm text-muted">
-                Applying correction to {docLabel}…
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-4">
+  return (
+    /* THE SHARED DIALOG SHELL (flow audit 2026-09, R13 follow-up).
+       This was a hand-rolled portal: a fixed backdrop and a panel, with no
+       `role="dialog"`, no `aria-modal`, no focus trap and no scroll lock. It
+       got away with it while it was stacked on DocOverlay, which locked the
+       body itself and was the layer keyboard focus was already confined to.
+       Turning the document reader into an ordinary panel took all three of
+       those away, and this dialog is now the only overlay in the flow — so it
+       goes through components/modal.tsx, which provides them, rather than
+       re-implementing them here. */
+    <Modal
+      open={open}
+      onClose={close}
+      title="Correct information"
+      description={`Only the ${docLabel} document will be updated.`}
+      closeOnBackdrop={!pending}
+      footer={
+        <div className="flex items-center justify-end gap-3">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
@@ -174,8 +110,63 @@ export function CorrectInfoModal({
             {pending ? "Applying…" : "Apply Correction"}
           </Button>
         </div>
+      }
+    >
+      <div className="space-y-3">
+        <label className="block text-sm font-medium text-foreground">
+          What needs to be corrected?
+        </label>
+        <Textarea
+          ref={textareaRef}
+          value={corrections}
+          onChange={(e) => setCorrections(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit();
+          }}
+          placeholder={
+            'e.g. "Our pricing is $49/mo, not $99/mo" or\n"Our head office is in Tel Aviv, not London"'
+          }
+          rows={5}
+          disabled={pending}
+          className="resize-none"
+        />
+        {/* The charge happens before the model call, so a client used to learn
+            the price only by watching the rail drop by 2 - or, if they were
+            short, by a red error after committing. Every other billable action
+            states its cost up front ("Costs N credits." on the run dialog);
+            this surface was the one that stayed silent. */}
+        <p className="text-[11px] text-muted-2">
+          Be specific. Only the facts you name will change. Everything else stays identical.
+          Tip: {"⌘"}Enter to submit.
+          {correctionPricing && (
+            <span className="ml-1 text-muted">Costs {correctionPricing.cost} credits.</span>
+          )}
+        </p>
+
+        {shortfall && (
+          <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5">
+            <Icon name="Lock" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <p className="text-sm text-muted">{correctionPricing?.blockReason}</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2.5">
+            <Icon name="CircleAlert" className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+            <p className="text-sm text-danger">{error}</p>
+          </div>
+        )}
+
+        {pending && (
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-lg border border-neon/20 bg-neon/5 px-3 py-2.5"
+          >
+            <Icon name="Loader" className="h-4 w-4 shrink-0 animate-spin text-neon" />
+            <p className="text-sm text-muted">Applying correction to {docLabel}…</p>
+          </div>
+        )}
       </div>
-    </div>,
-    document.body,
+    </Modal>
   );
 }

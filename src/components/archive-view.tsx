@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
 import { AgentIdentity } from "@/components/agent-identity";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
@@ -104,20 +105,24 @@ const GROUP_PAGE_SIZE = 12;
  *
  * ── REINTRODUCED 2026-09, ON EXACTLY THOSE TERMS ─────────────────────────
  *
- * `initialStatus` below is the reader; the producer is the "Content by status"
+ * The `status` value below is the reader (seeded from `?status=` by the page,
+ * held by the calendar); the producer is the "Content by status"
  * chart (client-analytics.tsx's `statusHref`), which is on the same reader's
  * Reporting tab two clicks from here and whose entire purpose is to open this
  * list narrowed to the bar they pressed. Both ends are pinned by
  * content-status-deeplink.test.ts, which fails if either the link stops
  * carrying the param or this prop stops seeding the filter.
  *
- * It is a SEED, not the re-reading controlled value the deleted version had.
- * That version's manual same-route re-read is the part that had no test and is
- * not coming back: the page passes an initial value, the dropdown owns the
- * filter from the first interaction on, and a client changing the select does
- * not have it snap back to the URL.
+ * CONTROLLED SINCE THE REVIEW WAVE (2026-09), which is not the re-reading
+ * reader that was deleted. The values are held by the host (run-calendar.tsx),
+ * mirrored into the URL by it, and handed back down; this component renders
+ * them and reports every change. The deleted version's fault was that it
+ * re-read the route BEHIND the reader's back; the fault the seed-only version
+ * had is the mirror image — leaving the archive and returning, or stepping
+ * Back, remounted this list on the FIRST load's props while the URL went on
+ * claiming filters that were no longer in force. A single owner has neither.
  *
- * The prop also cannot offer a state this list rejects — the page derives it
+ * The value also cannot be a state this list rejects — the host narrows it
  * through `offeredStatesFor("archive", …)`, the same function that builds the
  * dropdown, so a deep link to "draft" degrades to the unfiltered list for a
  * client rather than to an empty one.
@@ -130,7 +135,11 @@ export function ArchiveView({
   assets,
   agentLabelByAssetId,
   viewerIsClient,
-  initialStatus = "all",
+  status,
+  agent,
+  search,
+  onFiltersChange,
+  agentsHref,
 }: {
   assets: Asset[];
   /**
@@ -153,17 +162,45 @@ export function ArchiveView({
    */
   viewerIsClient: boolean;
   /**
-   * The status this list opens on, seeded from `?status=` by the page. See the
-   * REINTRODUCED note above for why this reader exists again and on what terms.
+   * The three filters, as VALUES (review wave, 2026-09). `status` is narrowed by
+   * the host through `offeredStatesFor("archive", …)`; `agent` is a label this
+   * archive actually holds, or "all"; `search` is free text. All three are
+   * required — a defaulted filter is how a remount silently showed a different
+   * list from the one the URL described.
    */
-  initialStatus?: Asset["status"] | "all";
+  status: Asset["status"] | "all";
+  agent: string;
+  search: string;
+  /**
+   * Reports every change, immediately: the host owns the values, so nothing
+   * moves on this screen until it hands them back. It is also the host that
+   * puts them in the URL (flow audit 2026-09, R5 — the calendar does, with a
+   * debounced `replaceState`), which is why nothing is debounced here.
+   */
+  onFiltersChange: (filters: {
+    status: Asset["status"] | "all";
+    agent: string;
+    search: string;
+  }) => void;
+  /**
+   * Where "See your agents" goes from the never-had-anything empty state
+   * (flow audit 2026-09, R9). Omitted on a mount with no single client in
+   * scope — the staff cross-client overview — and the empty state then simply
+   * carries no action rather than a link to a page that does not exist.
+   */
+  agentsHref?: string;
 }) {
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
-  const [status, setStatus] = useState<Asset["status"] | "all">(initialStatus);
-  const [agent, setAgent] = useState<string>("all");
-  const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  // One place where "a filter moved" becomes "tell the host", so a fourth
+  // filter cannot be added and silently left out of the URL.
+  const setFilters = useCallback(
+    (next: Partial<{ status: Asset["status"] | "all"; agent: string; search: string }>) =>
+      onFiltersChange({ status, agent, search, ...next }),
+    [onFiltersChange, status, agent, search],
+  );
 
   // The resolver already answered for every asset in the payload and never
   // returns an empty label; the local fallbacks stay only so a hand-assembled
@@ -225,6 +262,25 @@ export function ArchiveView({
             ? "Work your Karos team has approved shows up here, and stays for 30 days after you mark it posted."
             : "Everything the agents produce lands here, organized per agent."
         }
+        // R9: an empty region should offer the control that starts the task
+        // which would populate it. Nothing has ever landed in this archive, so
+        // that control is not in the archive — it is the agents that make the
+        // work. (The panel's own "Back to calendar" sits directly above this,
+        // which is why the action here is the other direction rather than a
+        // second way back to the page the reader is already on.)
+        {...(agentsHref
+          ? {
+              action: (
+                <Link
+                  href={agentsHref}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border px-3.5 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+                >
+                  <Icon name="Bot" className="h-3.5 w-3.5" />
+                  See your agents
+                </Link>
+              ),
+            }
+          : {})}
       />
     );
   }
@@ -239,7 +295,7 @@ export function ArchiveView({
         <select
           aria-label="Filter deliverables by status"
           value={status}
-          onChange={(e) => setStatus(e.target.value as Asset["status"] | "all")}
+          onChange={(e) => setFilters({ status: e.target.value as Asset["status"] | "all" })}
           className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
         >
           <option value="all">All statuses</option>
@@ -253,7 +309,7 @@ export function ArchiveView({
           <select
             aria-label="Filter deliverables by agent"
             value={agent}
-            onChange={(e) => setAgent(e.target.value)}
+            onChange={(e) => setFilters({ agent: e.target.value })}
             className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
           >
             <option value="all">All agents</option>
@@ -266,7 +322,7 @@ export function ArchiveView({
         )}
         <input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => setFilters({ search: e.target.value })}
           placeholder="Search by title"
           aria-label="Search deliverables by title"
           className="h-8 min-w-[160px] flex-1 rounded-md border border-border bg-surface px-2 text-xs text-foreground placeholder:text-muted-2 focus:outline-none focus:ring-2 focus:ring-neon/40"
@@ -279,6 +335,20 @@ export function ArchiveView({
           icon={<Icon name="SearchX" className="h-7 w-7" />}
           title="No matching deliverables"
           description="Try clearing a filter to see more."
+          // R9 again, and here the direct control is unambiguous: this list is
+          // empty because of the three filters above it, so the action is the
+          // one that undoes them. "Try clearing a filter" told the reader what
+          // to do and made them do it themselves, three controls at a time.
+          action={
+            <button
+              type="button"
+              onClick={() => onFiltersChange({ status: "all", agent: "all", search: "" })}
+              className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border px-3.5 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+            >
+              <Icon name="X" className="h-3.5 w-3.5" />
+              Clear filters
+            </button>
+          }
         />
       ) : (
         groups.map((group) => {
@@ -341,7 +411,27 @@ export function ArchiveView({
                       />
                     ))}
                   </div>
-                  {hidden > 0 && (
+                  {/* "Show all" was ONE-WAY (flow audit 2026-09, R17): a group
+                      of 200 expanded on one press and there was no way back to
+                      the twelve, on the one screen whose whole job is to be
+                      scanned. The reverse is the same control, so it sits in
+                      the same place and reads as the same affordance. */}
+                  {showAll && group.assets.length > GROUP_PAGE_SIZE ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpanded((prev) => {
+                          const next = new Set(prev);
+                          next.delete(group.name);
+                          return next;
+                        })
+                      }
+                      className="mt-2 inline-flex items-center gap-1 rounded-md text-xs text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+                    >
+                      Show fewer
+                      <Icon name="ChevronUp" className="h-3.5 w-3.5" />
+                    </button>
+                  ) : hidden > 0 ? (
                     <button
                       type="button"
                       onClick={() => setExpanded((prev) => new Set(prev).add(group.name))}
@@ -350,7 +440,7 @@ export function ArchiveView({
                       Show all {group.assets.length} · {hidden} more
                       <Icon name="ChevronDown" className="h-3.5 w-3.5" />
                     </button>
-                  )}
+                  ) : null}
                 </>
               )}
             </section>

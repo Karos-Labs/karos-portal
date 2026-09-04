@@ -25,8 +25,14 @@ import { SavedFormCard } from "@/components/saved-form-card";
 import { JobStatusBadge } from "@/components/job-status";
 import { formatDate, relativeTime } from "@/lib/utils";
 import type { JobStatus } from "@/lib/types";
+import { IntakeNoRuns } from "@/components/intake-no-runs";
 import { clientArchiveLink, intakeAnchorId } from "@/lib/agent-intake-links";
 import { intakeSave } from "@/lib/intake-save";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { useSetupFireWindow } from "@/components/setup-fire-window";
+import { CreditPriceNote } from "@/components/credit-price-note";
+import { IntakeRunError } from "@/components/intake-run-error";
+import { creditsLabel } from "@/lib/credits";
 import {
   runReputationSetupAction,
   saveReputationCompanyIntakeAction,
@@ -68,15 +74,29 @@ function SetupBand({
   clientId,
   isSetUp,
   detailsOnFile,
+  runInFlight,
+  setupCost,
+  viewerIsBilled,
 }: {
   clientId: string;
   isSetUp: boolean;
   detailsOnFile: boolean;
+  /**
+   * Is a run of this family queued or working right now (server-answered, off
+   * the unfiltered job scan)? While setup has not happened it can only be the
+   * setup run — the submit core refuses a pulse without it — so inside this
+   * branch it reads as "setup is running".
+   */
+  runInFlight: boolean;
+  setupCost: number;
+  viewerIsBilled: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [fired, setFired] = useState(false);
+  // Not a plain boolean: a press that a FAILED run followed used to pin this
+  // band for the rest of the session. See setup-fire-window.ts.
+  const { fired, markFired } = useSetupFireWindow(runInFlight);
 
   function run() {
     setError(null);
@@ -86,10 +106,16 @@ function SetupBand({
         setError(result.error);
         return;
       }
-      setFired(true);
+      markFired();
       router.refresh();
     });
   }
+
+  // FLOW AUDIT 2026-09, R1. `fired` alone was the whole of this state, so the
+  // sentence below promised a refresh no interval ever performed AND vanished
+  // on a reload — putting the "Set it up" button back on screen while the run
+  // it fires was already in flight, one press away from a second charge.
+  const running = runInFlight || fired;
 
   if (isSetUp) {
     return (
@@ -118,10 +144,15 @@ function SetupBand({
         material you already gave us and from the reviews you already have. Nothing is posted
         anywhere. After this, every check reads what is new and drafts replies for you to send.
       </p>
-      {fired ? (
-        <p className="mt-3 text-sm text-muted">
-          Setup is running. This page updates itself when it finishes.
-        </p>
+      {running ? (
+        <>
+          {/* The component that keeps the sentence. Mounted only while a run is
+              in flight; the server rendering "set up" above unmounts it. */}
+          <AutoRefresh />
+          <p className="mt-3 text-sm text-muted">
+            Setup is running. This page updates itself when it finishes.
+          </p>
+        </>
       ) : (
         <>
           {!detailsOnFile ? (
@@ -129,7 +160,9 @@ function SetupBand({
               Save your details below first, so setup knows your rules.
             </p>
           ) : null}
-          {fieldError(error)}
+          <IntakeRunError error={error} />
+          {/* R3: this press charges a full agent run and used to quote nothing. */}
+          <CreditPriceNote price={creditsLabel(setupCost)} viewerIsBilled={viewerIsBilled} />
           <Button onClick={run} disabled={pending || !detailsOnFile} className="mt-3">
             {pending ? "Starting…" : "Set it up"}
           </Button>
@@ -194,7 +227,10 @@ function DetailsForm({
     <SavedFormCard
       title="Your review details"
       badge={
-        intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>
+        /* R7: "Not set up" is the setup band's phrase for "the stand-up run has
+           not happened". This badge answers a different question — is the form
+           saved — and one page must not spell two states the same way. */
+        intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not saved yet</Badge>
       }
       // The routing contact leads the summary rather than the sites, because it
       // is the one line whose absence costs something the same day.
@@ -363,7 +399,9 @@ function HistoryBox({
             );
           })}
         </ul>
-      ) : null}
+      ) : (
+        <IntakeNoRuns clientId={clientId} noun="replies" />
+      )}
     </Card>
   );
 }
@@ -375,6 +413,9 @@ export function ReputationAgentIntake({
   company,
   isSetUp,
   runs,
+  runInFlight = false,
+  setupCost,
+  viewerIsBilled = true,
   isStaff,
 }: {
   clientId: string;
@@ -387,12 +428,30 @@ export function ReputationAgentIntake({
    */
   isSetUp?: boolean;
   runs: ReputationRunRowView[];
+  /**
+   * Is a run of this family queued or working? Answered on the server from the
+   * unfiltered job scan (`anyRunInFlight`), never from `runs` — those rows are
+   * the collapsed DISPLAY list. Absent ⇒ false, so an older caller polls
+   * nothing rather than polling forever.
+   */
+  runInFlight?: boolean;
+  /** What one setup press costs a billable client, resolved off the agent doc. */
+  setupCost: number;
+  /** `isBillableClientActor()` — decides whose money the quote names, not the figure. */
+  viewerIsBilled?: boolean;
   /** Whose vocabulary the run rows are written in — see HistoryBox. */
   isStaff: boolean;
 }) {
   return (
     <div className="space-y-6">
-      <SetupBand clientId={clientId} isSetUp={isSetUp ?? true} detailsOnFile={company !== null} />
+      <SetupBand
+        clientId={clientId}
+        isSetUp={isSetUp ?? true}
+        detailsOnFile={company !== null}
+        runInFlight={runInFlight}
+        setupCost={setupCost}
+        viewerIsBilled={viewerIsBilled}
+      />
       {/* The anchor the agent page's inputs band links its one row to (#85).
           Reputation has no seats and no news drop, so "company" is the whole
           set, derived from the same row id the band mints rather than spelled

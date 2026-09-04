@@ -20,12 +20,18 @@ import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
 import { SavedFormCard } from "@/components/saved-form-card";
 import { ClientSeatRemove } from "@/components/client-seat-remove";
+import { IntakeNoRuns } from "@/components/intake-no-runs";
 import {
   clientArchiveLink,
   intakeAnchorId,
   intakeSeatAnchorId,
 } from "@/lib/agent-intake-links";
 import { INTAKE_UPLOAD_FAILED, intakeSave } from "@/lib/intake-save";
+import { AutoRefresh } from "@/components/auto-refresh";
+import { useSetupFireWindow } from "@/components/setup-fire-window";
+import { CreditPriceNote } from "@/components/credit-price-note";
+import { IntakeRunError } from "@/components/intake-run-error";
+import { creditsLabel } from "@/lib/credits";
 import {
   addLiDirectionRequestAction,
   addLiDraftFeedbackAction,
@@ -260,10 +266,18 @@ function IdentityPicker({
   clientId,
   seats,
   runInFlight,
+  setupRunInFlight,
+  setupCost,
+  viewerIsBilled,
 }: {
   clientId: string;
   seats: LiSeatView[];
   runInFlight: boolean;
+  /** Narrower, for the seat's voice build alone — see SeatSetup. */
+  setupRunInFlight: boolean;
+  /** Both controls under here fire a billable run — see AddSeatForm/SeatSetup. */
+  setupCost: number;
+  viewerIsBilled: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>(seats[0]?.id ?? null);
   const [adding, setAdding] = useState(false);
@@ -325,10 +339,17 @@ function IdentityPicker({
 
       <div className="mt-4">
         {adding || seats.length === 0 ? (
-          <AddSeatForm clientId={clientId} />
+          <AddSeatForm clientId={clientId} setupCost={setupCost} viewerIsBilled={viewerIsBilled} />
         ) : seat ? (
           <div id={intakeSeatAnchorId(seat.id)} className="scroll-mt-24">
-            <SeatCard clientId={clientId} seat={seat} runInFlight={runInFlight} />
+            <SeatCard
+              clientId={clientId}
+              seat={seat}
+              runInFlight={runInFlight}
+              setupRunInFlight={setupRunInFlight}
+              setupCost={setupCost}
+              viewerIsBilled={viewerIsBilled}
+            />
           </div>
         ) : null}
       </div>
@@ -374,15 +395,29 @@ function SetupBand({
   clientId,
   isSetUp,
   companyOnFile,
+  runInFlight,
+  setupCost,
+  viewerIsBilled,
 }: {
   clientId: string;
   isSetUp: boolean;
   companyOnFile: boolean;
+  /**
+   * Is a run of this family queued or working right now (server-answered, off
+   * the unfiltered job scan)? While the stand-up has not happened it can only
+   * be that run — the submit core refuses a writer run without it — so inside
+   * this branch it reads as "setup is running".
+   */
+  runInFlight: boolean;
+  setupCost: number;
+  viewerIsBilled: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [fired, setFired] = useState(false);
+  // Not a plain boolean: a press that a FAILED run followed used to pin this
+  // band for the rest of the session. See setup-fire-window.ts.
+  const { fired, markFired } = useSetupFireWindow(runInFlight);
 
   function run() {
     setError(null);
@@ -394,10 +429,16 @@ function SetupBand({
         setError(result.error);
         return;
       }
-      setFired(true);
+      markFired();
       router.refresh();
     });
   }
+
+  // FLOW AUDIT 2026-09, R1. `fired` alone was the whole of this state, so the
+  // sentence below promised a refresh no interval ever performed AND vanished
+  // on a reload — putting the "Set it up" button back on screen while the run
+  // it fires was already in flight, one press away from a second charge.
+  const running = runInFlight || fired;
 
   if (isSetUp) {
     return (
@@ -426,10 +467,15 @@ function SetupBand({
         worked out from the material you already gave us, and nothing posts. After this, the agent is
         active and every run drafts a post.
       </p>
-      {fired ? (
-        <p className="mt-3 text-sm text-muted">
-          Setup is running. This page updates itself when it finishes.
-        </p>
+      {running ? (
+        <>
+          {/* The component that keeps the sentence. Mounted only while a run is
+              in flight; the server rendering "set up" above unmounts it. */}
+          <AutoRefresh />
+          <p className="mt-3 text-sm text-muted">
+            Setup is running. This page updates itself when it finishes.
+          </p>
+        </>
       ) : (
         <>
           {!companyOnFile ? (
@@ -437,7 +483,9 @@ function SetupBand({
               Save the company page below first, so setup knows what is off the table.
             </p>
           ) : null}
-          {fieldError(error)}
+          <IntakeRunError error={error} />
+          {/* R3: this press charges a full agent run and used to quote nothing. */}
+          <CreditPriceNote price={creditsLabel(setupCost)} viewerIsBilled={viewerIsBilled} />
           <Button onClick={run} disabled={pending || !companyOnFile} className="mt-3">
             {pending ? "Starting…" : "Set it up"}
           </Button>
@@ -456,11 +504,39 @@ function SetupBand({
  * refuses to write on a personal profile in a borrowed voice, so an option that
  * pointed at them would only ever refuse.
  */
-function SeatSetup({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
+function SeatSetup({
+  clientId,
+  seat,
+  setupCost,
+  viewerIsBilled,
+  setupRunInFlight,
+}: {
+  clientId: string;
+  seat: LiSeatView;
+  /** Same agent doc as the company stand-up, fired with this seat's identity. */
+  setupCost: number;
+  viewerIsBilled: boolean;
+  /**
+   * Is a SETUP run queued or working? Used only to decide how long this
+   * reader's own press keeps counting — never on its own. By the time a seat can
+   * be added the family is set up, so reading a run in flight as "we are
+   * building this person's voice" would be a sentence about someone else's work.
+   *
+   * SCOPED TO SETUP RUNS, not the family (review wave, 2026-09). This was handed
+   * the family-wide answer, so an ordinary scheduled LinkedIn post held every
+   * seat card's press open for as long as that post ran — work this card is not
+   * about. The server narrows it to `runType: "launch"`, which is what these
+   * presses submit; see `setupRunInFlight` in lib/agent-intake-views.ts,
+   * including the one thing it still cannot narrow (which seat).
+   */
+  setupRunInFlight: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [fired, setFired] = useState(false);
+  // A press that a FAILED voice run followed used to leave this card claiming a
+  // build forever, with no way to retry it. See setup-fire-window.ts.
+  const { fired, markFired } = useSetupFireWindow(setupRunInFlight);
 
   function run() {
     setError(null);
@@ -470,7 +546,7 @@ function SeatSetup({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
         setError(result.error);
         return;
       }
-      setFired(true);
+      markFired();
       router.refresh();
     });
   }
@@ -490,9 +566,14 @@ function SeatSetup({ clientId, seat }: { clientId: string; seat: LiSeatView }) {
           ? `Building ${seat.name.split(" ")[0]}'s voice. This page updates itself when it finishes.`
           : `${seat.name.split(" ")[0]} cannot be posted for yet. One run reads how they actually write and builds their voice. We never write on someone's profile in a borrowed voice.`}
       </p>
-      {fired ? null : (
+      {fired ? (
+        /* R1: the sentence above says this page updates itself, so it does. */
+        <AutoRefresh />
+      ) : (
         <>
-          {fieldError(error)}
+          <IntakeRunError error={error} />
+          {/* R3: this press charges a full agent run and used to quote nothing. */}
+          <CreditPriceNote price={creditsLabel(setupCost)} viewerIsBilled={viewerIsBilled} />
           <Button onClick={run} disabled={pending || !seat.intake} variant="subtle" className="mt-2">
             {pending ? "Starting…" : "Build their voice"}
           </Button>
@@ -530,6 +611,8 @@ function CompanyForm({
   intake,
   pageUrlSuggestion,
   isSetUp,
+  setupCost,
+  viewerIsBilled,
 }: {
   clientId: string;
   intake: LiIntakeView | null;
@@ -544,6 +627,9 @@ function CompanyForm({
    * default the rest of this file uses for props built before setup existed.
    */
   isSetUp?: boolean;
+  /** What the setup run this save fires costs a billable client. */
+  setupCost: number;
+  viewerIsBilled: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -583,11 +669,16 @@ function CompanyForm({
 
   // The field starts from the profile suggestion, which is not a URL on file.
   const urlOnFile = intake && !intake.handle ? "" : pageUrl;
+  // Does pressing Save start a billable run? Exactly the condition `save` uses.
+  const firesSetup = isSetUp === false;
 
   return (
     <SavedFormCard
       title="Company page"
-      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>}
+      /* R7: "Not set up" is the setup band's phrase for "the stand-up run has
+         not happened". This badge answers a different question — is the form
+         saved — and one page must not spell two states the same way. */
+      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not saved yet</Badge>}
       summary={[
         { label: "Company page URL", value: urlOnFile },
         { label: "How the page should sound", value: comeAcross },
@@ -635,9 +726,19 @@ function CompanyForm({
           />
         </div>
         {fieldError(error)}
+        {/* R3, "stop charging silently". The first save fires the billable
+            stand-up run (see `save` above), and the button said only "Save
+            company page" with no price anywhere near it — a client pressing
+            Save had no way to know they had just bought a run. The behaviour is
+            unchanged; the label now names what the press does and the line
+            under it quotes what that costs. Once setup has happened no run
+            fires, so neither the label nor the price appears. */}
+        {firesSetup ? (
+          <CreditPriceNote price={creditsLabel(setupCost)} viewerIsBilled={viewerIsBilled} />
+        ) : null}
         <div className="flex items-center gap-3">
           <Button onClick={save} disabled={pending}>
-            {pending ? "Saving…" : "Save company page"}
+            {pending ? "Saving…" : firesSetup ? "Save and set it up" : "Save company page"}
           </Button>
           {intake ? (
             <Button variant="ghost" onClick={cancel} disabled={pending}>
@@ -775,11 +876,19 @@ function SeatCard({
   clientId,
   seat,
   runInFlight,
+  setupRunInFlight,
+  setupCost,
+  viewerIsBilled,
 }: {
   clientId: string;
   seat: LiSeatView;
   /** Passed through to the remove confirm — see ClientSeatRemove. */
   runInFlight: boolean;
+  /** Narrower, for SeatSetup alone — see its own prop. */
+  setupRunInFlight: boolean;
+  /** Threaded to SeatSetup's "Build their voice", which charges a run. */
+  setupCost: number;
+  viewerIsBilled: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -880,7 +989,13 @@ function SeatCard({
           {/* Also in the footer, and for the same reason: whether this person can
               be posted for is the first thing anyone opening their card wants to
               know, and it must not sit behind "Edit". */}
-          <SeatSetup clientId={clientId} seat={seat} />
+          <SeatSetup
+            clientId={clientId}
+            seat={seat}
+            setupCost={setupCost}
+            viewerIsBilled={viewerIsBilled}
+            setupRunInFlight={setupRunInFlight}
+          />
           {/* In the footer so it renders in BOTH states: a seat added by
               mistake is one nobody has opened, and hiding the way back behind
               "Edit" is how it became permanent. */}
@@ -971,7 +1086,16 @@ function SeatCard({
   );
 }
 
-function AddSeatForm({ clientId }: { clientId: string }) {
+function AddSeatForm({
+  clientId,
+  setupCost,
+  viewerIsBilled,
+}: {
+  clientId: string;
+  /** The voice run adding a seat fires — see `add` below. */
+  setupCost: number;
+  viewerIsBilled: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [open, setOpen] = useState(false);
@@ -1098,9 +1222,13 @@ function AddSeatForm({ clientId }: { clientId: string }) {
           onText={setFallbackText}
         />
         {fieldError(error)}
+        {/* R3, "stop charging silently": adding a person fires their billable
+            voice run (see `add` above) and the button named neither the run nor
+            its price. Behaviour unchanged; the label and the line now say so. */}
+        <CreditPriceNote price={creditsLabel(setupCost)} viewerIsBilled={viewerIsBilled} />
         <div className="flex gap-3">
           <Button onClick={add} disabled={pending}>
-            {pending ? "Adding…" : "Add seat"}
+            {pending ? "Adding…" : "Add seat and build their voice"}
           </Button>
           <Button variant="ghost" onClick={() => setOpen(false)}>
             Cancel
@@ -1202,7 +1330,9 @@ function FeedbackBox({
             );
           })}
         </ul>
-      ) : null}
+      ) : (
+        <IntakeNoRuns clientId={clientId} noun="posts" />
+      )}
       <div className="mt-4 space-y-3">
         <div className="max-w-xs">
           <Label htmlFor="lf-account">This is about</Label>
@@ -1257,6 +1387,9 @@ export function LinkedInAgentIntake({
   feedback,
   runs,
   runInFlight,
+  setupRunInFlight = false,
+  setupCost,
+  viewerIsBilled = true,
   pageUrlSuggestion,
   isStaff,
 }: {
@@ -1286,6 +1419,23 @@ export function LinkedInAgentIntake({
    * unfiltered scan (see `anyRunInFlight` in lib/agent-intake-views.ts).
    */
   runInFlight: boolean;
+  /**
+   * The same question narrowed to SETUP runs, for the seat cards' voice build
+   * (review wave, 2026-09). The family-wide answer above is right for the
+   * company stand-up — nothing else can be running before it — and wrong for a
+   * seat, whose family is already live and whose posts run all week. Absent ⇒
+   * false: no press should be held open by a run the caller could not name.
+   */
+  setupRunInFlight?: boolean;
+  /**
+   * What one setup run costs a billable client, resolved on the server off the
+   * setup agent's own document. One figure for three controls — the company
+   * stand-up, "Save and set it up" and a seat's "Build their voice" are the
+   * same agent fired with a different identity.
+   */
+  setupCost: number;
+  /** `isBillableClientActor()` — decides whose money the quote names, not the figure. */
+  viewerIsBilled?: boolean;
   pageUrlSuggestion?: string;
   /** Whose vocabulary the run rows are written in - see FeedbackBox. */
   isStaff: boolean;
@@ -1296,6 +1446,9 @@ export function LinkedInAgentIntake({
         clientId={clientId}
         isSetUp={isSetUp ?? true}
         companyOnFile={company !== null}
+        runInFlight={runInFlight}
+        setupCost={setupCost}
+        viewerIsBilled={viewerIsBilled}
       />
       {/* ONE agent, split into steps, shown once. While the stand-up run has not
           happened the setup above IS the agent, so everything a person could
@@ -1309,6 +1462,8 @@ export function LinkedInAgentIntake({
           intake={company}
           {...(pageUrlSuggestion ? { pageUrlSuggestion } : {})}
           isSetUp={isSetUp ?? true}
+          setupCost={setupCost}
+          viewerIsBilled={viewerIsBilled}
         />
       </div>
       {isSetUp === false ? (
@@ -1317,7 +1472,14 @@ export function LinkedInAgentIntake({
           profile we should post from.
         </p>
       ) : (
-        <IdentityPicker clientId={clientId} seats={seats} runInFlight={runInFlight} />
+        <IdentityPicker
+          clientId={clientId}
+          seats={seats}
+          runInFlight={runInFlight}
+          setupRunInFlight={setupRunInFlight}
+          setupCost={setupCost}
+          viewerIsBilled={viewerIsBilled}
+        />
       )}
       <div id={intakeAnchorId("direction")} className="scroll-mt-24">
         <DirectionRequestsBox

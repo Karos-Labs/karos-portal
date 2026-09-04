@@ -49,6 +49,23 @@ interface SdkUsage {
 type UsageInput = Omit<UsageLog, "id" | "timestamp" | "estimatedCostUsd" | "provider" | "vendor"> & {
   provider?: ProviderId;
   vendor?: PricingVendor;
+  /**
+   * A cost the SOURCE already priced, in USD — set only by callers whose
+   * upstream reports dollars rather than tokens.
+   *
+   * The one caller today is agent-engine's reconcile (credits rework, 2026-09):
+   * the engine bills its own run and reports `totalCostUsd`, but does not report
+   * the `(vendor, modelId)` pairs behind it, so `computeCostUsd` has nothing to
+   * price and would refuse the row (`pricingUnresolved`, cost 0) — recording a
+   * whole product family's real spend as free, which is precisely the failure
+   * AU70's refuse-to-guess rule exists to prevent, arriving from the other
+   * direction.
+   *
+   * NOT A WAY TO OVERRIDE OUR PRICING. A caller that has tokens must pass
+   * tokens and let this module price them; that is what keeps one pricing table
+   * authoritative. This slot is for a cost we did not compute and cannot.
+   */
+  costUsd?: number;
 };
 
 /** Metadata for logging an AI SDK streaming/generate result (usage read for you). */
@@ -158,6 +175,27 @@ class Logger {
     // the stored data, not just to whoever happens to be watching the log.
     let estimatedCostUsd = 0;
     let pricingUnresolved = false;
+    // A cost the source already priced short-circuits the lookup entirely —
+    // there is nothing here to compute and nothing to resolve. See UsageInput.
+    // `> 0`, not merely finite. A source that reports 0 has told us nothing —
+    // an engine run that failed before billing, or one whose total had not
+    // landed yet — and short-circuiting on it would write a priced-looking row
+    // at zero, which is exactly the "free run" indistinguishable from a real
+    // one that `pricingUnresolved` exists to prevent. Falling through instead
+    // prices it from tokens, or marks it unresolved, both of which are honest.
+    if (typeof data.costUsd === "number" && Number.isFinite(data.costUsd) && data.costUsd > 0) {
+      const { costUsd: _priced, ...rest } = data;
+      void _priced;
+      void this._writeUsage({
+        ...rest,
+        provider,
+        vendor,
+        webSearchCount,
+        estimatedCostUsd: data.costUsd,
+        timestamp: Date.now(),
+      });
+      return;
+    }
     try {
       estimatedCostUsd = computeCostUsd(
         vendor,

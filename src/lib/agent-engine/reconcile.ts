@@ -2,9 +2,44 @@ import "server-only";
 import { after } from "next/server";
 import { updateJob } from "@/lib/data";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { settleJobCharge } from "@/lib/credit-settle";
+import { logger } from "@/services/logger";
 import { materializeAgentEngineDeliverable } from "./materialize";
-import { readAgentEngineRun, type AgentEngineRunRecord, type AgentEngineRunView } from "./read-run";
+import {
+  readAgentEngineRun,
+  totalStepCostUsd,
+  type AgentEngineRunRecord,
+  type AgentEngineRunView,
+} from "./read-run";
 import type { Job } from "@/lib/types";
+
+/**
+ * What this run cost Karos, in USD, or undefined when the engine reported
+ * nothing at all.
+ *
+ * THE ONE TELEMETRY GAP THE CREDITS REWORK HAD TO CLOSE (2026-09). agent-engine
+ * has always known this figure and the portal has always RENDERED it live
+ * (`AgentEngineRunPanel`), but `syncAgentEngineJobStatusFromView` wrote only
+ * status/error/assetIds, so nothing was ever persisted onto the job — and a
+ * settlement can only reconcile against a cost it can read back. Every other
+ * execution path already stored one (`job.external.totalCostUsd` from the
+ * agent-service webhook; `usageLogs.estimatedCostUsd` for in-app calls), so this
+ * was the last product family that could not be settled at all.
+ *
+ * Run-level first, step-sum second: the run record's own total is authoritative
+ * once the run is terminal, and the step sum is what a run that finished before
+ * the total was written still has. Zero is treated as "nothing reported" rather
+ * than "free" — the same rule `summarizeAgentEconomics` and the settlement path
+ * both apply, because a $0 run is a measurement failure, not a gift.
+ */
+function engineRunCostUsd(view: AgentEngineRunView): number | undefined {
+  const runTotal = view.run.totalCostUsd;
+  if (typeof runTotal === "number" && Number.isFinite(runTotal) && runTotal > 0) return runTotal;
+  // `?? []` because a run view can legitimately carry no step records yet (a
+  // run that finished before step checkpointing, or one still writing them).
+  const stepTotal = totalStepCostUsd(view.steps ?? []);
+  return stepTotal > 0 ? stepTotal : undefined;
+}
 
 /**
  * The fields a terminal transition writes — spelled out so `held`'s
@@ -204,13 +239,59 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   }
   const assetsChanged = assetIds !== job.assetIds;
 
-  if (!statusChanged && !assetsChanged) return job; // already synced, nothing left to attach
+  // What the run cost us, persisted onto the job the same way the agent-service
+  // webhook persists its own `usage.totalCostUsd` — see engineRunCostUsd above.
+  // Compared against what is already stored so a re-entered sync (this function
+  // runs on every page view of a terminal job) does not rewrite an unchanged
+  // figure, and so a run that reports nothing never clears one we already have.
+  const costUsd = engineRunCostUsd(view);
+  const costChanged = costUsd !== undefined && costUsd !== job.external?.totalCostUsd;
+
+  if (!statusChanged && !assetsChanged && !costChanged) return job; // already synced
 
   await updateJob(job.id, {
     ...(statusChanged ? update : {}),
     ...(assetsChanged ? { assetIds } : {}),
+    ...(costChanged ? { external: { ...job.external, totalCostUsd: costUsd } } : {}),
     updatedAt: Date.now(),
   });
+
+  // Mirror the webhook's own usage logging. Without it, agent-engine spend
+  // reaches neither `usageLogs` nor the leaderboard, and every cross-check of
+  // the settlement ledger against our real cost (scripts/dump-agent-cost-report)
+  // would read this whole product family as free. One run-level row, not one per
+  // step: the engine's per-step model ids are not reported through this view, so
+  // a per-step row would have to invent a model name.
+  //
+  // GATED ON THE TERMINAL TRANSITION, not on the cost moving. An agent-engine
+  // run is genuinely re-enterable — held, resumed, completed — so `costChanged`
+  // fires two or three times for one run as the total climbs, and a usage row
+  // per firing would bill the leaderboard for the same run twice and inflate
+  // every cost dashboard that sums this collection. `statusChanged` is true
+  // exactly once per transition into a terminal state, which is once per
+  // OUTCOME; a resumed run that reaches `review` after a hold logs on that
+  // transition, with the full cost, which is the row we actually want.
+  if (costChanged && statusChanged) {
+    logger.logUsage({
+      clientId: job.clientId,
+      agentId: "agent-engine",
+      agentName: job.agentName,
+      // The pair `priceFor()` would key on is not available here — the cost
+      // arrives already priced by the engine — so the row carries the engine's
+      // own figure and names the product as the model. `logUsage` does not
+      // re-price a row that already has a cost.
+      modelName: view.run.productId,
+      provider: "anthropic",
+      operation: "agent_engine_run",
+      inputTokens: 0,
+      outputTokens: 0,
+      // Already priced by the engine — see UsageInput.costUsd. Passing tokens
+      // here would be inventing them.
+      costUsd,
+      jobId: job.id,
+      status: update.status === "failed" ? "failed" : "success",
+    });
+  }
 
   // A failed engine run refunds, exactly like a failed agent-service one.
   //
@@ -240,6 +321,34 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   // double-credited, but it would mean a Firestore transaction on every view.
   if (statusChanged && update.status === "failed") {
     await refundJobCharge(job.id, `Auto-refund · agent-engine run ${view.run.status} · ${job.agentName}`.slice(0, 120));
+  }
+
+  // A DELIVERED run settles its hold to what it actually cost us (credits
+  // rework, 2026-09). Only `"review"` — the outcome where the client received
+  // something:
+  //   - `failed` refunded on the branch above, and a charge is either refunded
+  //     or settled, never both (settleJobCharge re-checks that inside its own
+  //     transaction, so the ordering here is belt to that brace, not the brace);
+  //   - `held` deliberately neither refunds nor settles: agent-engine can resume
+  //     it, and a run that later delivers must settle against its FULL cost, not
+  //     against the partial one it had while held.
+  // Not gated on `statusChanged`, unlike the refund: a job whose status was
+  // already synced by an earlier deploy still has an unsettled hold, and
+  // `settle_<chargeEntryId>` makes the retry free. It is gated on `costChanged`
+  // for the same reason the refund is gated on `statusChanged` — otherwise every
+  // page view of a settled job opens a Firestore transaction to learn nothing.
+  if (update.status === "review" && costChanged) {
+    // Guarded like the webhook's own call: a settlement racing another writer
+    // aborts by design (the deterministic `settle_<chargeEntryId>` id doing its
+    // job), and this function's other work — the status write, the
+    // materialized deliverable — has already landed. Throwing here would turn a
+    // delivered run into a failed page render and a failed cron tick. A lost
+    // settlement leaves the estimate standing, which the sweep then retries.
+    try {
+      await settleJobCharge(job.id, costUsd, job.agentName, job.id);
+    } catch (e) {
+      console.error(`[agent-engine] settlement failed for job ${job.id}:`, e);
+    }
   }
 
   return { ...job, ...update, assetIds };

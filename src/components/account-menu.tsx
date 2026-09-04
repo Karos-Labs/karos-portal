@@ -8,6 +8,7 @@ import { cn, initials } from "@/lib/utils";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
+import { useMenuDismiss } from "@/components/use-menu-dismiss";
 import type { AppUser, Client } from "@/lib/types";
 
 /**
@@ -64,6 +65,7 @@ export function AccountMenu({
   staffExtras?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useMenuDismiss(open, setOpen);
 
   // Close the menu when navigation completes (instead of on click), so a <Link>
   // isn't unmounted mid-click - which would cancel the navigation.
@@ -93,8 +95,14 @@ export function AccountMenu({
     <div className="relative">
       {/* Identity row — ONE control, the whole row, opening the menu. */}
       <button
+        ref={triggerRef}
         onClick={() => setOpen((o) => !o)}
-        aria-label="Open account menu"
+        /* NAMES THE PERSON (review wave, 2026-09). An aria-label replaces the
+           button's contents outright, so "Open account menu" was the WHOLE
+           accessible name — the two lines a sighted reader uses to tell whose
+           account and whose workspace this is were announced as nothing. */
+        aria-label={`Open account menu for ${user.name}`}
+        aria-haspopup="menu"
         aria-expanded={open}
         title="Account menu"
         className={cn(
@@ -146,6 +154,29 @@ export function AccountMenu({
                 <Icon name="Settings" className="h-4 w-4 text-muted-2" />
                 Account Center
               </Link>
+              {/* TEAM — the same conditional row the mobile Company sheet has
+                  carried all along (client-rail.tsx), now at desktop width too
+                  (flow audit 2026-09, R11 · F14 · NN/g *Left-Side Vertical
+                  Navigation*: do not hide a desktop destination behind a
+                  narrow-width menu). `/team` was linked from ONE place in the
+                  entire client portal, and that place is `md:hidden`, so a group
+                  admin on a laptop could not reach the page they are the admin
+                  of at all.
+                  The predicate is the viewer's, not the shell's — `isGroupAdmin`
+                  is exactly what /team's own guard checks — so the client rail
+                  and the staff shell's client-context arm, which both mount this
+                  menu, cannot end up offering different rows to one person
+                  (parity pass 2026-09). It is not a "staff extra": a group admin
+                  is a client. */}
+              {user.isGroupAdmin && (
+                <Link
+                  href="/team"
+                  className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                >
+                  <Icon name="Users" className="h-4 w-4 text-muted-2" />
+                  Team
+                </Link>
+              )}
               <ThemeSwitch />
               <ContactUsButton variant="row" userName={user.name} userEmail={user.email} />
             </div>

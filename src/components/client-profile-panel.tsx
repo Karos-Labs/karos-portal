@@ -196,6 +196,16 @@ function BrandProfileModal({
   const [error, setError] = useState<string | null>(null);
   const [logoBusy, setLogoBusy] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
+  /**
+   * Two-step inline confirm on the logo "Remove" (flow audit 2026-09, R4).
+   *
+   * The DELETE is immediate and unversioned — it does not wait for this
+   * dialog's Save, so the modal's own Cancel cannot take it back, which is
+   * precisely why one press was never enough. Same block shape as
+   * `client-key-inline.tsx`; not the undo window Home's task lists took,
+   * because there is no stored previous file to restore.
+   */
+  const [confirmingLogo, setConfirmingLogo] = useState(false);
   const [form, setForm] = useState({
     contactEmail: client.contactEmail ?? "",
     website: client.website ?? "",
@@ -231,6 +241,7 @@ function BrandProfileModal({
         setLogoError("Could not remove logo");
         return;
       }
+      setConfirmingLogo(false);
       router.refresh();
     } catch {
       setLogoError("Could not remove logo");
@@ -352,8 +363,8 @@ function BrandProfileModal({
                 {client.logoUrl && (
                   <button
                     type="button"
-                    onClick={removeLogo}
-                    disabled={logoBusy}
+                    onClick={() => setConfirmingLogo(true)}
+                    disabled={logoBusy || confirmingLogo}
                     className="w-fit text-xs text-muted transition-colors hover:text-danger disabled:opacity-50"
                   >
                     Remove
@@ -361,6 +372,32 @@ function BrandProfileModal({
                 )}
               </div>
             </div>
+            {/* R4 — the two-step block, borrowed from client-key-inline.tsx. */}
+            {confirmingLogo && (
+              <div className="mt-2 rounded-[8px] border border-warning/30 bg-warning/10 px-2.5 py-2">
+                <p className="text-[11px] leading-relaxed text-foreground">
+                  Remove your company picture? It disappears everywhere it is shown, and you
+                  would need the original file to put it back.
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={removeLogo}
+                    disabled={logoBusy}
+                    className="rounded-[6px] border border-warning/40 bg-warning/15 px-2.5 py-1 text-[11px] font-medium text-warning disabled:opacity-50"
+                  >
+                    Remove picture
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingLogo(false)}
+                    className="rounded-[6px] border border-border px-2.5 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
             {logoError && <p className="mt-1.5 text-xs text-danger">{logoError}</p>}
           </div>
 

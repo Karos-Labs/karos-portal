@@ -90,7 +90,7 @@ const asStaff = () => vi.mocked(getCurrentUser).mockResolvedValue(STAFF as any);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(data.chargeClientCredits).mockResolvedValue({ balance: 100 });
+  vi.mocked(data.chargeClientCredits).mockResolvedValue({ balance: 100, entryId: "charge-1" });
   vi.mocked(data.creditClientCredits).mockResolvedValue({ balance: 100 });
   vi.mocked(data.getClient).mockResolvedValue({ id: "c1", name: "Acme", brief: "We sell things." } as any);
 });

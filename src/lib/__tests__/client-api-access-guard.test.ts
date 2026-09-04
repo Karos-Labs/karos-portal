@@ -659,6 +659,10 @@ describe("every API route that takes a client id asks the fence", () => {
     "agent-service/reconcile": "cron",
     "agent-service/webhook": "signed",
     "analytics/sync": "cron",
+    // One asset, for the copilot dock — the only deliverable surface that holds
+    // an id and not the object (flow audit 2026-09, R12). Delegates to
+    // `authorizeAssetMedia`, the same gate the two media routes below use.
+    "assets/[id]": "fenced",
     "assets/[id]/download": "fenced",
     "assets/[id]/media": "fenced",
     "assets/bulk-upload": "fenced",

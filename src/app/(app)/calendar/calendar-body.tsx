@@ -58,7 +58,13 @@ import { inferSuggestionDates } from "@/lib/calendar-suggestion-placement";
 // From the plain module, NOT from run-calendar.tsx (a client module): a server
 // component importing a value across that boundary gets a client reference, and
 // `.find` on it threw on every /calendar render (see lib/calendar-view-modes.ts).
-import { CALENDAR_VIEW_MODES, type CalendarViewMode } from "@/lib/calendar-view-modes";
+import {
+  CALENDAR_VIEW_MODES,
+  formatCalendarDate,
+  parseCalendarDate,
+  parseCalendarHidden,
+  type CalendarViewMode,
+} from "@/lib/calendar-view-modes";
 import {
   RunCalendar,
   type CalendarClientOption,
@@ -139,6 +145,10 @@ export async function CalendarBody({
   viewClientId,
   view,
   status,
+  date,
+  agent,
+  q,
+  hidden,
 }: {
   user: AppUser;
   viewClientId?: string;
@@ -146,6 +156,14 @@ export async function CalendarBody({
   view?: string;
   /** `?status=` — the archive's own filter, narrowed below to what it can hold. */
   status?: string;
+  /** `?date=YYYY-MM-DD` — the anchor day of the active time view (flow audit 2026-09, R5). */
+  date?: string;
+  /** `?agent=` — the archive's agent filter, matched by label against what it actually holds. */
+  agent?: string;
+  /** `?q=` — the archive's title search. Free text; nothing to validate but its length. */
+  q?: string;
+  /** `?hidden=` — the legend chips this reader has dimmed (review wave, 2026-09). */
+  hidden?: string;
 }) {
   const isClient = user.role === "CLIENT_USER";
   // Unknown values are DROPPED, not defaulted loudly: a stale or typo'd link
@@ -154,6 +172,23 @@ export async function CalendarBody({
   const initialViewMode: CalendarViewMode | undefined = CALENDAR_VIEW_MODES.find(
     (mode) => mode === view,
   );
+  // Same rule for the anchor: `parseCalendarDate` returns null for anything
+  // that is not a real local day, and a null seed means "today", which is
+  // where this calendar has always opened (flow audit 2026-09, R5).
+  //
+  // VALIDATED HERE, PARSED IN THE BROWSER (review wave, 2026-09). This used to
+  // pass `initialDate.getTime()`: an epoch instant produced by parsing
+  // `YYYY-MM-DD` at local midnight IN THE SERVER'S ZONE, then re-read as a
+  // local `Date` by the reader's. For anyone west of the server that lands on
+  // the previous day — the anchor is off by one AND the server and the browser
+  // render different grids from the same prop, which is a hydration mismatch.
+  // The `YYYY-MM-DD` string means the same thing on both sides, so it crosses
+  // instead and RunCalendar parses it against the only clock that matters.
+  const parsedDate = parseCalendarDate(date);
+  const initialDate = parsedDate ? formatCalendarDate(parsedDate) : undefined;
+  // `?hidden=`, narrowed to the legend keys that exist. Unknown keys are
+  // dropped rather than refused: same fail-open rule as every param above.
+  const initialHiddenStatuses = parseCalendarHidden(hidden);
 
   // ── Resolve scope ──────────────────────────────────────────────────
   let idSet: Set<string> | null = null; // null = every client (admin overview)
@@ -261,8 +296,38 @@ export async function CalendarBody({
   const inScope = <T extends { clientId: string }>(arr: T[]): T[] =>
     idSet ? arr.filter((x) => idSet!.has(x.clientId)) : arr;
 
-  const scheduledRuns = inScope(runsRaw);
-  const jobs = inScope(jobsRaw);
+  /**
+   * THE CROSS-CLIENT OVERVIEW'S HORIZON (review wave, 2026-09).
+   *
+   * With no single client in scope, the three reads above are unfiltered — the
+   * whole `assets`, `jobs` and `plannedScheduledRuns` collections, every client
+   * that has ever existed, on a page that then paints a few weeks of them. And
+   * AutoRefresh re-runs the entire render every 4 seconds while anything is in
+   * flight, so the cost is paid again and again.
+   *
+   * Bounded IN MEMORY, which does not save the read but does bound everything
+   * downstream of it (the projections, the per-day maps, the payload shipped to
+   * the browser). Only the unscoped branch is trimmed: a single-client scope is
+   * already a `where clientId ==` query, and trimming it would cut the staff
+   * library the archive is built from.
+   *
+   * TODO(SCRUM-follow-up): make this a real query bound — `createdAt >=` for
+   * jobs/assets and `nextRunAt <=` for planned runs, as new bounded readers in
+   * `src/lib/data.ts` (owned elsewhere this wave, hence the in-memory filter
+   * here). Until then this is a payload bound, not a Firestore one.
+   */
+  const OVERVIEW_HORIZON_MS = 120 * 24 * 60 * 60 * 1000;
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const horizonNow = Date.now();
+  const horizonFrom = horizonNow - OVERVIEW_HORIZON_MS;
+  const horizonTo = horizonNow + OVERVIEW_HORIZON_MS;
+  const inHorizon = (at: number | undefined): boolean =>
+    at == null || (at >= horizonFrom && at <= horizonTo);
+
+  const scheduledRuns = inScope(runsRaw).filter(
+    (r) => !!singleFilter || inHorizon(r.nextRunAt),
+  );
+  const jobs = inScope(jobsRaw).filter((j) => !!singleFilter || inHorizon(j.createdAt));
   // WHAT A VIEWER'S CALENDAR IS MADE OF now lives in lib/client-calendar, and
   // this page is one of its two readers — the daily digest is the other, and it
   // has to be able to say it is showing the calendar rather than something like
@@ -276,7 +341,16 @@ export async function CalendarBody({
   // hand back the survivors. Deduped ONCE: the run cards ("drafted 8 posts") and
   // the runway badge read the same list, so a list still holding both copies
   // would print a deliverable twice and over-count the days filled through.
-  const scopedAssets = inScope(assetsRaw);
+  // The dates an asset can land on this calendar by: its scheduled slot, its
+  // publish stamp, or (for a row with neither, which the grid drops anyway)
+  // when it was created.
+  const scopedAssets = inScope(assetsRaw).filter(
+    (a) =>
+      !!singleFilter ||
+      inHorizon(a.scheduledAt) ||
+      inHorizon(a.publishedAt) ||
+      inHorizon(a.createdAt),
+  );
   const assets = clientVisibleCalendarAssets(scopedAssets, {
     isClient,
     // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
@@ -503,14 +577,8 @@ export async function CalendarBody({
         // the VIEWER's clock — one calendar, one definition of a day — and this
         // zone reaches only `timeStr` and `zoneLabel`, which is how a reader can
         // still see the wall clock the schedule was actually set in.
-        //
-        // This sentence used to say the bucket was computed from it "exactly as
-        // on the server", and both halves stopped being true with that change.
-        // It is the THIRD copy of the claim; the other two were retired with the
-        // fix and this one, 280 lines below the first in the same file, was not.
-        // The residual is in `dayKey`'s own docstring: server and browser can
-        // now disagree about the day, and that is the trade the consolidation
-        // makes deliberately.
+        // (The residual — server and browser can disagree about which day an
+        // instant falls in — is stated in `dayKey`'s own docstring.)
         timeZone: runZone(r.timeZone),
         // Per OCCURRENCE, not per row: a projection that crosses a DST boundary
         // prints the offset in force on that day.
@@ -747,6 +815,19 @@ export async function CalendarBody({
   // mechanical half of the same rule, at the boundary the URL actually crosses.
   const initialArchiveStatus = offeredStatesFor("archive", isClient).find((s) => s === status);
 
+  // `?agent=` and `?q=`, the other two archive filters the view now writes back
+  // (flow audit 2026-09, R5). Same narrowing rule as `?status=`, applied to the
+  // only list that can answer it: the agent labels THIS archive actually holds.
+  // A link naming an agent whose work is not in this window opens the
+  // unfiltered archive rather than an empty one. `q` is free text — there is
+  // nothing to validate but its length, and an over-long one is truncated
+  // rather than refused, because a truncated search still finds something.
+  const archiveAgentNames = archiveAgentLabelByAssetId
+    ? new Set(Object.values(archiveAgentLabelByAssetId))
+    : new Set<string>();
+  const initialArchiveAgent = agent && archiveAgentNames.has(agent) ? agent : undefined;
+  const initialArchiveSearch = q ? q.slice(0, 120) : undefined;
+
   // Runway indicator (staff single-client scope only - the client's own view
   // hides internal drafts, which would understate the backlog). Reuses the same
   // pure calculator the top-up cron runs, so the badge and the autopilot agree.
@@ -783,7 +864,20 @@ export async function CalendarBody({
   // is a server component, so without this it would sit on "queued"/"running"
   // until someone happens to reload. Mounted only while something is actually
   // in flight, same convention as the Agents page's AutoRefresh.
-  const runInFlight = jobs.some((j) => j.status === "queued" || j.status === "running");
+  //
+  // SCOPED TO WHAT THIS PAGE ACTUALLY PAINTED (review wave, 2026-09). It used
+  // to ask every job in scope, which on the staff cross-client overview is
+  // every job of every client they can see: one client with a job stuck
+  // "queued" put every staff member's overview into a 4-second full re-render
+  // loop forever, re-reading whole collections each tick, for a chip that was
+  // not even on the screen. A refresh is worth paying for when a row this
+  // render drew can change, so the question is asked of the rows themselves.
+  const renderedClientIds = new Set([...runs.map((r) => r.clientId), ...posts.map((p) => p.clientId)]);
+  const runInFlight = jobs.some(
+    (j) =>
+      (j.status === "queued" || j.status === "running") &&
+      (!!singleFilter || renderedClientIds.has(j.clientId)),
+  );
 
   const viewerIsBilled = isBillableClientActor(user);
   const scopedClientDoc = scopedClientId ? clientById.get(scopedClientId) : undefined;
@@ -824,10 +918,13 @@ export async function CalendarBody({
           viewerIsBilled={viewerIsBilled}
         />
       )}
-      {/* `initialViewMode`/`initialArchiveStatus` below are seeded from the
-          URL — see CalendarBody's own note. Spread rather than passed as
-          `{undefined}` because of `exactOptionalPropertyTypes`, same as every
-          other optional prop on this element. */}
+      {/* Every `initial…` below is seeded from the URL — see CalendarBody's
+          own note. The set grew with the calendar's own URL state (flow audit
+          2026-09, R5): the view, the anchor date, and the archive's three
+          filters are all written back by the calendar now, and all five are
+          validated here before they are handed over. Spread rather than passed
+          as `{undefined}` because of `exactOptionalPropertyTypes`, same as
+          every other optional prop on this element. */}
       <RunCalendar
         runs={runs}
         posts={posts}
@@ -854,6 +951,10 @@ export async function CalendarBody({
         {...(archiveAgentLabelByAssetId ? { agentLabelByAssetId: archiveAgentLabelByAssetId } : {})}
         {...(initialViewMode ? { initialViewMode } : {})}
         {...(initialArchiveStatus ? { initialArchiveStatus } : {})}
+        {...(initialDate ? { initialDate } : {})}
+        {...(initialArchiveAgent ? { initialArchiveAgent } : {})}
+        {...(initialArchiveSearch ? { initialArchiveSearch } : {})}
+        {...(initialHiddenStatuses.length > 0 ? { initialHiddenStatuses } : {})}
       />
       {/* Persistent, always-visible — not tucked inside a day's own detail
           panel, which a client reported not being able to find (2026-08).

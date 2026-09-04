@@ -170,6 +170,25 @@ export interface Client {
    */
   starredAgentIds?: string[];
   /**
+   * The order Home's "Get set up" ladder walks this client through their
+   * agents, decided once at onboarding (portal feedback round 4, 2026-09).
+   *
+   * CustomAgent IDS ONLY, deliberately — the same discipline
+   * `ClientActionState.actionId` keeps. Labels, hrefs and completion signals
+   * stay in code (lib/setup-ladder.ts), so a stored order can never resurrect a
+   * step that no longer exists, and an id for an agent this client no longer
+   * has is simply dropped when the ladder is resolved.
+   *
+   * Absent ⇒ `rankSetupLadder` is computed on the fly from the same inputs, so
+   * a client onboarded before this field existed gets the same order a fresh
+   * one would. Written inside completeOnboardingAction's `after()` block, beside
+   * the swarm, and never on the request path.
+   */
+  setupLadderOrder?: string[];
+  /** When `setupLadderOrder` was computed, so a later re-grant can tell a
+   *  stale order from an absent one. */
+  setupLadderOrderAt?: number;
+  /**
    * Plan capacity for LinkedIn employee-advocacy seats. Seats within this limit
    * are free; adding beyond it charges credits per seat (the monetization gate).
    * Absent ⇒ DEFAULT_LINKEDIN_SEAT_LIMIT. Admin-set from client settings.
@@ -1079,14 +1098,24 @@ export interface ExternalJobArtifact {
 
 /** Provenance + results of a job executed by the external agent service. */
 export interface ExternalJobInfo {
-  serviceJobId: string;
+  /**
+   * OPTIONAL SINCE THE CREDITS REWORK (2026-09), and the reason is that this
+   * record stopped being agent-service-only. `totalCostUsd` below is where
+   * every cost reader looks — `summarizeAgentEconomics`, the settlement path,
+   * the staff cost line — so agent-engine runs now write their own cost here
+   * too, and an agent-engine run has no agent-service job and no wire task
+   * type. Making these two optional says that outright; the alternative was
+   * minting a fake service id, which every truthiness check in the codebase
+   * would then have had to distrust.
+   */
+  serviceJobId?: string;
   /**
    * `WireTaskType`, not `ManagedTaskType`: this is a RECORD of what ran, and
    * every v1 newsletter job in the database carries the retired type here. It is
    * also what `runway`'s in-flight check and `resolveContentIdentity` read, so
    * narrowing it would make historical rows unreadable rather than unwritable.
    */
-  taskType: WireTaskType;
+  taskType?: WireTaskType;
   /** karos-agents commit the job ran against. */
   agentsRepoSha?: string;
   model?: string;
@@ -1164,6 +1193,15 @@ export interface Job {
    */
   agentEngineRunId?: string;
   agentEngineProductId?: string;
+  /**
+   * When the unsettled-hold sweep last dealt with this job's credit hold
+   * (credits rework, 2026-09) — settled it, or established there was nothing to
+   * settle. Purely a bookmark so the sweep's candidate list shrinks; the real
+   * idempotency is the `settle_<chargeEntryId>` ledger doc, and a job that
+   * somehow loses this field is simply re-examined and correctly declined.
+   * Absent on every job the sweep has not reached.
+   */
+  holdSettledAt?: number;
   /** See JobRunType. Absent on jobs written before run-type tracking existed. */
   runType?: JobRunType;
   /** The client-agent umbrella (clientAgents doc id) this run belongs to, when one exists. */
@@ -2579,9 +2617,37 @@ export interface ClientCredits {
   monthKey: string;
   monthSpent: number;
   updatedAt: number;
+  /**
+   * Which credit plan this doc has been brought onto — `CREDIT_PLAN_VERSION`
+   * (credits rework, 2026-09). ABSENT means "written before the rework and not
+   * yet migrated", which is what `rollCreditWindows` acts on.
+   *
+   * A STAMP RATHER THAN VALUE-MATCHING ALONE, because the two are ambiguous
+   * together and the stamp is what makes the ambiguity finite. The migration
+   * recognises an untouched doc by its old default caps (150/400) and would
+   * otherwise keep recognising an admin who DELIBERATELY types 150 as untouched,
+   * forever. With the stamp, that collision can only happen on a doc nobody has
+   * touched once since the rework — after which the answer is recorded and no
+   * heuristic runs against it again.
+   */
+  planVersion?: number;
 }
 
-export type CreditEntryKind = "grant" | "charge" | "refund" | "adjustment";
+/**
+ * `"settlement"` is its own kind (credits rework, 2026-09) and not a refund or
+ * an adjustment wearing a different reason line. Three things depend on telling
+ * them apart, so the distinction has to be in the data:
+ *
+ *   - the refund pairing counts refunds against charges to decide what may
+ *     still be handed back (`newestUnrefundedCharge`); a settlement counted as
+ *     a refund would block a real one, and a settlement that DEDUCTED counted
+ *     as a refund would be an outright accounting error;
+ *   - a settlement can be negative, which no refund may be;
+ *   - the client's own spend breakdown has to net settlements into the run they
+ *     correct, while still excluding grants and refunds as balance movements
+ *     rather than usage.
+ */
+export type CreditEntryKind = "grant" | "charge" | "refund" | "adjustment" | "settlement";
 
 export type CreditOperation =
   /** Legacy — in-app agent runs no longer exist; kept so old ledger entries still render. */
@@ -2644,6 +2710,70 @@ export interface CreditLedgerEntry {
    */
   modelName?: string | null;
   provider?: string | null;
+  /**
+   * Two-phase charging (credits rework, 2026-09).
+   *
+   * `"hold"` — a charge taken upfront at the ESTIMATE, awaiting settlement
+   * against what the run actually cost us. `"settlement"` — the row that
+   * reconciled one, always paired to its hold by the deterministic doc id
+   * `settle_<holdId>`.
+   *
+   * ABSENT MEANS PRE-REWORK, and nothing more than that. Every row written
+   * before two-phase charging existed carries no `phase`, and none of them is
+   * ever settled.
+   *
+   * IT DOES NOT MEAN "WILL BE SETTLED". `chargeClientCredits` stamps `"hold"`
+   * on every charge it writes, including the ones for operations in
+   * `UNSETTLED_OPERATIONS` — a seat purchase, an agent setup — because that
+   * function prices nothing and has no business deciding which charges are
+   * measurements. (An earlier version of this note claimed those were left
+   * unstamped, which was simply not what the code did; the honest fix was the
+   * sentence, not a second policy inside the writer.) `operation` is the field
+   * that says whether a charge settles, and `UNSETTLED_OPERATIONS` is the one
+   * place that list lives — checked inside the settling transaction, against
+   * the charge row's own operation.
+   */
+  phase?: "hold" | "settlement";
+  /** Settlements only: the id of the hold this row reconciles. */
+  settlesEntryId?: string;
+  /**
+   * HOLDS ONLY, and only on the task-dispatch path: the `jobs` doc id of the
+   * run this hold is paying for.
+   *
+   * WHY A HOLD NEEDS TO NAME ITS RUN. A charge's `jobId` is a PAIRING key, not
+   * always a Job id — a board-task dispatch is charged under the TASK id,
+   * before any job exists. Re-running the same task files a second charge under
+   * the same key, so "the newest unpaired charge" stops identifying a
+   * particular run the moment two of them overlap, and the first run to deliver
+   * would settle the second run's hold against its own cost.
+   *
+   * Stamped by `execution-engine.ts` at the instant the dispatch learns its job
+   * id (the same write that puts `externalJobId` on the task), which is the
+   * earliest moment anything knows the mapping. Absent on every direct-fire
+   * charge — those are already filed under the job id itself — and on every row
+   * written before this existed, where "newest unpaired" remains the only
+   * answer available and is what the pairing falls back to.
+   */
+  settlesJobId?: string;
+  /** Settlements only: what the hold charged, so a row can show both figures. */
+  estimateCredits?: number;
+  /**
+   * Settlements only: our own measured cost of the run, in USD.
+   *
+   * STAFF-FACING. It is our cost, not the client's price, and no client surface
+   * renders it — the credits panel's cost line is inside a staff-only section
+   * for exactly this reason. Recorded UNCAPPED: when `settlementCapped` is set,
+   * the credits actually taken were clipped to 2× the hold and this field still
+   * says what the run really cost, which is the only way staff can see how far
+   * an estimate has drifted.
+   */
+  actualUsd?: number;
+  /**
+   * True when `creditsForUsd(actualUsd)` exceeded `SETTLEMENT_CAP_FACTOR ×` the
+   * hold and the deduction was clipped. Karos ate the difference on this run.
+   * A flag for staff review, not a client-facing state.
+   */
+  settlementCapped?: boolean;
 }
 
 /* ─────────────── Agent intake & seats (X e13 · LinkedIn e10) ───────────────

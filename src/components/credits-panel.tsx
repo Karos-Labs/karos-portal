@@ -11,12 +11,19 @@ import {
   CREDIT_BLOCK_REASON,
   CREDIT_COSTS,
   CREDIT_WINDOW_RESET,
+  ESTIMATED_PRICE_NOTE,
   availableCredits,
   bindingCreditLimit,
   clientPriceText,
+  settledCreditsLabel,
   CREDIT_BUCKET_LABEL,
 } from "@/lib/credits";
-import type { AgentSpendRow } from "@/lib/credit-reporting";
+import { StaffOnlySection } from "@/components/staff-only-section";
+import {
+  MONTHLY_COST_ALERT_FRACTION,
+  type AgentSpendRow,
+  type ClientMonthlyCost,
+} from "@/lib/credit-reporting";
 import { cn, relativeTime } from "@/lib/utils";
 import type { ClientCredits, CreditLedgerEntry, Role } from "@/lib/types";
 
@@ -77,6 +84,8 @@ export function CreditsPanel({
   credits,
   ledger,
   spendByAgent,
+  monthlyCost,
+  pricesAreEstimates,
   role,
   viewer,
 }: {
@@ -90,6 +99,23 @@ export function CreditsPanel({
    * breakdown of the last few rows presented as a breakdown of spend.
    */
   spendByAgent?: AgentSpendRow[];
+  /**
+   * What this client has actually cost Karos this month, against the $130 line
+   * (credits rework, 2026-09). STAFF ONLY, and gated on the SERVER: the settings
+   * page passes it only to a staff viewer, so a client's payload never carries
+   * our raw cost at all — this is a "use client" component, so anything crossing
+   * this boundary is readable from view-source whether the panel paints it or
+   * not. The same structural gate `agent-economics.tsx` uses, for the same
+   * reason.
+   */
+  monthlyCost?: ClientMonthlyCost;
+  /**
+   * Whether this deployment charges an estimate and settles it to real usage
+   * (`CREDITS_PLAN_V2_ENABLED`), resolved on the server: this is a `"use
+   * client"` component and cannot read a non-`NEXT_PUBLIC_` env var. Wording
+   * only — every figure on the card is the same either way.
+   */
+  pricesAreEstimates?: boolean;
   role: Role;
   /**
    * Signed-in viewer, for the support control offered when spending is blocked.
@@ -191,9 +217,21 @@ export function CreditsPanel({
             Copilot message from {CREDIT_COSTS.chatMessage} · document correction{" "}
             {CREDIT_COSTS.targetedCorrection} · agent run from {CREDIT_COSTS.customAgentRun}.
           </p>
+          {/* THE ONE SENTENCE THAT MAKES THE NUMBERS ABOVE HONEST (credits
+              rework, 2026-09). Every figure on this card is now a typical
+              price: the charge is reserved when the work starts and reconciled
+              to what it actually used when it finishes, which is why a ledger
+              row below can read less than the price quoted above it. Read off
+              the shared constant, not typed here, so the eleven surfaces that
+              quote a price cannot describe the rule eleven ways. */}
+          {pricesAreEstimates && (
+            <p className="mt-1 text-xs text-muted-2">
+              Prices are typical. {ESTIMATED_PRICE_NOTE}
+            </p>
+          )}
         </div>
         <div className="text-right">
-          <p className="font-mono text-2xl font-semibold">{spendable}</p>
+          <p className="stat-number text-2xl font-semibold">{spendable}</p>
           <p className="text-xs text-muted-2">credits available</p>
           {/* The headline used to be credits.balance, which is NOT what the
               client can spend: assessCharge clips it by the weekly/monthly caps.
@@ -290,22 +328,83 @@ export function CreditsPanel({
               Agent runs, copilot messages, task executions and document corrections are paused
               {bindingLimit === "insufficient_balance" ? " until credits are added." : " until then."}
             </p>
+            {/* R7 (flow audit 2026-09): ONE label. This control opened the very
+                same dialog as the account menu's "Support" while calling itself
+                "Request more credits" or "Ask about your limit" — three names
+                for one destination, which is the finding. The ask is not lost:
+                the two sentences directly above name the limit that is binding
+                and what it takes to lift it, and the dialog opens on an empty
+                subject the client fills in either way. */}
             {viewer && (
               <div className="pt-1">
-                <ContactUsButton
-                  variant="row"
-                  userName={viewer.name}
-                  userEmail={viewer.email}
-                  label={
-                    bindingLimit === "insufficient_balance"
-                      ? "Request more credits"
-                      : "Ask about your limit"
-                  }
-                />
+                <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
               </div>
             )}
           </div>
         </div>
+      )}
+
+      {/* ── What this client actually costs us, beside what they were charged ──
+          Staff only, and additive to the client's own card (the parity rule):
+          it sits in the shared frame rather than styled like the cards above,
+          so a staff member previewing the account can tell at a glance which
+          half the client gets.
+
+          WHY TWO LINES AND NOT ONE. Settle-to-actual makes "2600 credits ⇒ no
+          more than $130" true by construction for every credit a client is
+          CHARGED. Two kinds of real spend never reach the ledger and therefore
+          bypass that guarantee: runs nobody billed (staff-fired, View as
+          Client, schedules with billClientCredits off) and refunded failures,
+          whose tokens are gone even though the credits came back. So the cost
+          line can legitimately exceed monthSpent × $0.05, and the GAP BETWEEN
+          THE TWO LINES IS THAT LEAK. Showing them side by side is what makes
+          it visible instead of assumed. */}
+      {monthlyCost && (
+        <StaffOnlySection className="mt-5" label="Staff only · what this client costs us">
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-xs text-muted-2">Cost to us this month</span>
+              <span
+                className={cn(
+                  "font-mono text-sm",
+                  monthlyCost.fraction >= 1
+                    ? "text-danger"
+                    : monthlyCost.fraction >= MONTHLY_COST_ALERT_FRACTION
+                      ? "text-warning"
+                      : "text-foreground",
+                )}
+              >
+                ${monthlyCost.usd.toFixed(2)} of ${monthlyCost.budgetUsd.toFixed(2)}
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-xs text-muted-2">Client charged</span>
+              <span className="font-mono text-sm text-muted">
+                {credits.monthSpent}
+                {credits.monthlyLimit != null ? ` of ${credits.monthlyLimit}` : ""} credits
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-2">
+              {monthlyCost.runs} run{monthlyCost.runs === 1 ? "" : "s"} counted, including
+              staff-fired and failed ones.
+              {monthlyCost.unpricedRows > 0
+                ? ` ${monthlyCost.unpricedRows} usage row${monthlyCost.unpricedRows === 1 ? "" : "s"} could not be priced and ${monthlyCost.unpricedRows === 1 ? "is" : "are"} not counted.`
+                : ""}
+            </p>
+            {monthlyCost.fraction >= MONTHLY_COST_ALERT_FRACTION && (
+              <p
+                className={cn(
+                  "text-[11px]",
+                  monthlyCost.fraction >= 1 ? "text-danger" : "text-warning",
+                )}
+              >
+                {monthlyCost.fraction >= 1
+                  ? "Over the monthly cost line for this client. Check for unbilled schedules or a failing agent burning runs."
+                  : "Past 80% of the monthly cost line for this client."}
+              </p>
+            )}
+          </div>
+        </StaffOnlySection>
       )}
 
       {isAdmin && (
@@ -400,6 +499,19 @@ export function CreditsPanel({
               <li key={e.id} className="flex items-center justify-between gap-3 py-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm">{e.reason}</p>
+                  {/* A SETTLED RUN SHOWS BOTH FIGURES (credits rework, 2026-09).
+                      Without the estimate beside it, a settlement reads as a
+                      second, unexplained charge for a run the client already
+                      paid for; with it, the row says what the whole two-phase
+                      model does. Built from the row's own fields rather than
+                      parsed back out of the reason line. `estimateCredits −
+                      delta` is what the run finally cost: delta is positive
+                      when credits came back. */}
+                  {e.kind === "settlement" && e.estimateCredits != null && (
+                    <p className="text-xs text-muted-2">
+                      {settledCreditsLabel(e.estimateCredits - e.delta, e.estimateCredits)}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-2">
                     {relativeTime(e.createdAt)}
                     {e.actorName ? ` · ${e.actorName}` : ""}

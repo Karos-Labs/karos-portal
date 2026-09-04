@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import {
   createClient,
   getClient,
+  getCustomAgent,
   updateClient,
   deleteClientCascade,
   getClientByKeyId,
@@ -16,6 +17,7 @@ import {
 import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
 import { canViewClient } from "@/lib/client-visibility";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import type { Client, SocialLinks } from "@/lib/types";
 import { clampClientCategoryValue } from "@/lib/utils";
 import { toStoredPace } from "@/lib/daily-pace";
@@ -219,6 +221,15 @@ export async function updateClientProfileAction(
 }
 
 /**
+ * How many agents one client may pin. See the ceiling's own note inside
+ * `toggleStarredAgentAction` for why an unbounded array was the problem.
+ *
+ * NOT exported: this is a `"use server"` module, and every export of one has to
+ * be an async function.
+ */
+const MAX_STARRED_AGENTS = 24;
+
+/**
  * Pin or unpin an agent above the client rail's "AI agents" dropdown
  * (Surface 01, portal revamp). Same self-service rule as
  * `updateClientProfileAction`: a CLIENT_USER may star their own client's
@@ -258,6 +269,43 @@ export async function toggleStarredAgentAction(
   }
 
   const current = client.starredAgentIds ?? [];
+
+  // WHAT IS BEING PINNED, asked before it is written (review wave, 2026-09).
+  //
+  // The action authorized the WRITER and then took the `agentId` on trust, so
+  // any authorized caller could put an arbitrary string into
+  // `Client.starredAgentIds` — a retired agent, another client's per-client
+  // instance, a typo, a value from a stale tab. Nothing crashed, because
+  // `railAgentsForClient` re-applies these same fences on read and simply drops
+  // what does not pass; the ids just accumulated silently in the document,
+  // unpaintable and unremovable through the UI (a row that never renders has no
+  // star to click). The rail's own read rule is therefore the write rule.
+  //
+  // UNPINNING SKIPS ALL OF IT, deliberately: `starred: false` only ever removes
+  // an id, and refusing to remove a pin because the agent behind it was
+  // disabled or retired is exactly how a document gets stuck with one.
+  if (starred) {
+    const agent = await getCustomAgent(agentId);
+    // The same three clauses railAgentsForClient applies, in the same order:
+    // the agent exists, it is enabled, and it is not another client's
+    // per-client instance (an entry skill baked under ONE lab folder, #132).
+    if (!agent || !agent.enabled || !agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
+      return { ok: false, error: "That agent is not available for this client." };
+    }
+    // A LENGTH CEILING, because this array is unbounded input into a document
+    // that is read on every page of both shells. The rail's own cap is on the
+    // UNSTARRED group (UNSTARRED_AGENT_CAP = 6) and pinned rows are deliberately
+    // never capped there — a client curates that set — so nothing downstream
+    // bounds it. 24 is comfortably past any real roster (the catalog runs past
+    // 20) and well short of a document a script could inflate.
+    if (!current.includes(agentId) && current.length >= MAX_STARRED_AGENTS) {
+      return {
+        ok: false,
+        error: `You can pin up to ${MAX_STARRED_AGENTS} agents. Unpin one to add another.`,
+      };
+    }
+  }
+
   const next = starred
     ? current.includes(agentId)
       ? current

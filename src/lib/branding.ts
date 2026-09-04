@@ -811,6 +811,20 @@ export type BrandingGenResult = {
   source: "ai_generated";
   dominantColors?: BrandColor[];
   visualStyle?: string;
+  /* ── The rest of what this run WROTE (flow audit 2026-09, R14) ───────
+     This generator does not propose a palette, it applies a whole brand
+     profile: `updateClient(… brandingGuidelines: fullGuidelines)` below
+     persists the fonts, the tone keywords and the generated guidelines
+     markdown along with the colours. The result used to name only the
+     colours and the style, so a caller holding a form had no way to show
+     what had actually landed — and BrandingModal, which re-sends the whole
+     document on its next Save, sent the pre-generation voice back over the
+     top of it. These four are that write, reported. */
+  fontHeading?: string;
+  fontBody?: string;
+  toneKeywords?: string[];
+  /** The generated guidelines markdown (`buildGuidelinesMarkdown`). */
+  guidelines?: string;
   /** @deprecated Read dominantColors[0].hex */
   primaryAccent?: string;
   /** @deprecated Read dominantColors[1].hex */
@@ -1009,6 +1023,11 @@ export async function applyBrandingForClient(
     source: "ai_generated",
     dominantColors,
     visualStyle: fullGuidelines.visualStyle,
+    // Everything else this run just persisted — see the type's own note.
+    fontHeading: fullGuidelines.fontHeading,
+    fontBody: fullGuidelines.fontBody,
+    toneKeywords: fullGuidelines.toneKeywords,
+    guidelines: fullGuidelines.guidelines,
     // Legacy aliases — kept for callers still reading old field names
     primaryAccent: fullGuidelines.primaryAccent,
     secondaryAccent: fullGuidelines.secondaryAccent,

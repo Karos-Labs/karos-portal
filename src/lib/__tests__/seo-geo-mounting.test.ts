@@ -82,14 +82,61 @@ describe("SEO/GEO surfaces stay mounted (QA F152)", () => {
     expect(orphans).toEqual([]);
   }, 15_000); // Full-repo file scan — the default 5s budget is already gone as the codebase grows, not a slow assertion.
 
-  it("keeps the client-facing action plan mounted in the panel", () => {
+  /**
+   * THE CONTRACT CHANGED (portal feedback round 4, 2026-09), and it did not
+   * weaken: it inverted. F152 pinned that the Karos-owned action plan must stay
+   * MOUNTED, because a merge had silently orphaned it. The product owner then
+   * ruled the section itself untrue — "all these 'what we're fixing' items are
+   * not true… make the system not generate this anymore" — so the plan must now
+   * stay OFF the client-facing report, and the thing that may not be silently
+   * dropped is its replacement.
+   *
+   * Both halves are pinned, because the failure mode F152 describes is unchanged
+   * in shape: nothing about an unrendered component is a type error.
+   */
+  it("keeps the plan wired to the persisted snapshot, for the cross-repo contract", () => {
+    // buildRecommendations is still produced and persisted on every capture for
+    // docs/routable-recommendation-contract.md, and this render path is kept so
+    // re-enabling it is a decision, not a rebuild. It must therefore stay whole.
     const panel = read(path.join(SRC, "components", "seo-geo-panel.tsx"));
     expect(panel).toMatch(/import\s*\{[^}]*\bSeoGeoActionPlan\b[^}]*\}\s*from/);
     expect(panel).toContain("<SeoGeoActionPlan");
-    // Not just imported — actually fed the persisted plan and the approval state.
     expect(panel).toMatch(/recommendations=\{/);
     expect(panel).toMatch(/approvedRecIds=\{/);
     expect(panel).toContain("insights.recommendations");
+    // ...and stay off unless a caller asks for it by name.
+    expect(panel).toMatch(/hidePlan = true/);
+  });
+
+  it("renders no Karos-owned plan on the client-facing report", () => {
+    const page = read(path.join(SRC, "app", "(app)", "clients", "[id]", "settings", "page.tsx"));
+    // The Reporting tab is the ONLY surface that mounts the report. Neither the
+    // plan nor the internal gap list may be mounted from it, under any prop.
+    expect(page).not.toMatch(/<SeoGeoPlan/);
+    expect(page).not.toMatch(/<GapList/);
+    expect(page).not.toMatch(/\bSeoGeoPlan\b.*from "@\/components\/seo-geo-panel"/);
+    expect(page).not.toMatch(/from "@\/components\/seo-geo\/gap-list"/);
+    // And it says so at the panel it does mount, rather than inheriting the default.
+    expect(page).toMatch(/hidePlan\b/);
+  });
+
+  it("mounts the client-owned suggestions in its place", () => {
+    const page = read(path.join(SRC, "app", "(app)", "clients", "[id]", "settings", "page.tsx"));
+    expect(page).toMatch(/import\s*\{[^}]*\bClientSuggestions\b[^}]*\}\s*from/);
+    expect(page).toContain("<ClientSuggestions");
+    // Fed from the same snapshot the scores read, through the pure builder whose
+    // rules are the product (see seo-geo-client-suggestions.test.ts).
+    expect(page).toContain("buildClientSuggestions(");
+    expect(page).toMatch(/suggestions=\{/);
+  });
+
+  it("keeps Performance and Connected channels off the Reporting tab", () => {
+    // "Connected channels and Performance have nothing to do in the Reporting
+    // tab." Staff Home keeps its own <ClientAnalytics/>; this page has none.
+    const page = read(path.join(SRC, "app", "(app)", "clients", "[id]", "settings", "page.tsx"));
+    // Anchored, so the note explaining the removal is not itself a hit.
+    expect(page).not.toMatch(/^\s*<ClientAnalytics/m);
+    expect(page).not.toMatch(/from "@\/components\/client-analytics"/);
   });
 
   it("keeps the internal gap list behind the staff gate, below the plan", () => {

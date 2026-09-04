@@ -148,6 +148,61 @@ describe("every shell tells the bell which shell it is", () => {
   });
 });
 
+/**
+ * WHAT THE STAFF BELL IS ALLOWED TO READ, AND FOR WHOM (review wave, 2026-09).
+ *
+ * The feed itself was correct for an admin and quietly wrong for everybody
+ * else: the layout read the newest 200 tasks agency-wide and then kept the ones
+ * belonging to the viewer's clients. An employee is fenced to their
+ * assignments, so at a busy agency every one of their clients' tasks could sit
+ * outside that global window — an empty bell and an "All caught up!" that was
+ * simply false. And the OTHER arm of the same fence handed raw task documents
+ * to a CLIENT_USER who had fallen through to this shell.
+ */
+describe("the staff bell reads the viewer's own scope", () => {
+  const appLayout = src("app/(app)/layout.tsx");
+
+  it("fences an employee's task read in the QUERY, not after it", () => {
+    const a = flat(appLayout);
+    // The scope reaches listClientTasks, and only for the role that has one.
+    expect(a).toMatch(
+      /user\.role === "KAROS_EMPLOYEE" \? \{ clientIds: \[\.\.\.staffClientNames\.keys\(\)\] \}/,
+    );
+    // The same key set the review feed is fenced with — one scope, two feeds.
+    expect(a).toContain("listReviewJobsForClients([...staffClientNames.keys()]");
+    // An admin keeps the single global read: their scope IS every client, and
+    // 30-at-a-time `in` queries over the whole roster would be strictly worse.
+    expect(a).toMatch(/listClientTasks\(\{ \.\.\.\(user\.role === "KAROS_EMPLOYEE"/);
+  });
+
+  it("gives listClientTasks a chunked clientIds filter that fails closed", () => {
+    const data = flat(src("lib/data.ts"));
+    // Firestore caps an `in` list; a wider scope is split rather than truncated.
+    expect(data).toContain("const TASK_CLIENT_SCOPE_CHUNK = 30;");
+    expect(data).toContain('q.where("clientId", "in", scope)');
+    // An EMPTY scope is an empty answer, never "everything" — the fence has to
+    // fail closed or an employee with no assignments would see every client.
+    expect(data).toContain("if (scope.length === 0) return [];");
+    // The cap is applied to the merged, re-sorted union, not per chunk.
+    expect(data).toMatch(
+      /pages \.flat\(\) \.sort\(\(a, b\) => b\.createdAt - a\.createdAt\) \.slice\(0, opts\.limit \?\? 200\)/,
+    );
+  });
+
+  it("narrows a client viewer's task rows on BOTH branches of the shell split", () => {
+    // `clientSafeTaskAlerts` was applied to the resolvable-client branch only.
+    // The other branch is a CLIENT_USER whose client document would not load —
+    // they fall through to the staff Sidebar, which is "use client", so a raw
+    // ClientTask there is in their RSC payload whether or not a row paints it.
+    expect(appLayout.match(/clientSafeTaskAlerts\(/g) ?? []).toHaveLength(2);
+    expect(flat(appLayout)).toContain(": clientSafeTaskAlerts(taskAlerts);");
+    expect(flat(appLayout)).toContain("taskAlerts={clientSafeTaskAlerts(taskAlerts)}");
+    // And the prop the staff shell declares is the narrow row type, so the
+    // wide one cannot come back without a type change in the open.
+    expect(flat(sidebar)).toContain("taskAlerts?: TaskAlert[];");
+  });
+});
+
 describe("a bell inside a dismissible container closes it", () => {
   it("closes its own container from every mount that sits in one", () => {
     // The rule is "a bell inside something that covers the page dismisses it",

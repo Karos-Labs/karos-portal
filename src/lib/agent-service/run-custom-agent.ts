@@ -236,6 +236,19 @@ export async function submitCustomAgentRun(args: {
 
   // Charge upfront (billable client actors only) with jobId pairing so the
   // webhook's failure refund and the reconcile sweeps can hand the credits back.
+  //
+  // THE SECOND CHARGE PATH, and it needs no estimate of its own (credits
+  // rework, 2026-09). Unlike `submitCustomAgentJob`, this core does not resolve
+  // a price — the caller hands it one, the way `input.charge` does over there —
+  // so there is nothing here to calibrate. What it DOES take part in is the
+  // other half: `chargeClientCredits` stamps every row it writes as a hold, and
+  // the webhook settles that hold against the run's real cost by `jobId`, which
+  // this passes. So a fire through this core is reconciled exactly like one
+  // through its twin, with no code here to keep in step.
+  //
+  // (Its one caller today, /api/scheduler, passes `charge: null` — every fire
+  // through it is free to the client and absent from the ledger, so there is
+  // nothing to settle either.)
   const charged = args.charge != null;
   if (args.charge) {
     try {

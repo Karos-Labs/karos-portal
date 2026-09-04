@@ -232,7 +232,9 @@ export function ClientAnalytics({
                         {assetStatusLabel(status, viewerIsClient)}
                       </span>
                       <span className="flex shrink-0 items-center gap-1.5">
-                        <span className="font-mono text-sm font-semibold text-foreground">
+                        {/* A count is a number: sans + tabular, not a synthesised mono bold
+                            (globals.css §5, review wave 2026-09). */}
+                        <span className="stat-number text-sm font-medium text-foreground">
                           {count}
                         </span>
                         {href && (

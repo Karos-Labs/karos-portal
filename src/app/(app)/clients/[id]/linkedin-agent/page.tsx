@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
+import { isBillableClientActor } from "@/lib/credits";
 import { buildLinkedInAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
 import { IntakePageActionLink } from "@/components/intake-page-action-link";
@@ -25,8 +26,12 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
 
   const client = await requireVisibleClient(user, id);
 
+  // FLOW AUDIT 2026-09, R3: the metered controls on this page quote a price,
+  // and this is the answer to "whose money" — an unbilled reader still reads
+  // the client's figure, marked as theirs (see CreditPriceNote).
   const view = await buildLinkedInAgentIntakeView(id, {
     isStaff,
+    viewerIsBilled: isBillableClientActor(user),
     ...(client.socialLinks?.linkedin ? { pageUrlSuggestion: client.socialLinks.linkedin } : {}),
   });
   // Resolved for BOTH roles. It used to be skipped for staff "whose destination is

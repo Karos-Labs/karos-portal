@@ -210,7 +210,7 @@ export function ClientRail({
                     <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
                     Credits
                   </span>
-                  <span className="font-mono font-medium text-foreground">{spendableCredits}</span>
+                  <span className="stat-number font-medium text-foreground">{spendableCredits}</span>
                 </Link>
               )}
               <NotificationBell
@@ -253,7 +253,7 @@ export function ClientRail({
               className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
             >
               <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
-              <span className="font-mono font-medium text-foreground">{spendableCredits}</span>
+              <span className="stat-number font-medium text-foreground">{spendableCredits}</span>
             </Link>
           )}
         </div>

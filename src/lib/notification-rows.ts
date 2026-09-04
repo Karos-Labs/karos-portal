@@ -139,6 +139,52 @@ export function reviewFeedRows(
 }
 
 /**
+ * One row per task for staff; one SUMMARY row per status group for a client.
+ *
+ * FLOW AUDIT 2026-09, R10 — "make the bell honest". Three of the four row kinds
+ * a client could see were inert but shaped like the fourth, which is a link
+ * (NN/g *Beyond Blue Links*: never style static text like a link or vice versa).
+ * Two of those three were these task rows, one per task, each naming a piece of
+ * work with nowhere to go: the Workspace board they used to open was removed in
+ * 2026-08 and nothing replaced it as an aggregate view of tasks.
+ *
+ * The audit offered two ways out — give them the destination the same facts
+ * have on Home, or collapse them into a non-row summary line — and this is the
+ * second, for a reason the first does not survive: on Home these very counts
+ * are ALSO destination-less, by an explicit ruling ("N tasks ready for review",
+ * "N pending tasks", client-home-overview.tsx, F97 × F149). A link here would
+ * make the bell disagree with the dashboard about whether the reader can act.
+ *
+ * So the client is told this feed at the grain the review queue is already told
+ * at — `ReviewSummaryRow`'s grain, one stampless line — and for the same second
+ * reason: a swarm proposes a whole set of tasks in one pass, so a per-task list
+ * on the chrome of every page publishes the batch.
+ *
+ * NO COUNT ON THE SUMMARY, deliberately, and the same argument as
+ * `reviewFeedRows`: the dashboard one screen over prints a count for these rows
+ * off its OWN capped read, and two numbers answering one question is the
+ * defect. The count lives on the card that can also show the rows.
+ *
+ * Staff are unaffected — cross-client rows with their own stamps and client
+ * names are the forensic detail they work from.
+ */
+export type TaskAlertFeedRow =
+  | { kind: "task"; task: TaskAlert }
+  | { kind: "summary"; status: TaskAlert["status"] };
+
+export function taskAlertRows(
+  taskAlerts: readonly TaskAlert[],
+  opts: { viewerIsClient: boolean },
+): TaskAlertFeedRow[] {
+  if (!opts.viewerIsClient) return taskAlerts.map((task) => ({ kind: "task", task }));
+  // Order is the panel's order: what is waiting on the reader first.
+  const groups: TaskAlert["status"][] = ["review_pending", "pending"];
+  return groups
+    .filter((status) => taskAlerts.some((t) => t.status === status))
+    .map((status) => ({ kind: "summary", status }));
+}
+
+/**
  * How many notification ROWS this viewer has — the number every badge, dot and
  * panel header in the product prints.
  *
@@ -160,6 +206,9 @@ export function unreadNotificationCount(
   return (
     visibleActionItems(feeds.actionItems, opts.dismissed).length +
     reviewFeedRows(feeds.reviewJobs, opts).length +
-    feeds.taskAlerts.length
+    // ROWS, not records — same rule the review queue already follows (R10). A
+    // badge that counted a swarm's whole task set while the panel showed two
+    // summary lines would be the #105 lie in a third place.
+    taskAlertRows(feeds.taskAlerts, opts).length
   );
 }

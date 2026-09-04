@@ -67,6 +67,7 @@ import {
   applyCredit,
   assessCharge,
   defaultClientCredits,
+  isCreditsPlanV2Enabled,
   rollCreditWindows,
 } from "@/lib/credits";
 import { canViewClient } from "@/lib/client-visibility";
@@ -2495,17 +2496,62 @@ export async function listLoginLogs(opts?: { since?: number; limit?: number }): 
 
 /* ─────────────────────── Proactive Task Board ───────────────────────── */
 
+/**
+ * Firestore's ceiling on the value list of an `in` filter. A wider client scope
+ * is split into this many ids per query and merged in JS.
+ */
+const TASK_CLIENT_SCOPE_CHUNK = 30;
+
 export async function listClientTasks(opts: {
   clientId?: string;
+  /**
+   * A CROSS-CLIENT scope, fenced IN THE QUERY (review wave, 2026-09).
+   *
+   * The staff bell used to read the newest 200 tasks agency-wide and then keep
+   * the ones belonging to the viewer's clients. For an admin that is the same
+   * answer either way, but an EMPLOYEE is fenced to their assignments — so an
+   * employee whose clients' tasks all sat outside the newest 200 got an empty
+   * bell and a "All caught up!" that was simply false. The `limit` has to be
+   * applied to the viewer's OWN rows, which means the scope has to reach the
+   * query.
+   *
+   * Ignored when `clientId` is set (that is the narrower fence already), and an
+   * EMPTY array means an empty scope, not "everything" — it fails closed.
+   */
+  clientIds?: string[];
   /** Single status or array of statuses — filtered in JS to avoid composite indexes. */
   status?: TaskStatus | TaskStatus[];
   limit?: number;
   /** Archived tasks are hidden unless requested (or explicitly asked for via status). */
   includeArchived?: boolean;
 }): Promise<ClientTask[]> {
+  // Wider than one `in` filter can carry: run a query per chunk and merge. Each
+  // chunk is already sorted and capped by the recursive call, and the newest
+  // `limit` of a subset is a superset of whatever survives globally, so
+  // re-sorting and re-capping the union is the same answer one query would give.
+  const scope = opts.clientId ? undefined : opts.clientIds && [...new Set(opts.clientIds)];
+  if (scope) {
+    if (scope.length === 0) return [];
+    if (scope.length > TASK_CLIENT_SCOPE_CHUNK) {
+      const chunks: string[][] = [];
+      for (let i = 0; i < scope.length; i += TASK_CLIENT_SCOPE_CHUNK) {
+        chunks.push(scope.slice(i, i + TASK_CLIENT_SCOPE_CHUNK));
+      }
+      const pages = await Promise.all(
+        chunks.map((clientIds) => listClientTasks({ ...opts, clientIds })),
+      );
+      return pages
+        .flat()
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, opts.limit ?? 200);
+    }
+  }
   // Avoid composite-index requirement by filtering in JS after a simple query.
   let q = col.clientTasks() as FirebaseFirestore.Query;
   if (opts.clientId) q = q.where("clientId", "==", opts.clientId);
+  // `in` expands to a disjunction of EQUALITY filters, so this needs no
+  // composite index either — same reason the single-status filter below is safe.
+  else if (scope) q = q.where("clientId", "in", scope);
   // Single-status Firestore filter for efficiency; multi-status done in JS below.
   if (typeof opts.status === "string") q = q.where("status", "==", opts.status);
   const snap = await q.get();
@@ -2894,7 +2940,7 @@ type CreditEntryMeta = {
  */
 export async function chargeClientCredits(
   args: CreditEntryMeta & { amount: number },
-): Promise<{ balance: number }> {
+): Promise<{ balance: number; entryId: string | null }> {
   if (!Number.isSafeInteger(args.amount)) {
     throw new Error("Credit amount must be a finite integer");
   }
@@ -2908,7 +2954,9 @@ export async function chargeClientCredits(
 
     const assessed = assessCharge(current, args.amount, now);
     if (!assessed.ok) throw new CreditError(assessed.code, assessed.message);
-    if (args.amount <= 0) return { balance: assessed.next.balance };
+    // A zero-amount charge writes no ledger row, so there is no hold to settle
+    // and `entryId` is honestly null rather than a made-up id.
+    if (args.amount <= 0) return { balance: assessed.next.balance, entryId: null };
 
     tx.set(ref, assessed.next);
     const entryRef = col.creditLedger().doc();
@@ -2927,8 +2975,18 @@ export async function chargeClientCredits(
       actorUid: args.actorUid,
       actorName: args.actorName,
       createdAt: now,
+      // Two-phase charging (credits rework, 2026-09): a charge written while the
+      // rework is ON is an ESTIMATE awaiting settlement. Stamped on the row
+      // rather than inferred, so a reader of the ledger alone can tell a hold
+      // from the pre-rework charges that were final by construction.
+      //
+      // GATED, like every other write this rework introduces: with the flag off
+      // nothing will ever settle these rows, so calling them holds would be a
+      // claim the ledger cannot keep. It decides nothing either way — the
+      // settlement path pairs on ids and reads `operation`, never this.
+      ...(isCreditsPlanV2Enabled() ? { phase: "hold" as const } : {}),
     } satisfies CreditLedgerEntry);
-    return { balance: assessed.next.balance };
+    return { balance: assessed.next.balance, entryId: entryRef.id };
   });
   if (args.amount > 0) {
     trackCreditUsage({
@@ -2955,6 +3013,21 @@ export async function creditClientCredits(
     kind: "grant" | "refund" | "adjustment";
     /** Refunds: when the original charge happened — scopes window-spend hand-back. */
     chargedAt?: number;
+    /**
+     * A DETERMINISTIC ledger doc id for this credit, making the write
+     * idempotent: if the doc already exists the whole call is a no-op and the
+     * balance is not moved a second time.
+     *
+     * Added for the in-request refund paths (credits rework, 2026-09), which
+     * until now wrote auto-id docs with no idempotency key at all — the gap
+     * `refundOnce` exists to paper over per-run, and which nothing could see
+     * across runs. Passing `refundEntryIdFor(chargeEntryId)` here gives them the
+     * same `refund_<chargeEntryId>` pairing the job path has always had, which
+     * is also what lets a settlement tell that a charge was already handed back.
+     * Omit for grants and adjustments: two identical admin grants are two real
+     * grants, not a duplicate.
+     */
+    entryId?: string;
   },
 ): Promise<{ balance: number }> {
   if (!Number.isSafeInteger(args.amount)) {
@@ -2972,9 +3045,17 @@ export async function creditClientCredits(
       ? (snap.data() as ClientCredits)
       : defaultClientCredits(args.clientId, now);
 
+    // Idempotency, when the caller supplied a deterministic id: read INSIDE the
+    // transaction so a concurrent duplicate is serialised against this one
+    // rather than both reading "absent" and both crediting.
+    const entryRef = args.entryId ? col.creditLedger().doc(args.entryId) : col.creditLedger().doc();
+    if (args.entryId) {
+      const existing = await tx.get(entryRef);
+      if (existing.exists) return { balance: current.balance, duplicate: true };
+    }
+
     const next = applyCredit(current, args.amount, args.kind, now, args.chargedAt);
     tx.set(ref, next);
-    const entryRef = col.creditLedger().doc();
     tx.set(entryRef, {
       id: entryRef.id,
       clientId: args.clientId,
@@ -2991,8 +3072,11 @@ export async function creditClientCredits(
       actorName: args.actorName,
       createdAt: now,
     } satisfies CreditLedgerEntry);
-    return { balance: next.balance };
+    return { balance: next.balance, duplicate: false };
   });
+  // A duplicate moved nothing, so reporting it as usage would double-count a
+  // hand-back that never happened.
+  if (result.duplicate) return { balance: result.balance };
   trackCreditUsage({
     clientId: args.clientId,
     amount: args.amount,
@@ -3003,6 +3087,77 @@ export async function creditClientCredits(
     provider: args.provider ?? null,
   });
   return result;
+}
+
+/**
+ * Stamp the run a HOLD is paying for onto the charge row (credits rework,
+ * 2026-09) — see `CreditLedgerEntry.settlesJobId`.
+ *
+ * WHY THIS EXISTS AT ALL. A board-task dispatch is charged under the TASK id
+ * before any job exists, so two overlapping runs of one task file two holds
+ * under one key and "newest unpaired" stops naming a particular run. This is
+ * the earliest moment anything knows which job a given hold belongs to: the
+ * dispatch has just been given its job id.
+ *
+ * Stamps the NEWEST UNSTAMPED charge under the key, which is this dispatch's own
+ * — the charge was taken moments ago, immediately before the submit, and any
+ * older overlapping hold was stamped by its own dispatch on the same path.
+ *
+ * BEST EFFORT, and deliberately not transactional with the dispatch: an
+ * unstamped hold still settles, by the pre-existing newest-unpaired rule. This
+ * makes the common case exact; it is not load-bearing for correctness of a
+ * single in-flight run.
+ */
+export async function stampChargeSettlesJob(ledgerKey: string, jobId: string): Promise<void> {
+  // Gated with the rest of the rework: while it is dark nothing settles, so the
+  // stamp would be a read and a write per dispatch to record something nothing
+  // consults. A hold taken before the flag flips is simply unstamped, which is
+  // the legacy case the pairing already falls back to.
+  if (!isCreditsPlanV2Enabled()) return;
+  try {
+    const snap = await col
+      .creditLedger()
+      .where("jobId", "==", ledgerKey)
+      .limit(50)
+      .get();
+    const candidate = snap.docs
+      .map((d) => withId<CreditLedgerEntry>(d))
+      .filter((e) => e.kind === "charge" && e.delta < 0 && e.settlesJobId == null)
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!candidate) return;
+    await col.creditLedger().doc(candidate.id).set({ settlesJobId: jobId }, { merge: true });
+  } catch (e) {
+    console.error(`[credits] could not stamp charge under ${ledgerKey} with job ${jobId}:`, e);
+  }
+}
+
+/**
+ * This client's runs of ONE agent, bounded — the sample the run-price estimate
+ * is measured from (credits rework, 2026-09).
+ *
+ * TWO EQUALITY FILTERS AND A LIMIT, deliberately no `orderBy`: that pairing
+ * needs no composite index (Firestore merges single-field indexes for multiple
+ * `==`, the same reasoning `listReviewJobsNeedingAssets` records), while
+ * ordering alongside an equality filter would. The estimate sorts what comes
+ * back in memory before it takes the newest ten, so ordering here would buy an
+ * index and nothing else.
+ *
+ * REPLACES `listJobs({ clientId })` ON THE SUBMIT PATH, which read every job the
+ * client has ever run — on every single submit — to find at most ten numbers
+ * about one agent.
+ */
+export async function listJobsByClientAndAgent(
+  clientId: string,
+  customAgentId: string,
+  limit = 100,
+): Promise<Job[]> {
+  const snap = await col
+    .jobs()
+    .where("clientId", "==", clientId)
+    .where("customAgentId", "==", customAgentId)
+    .limit(limit)
+    .get();
+  return snap.docs.map((d) => withId<Job>(d));
 }
 
 /** Set the weekly/monthly spend caps (null = uncapped). Creates the doc with defaults if missing. */

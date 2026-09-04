@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { BrandFavicon } from "@/components/brand-favicon";
 import { cn } from "@/lib/utils";
-import { domainFromName } from "@/lib/favicon";
 import { BrandingModal } from "@/components/branding-modal";
 import { addCompetitorByNameAction, removeCompetitorAction } from "@/lib/actions";
 import { computeTrackedCompetitors, TRACKED_COMPETITOR_LIMIT } from "@/lib/competitor-priority";
+import { buildCompetitorRows, type CompetitorAiVisibility } from "@/lib/competitor-rows";
 import type { BrandColor, BrandingGuidelines, ClientCompetitor } from "@/lib/types";
 
 /* ── Competitor favicon with fallback ────────────────────────────────── */
@@ -35,12 +35,19 @@ export function CompetitorTrack({
   clientId,
   isStaff,
   limit = TRACKED_COMPETITOR_LIMIT,
-  collapseTo = null,
-  title = "Competitor Track",
+  title = "Competitors",
+  aiVisibility = null,
 }: {
   competitors: ClientCompetitor[];
   clientId: string;
   isStaff: boolean;
+  /**
+   * The client's own side of the last SEO/GEO capture (portal feedback round 4,
+   * 2026-09), so each row's stored `llmMentions` has something to be a share
+   * OF. Resolved on the server from the snapshot this page already read; null
+   * whenever there is no snapshot, and the meter simply does not render.
+   */
+  aiVisibility?: CompetitorAiVisibility | null;
   /**
    * Display cap. Defaults to the rail's original top-5 view; the Account
    * Center Competitors tab passes `null` ("holds everything we gather") —
@@ -48,24 +55,6 @@ export function CompetitorTrack({
    * capture roster (lib/intel/pipeline.ts) and is untouched by this prop.
    */
   limit?: number | null;
-  /**
-   * How many rows render before the rest are behind a disclosure, or `null`
-   * for "all of them, always".
-   *
-   * NOT a second `limit`, and the difference is what the two words buy: `limit`
-   * DROPS rows — anything past it is not in this component's output and cannot
-   * be asked for. `collapseTo` keeps every row and hides the tail behind a
-   * toggle, so Account Center still "holds everything we gather" while opening
-   * on the handful that answer the question a person actually arrived with
-   * ("who am I losing to?").
-   *
-   * The order it cuts against is `computeTrackedCompetitors`'s, which is the
-   * point: manual rows first, then auto-seeded rivals by MEASURED AI-answer
-   * presence (llmMentions, written back after each SEO/GEO capture). So the
-   * visible ones are the rivals the engines actually name — the same ranking
-   * that decides who the next capture measures against.
-   */
-  collapseTo?: number | null;
   title?: string;
 }) {
   const router = useRouter();
@@ -76,6 +65,17 @@ export function CompetitorTrack({
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  /**
+   * Which row's "Stop tracking" is asking (flow audit 2026-09, R4).
+   *
+   * A one-off destructive press with no undo behind it — the tracker forgets
+   * the competitor's whole history, and re-adding by name starts a fresh
+   * analysis — so it takes the two-step inline confirm this codebase already
+   * has (`client-key-inline.tsx`, `client-seat-remove.tsx`) rather than the
+   * timed undo Home's repeatable X's took. One id, not a set: two open
+   * questions in a six-row list is two chances to answer the wrong one.
+   */
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [, startRemove] = useTransition();
 
   // Strict top-5 view: manually added competitors always take priority, remaining
@@ -95,28 +95,46 @@ export function CompetitorTrack({
     const pending = addedRows.filter((c) => c.clientId === clientId && !serverIds.has(c.id));
     return [...competitors, ...pending].filter((c) => !removedIds.has(c.id));
   }, [addedRows, clientId, competitors, removedIds]);
-  const displayed = useMemo(() => computeTrackedCompetitors(active, limit), [active, limit]);
+  /**
+   * Two steps, and they answer different questions (portal feedback round 4,
+   * 2026-09): `computeTrackedCompetitors` decides which rows survive `limit`,
+   * `buildCompetitorRows` decides how the survivors read and in what order.
+   * Keeping the cap on the first means the rail's top-5 still drops the same
+   * rows it always did; keeping the ordering in the second means the tab can
+   * lead with the rivals the engines actually name without touching the
+   * measurement roster's own priority maths.
+   */
+  const displayed = useMemo(
+    () => buildCompetitorRows(computeTrackedCompetitors(active, limit), aiVisibility),
+    [active, aiVisibility, limit],
+  );
 
-  const [showAll, setShowAll] = useState(false);
-  // A removal must not silently re-collapse the list under someone who opened
-  // it, so the toggle is state and never derived from the row count.
-  const collapsed = collapseTo != null && !showAll && displayed.length > collapseTo;
-  const rows = collapsed ? displayed.slice(0, collapseTo) : displayed;
-  const hiddenCount = displayed.length - rows.length;
+  /** Which row's disclosure is open. One at a time: this is a list, not a form. */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  /**
+   * NO COLLAPSE (review wave, 2026-09). The `collapseTo` prop and its "View all
+   * N competitors" disclosure are gone rather than left unused: round 4 already
+   * ruled that this list opens on everything it holds ("since it's only
+   * competitors now we can show all of them right off the bat"), the tab was
+   * its only caller and passed `null`, and a hiding mechanism nothing asks for
+   * is a second answer waiting to disagree with the first.
+   */
+  const rows = displayed;
 
-  function handleRemove(competitor: ClientCompetitor) {
+  function handleRemove(competitorId: string) {
     setRemoveError(null);
-    setRemovingId(competitor.id);
+    setConfirmingId(null);
+    setRemovingId(competitorId);
     // Optimistic: hide immediately so a lower-priority rival backfills without layout shift.
-    setRemovedIds((prev) => new Set(prev).add(competitor.id));
+    setRemovedIds((prev) => new Set(prev).add(competitorId));
     startRemove(async () => {
       try {
-        await removeCompetitorAction(clientId, competitor.id);
+        await removeCompetitorAction(clientId, competitorId);
       } catch (e) {
         // Roll back on failure.
         setRemovedIds((prev) => {
           const next = new Set(prev);
-          next.delete(competitor.id);
+          next.delete(competitorId);
           return next;
         });
         setRemoveError(e instanceof Error ? e.message : "Failed to remove competitor");
@@ -175,29 +193,42 @@ export function CompetitorTrack({
     });
   }
 
+  /**
+   * A FULL-WIDTH TAB SECTION, NOT A RAIL WIDGET (review wave, 2026-09).
+   *
+   * Everything here used to be dressed for the 224px client rail it was moved
+   * off: a `border-t` hairline standing in for a heading, a 10px all-caps label,
+   * and an icon-only 20px "+" as the only way to add a rival. On the Account
+   * Center's Competitors tab that read as a leftover strip rather than the tab's
+   * subject. It takes the same section heading the tab's other blocks use
+   * (Visibility scores, Things only you can do) and an add control that says
+   * what it does.
+   */
   return (
-    <div className="border-t border-border pt-3">
-      <div className="mb-1 flex items-center justify-between gap-2 px-1">
-        <p className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
           <span className="truncate">{title}</span>
-          {collapseTo != null && displayed.length > 0 && (
-            <span className="shrink-0 rounded-full border border-border bg-surface-2 px-1.5 py-px font-mono text-[9px] font-normal tracking-normal text-muted-2">
-              {collapsed ? `${rows.length}/${displayed.length}` : displayed.length}
+          {/* "How many are we watching" is the first thing a person asks of a
+              list they cannot see the bottom of. */}
+          {displayed.length > 0 && (
+            <span className="shrink-0 rounded-full border border-border bg-surface-2 px-1.5 py-px text-[9px] font-normal tracking-normal text-muted-2">
+              {displayed.length}
             </span>
           )}
         </p>
         <button
           onClick={openAdd}
-          className="flex h-5 w-5 items-center justify-center rounded-[4px] text-muted-2 transition-colors hover:bg-surface-2 hover:text-neon"
-          aria-label="Add competitor"
-          title="Add competitor"
+          aria-expanded={addOpen}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
         >
-          <Icon name="Plus" className="h-3 w-3" />
+          <Icon name="Plus" className="h-3.5 w-3.5" />
+          Add competitor
         </button>
       </div>
 
       {addOpen && (
-        <div className="mb-2 space-y-1.5 px-1">
+        <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
             <input
               value={addName}
@@ -240,77 +271,140 @@ export function CompetitorTrack({
       )}
 
       {active.length === 0 && (
-        <p className="px-1 py-1 text-xs text-muted-2">
-          No competitors tracked yet. Click + to add one.
+        <p className="text-sm text-muted-2">
+          No competitors tracked yet. Use &ldquo;Add competitor&rdquo; to start the list.
         </p>
       )}
 
       {rows.length > 0 && (
-        <ul>
+        <ul className="divide-y divide-border/50">
           {rows.map((c) => {
-            // CD-H3: a stored url wins, but a row that has none and whose NAME
-            // is a domain ("Okara.ai", "ploy.ai") is just as linkable - and the
-            // favicon beside it already resolves through exactly this fallback,
-            // so the row showed the brand's real icon and then refused to open
-            // it. Same derivation, one source (lib/favicon). Neither present
-            // still means no anchor rather than a dead one.
-            const derived = c.url?.trim() ? null : domainFromName(c.company);
-            const href = c.url?.trim()
-              ? c.url.startsWith("http")
-                ? c.url
-                : `https://${c.url}`
-              : derived
-                ? `https://${derived}`
-                : null;
             const isRemoving = removingId === c.id;
-            const linkContent = (
-              <>
-                <CompetitorFavicon url={c.url} company={c.company} />
-                <span className="flex-1 truncate text-xs text-muted group-hover:text-foreground">
-                  {c.company}
-                </span>
-                {/* CD-G4: the same ↗ the client chip uses, so "opens a site in
-                    a new tab" reads identically everywhere in the rail. Shown
-                    to staff and clients alike - only the trash beside it is
-                    staff-gated. opacity-0 rather than conditional rendering so
-                    the row keeps its width on hover and the favicon never
-                    shifts. */}
-                {href && (
-                  <Icon
-                    name="ArrowUpRight"
-                    className="h-3 w-3 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
-                  />
-                )}
-              </>
-            );
+            const isConfirming = confirmingId === c.id;
+            const isExpanded = expandedId === c.id;
             return (
-              <li
-                key={c.id}
-                className="group flex items-center gap-1 rounded-md px-2 py-1 transition-colors hover:bg-surface-2"
+              <li key={c.id}>
+              <div
+                className="group flex items-start gap-1 rounded-md px-2 py-1.5 transition-colors hover:bg-surface-2"
               >
-                {href ? (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex min-w-0 flex-1 items-center gap-2.5"
-                  >
-                    {linkContent}
-                  </a>
-                ) : (
-                  <div className="flex min-w-0 flex-1 items-center gap-2.5">{linkContent}</div>
-                )}
-                {/* Any tracked row is removable by staff and the client alike —
-                    it's their tracker, not just their own manual adds. */}
+                {/* THE ROW IS THE DISCLOSURE (portal feedback round 4, 2026-09).
+                    It used to be an anchor straight to the competitor's site,
+                    which made the row's only job "leave the page". The website
+                    is still one press away, inside the panel below, and the row
+                    itself now opens what we already know about them. A row with
+                    nothing behind it stays inert rather than opening an empty
+                    box, so the chevron is conditional too. */}
                 <button
                   type="button"
-                  onClick={() => handleRemove(c)}
+                  onClick={() => c.hasDetail && setExpandedId(isExpanded ? null : c.id)}
+                  disabled={!c.hasDetail}
+                  aria-expanded={c.hasDetail ? isExpanded : undefined}
+                  className="flex min-w-0 flex-1 items-start gap-2.5 text-left disabled:cursor-default"
+                >
+                  <span className="mt-0.5 shrink-0">
+                    <CompetitorFavicon url={c.url} company={c.company} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-xs font-medium text-muted group-hover:text-foreground">
+                        {c.company}
+                      </span>
+                      {/* NOT labelled "Tracked": every row on this list is
+                          tracked, and the trash beside it says "Stop
+                          tracking". What this marks is provenance, which is
+                          the real question a client has about a name they do
+                          not recognise. Neutral, not accent: the orange is
+                          rationed and the meter below already spends it. */}
+                      {c.tracked && (
+                        <span
+                          title="Added to this list by hand, not found by us"
+                          className="shrink-0 rounded-full border border-border bg-surface-2 px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-muted-2"
+                        >
+                          Added by hand
+                        </span>
+                      )}
+                    </span>
+
+                    {/* "What they do", in one line, from the positioning the
+                        report already stored. No research, no new call. */}
+                    {c.summary && (
+                      <span className="mt-0.5 block truncate text-[11px] leading-snug text-muted-2">
+                        {c.summary}
+                      </span>
+                    )}
+
+                    {c.chips.length > 0 && (
+                      <span className="mt-1 flex flex-wrap items-center gap-1">
+                        {c.chips.map((chip) => (
+                          <span
+                            key={chip}
+                            className="rounded-[4px] border border-border bg-surface-2 px-1.5 py-px text-[10px] leading-4 text-muted-2"
+                          >
+                            {chip}
+                          </span>
+                        ))}
+                      </span>
+                    )}
+
+                    {/* Share of the AI conversation, from the counts the last
+                        SEO/GEO capture already wrote back onto these rows. The
+                        bar is drawn against the LARGER of this rival's count
+                        and the client's own, so a full bar means "ahead of
+                        you" and never "100% of something". */}
+                    {c.mentions !== null && (
+                      <span className="mt-1 flex items-center gap-2">
+                        {c.barPct !== null && (
+                          <span className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-surface-3">
+                            <span
+                              className="block h-full rounded-full bg-neon"
+                              style={{ width: `${c.barPct}%` }}
+                            />
+                          </span>
+                        )}
+                        <span className="truncate font-mono text-[10px] text-muted-2">
+                          {c.answersMeasured !== null
+                            ? `Named in ${c.mentions} of ${c.answersMeasured} AI answers`
+                            : `Named in ${c.mentions} AI answers`}
+                          {c.clientMentions !== null ? ` · you: ${c.clientMentions}` : ""}
+                        </span>
+                      </span>
+                    )}
+                    {/* A row the last capture did not measure (review wave,
+                        2026-09). It may still hold a count from an OLDER run,
+                        and printing that beside this run's client figure, over
+                        this run's denominator, compares two measurements as
+                        though they were one. Says so instead. */}
+                    {c.notMeasuredThisRun && (
+                      <span className="mt-1 block truncate font-mono text-[10px] text-muted-2">
+                        Not measured in the latest run
+                      </span>
+                    )}
+                  </span>
+                  {c.hasDetail && (
+                    <Icon
+                      name="ChevronDown"
+                      className={cn(
+                        "mt-0.5 h-3 w-3 shrink-0 text-muted-2 transition-transform",
+                        isExpanded && "rotate-180",
+                      )}
+                    />
+                  )}
+                </button>
+                {/* Any tracked row is removable by staff and the client alike —
+                    it's their tracker, not just their own manual adds.
+                    R4 (flow audit 2026-09): the trash ASKS now — it used to
+                    commit on the press, and re-adding by name starts a fresh
+                    analysis rather than restoring the history it forgot. */}
+                <button
+                  type="button"
+                  onClick={() => setConfirmingId(isConfirming ? null : c.id)}
                   disabled={isRemoving}
                   aria-label={`Stop tracking ${c.company}`}
+                  aria-expanded={isConfirming}
                   title="Stop tracking"
                   // Reachable without a pointer: this removes a tracked competitor,
                   // and hover-only reveal hides it entirely on touch (#89's shape).
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 opacity-0 transition-colors group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+                  className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] text-muted-2 opacity-0 transition-colors group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 hover:bg-danger/10 hover:text-danger disabled:opacity-50"
                 >
                   {isRemoving ? (
                     <Icon name="Loader" className="h-3 w-3 animate-spin" />
@@ -318,33 +412,93 @@ export function CompetitorTrack({
                     <Icon name="Trash2" className="h-3 w-3" />
                   )}
                 </button>
+              </div>
+
+              {isExpanded && (
+                <div className="mb-1.5 ml-9 mr-2 space-y-2 rounded-md border border-border bg-surface-2/50 px-2.5 py-2">
+                  {c.facts.length > 0 && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-1">
+                      {c.facts.map((f) => (
+                        <span key={f.label} className="text-[11px] leading-snug text-muted">
+                          <span className="text-muted-2">{f.label}:</span> {f.value}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {c.strengths.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                        Where they are strong
+                      </p>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {c.strengths.map((s, i) => (
+                          <li key={i} className="text-[11px] leading-snug text-muted">
+                            {s}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {c.weaknesses.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+                        Where they are weak
+                      </p>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {c.weaknesses.map((s, i) => (
+                          <li key={i} className="text-[11px] leading-snug text-muted">
+                            {s}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {c.href && (
+                    <a
+                      href={c.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-medium text-muted transition-colors hover:text-neon"
+                    >
+                      Visit website
+                      <Icon name="ArrowUpRight" className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {isConfirming && (
+                <div className="mx-2 mb-1 rounded-md border border-warning/30 bg-warning/10 px-2 py-1.5">
+                  <p className="text-[11px] leading-snug text-foreground">
+                    Stop tracking {c.company}? Their history goes with them.
+                  </p>
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleRemove(c.id)}
+                      disabled={isRemoving}
+                      className="rounded-[4px] border border-warning/40 bg-warning/15 px-2 py-0.5 text-[11px] font-medium text-warning disabled:opacity-50"
+                    >
+                      Stop tracking
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingId(null)}
+                      className="rounded-[4px] border border-border px-2 py-0.5 text-[11px] font-medium text-muted hover:text-foreground"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
               </li>
             );
           })}
         </ul>
       )}
 
-      {/* The disclosure. Rendered whenever the list is collapsible in EITHER
-          direction, so the way back is the same control as the way out — a
-          "show all" that turns into nothing once pressed leaves a person
-          scrolling a list they did not ask to open. */}
-      {collapseTo != null && (hiddenCount > 0 || showAll) && (
-        <button
-          type="button"
-          onClick={() => setShowAll((v) => !v)}
-          aria-expanded={showAll}
-          className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-1.5 text-[11px] font-medium text-muted-2 transition-colors hover:border-border-strong hover:text-foreground"
-        >
-          {showAll ? "Show fewer" : `View all ${displayed.length} competitors`}
-          <Icon
-            name="ChevronDown"
-            className={cn("h-3 w-3 transition-transform", showAll && "rotate-180")}
-          />
-        </button>
-      )}
-
-      {removeError && <p className="mt-1 px-1 text-[11px] text-danger">{removeError}</p>}
-    </div>
+      {removeError && <p className="text-[11px] text-danger">{removeError}</p>}
+    </section>
   );
 }
 

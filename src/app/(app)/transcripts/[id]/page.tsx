@@ -10,6 +10,7 @@ import { ArchiveButton } from "@/components/archive-button";
 import { formatDateTime } from "@/lib/utils";
 import { deriveActionItemOwners } from "@/lib/transcripts/ingest";
 import { normalizeDashes } from "@/lib/text-utils";
+import { isSafeInternalPath } from "@/lib/safe-internal-path";
 import type { AppUser } from "@/lib/types";
 
 export default async function TranscriptDetailPage({
@@ -39,8 +40,14 @@ export default async function TranscriptDetailPage({
   // `?tab=settings#meetings` since portal feedback round 2 (2026-09): Meetings
   // stopped being a tab of its own and became the last sub-section of the
   // Settings tab ("Meetings can be a sub-section in, like, account settings").
+  //
+  // `isSafeInternalPath`, not `startsWith("/")` (review wave, 2026-09): this
+  // value comes off the query string, so it is an attacker's string as much as
+  // ours, and a bare leading slash also opens `//evil.com` and `/\evil.com` —
+  // both of which navigate a signed-in reader off the portal from a link that
+  // says "Back". See that helper for the whole rule.
   const backHref =
-    from && from.startsWith("/")
+    isSafeInternalPath(from)
       ? from
       : !isStaff && user.clientId
         ? `/clients/${user.clientId}/settings?tab=settings#meetings`

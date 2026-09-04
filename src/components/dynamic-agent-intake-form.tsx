@@ -20,6 +20,8 @@
 import { useId, useState } from "react";
 import { Button, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { CreditPriceNote } from "@/components/credit-price-note";
+import { creditsLabel, estimatedCreditsLabel } from "@/lib/credits";
 import type { DynamicAgentInputDef, DynamicAgentInputValue } from "@/lib/types";
 
 const DEFAULT_MAX_SIZE_MB = 20;
@@ -123,12 +125,30 @@ export function DynamicAgentIntakeForm({
   submitLabel = "Run agent",
   submitting = false,
   onSubmit,
+  creditsCost,
+  priceIsEstimate = false,
+  viewerIsBilled = true,
 }: {
   inputSchema: DynamicAgentInputDef[];
   clientId: string;
   submitLabel?: string;
   submitting?: boolean;
   onSubmit: (values: Record<string, DynamicAgentInputValue>) => void;
+  /**
+   * `DynamicAgentSpec.creditsCost` — quoted above the submit (flow audit
+   * 2026-09, R3). The press charges it immediately, with no confirm step, and
+   * this surface quoted nothing at all. Absent ⇒ no line, for the admin-side
+   * preview mounts that are not spending a client's credits.
+   */
+  creditsCost?: number;
+  /**
+   * Whether that figure is a HOLD that settles to what the run actually used
+   * (`CREDITS_PLAN_V2_ENABLED`, threaded from the server — see DynamicAgentRun).
+   * Wording only; the number is the same either way.
+   */
+  priceIsEstimate?: boolean;
+  /** `isBillableClientActor()` — decides whose money the quote names, not the figure. */
+  viewerIsBilled?: boolean;
 }) {
   const formId = useId();
   const fields = [...inputSchema].sort((a, b) => a.order - b.order);
@@ -296,6 +316,20 @@ export function DynamicAgentIntakeForm({
         </p>
       ) : null}
 
+      <CreditPriceNote
+        price={
+          creditsCost == null
+            ? null
+            : // The hedge lives in the STRING, which is CreditPriceNote's own
+              // rule — see its note on why: most of its callers quote an
+              // unsettled setup charge, and this one does not.
+              priceIsEstimate
+              ? estimatedCreditsLabel(creditsCost)
+              : creditsLabel(creditsCost)
+        }
+        viewerIsBilled={viewerIsBilled}
+        className="mt-0"
+      />
       <Button type="submit" disabled={submitting} loading={submitting}>
         {submitLabel}
       </Button>

@@ -246,9 +246,14 @@ export async function refreshJobStatusAction(
 
 async function requestJobCancellation(jobId: string, preloaded?: Job): Promise<{ error?: string }> {
   const job = preloaded ?? (await getJob(jobId));
-  if (!job?.external) return { error: "Not a managed job." };
+  // `serviceJobId` is optional on ExternalJobInfo since agent-engine jobs
+  // started carrying a cost there without carrying an agent-service identity
+  // (credits rework, 2026-09). The presence of `external` therefore no longer
+  // implies a service job to cancel, so the id itself is what this checks.
+  const serviceJobId = job?.external?.serviceJobId;
+  if (!serviceJobId) return { error: "Not a managed job." };
   try {
-    await cancelAgentServiceJob(job.external.serviceJobId);
+    await cancelAgentServiceJob(serviceJobId);
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Cancel failed" };
   }

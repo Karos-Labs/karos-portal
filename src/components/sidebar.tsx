@@ -14,6 +14,7 @@ import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { BrandColorsSection } from "@/components/client-context-sections";
 import { ClientRailAgentsNav } from "@/components/client-rail-agents-nav";
 import { AccountMenu } from "@/components/account-menu";
+import { useMenuDismiss } from "@/components/use-menu-dismiss";
 import { NavLink } from "@/components/rail-nav-link";
 import {
   NotificationBell,
@@ -23,17 +24,17 @@ import {
 import {
   unreadNotificationCount,
   type NotificationFeeds,
+  type TaskAlert,
 } from "@/lib/notification-rows";
 import { ThemeSwitch } from "@/components/theme-switch";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { LogoutButton } from "@/components/logout-button";
 import { MobileCompanySheet, MobileTabBar, useCompanySheet } from "@/components/mobile-shell";
-import type { StaffShellClientView } from "@/lib/client-visibility";
+import type { StaffPickerClientView } from "@/lib/client-visibility";
 import type {
   ActionItemNotification,
   AgentReviewNotification,
   AppUser,
-  ClientTask,
   Role,
 } from "@/lib/types";
 
@@ -141,28 +142,42 @@ function ClientContextPicker({
   clients,
   isAdmin,
 }: {
-  clients: StaffShellClientView[];
+  clients: StaffPickerClientView[];
   isAdmin: boolean;
 }) {
   const router = useRouter();
   const { activeClient, setActiveClient } = useActiveClient();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const triggerRef = useMenuDismiss(open, setOpen);
 
   const filtered = query.trim()
     ? clients.filter((c) => c.name.toLowerCase().includes(query.toLowerCase()))
     : clients;
 
-  function selectClient(client: StaffShellClientView) {
+  function selectClient(client: StaffPickerClientView) {
     setOpen(false);
     setQuery("");
-    // Re-picking the client that is already active is a no-op, not a reset.
-    // The optimistic seed below starts the roster empty and the balance
-    // unknown, and ClientContextSync only re-fills them when one of its
-    // dependency signatures changes - which, on the same client's own page,
-    // nothing does. So the credits pill vanished and the AI-agents dropdown
-    // emptied until the next navigation (alignment review, parity pass 2026-09).
-    if (activeClient?.client.id === client.id) return;
+    // THE GUARD SKIPS THE SEED, NOT THE NAVIGATION (review wave, 2026-09).
+    //
+    // Re-picking the client that is already active must not RE-SEED: the
+    // optimistic seed below starts the roster empty and the balance unknown,
+    // and ClientContextSync only re-fills them when one of its dependency
+    // signatures changes - which, on the same client's own page, nothing does.
+    // So the credits pill vanished and the AI-agents dropdown emptied until the
+    // next navigation (alignment review, parity pass 2026-09).
+    //
+    // It used to `return` outright, which also swallowed the push - so picking
+    // the active client from `/jobs` or `/assets` closed the dropdown and left
+    // the reader exactly where they were, with no feedback at all. Picking a
+    // client from this control means "take me to that client".
+    if (activeClient?.client.id !== client.id) {
+      seedContext(client);
+    }
+    router.push(`/clients/${client.id}`);
+  }
+
+  function seedContext(client: StaffPickerClientView) {
     // Optimistically switch the nav immediately; ClientContextSync fills in docs/competitors on load.
     // isAdmin carries the VIEWER's real role rather than a hardcoded true: the
     // picker renders for every staff member, so an EMPLOYEE who picked a client
@@ -179,6 +194,12 @@ function ClientContextPicker({
     // paints an empty dropdown for one frame; a `null` balance hides the
     // credits pill rather than flashing a wrong number at a staff member who is
     // about to read it as the client's (parity pass 2026-09).
+    // `client` is the PICKER's row, a narrower projection than the one the
+    // context finally holds (StaffPickerClientView — see client-visibility.ts).
+    // Same one-frame honesty as the two fields above it: the missing profile
+    // fields paint as absent for one render and ClientContextSync replaces the
+    // whole projection the moment the client's own layout mounts, which the
+    // push below guarantees happens next.
     setActiveClient({
       client,
       contextDocs: [],
@@ -187,7 +208,6 @@ function ClientContextPicker({
       spendableCredits: null,
       isAdmin,
     });
-    router.push(`/clients/${client.id}`);
   }
 
   function clearClient(e: React.MouseEvent) {
@@ -200,60 +220,77 @@ function ClientContextPicker({
 
   return (
     <div className="relative">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        /* D12 (parity pass 2026-09): in client context this rail is the
-           client's rail, and this control is the one thing on it a client has
-           no equivalent of. It stays — it is the only way in and out of the
-           context — but it says so, in a word and in a tooltip, so nobody
-           reads it as part of what the client sees. */
-        title={
-          activeClient
-            ? "Internal · you are viewing this client's workspace. Clients never see this control."
-            : "Internal · pick a client to view their workspace."
-        }
-        className={cn(
-          "flex w-full items-center gap-2 rounded-[10px] px-3 py-2 text-sm transition-colors",
-          open
-            ? "bg-surface-2 text-foreground"
-            : "text-muted hover:bg-surface-2 hover:text-foreground",
-        )}
-      >
-        <Icon name="Eye" className="h-4 w-4 shrink-0 text-muted-2" />
-        <span className="min-w-0 flex-1 truncate text-left">
-          {activeClient ? activeClient.client.name : "Client context"}
-        </span>
-        {/* One row, not a caption line above it: the rail's height is a fixed
-            budget (CD-E3) and this control has to fit the client's footer. */}
-        {activeClient && (
-          <span
-            aria-hidden="true"
-            className="shrink-0 rounded border border-border px-1 font-mono text-[9px] uppercase leading-[1.4] tracking-[0.12em] text-muted-2"
-          >
-            Internal
+      {/* TWO CONTROLS, TWO ELEMENTS (review wave, 2026-09). The clear-context ✕
+          used to be a `role="button" tabIndex={0}` SPAN nested inside the
+          trigger button — invalid markup (interactive content inside a button),
+          which browsers and assistive tech resolve inconsistently, and it hand-
+          rolled only the Enter half of a button's keyboard contract, so Space
+          fell through to the trigger and re-opened the dropdown instead of
+          clearing the context. It is a sibling `<button>` now, absolutely
+          positioned over the trigger's right padding — the same shape
+          `AgentRow` uses in client-rail-agents-nav.tsx — so Enter, Space and
+          the focus ring all come from the platform rather than from here. */}
+      <div className="relative flex items-center">
+        <button
+          ref={triggerRef}
+          onClick={() => setOpen((o) => !o)}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          /* D12 (parity pass 2026-09): in client context this rail is the
+             client's rail, and this control is the one thing on it a client has
+             no equivalent of. It stays — it is the only way in and out of the
+             context — but it says so, in a word and in a tooltip, so nobody
+             reads it as part of what the client sees. */
+          title={
+            activeClient
+              ? "Internal · you are viewing this client's workspace. Clients never see this control."
+              : "Internal · pick a client to view their workspace."
+          }
+          className={cn(
+            "flex w-full items-center gap-2 rounded-[10px] py-2 pl-3 text-sm transition-colors",
+            // Room for the ✕ that sits over this padding when a context is open.
+            activeClient ? "pr-8" : "pr-3",
+            open
+              ? "bg-surface-2 text-foreground"
+              : "text-muted hover:bg-surface-2 hover:text-foreground",
+          )}
+        >
+          <Icon name="Eye" className="h-4 w-4 shrink-0 text-muted-2" />
+          <span className="min-w-0 flex-1 truncate text-left">
+            {activeClient ? activeClient.client.name : "Client context"}
           </span>
-        )}
-        {activeClient ? (
-          <span
-            role="button"
-            tabIndex={0}
+          {/* One row, not a caption line above it: the rail's height is a fixed
+              budget (CD-E3) and this control has to fit the client's footer. */}
+          {activeClient && (
+            <span
+              aria-hidden="true"
+              className="shrink-0 rounded border border-border px-1 font-mono text-[9px] uppercase leading-[1.4] tracking-[0.12em] text-muted-2"
+            >
+              Internal
+            </span>
+          )}
+          {!activeClient && (
+            <Icon
+              name="ChevronDown"
+              className={cn(
+                "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform",
+                open && "rotate-180",
+              )}
+            />
+          )}
+        </button>
+        {activeClient && (
+          <button
+            type="button"
             onClick={clearClient}
-            onKeyDown={(e) => e.key === "Enter" && clearClient(e as never)}
-            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground"
+            className="absolute right-2 flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground"
             aria-label="Clear client context"
+            title="Clear client context"
           >
             <Icon name="X" className="h-3 w-3" />
-          </span>
-        ) : (
-          <Icon
-            name="ChevronDown"
-            className={cn(
-              "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform",
-              open && "rotate-180",
-            )}
-          />
+          </button>
         )}
-      </button>
+      </div>
 
       {open && (
         <>
@@ -275,7 +312,12 @@ function ClientContextPicker({
               ) : (
                 filtered.map((client) => {
                   const isActive = activeClient?.client.id === client.id;
-                  const logoUrl = client.logoUrl || client.brandingGuidelines?.logoUrl;
+                  // `logoUrl` already IS `logoUrl || brandingGuidelines.logoUrl`
+                  // — the picker's projection resolves that fallback so a whole
+                  // BrandingGuidelines object per client no longer rides into
+                  // every staff page's payload for one nested string (review
+                  // wave, 2026-09; see toStaffPickerView).
+                  const logoUrl = client.logoUrl;
                   const accentColor = client.accentColor ?? "#ff6b2c";
                   return (
                     <button
@@ -360,6 +402,7 @@ function UserMenu({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const triggerRef = useMenuDismiss(open, setOpen);
   // No bell in this menu inside the drawer, so no dot on its trigger either.
   const unread = showChrome ? unreadWithChrome : 0;
 
@@ -378,7 +421,23 @@ function UserMenu({
   return (
     <div className="relative">
       <button
+        ref={triggerRef}
         onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        /* NAMES THE PERSON, not just the control (review wave, 2026-09). The
+           visible row already carries the name and the role; a screen reader
+           was told only "button", and in an impersonated session ("Viewing as
+           Client") knowing WHOSE account this menu belongs to is the whole
+           point of the row. The unread count rides in the SAME string, because
+           an aria-label replaces the element's contents outright — the sr-only
+           span that used to carry it inside the button stopped being announced
+           the moment this label existed. */
+        aria-label={
+          unread > 0
+            ? `Open account menu for ${user.name}, ${unread} unread notifications`
+            : `Open account menu for ${user.name}`
+        }
         className={cn(
           "flex w-full items-center gap-3 rounded-[10px] px-2 py-1.5 text-left transition-colors",
           open ? "bg-surface-2" : "hover:bg-surface-2",
@@ -411,7 +470,6 @@ function UserMenu({
             />
           )}
         </span>
-        {unread > 0 && <span className="sr-only">{unread} unread notifications</span>}
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium">{user.name}</p>
           <p className="truncate text-[11px] text-muted-2">
@@ -502,15 +560,22 @@ export function Sidebar({
   user: AppUser;
   pendingCount?: number;
   realAdmin?: AppUser;
-  clients?: StaffShellClientView[];
+  /** Picker ROWS — the narrow projection, not the active client's. */
+  clients?: StaffPickerClientView[];
   /**
    * Bell feeds. They used to be handed to AppHeader, the floating top-right
    * strip; CD-G9c retired that strip and the bell now lives in the account
    * menu (and, at narrow width in client context, in the Company sheet).
+   *
+   * `TaskAlert`, not `ClientTask`: this shell is also what a CLIENT_USER with an
+   * unresolvable client falls through to, and a full task document handed to a
+   * "use client" component is in that viewer's RSC payload whether or not a row
+   * paints it. Staff rows satisfy this Pick structurally and keep their
+   * `_clientName` (review wave, 2026-09; see notification-rows.ts).
    */
   actionItems?: ActionItemNotification[];
   reviewJobs?: AgentReviewNotification[];
-  taskAlerts?: (ClientTask & { _clientName?: string })[];
+  taskAlerts?: TaskAlert[];
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -694,7 +759,7 @@ export function Sidebar({
         <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
         Credits
       </span>
-      <span className="font-mono font-medium text-foreground">{clientCtx.spendableCredits}</span>
+      <span className="stat-number font-medium text-foreground">{clientCtx.spendableCredits}</span>
     </Link>
   );
 
@@ -907,7 +972,7 @@ export function Sidebar({
                   className="flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted"
                 >
                   <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
-                  <span className="font-mono font-medium text-foreground">
+                  <span className="stat-number font-medium text-foreground">
                     {clientCtx.spendableCredits}
                   </span>
                 </Link>
@@ -1074,9 +1139,9 @@ export function Sidebar({
           the width (rulings D1/D2): `w-72` and `relative z-30`, so its menus
           and notification panel sit above the center column exactly as
           client-rail.tsx's do. `w-64` stays the agency width — that shell is
-          out of scope, and its narrower column is what the copilot dock's
-          `md:left-64`… no longer needs to match, because the staff dock only
-          ever mounts in client context (see copilot-dock's SHELL_ANCHOR). */}
+          out of scope, and nothing has to match it: the copilot dock is only
+          ever mounted in client context, so it anchors to the `w-72` arm alone
+          (one anchor for both shells now — see copilot-dock's DOCK_ANCHOR). */}
       <aside
         className={cn(
           "hidden shrink-0 border-r border-border bg-background md:block",

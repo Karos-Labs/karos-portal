@@ -83,6 +83,7 @@ import {
   perClientAgentSlug,
 } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { estimateAgentRunCredits } from "@/lib/credit-estimate";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { logActivity } from "@/lib/actions/_shared";
@@ -617,10 +618,51 @@ export async function submitCustomAgentJob(
       : isReputationAgent(agent.key)
         ? REPUTATION_RUN_CREDITS
         : null;
+  //
+  // THE FALLBACK IS NOW A FALLBACK, not the price (credits rework, 2026-09).
+  // The ladder above resolves what to quote when nothing has been MEASURED yet;
+  // `estimateAgentRunCredits` prefers the median of this agent's recent real
+  // costs for this client. Either way the number here is a HOLD — an estimate
+  // reserved at dispatch — and the webhook settles it to `ceil(actualUsd × 20)`
+  // when the run reports what it cost us.
+  //
+  // `input.charge` (the one-time setup charge) skips the estimate entirely: it
+  // is an admin-set price calibrated from a measured cross-client ratio, and
+  // `UNSETTLED_OPERATIONS` keeps it out of settlement too, so quoting a
+  // per-run median for it would replace one deliberate number with another
+  // product's average.
+  const fallbackCredits = agent.creditCost ?? carriedDefault ?? CREDIT_COSTS.customAgentRun;
+  const billing = input.bill ?? isBillableClientActor(user);
+  const estimate = input.charge
+    ? null
+    : billing
+      ? await estimateAgentRunCredits({
+          clientId: input.clientId,
+          customAgentId: agent.id,
+          fallbackCredits,
+        })
+      : null;
+  //
+  // THE MULTIPLIER APPLIES TO THE CONSTANT, NEVER TO A MEASUREMENT. The
+  // fallback prices ONE output, so a three-post batch is 3× it. A measured
+  // median does not: it is `ceil(actualUsd × 20)` over real runs of this agent,
+  // and those runs already produced whatever batch size they were asked for, so
+  // multiplying it again bills a three-post batch at nine posts. The two
+  // branches are different KINDS of number and only one of them is per-output.
+  //
+  // The residual, stated rather than smoothed over: a client who usually runs
+  // batches of 1 and today asks for 3 is quoted a single-run median for a
+  // triple-size run. That under-holds, and settlement corrects it at the 2×
+  // cap; over ten runs the median moves onto the mix they actually use. The
+  // alternative — dividing the sample by each run's own batch size — needs a
+  // per-job output count the jobs do not carry, so it would be a guess wearing
+  // a measurement's clothes.
   const runCost = input.charge
     ? input.charge.amount
-    : (agent.creditCost ?? carriedDefault ?? CREDIT_COSTS.customAgentRun) * multiplier;
-  if (input.bill ?? isBillableClientActor(user)) {
+    : estimate && !estimate.fallback
+      ? estimate.credits
+      : fallbackCredits * multiplier;
+  if (billing) {
     try {
       await chargeClientCredits({
         clientId: input.clientId,

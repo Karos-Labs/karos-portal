@@ -226,7 +226,7 @@ describe("AF-1 · Meetings is reached from Settings, not from the rail", () => {
     // "Meetings can be a sub-section in, like, account settings" — so what is
     // asked for now is the section and its anchor, not a row on the tab strip.
     // Same card, same rows, one level down.
-    expect(settingsPage).toContain('<Card id="meetings">');
+    expect(settingsPage).toMatch(/<Card id="meetings"/);
     expect(flat(settingsPage)).toContain('<CardTitle className="mb-3">Meetings</CardTitle>');
     expect(flat(settingsPage)).toContain("href={`/transcripts/${t.id}");
     // Inside the Settings tab, and last of the client's own sub-sections.
@@ -591,5 +591,95 @@ describe("#127 · the staff main reserves space only for chrome that is there", 
     // …and the staff branch no longer writes a <main> of its own.
     expect(layout.match(/<main\b/g) ?? []).toHaveLength(1);
     expect(layout).toContain("<StaffShellMain>");
+  });
+});
+
+/**
+ * THE ACCOUNT ZONE AT THE FOOT OF BOTH RAILS (review wave, 2026-09).
+ *
+ * Three dropdowns sit there — the staff `UserMenu`, the client-context picker
+ * beside it, and the `AccountMenu` both shells mount — and between them they
+ * were the whole keyboard story of the rail: none closed on Escape, none
+ * returned focus to what opened it, none announced that it opened a menu, and
+ * one of them nested an interactive `role="button"` span INSIDE a button.
+ */
+describe("review wave 2026-09 · the rail's account-zone menus", () => {
+  const ACCOUNT_MENU = "src/components/account-menu.tsx";
+  const accountMenu = source(ACCOUNT_MENU);
+  const dismissHook = source("src/components/use-menu-dismiss.ts");
+
+  it("closes on Escape and hands focus back, from ONE rule", () => {
+    // One hook rather than three copies of the same effect — the rule is the
+    // same rule in all three places, and the codebase's existing statement of
+    // it (MoreActionsMenu) lives inside a component that owns its own trigger
+    // markup and cannot be reused here.
+    expect(flat(dismissHook)).toContain('if (e.key !== "Escape") return;');
+    expect(flat(dismissHook)).toContain("setOpen(false); triggerRef.current?.focus();");
+    // Every one of the three menus subscribes, and puts the ref on its trigger.
+    for (const [rel, src] of [[SIDEBAR, sidebar], [ACCOUNT_MENU, accountMenu]] as const) {
+      expect(src, `${rel} does not use the shared dismiss rule`).toContain(
+        'from "@/components/use-menu-dismiss"',
+      );
+    }
+    // Two in the sidebar (UserMenu + the picker), one in the account menu.
+    expect(sidebar.match(/useMenuDismiss\(open, setOpen\)/g) ?? []).toHaveLength(2);
+    expect(accountMenu.match(/useMenuDismiss\(open, setOpen\)/g) ?? []).toHaveLength(1);
+    expect((sidebar + accountMenu).match(/ref=\{triggerRef\}/g) ?? []).toHaveLength(3);
+  });
+
+  it("announces all three triggers as menus, and names the account holder", () => {
+    expect((sidebar + accountMenu).match(/aria-haspopup="menu"/g) ?? []).toHaveLength(3);
+    // An aria-label REPLACES the element's contents, so "Open account menu" was
+    // the whole accessible name of a row whose entire job is saying whose
+    // account it is — and in the staff copy it also silenced the sr-only unread
+    // count that used to sit inside the button.
+    expect(flat(accountMenu)).toContain("aria-label={`Open account menu for ${user.name}`}");
+    expect(flat(sidebar)).toContain("`Open account menu for ${user.name}, ${unread} unread notifications`");
+    expect(sidebar).not.toContain("{unread} unread notifications</span>");
+  });
+
+  it("puts the clear-context control beside the picker's trigger, not inside it", () => {
+    // Interactive content inside a <button> is invalid markup that browsers and
+    // assistive tech resolve inconsistently — and the hand-rolled keyboard
+    // handler covered Enter only, so Space fell through to the trigger and
+    // re-opened the dropdown instead of clearing the context. A real sibling
+    // <button> gets Enter, Space and the focus ring from the platform.
+    expect(sidebar).not.toMatch(/role="button"/);
+    expect(sidebar).not.toMatch(/e\.key === "Enter" && clearClient/);
+    expect(flat(sidebar)).toMatch(
+      /<button type="button" onClick=\{clearClient\}[^>]*aria-label="Clear client context"/,
+    );
+  });
+
+  it("navigates on every pick, and re-seeds only on a change", () => {
+    // The guard used to `return` outright, so picking the client that was
+    // already active from /jobs or /assets closed the dropdown and left the
+    // reader exactly where they were. Re-seeding IS still skipped: the seed
+    // starts the roster empty and the balance unknown, and on that client's own
+    // page nothing moves ClientContextSync's signatures to refill them.
+    expect(flat(sidebar)).toMatch(
+      /if \(activeClient\?\.client\.id !== client\.id\) \{ seedContext\(client\); \} router\.push\(`\/clients\/\$\{client\.id\}`\);/,
+    );
+  });
+});
+
+/**
+ * H2 · ClientContextSync's dependency list against what the rail PAINTS.
+ */
+describe("review wave 2026-09 · the staff rail refreshes after an edit made on it", () => {
+  it("depends on the whole client projection, not two of its fields", () => {
+    const sync = source("src/lib/active-client-context.tsx");
+    // The pencil that edits name, website, logo and brand colours is ON this
+    // rail. The effect's deps named `isAiProcessing`, `aiProcessingStartedAt`
+    // and `starredAgentIds` and nothing else, so an edit wrote to Firestore,
+    // re-rendered the page with the new document, and left the rail serving the
+    // old one until a hard reload.
+    expect(sync).toContain("const clientSignature = JSON.stringify(client);");
+    expect(flat(sync)).toContain(
+      "}, [ clientSignature, docSignature, competitorSignature, agentSignature, spendableCredits, isAdmin, ]);",
+    );
+    // The two hand-rolled field lists are gone, not merely supplemented.
+    expect(sync).not.toContain("processingSignature");
+    expect(sync).not.toContain("client.starredAgentIds ?? []).join");
   });
 });

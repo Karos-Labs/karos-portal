@@ -140,7 +140,7 @@ export function MarkPostedRow({
         {busy ? "Marking…" : "Mark as posted"}
       </button>
       <p className="mt-1.5 text-[11px] text-muted-2">
-        Moves it to Published, so it shows on your calendar and lands in your archive.
+        Moves it to Published, so it shows on your calendar and lands in the archive.
       </p>
       {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
     </div>

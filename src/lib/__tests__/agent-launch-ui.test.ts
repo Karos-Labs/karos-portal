@@ -19,6 +19,7 @@ import {
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
 import { CREDIT_DENIAL_PREFIX } from "@/lib/credits";
+import { intakePageHref } from "@/lib/agent-intake-links";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import * as data from "@/lib/data";
 import { buildAgentSetup } from "@/lib/client-agent-rows";
@@ -280,9 +281,20 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
 
   it("always resolves an href, pane or no pane", () => {
     // Three agents, three hrefs, and none of them conditional on a payload.
-    for (const route of ["x-agent", "linkedin-agent", "reddit-agent"]) {
-      expect(rows).toContain(`/clients/\${clientId}/${route}`);
+    //
+    // ASKED OF THE TABLE THEY NOW COME FROM (flow audit 2026-09, R16). These
+    // routes used to be spelled inline here AND a second time in
+    // custom-agents.tsx's own `INTAKE_ROUTE`; the copy is gone and both readers
+    // ask `intakePageHref` (lib/agent-intake-links.ts). So the assertion is that
+    // each family resolves one, plus the real path the shared table returns —
+    // pinning the template literal again would just re-pin a spelling that no
+    // longer lives in this file.
+    for (const family of ["x", "linkedin", "reddit"] as const) {
+      expect(rows).toContain(`intakePageHref(clientId, "${family}")`);
     }
+    expect(intakePageHref("c1", "x")).toBe("/clients/c1/x-agent");
+    expect(intakePageHref("c1", "linkedin")).toBe("/clients/c1/linkedin-agent");
+    expect(intakePageHref("c1", "reddit")).toBe("/clients/c1/reddit-agent");
     // The pane-less branch still carries href/label/clientLabel — the href is
     // NOT conditional on a payload.
     //

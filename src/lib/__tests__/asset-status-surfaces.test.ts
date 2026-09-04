@@ -404,10 +404,20 @@ const HARDCODED_VIEWER_MOUNTS = new Map([
 
 const MODAL_MOUNT_FILES = [
   "components/archive-view.tsx",
+  // The copilot dock — the one surface with no asset in hand, only the id its
+  // own tools named (flow audit 2026-09, R12/F18). It fetches the asset from
+  // `/api/assets/[id]`, which decides the viewer server-side and sends it back,
+  // so this mount reads its flag off the response rather than hard-coding one.
+  "components/chatbot-widget.tsx",
   // The "What it has made for you" rows on the agent detail page — each row's
   // View-output control opens the modal with the page's own viewer flag.
   "components/client-agents/agent-archive-rows.tsx",
   "components/client-agents/clip-gallery.tsx",
+  // Home's Calendar widget — its rows were inert while the same posts opened
+  // from the calendar's own chips (flow audit 2026-09, R8/F8). Same modal,
+  // same asset, same viewer flag; the set is already client-redacted by the
+  // page before it crosses.
+  "components/home-calendar-preview.tsx",
   "components/client-agents/outputs-hub.tsx",
   "components/run-calendar.tsx",
 ];
