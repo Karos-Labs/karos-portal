@@ -922,7 +922,18 @@ function migrateCreditPlan(credits: ClientCredits): ClientCredits {
   return {
     ...credits,
     ...(untouched
-      ? { weeklyLimit: CREDIT_DEFAULTS.weeklyLimit, monthlyLimit: CREDIT_DEFAULTS.monthlyLimit }
+      ? {
+          weeklyLimit: CREDIT_DEFAULTS.weeklyLimit,
+          monthlyLimit: CREDIT_DEFAULTS.monthlyLimit,
+          // Entering the plan GRANTS this month's allowance, not just the cap
+          // (product owner on prep, 2026-09-04: "they should see that they have
+          // 2,600 credits"). Without this a migrated client kept their legacy
+          // balance until the next month roll - the cap said 2600, the pill
+          // said 195. Same `max` rule as the roll: a higher balance is never
+          // clawed back. Only untouched docs: an admin-set cap is a decision,
+          // and the top-up follows the cap that admin chose, on the next roll.
+          balance: Math.max(credits.balance, MONTHLY_ALLOWANCE),
+        }
       : {}),
     planVersion: CREDIT_PLAN_VERSION,
   };

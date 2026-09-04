@@ -777,11 +777,20 @@ describe("the lazy migration onto the new plan", () => {
     expect(rolled.monthlyLimit).toBe(900);
   });
 
-  it("does not migrate the balance — a top-up is a monthly event, not a migration", () => {
-    // A legacy client on 200 keeps 200 until their month rolls; taking the
-    // migration as an excuse to grant 2600 mid-month would hand every client in
-    // the product a free month on a deploy.
-    expect(rollCreditWindows(legacyDoc(), NOW).balance).toBe(200);
+  it("grants the monthly allowance to an untouched doc the moment it enters the plan", () => {
+    // Reversed on 2026-09-04 by the product owner looking at prep: a migrated
+    // client whose cap said 2600 while the pill still said 195 read as the
+    // rework not having shipped. Entering the plan is the first month of it.
+    // Same `max` rule as the roll - a higher balance is never clawed back.
+    expect(rollCreditWindows(legacyDoc(), NOW).balance).toBe(MONTHLY_ALLOWANCE);
+    expect(rollCreditWindows(legacyDoc({ balance: 5000 }), NOW).balance).toBe(5000);
+  });
+
+  it("does not touch the balance of a doc an admin configured", () => {
+    // An admin-set cap is a decision; the top-up follows the cap that admin
+    // chose, on the next month roll, not on the deploy.
+    expect(rollCreditWindows(legacyDoc({ monthlyLimit: 900 }), NOW).balance).toBe(200);
+    expect(rollCreditWindows(legacyDoc({ weeklyLimit: 42, monthlyLimit: 900 }), NOW).balance).toBe(200);
   });
 
   it("leaves BOTH caps alone when only one of them is still the default", () => {
