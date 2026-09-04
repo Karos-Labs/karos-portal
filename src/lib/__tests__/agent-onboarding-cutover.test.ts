@@ -269,6 +269,109 @@ describe("SCRUM-274 (T-B19) — gate-timeout: completes within the hour rather t
     expect(written).toHaveLength(1);
   });
 
+  it("survives a transient poll failure — a deploy mid-wait must not fail the run", async () => {
+    // 2026-09-03, prep, Karos Labs. A deploy of agent-engine restarted the
+    // service while this loop was waiting; one poll came back `fetch failed`;
+    // the whole pipeline aborted and the client was stamped
+    // `aiProcessingError: "fetch failed"` while BOTH agents were still
+    // working. At 15-second intervals over 70 minutes this loop makes ~280
+    // requests to a service that scales to zero and is redeployed during the
+    // day — a transient failure is the expected weather, not an edge case.
+    let calls = 0;
+    let simulatedNowMs = 1_700_000_000_000;
+    const written: Array<{ clientId: string; docs: Row[] }> = [];
+    const deps = {
+      getClient: async () => CLIENT,
+      dispatchResearchAgents: async () => ({
+        intelReport: { agentEngineRunId: "run-intel" },
+        seoGeo: { agentEngineRunId: "run-seo" },
+      }),
+      getDeliverable: async (_runId: string, kind: string) => {
+        calls += 1;
+        // Every engine restart looks like this from the portal's side.
+        if (calls <= 4) throw new TypeError("fetch failed");
+        return kind === INTEL_REPORT_DELIVERABLE_KIND ? FIXTURE_INTEL_REPORT : FIXTURE_SEO_GEO;
+      },
+      condense: async (_c: unknown, docTypes: string[]) =>
+        docTypes.map((docType) => ({ docType, content: `condensed ${docType}` })),
+      replaceDocs: async (clientId: string, docs: Row[]) => {
+        written.push({ clientId, docs });
+      },
+      now: () => simulatedNowMs,
+      sleep: async (ms: number) => {
+        simulatedNowMs += ms;
+      },
+    } as never;
+
+    const result = await runAgentOnboarding(CLIENT_ID, deps, {
+      deliverableTimeoutMs: ONBOARDING_DELIVERABLE_TIMEOUT_MS,
+      pollIntervalMs: 15_000,
+    });
+
+    expect(result.docsWritten).toBe(14);
+    expect(written).toHaveLength(1);
+  });
+
+  it("carries the last poll failure into the timeout message, instead of blaming a slow agent", async () => {
+    // The timeout used to say only that the deliverable never arrived, which
+    // reads as "the agent was slow" when the truth may be that every request
+    // was refused. Losing that distinction is how an outage gets diagnosed as
+    // a performance problem.
+    let simulatedNowMs = 1_700_000_000_000;
+    const deps = {
+      getClient: async () => CLIENT,
+      dispatchResearchAgents: async () => ({
+        intelReport: { agentEngineRunId: "run-intel" },
+        seoGeo: { agentEngineRunId: "run-seo" },
+      }),
+      getDeliverable: async () => {
+        throw new TypeError("fetch failed");
+      },
+      condense: async () => [],
+      replaceDocs: async () => {},
+      now: () => simulatedNowMs,
+      sleep: async (ms: number) => {
+        simulatedNowMs += ms;
+      },
+    } as never;
+
+    await expect(
+      runAgentOnboarding(CLIENT_ID, deps, { deliverableTimeoutMs: 60_000, pollIntervalMs: 15_000 }),
+    ).rejects.toThrow(/The last poll failed with: fetch failed/);
+  });
+
+  it("does NOT retry a credential failure for 70 minutes", async () => {
+    // A misconfiguration is not weather. Retrying it to the deadline turns an
+    // instant, legible error into a 70-minute silence.
+    const credentialError = new Error("agent-engine is IAM-protected but no ID token could be minted: no metadata server");
+    credentialError.name = "AgentEngineCredentialError";
+    let simulatedNowMs = 1_700_000_000_000;
+    let calls = 0;
+    const deps = {
+      getClient: async () => CLIENT,
+      dispatchResearchAgents: async () => ({
+        intelReport: { agentEngineRunId: "run-intel" },
+        seoGeo: { agentEngineRunId: "run-seo" },
+      }),
+      getDeliverable: async () => {
+        calls += 1;
+        throw credentialError;
+      },
+      condense: async () => [],
+      replaceDocs: async () => {},
+      now: () => simulatedNowMs,
+      sleep: async (ms: number) => {
+        simulatedNowMs += ms;
+      },
+    } as never;
+
+    await expect(
+      runAgentOnboarding(CLIENT_ID, deps, { deliverableTimeoutMs: ONBOARDING_DELIVERABLE_TIMEOUT_MS, pollIntervalMs: 15_000 }),
+    ).rejects.toThrow(/no ID token could be minted/);
+    // Both deliverables are awaited concurrently, so one attempt each.
+    expect(calls).toBeLessThanOrEqual(2);
+  });
+
   it("the SAME scenario, on the pre-fix 15-minute default, times out instead of completing", async () => {
     // The exact bug this ticket fixes, pinned as a permanent regression test:
     // agent-onboarding.ts's own default (`deliverableTimeoutMs ?? 15 *
