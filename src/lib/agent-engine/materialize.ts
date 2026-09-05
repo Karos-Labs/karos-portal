@@ -1,5 +1,5 @@
 import "server-only";
-import { attachAssetToJob, createAsset, getJob } from "@/lib/data";
+import { attachAssetToJob, createAsset, getJob, updateJob } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import { reflowClientChain } from "@/lib/chain";
 import { orderKeyForCreatedAt } from "@/lib/post-chain";
@@ -69,7 +69,18 @@ interface ProductDeliverableSpec {
   taskType: WireTaskType;
   /** Honored by `deliverableAssetType` only when `taskType` is `"custom"`, and only if whitelisted there. */
   assetTypeHint?: AssetType;
+  /**
+   * `false` for products whose deliverable is INTERNAL DATA — context the
+   * other agents consume — rather than a reviewable piece of content. Their
+   * deliverable is still read and persisted (insights, report store), but no
+   * `assets` row is created and nothing lands in the client's Assets view.
+   * Defaults to `true`.
+   */
+  portalAsset?: boolean;
 }
+
+export { INTERNAL_DATA_PRODUCTS, isInternalDataProduct, hasMaterialized } from "./internal-data-products";
+import { hasMaterialized } from "./internal-data-products";
 
 const PRODUCT_DELIVERABLES = {
   "x-agent": { kind: "x-post", taskType: "social_post" },
@@ -88,8 +99,8 @@ const PRODUCT_DELIVERABLES = {
   // The three report/bundle products have no publishable shape at all: they are
   // internal analysis a staff member reads, so `note` (target-less, pinned as
   // such in platforms-publishable.test.ts) is the honest type, not a hedge.
-  "intel-report-agent": { kind: "intel-report", taskType: "custom", assetTypeHint: "note" },
-  "seo-geo-agent": { kind: "seo-geo-report", taskType: "custom", assetTypeHint: "note" },
+  "intel-report-agent": { kind: "intel-report", taskType: "custom", assetTypeHint: "note", portalAsset: false },
+  "seo-geo-agent": { kind: "seo-geo-report", taskType: "custom", assetTypeHint: "note", portalAsset: false },
   "campaign-orchestrator": { kind: "campaign-bundle", taskType: "custom", assetTypeHint: "note" },
   // The reputation pulse. `note` for the same reason Reddit is fenced to it —
   // a review reply is posted from the CLIENT'S OWN business listing (Google,
@@ -589,7 +600,10 @@ async function materializeLandingPageSite(job: Job, deliverable: LandingPageSite
  * rendered, so a future dedicated viewer can still read the typed data
  * directly without a re-delivery.
  */
-function materializeIntelReport(deliverable: Record<string, unknown>): AssetMaterialization {
+// Exported so the render can be tested directly: these two products no longer
+// create a portal asset (see `INTERNAL_DATA_PRODUCTS`), so the render is not
+// observable through `materializeAgentEngineDeliverable` any more.
+export function materializeIntelReport(deliverable: Record<string, unknown>): AssetMaterialization {
   const { title, content } = renderIntelReport(deliverable);
   return {
     title,
@@ -618,7 +632,10 @@ function materializeIntelReport(deliverable: Record<string, unknown>): AssetMate
  * above it and the fired recommendations under it. Every score object, the
  * frozen prompt set and the reproducibility digest stay in `meta`.
  */
-function materializeSeoGeoReport(deliverable: Record<string, unknown>): AssetMaterialization {
+// Exported so the render can be tested directly: these two products no longer
+// create a portal asset (see `INTERNAL_DATA_PRODUCTS`), so the render is not
+// observable through `materializeAgentEngineDeliverable` any more.
+export function materializeSeoGeoReport(deliverable: Record<string, unknown>): AssetMaterialization {
   const seoScore = rec(deliverable["seoScore"])["score"];
   const geoScore = rec(deliverable["geoReadiness"])["score"];
   const recommendations = objArray(deliverable["firedRecommendations"]);
@@ -868,7 +885,7 @@ export function agentEngineAssetId(runId: string): string {
 
 export async function materializeAgentEngineDeliverable(job: Job): Promise<string | undefined> {
   if (!job.agentEngineRunId || !job.agentEngineProductId) return undefined;
-  if (job.assetIds.length > 0) return undefined;
+  if (hasMaterialized(job)) return undefined;
 
   // THE SNAPSHOT GUARD ABOVE IS NOT A LOCK, and prep has the receipts: 13 jobs
   // with 2–8 identical assets each, every copy minted within seconds of the
@@ -891,7 +908,7 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
   // must degrade to "no fresh information" rather than break the never-throws
   // contract — layer (2) still holds without it.
   const live = await getJob(job.id).catch(() => null);
-  if (live && live.assetIds.length > 0) return undefined;
+  if (live && hasMaterialized(live)) return undefined;
 
   // Widened to a plain index signature for this one lookup: `job.agentEngineProductId`
   // is an arbitrary string that crossed a service boundary, not a key of the
@@ -916,6 +933,20 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
     // fully-grounded one. Declaring it on each shape instead would be eleven
     // edits for one concept and would silently omit every product added later.
     // See `context-grounding.ts` for the full reasoning.
+    if (spec.portalAsset === false) {
+      // Internal data: everything the rest of the system reads from this run
+      // is written here — nothing goes to Assets. The job is marked so
+      // reconcile's "already materialized?" check has something to read in
+      // place of an asset id.
+      const now = Date.now();
+      if (job.agentEngineProductId === "seo-geo-agent") {
+        await persistSeoGeoInsightsFromDeliverable(job.clientId, job.agentEngineRunId, deliverable as AgentEngineSeoGeoReport, now);
+      }
+      await updateJob(job.id, { agentEngineMaterializedRunId: job.agentEngineRunId, updatedAt: now });
+      console.info(`[agent-engine materialize] job "${job.id}" (${job.agentEngineProductId}) materialized as internal data — no portal asset by design`);
+      return undefined;
+    }
+
     const contextGrounding = readContextGroundingMarker(deliverable);
 
     // The one shared point every runtime-derived asset type in this codebase goes

@@ -1,5 +1,5 @@
 import "server-only";
-import { listAssets } from "@/lib/data";
+import { getClientSeoGeo, listAssets } from "@/lib/data";
 import { toRoutableRecommendation, type RoutableRecommendation } from "./routable-recommendation";
 
 /**
@@ -25,6 +25,17 @@ import { toRoutableRecommendation, type RoutableRecommendation } from "./routabl
 export async function latestSeoGeoReportRecommendations(
   clientId: string,
 ): Promise<RoutableRecommendation[] | undefined> {
+  // Since 2026-09-05 the seo-geo-agent creates no portal asset — its output is
+  // internal data — so the current report lives on `clientSeoGeo`. Records from
+  // before then have no `routableRecommendations` there and fall through to the
+  // asset scan below, which still finds the last asset-era report.
+  const insights = await getClientSeoGeo(clientId);
+  if (insights?.routableRecommendations) {
+    return insights.routableRecommendations
+      .map(toRoutableRecommendation)
+      .filter((r): r is RoutableRecommendation => r !== undefined);
+  }
+
   const assets = await listAssets({ clientId });
   // Latest first: listAssets already sorts by createdAt desc.
   const reportAsset = assets.find(

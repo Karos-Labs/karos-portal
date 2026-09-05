@@ -5,6 +5,7 @@ import { refundJobCharge } from "@/lib/credit-reconcile";
 import { settleJobCharge } from "@/lib/credit-settle";
 import { logger } from "@/services/logger";
 import { materializeAgentEngineDeliverable } from "./materialize";
+import { hasMaterialized, isInternalDataProduct } from "./internal-data-products";
 import {
   readAgentEngineRun,
   totalStepCostUsd,
@@ -102,10 +103,19 @@ interface TerminalJobUpdate {
  * `job.status` point of view — `awaiting_gate`'s pending-approval UI is a job
  * of `AgentEngineRunPanel`/`AgentEngineGateApproval`, not `job.status` itself.
  */
-function terminalJobUpdate(run: AgentEngineRunRecord): TerminalJobUpdate | undefined {
+function terminalJobUpdate(run: AgentEngineRunRecord, productId?: string): TerminalJobUpdate | undefined {
   switch (run.status) {
     case "completed":
-      return { status: "review", error: null, heldReason: null, blockedReason: null };
+      // Internal-data products (intel-report-agent, seo-geo-agent) produce
+      // context for the other agents, not a reviewable asset — there is
+      // nothing in Assets for a human to approve, so `"review"` would leave
+      // the job open forever. They land `"approved"` once materialized.
+      return {
+        status: isInternalDataProduct(productId) ? "approved" : "review",
+        error: null,
+        heldReason: null,
+        blockedReason: null,
+      };
     case "failed":
     case "degraded":
       return { status: "failed", error: run.failureReason ?? `agent-engine run ${run.status}`, heldReason: null, blockedReason: null };
@@ -153,7 +163,7 @@ function terminalJobUpdate(run: AgentEngineRunRecord): TerminalJobUpdate | undef
  */
 export function isJobInProgress(job: Job, agentEngineView?: AgentEngineRunView): boolean {
   if (job.agentEngineRunId) {
-    return agentEngineView === undefined || terminalJobUpdate(agentEngineView.run) === undefined;
+    return agentEngineView === undefined || terminalJobUpdate(agentEngineView.run, job.agentEngineProductId) === undefined;
   }
   return job.status === "running" || job.status === "queued";
 }
@@ -207,7 +217,7 @@ interface PendingSyncWork {
  * means a fully synced job schedules nothing.
  */
 function pendingSyncWork(job: Job, view: AgentEngineRunView): PendingSyncWork | undefined {
-  const update = terminalJobUpdate(view.run);
+  const update = terminalJobUpdate(view.run, job.agentEngineProductId);
   if (!update) return undefined;
 
   // Reads every field the transition writes: it compared `job.error` alone,
@@ -238,7 +248,7 @@ function pendingSyncWork(job: Job, view: AgentEngineRunView): PendingSyncWork | 
   const costUsd = engineRunCostUsd(view);
   const costChanged = costUsd !== undefined && costUsd !== job.external?.totalCostUsd;
 
-  const needsMaterialize = update.status === "review" && job.assetIds.length === 0;
+  const needsMaterialize = (update.status === "review" || update.status === "approved") && !hasMaterialized(job);
 
   return { update, statusChanged, costUsd, costChanged, needsMaterialize, needed: statusChanged || costChanged || needsMaterialize };
 }
@@ -283,7 +293,7 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
   // recovers from, rather than a synced status with a deliverable nobody will
   // ever ask for again.
   let assetIds = job.assetIds;
-  if (update.status === "review") {
+  if (update.status === "review" || update.status === "approved") {
     const assetId = await materializeAgentEngineDeliverable(job);
     if (assetId) assetIds = [...job.assetIds, assetId];
   }

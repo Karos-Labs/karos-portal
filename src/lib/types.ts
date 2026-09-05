@@ -1194,6 +1194,16 @@ export interface Job {
   agentEngineRunId?: string;
   agentEngineProductId?: string;
   /**
+   * The agent-engine run whose deliverable this job has already materialized
+   * WITHOUT creating a portal asset. Set for internal-data products
+   * (intel-report-agent, seo-geo-agent — see `INTERNAL_DATA_PRODUCTS` in
+   * materialize.ts) whose output is context for other agents, not a
+   * reviewable asset. Reconcile's "already materialized?" check reads this
+   * alongside `assetIds`, so a job with no asset is not re-materialized on
+   * every pass.
+   */
+  agentEngineMaterializedRunId?: string;
+  /**
    * When the unsettled-hold sweep last dealt with this job's credit hold
    * (credits rework, 2026-09) — settled it, or established there was nothing to
    * settle. Purely a bookmark so the sweep's candidate list shrinks; the real
