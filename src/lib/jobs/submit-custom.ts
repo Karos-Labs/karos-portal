@@ -11,6 +11,7 @@ import { normalizeDashes } from "@/lib/text-utils";
 import {
   chargeClientCredits,
   createJob,
+  getAgentIntake,
   deleteJob,
   getClient,
   getContextItem,
@@ -64,6 +65,7 @@ import {
   hasReputationV2Setup,
   isReputationAgent,
   isReputationSetupV2,
+  toReputationEngineRunInput,
 } from "@/lib/agent-service/reputation-agent-context";
 import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
 import { buildDynamicAgentClientContextFiles } from "@/lib/agent-service/dynamic-agent-context";
@@ -366,6 +368,11 @@ export async function submitCustomAgentJob(
   // widened below where a field needs a lookup only this layer can do (the
   // LinkedIn seat's name); the legacy agent-service path never reads it.
   let engineBriefValues = input.briefValues;
+  // Run inputs the engine reads that are NOT dialog fields — a family's saved
+  // intake handed to a pre-flight that runs setup for itself (reputation, via
+  // `toReputationEngineRunInput`). Merged AFTER `toEngineRunInput` at dispatch,
+  // so a dialog key can never be shadowed by an intake key with the same name.
+  let engineExtraInputs: Record<string, unknown> = {};
 
   /**
    * HOW MANY OUTPUTS THIS FIRE ASKS FOR — clamped once, and the same number is
@@ -586,17 +593,33 @@ export async function submitCustomAgentJob(
         error: `${REPUTATION_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs to know who hears about an urgent review before it reads anything. Nothing has run.`,
       };
     }
-    if (!isReputationSetupV2(agent.key) && !(await hasReputationV2Setup(input.clientId))) {
-      return {
-        error: `${REPUTATION_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the reputation agent card, which finds their real listings and sets what counts as urgent. Nothing has run.`,
+    if (engineProductId) {
+      // On the engine, setup is the run's own first step: `reputation-agent`'s
+      // `00-roster-setup` resolves the client's listings from the intake the
+      // run carries and records them in client config, then pulses. So the
+      // stand-up rung below does not apply — there is no roster row for it to
+      // find and none is needed — and the context files do not travel (the
+      // engine reads its own workspace; see the dispatch note further down).
+      // What DOES travel is the intake itself, as run input, because that is
+      // what the pre-flight resolves from. Nothing here tells the client that
+      // "setup" happened; their first run works or names what did not resolve.
+      engineExtraInputs = {
+        ...engineExtraInputs,
+        ...toReputationEngineRunInput(await getAgentIntake(input.clientId, "reputation", null)),
       };
-    }
-    try {
-      contextFiles.push(...(await buildReputationAgentContextFiles(input.clientId, agent.name)));
-    } catch (e) {
-      return {
-        error: `Could not attach the client's reputation data: ${e instanceof Error ? e.message : "unknown error"}`,
-      };
+    } else {
+      if (!isReputationSetupV2(agent.key) && !(await hasReputationV2Setup(input.clientId))) {
+        return {
+          error: `${REPUTATION_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the reputation agent card, which finds their real listings and sets what counts as urgent. Nothing has run.`,
+        };
+      }
+      try {
+        contextFiles.push(...(await buildReputationAgentContextFiles(input.clientId, agent.name)));
+      } catch (e) {
+        return {
+          error: `Could not attach the client's reputation data: ${e instanceof Error ? e.message : "unknown error"}`,
+        };
+      }
     }
   }
 
@@ -822,7 +845,7 @@ export async function submitCustomAgentJob(
       // fix is that the page and the server must agree on it — otherwise the
       // dialog paints a field the server builds its input without. Pinned by
       // the page/server consistency sweep in product-mapping.test.ts.
-      inputs: toEngineRunInput(engineBriefValues, engineProductId),
+      inputs: { ...toEngineRunInput(engineBriefValues, engineProductId), ...engineExtraInputs },
       createdBy: user.uid,
     });
     if ("error" in dispatched) {
