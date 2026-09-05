@@ -38,12 +38,65 @@ export interface ObservedColor {
   hex: string;
   /** How many times it appeared across the fetched documents. */
   count: number;
-  /** CSS custom properties that resolve to it, e.g. `["--accent"]`. */
+  /**
+   * CSS custom properties that resolve to it in the site's DEFAULT scope
+   * (`:root`, `html`, `body`, `.dark`) — the theme the site actually serves.
+   */
   cssVars: string[];
+  /**
+   * Custom properties that resolve to it ONLY inside a theme-variant scope
+   * (`.theme-cobalt`, `html.light .theme-signal`, …). karoslabs.com ships four
+   * demo palettes for a theme switcher on its own landing page; pooled with the
+   * real `:root` they outnumber it, and the extraction picked `#0b0b0d` — a
+   * scene ground — as the brand's background over the real `#1a1a1a`.
+   */
+  themeVars: string[];
+  /** Present in the site's own icon/logo SVG — the strongest statement of brand identity available here. */
+  inLogo: boolean;
+  /** Present in the served HTML itself (inline style, embedded SVG, theme-color meta). */
+  inMarkup: boolean;
+}
+
+/**
+ * Custom-property names that are component-library SLOTS, not brand statements.
+ *
+ * The distinction this file turns on. `--accent`, `--brand-primary` and
+ * `--cta` are somebody naming a colour their brand acts with. `--primary`,
+ * `--ring` and `--input` are slots in a scaffold (shadcn, MUI, Bootstrap):
+ * frequently meaningful, and just as frequently left at whatever the template
+ * shipped with. karoslabs.com declares `--primary: #2f6bff` and `--ring:
+ * #2f6bff` in `:root` — a blue that a rendered-DOM sweep of the live site finds
+ * painted on ZERO elements, and which appears in neither the mark nor the
+ * markup. It is the sole reason that site's brand guidelines said "blue".
+ *
+ * A slot name is not evidence against a colour — plenty of brands really do put
+ * their colour in `--primary`. It is only a reason to require corroboration
+ * from some other source before treating it as the brand's.
+ */
+const SLOT_ONLY_NAMES = new Set([
+  "--primary", "--secondary", "--ring", "--input", "--border", "--muted", "--card", "--popover",
+  "--destructive", "--foreground", "--background", "--surface", "--color-white", "--color-black",
+]);
+
+/** True when every name for this colour is a bare component slot. */
+function slotNamedOnly(cssVars: readonly string[]): boolean {
+  return cssVars.length > 0 && cssVars.every((n) => SLOT_ONLY_NAMES.has(n) || /^--(?:tw|swiper|mui)-/.test(n));
+}
+
+/**
+ * A colour named only by component slots, corroborated by nothing else, is
+ * probably scaffolding rather than brand. Kept in the list — it is really on
+ * the site, and `snapToObservedPalette` still needs it as a repair target — but
+ * presented to the model under a heading that says what it is.
+ */
+export function isUncorroboratedSlotColor(c: ObservedColor): boolean {
+  return !c.inLogo && !c.inMarkup && c.cssVars.length > 0 && slotNamedOnly(c.cssVars);
 }
 
 /** How many stylesheets to follow. A site that needs more is not hiding its palette in the sixth. */
 const MAX_STYLESHEETS = 4;
+/** How many icon/logo SVGs to read. A site states its mark in the first one or two. */
+const MAX_LOGOS = 2;
 /** Per-document read cap. A stylesheet larger than this is a bundle; its first megabyte still holds the theme. */
 const MAX_BYTES = 1_000_000;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -52,6 +105,36 @@ const HEX_RE = /#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g;
 const CUSTOM_PROP_RE = /(--[A-Za-z0-9_-]+)\s*:\s*(#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}))\b/g;
 const STYLESHEET_HREF_RE = /<link\b[^>]*rel=["']?stylesheet["']?[^>]*>/gi;
 const HREF_RE = /href=["']([^"']+)["']/i;
+/** One `selector { declarations }` rule. Inner blocks never nest, so at-rules fall out for free. */
+const CSS_RULE_RE = /([^{}]+)\{([^{}]*)\}/g;
+/** An icon or logo the page points at. Only SVG is followed — a PNG's colours are not readable here. */
+const LOGO_HREF_RE = /(?:href|src|content)=["']([^"']*(?:logo|icon|mark|brand)[^"']*\.svg[^"']*)["']/gi;
+
+/**
+ * Selectors that carry the theme the site ACTUALLY serves.
+ *
+ * A whole-selector match, so `html.light .theme-cobalt` is correctly excluded
+ * while `:root` and `.dark` are kept. Anything else is a variant scope: real
+ * CSS, but a statement about some other theme, not about this brand.
+ */
+const DEFAULT_SCOPE_RE = /^\s*(?::root|html|body|\*|:host|\.dark|\[data-theme=["']?dark["']?\])\s*$/i;
+
+function isDefaultScope(selectorList: string): boolean {
+  return selectorList.split(",").some((s) => DEFAULT_SCOPE_RE.test(s));
+}
+
+/** Absolute URLs of SVG icons/logos the page references, most-specific first. */
+function logoUrls(html: string, pageUrl: string): string[] {
+  const urls: string[] = [];
+  for (const match of html.matchAll(LOGO_HREF_RE)) {
+    try {
+      urls.push(new URL(match[1]!, pageUrl).toString());
+    } catch {
+      // A malformed href is skipped, not fatal.
+    }
+  }
+  return [...new Set(urls)].slice(0, MAX_LOGOS);
+}
 
 /**
  * Colours with no brand meaning, dropped before ranking.
@@ -107,45 +190,87 @@ export async function observeSitePalette(domain: string, fetchImpl: typeof fetch
   const html = await fetchText(pageUrl, fetchImpl);
   if (html === null) return [];
 
-  const sheets = await Promise.all(stylesheetUrls(html, pageUrl).map((url) => fetchText(url, fetchImpl)));
+  const [sheets, logos] = await Promise.all([
+    Promise.all(stylesheetUrls(html, pageUrl).map((url) => fetchText(url, fetchImpl))),
+    Promise.all(logoUrls(html, pageUrl).map((url) => fetchText(url, fetchImpl))),
+  ]);
   const documents = [html, ...sheets.filter((s): s is string => s !== null)];
 
   const counts = new Map<string, number>();
   const vars = new Map<string, Set<string>>();
+  const themeOnly = new Map<string, Set<string>>();
+  const inLogo = new Set<string>();
+  const inMarkup = new Set<string>();
+
+  for (const match of html.matchAll(HEX_RE)) {
+    const hex = normalizeHex(match[0]);
+    if (hex) inMarkup.add(hex);
+  }
+
+  for (const svg of logos) {
+    if (svg === null) continue;
+    for (const match of svg.matchAll(HEX_RE)) {
+      const hex = normalizeHex(match[0]);
+      if (hex) inLogo.add(hex);
+    }
+  }
 
   for (const doc of documents) {
     for (const match of doc.matchAll(HEX_RE)) {
       const hex = normalizeHex(match[0]);
       if (hex) counts.set(hex, (counts.get(hex) ?? 0) + 1);
     }
-    for (const match of doc.matchAll(CUSTOM_PROP_RE)) {
-      const hex = normalizeHex(match[2]!);
-      if (!hex) continue;
-      const bucket = vars.get(hex) ?? new Set<string>();
-      bucket.add(match[1]!);
-      vars.set(hex, bucket);
-      // A declared custom property is a deliberate statement about the brand,
-      // so it also earns its colour a place in the ranking even when the
-      // ignore-list would otherwise drop it.
-      counts.set(hex, counts.get(hex) ?? 0);
+    // Rule-by-rule rather than document-wide, so each declaration is attributed
+    // to the scope that made it. A `--background` in `.theme-cobalt` is not the
+    // site's background.
+    for (const rule of doc.matchAll(CSS_RULE_RE)) {
+      const target = isDefaultScope(rule[1]!) ? vars : themeOnly;
+      for (const match of rule[2]!.matchAll(CUSTOM_PROP_RE)) {
+        const hex = normalizeHex(match[2]!);
+        if (!hex) continue;
+        const bucket = target.get(hex) ?? new Set<string>();
+        bucket.add(match[1]!);
+        target.set(hex, bucket);
+        // A declared custom property is a deliberate statement about the brand,
+        // so it also earns its colour a place in the ranking even when the
+        // ignore-list would otherwise drop it.
+        counts.set(hex, counts.get(hex) ?? 0);
+      }
     }
   }
 
+  // `themeVars` records only names that NEVER appear in a default scope —
+  // otherwise every variant redeclaration would also be listed as theme-only.
+  const rank = (c: ObservedColor) =>
+    c.inLogo ? 0 : isUncorroboratedSlotColor(c) ? 3 : c.cssVars.length > 0 ? 1 : c.themeVars.length > 0 ? 4 : 2;
+
   return [...counts.entries()]
-    .filter(([hex]) => !IGNORED_HEXES.has(hex) || vars.has(hex))
-    .map(([hex, count]) => ({ hex, count, cssVars: [...(vars.get(hex) ?? [])].sort() }))
-    // Custom properties first — a named colour outranks a frequent one, because
-    // frequency measures how much surface a colour covers and a name measures
-    // whether anyone decided it mattered.
-    .sort((a, b) => Number(b.cssVars.length > 0) - Number(a.cssVars.length > 0) || b.count - a.count || a.hex.localeCompare(b.hex))
+    .filter(([hex]) => !IGNORED_HEXES.has(hex) || vars.has(hex) || inLogo.has(hex))
+    .map(([hex, count]) => ({
+      hex,
+      count,
+      cssVars: [...(vars.get(hex) ?? [])].sort(),
+      themeVars: [...(themeOnly.get(hex) ?? [])].filter((name) => !vars.get(hex)?.has(name)).sort(),
+      inLogo: inLogo.has(hex),
+      inMarkup: inMarkup.has(hex),
+    }))
+    // The mark first, then colours the served theme names, then merely frequent
+    // ones, and last the variant-scope palettes — which are real CSS but are
+    // statements about some other theme. Within a tier, frequency decides.
+    .sort((a, b) => rank(a) - rank(b) || b.count - a.count || a.hex.localeCompare(b.hex))
     .slice(0, 40);
 }
 
 /** The prompt block naming what the site really declares. Empty string when nothing was observed. */
 export function describeObservedPalette(observed: readonly ObservedColor[]): string {
   if (observed.length === 0) return "";
-  const named = observed.filter((c) => c.cssVars.length > 0);
-  const rest = observed.filter((c) => c.cssVars.length === 0).slice(0, 12);
+  const logo = observed.filter((c) => c.inLogo);
+  const slotOnly = observed.filter((c) => !c.inLogo && isUncorroboratedSlotColor(c));
+  const named = observed.filter((c) => !c.inLogo && !isUncorroboratedSlotColor(c) && c.cssVars.length > 0);
+  const themed = observed.filter((c) => !c.inLogo && c.cssVars.length === 0 && c.themeVars.length > 0);
+  const rest = observed
+    .filter((c) => !c.inLogo && c.cssVars.length === 0 && c.themeVars.length === 0)
+    .slice(0, 12);
 
   const lines = [
     "## Source C — Verified site palette (transcribed from the live CSS by code, not by a model)",
@@ -155,12 +280,44 @@ export function describeObservedPalette(observed: readonly ObservedColor[]): str
     "or substitute a value you believe is close — a hex that is not in this list is wrong by definition.",
     "",
   ];
+  if (logo.length > 0) {
+    lines.push(
+      "The site's own icon/logo mark uses these colours. A mark is the most deliberate colour decision",
+      "a brand makes, so treat these as near-certain brand colours:",
+      ...logo.map((c) => `  ${c.hex}${c.cssVars.length > 0 ? `  (also ${c.cssVars.join(", ")})` : ""}`),
+      "",
+    );
+  }
   if (named.length > 0) {
     lines.push(
-      "Declared CSS custom properties (the site's own names for its colours — usually the clearest",
-      "statement of role available; a `--accent`/`--brand-*` is the colour the brand ACTS with, while",
-      "`--primary` in a component-library theme is often an untouched framework default):",
+      "Declared CSS custom properties in the theme the site actually serves (`:root`/`.dark`) — the",
+      "site's own names for its colours, usually the clearest statement of role available. Read the",
+      "NAME as evidence of intent: `--accent`/`--brand-*` is the colour the brand ACTS with, whereas",
+      "`--primary`/`--ring` are component-library slot names that are frequently left at a framework",
+      "default the site never actually paints. Being declared is not on its own evidence that a colour",
+      "is part of the brand — a slot-named colour that nothing else here corroborates is usually a",
+      "leftover default, and must NOT be reported as a brand colour:",
       ...named.map((c) => `  ${c.cssVars.join(", ")}: ${c.hex}`),
+      "",
+    );
+  }
+  if (slotOnly.length > 0) {
+    lines.push(
+      "Declared ONLY under generic component-library slot names, and corroborated by nothing else —",
+      "not the mark, not the page markup, no brand-meaning name. In a scaffolded theme these are",
+      "usually template defaults the site never actually paints. Treat them as NOT part of the brand",
+      "unless another source here independently supports them; never report one as an accent, and never",
+      "add one just to reach a fourth colour:",
+      ...slotOnly.slice(0, 8).map((c) => `  ${c.cssVars.join(", ")}: ${c.hex}`),
+      "",
+    );
+  }
+  if (themed.length > 0) {
+    lines.push(
+      "Declared ONLY inside alternate/demo theme scopes (a theme switcher, a preview, a dark/light",
+      "variant of some other palette). These are real CSS but they describe a DIFFERENT theme, not this",
+      "brand's identity. Do not report them as brand colours unless nothing above is usable:",
+      ...themed.slice(0, 10).map((c) => `  ${c.themeVars.join(", ")}: ${c.hex}`),
       "",
     );
   }
