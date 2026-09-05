@@ -1,7 +1,20 @@
 import "server-only";
 
 import { normalizeHex } from "@/lib/branding-hex";
-import { observeSitePalette, describeObservedPalette, snapToObservedPalette, type ObservedColor } from "@/lib/branding-site-palette";
+import {
+  observeSitePalette,
+  describeObservedPalette,
+  snapToObservedPalette,
+  mergePaintedPalette,
+  type ObservedColor,
+} from "@/lib/branding-site-palette";
+import { paletteFromPng, pngDimensions } from "@/lib/branding-image-palette";
+import {
+  isScrappycocoConfigured,
+  fetchSiteScreenshot,
+  fetchInstagramBrandAssets,
+  type InstagramBrandAssets,
+} from "@/lib/branding-scrappycoco";
 
 // Re-exported so this module stays the one import site callers already know.
 export { normalizeHex };
@@ -675,7 +688,7 @@ const MAX_NAME_LEN = 100;
 const MAX_DESC_LEN = 400;
 const MAX_INTEL_LEN = 3_000;
 
-function buildBrandingPrompt(
+export function buildBrandingPrompt(
   name: string,
   domain: string | null,
   category?: string,
@@ -683,6 +696,8 @@ function buildBrandingPrompt(
   siteIntelligence?: string | null,
   logoContext?: LogoContext,
   observedPalette: readonly ObservedColor[] = [],
+  /** Labels for the images attached alongside this prompt, in order. */
+  visionSources: readonly string[] = [],
 ): string {
   const safeName = name.slice(0, MAX_NAME_LEN);
   const safeDesc = description?.slice(0, MAX_DESC_LEN);
@@ -774,6 +789,23 @@ function buildBrandingPrompt(
   // the branches above: whichever sources were available, a hex that is not on
   // the site is wrong. See `branding-site-palette.ts` for what this costs and
   // what it caught.
+  if (visionSources.length > 0) {
+    lines.push(
+      "",
+      "## Images attached to this message",
+      ...visionSources.map((label, i) => `${i + 1}. ${label}`),
+      "",
+      "How to read them. The rendered homepage is what a visitor actually sees, and it is the final word",
+      "on whether a colour is in use at all. The Instagram images show the brand ACTING: an avatar is",
+      "usually just the neutrals — a mark on a ground — while the POSTS are where a rationed accent",
+      "appears in use. A colour missing from the avatar is not thereby absent from the brand; check the",
+      "posts and the page before concluding anything is absent.",
+      "Read these for JUDGMENT — which colours matter, what each is for, how they are combined. Do NOT",
+      "read hex values off them; screens, compression and overlays all shift a colour by a few points.",
+      "Every hex you return still has to be copied from the verified list below.",
+    );
+  }
+
   const verified = describeObservedPalette(observedPalette);
   if (verified) lines.push("", verified);
 
@@ -878,7 +910,7 @@ export async function applyBrandingForClient(
   const logoUrl = client.logoUrl ?? client.brandingGuidelines?.logoUrl;
 
   // ── Tiers 1+2 (site intelligence), the verified palette, and the logo ─
-  const [siteIntelligence, observedPalette, logoContext] = await Promise.all([
+  const [siteIntelligence, declaredPalette, logoContext, screenshot, instagram] = await Promise.all([
     (async (): Promise<string | null> => {
       if (!domain) return null;
       const access = await checkSiteAccess(`https://${domain}`);
@@ -897,16 +929,77 @@ export async function applyBrandingForClient(
     // provably exist.
     domain ? observeSitePalette(domain) : Promise.resolve<ObservedColor[]>([]),
     logoUrl ? prepareLogoContext(logoUrl) : Promise.resolve<LogoContext>(null),
+    // What the site PAINTS, as opposed to what it declares — the one question
+    // the two sources above cannot answer. See `branding-scrappycoco.ts`.
+    domain && isScrappycocoConfigured() ? fetchSiteScreenshot(domain) : Promise.resolve(null),
+    // The client's own Instagram mark and grid. Reachable only through a
+    // scraper: logged out, instagram.com serves a JavaScript shell with no
+    // profile data in it at all.
+    isScrappycocoConfigured()
+      ? fetchInstagramBrandAssets(client.socialLinks?.instagram)
+      : Promise.resolve<InstagramBrandAssets | null>(null),
   ]);
+
+  // The screenshot's measured colours are folded into the declared palette, so
+  // every downstream reader sees one list in which each colour knows whether the
+  // page actually paints it.
+  const paintedColors = screenshot ? paletteFromPng(Buffer.from(screenshot.bytes)) : [];
+  const observedPalette = mergePaintedPalette(declaredPalette, paintedColors);
+
+  /**
+   * The screenshot the VISION model is shown, which is not always the one the
+   * palette was measured from.
+   *
+   * The palette wants the whole page — a first-screen render answers "is this
+   * colour above the fold", and reported Deel's yellow and purple as unused.
+   * Anthropic rejects any image whose longest side exceeds 8000px, which a
+   * full-page render of a long marketing site comfortably passes. So the tall
+   * render is decoded locally and, when it is too tall to send, a second
+   * first-screen render is fetched purely to be looked at.
+   */
+  const MAX_VISION_PIXELS = 8000;
+  const shotSize = screenshot ? pngDimensions(Buffer.from(screenshot.bytes)) : null;
+  const shotFitsVision = shotSize !== null && shotSize.width <= MAX_VISION_PIXELS && shotSize.height <= MAX_VISION_PIXELS;
+  const viewportShot =
+    screenshot && !shotFitsVision && domain && isScrappycocoConfigured() ? await fetchSiteScreenshot(domain, false) : null;
+  const screenshotForVision = shotFitsVision ? screenshot : viewportShot;
 
   if (observedPalette.length > 0) {
     const named = observedPalette.filter((c) => c.cssVars.length > 0).length;
     console.info(`[branding] ${domain} — verified palette: ${observedPalette.length} colours (${named} named by CSS custom properties)`);
   }
+  if (paintedColors.length > 0) {
+    const dead = observedPalette.filter((c) => c.paintedShare === 0 && c.cssVars.length > 0);
+    console.info(
+      `[branding] ${domain} — rendered screenshot: ${paintedColors.length} colours measured` +
+        (dead.length > 0 ? `; ${dead.length} declared colour(s) painted on nothing: ${dead.map((c) => c.hex).join(", ")}` : ""),
+    );
+  }
+  if (instagram) {
+    console.info(
+      `[branding] @${instagram.handle} — ${instagram.profileImage ? "profile picture" : "no profile picture"}` +
+        `, ${instagram.postImages.length} post image(s)`,
+    );
+  }
 
   if (logoContext) {
     console.info(`[branding] Logo loaded — kind: ${logoContext.kind}`);
   }
+
+  /**
+   * Every image the model gets to look at, in the order it should read them.
+   *
+   * The rendered homepage comes first because it is the only picture of what a
+   * visitor actually sees. The Instagram grid follows: a brand's avatar is
+   * usually just its neutrals — karoslabs.com's is the charcoal and the cream,
+   * with no orange anywhere — so the POSTS are where a rationed accent shows up
+   * in use, and the avatar alone would quietly lose it.
+   */
+  const visionImages: Array<{ bytes: Uint8Array; mimeType: string; label: string }> = [
+    ...(screenshotForVision ? [screenshotForVision] : []),
+    ...(instagram?.profileImage ? [instagram.profileImage] : []),
+    ...(instagram?.postImages ?? []),
+  ];
 
   // ── Tier 3: Structured extraction via generateObject ────────────
   const promptText = buildBrandingPrompt(
@@ -917,6 +1010,7 @@ export async function applyBrandingForClient(
     siteIntelligence,
     logoContext,
     observedPalette,
+    visionImages.map((image) => image.label),
   );
 
   const paletteUsageMeta = {
@@ -925,27 +1019,37 @@ export async function applyBrandingForClient(
   };
 
   async function runPaletteExtraction() {
-    if (logoContext?.kind === "vision") {
-      // Vision mode: pass logo image as Claude image part alongside the text prompt
+    const logoPart =
+      logoContext?.kind === "vision"
+        ? [{ type: "image" as const, image: logoContext.imageBytes, mediaType: logoContext.mimeType }]
+        : [];
+
+    if (logoPart.length === 0 && visionImages.length === 0) {
+      // Text-only mode: SVG colors and/or site intelligence are embedded in the prompt text
       return generateObject({
         model: aiFor("branding.extract").model,
         schema: BrandingAISchema,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image", image: logoContext.imageBytes, mediaType: logoContext.mimeType },
-              { type: "text", text: promptText },
-            ],
-          },
-        ],
+        prompt: promptText,
       });
     }
-    // Text-only mode: SVG colors and/or site intelligence are embedded in the prompt text
+
     return generateObject({
       model: aiFor("branding.extract").model,
       schema: BrandingAISchema,
-      prompt: promptText,
+      messages: [
+        {
+          role: "user",
+          content: [
+            ...logoPart,
+            ...visionImages.map((image) => ({
+              type: "image" as const,
+              image: image.bytes,
+              mediaType: image.mimeType,
+            })),
+            { type: "text", text: promptText },
+          ],
+        },
+      ],
     });
   }
 

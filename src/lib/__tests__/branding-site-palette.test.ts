@@ -3,7 +3,7 @@ import { vi, describe, expect, it } from "vitest";
 // Must be hoisted before any import that transitively pulls in server-only.
 vi.mock("server-only", () => ({}));
 
-const { observeSitePalette, describeObservedPalette, snapToObservedPalette, isUncorroboratedSlotColor } = await import("../branding-site-palette");
+const { observeSitePalette, describeObservedPalette, snapToObservedPalette, isUncorroboratedSlotColor, mergePaintedPalette, accentCandidates, isDisqualifiedByRender } = await import("../branding-site-palette");
 
 /**
  * The defect this exists for, from prep on 2026-09-03.
@@ -227,5 +227,111 @@ describe("snapToObservedPalette", () => {
     // come from a logo file, which this function cannot see.
     const input = [{ hex: "#6366f1", dominanceRank: 1, role: "Accent" }];
     expect(snapToObservedPalette(input, [])).toEqual(input);
+  });
+});
+
+describe("mergePaintedPalette", () => {
+  const declared = async () => await observeSitePalette("karoslabs.com", fakeFetch(PAGES));
+
+  it("marks a declared colour the render never paints", async () => {
+    // The whole point. `--primary: #2f6bff` is really in `:root`; the rendered
+    // page uses it on nothing. No rule about token names is needed to know it
+    // is not a brand colour once the pixels have been counted.
+    const merged = mergePaintedPalette(await declared(), [
+      { hex: "#1a1a1a", share: 0.9 },
+      { hex: "#f2f1ec", share: 0.09 },
+      { hex: "#ff6b2c", share: 0.0016 },
+    ]);
+    const byHex = new Map(merged.map((c) => [c.hex, c]));
+
+    expect(byHex.get("#2f6bff")?.paintedShare).toBe(0);
+    expect(byHex.get("#1a1a1a")?.paintedShare).toBeCloseTo(0.9, 4);
+    expect(byHex.get("#ff6b2c")?.paintedShare).toBeCloseTo(0.0016, 4);
+  });
+
+  it("tolerates the few points an overlay or antialiasing shifts a colour by", async () => {
+    // A token painted through a translucent layer lands near, not on, its
+    // declared value. Requiring an exact match would report every real colour
+    // as unpainted and disqualify the entire brand.
+    const merged = mergePaintedPalette(await declared(), [{ hex: "#1c1b1a", share: 0.8 }]);
+    expect(merged.find((c) => c.hex === "#1a1a1a")?.paintedShare).toBeCloseTo(0.8, 4);
+  });
+
+  it("keeps a painted colour the CSS never declared", async () => {
+    // A brand whose identity lives in a hero image has no custom property to be
+    // found by, and would otherwise be invisible to this pipeline entirely.
+    const merged = mergePaintedPalette(await declared(), [{ hex: "#8b1d3f", share: 0.3 }]);
+    const found = merged.find((c) => c.hex === "#8b1d3f");
+    expect(found).toBeDefined();
+    expect(found?.cssVars).toEqual([]);
+    expect(found?.paintedShare).toBeCloseTo(0.3, 4);
+  });
+
+  it("leaves the palette untouched when no render was available", async () => {
+    // "Unknown" must stay distinguishable from "zero": with no screenshot,
+    // nothing may be disqualified for not appearing in one.
+    const before = await declared();
+    const after = mergePaintedPalette(before, []);
+    expect(after).toEqual(before);
+    expect(after.every((c) => c.paintedShare === undefined)).toBe(true);
+  });
+});
+
+describe("accentCandidates", () => {
+  it("finds a rationed accent that area ranking would bury", async () => {
+    // karoslabs.com's orange is 0.16% of the page and appears in neither the
+    // logo mark nor the Instagram avatar — both are just the neutrals. It is
+    // still the colour the brand acts with.
+    const merged = mergePaintedPalette(await observeSitePalette("karoslabs.com", fakeFetch(PAGES)), [
+      { hex: "#1a1a1a", share: 0.899 },
+      { hex: "#f2f1ec", share: 0.0092 },
+      { hex: "#ff6b2c", share: 0.0016 },
+    ]);
+    const accents = accentCandidates(merged).map((c) => c.hex);
+
+    expect(accents[0]).toBe("#ff6b2c");
+    // The ground and the ink are the substrate, never the signature.
+    expect(accents).not.toContain("#1a1a1a");
+    expect(accents).not.toContain("#f2f1ec");
+    // And a declared-but-unpainted colour is not a candidate for anything.
+    expect(accents).not.toContain("#2f6bff");
+  });
+
+  it("does not invent an accent for a brand that has none", () => {
+    const neutralsOnly = [
+      { hex: "#1a1a1a", count: 3, cssVars: ["--background"], themeVars: [], inLogo: true, inMarkup: true, paintedShare: 0.9 },
+      { hex: "#f2f1ec", count: 3, cssVars: ["--foreground"], themeVars: [], inLogo: true, inMarkup: false, paintedShare: 0.1 },
+    ];
+    expect(accentCandidates(neutralsOnly)).toEqual([]);
+  });
+});
+
+describe("isDisqualifiedByRender", () => {
+  const color = (over: Partial<Parameters<typeof isDisqualifiedByRender>[0]>) => ({
+    hex: "#2f6bff", count: 2, cssVars: [], themeVars: [], inLogo: false, inMarkup: false, ...over,
+  });
+
+  it("disqualifies a bare slot the render paints on nothing", () => {
+    // karoslabs.com's `--primary`/`--ring`: a scaffold slot, in neither the mark
+    // nor the markup, on zero pixels. Scaffolding, not brand.
+    expect(isDisqualifiedByRender(color({ cssVars: ["--primary", "--ring"], paintedShare: 0 }))).toBe(true);
+  });
+
+  it("does NOT disqualify a brand-named colour merely absent from one render", () => {
+    // deel.com's `--color-core-cornbread: #ffcf25` is a name its owners chose.
+    // A full-page render of one route still misses other pages, hover states
+    // and anything behind an interaction — absence there is not evidence of
+    // absence, and treating it as such deleted half of Deel's design system.
+    expect(
+      isDisqualifiedByRender(color({ hex: "#ffcf25", cssVars: ["--color-core-cornbread"], paintedShare: 0 })),
+    ).toBe(false);
+  });
+
+  it("does not disqualify anything when no render was available", () => {
+    expect(isDisqualifiedByRender(color({ cssVars: ["--primary", "--ring"] }))).toBe(false);
+  });
+
+  it("keeps a slot-named colour the render actually paints", () => {
+    expect(isDisqualifiedByRender(color({ cssVars: ["--primary"], paintedShare: 0.4 }))).toBe(false);
   });
 });
