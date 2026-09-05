@@ -275,6 +275,16 @@ const resolveSessionUser = cache(async (): Promise<AppUser | null> => {
   }
 });
 
+/**
+ * The "View as Client" target, read once per request. `getCurrentUser` runs
+ * many times in one request (the layout, the page, every action and every
+ * `logActivity` row), and under impersonation each call re-read the target's
+ * user document. Same idiom as `resolveSessionUser` above; the same
+ * per-request lifetime keeps it correct — `startImpersonation` sets the cookie
+ * and redirects, so no request both changes the target and re-reads it.
+ */
+const impersonationTarget = cache(async (uid: string): Promise<AppUser | null> => getUser(uid));
+
 async function getSessionUser(): Promise<AppUser | null> {
   const user = await resolveSessionUser();
   return user ? { ...user } : null;
@@ -288,7 +298,7 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     const store = await cookies();
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
-      const target = await getUser(impUid);
+      const target = await impersonationTarget(impUid);
       // impersonatedBy is transient — it marks the session so credit charges
       // and other client-billed actions know a staff member is behind it.
       if (target && !target.disabled) return { ...target, impersonatedBy: realUser.uid };
@@ -318,7 +328,7 @@ export async function getViewingContext(): Promise<{
   if (realUser.role === "KAROS_ADMIN") {
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
-      const target = await getUser(impUid);
+      const target = await impersonationTarget(impUid);
       if (target && !target.disabled) {
         return {
           user: { ...target, impersonatedBy: realUser.uid },

@@ -63,21 +63,25 @@ export async function buildDynamicAgentHistory(
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, DYNAMIC_AGENT_HISTORY_RUNS);
 
-  const items: DynamicAgentHistoryItem[] = [];
-  for (const job of jobs) {
-    // The run's primary deliverable is its first asset — the same join
-    // (job.assetIds[0] -> getAsset) the prior-batch readers and the job detail
-    // page both use. A dynamic run creates exactly one asset.
-    const assetId = job.assetIds[0];
-    if (!assetId) continue;
-    const asset = await getAsset(assetId);
-    const content = asset?.content?.trim();
-    if (!content) continue;
-    items.push({
-      jobId: job.id,
-      createdAt: job.createdAt,
-      excerpt: content.slice(0, DYNAMIC_AGENT_HISTORY_EXCERPT_CHARS),
-    });
-  }
-  return items;
+  // Read the prior deliverables in PARALLEL (review, 2026-09): this runs inside
+  // the submit action, and each sequential read was wall-clock the person
+  // launching the run sat through. Mapping preserves order (newest first).
+  const items = await Promise.all(
+    jobs.map(async (job): Promise<DynamicAgentHistoryItem | null> => {
+      // The run's primary deliverable is its first asset — the same join
+      // (job.assetIds[0] -> getAsset) the prior-batch readers and the job detail
+      // page both use. A dynamic run creates exactly one asset.
+      const assetId = job.assetIds[0];
+      if (!assetId) return null;
+      const asset = await getAsset(assetId);
+      const content = asset?.content?.trim();
+      if (!content) return null;
+      return {
+        jobId: job.id,
+        createdAt: job.createdAt,
+        excerpt: content.slice(0, DYNAMIC_AGENT_HISTORY_EXCERPT_CHARS),
+      };
+    }),
+  );
+  return items.filter((i): i is DynamicAgentHistoryItem => i !== null);
 }
