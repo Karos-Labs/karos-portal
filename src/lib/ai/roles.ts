@@ -209,11 +209,12 @@ export const AI_ROLES = {
     // SCRUM-394 (IGSTYLE-9) inserted the role-based palette resolver above
     // this call in branding.ts, shifting these two line numbers down from
     // 736/751 — re-pinned against the real file, not carried over stale.
-    // Re-pinned twice in 2026-09: the flow audit (R14) added reported fields
-    // to `BrandingGenResult` above these calls, and main's "stop inventing
-    // colours" change moved them again. Both merged; provider-wiring.test.ts
-    // is what catches the drift.
-    sites: ["src/lib/branding.ts:931", "src/lib/branding.ts:946"],
+    // Re-pinned three times in 2026-09: the flow audit (R14) added reported
+    // fields to `BrandingGenResult` above these calls, main's "stop inventing
+    // colours" change moved them again, and the ScrappyCoco brand-evidence
+    // change (rendered screenshot + Instagram images) moved them a third time.
+    // All merged; provider-wiring.test.ts is what catches the drift.
+    sites: ["src/lib/branding.ts:1030", "src/lib/branding.ts:1037"],
   },
   // Shifted 36/37 → 37/38 by the credits rework (2026-09), which added one
   // import above them. Re-pinned against the real file, per the rule above.
