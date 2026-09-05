@@ -2245,6 +2245,20 @@ export interface SeoGeoInsights {
   gaps: VisibilityGap[];
   /** Client-facing action plan derived from `gaps` (dev-handoff §3b). Safe to render to clients. */
   recommendations: Recommendation[];
+  /**
+   * The engine's fired recommendations in routable form (recId, lever, check,
+   * routing) — what `createTasksFromSeoGeoReportAction` and
+   * `approveSeoGeoRecommendationAction` act on. Lives here because the
+   * seo-geo-agent no longer creates a portal asset (its output is internal
+   * data), so this record is the report's home. Written by
+   * `mapAgentEngineSeoGeoToInsights`; absent on records from before 2026-09-05.
+   *
+   * Typed as opaque JSON on purpose: this module is pure, client-safe maths with
+   * no imports, and readers re-validate each row through
+   * `toRoutableRecommendation` (agent-engine/routable-recommendation.ts) on the
+   * way out — the same discipline the asset-era reader used.
+   */
+  routableRecommendations?: readonly unknown[];
   /** recIds the client/staff has approved for the team to execute (QA Fix 6). Mutated by
    *  approveSeoGeoRecommendation, not the capture run. */
   approvedRecIds?: string[];

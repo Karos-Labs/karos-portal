@@ -2,7 +2,7 @@ import "server-only";
 
 import type { Client } from "@/lib/types";
 import type { ParsedReport } from "@/lib/report-parser";
-import { upsertClientReport, replaceReportCompetitors } from "@/lib/data";
+import { getClient, upsertClientReport, replaceReportCompetitors } from "@/lib/data";
 import { buildClientReport } from "@/lib/report-parser";
 import { applyBrandingForClient } from "@/lib/branding";
 import {
@@ -139,6 +139,18 @@ export async function runIntelReportPipeline(
         console.error("[intel] Branding generation failed (non-fatal):", err);
       }),
   ]);
+
+  // Branding just rewrote the client's palette; the projection that ran inside
+  // the doc pipeline read the client BEFORE that landed. Re-project brand and
+  // profile now so the engine's `client/brand.json` is the palette the portal
+  // shows — the intel report was describing a background the portal had
+  // already corrected. Best-effort, like everything on this side channel.
+  try {
+    const [{ projectClientToWorkspace }, freshClient] = await Promise.all([import("@/lib/agent-engine/context-doc-projection"), getClient(clientId)]);
+    if (freshClient) await projectClientToWorkspace(freshClient, undefined);
+  } catch (err) {
+    console.error("[intel] brand/profile projection failed (non-fatal):", err);
+  }
 
   if (docsResult.status === "rejected") {
     console.error("[intel] Context-doc pipeline failed:", docsResult.reason);
