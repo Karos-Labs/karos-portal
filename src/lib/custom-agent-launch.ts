@@ -294,6 +294,20 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           ],
         },
         {
+          // agent-engine RFC-12 (2026-09): Instagram's post format. `auto`
+          // makes every third post a single image with a deep caption. Read by
+          // instagram-agent only; tiktok-agent receives and ignores it.
+          key: "requestedFormat",
+          label: "Instagram format",
+          type: "select",
+          defaultValue: "carousel",
+          options: [
+            { value: "carousel", label: "Carousel (6-8 slides)" },
+            { value: "single", label: "Single image with a deep caption" },
+            { value: "auto", label: "Rotate (every third post a single image)" },
+          ],
+        },
+        {
           // The shared batch key, not a bespoke `post_count`: the submit core
           // turns N here into N SEPARATE runs (one post each, each at the
           // per-run price), and it reads that number from exactly one field.
@@ -365,6 +379,20 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           // Replaced per client by withLinkedInIdentityOptions — a seat only
           // becomes selectable once its own setup has built its voice.
           options: [{ value: "company", label: "The company page" }],
+        },
+        {
+          // agent-engine RFC-12 (2026-09): the content-mode rotation, which
+          // also steers the archetype family. Blank means the engine rotates.
+          key: "requestedMode",
+          label: "Kind of post",
+          type: "select",
+          defaultValue: "",
+          options: [
+            { value: "", label: "Rotate automatically" },
+            { value: "hot-news", label: "Hot news — an insider read on something current" },
+            { value: "deep-value", label: "Deep value — a teardown, a lesson, a customer story" },
+            { value: "open-discussion", label: "Open discussion — a question with your position stated" },
+          ],
         },
         {
           key: BATCH_SIZE_FIELD_KEY,
@@ -566,6 +594,21 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           options: [
             { value: "the company page", label: "Company page" },
             { value: "one seat (named in the request below)", label: "One person's seat" },
+          ],
+        },
+        {
+          // agent-engine RFC-12 (2026-09): the content-mode rotation. Blank
+          // means the engine rotates (never the same mode twice in a row); a
+          // value pins this run. Reaches the engine as `requestedMode`.
+          key: "requestedMode",
+          label: "Kind of post",
+          type: "select",
+          defaultValue: "",
+          options: [
+            { value: "", label: "Rotate automatically" },
+            { value: "hot-news", label: "Hot news — react to something that just happened" },
+            { value: "deep-value", label: "Deep value — a useful, specific insight" },
+            { value: "open-discussion", label: "Open discussion — a take the audience will argue with" },
           ],
         },
         {
@@ -1281,7 +1324,12 @@ export const MEDIA_ASSETS_FIELD_KEY = "mediaAssets";
  * slot to put a video in and offering one would be offering a control that
  * silently does nothing.
  */
-const MEDIA_DEPENDENT_PRODUCTS = new Set(["instagram-agent", "branded-shorts-agent", "tiktok-agent"]);
+// 2026-09: x-agent and linkedin-agent joined the set. Both now ingest an
+// attached image, read it with a vision model BEFORE drafting, and write the
+// post TO it (agent-engine RFC-12). For them the upload is optional — a run
+// without one sources its own picture — but the field has to exist for a
+// client to be able to hand one over at all.
+const MEDIA_DEPENDENT_PRODUCTS = new Set(["instagram-agent", "branded-shorts-agent", "tiktok-agent", "x-agent", "linkedin-agent"]);
 
 /**
  * Whether an agent-engine product reads `mediaAssets` at all.
@@ -1341,7 +1389,8 @@ export function withEngineRunFields(
       label: "Source media",
       type: "textarea",
       placeholder: '[{"uri": "gs://bucket/episode.mp4", "role": "source"}]',
-      helper: "A gs:// or https:// URI per asset. This agent works from media rather than producing it.",
+      helper:
+        "A gs:// or https:// URI per asset. For the video agents this is the footage to work from; for X, LinkedIn and Instagram it is optional — attach a picture and the post is written to it, leave it blank and the agent sources one.",
     });
   }
   if (extra.length === 0) return profile;

@@ -32,10 +32,14 @@ describe("agentEngineProductAcceptsMediaAssets", () => {
     expect(agentEngineProductAcceptsMediaAssets("instagram-agent")).toBe(true);
     expect(agentEngineProductAcceptsMediaAssets("branded-shorts-agent")).toBe(true);
     expect(agentEngineProductAcceptsMediaAssets("tiktok-agent")).toBe(true);
+    // agent-engine RFC-12 (2026-09): the text-first channels read an attached
+    // image too — the post is written to it.
+    expect(agentEngineProductAcceptsMediaAssets("x-agent")).toBe(true);
+    expect(agentEngineProductAcceptsMediaAssets("linkedin-agent")).toBe(true);
   });
 
   it("is false for an engine product that does not consume media", () => {
-    expect(agentEngineProductAcceptsMediaAssets("x-agent")).toBe(false);
+    expect(agentEngineProductAcceptsMediaAssets("blog-agent")).toBe(false);
     expect(agentEngineProductAcceptsMediaAssets("landing-builder-agent")).toBe(false);
   });
 
@@ -51,7 +55,7 @@ describe("withEngineRunFields defers to the same predicate", () => {
   });
 
   it("does not paint the mediaAssets field for a non-media-dependent product", () => {
-    const profile = withEngineRunFields(BASE_PROFILE, "x-agent");
+    const profile = withEngineRunFields(BASE_PROFILE, "blog-agent");
     expect(profile.fields.some((f) => f.key === "mediaAssets")).toBe(false);
   });
 });

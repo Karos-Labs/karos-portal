@@ -37,6 +37,8 @@ const PROBE_INPUT: Record<WireFieldKey, Record<string, string>> = {
   runScope: { run_scope: "probe scope" },
   requestedLane: { requestedLane: "probe-lane" },
   requestedArchetype: { requestedArchetype: "probe-archetype" },
+  requestedMode: { requestedMode: "hot-news" },
+  requestedFormat: { requestedFormat: "single" },
   requestedExecutiveName: { requestedExecutiveName: "Albert Kattan" },
   requestedSubreddit: { requestedSubreddit: "probe-subreddit" },
   requestedThreadUrl: { requestedThreadUrl: "https://reddit.test/thread" },
@@ -138,7 +140,7 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
     }).toThrow();
   });
 
-  it("pins the exact current wire-field set (26 keys) — a change here should be a deliberate, reviewed diff", () => {
+  it("pins the exact current wire-field set (28 keys) — a change here should be a deliberate, reviewed diff", () => {
     expect([...WIRE_FIELD_KEYS].sort()).toEqual(
       [
         "audience",
@@ -156,7 +158,9 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
         "requestedIdentityScope",
         "proof",
         "requestedArchetype",
+        "requestedFormat",
         "requestedLane",
+        "requestedMode",
         "requestedSubreddit",
         "requestedThreadTitle",
         "requestedThreadUrl",
@@ -272,10 +276,12 @@ describe("ENGINE_FIELD_CONTRACT — the pinned classification (C3's deliverable 
     );
     expect(read).toEqual({
       customPrompt: [...REACHABLE_PRODUCTS].sort(),
-      mediaAssets: ["instagram-agent", "tiktok-agent"],
+      mediaAssets: ["instagram-agent", "linkedin-agent", "tiktok-agent", "x-agent"],
       requestedTopic: ["linkedin-agent", "reddit-agent", "tiktok-agent", "x-agent"],
       requestedLane: ["x-agent"],
       requestedArchetype: ["linkedin-agent"],
+      requestedMode: ["linkedin-agent", "x-agent"],
+      requestedFormat: ["instagram-agent"],
       requestedIdentityScope: ["linkedin-agent"],
       requestedExecutiveName: ["linkedin-agent"],
       requestedSubreddit: ["reddit-agent"],

@@ -328,13 +328,13 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   productId: string;
   visibleFields: readonly string[];
 }> = [
-  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "batch_size", "request", "customPrompt"] },
-  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "batch_size", "request", "customPrompt"] },
-  { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt"] },
+  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "customPrompt", "mediaAssets"] },
+  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "customPrompt", "mediaAssets"] },
+  { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "mediaAssets"] },
   { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request", "customPrompt"] },
   { key: "karos-reddit-setup", name: "Reddit Setup", productId: "reddit-agent", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
-  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
-  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
+  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
+  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
   { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "mediaAssets"] },
   { key: "landing-builder", name: "Landing Page Builder", productId: "landing-builder-agent", visibleFields: ["request", "offer", "audience", "cta", "proof", "references", "customPrompt"] },
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
