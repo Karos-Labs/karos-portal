@@ -346,6 +346,7 @@ export function mapAgentEngineSeoGeoToInsights(input: SeoGeoMappingInput): SeoGe
     perEngine,
     gaps,
     recommendations: buildRecommendations(gaps),
+    routableRecommendations: routable,
     seoChecks,
     geoChecks,
     promptSet,

@@ -379,6 +379,107 @@ function customerSentimentList(rows: readonly Record<string, unknown>[]): string
  * run: an onboarding that produces a blank ground-truth document must fail
  * loudly, not store a placeholder for every downstream agent to read.
  */
+/** Personas as the intel report now emits them (intel-report-craft@5 `targetAudience`). */
+function personaBlock(p: Record<string, unknown>): string {
+  const line = (label: string, v: unknown) => {
+    const text = str(v);
+    return text ? `- **${label}:** ${text}` : undefined;
+  };
+  const list = (label: string, v: unknown) => {
+    const items = strArray(v);
+    return items.length ? `- **${label}:** ${items.join("; ")}` : undefined;
+  };
+  const title = `### ${str(p["label"]) ?? "Persona"}${p["isPrimary"] === true ? " (primary)" : ""}`;
+  return joinBlocks([
+    title,
+    line("Demographics & firmographics", p["firmographics"]),
+    line("Role in the buying committee", p["role"]),
+    list("Core pain points", p["painPoints"]),
+    list("Success metrics they are judged on", p["successMetrics"]),
+    list("Incumbent tools & methods", p["incumbentTools"]),
+    list("Where the incumbents fall short", p["incumbentShortfalls"]),
+    list("Switching triggers", p["switchingTriggers"]),
+    list("Channels & formats that reach them", p["channels"]),
+    list("Trust builders", p["trustBuilders"]),
+    list("Vocabulary they use", p["vocabulary"]),
+    list("How they describe the problem", p["problemPhrases"]),
+    list("How they describe the ideal outcome", p["outcomePhrases"]),
+    list("Words & phrases to avoid in copy", p["avoidPhrases"]),
+  ]);
+}
+
+/** One competitor profile in the shape legacy's "Competitor Profiles" section carried. */
+function competitorProfile(c: Record<string, unknown>): string | undefined {
+  const name = str(c["company"]);
+  if (!name) return undefined;
+  const url = str(c["url"]);
+  const facts = [
+    str(c["marketTier"]) ? `**Market tier:** ${str(c["marketTier"])}` : undefined,
+    str(c["overlap"]) ? `**Overlap with us:** ${str(c["overlap"])}` : undefined,
+    str(c["threatLevel"]) ? `**Threat level:** ${str(c["threatLevel"])}` : undefined,
+    str(c["founded"]) ? `**Founded:** ${str(c["founded"])}` : undefined,
+    str(c["scale"]) ? `**Scale:** ${str(c["scale"])}` : undefined,
+    str(c["positioning"]) ? `**Positioning:** ${str(c["positioning"])}` : undefined,
+    strArray(c["keyStrengths"]).length ? `**Key strengths:** ${strArray(c["keyStrengths"]).join("; ")}` : undefined,
+    strArray(c["keyWeaknesses"]).length ? `**Key weaknesses:** ${strArray(c["keyWeaknesses"]).join("; ")}` : undefined,
+  ].filter((f): f is string => Boolean(f));
+  return joinBlocks([`### ${name}${url ? ` (${url})` : ""}${c["deepDive"] === true ? " — deep dive" : ""}`, facts.join("\n")]);
+}
+
+/** A recommendation with its description and priority, not just its title. */
+function recommendationBlock(r: Record<string, unknown>): string | undefined {
+  const title = str(r["title"]) ?? str(r["recommendation"]) ?? str(r["id"]);
+  if (!title) return undefined;
+  const priority = str(r["priorityLabel"]) ?? (typeof r["priority"] === "number" ? `P${r["priority"]}` : undefined);
+  const tag = str(r["tag"]);
+  const head = `**${title}**${priority ? ` — ${priority}` : ""}${tag ? ` · ${tag}` : ""}`;
+  const desc = str(r["description"]);
+  return desc ? `${head}\n${desc}` : head;
+}
+
+/** A fired SEO/GEO recommendation with what it targets and what it is worth. */
+function firedBlock(r: Record<string, unknown>): string | undefined {
+  const title = str(r["recommendation"]) ?? str(r["title"]) ?? str(r["recId"]);
+  if (!title) return undefined;
+  const meta = [
+    str(r["recId"]),
+    str(r["fireState"]) ? `state ${str(r["fireState"])}` : undefined,
+    str(r["impact"]) ? `impact ${str(r["impact"])}` : undefined,
+    str(r["effort"]) ? `effort ${str(r["effort"])}` : undefined,
+    typeof r["scoreLift"] === "number" ? `+${r["scoreLift"]} pts` : undefined,
+  ].filter((m): m is string => Boolean(m));
+  return `**${title}**${meta.length ? ` (${meta.join(", ")})` : ""}`;
+}
+
+function dimensionScoreList(rows: readonly Record<string, unknown>[]): string | undefined {
+  if (!rows.length) return undefined;
+  const lines = rows
+    .map((r) => {
+      const label = str(r["label"]) ?? str(r["dimension"]) ?? str(r["key"]);
+      const score = r["score"];
+      return label && typeof score === "number" ? `- ${label}: ${score}/100` : undefined;
+    })
+    .filter((l): l is string => Boolean(l));
+  return lines.length ? lines.join("\n") : undefined;
+}
+
+/**
+ * Compose every context document from the two research deliverables.
+ *
+ * Each document is a fixed template over the deliverables' fields — no model
+ * call, so a document can never say something the research did not. The
+ * 2026-09-05 revision exists because the first template used a fraction of
+ * what the intel report carries: eight competitors with positioning, tier,
+ * strengths and weaknesses were rendered as a bullet list of names; the SEO
+ * and GEO analyses were dropped; recommendations lost their descriptions and
+ * priorities; and target-audience had NO audience in it at all (the report
+ * had no such field — intel-report-craft@5 adds `targetAudience`). The
+ * documents were the right shape and a third of the substance.
+ *
+ * These documents are what every other agent reads as its picture of the
+ * client, so a field the report bothered to ground is a field the agents
+ * should see.
+ */
 export function composeContextDocsFromAgentReports(input: {
   client: Pick<Client, "id" | "name">;
   intelReport: IntelReportDeliverable;
@@ -388,120 +489,107 @@ export function composeContextDocsFromAgentReports(input: {
   const swot = rec(ir["swot"]);
   const seoScore = rec(sg["seoScore"])["score"];
   const geoScore = rec(sg["geoReadiness"])["score"];
+  const visibilityIndex = rec(rec(sg["visibility"])["byN"])["index"];
   const header = (title: string) => `# ${title} — ${client.name}`;
-
   const scoreLine = [
     typeof seoScore === "number" ? `SEO ${seoScore}` : undefined,
     typeof geoScore === "number" ? `GEO readiness ${geoScore}` : undefined,
+    typeof visibilityIndex === "number" ? `AI visibility index ${visibilityIndex}` : undefined,
   ]
     .filter((p): p is string => Boolean(p))
     .join(" · ");
+  const overall =
+    typeof ir["overallScore"] === "number"
+      ? `**Overall intel score: ${ir["overallScore"]}/100${str(ir["overallGrade"]) ? ` (grade ${str(ir["overallGrade"])})` : ""}**`
+      : undefined;
 
   const recommendations = objArray(ir["recommendations"]);
   const fired = objArray(sg["firedRecommendations"]);
-  // `ir.competitors` is `ClientCompetitorSchema[]` on the real deliverable
-  // (`{ company, url?, marketTier, ... }`), not `string[]` — see the two uses
-  // below (SCRUM-274/T-B19 fix, verified against agent-engine's ref clone).
   const competitors = objArray(ir["competitors"]);
-  // `sg.promptSet` is `{ prompts: SeoGeoPrompt[], source, ... }` on the real
-  // deliverable, not itself an array — `sg.promptSet.prompts` is the array,
-  // and each prompt's text is `promptText`, not `prompt`/`text` (SCRUM-274/
-  // T-B19 fix, verified against agent-engine's ref clone,
-  // `agents/seo-geo-agent/src/workflow/types.ts`'s `SeoGeoPrompt`).
+  const rankings = objArray(ir["competitorRankings"]);
+  const dimensionScores = objArray(ir["dimensionScores"]);
   const promptSetPrompts = objArray(rec(sg["promptSet"])["prompts"]);
+  const targetAudience = rec(ir["targetAudience"]);
+  const personas = objArray(targetAudience["personas"]);
+  const swotBlock = joinBlocks(
+    (["strengths", "weaknesses", "opportunities", "threats"] as const).map((key) => {
+      const list = bullets(strArray(swot[key]));
+      return list ? `**${key[0]!.toUpperCase()}${key.slice(1)}**\n${list}` : undefined;
+    }),
+  );
+  const rankingLines = rankings
+    .map((r) => {
+      const name = str(r["company"]) ?? str(r["name"]);
+      const score = r["score"];
+      const grade = str(r["grade"]);
+      const rank = r["rank"];
+      if (!name || typeof score !== "number") return undefined;
+      const strongest = str(r["bestDimension"]);
+      const weakest = str(r["weakestDimension"]);
+      return `- ${typeof rank === "number" ? `#${rank} ` : ""}${name}: ${score}/100${grade ? ` (${grade})` : ""}${strongest ? ` — strongest in ${strongest}` : ""}${weakest ? `, weakest in ${weakest}` : ""}`;
+    })
+    .filter((l): l is string => Boolean(l));
+  const rankingList = rankingLines.length ? rankingLines.join("\n") : undefined;
+  const scoreHeader = [overall, scoreLine ? `**${scoreLine}**` : undefined].filter((p): p is string => Boolean(p)).join("\n") || undefined;
 
   return {
-    // SCRUM-274 (T-B19) — Brand Voice precedence, flagged, unratified (see
-    // this ticket's report for the full account). `Client.brandVoice`
-    // (src/lib/types.ts) is one source of brand voice; the batch doc names a
-    // second — a `brand-voice` context doc agent-engine reads via
-    // `client.getKnowledge()` during its own runs, a boundary this checkout
-    // has no `getKnowledge` function to reach from here. This function WRITES
-    // the `brand-voice` doc purely from the Intel Report deliverable's own
-    // brand fields below; it does not read or reconcile against
-    // `Client.brandVoice` at all. SCRUM-380 (D1-v2, still Prep, not merged
-    // into this checkout) reportedly picks BrandKit (`Client.brandVoice`) as
-    // authoritative on its own branch, but that ratification hasn't landed
-    // here — this comment is what makes today's actual precedence (the Intel
-    // Report deliverable wins, unconditionally, because it is the only source
-    // consulted) explicit and visible rather than an implicit accident of
-    // "whichever function got called," per the ticket's own instruction: get
-    // it ratified or make the precedence explicit; do not inherit it silently.
     "brand-voice": document(header("Brand Voice"), [
       section("Brand analysis", str(ir["brandAnalysis"])),
       section("Voice territory", str(ir["brandVoiceTerritory"])),
       section("Archetypes", brandVoiceArchetypeList(objArray(ir["brandVoiceArchetypes"]))),
       section("Voice attributes", brandVoiceAttributeList(objArray(ir["brandVoiceRows"]))),
+      section("Brand synchronization update", str(ir["brandSynchronizationUpdate"])),
     ]),
-
     "market-strategy": document(header("Market Strategy"), [
-      scoreLine ? `**${scoreLine}**` : undefined,
+      scoreHeader,
+      section("Dimension scores", dimensionScoreList(dimensionScores)),
       section("Positioning", str(ir["positioningAnalysis"])),
       section("Growth", str(ir["growthAnalysis"])),
       section("Whitespace opportunities", bullets(strArray(ir["whitespaceOpportunities"]))),
+      section("SEO & discoverability", str(ir["seoAnalysis"])),
+      section("GEO & AI discoverability", str(ir["geoAnalysis"])),
       section("Search and answer-engine visibility", str(sg["narrative"])),
+      section("Strategic recommendations", joinBlocks(recommendations.map(recommendationBlock))),
     ]),
-
     "competitor-analysis": document(header("Competitor Analysis"), [
       competitors.length ? `**Competitors analysed: ${competitors.length}**` : undefined,
-      section("Rankings", labelledList(objArray(ir["competitorRankings"]), ["company", "name", "competitor", "label"], "score")),
-      section("Tracked competitors", bullets(competitors.map((c) => str(c["company"])).filter((s): s is string => Boolean(s)))),
-      section(
-        "SWOT",
-        joinBlocks(
-          (["strengths", "weaknesses", "opportunities", "threats"] as const).map((key) => {
-            const list = bullets(strArray(swot[key]));
-            return list ? `**${key[0]!.toUpperCase()}${key.slice(1)}**\n${list}` : undefined;
-          }),
-        ),
-      ),
-      // NOT FIXED — SCRUM-274 (T-B19) finding, not a diff: the real
-      // `SeoGeoReport.visibility` shape (`{ byN, byNe, denominatorDecision }`,
-      // agent-engine's `agents/seo-geo-agent/src/workflow/types.ts`) has no
-      // per-engine (chatgpt/gemini/claude) mention breakdown anywhere on it —
-      // `VisibilityIndexResult.componentNorms` is per-SCORING-COMPONENT
-      // (citation_share, who_ranks_first, share_of_voice — see
-      // `packages/tools/karos-seo-geo/src/visibility-index.ts`), a different
-      // axis entirely, not per-engine. Rendering componentNorms under this
-      // heading would look plausible and mean something else, which is worse
-      // than an honestly empty section — so this section is left reading a
-      // field that does not exist rather than substituting one that does but
-      // means the wrong thing. See this ticket's report for the full account.
+      section("Competitive ranking", rankingList),
+      section("Competitor profiles", joinBlocks(competitors.map(competitorProfile))),
+      section("SWOT", swotBlock),
       section("Share of voice in AI answers", labelledList(objArray(rec(sg["visibility"])["engines"]), ["engine", "label", "name"], "mentions")),
     ]),
-
     "product-information": document(header("Product Information"), [
+      section("Positioning", str(ir["positioningAnalysis"])),
       section("Content analysis", str(ir["contentAnalysis"])),
       section("Conversion analysis", str(ir["conversionAnalysis"])),
+      section("Voice territory", str(ir["brandVoiceTerritory"])),
     ]),
-
     "branding-guidelines": document(header("Branding Guidelines"), [
       section("Brand analysis", str(ir["brandAnalysis"])),
       section("Brand synchronization update", str(ir["brandSynchronizationUpdate"])),
       section("Voice territory", str(ir["brandVoiceTerritory"])),
     ]),
-
     "target-audience": document(header("Target Audience"), [
+      section("Summary", str(targetAudience["summary"])),
+      personas.length ? joinBlocks(personas.map(personaBlock)) : undefined,
+      section("Evidence", bullets(strArray(targetAudience["evidence"]))),
       section("Customer sentiment", customerSentimentList(objArray(ir["customerSentiment"]))),
       section("Buyer-intent prompt set", bullets(promptSetPrompts.map((p) => str(p["promptText"]) ?? str(p["prompt"]) ?? str(p["text"]) ?? "").filter(Boolean))),
     ]),
-
     "client-guidelines": document(header("Client Guidelines"), [
-      section("Dimension scores", labelledList(objArray(ir["dimensionScores"]), ["label", "key", "dimension"], "score")),
-      section("Standing recommendations", labelledList(recommendations, ["title", "recommendation", "id"])),
+      overall,
+      section("Dimension scores", dimensionScoreList(dimensionScores)),
+      section("Standing recommendations", joinBlocks(recommendations.map(recommendationBlock))),
+      section("Brand synchronization update", str(ir["brandSynchronizationUpdate"])),
     ]),
-
     "action-plan": document(header("Action Plan"), [
-      section("From the intel report", labelledList(recommendations, ["title", "recommendation", "id"])),
-      section("From the SEO/GEO audit", labelledList(fired, ["title", "recommendation", "id"])),
+      section("From the intel report", joinBlocks(recommendations.map(recommendationBlock))),
+      section("From the SEO/GEO audit", joinBlocks(fired.map(firedBlock))),
       section("Prepared fixes", labelledList(objArray(sg["fixDrafts"]), ["title", "target", "id"])),
     ]),
   };
 }
 
-/* ── The run ──────────────────────────────────────────────────────── */
-
-/** The engine `kind` each product writes through `ledger.writeDeliverable`. Must match `PRODUCT_DELIVERABLE_KINDS` in materialize.ts exactly — anything else 404s. */
 export const INTEL_REPORT_DELIVERABLE_KIND = "intel-report";
 export const SEO_GEO_DELIVERABLE_KIND = "seo-geo-report";
 
@@ -517,6 +605,13 @@ export interface AgentOnboardingDeps {
   getDeliverable: (runId: string, kind: string) => Promise<unknown>;
   condense: (client: Client, docTypes: ContextDocType[], internal: Record<string, string>) => Promise<{ docType: ContextDocType; content: string }[]>;
   replaceDocs: (clientId: string, docs: StoredContextDoc[]) => Promise<void>;
+  /**
+   * Project the freshly written documents (and the client's brand + profile)
+   * into the agent-engine workspace the engine's tools read from. Optional and
+   * best-effort: absent in tests, a no-op when the workspace bucket is not
+   * configured, never allowed to fail the run. See `context-doc-projection.ts`.
+   */
+  projectDocs?: (clientId: string, docs: StoredContextDoc[]) => Promise<void>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
 }
@@ -615,7 +710,7 @@ export async function dispatchAndAwaitResearch(
 /** The second half: compose the eight context documents and write them. */
 export async function writeContextDocsFromResearch(
   research: AgentResearchDeliverables,
-  deps: Pick<AgentOnboardingDeps, "condense" | "replaceDocs" | "now">,
+  deps: Pick<AgentOnboardingDeps, "condense" | "replaceDocs" | "projectDocs" | "now">,
 ): Promise<{ docsWritten: number }> {
   const { client, intelReport, seoGeo } = research;
   const clientId = client.id;
@@ -669,6 +764,14 @@ export async function writeContextDocsFromResearch(
   assertContextDocSetShape(docs, clientId);
 
   await deps.replaceDocs(clientId, docs);
+  if (deps.projectDocs) {
+    // Best-effort by contract: the documents are already stored; what fails
+    // here is only their copy in the engine workspace, and the engine has its
+    // own mirror fallback for that.
+    await deps.projectDocs(clientId, docs).catch((err: unknown) => {
+      console.error(`[agent-onboarding] context-doc projection failed for ${clientId} (non-fatal):`, err);
+    });
+  }
   return { docsWritten: docs.length };
 }
 
@@ -756,6 +859,18 @@ export async function agentOnboardingDeps(): Promise<AgentOnboardingDeps> {
     getDeliverable: (runId, kind) => getAgentEngineDeliverable(runId, kind),
     condense: (client, docTypes, internal) => condenseDocs(client, docTypes, internal, rules),
     replaceDocs: (id, docs) => replaceClientContextDocs(id, docs),
+    projectDocs: async (id) => {
+      // Read the stored rows back rather than projecting the in-memory ones:
+      // the projection wants Firestore ids and versions for provenance, and
+      // `replaceClientContextDocs` has just assigned them.
+      const [{ projectClientToWorkspace }, { listClientContextDocs }, freshClient] = await Promise.all([
+        import("@/lib/agent-engine/context-doc-projection"),
+        import("@/lib/data"),
+        getClient(id),
+      ]);
+      if (!freshClient) return;
+      await projectClientToWorkspace(freshClient, await listClientContextDocs(id));
+    },
     now: () => Date.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   };
