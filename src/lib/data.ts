@@ -604,6 +604,19 @@ export async function updateJob(id: string, data: Partial<Job>): Promise<void> {
   await col.jobs().doc(id).set(data, { merge: true });
 }
 
+/**
+ * Appends one asset id to `job.assetIds` with `arrayUnion` — safe under
+ * concurrent writers, which `updateJob(id, { assetIds: [...job.assetIds, x] })`
+ * is not: that spread is computed from whatever snapshot the caller holds, so
+ * two overlapping attachers each write "[] plus mine" and the job ends up
+ * referencing only the last one (the others become orphans that still show on
+ * /assets). Idempotent — attaching an id already present is a no-op.
+ */
+export async function attachAssetToJob(jobId: string, assetId: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.jobs().doc(jobId).set({ assetIds: FieldValue.arrayUnion(assetId), updatedAt: Date.now() }, { merge: true });
+}
+
 /** Deletes the job record only — assets created by the job keep living on /assets. */
 export async function deleteJob(id: string): Promise<void> {
   await col.jobs().doc(id).delete();

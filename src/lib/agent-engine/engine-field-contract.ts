@@ -12,12 +12,39 @@
  * (`agent-engine/agents/<product>-agent/src/workflow/create-*-workflow.ts`).
  *
  * This file is that missing half, read out of agent-engine's actual source
- * (commit `8156679`, 2026-08-29 — see each entry's citation) rather than
- * assumed from the field's name or its dialog label. It exists so T-A13
- * (SCRUM-269) has a real, evidenced list of "still-decoration" fields to
+ * rather than assumed from the field's name or its dialog label. It exists so
+ * T-A13 (SCRUM-269) has a real, evidenced list of "still-decoration" fields to
  * build engine-side readers against, instead of re-deriving this audit from
- * scratch or guessing from field names (a field named `tone` looks read; it
- * is not, anywhere, today).
+ * scratch or guessing from field names.
+ *
+ * ## T-A13 IS DONE (2026-09-05), and the shape of the fix is worth keeping
+ *
+ * Sixteen fields were listed here as read by nothing. Fifteen of them were
+ * structured answers a client typed into a run dialog — audience, tone, call
+ * to action, must-include, keywords, the run-mode and channel selectors,
+ * branded-shorts' duration, landing's offer and proof, X's run scope, and all
+ * four of seo-geo's (the website to audit, its scope, market and competitors).
+ * The audit's own framing invited sixteen engine-side readers, one per field.
+ * That would have been wrong: the fields differ, but the QUESTION each one
+ * asks a model is the same, and every drafting agent already had a channel for
+ * it (`runDirectionField`, pinned per product by agent-engine's
+ * `run-direction-coverage.test.ts`).
+ *
+ * So the fix is one place, in agent-engine:
+ * `packages/workflow/src/primitives/run-direction.ts` parses the whole brief
+ * (`readRunBrief`) and renders it as labelled lines (`renderRunBrief`) into
+ * `RunDirection.direction`, which every agent spreads into its drafting step
+ * and which `base-agent.ts`'s `buildTurnPrompt` serializes into the prompt.
+ * Each entry below cites its product's own spread site, so the claim stays
+ * per-product rather than collapsing into "the shared thing handles it".
+ *
+ * WHAT THIS DOES NOT CLAIM. A model that READS "Website: acme.test" is not the
+ * same as a workflow that AUDITS acme.test — seo-geo still resolves the site
+ * it crawls from `client.getProfile()`, and `runMode` does not switch any
+ * agent into a revise path. Turning one of these into structural behaviour is
+ * a per-agent product decision; making the client's answer visible to the
+ * model is what a free-text steer can honestly promise, and it is what was
+ * missing entirely.
  *
  * ## Method
  *
@@ -66,7 +93,7 @@
  * literal type instead of widening to `string`) plus `SPECIAL_CASED_WIRE_KEYS`
  * (the handful of keys `toEngineRunInput` sets by bespoke logic rather than by
  * walking a table — `customPrompt`, `mediaAssets`, `requestedTopic`,
- * `targetDate`, `postCount`). `WireFieldKey` below is a type built ENTIRELY
+ * `targetDate`, `requestedIdentityScope`). `WireFieldKey` below is a type built ENTIRELY
  * out of those exports — there is no second, independently-typed key list
  * anywhere in this codebase for the compiler to lose sync with. Re-run the
  * same empirical check after this fix (see `engine-field-contract.test.ts`'s
@@ -299,36 +326,50 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
   // ── SHARED_SCALAR_FIELDS (audience/tone/cta) — read by NOTHING, anywhere ──
 
   audience: {
-    readBy: [],
-    // reddit-agent: only via the GENERIC profile (karos-reddit-setup).
-    sentButUnread: ["reddit-agent", "instagram-agent", "tiktok-agent", "landing-builder-agent", "blog-agent", "newsletter-agent"],
+    readBy: [
+      { product: "reddit-agent", evidence: "agents/reddit-agent/src/workflow/create-reddit-agent-workflow.ts:442 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:1821 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:498 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "landing-builder-agent", evidence: "agents/landing-builder-agent/src/workflow/create-landing-builder-agent-workflow.ts:180 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "blog-agent", evidence: "agents/blog-agent/src/workflow/create-blog-agent-workflow.ts:309 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "newsletter-agent", evidence: "agents/newsletter-agent/src/workflow/create-newsletter-agent-workflow.ts:327 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   tone: {
-    readBy: [],
-    sentButUnread: ["newsletter-agent"],
+    readBy: [
+      { product: "newsletter-agent", evidence: "agents/newsletter-agent/src/workflow/create-newsletter-agent-workflow.ts:327 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   cta: {
-    readBy: [],
-    sentButUnread: ["branded-shorts-agent", "landing-builder-agent", "newsletter-agent"],
+    readBy: [
+      { product: "branded-shorts-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts:235 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "landing-builder-agent", evidence: "agents/landing-builder-agent/src/workflow/create-landing-builder-agent-workflow.ts:180 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "newsletter-agent", evidence: "agents/newsletter-agent/src/workflow/create-newsletter-agent-workflow.ts:327 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   // ── SHARED_LIST_FIELDS — also read by nothing ──
 
   mustInclude: {
-    readBy: [],
-    // reddit-agent's `success_criteria` alias (the GENERIC profile's own
-    // constraints box) folds into this exact same list — equally unread.
-    sentButUnread: ["reddit-agent", "instagram-agent", "tiktok-agent", "newsletter-agent"],
+    readBy: [
+      { product: "reddit-agent", evidence: "agents/reddit-agent/src/workflow/create-reddit-agent-workflow.ts:442 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:1821 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:498 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "newsletter-agent", evidence: "agents/newsletter-agent/src/workflow/create-newsletter-agent-workflow.ts:327 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   keywords: {
-    readBy: [],
-    // blog-agent reads its OWN `targetKeywords` off `client.getConfig`
-    // (create-blog-agent-workflow.ts:92-99) — a real, load-bearing read, but
-    // of the client's standing config, never of this run's `keywords`.
-    sentButUnread: ["blog-agent"],
+    readBy: [
+      { product: "blog-agent", evidence: "agents/blog-agent/src/workflow/create-blog-agent-workflow.ts:309 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   // ── Fields no current dialog renders at all ──
@@ -340,19 +381,29 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     note: "No dialog in this portal shows target_date/targetDate (checked every ENGINE_ROUTED_DIALOGS row in product-mapping.test.ts), and no server action sets it either — grepped this repo for the literal key, zero non-test hits. Doubly dead today: nothing sends it, and no agent-engine workflow reads it (grepped agent-engine's agents/ tree for a wf.input read, zero hits). Kept in toEngineRunInput's allow-list for when a scheduling surface needs it, per that function's own doc comment.",
   },
 
-  postCount: {
-    readBy: [],
-    sentButUnread: ["instagram-agent", "tiktok-agent"],
+  requestedIdentityScope: {
+    // Replaces the retired `liIdentity` row (this audit's flagship finding: the
+    // dialog's "company" | "seat:<id>" went out under a key no workflow read,
+    // so every LinkedIn run posted as the company). `toEngineRunInput` now
+    // translates li_identity into this key, and submit-custom.ts resolves the
+    // seat into `requestedExecutiveName` alongside it.
+    readBy: [{ product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts:81 (RUN_SCOPED_KEYS), :234-238 and :266-267 (identityScope = requestedIdentityScope ?? options.identityScope ?? \"company\")" }],
+    sentButUnread: [],
+  },
+
+  requestedExecutiveName: {
+    readBy: [{ product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts:81 (RUN_SCOPED_KEYS), :112-116 (selectExecutive — case-insensitive name match, else the first configured executive)" }],
+    sentButUnread: [],
+    note: "Set by submit-custom.ts from the seat the client picked (ClientSeat.name), never by a dialog directly — a seat id is meaningless to the engine, which matches executives by NAME.",
   },
 
   // ── DEDICATED_FIELDS ──
 
   runScope: {
-    readBy: [],
-    // The one dedicated field whose own dialog (X draft's "run_scope") sends
-    // it and whose product (x-agent) still never reads it — x-agent's
-    // RUN_SCOPED_KEYS is only ["requestedTopic", "requestedLane"].
-    sentButUnread: ["x-agent"],
+    readBy: [
+      { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts:335 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   requestedLane: {
@@ -372,30 +423,6 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     sentButUnread: [],
     noCurrentSender: true,
     note: "No dialog field renders this key and no server action sets it — same idle-but-wired state as requestedLane.",
-  },
-
-  liIdentity: {
-    // THE flagship finding of this audit. linkedin-agent's own RUN_SCOPED_KEYS
-    // is ["requestedTopic", "requestedArchetype", "requestedIdentityScope",
-    // "requestedExecutiveName"] (verified directly at
-    // create-linkedin-agent-workflow.ts:71) — "liIdentity" appears in NONE of
-    // them, and was grepped across the whole agent-engine tree with zero hits
-    // outside this portal's own doc comments. Both live senders hit the same
-    // wall:
-    //   - the LinkedIn writer/setup dialog's "Choose my seat" /
-    //     "Set up" field (custom-agent-launch.ts's LINKEDIN_IDENTITY_FIELD_KEY)
-    //   - runLinkedInSetupAction (src/lib/actions/linkedin-agent-actions.ts:
-    //     598-601), which sets briefValues.li_identity to "company" or
-    //     `seat:<seatId>` directly, bypassing the dialog entirely.
-    // Both become `liIdentity` on the wire via product-mapping.ts's
-    // DEDICATED_FIELDS row and are then silently ignored: linkedin-agent
-    // always falls back to `options.identityScope ?? "company"`
-    // (create-linkedin-agent-workflow.ts:228,257), so every run posts as the
-    // company regardless of which seat a client picked. This is a live user-
-    // facing defect this audit surfaced as a side effect, not a hypothetical.
-    readBy: [],
-    sentButUnread: ["linkedin-agent"],
-    note: "The engine's actual identity fields are requestedIdentityScope (\"company\"|\"executive\") and requestedExecutiveName (an executive's NAME, matched case-insensitively — see selectExecutive, create-linkedin-agent-workflow.ts:102-104), not a single combined liIdentity/seat-id string. Translating li_identity's \"company\"|\"seat:<id>\" shape into those two keys (the id -> executive NAME lookup agent-engine expects) is real per-run logic this portal does not have today, not a one-line rename — see the cross-repo follow-up note below.",
   },
 
   requestedSubreddit: {
@@ -420,63 +447,69 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
   },
 
   runMode: {
-    readBy: [],
-    sentButUnread: ["instagram-agent", "tiktok-agent", "blog-agent"],
+    readBy: [
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:1821 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:498 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "blog-agent", evidence: "agents/blog-agent/src/workflow/create-blog-agent-workflow.ts:309 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   platform: {
-    // Read by the PORTAL (resolveAgentEngineProductId's instagram/tiktok
-    // routing decision, made before dispatch) but by no engine WORKFLOW —
-    // once a run lands inside instagram-agent/tiktok-agent/branded-shorts-
-    // agent, nothing reads wf.input.platform back out. The gate calls in
-    // several agents' self-critique steps (e.g. `gateArgs: { platform: "x" }`)
-    // are fixed string literals the agent supplies itself, never a value read
-    // off this run's input — a different "platform" entirely.
-    readBy: [],
-    sentButUnread: ["instagram-agent", "tiktok-agent", "branded-shorts-agent"],
+    readBy: [
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:1821 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:498 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "branded-shorts-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts:235 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   duration: {
-    readBy: [],
-    sentButUnread: ["branded-shorts-agent"],
+    readBy: [
+      { product: "branded-shorts-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts:235 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   offer: {
-    readBy: [],
-    sentButUnread: ["landing-builder-agent"],
+    readBy: [
+      { product: "landing-builder-agent", evidence: "agents/landing-builder-agent/src/workflow/create-landing-builder-agent-workflow.ts:180 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   proof: {
-    readBy: [],
-    // landing-builder-agent's own make.ts has an unrelated static site-build
-    // constant literally named "proof" (the ProofStrip component's prop
-    // name) — a coincidence of naming, not a read of this run's input.
-    sentButUnread: ["landing-builder-agent"],
+    readBy: [
+      { product: "landing-builder-agent", evidence: "agents/landing-builder-agent/src/workflow/create-landing-builder-agent-workflow.ts:180 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   website: {
-    readBy: [],
-    // seo-geo-agent reads its OWN "website" off `client.getProfile()`
-    // (create-seo-geo-agent-workflow.ts:63), never off `wf.input` — same
-    // client-config-not-run-input shape as requestedTopic above.
-    sentButUnread: ["seo-geo-agent"],
+    readBy: [
+      { product: "seo-geo-agent", evidence: "agents/seo-geo-agent/src/workflow/create-seo-geo-agent-workflow.ts:834 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   scope: {
-    readBy: [],
-    sentButUnread: ["seo-geo-agent"],
+    readBy: [
+      { product: "seo-geo-agent", evidence: "agents/seo-geo-agent/src/workflow/create-seo-geo-agent-workflow.ts:834 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   market: {
-    readBy: [],
-    sentButUnread: ["seo-geo-agent"],
+    readBy: [
+      { product: "seo-geo-agent", evidence: "agents/seo-geo-agent/src/workflow/create-seo-geo-agent-workflow.ts:834 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 
   competitors: {
-    readBy: [],
-    // seo-geo-agent's own `clientContext.competitors` comes from a
-    // `client.*` tool read (create-seo-geo-agent-workflow.ts:170-176,203),
-    // never off `wf.input`.
-    sentButUnread: ["seo-geo-agent"],
+    readBy: [
+      { product: "seo-geo-agent", evidence: "agents/seo-geo-agent/src/workflow/create-seo-geo-agent-workflow.ts:834 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+    ],
+    sentButUnread: [],
   },
 };

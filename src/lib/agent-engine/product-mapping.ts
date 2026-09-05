@@ -307,8 +307,12 @@ export const DEDICATED_FIELDS = [
   ["run_scope", "runScope"],
   ["requestedLane", "requestedLane"],
   ["requestedArchetype", "requestedArchetype"],
-  // LinkedIn post / setup
-  ["li_identity", "liIdentity"],
+  // LinkedIn post / setup. `li_identity` itself ("company" | "seat:<id>") is
+  // NOT a row here any more: the engine never read a `liIdentity` key. It is
+  // translated bespoke below into `requestedIdentityScope`, and the seat's
+  // NAME — which only the submit core can look up — arrives pre-resolved under
+  // the engine's own key, passed through like the other `requested*` keys.
+  ["requestedExecutiveName", "requestedExecutiveName"],
   // Reddit reply
   ["requestedSubreddit", "requestedSubreddit"],
   ["requestedThreadUrl", "requestedThreadUrl"],
@@ -333,8 +337,10 @@ export const DEDICATED_FIELDS = [
  * walking one of the three tables above: `customPrompt`/`mustInclude`-style
  * folding, `request` (-> `requestedTopic`, unless `engineProductId` is
  * `REQUEST_IS_DIRECTION_PRODUCT`), `target_date` (-> `targetDate`, after
- * `normalizeTargetDate`), `post_count` (-> `postCount`, after the integer
- * guard) and the parsed `mediaAssets` array.
+ * `normalizeTargetDate`), `li_identity` (-> `requestedIdentityScope`,
+ * "company" | "executive") and the parsed `mediaAssets` array. `post_count`
+ * used to map to `postCount` here; no engine workflow ever read it, and the
+ * submit core now honours a post count as N separate runs instead.
  *
  * This list exists so C3 (`engine-field-contract.ts`) can build its
  * `WireFieldKey` union from ALL of this function's real outputs, not just the
@@ -360,7 +366,7 @@ export const SPECIAL_CASED_WIRE_KEYS = [
   "mediaAssets",
   "requestedTopic",
   "targetDate",
-  "postCount",
+  "requestedIdentityScope",
 ] as const;
 
 /**
@@ -397,11 +403,12 @@ const FOLDED_INTO_MEDIA: ReadonlyArray<
 /**
  * ONE DIALOG KEY IS DELIBERATELY ABSENT FROM EVERY TABLE ABOVE: `batch_size`.
  *
- * It is hidden in every profile that still declares it and inert for pricing
- * by product ruling (2026-08-05 / 2026-08-11): one press, one output, flat
- * price. C3 deletes it from the x-agent and linkedin-agent rows outright ("the
- * engine does one post per run — product ruling 11.08"). Forwarding it would
- * ask the engine for N outputs the client cannot see and is not billed for.
+ * It is the client's "Number of posts" (visible again, default 1, since
+ * 2026-09-04), and the submit core honours it as N SEPARATE one-post runs —
+ * each child submission pins it back to "1" before this function ever sees the
+ * brief. An engine run still does exactly one post ("product ruling 11.08",
+ * which C3 pinned by deleting the key from the x-agent and linkedin-agent
+ * rows), so forwarding the number would ask a run for outputs it cannot give.
  *
  * Written here rather than enforced by a filter, because a filter over a key
  * no table mentions is a check that cannot fail. What can fail is the test
@@ -511,14 +518,17 @@ export function toEngineRunInput(
     if (iso) input.targetDate = iso;
   }
 
-  // `post_count` is the social dialog's own VISIBLE "Number of posts" (1-10,
-  // default 3) and is not `batch_size`: it multiplies no bill and is not
-  // hidden, so a client who moves it is asking for something and must be heard.
-  // Sent as a number rather than the form's string, because a count is a count.
-  const postCount = at("post_count");
-  if (postCount) {
-    const n = Number(postCount);
-    if (Number.isInteger(n) && n > 0) input.postCount = n;
+  // LinkedIn "Post as": the dialog's "company" | "seat:<id>" becomes the
+  // engine's own identity scope. The engine's second identity key,
+  // `requestedExecutiveName`, needs the seat's NAME — a Firestore lookup this
+  // pure function cannot do — so submit-custom.ts resolves it and hands it in
+  // under that key, which DEDICATED_FIELDS passes through. A seat with no
+  // resolved name still asks for the executive path: the engine then picks its
+  // first configured executive rather than silently posting as the company,
+  // which is the defect this replaces (see engine-field-contract.ts).
+  const liIdentity = at("li_identity");
+  if (liIdentity) {
+    input.requestedIdentityScope = liIdentity === "company" ? "company" : "executive";
   }
 
   for (const [dialogKey, wireKey] of DEDICATED_FIELDS) {

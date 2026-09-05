@@ -35,7 +35,7 @@ describe("custom agent launch profiles", () => {
     const x = launchProfileFor({ key: "karos-x-agent-v2", name: "X Agent" });
 
     expect(instagram.fields.map((field) => field.key)).toEqual(
-      expect.arrayContaining(["run_mode", "request", "platform", "post_count"]),
+      expect.arrayContaining(["run_mode", "request", "platform", "batch_size"]),
     );
     expect(linkedin.fields.map((field) => field.key)).toEqual(
       expect.arrayContaining(["executive", "request", "proof"]),

@@ -2,7 +2,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const {
   createAssetMock,
-  updateJobMock,
+  attachAssetToJobMock,
+  getJobMock,
   getDeliverableMock,
   generateTitleMock,
   reflowMock,
@@ -13,7 +14,8 @@ const {
   readAgentEngineRunMock,
 } = vi.hoisted(() => ({
   createAssetMock: vi.fn(),
-  updateJobMock: vi.fn(),
+  attachAssetToJobMock: vi.fn(),
+  getJobMock: vi.fn(),
   getDeliverableMock: vi.fn(),
   generateTitleMock: vi.fn(),
   reflowMock: vi.fn(),
@@ -27,7 +29,8 @@ const {
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/data", () => ({
   createAsset: createAssetMock,
-  updateJob: updateJobMock,
+  attachAssetToJob: attachAssetToJobMock,
+  getJob: getJobMock,
   // [T-B16/SCRUM-271] persist-seo-geo-insights.ts's own dependencies — a
   // seo-geo-agent materialization now also builds and persists `clientSeoGeo`;
   // see the "T-B16: persisting clientSeoGeo" describe block below for the
@@ -84,6 +87,9 @@ function job(productId: string, overrides: Partial<Job> = {}): Job {
   } as Job;
 }
 
+/** What `createAsset(data, id)` answers when this writer wins the create. */
+const createdWithId = async (_data: unknown, id: string) => ({ id, created: true });
+
 /** The asset payload the one `createAsset` call was given. */
 function createdAsset(): Omit<Asset, "id"> {
   expect(createAssetMock).toHaveBeenCalledTimes(1);
@@ -96,8 +102,9 @@ async function materialize(productId: string, deliverable: unknown, overrides: P
 }
 
 beforeEach(() => {
-  createAssetMock.mockReset().mockResolvedValue("asset_1");
-  updateJobMock.mockReset();
+  createAssetMock.mockReset().mockImplementation(createdWithId);
+  attachAssetToJobMock.mockReset();
+  getJobMock.mockReset().mockResolvedValue(null); // no fresh information — the snapshot stands
   getDeliverableMock.mockReset();
   generateTitleMock.mockReset().mockResolvedValue(null);
   reflowMock.mockReset().mockResolvedValue(undefined);
@@ -151,7 +158,7 @@ describe("the product catalog is covered end to end", () => {
   it("fetches each product's deliverable by that exact kind — a mismatch 404s and silently delivers nothing", async () => {
     for (const [productId, kind] of Object.entries(ENGINE_CATALOG)) {
       getDeliverableMock.mockReset().mockResolvedValue({ text: "something" });
-      createAssetMock.mockReset().mockResolvedValue("asset_1");
+      createAssetMock.mockReset().mockImplementation(createdWithId);
       await materializeAgentEngineDeliverable(job(productId));
       expect(getDeliverableMock, productId).toHaveBeenCalledWith("pubsub-1", kind);
     }
@@ -161,9 +168,9 @@ describe("the product catalog is covered end to end", () => {
     // The regression in one line: eight of eleven products used to fall through
     // `DELIVERABLE_KIND_BY_PRODUCT` and return undefined here.
     for (const productId of Object.keys(ENGINE_CATALOG)) {
-      createAssetMock.mockReset().mockResolvedValue(`asset_${productId}`);
+      createAssetMock.mockReset().mockImplementation(createdWithId);
       const assetId = await materialize(productId, { text: "body text", topic: "a topic" });
-      expect(assetId, productId).toBe(`asset_${productId}`);
+      expect(assetId, productId).toBe("agent-engine-pubsub-1");
     }
   });
 });
@@ -726,7 +733,7 @@ describe("reputation-pulse", () => {
 
   it("survives a deliverable with none of these fields yet, without throwing", async () => {
     const assetId = await materialize("reputation-agent", {});
-    expect(assetId).toBe("asset_1");
+    expect(assetId).toBe("agent-engine-pubsub-1");
     expect(createdAsset().content).toBe("");
     expect(createdAsset().title).toBe("Reputation pulse");
   });
@@ -1025,7 +1032,7 @@ describe("what it deliberately does not do", () => {
     // Every field read defensively — the alternative is an exception this module
     // swallows, which lands the job right back at "review with nothing attached".
     const assetId = await materialize("linkedin-agent", { archetype: 42, hashtags: "not-an-array", text: null });
-    expect(assetId).toBe("asset_1");
+    expect(assetId).toBe("agent-engine-pubsub-1");
     const asset = createdAsset();
     expect(asset.content).toBe("");
     expect(asset.title).toBe("LinkedIn post");
@@ -1052,12 +1059,45 @@ describe("titling", () => {
 describe("the job is wired to its new asset", () => {
   it("attaches the asset id and reflows the client's calendar chain", async () => {
     await materialize("x-agent", { text: "post" });
-    expect(updateJobMock).toHaveBeenCalledWith("job_1", expect.objectContaining({ assetIds: ["asset_1"] }));
+    expect(attachAssetToJobMock).toHaveBeenCalledWith("job_1", "agent-engine-pubsub-1");
     expect(reflowMock).toHaveBeenCalledWith("client_1");
   });
 
   it("stamps the run and product onto the asset's meta for traceability", async () => {
     await materialize("x-agent", { text: "post" });
     expect(createdAsset().meta).toMatchObject({ agentEngineRunId: "pubsub-1", agentEngineProductId: "x-agent" });
+  });
+});
+
+describe("two materializations of one run cannot produce two assets", () => {
+  // Prep, 2026-08-25: eight Job-page renders in 16 s during one run's
+  // completion, eight identical instagram assets — every deferred sync held a
+  // job snapshot with `assetIds: []`. The three layers below are the fix.
+
+  it("bails on the FRESH job before spending anything when another writer already attached an asset", async () => {
+    getJobMock.mockResolvedValue({ ...job("x-agent"), assetIds: ["agent-engine-pubsub-1"] });
+    const assetId = await materialize("x-agent", { text: "post" });
+    expect(assetId).toBeUndefined();
+    expect(getDeliverableMock).not.toHaveBeenCalled();
+    expect(generateTitleMock).not.toHaveBeenCalled();
+    expect(createAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("mints the asset under a deterministic id derived from the run, via the idempotent create", async () => {
+    await materialize("x-agent", { text: "post" });
+    expect(createAssetMock).toHaveBeenCalledWith(expect.objectContaining({ jobId: "job_1" }), "agent-engine-pubsub-1");
+  });
+
+  it("when it loses the create race it still attaches the winner's asset, and neither reflows nor duplicates", async () => {
+    createAssetMock.mockImplementation(async (_data: unknown, id: string) => ({ id, created: false }));
+    const assetId = await materialize("x-agent", { text: "post" });
+    expect(assetId).toBe("agent-engine-pubsub-1");
+    expect(attachAssetToJobMock).toHaveBeenCalledWith("job_1", "agent-engine-pubsub-1");
+    expect(reflowMock).not.toHaveBeenCalled();
+  });
+
+  it("treats a failed fresh read as no information rather than as a reason to throw or to skip", async () => {
+    getJobMock.mockRejectedValue(new Error("firestore hiccup"));
+    expect(await materialize("x-agent", { text: "post" })).toBe("agent-engine-pubsub-1");
   });
 });
