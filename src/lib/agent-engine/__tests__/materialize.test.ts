@@ -917,11 +917,51 @@ describe("the three products that already worked keep working", () => {
     expect(asset.imageUrl).toBe("https://karos.example/agent-engine/job_1/slide-2.png");
   });
 
-  it("landing-page-site names where the reviewed source tree lives", async () => {
+  it("landing-page-site (v1 shape) names where the reviewed source tree lives", async () => {
     await materialize("landing-builder-agent", { gcsPrefix: "gs://bucket/sites/acme", fileCount: 12, status: "ok" });
     const asset = createdAsset();
     expect(asset.type).toBe("note");
+    expect(asset.title).toBe("Landing page");
     expect(asset.content).toContain("gs://bucket/sites/acme");
+  });
+
+  it("landing-page-site (v2, RFC-11) leads with the live URL, keeps the preview, and rehosts the desktop screenshot as the cover", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
+    await materialize("landing-builder-agent", {
+      title: "Karos Labs: the AI CMO that moves first",
+      description: "Always-on agents that run strategy, content and distribution.",
+      status: "ok",
+      gate: "pass",
+      craftVerdict: "pass",
+      liveUrl: "https://karos-karoslabs.web.app",
+      previewUrl: "https://karos-karoslabs--run-abc123.web.app",
+      versionName: "sites/karos-karoslabs/versions/v1",
+      indexSignedUrl: "https://signed.example/landing/karoslabs/run/index.html",
+      gcsPrefix: "gs://bucket/landing/karoslabs/run/",
+      fileCount: 3,
+      screenshots: [
+        { label: "mobile", url: "https://signed.example/render-v1-mobile.png" },
+        { label: "desktop", url: "https://signed.example/render-v1-desktop.png" },
+      ],
+      assumptions: ["no product-information document is on file"],
+      revision: false,
+    });
+    const asset = createdAsset();
+    expect(asset.type).toBe("note");
+    expect(asset.title).toBe("Karos Labs: the AI CMO that moves first");
+    expect(asset.content.split("\n")[0]).toBe("Live: https://karos-karoslabs.web.app");
+    expect(asset.content).toContain("Preview: https://karos-karoslabs--run-abc123.web.app");
+    expect(asset.imageUrl).toBe("https://karos.example/agent-engine/job_1/landing-desktop.png");
+    expect(asset.meta).toMatchObject({ taskType: "landing_page", liveUrl: "https://karos-karoslabs.web.app", hostingVersion: "sites/karos-karoslabs/versions/v1", craftVerdict: "pass", buildStatus: "ok" });
+  });
+
+  it("landing-page-site (v2) without Hosting falls back to the signed page link and flags a needs_human build", async () => {
+    await materialize("landing-builder-agent", { title: "Northwind", status: "needs_human", gate: "fail", indexSignedUrl: "https://signed.example/index.html", gcsPrefix: "gs://bucket/landing/northwind/run/", screenshots: [] });
+    const asset = createdAsset();
+    expect(asset.content).toContain("Page (signed link, 7 days): https://signed.example/index.html");
+    expect(asset.content).toContain("review before sharing");
+    expect(asset.imageUrl ?? null).toBeNull();
   });
 });
 

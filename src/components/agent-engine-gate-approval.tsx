@@ -723,7 +723,16 @@ export function AgentEngineGateApproval({
             <div key={label} className="min-w-0">
               <dt className="text-xs text-muted-2">{label}</dt>
               <dd className="truncate text-sm" title={value}>
-                {normalizeDashes(value)}
+                {/* A landing page's `previewUrl`/`pageUrl` (RFC-11) is the thing
+                    the reviewer is asked to judge; a link they can open beats a
+                    string they have to copy. Only https:// values, never http. */}
+                {value.startsWith("https://") ? (
+                  <a href={value} target="_blank" rel="noreferrer" className="text-neon underline-offset-2 hover:underline">
+                    {value.replace(/^https:\/\//, "")}
+                  </a>
+                ) : (
+                  normalizeDashes(value)
+                )}
               </dd>
             </div>
           ))}
