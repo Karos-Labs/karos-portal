@@ -501,27 +501,75 @@ async function materializeTiktokClip(job: Job, deliverable: TiktokClipDeliverabl
 }
 
 interface LandingPageSiteDeliverable {
+  /** Landing Builder v2 (agent-engine RFC-11): the page's <title>. */
+  title?: string;
+  description?: string;
+  /** `https://<site>.web.app` once the reviewed version was released live. */
+  liveUrl?: string;
+  /** The auto-expiring Firebase Hosting preview channel the reviewer saw. */
+  previewUrl?: string;
+  versionName?: string;
+  /** 7-day signed URL to the archived index.html; the fallback link when Hosting is not configured. */
+  indexSignedUrl?: string;
+  screenshots?: Array<{ label?: string; url?: string; gcsUri?: string }>;
+  craftVerdict?: string;
+  assumptions?: string[];
+  revision?: boolean;
+  gate?: string;
   gcsPrefix?: string;
   fileCount?: number;
   status?: string;
 }
 
 /**
- * No landing-page-bundle concept exists anywhere in `Asset` today (confirmed:
- * the legacy webhook has zero special-casing for `landing_page` either — it
- * lands as a slot-less `"note"`, same as here). `gcsPrefix` is a directory
- * tree, not a single fetchable URL, so there is nothing to rehost — the
- * asset's `content` names where the reviewed source tree lives, and staff
- * retrieve it out-of-band until a real bundle/preview concept exists on
- * either side.
+ * Landing Builder v2 (agent-engine RFC-11) ships a real page, not a source
+ * tree: a live `.web.app` URL after approval, the preview channel the reviewer
+ * saw, an archived `index.html` with a signed URL, and the render
+ * screenshots. The asset therefore gets a title the client would recognise,
+ * a body that leads with the live link, and the desktop screenshot rehosted
+ * as its cover, the same way a carousel's first slide is. Still a `note`:
+ * the page is published by Hosting, not scheduled to a channel.
+ *
+ * A v1 deliverable (only `gcsPrefix`/`fileCount`) still materialises, with
+ * the old "site source uploaded to ..." body, so historical jobs render.
  */
-function materializeLandingPageSite(deliverable: LandingPageSiteDeliverable): AssetMaterialization {
+async function materializeLandingPageSite(job: Job, deliverable: LandingPageSiteDeliverable): Promise<AssetMaterialization> {
+  const screenshots = Array.isArray(deliverable.screenshots) ? deliverable.screenshots : [];
+  const desktop = screenshots.find((s) => s.label === "desktop" && typeof s.url === "string") ?? screenshots.find((s) => typeof s.url === "string");
+  const imageUrl = desktop?.url ? await rehostIfFetchable(desktop.url, `agent-engine/${job.id}/landing-desktop.png`, "image/png") : undefined;
+
+  const lines: string[] = [];
+  if (deliverable.liveUrl) lines.push(`Live: ${deliverable.liveUrl}`);
+  if (deliverable.previewUrl) lines.push(`Preview: ${deliverable.previewUrl}`);
+  if (!deliverable.liveUrl && !deliverable.previewUrl && deliverable.indexSignedUrl) lines.push(`Page (signed link, 7 days): ${deliverable.indexSignedUrl}`);
+  if (deliverable.description) lines.push("", deliverable.description);
+  if (deliverable.status === "needs_human") lines.push("", "The engine's own checks did not all pass; review before sharing.");
+  if (lines.length === 0) {
+    lines.push(
+      deliverable.gcsPrefix
+        ? `Site source (${deliverable.fileCount ?? "?"} files) uploaded to ${deliverable.gcsPrefix}`
+        : "Landing page build completed — no site bundle was uploaded (GCS_ARTIFACTS_BUCKET not configured on agent-engine).",
+    );
+  }
+
   return {
-    title: "Landing page",
-    content: deliverable.gcsPrefix
-      ? `Site source (${deliverable.fileCount ?? "?"} files) uploaded to ${deliverable.gcsPrefix}`
-      : "Landing page build completed — no site bundle was uploaded (GCS_ARTIFACTS_BUCKET not configured on agent-engine).",
-    meta: { taskType: "landing_page", gcsPrefix: deliverable.gcsPrefix, fileCount: deliverable.fileCount, buildStatus: deliverable.status },
+    title: deliverable.title ?? "Landing page",
+    content: lines.join("\n"),
+    ...(imageUrl ? { imageUrl } : {}),
+    meta: {
+      taskType: "landing_page",
+      ...(deliverable.liveUrl ? { liveUrl: deliverable.liveUrl } : {}),
+      ...(deliverable.previewUrl ? { previewUrl: deliverable.previewUrl } : {}),
+      ...(deliverable.indexSignedUrl ? { pageUrl: deliverable.indexSignedUrl } : {}),
+      ...(deliverable.versionName ? { hostingVersion: deliverable.versionName } : {}),
+      ...(deliverable.craftVerdict ? { craftVerdict: deliverable.craftVerdict } : {}),
+      ...(Array.isArray(deliverable.assumptions) ? { assumptions: deliverable.assumptions } : {}),
+      ...(deliverable.revision !== undefined ? { revision: deliverable.revision } : {}),
+      gcsPrefix: deliverable.gcsPrefix,
+      fileCount: deliverable.fileCount,
+      buildStatus: deliverable.status,
+      gate: deliverable.gate,
+    },
   };
 }
 
@@ -787,7 +835,7 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
     case "tiktok-agent":
       return materializeTiktokClip(job, deliverable as TiktokClipDeliverable);
     case "landing-builder-agent":
-      return materializeLandingPageSite(deliverable as LandingPageSiteDeliverable);
+      return materializeLandingPageSite(job, deliverable as LandingPageSiteDeliverable);
     case "intel-report-agent":
       return materializeIntelReport(fields);
     case "seo-geo-agent":
