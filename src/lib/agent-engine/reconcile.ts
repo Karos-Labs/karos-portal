@@ -182,23 +182,41 @@ export async function syncAgentEngineJobStatus(job: Job): Promise<Job> {
   return syncAgentEngineJobStatusFromView(job, view);
 }
 
-/**
- * Same sync, for a caller that already fetched the run view for its own
- * purposes (the Job detail page reads it to render `AgentEngineRunPanel`
- * regardless) — avoids a second, redundant Firestore round trip.
- */
-export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngineRunView): Promise<Job> {
-  const update = terminalJobUpdate(view.run);
-  if (!update) return job; // still in flight — job.status already correctly says so
+interface PendingSyncWork {
+  update: TerminalJobUpdate;
+  statusChanged: boolean;
+  costUsd: number | undefined;
+  costChanged: boolean;
+  /** The run completed and this job still holds no asset. */
+  needsMaterialize: boolean;
+  /** Anything at all left for a sync to persist. */
+  needed: boolean;
+}
 
-  // Whether the STATUS write is still needed. Reads every field the transition
-  // writes: it compared `job.error` alone, which was total only while every
-  // terminal outcome wrote `error`; with `held` writing `heldReason` instead, an
-  // error-only comparison would call a held job "already synced" the moment its
-  // status matched and never store the reason at all. `?? null` on the job side
-  // because an untouched doc has the field ABSENT while a transition writes an
-  // explicit `null` — the same value, two spellings, and only one of them
-  // compares equal.
+/**
+ * The pure "what would a sync of this job still write?" question, answered
+ * once so that `syncAgentEngineJobStatusFromView` (which does the writes) and
+ * `scheduleAgentEngineJobStatusSync` (which decides whether to defer one at
+ * all) cannot disagree. Returns undefined while the run is not terminal.
+ *
+ * The scheduler used to defer a full sync on EVERY render of a terminal-run
+ * Job page, whether or not anything was left to do — and every one of those
+ * deferred syncs held the job as it was at render time. With the page
+ * auto-refreshing every 4 s around completion, prep saw up to eight
+ * materializations of one run land within 16 s. Asking this question first
+ * means a fully synced job schedules nothing.
+ */
+function pendingSyncWork(job: Job, view: AgentEngineRunView): PendingSyncWork | undefined {
+  const update = terminalJobUpdate(view.run);
+  if (!update) return undefined;
+
+  // Reads every field the transition writes: it compared `job.error` alone,
+  // which was total only while every terminal outcome wrote `error`; with
+  // `held` writing `heldReason` instead, an error-only comparison would call a
+  // held job "already synced" the moment its status matched and never store the
+  // reason at all. `?? null` on the job side because an untouched doc has the
+  // field ABSENT while a transition writes an explicit `null` — the same value,
+  // two spellings, and only one of them compares equal.
   const statusChanged = !(
     job.status === update.status &&
     (job.error ?? null) === update.error &&
@@ -211,6 +229,38 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
     // exactly the runs it exists for.
     (job.blockedReason ?? null) === update.blockedReason
   );
+
+  // What the run cost us, persisted onto the job the same way the agent-service
+  // webhook persists its own `usage.totalCostUsd` — see engineRunCostUsd above.
+  // Compared against what is already stored so a re-entered sync does not
+  // rewrite an unchanged figure, and so a run that reports nothing never clears
+  // one we already have.
+  const costUsd = engineRunCostUsd(view);
+  const costChanged = costUsd !== undefined && costUsd !== job.external?.totalCostUsd;
+
+  const needsMaterialize = update.status === "review" && job.assetIds.length === 0;
+
+  return { update, statusChanged, costUsd, costChanged, needsMaterialize, needed: statusChanged || costChanged || needsMaterialize };
+}
+
+/**
+ * Same sync, for a caller that already fetched the run view for its own
+ * purposes (the Job detail page reads it to render `AgentEngineRunPanel`
+ * regardless) — avoids a second, redundant Firestore round trip.
+ */
+export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngineRunView): Promise<Job> {
+  const work = pendingSyncWork(job, view);
+  if (!work) return job; // still in flight — job.status already correctly says so
+  const { update, statusChanged, costUsd, costChanged } = work;
+
+  // Whether the STATUS write is still needed. Reads every field the transition
+  // writes: it compared `job.error` alone, which was total only while every
+  // terminal outcome wrote `error`; with `held` writing `heldReason` instead, an
+  // error-only comparison would call a held job "already synced" the moment its
+  // status matched and never store the reason at all. `?? null` on the job side
+  // because an untouched doc has the field ABSENT while a transition writes an
+  // explicit `null` — the same value, two spellings, and only one of them
+  // compares equal.
 
   // MATERIALIZATION IS NOT GATED ON THAT TRANSITION, and it used to be — which
   // is why the fix to `materialize.ts` would have healed nothing already on
@@ -237,21 +287,16 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
     const assetId = await materializeAgentEngineDeliverable(job);
     if (assetId) assetIds = [...job.assetIds, assetId];
   }
-  const assetsChanged = assetIds !== job.assetIds;
 
-  // What the run cost us, persisted onto the job the same way the agent-service
-  // webhook persists its own `usage.totalCostUsd` — see engineRunCostUsd above.
-  // Compared against what is already stored so a re-entered sync (this function
-  // runs on every page view of a terminal job) does not rewrite an unchanged
-  // figure, and so a run that reports nothing never clears one we already have.
-  const costUsd = engineRunCostUsd(view);
-  const costChanged = costUsd !== undefined && costUsd !== job.external?.totalCostUsd;
-
-  if (!statusChanged && !assetsChanged && !costChanged) return job; // already synced
+  // `assetIds` is deliberately NOT part of this patch any more. The
+  // materializer attaches its asset with `attachAssetToJob` (an `arrayUnion`);
+  // writing `[...job.assetIds, assetId]` from here re-introduced the stale-
+  // snapshot overwrite this function is called concurrently enough to lose —
+  // every duplicated prep job had exactly one id on the job and the rest orphaned.
+  if (!statusChanged && !costChanged) return { ...job, assetIds }; // already synced (or only the asset moved, and that write already landed)
 
   await updateJob(job.id, {
     ...(statusChanged ? update : {}),
-    ...(assetsChanged ? { assetIds } : {}),
     ...(costChanged ? { external: { ...job.external, totalCostUsd: costUsd } } : {}),
     updatedAt: Date.now(),
   });
@@ -387,8 +432,12 @@ export async function syncAgentEngineJobStatusFromView(job: Job, view: AgentEngi
  * sweep already exists to provide (see that route's own doc comment).
  */
 export function scheduleAgentEngineJobStatusSync(job: Job, view: AgentEngineRunView): Job {
-  const update = terminalJobUpdate(view.run);
-  if (!update) return job; // still in flight — nothing to schedule
+  const work = pendingSyncWork(job, view);
+  if (!work) return job; // still in flight — nothing to schedule
+  // Nothing left to persist: no status/cost delta and the asset is already
+  // attached. Scheduling anyway is what turned every view of a finished job
+  // into another materialization attempt racing the ones already in flight.
+  if (!work.needed) return job;
 
   after(() => {
     syncAgentEngineJobStatusFromView(job, view).catch((error: unknown) => {
@@ -405,5 +454,5 @@ export function scheduleAgentEngineJobStatusSync(job: Job, view: AgentEngineRunV
   // above). Good enough for this render: status/error/heldReason are exactly
   // what `view` already says, and assetIds is deliberately left as whatever
   // the caller already fetched with, per the trade-off noted above.
-  return { ...job, ...update };
+  return { ...job, ...work.update };
 }

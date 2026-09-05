@@ -33,11 +33,11 @@ const PROBE_INPUT: Record<WireFieldKey, Record<string, string>> = {
   mustInclude: { must_include: "probe requirement" },
   keywords: { keywords: "probe,keywords" },
   targetDate: { target_date: "2026-09-01" },
-  postCount: { post_count: "3" },
+  requestedIdentityScope: { li_identity: "company" },
   runScope: { run_scope: "probe scope" },
   requestedLane: { requestedLane: "probe-lane" },
   requestedArchetype: { requestedArchetype: "probe-archetype" },
-  liIdentity: { li_identity: "company" },
+  requestedExecutiveName: { requestedExecutiveName: "Albert Kattan" },
   requestedSubreddit: { requestedSubreddit: "probe-subreddit" },
   requestedThreadUrl: { requestedThreadUrl: "https://reddit.test/thread" },
   requestedThreadTitle: { requestedThreadTitle: "probe title" },
@@ -92,7 +92,7 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
     request: "probe-request",
     customPrompt: "probe-customPrompt-base",
     target_date: "2026-09-01",
-    post_count: "5",
+    li_identity: "seat:probe-seat",
     mediaAssets: '[{"uri":"gs://bucket/probe-exhaustive.mp4","role":"source"}]',
   };
   for (const [dialogKey] of SHARED_SCALAR_FIELDS) EXHAUSTIVE_PROBE_BRIEF[dialogKey] = `probe-${dialogKey}`;
@@ -147,13 +147,13 @@ describe("the guard actually guards (fixes the prior round's build-time-guard re
         "customPrompt",
         "duration",
         "keywords",
-        "liIdentity",
+        "requestedExecutiveName",
         "market",
         "mediaAssets",
         "mustInclude",
         "offer",
         "platform",
-        "postCount",
+        "requestedIdentityScope",
         "proof",
         "requestedArchetype",
         "requestedLane",
@@ -245,32 +245,22 @@ describe("ENGINE_FIELD_CONTRACT — grounded in this repo's own wire behavior", 
 describe("ENGINE_FIELD_CONTRACT — the pinned classification (C3's deliverable for T-A13)", () => {
   it("pins the exact set of wire fields no reachable product reads anywhere today", () => {
     const neverRead = WIRE_FIELD_KEYS.filter((field) => ENGINE_FIELD_CONTRACT[field].readBy.length === 0).sort();
-    // This IS T-A13's worklist, restated as data: every one of these needs a
-    // reader added engine-side, or should be deleted from its dialog — C3's
-    // own non-negotiable principle (product-mapping.ts's DEDICATED_FIELDS
-    // doc comment), which nothing enforced end-to-end until this audit.
-    expect(neverRead).toEqual(
-      [
-        "audience",
-        "competitors",
-        "cta",
-        "duration",
-        "keywords",
-        "liIdentity",
-        "market",
-        "mustInclude",
-        "offer",
-        "platform",
-        "postCount",
-        "proof",
-        "runMode",
-        "runScope",
-        "scope",
-        "targetDate",
-        "tone",
-        "website",
-      ].sort(),
-    );
+    // T-A13's worklist, restated as data — and now down to ONE entry, which is
+    // not a dialog field at all.
+    //
+    // This list used to hold sixteen: every structured thing a client typed
+    // (audience, tone, call to action, must-include, keywords, the run-mode and
+    // channel selectors, branded-shorts' duration, landing's offer and proof,
+    // and all four of seo-geo's — the website to audit, its scope, market and
+    // competitors) reached the wire and was read by no workflow anywhere. The
+    // engine-side fix was one place, not sixteen: `readRunBrief` parses them,
+    // `renderRunBrief` labels them, and every agent already spreads the result
+    // into its drafting step via `runDirectionField`.
+    //
+    // `targetDate` stays, correctly: it has no sender either (see its own
+    // `note`), and it is scheduling metadata the PORTAL acts on when it places
+    // the asset — there is nothing for a drafting model to do with a date.
+    expect(neverRead).toEqual(["targetDate"]);
   });
 
   it("pins the fields genuinely read by at least one product, and by which", () => {
@@ -286,23 +276,48 @@ describe("ENGINE_FIELD_CONTRACT — the pinned classification (C3's deliverable 
       requestedTopic: ["linkedin-agent", "reddit-agent", "tiktok-agent", "x-agent"],
       requestedLane: ["x-agent"],
       requestedArchetype: ["linkedin-agent"],
+      requestedIdentityScope: ["linkedin-agent"],
+      requestedExecutiveName: ["linkedin-agent"],
       requestedSubreddit: ["reddit-agent"],
       requestedThreadUrl: ["reddit-agent"],
       requestedThreadTitle: ["reddit-agent"],
+      // The structured brief, read through the shared run-direction primitive
+      // rather than by each workflow's own `wf.input` access. Listed here per
+      // product against the dialogs that actually COLLECT each field, so this
+      // pin still says something specific: a field's readers are the agents
+      // whose forms ask for it, not "everything", even though the mechanism
+      // that delivers it is shared.
+      audience: ["blog-agent", "instagram-agent", "landing-builder-agent", "newsletter-agent", "reddit-agent", "tiktok-agent"],
+      tone: ["newsletter-agent"],
+      cta: ["branded-shorts-agent", "landing-builder-agent", "newsletter-agent"],
+      mustInclude: ["instagram-agent", "newsletter-agent", "reddit-agent", "tiktok-agent"],
+      keywords: ["blog-agent"],
+      runScope: ["x-agent"],
+      runMode: ["blog-agent", "instagram-agent", "tiktok-agent"],
+      platform: ["branded-shorts-agent", "instagram-agent", "tiktok-agent"],
+      duration: ["branded-shorts-agent"],
+      offer: ["landing-builder-agent"],
+      proof: ["landing-builder-agent"],
+      website: ["seo-geo-agent"],
+      scope: ["seo-geo-agent"],
+      market: ["seo-geo-agent"],
+      competitors: ["seo-geo-agent"],
     });
   });
 
-  it("the flagship gap: liIdentity is sent (both from the dialog and from runLinkedInSetupAction) but linkedin-agent reads requestedIdentityScope/requestedExecutiveName instead — never liIdentity", () => {
-    const entry = ENGINE_FIELD_CONTRACT.liIdentity;
-    expect(entry.readBy).toEqual([]);
-    expect(entry.sentButUnread).toEqual(["linkedin-agent"]);
-    expect(entry.note).toMatch(/requestedIdentityScope/);
-    expect(entry.note).toMatch(/requestedExecutiveName/);
-
-    // Grounds the "sent" half concretely: both live callers' exact shapes
-    // still resolve to the same dead wire key.
-    expect(toEngineRunInput({ li_identity: "company" }, "linkedin-agent")).toEqual({ liIdentity: "company" });
-    expect(toEngineRunInput({ li_identity: "seat:exec-123" }, "linkedin-agent")).toEqual({ liIdentity: "seat:exec-123" });
+  it("the former flagship gap is closed: the LinkedIn 'Post as' choice reaches linkedin-agent under the two keys it actually reads", () => {
+    // `liIdentity` used to be the wire key, and linkedin-agent's RUN_SCOPED_KEYS
+    // never contained it: every run posted as the company page whatever the
+    // client picked. The dialog value is now translated to the engine's scope
+    // key, and the seat's NAME (a submit-core lookup) travels under the second.
+    expect(ENGINE_FIELD_CONTRACT.requestedIdentityScope.readBy.map((r) => r.product)).toEqual(["linkedin-agent"]);
+    expect(ENGINE_FIELD_CONTRACT.requestedExecutiveName.readBy.map((r) => r.product)).toEqual(["linkedin-agent"]);
+    expect(toEngineRunInput({ li_identity: "company" }, "linkedin-agent")).toEqual({ requestedIdentityScope: "company" });
+    expect(toEngineRunInput({ li_identity: "seat:exec-123", requestedExecutiveName: "Albert Kattan" }, "linkedin-agent")).toEqual({
+      requestedIdentityScope: "executive",
+      requestedExecutiveName: "Albert Kattan",
+    });
+    expect(JSON.stringify(toEngineRunInput({ li_identity: "seat:exec-123" }, "linkedin-agent"))).not.toContain("liIdentity");
   });
 
   it("pins which fields the engine reads but no current portal caller populates (idle but wired, not decoration)", () => {

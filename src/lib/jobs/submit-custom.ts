@@ -16,6 +16,7 @@ import {
   getContextItem,
   getCustomAgent,
   getDynamicAgentSpec,
+  listClientSeats,
   listJobs,
   updateJob,
 } from "@/lib/data";
@@ -79,13 +80,14 @@ import {
   REPUTATION_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
+  BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
   perClientAgentSlug,
 } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { estimateAgentRunCredits } from "@/lib/credit-estimate";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
-import { scheduleLimitsFor } from "@/lib/scheduled-runs";
+import { maxPostsPerSubmission, scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { logActivity } from "@/lib/actions/_shared";
 import { customRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
@@ -223,6 +225,14 @@ export interface SubmitCustomAgentInput {
    * and the reconcile sweeps hand it back with no extra code.
    */
   charge?: { amount: number; operation: CreditOperation; reason: string };
+  /**
+   * INTERNAL — set only by this module's own fan-out. Which post of a
+   * multi-post request this job is (1-based) and how many there are, so the
+   * job's title and stored input say "post 2 of 3" and a caller reading the
+   * jobs list can tell the three apart. A caller passing this from outside
+   * gets a label and nothing else: it never changes what is charged or run.
+   */
+  batchPosition?: { index: number; total: number };
 }
 
 /**
@@ -251,10 +261,30 @@ export async function isCustomAgentGrantedToClient(
   );
 }
 
+/**
+ * The batch-size value every fanned-out child carries, so the recursion bottoms
+ * out at one post per run. A named constant rather than an inline literal: the
+ * client-copy boundary scan follows `input` from the persisting writers back to
+ * this module's own recursive call, and a bare string there reads as copy.
+ */
+const SINGLE_POST = String(1);
+
+export interface SubmitCustomAgentResult {
+  /** The first (or only) job started. Callers that navigate to "the job" use this. */
+  jobId?: string;
+  /**
+   * Every job this submission started, in order. Only longer than one when an
+   * agent-engine run was asked for N posts and fanned out into N runs. Absent
+   * on the legacy agent-service path, which is still one job per submission.
+   */
+  jobIds?: string[];
+  error?: string;
+}
+
 export async function submitCustomAgentJob(
   user: AppUser,
   input: SubmitCustomAgentInput,
-): Promise<{ jobId?: string; error?: string }> {
+): Promise<SubmitCustomAgentResult> {
   const agent = await getCustomAgent(input.agentId);
   if (!agent || !agent.enabled) return { error: "Agent not found." };
   const client = await getClient(input.clientId);
@@ -274,6 +304,68 @@ export async function submitCustomAgentJob(
       error: `${agent.name} runs only for the client whose lab repo slug is "${perClientAgentSlug(agent.key)}", and ${client.name}'s slug is ${client.agentsRepoSlug ? `"${client.agentsRepoSlug}"` : "not set"}. Nothing has run — use this client's own agent.`,
     };
   }
+
+  // Which executor runs this agent. Part of the staged cutover: the custom
+  // agents with real agent-engine workflows go there, everything else stays on
+  // agent-service. Decided up here, before anything is composed or written, so
+  // the fan-out below and the job doc both record the truth from the start — a
+  // job that says "agent-service" and was handed to the engine is
+  // unreconcilable by every surface that reads agentId.
+  const engineProductId = resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug);
+
+  /**
+   * N POSTS = N RUNS on the agent-engine path.
+   *
+   * An engine run always delivers exactly ONE post (`materializeAgentEngineDeliverable`
+   * mints one asset per run, deterministically keyed on the run id), and no
+   * engine workflow has ever read a post count. So "Create exactly N distinct
+   * outputs" — the legacy agent-service instruction the multiplier below still
+   * composes — reached the engine as nothing, while the charge was N× the
+   * per-run price: a client asked for three posts, paid for three, and got one.
+   *
+   * Honoured instead as N separate submissions of this same brief, each billed
+   * at the single-run price, each its own job with its own run, deliverable
+   * and asset. The batch field is pinned to "1" on every child so the recursion
+   * bottoms out, and `chargeMultiplier` is dropped for the same reason. A
+   * child that fails to start (credits ran out, dispatch refused) stops the
+   * loop — what already started stays started, and the caller is told how far
+   * it got rather than shown a clean success.
+   *
+   * Reddit never fans out (`maxPostsPerSubmission` is 1 there): one run drafts
+   * ONE reply, as a hard product rule.
+   */
+  const requestedPosts = Math.max(1, Math.round(input.chargeMultiplier ?? 1));
+  if (engineProductId && requestedPosts > 1 && !input.batchPosition) {
+    const total = Math.min(requestedPosts, maxPostsPerSubmission(agent.key));
+    if (total > 1) {
+      const jobIds: string[] = [];
+      for (let index = 1; index <= total; index++) {
+        const child = await submitCustomAgentJob(user, {
+          ...input,
+          chargeMultiplier: 1,
+          briefValues: { ...input.briefValues, [BATCH_SIZE_FIELD_KEY]: SINGLE_POST },
+          batchPosition: { index, total },
+        });
+        if (child.error || !child.jobId) {
+          const started = jobIds.length;
+          return {
+            ...(started > 0 ? { jobId: jobIds[0], jobIds } : {}),
+            error:
+              started > 0
+                ? `Started ${started} of ${total} posts; post ${index} did not start: ${child.error ?? "unknown error"}`
+                : (child.error ?? "The run did not start."),
+          };
+        }
+        jobIds.push(child.jobId);
+      }
+      return { jobId: jobIds[0], jobIds };
+    }
+  }
+
+  // The brief as the ENGINE will see it. Starts as what the caller sent and is
+  // widened below where a field needs a lookup only this layer can do (the
+  // LinkedIn seat's name); the legacy agent-service path never reads it.
+  let engineBriefValues = input.briefValues;
 
   /**
    * HOW MANY OUTPUTS THIS FIRE ASKS FOR — clamped once, and the same number is
@@ -382,6 +474,15 @@ export async function submitCustomAgentJob(
     const v2Identity = isLinkedInV2Agent(agent.key)
       ? await resolveLiRunIdentity(input.clientId, input.briefValues?.[LI_IDENTITY_FIELD_KEY])
       : LI_COMPANY_IDENTITY;
+    // The engine matches executives by NAME (`selectExecutive`, case-
+    // insensitive), never by this portal's seat id — so the seat the client
+    // picked is resolved to its display name here and handed to
+    // `toEngineRunInput` under the engine's own key. Without this every
+    // LinkedIn engine run posted as the company page whatever was chosen.
+    if (v2Identity.kind === "seat") {
+      const seat = (await listClientSeats(input.clientId)).find((s) => s.id === v2Identity.seatId);
+      if (seat) engineBriefValues = { ...engineBriefValues, requestedExecutiveName: seat.name };
+    }
     if (!isLinkedInSetupV2(agent.key) && isLinkedInV2Agent(agent.key)) {
       if (!(await hasLinkedInV2Setup(input.clientId))) {
         return {
@@ -541,12 +642,9 @@ export async function submitCustomAgentJob(
       ? `${requestChars.slice(0, 63).join("").trimEnd()}…`
       : requestChars.join("");
 
-  // Which executor runs this agent. Part of the staged cutover: three custom
-  // agents have real agent-engine workflows now, everything else stays on
-  // agent-service. Decided before the job doc is written so the doc records
-  // the truth from the start — a job that says "agent-service" and was handed
-  // to the engine is unreconcilable by every surface that reads agentId.
-  const engineProductId = resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug);
+  // `engineProductId` was resolved at the top of this function (it decides the
+  // N-posts fan-out before anything is composed), and is what the job doc
+  // below records as its executor.
 
   // Checked here rather than at the top of the function, which is where it
   // used to live: an agent routed to agent-engine has no use for
@@ -557,6 +655,12 @@ export async function submitCustomAgentJob(
   if (!engineProductId && !isAgentServiceConfigured()) {
     return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
   }
+
+  // "post 2 of 3" on a fanned-out child, so the jobs list and the Job page can
+  // tell three otherwise identical runs apart.
+  const jobTitle = input.batchPosition
+    ? `${jobTitleForClient(agent.name, client.name)} · post ${input.batchPosition.index} of ${input.batchPosition.total}`
+    : jobTitleForClient(agent.name, client.name);
 
   const now = Date.now();
   const jobId = await createJob({
@@ -569,9 +673,14 @@ export async function submitCustomAgentJob(
     ...(runLabel ? { runLabel } : {}),
     ...(input.requestedScheduledAt ? { requestedScheduledAt: input.requestedScheduledAt } : {}),
     agentName: agent.name,
-    title: jobTitleForClient(agent.name, client.name),
+    title: jobTitle,
     status: "queued",
-    input: { agent: agent.name, prompt },
+    input: {
+      agent: agent.name,
+      prompt,
+      // Strings, like every other `Job.input` value (it is a Record<string, string>).
+      ...(input.batchPosition ? { batchIndex: String(input.batchPosition.index), batchTotal: String(input.batchPosition.total) } : {}),
+    },
     assetIds: [],
     events: [
       {
@@ -703,7 +812,7 @@ export async function submitCustomAgentJob(
       productId: engineProductId,
       runKind: resolveAgentEngineRunKind(engineProductId),
       agentName: agent.name,
-      title: jobTitleForClient(agent.name, client.name),
+      title: jobTitle,
       // What the person actually asked for, allow-listed down to the keys the
       // engine understands as a per-run request.
       //
@@ -713,7 +822,7 @@ export async function submitCustomAgentJob(
       // fix is that the page and the server must agree on it — otherwise the
       // dialog paints a field the server builds its input without. Pinned by
       // the page/server consistency sweep in product-mapping.test.ts.
-      inputs: toEngineRunInput(input.briefValues, engineProductId),
+      inputs: toEngineRunInput(engineBriefValues, engineProductId),
       createdBy: user.uid,
     });
     if ("error" in dispatched) {

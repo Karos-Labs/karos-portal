@@ -293,7 +293,26 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
             { value: "tiktok", label: "TikTok" },
           ],
         },
-        { key: "post_count", label: "Number of posts", type: "number", min: 1, max: 10, defaultValue: "3" },
+        {
+          // The shared batch key, not a bespoke `post_count`: the submit core
+          // turns N here into N SEPARATE runs (one post each, each at the
+          // per-run price), and it reads that number from exactly one field.
+          // The old `post_count` defaulted to 3 and reached the engine as
+          // `postCount`, which no workflow ever read — a client asked for
+          // three and got one carousel. Default 1 (product decision, 2026-09-04).
+          key: BATCH_SIZE_FIELD_KEY,
+          label: "Number of posts",
+          type: "select",
+          defaultValue: "1",
+          helper: "Each post is its own run, priced per run.",
+          options: [
+            { value: "1", label: "1 post" },
+            { value: "2", label: "2 posts" },
+            { value: "3", label: "3 posts" },
+            { value: "4", label: "4 posts" },
+            { value: "5", label: "5 posts" },
+          ],
+        },
         {
           key: "audience",
           label: "Audience or segment",
@@ -349,25 +368,18 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         },
         {
           key: BATCH_SIZE_FIELD_KEY,
-          label: "How many posts?",
+          label: "Number of posts",
           type: "select",
           defaultValue: "1",
-          // ONE POST PER PRESS — Daniel's ruling, 2026-08-06, and the same
-          // treatment X's selector already carries. It was VISIBLE and a client
-          // could raise it to 3, which made the band's button and the dialog
-          // disagree about money: the button can only ever quote the fresh
-          // dialog's default (defaultRunBatchSize filters hidden fields, so 1 ×
-          // 15), while the dialog charged `cost × the chosen size` — so a client
-          // with 30 credits passed every gate on 15 and then died on a 45-credit
-          // submit. Hidden means INERT for pricing: no multiplier and no "Create
-          // exactly N" prefix reach the run, so a press charges the flat 15 the
-          // button shows.
-          //
-          // It also matches the product: one run drafts ONE post, and variety
-          // lives in the lane rotation rather than in the batch (the canonical
-          // writer instructions in docs/linkedin-agent-portal.md). Options kept
-          // for the day this becomes a staff control.
-          hidden: true,
+          helper: "Each post is its own run, priced per run.",
+          // VISIBLE AGAIN, default 1 (product decision, 2026-09-04). It was
+          // hidden by the 2026-08-06 ruling because a visible N multiplied the
+          // charge while the engine still drafted ONE post per run — a client
+          // paid for three and got one. The submit core now turns N into N
+          // SEPARATE runs (one post each, each at the per-run price the button
+          // quotes), so the number a client sees is the number of posts they
+          // get and the number of runs they pay for. "One run drafts ONE post"
+          // still holds for every one of those runs.
           options: [
             { value: "1", label: "1 post" },
             { value: "2", label: "2 posts" },
@@ -558,21 +570,21 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         },
         {
           key: BATCH_SIZE_FIELD_KEY,
-          label: "How many drafts?",
+          label: "Number of posts",
           type: "select",
           defaultValue: "1",
-          // One post per run — Daniel's ruling, 2026-08-11, the same treatment
-          // LinkedIn's selector has carried since 2026-08-06: one run drafts
-          // one post, and batches do not exist. Hidden means INERT for pricing:
-          // no charge multiplier and no "Create exactly N" prefix reach the run
-          // (see the `hidden` doc on AgentBriefField) — the press charges the
-          // flat per-run price the button quotes, and the canonical
-          // instructions (scripts/promote-x-agent-v2.ts) pin the run to one
-          // post. The field itself stays because the launch-brief contract test
-          // pins the X field list, and removing a serialized key is a schema
-          // change for no behavioural gain.
-          hidden: true,
-          options: [{ value: "1", label: "1 post" }],
+          helper: "Each post is its own run, priced per run.",
+          // VISIBLE AGAIN, default 1 (product decision, 2026-09-04) — the same
+          // change LinkedIn's selector made, for the same reason: the submit
+          // core now turns N into N SEPARATE runs, so "one run drafts one post"
+          // (the 2026-08-11 ruling, still pinned by scripts/promote-x-agent-v2.ts)
+          // holds for every run while a client who wants three posts gets
+          // three runs at three times the quoted per-run price.
+          options: [
+            { value: "1", label: "1 post" },
+            { value: "2", label: "2 posts" },
+            { value: "3", label: "3 posts" },
+          ],
         },
         {
           key: "request",

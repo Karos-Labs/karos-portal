@@ -218,14 +218,13 @@ describe("the writer's brief", () => {
     // raise it, not because a bigger default was wanted.
     const size = profile.fields.find((f) => f.key === BATCH_SIZE_FIELD_KEY);
     expect(size?.defaultValue).toBe("1");
-    // HIDDEN, by Daniel's ruling of 2026-08-06 ("you can only run one output at a
-    // time"), and the same treatment X's selector carries. While it was visible a
-    // client could raise it to 3, and the two surfaces then quoted different
-    // money: the band's button can only ever show the fresh dialog's default
-    // (defaultRunBatchSize filters hidden fields), while the dialog charged
-    // cost × the chosen size — so a client with 30 credits cleared every gate on
-    // 15 and then failed at submit on 45.
-    expect(size?.hidden, "the LinkedIn batch selector must stay hidden").toBe(true);
+    // VISIBLE, default 1 (product decision, 2026-09-04). It was hidden by the
+    // 2026-08-06 ruling because a visible N multiplied the charge while the
+    // engine drafted one post per run. The submit core now fans N out into N
+    // separate one-post runs, each at the quoted per-run price, so the number
+    // the client sees is the number of posts they get and pay for.
+    expect(size?.hidden ?? false, "the LinkedIn batch selector is a real control again").toBe(false);
+    expect(size?.options?.map((o) => o.value)).toEqual(["1", "2", "3"]);
     // A hidden field must never be required — nothing can ever fill it in.
     expect(size?.required ?? false).toBe(false);
   });

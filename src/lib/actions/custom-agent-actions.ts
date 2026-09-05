@@ -17,7 +17,7 @@ import {
 import { listClientAgents, updateClientAgent } from "@/lib/data-client-agents";
 import type { PlannedScheduledRun } from "@/lib/types";
 import { containsLabJargon } from "@/lib/agent-copy-rules";
-import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { submitCustomAgentJob, type SubmitCustomAgentResult } from "@/lib/jobs/submit-custom";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
@@ -368,7 +368,7 @@ export async function runCustomAgentAction(input: {
    * refusal rather than the field being silently dropped.
    */
   requestedScheduledAt?: number;
-}): Promise<{ jobId?: string; error?: string }> {
+}): Promise<SubmitCustomAgentResult> {
   const user = await requireClientAccess(input.clientId);
   if (input.requestedScheduledAt != null) {
     if (!isStaffCopilotActor(user)) {

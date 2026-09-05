@@ -1,5 +1,5 @@
 import "server-only";
-import { createAsset, updateJob } from "@/lib/data";
+import { attachAssetToJob, createAsset, getJob } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import { reflowClientChain } from "@/lib/chain";
 import { orderKeyForCreatedAt } from "@/lib/post-chain";
@@ -814,9 +814,36 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
  * already materialized) — never throws, since a materialization failure
  * must not block the job from reaching `status: "review"`.
  */
+export function agentEngineAssetId(runId: string): string {
+  return `agent-engine-${runId}`;
+}
+
 export async function materializeAgentEngineDeliverable(job: Job): Promise<string | undefined> {
   if (!job.agentEngineRunId || !job.agentEngineProductId) return undefined;
   if (job.assetIds.length > 0) return undefined;
+
+  // THE SNAPSHOT GUARD ABOVE IS NOT A LOCK, and prep has the receipts: 13 jobs
+  // with 2–8 identical assets each, every copy minted within seconds of the
+  // others (e.g. job 0ltqevQ4rBQDPqdQ2TzT — eight page renders in 16 s, eight
+  // assets). Each Job page render defers a sync via `after()` holding the job
+  // as it was at render time, so N renders during one materialization all see
+  // `assetIds: []` and all reach `createAsset`. Three layers close it:
+  //
+  //  1. a FRESH read here, so a deferred sync built on a stale snapshot bails
+  //     before it spends the deliverable fetch, the rehost and the title call;
+  //  2. a DETERMINISTIC asset id (`agent-engine-<runId>`) created with
+  //     `create()`, so of two writers that both pass (1) exactly one wins —
+  //     the same discipline lab-import uses on `itemKey`;
+  //  3. `attachAssetToJob`'s `arrayUnion`, so the job never loses an attached
+  //     id to a stale-spread overwrite.
+  //
+  // Read into a local rather than overwriting `job`: the caller's object is
+  // what reconcile.ts returns for the render, and it stays that.
+  // `.catch(() => null)`: this runs outside the try below, and a failed read
+  // must degrade to "no fresh information" rather than break the never-throws
+  // contract — layer (2) still holds without it.
+  const live = await getJob(job.id).catch(() => null);
+  if (live && live.assetIds.length > 0) return undefined;
 
   // Widened to a plain index signature for this one lookup: `job.agentEngineProductId`
   // is an arbitrary string that crossed a service boundary, not a key of the
@@ -866,7 +893,8 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
       : null;
 
     const now = Date.now();
-    const assetId = await createAsset({
+    const assetId = agentEngineAssetId(job.agentEngineRunId);
+    const { created } = await createAsset({
       clientId: job.clientId,
       jobId: job.id,
       agentId: "agent-engine",
@@ -887,9 +915,17 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
       createdBy: "agent-engine",
       createdAt: now,
       updatedAt: now,
-    });
+    }, assetId);
 
-    await updateJob(job.id, { assetIds: [...job.assetIds, assetId], updatedAt: Date.now() });
+    // Attach in BOTH branches: the writer that lost the create race may still be
+    // the one that survives to attach (the winner could crash between its own
+    // create and attach), and `arrayUnion` makes the second attach free.
+    await attachAssetToJob(job.id, assetId);
+
+    if (!created) {
+      console.warn(`[agent-engine materialize] asset "${assetId}" already existed for job "${job.id}" — a concurrent materialization won the create; nothing duplicated`);
+      return assetId;
+    }
 
     // Best-effort, same as the legacy webhook's own reflow call: the job already has its
     // asset and its "review" status regardless of whether the calendar slot lands.

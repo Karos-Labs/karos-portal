@@ -2313,6 +2313,8 @@ export function RunCustomAgentModal({
   const [started, setStarted] = useState(false);
   /** The run this press produced, so a staff confirmation can link it (AF-9). */
   const [startedJobId, setStartedJobId] = useState<string | null>(null);
+  /** How many runs this press produced — more than one when "Number of posts" was raised. */
+  const [startedCount, setStartedCount] = useState(1);
   const intake = intakeFor(setup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
@@ -2474,6 +2476,7 @@ export function RunCustomAgentModal({
         // the refresh is what makes it start doing so — the in-flight mark and
         // the poller both key off a job that only exists after this await.
         if (result.jobId) setStartedJobId(result.jobId);
+        setStartedCount(result.jobIds?.length ?? 1);
         setStarted(true);
         router.refresh();
       } else if (result.jobId) {
@@ -2487,7 +2490,9 @@ export function RunCustomAgentModal({
       <Modal open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3 text-center">
           <Icon name="CircleCheck" className="mx-auto h-8 w-8 text-success" />
-          <p className="text-sm text-foreground">Run started</p>
+          <p className="text-sm text-foreground">
+            {startedCount > 1 ? `${startedCount} runs started · one post each` : "Run started"}
+          </p>
           {/* Drafts no longer reach the client archive at all: F149 filters it
               to approved, non-future items. phase3-design §3's sentence is for
               run-FINISHED surfaces; this one fires the moment a run starts, so
