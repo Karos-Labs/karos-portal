@@ -272,6 +272,11 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     readBy: [
       { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:806 (filters role === source|reference)" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:237 (firstAsset(rich.mediaAssets, \"source\"))" },
+      // agent-engine RFC-12 (2026-09): both text-first channels ingest an
+      // attached image, describe it with a vision model before drafting, and
+      // write the post to it.
+      { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts (09b-analyze-attached-media: analyzeAttachedMedia(..., { assets: runDirection.mediaAssets }))" },
+      { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (08b-analyze-attached-media: analyzeAttachedMedia(..., { assets: runDirection.mediaAssets }))" },
     ],
     // branded-shorts: dialog shows both a raw `mediaAssets` field AND
     // `source_url` (which product-mapping.ts also folds into mediaAssets) —
@@ -423,6 +428,26 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     sentButUnread: [],
     noCurrentSender: true,
     note: "No dialog field renders this key and no server action sets it — same idle-but-wired state as requestedLane.",
+  },
+
+  // agent-engine RFC-12 (2026-09): the content-mode rotation. Rendered as a
+  // "Kind of post" select on the X draft and LinkedIn post dialogs; blank
+  // means the engine rotates and the key is not sent at all.
+  requestedMode: {
+    readBy: [
+      { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts (00-intake-check overlays wf.input.requestedMode; 07b-select-content-mode: selectContentMode(recentModes, intake.requestedMode))" },
+      { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (RUN_SCOPED_KEYS includes requestedMode; readRunConfig; 07b-select-content-mode)" },
+    ],
+    sentButUnread: [],
+  },
+
+  // agent-engine RFC-12 (2026-09): Instagram's post format. The social
+  // content system dialog also routes tiktok-agent runs, which receive the
+  // key and never read it — a select for a channel choice the other channel
+  // does not have, the same shape `platform` already carries.
+  requestedFormat: {
+    readBy: [{ product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (01-open-run: isFormatChoice(wf.input.requestedFormat) -> InstagramRunClaim.requestedFormat; 04h-select-format)" }],
+    sentButUnread: ["tiktok-agent"],
   },
 
   requestedSubreddit: {

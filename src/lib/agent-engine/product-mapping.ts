@@ -307,6 +307,10 @@ export const DEDICATED_FIELDS = [
   ["run_scope", "runScope"],
   ["requestedLane", "requestedLane"],
   ["requestedArchetype", "requestedArchetype"],
+  // X draft + LinkedIn post: the content-mode rotation (agent-engine RFC-12).
+  ["requestedMode", "requestedMode"],
+  // Social content system: Instagram's carousel | single | auto format.
+  ["requestedFormat", "requestedFormat"],
   // LinkedIn post / setup. `li_identity` itself ("company" | "seat:<id>") is
   // NOT a row here any more: the engine never read a `liIdentity` key. It is
   // translated bespoke below into `requestedIdentityScope`, and the seat's
