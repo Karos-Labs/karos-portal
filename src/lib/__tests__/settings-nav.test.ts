@@ -655,10 +655,16 @@ describe("the Brand Profile sheet asks for four things", () => {
       "category: clientCategoryValue(client) ?? \"\"",
     );
     expect(grid).toContain("maxLength={CLIENT_CATEGORY_MAX_LENGTH}");
-    // And the action behind it refuses the old key outright rather than mapping
-    // it, because it takes a whole Partial<Client> from a staff caller.
-    expect(flat(code("src/lib/actions/client-actions.ts"))).toContain(
-      "delete (patch as Partial<Client> & { industry?: string }).industry",
+    // And the action behind it cannot write the old key at all: it copies an
+    // allowlist of named fields off the input (2026-09), and `industry` is not
+    // on it — so a stale caller sending the legacy key writes nothing rather
+    // than re-opening the split.
+    const actions = code("src/lib/actions/client-actions.ts");
+    const list = actions.slice(
+      actions.indexOf("const CLIENT_EDITABLE_TEXT_FIELDS = ["),
+      actions.indexOf("] as const;", actions.indexOf("const CLIENT_EDITABLE_TEXT_FIELDS = [")),
     );
+    expect(list).toContain('"category"');
+    expect(list).not.toContain('"industry"');
   });
 });

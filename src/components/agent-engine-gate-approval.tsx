@@ -461,8 +461,8 @@ export function AgentEngineGateApproval({
               .sort((a, b) => a.n - b.n)
               .map((image) =>
                 image.url?.startsWith("https://") ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- a
-                  // signed GCS URL, re-signed per run; not a Next/Image asset.
+                  // A signed GCS URL, re-signed per run; not a Next/Image asset.
+                  // eslint-disable-next-line @next/next/no-img-element
                   <img
                     key={image.n}
                     src={image.url}

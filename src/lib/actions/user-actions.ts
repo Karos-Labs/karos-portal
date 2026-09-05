@@ -224,13 +224,54 @@ export async function rejectRegistrationAction(uid: string) {
   revalidatePath("/team");
 }
 
-export async function updateTeamMemberAction(uid: string, patch: Partial<AppUser>) {
-  await requireAdmin();
+const ROLES: readonly Role[] = ["KAROS_ADMIN", "KAROS_EMPLOYEE", "CLIENT_USER"];
+
+/**
+ * The three things the team page edits on an account, and NOTHING else.
+ *
+ * This took a whole `Partial<AppUser>` and spread it over the stored record. A
+ * server action's parameter type is a compile-time claim about this repo's
+ * callers, not a check on the POST body, so an admin session could post any
+ * field of the user document — including `uid` (which would write a DIFFERENT
+ * document, since `upsertUser` keys on it), `clientId` (re-homing a login into
+ * another workspace), `email`, `approvedAt`, `createdAt`, and every field added
+ * since. Admins are trusted people; the API still should not be wider than the
+ * page in front of them.
+ *
+ * Two self-protections that were only in the UI (`isSelf` disables the role
+ * select) are now the server's: an admin cannot demote or disable their own
+ * account through this action, because the failure mode is an agency with no
+ * admin left to undo it.
+ */
+export async function updateTeamMemberAction(
+  uid: string,
+  patch: { role?: Role; disabled?: boolean; assignedClientIds?: string[] },
+) {
+  const admin = await requireAdmin();
   const existing = await getUser(uid);
   if (!existing) throw new Error("User not found");
-  await upsertUser({ ...existing, ...patch });
+
+  const next: Partial<AppUser> = {};
+  if (patch.role !== undefined) {
+    if (!ROLES.includes(patch.role)) throw new Error("Unknown role");
+    if (uid === admin.uid) throw new Error("You can't change your own role.");
+    next.role = patch.role;
+  }
   if (patch.disabled !== undefined) {
-    await adminAuth().updateUser(uid, { disabled: patch.disabled }).catch(() => {});
+    if (uid === admin.uid && patch.disabled) throw new Error("You can't disable your own account.");
+    next.disabled = patch.disabled === true;
+  }
+  if (patch.assignedClientIds !== undefined) {
+    if (!Array.isArray(patch.assignedClientIds) || patch.assignedClientIds.some((id) => typeof id !== "string")) {
+      throw new Error("assignedClientIds must be a list of client ids");
+    }
+    next.assignedClientIds = [...new Set(patch.assignedClientIds.map((id) => id.trim()).filter(Boolean))];
+  }
+  if (Object.keys(next).length === 0) return;
+
+  await upsertUser({ ...existing, ...next });
+  if (next.disabled !== undefined) {
+    await adminAuth().updateUser(uid, { disabled: next.disabled }).catch(() => {});
   }
   revalidatePath("/team");
 }

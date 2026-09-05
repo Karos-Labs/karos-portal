@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { listClients, listAssets, listJobs, getClientCredits } from "@/lib/data";
+import { listClients, countAssetsForClients, listJobs, getClientCredits } from "@/lib/data";
 import { availableCredits } from "@/lib/credits";
 import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -9,8 +9,12 @@ import { ClientsGrid, type ClientCardCounts } from "@/components/clients-grid";
 export default async function ClientsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const clients = await listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined);
-  const [assets, jobs, creditsByClient] = await Promise.all([
-    listAssets(),
+  const visibleClientIds = new Set(clients.map((c) => c.id));
+  const [assetCounts, jobs, creditsByClient] = await Promise.all([
+    // ONE aggregation per visible client, not every asset document in the
+    // database (review, 2026-09). Assets are the largest collection in the
+    // store and this page printed one number per card from a full scan of it.
+    countAssetsForClients([...visibleClientIds]),
     listJobs(),
     // Every credit denial tells the client to "ask your Karos team", but no
     // staff surface showed a balance - the only credits control in the product
@@ -25,20 +29,17 @@ export default async function ClientsPage() {
   // every job in the database, serialized into the RSC payload, to print two
   // numbers per card. lastRunAt backs the "most recent run" sort.
   //
-  // Fenced to the VISIBLE clients, the same skip /jobs does (QA F37). `clients`
-  // is scoped to an employee's assignments and `credits` is built from it, but
-  // `counts` was keyed off the unfiltered listAssets()/listJobs() - so the map
-  // handed to ClientsGrid carried the ids, volumes and last-run times of every
-  // client in the database, including ones outside the employee's assignment
-  // and orphans of deleted clients. Replacing the two full scans with a
-  // server-side count() stays a handover item; the fence is what lands now.
-  const visibleClientIds = new Set(clients.map((c) => c.id));
+  // Fenced to the VISIBLE clients, the same skip /jobs does (QA F37). The asset
+  // half is now a per-client count() (above); the job half still walks the jobs
+  // collection because `lastRunAt` needs each client's newest `createdAt`, and
+  // an ordered per-client query would need a composite index this project does
+  // not manage in code. Jobs are the smaller collection by an order of
+  // magnitude, so that is the scan worth keeping.
   const counts: Record<string, ClientCardCounts> = {};
   const bump = (clientId: string): ClientCardCounts =>
     (counts[clientId] ??= { assets: 0, jobs: 0, lastRunAt: 0 });
-  for (const asset of assets) {
-    if (!visibleClientIds.has(asset.clientId)) continue;
-    bump(asset.clientId).assets++;
+  for (const [clientId, assets] of Object.entries(assetCounts)) {
+    if (assets > 0) bump(clientId).assets = assets;
   }
   for (const job of jobs) {
     if (!visibleClientIds.has(job.clientId)) continue;

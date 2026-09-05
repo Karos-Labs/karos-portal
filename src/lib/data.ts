@@ -307,6 +307,22 @@ export async function countUsers(): Promise<number> {
   return snap.data().count;
 }
 
+/**
+ * Registrations waiting in the admin queue — the number on the sidebar badge.
+ *
+ * The app layout computed this by reading EVERY user document on every staff
+ * request (`listUsers()`, then a filter), for a number that is almost always
+ * zero. Only disabled accounts can be pending, so the query asks for those and
+ * filters `approvedAt` in memory: an exact match on `null` would miss a record
+ * written before the field existed, and a disabled account that WAS approved
+ * (a deactivated colleague) is not a registration. Disabled accounts are a
+ * handful; the whole roster is not.
+ */
+export async function countPendingRegistrations(): Promise<number> {
+  const snap = await col.users().where("disabled", "==", true).get();
+  return snap.docs.filter((d) => !(d.data() as AppUser).approvedAt).length;
+}
+
 /* ----------------------------- clients ----------------------------- */
 
 const byNewestFirst = (a: Client, b: Client) => (b.createdAt ?? 0) - (a.createdAt ?? 0);
@@ -852,6 +868,26 @@ export async function listAssets(opts?: { clientId?: string }): Promise<Asset[]>
   return snap.docs
     .map((d) => withId<Asset>(d))
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+/**
+ * How many assets each client has, as one aggregation query per client.
+ *
+ * The Clients page used to answer this by reading EVERY asset document in the
+ * database and counting in memory — the largest collection in the store, read
+ * whole, to print one number per card. A `count()` aggregation is billed per
+ * 1,000 index entries matched rather than per document, needs no composite
+ * index for a single equality filter, and returns no document bodies. Clients
+ * not in the result have zero assets.
+ */
+export async function countAssetsForClients(clientIds: readonly string[]): Promise<Record<string, number>> {
+  const entries = await Promise.all(
+    [...new Set(clientIds)].map(async (clientId) => {
+      const snap = await col.assets().where("clientId", "==", clientId).count().get();
+      return [clientId, snap.data().count] as const;
+    }),
+  );
+  return Object.fromEntries(entries);
 }
 
 /**

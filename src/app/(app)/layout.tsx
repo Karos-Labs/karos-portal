@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getViewingContext } from "@/lib/auth";
 import {
-  listUsers,
+  countPendingRegistrations,
   listClients,
   listAssignedActionItems,
   listReviewJobs,
@@ -64,13 +64,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     : [];
   const staffClientNames = new Map(staffClients.map((c) => [c.id, c.name]));
 
-  const [adminData, actionItems, reviewJobs, taskAlerts] = await Promise.all([
+  const [pendingRegistrations, actionItems, reviewJobs, taskAlerts] = await Promise.all([
     // ONE listClients() PER REQUEST (review wave, 2026-09). This branch used to
     // fetch the whole client collection a second time for an admin, and
     // `listClients(undefined)` is exactly what `staffClients` already holds for
     // that role — the same read, the same answer, paid for twice on every staff
-    // page. Only the user list is admin-specific now.
-    user.role === "KAROS_ADMIN" ? listUsers().then((allUsers) => ({ allUsers })) : Promise.resolve(null),
+    // page. The one admin-specific number left is the registrations badge, and
+    // it no longer costs the whole user roster per request either: it used to
+    // read every user document to count the pending ones (review, 2026-09).
+    user.role === "KAROS_ADMIN" ? countPendingRegistrations() : Promise.resolve(0),
     // CLIENT_USER notifications are strictly scoped to their own client account;
     // a client user with no clientId has no company context, so no items at all.
     user.role === "CLIENT_USER"
@@ -133,12 +135,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         .map((t) => ({ ...t, _clientName: staffClientNames.get(t.clientId) }))
     : clientSafeTaskAlerts(taskAlerts);
 
-  if (adminData) {
-    pendingCount = adminData.allUsers.filter((u) => u.disabled && !u.approvedAt).length;
-  }
+  pendingCount = pendingRegistrations;
   // AN EMPLOYEE'S PICKER WAS EMPTY (ruling D24, parity pass 2026-09). `clients`
-  // was seeded only inside the `adminData` branch above, and `adminData` is
-  // null for a KAROS_EMPLOYEE — so the "Client context" picker at the foot of
+  // was seeded only inside the admin branch above, and that branch is
+  // skipped for a KAROS_EMPLOYEE — so the "Client context" picker at the foot of
   // their rail listed nothing at all and the whole client-context shell was
   // unreachable for them. `staffClients` is the same fence every other employee
   // surface uses (listClients({ employeeId })), already fetched above, so the
