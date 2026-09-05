@@ -33,15 +33,6 @@ const MAX_CLIENT_BLURB_CHARS = 300; // 1–2 sentences — it is a card line, no
 const MAX_SKILL_ROOTS = 8;
 const SKILL_DIR_RE = /^(?!.*\.\.)(?!.*\/\/)(products|skills|clients)\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 
-const GROUP_APPEARANCE: Record<string, { icon: string; color: string }> = {
-  Live: { icon: "Zap", color: "#A3E635" },
-  Building: { icon: "Bot", color: "#FBBF24" },
-  Onboarding: { icon: "Search", color: "#38BDF8" },
-  Internal: { icon: "TrendingUp", color: "#F87171" },
-  Amazon: { icon: "Package", color: "#F97316" },
-  Other: { icon: "Sparkles", color: "#E879F9" },
-};
-
 function normalizeSkillDir(dir: string): string {
   return dir.trim().replace(/\/SKILL\.md$/, "").replace(/\/+$/, "");
 }

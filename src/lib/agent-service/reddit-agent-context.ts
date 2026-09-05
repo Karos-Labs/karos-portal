@@ -262,20 +262,25 @@ async function priorBatchFiles(
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, PRIOR_BATCHES);
 
-  const files: AgentServiceContextFile[] = [];
-  for (const job of jobs) {
-    const asset = await getAsset(job.assetIds[0]);
-    if (!asset?.content?.trim()) continue;
-    const when = new Date(job.createdAt).toISOString().slice(0, 10);
-    const name = `prior-batch-${when}-${job.id.slice(0, 6)}.md`;
-    files.push({
-      name,
-      url: await upload(clientId, runKey, name, asset.content.slice(0, PRIOR_BATCH_MAX_CHARS), "text/markdown"),
-      content_type: "text/markdown",
-      description: `A previous Reddit draft for this client (${when}). Treat its thread, subreddit, question pattern, angle and phrasing as ALREADY USED — never answer that thread again, and do not repeat the same question pattern in the same subreddit within 30 days. The baked repo ledger is STALE for portal runs; these files are the durable memory.`,
-    });
-  }
-  return files;
+  // Read and upload the prior batches in PARALLEL rather than one at a time
+  // (review, 2026-09): this runs inside the submit action, so every sequential
+  // asset read plus GCS upload was wall-clock the person launching the run sat
+  // through. Mapping preserves order, so the files still arrive newest first.
+  const files = await Promise.all(
+    jobs.map(async (job): Promise<AgentServiceContextFile | null> => {
+      const asset = await getAsset(job.assetIds[0]);
+      if (!asset?.content?.trim()) return null;
+      const when = new Date(job.createdAt).toISOString().slice(0, 10);
+      const name = `prior-batch-${when}-${job.id.slice(0, 6)}.md`;
+      return {
+        name,
+        url: await upload(clientId, runKey, name, asset.content.slice(0, PRIOR_BATCH_MAX_CHARS), "text/markdown"),
+        content_type: "text/markdown",
+        description: `A previous Reddit draft for this client (${when}). Treat its thread, subreddit, question pattern, angle and phrasing as ALREADY USED — never answer that thread again, and do not repeat the same question pattern in the same subreddit within 30 days. The baked repo ledger is STALE for portal runs; these files are the durable memory.`,
+      };
+    }),
+  );
+  return files.filter((f): f is AgentServiceContextFile => f !== null);
 }
 
 /**

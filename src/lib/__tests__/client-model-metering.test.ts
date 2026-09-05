@@ -183,7 +183,6 @@ describe("#29 — the copilot's Refresh Task Map chip", () => {
     return { res, body };
   }
   const swarmYielding = (created: number) =>
-    // eslint-disable-next-line require-yield
     vi.mocked(runSwarm).mockImplementation(async function* () {
       yield { type: "done", created } as any;
     });

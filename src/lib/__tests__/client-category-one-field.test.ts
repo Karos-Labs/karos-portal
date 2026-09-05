@@ -120,14 +120,15 @@ const MODULES = walk(SRC).filter((f) => !f.includes("__tests__"));
  *    read the field it falls back to. Keyed on the enclosing function's name,
  *    so moving the helper to another module keeps it exempt and adding a second
  *    reader beside it does not.
- *  • A `delete`. `delete patch.industry` in `updateClientAction` is a REFUSAL TO
- *    WRITE, which is the opposite of the thing being forbidden: the action takes
- *    a whole `Partial<Client>` from a staff caller, so the legacy key has to be
- *    stripped by name before the patch reaches Firestore.
+ *
+ * A `delete patch.industry` used to be the second legal shape: `updateClientAction`
+ * took a whole `Partial<Client>` from a staff caller and had to strip the legacy
+ * key by name. The action is an allowlist now (2026-09) — `industry` is simply
+ * not a field it accepts — so the strip, and the excuse for it, are gone. The
+ * helper's own body is the ONLY reader left.
  */
 function legalUse(access: ts.Node, sf: ts.SourceFile): string | null {
   for (let q: ts.Node | undefined = access; q; q = q.parent) {
-    if (ts.isDeleteExpression(q)) return "a delete — a refusal to write";
     if (
       (ts.isFunctionDeclaration(q) || ts.isMethodDeclaration(q)) &&
       q.name?.getText(sf) === "clientCategoryValue"
@@ -180,16 +181,15 @@ const SCAN = (() => {
 })();
 
 describe("the legacy field has exactly one reader", () => {
-  it("scanned the tree it claims to, and found the two legal uses", () => {
+  it("scanned the tree it claims to, and found the one legal use", () => {
     // NON-VACUITY, both halves, because a scan that silently reads nothing
-    // reports green forever. The walk must find the app's modules AND the two
-    // shapes it deliberately excuses must actually be present — if the helper
-    // were renamed or the strip removed, this is what says so rather than the
-    // negative below passing by finding nothing at all.
+    // reports green forever. The walk must find the app's modules AND the one
+    // shape it deliberately excuses must actually be present — if the helper
+    // were renamed, this is what says so rather than the negative below
+    // passing by finding nothing at all.
     expect(MODULES.length, "the source walk found almost nothing").toBeGreaterThan(300);
     const reasons = new Set(SCAN.excused.map((e) => e.why));
-    expect(reasons).toContain("the fallback helper itself");
-    expect(reasons).toContain("a delete — a refusal to write");
+    expect(reasons).toEqual(new Set(["the fallback helper itself"]));
   });
 
   it("has no OTHER reader of `.industry` anywhere in src", () => {
