@@ -846,3 +846,42 @@ were already exported. `components/home-task-row.tsx` was not touched either —
 
 Every changed or added pin carries a "round 6 review" comment naming its finding. Not done, per the
 brief: no commit, no push, no dev server, no `npm run build`, nothing that writes to Firestore.
+
+## Orange restored on data fills (2026-09-06)
+
+Albert reviewed round 6 on Home and Reporting and reversed one part of it. The sweep had read
+rule 2's "one rationed orange per screen" as a ban on the colour, and greyed out the *data*: the
+share meters went white on a grey track, the sparkline went white, the three card heading chips
+went bare, the takeaway band lost its tint, your bar in the engine cards went ink, and the credits
+coin in the rail went grey. **The rule is about CONTROLS.** A meter fill, a sparkline, a card's
+heading glyph and a coin beside a price are not things you can press, so they are outside the
+count and they keep their orange.
+
+Restored to their pre-round-6 accent, and nothing else:
+
+- `components/home-standing.tsx` — the `ShareMeter` track (`bg-neon/15`) and fill (`bg-neon`), the
+  cell heading glyph (`text-neon`), the card's `bg-neon/10` chip with its `text-neon` Radar, and
+  the takeaway band's `border-neon/20 bg-neon/[0.06]` with its `text-neon` Sparkles.
+- `components/home-kpis.tsx` — the sparkline's `stroke="var(--neon)"`, the cell eyebrow glyph, and
+  the `bg-neon/10` chip with its `text-neon` ChartColumn.
+- `components/client-home-overview.tsx` — the `bg-neon/10` chip with its `text-neon` Activity.
+- `components/seo-geo-panel.tsx` — both `<Meter color="var(--neon)">` calls and the client's own
+  bar in `EngineCard` (`b.isClient ? "var(--neon)" : "var(--info)"`).
+- `components/client-rail.tsx` — the credits coin, desktop and mobile (`text-neon`).
+
+**Every interaction change from round 6 stands.** `.focus-ring`, the fill-step hovers, the single
+static `ChevronRight`, the whole-cell links and their `#presence` / `#share` anchors, the removal
+of the lift/translate/shadow hovers, the demoted `ArrowRight` glyphs, the outline attention button,
+the two-shapes rule for rows that open nothing — none of that was touched. Nor was any orange the
+sweep took off an *interactive* surface: `hover:text-neon`, `hover:border-neon/50`, `ring-neon`,
+the pinned star and pin button, and the kickoff strip's band all stay as round 6 left them.
+`seo-geo-panel.tsx`'s "Refreshing this snapshot" line also stays `text-info` — that is status, and
+orange still never signals status.
+
+The words were changed so a later pass cannot re-derive the sweep from the brief: §1 rule 2 and
+§3.A's scope line and acceptance criterion in `docs/portal-round6/impl-brief.md` now say the
+one-per-screen rule is about controls. `lib/__tests__/interaction-primitives.test.ts`'s rule-7
+block was inverted to match: instead of asserting Home's files contain no `neon` at all, it
+asserts they contain no second orange *control* (`variant="accent"`, an accent hover, an accent
+focus ring), and a second case pins the restored fills POSITIVELY so greying them fails the suite.
+Both cases carry a "round 6, Albert 2026-09-06" comment.

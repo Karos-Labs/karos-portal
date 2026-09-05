@@ -21,12 +21,13 @@ import type { PresenceView } from "@/components/seo-geo/presenter";
  * numbers on this card are shares and a share without its remainder is just a
  * digit.
  *
- * THE BAR IS INK (round 6, rule 7). It was an accent fill on an accent-tinted
- * track — two more orange things on the screen whose one orange is supposed to
- * be the ladder's button. The fill is `foreground` and the track is the same
- * decorative grey the KPI card's daily bars use, so the filled part is still
- * the number and the unfilled part is still visibly the same measurement rather
- * than background.
+ * THE BAR IS ORANGE (round 6, Albert 2026-09-06). Round 6 briefly made it ink
+ * on a grey track; the ruling put it back. The one-orange-per-screen rule is
+ * about CONTROLS — a meter fill is data, and data keeps its accent. The track
+ * is the same accent at low alpha: the filled part is the number, and the
+ * unfilled part is visibly the same measurement rather than background, which
+ * matters most at the small values where an accent sliver on `surface-3` read
+ * as an empty card.
  */
 function ShareMeter({
   icon,
@@ -50,7 +51,7 @@ function ShareMeter({
       className="row-lift focus-ring block rounded-md border border-border bg-surface-2 p-3.5"
     >
       <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
       </p>
@@ -62,9 +63,9 @@ function ShareMeter({
             {pct}
             <span className="ml-0.5 text-lg font-medium text-muted-2">%</span>
           </p>
-          <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-muted-3/20">
+          <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-neon/15">
             <div
-              className="h-full rounded-full bg-foreground"
+              className="h-full rounded-full bg-neon"
               style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
             />
           </div>
@@ -162,9 +163,13 @@ export function HomeStandingWidget({
   return (
     <Card>
       <div className="mb-1 flex items-center justify-between gap-3">
-        {/* Bare glyph, no orange chip — same demotion as the KPI card's. */}
+        {/* The orange chip stays (round 6, Albert 2026-09-06). A card's heading
+            glyph is decoration, not a control, so it is outside the
+            one-orange-per-screen rule — same ruling as the KPI card's. */}
         <CardTitle className="flex min-w-0 items-center gap-2">
-          <Icon name="Radar" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+            <Icon name="Radar" className="h-3.5 w-3.5 text-neon" />
+          </span>
           <span className="min-w-0 truncate">SEO &amp; AI visibility</span>
         </CardTitle>
         {/* A QUIET TEXT LINK, AND IT NAMES WHERE IT GOES (round 6). It said
@@ -238,14 +243,14 @@ export function HomeStandingWidget({
         </div>
       )}
 
-      {/* THE TAKEAWAY IS A SENTENCE, NOT AN ALERT (round 6, rule 7). It sat in
-          an orange-washed, orange-bordered band with an orange sparkle, which
-          on a card of grey numbers read as the most important thing on Home —
-          and it does nothing: there is no control in it and nowhere to press.
-          A `surface-2` band with the glyph in `muted-2` says the same words. */}
+      {/* The tinted band and its orange sparkle stay (round 6, Albert
+          2026-09-06). Round 6 flattened this to a `surface-2` band on the
+          argument that a band with no control in it should not carry the
+          screen's accent; the ruling is that the accent budget governs
+          CONTROLS, and this is the card's read-out of what the numbers mean. */}
       {presence?.takeaway && (
-        <p className="mt-3 flex items-start gap-2 rounded-md bg-surface-2 px-3 py-2.5 text-sm leading-relaxed text-muted">
-          <Icon name="Sparkles" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-2" />
+        <p className="mt-3 flex items-start gap-2 rounded-md border border-neon/20 bg-neon/[0.06] px-3 py-2.5 text-sm leading-relaxed text-muted">
+          <Icon name="Sparkles" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neon" />
           {presence.takeaway}
         </p>
       )}

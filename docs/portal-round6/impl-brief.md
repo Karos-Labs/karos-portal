@@ -28,7 +28,8 @@ sections named in your work package.
    screen and only on the control that moves the client forward: Home = the ladder's current-step button;
    agent page = the run / setup / launch control (mutually exclusive states, one renders). Everything else
    is `primary` (paper) or `outline`. Status tones use the judgment scale only (`success`, `warning`,
-   `info`, `muted`); orange never signals status. Meter fills, sparklines, icon chips: ink or grey.
+   `info`, `muted`); orange never signals status. Meter fills, sparklines and card icon chips keep their
+   orange (Albert, 2026-09-06): the one-per-screen rule is about CONTROLS.
 3. **Interaction logic** (think-home §1.1), portal-wide:
    - Link: whole surface is the target; hover = one fill step (`surface-2` to `surface-3`) plus the
      accent hairline on bordered rows (`row-lift`); ends in ONE trailing `ChevronRight` in `muted-2`,
@@ -92,13 +93,16 @@ Scope: think-home §1.2, §1.3 (every row of the table EXCEPT the ladder rows, t
 agents-surface rows owned by B/F), §1.4, §1.5. In `home-standing.tsx` the two SEO cells become whole-cell
 links to `?tab=reporting#presence` and `#share` (add those two anchors in `seo-geo-panel.tsx` next to
 `#visibility-scores`); "See the breakdown" becomes a quiet link "Open the full report" without a glyph;
-takeaway band and icon chips lose orange; meters and sparkline fill `foreground`. `presenter.ts`
+the takeaway band, the card icon chips, the meters and the sparkline KEEP their orange (Albert,
+2026-09-06 — round 6 stripped them and the ruling put them back). `presenter.ts`
 takeaways: "That's the gap our agents are working on." / "Our agents' job now is to protect that position."
 Add `@media (prefers-reduced-motion: reduce)` covering `transition-duration`.
 Acceptance: `Card` has no hover styles; `Button` has no translate or shadow bloom; `.focus-ring` exists and
 is applied by `Button`, `Input`, `Textarea`, `Select`, `TabButton`; `grep -rn "outline-none" src/components/ui.tsx`
-returns only lines that also apply `.focus-ring`; Home's orange = ladder button, progress fill, row-lift hovers,
-bell badge, nothing else.
+returns only lines that also apply `.focus-ring`; Home's one orange CONTROL is the ladder's button, and no
+other pressable thing on the screen is orange — no accent button, no accent hover, no accent focus ring.
+Data and decoration are outside that count and stay orange: the meter fills, the sparkline, the three card
+heading chips, the takeaway band, the credits coin (Albert, 2026-09-06).
 
 ### B. Status truth, agent page header and status line, rail, pin
 Owns: `lib/agent-detail-archetypes.ts` (+ `lib/__tests__/agent-detail-archetypes.test.ts`),

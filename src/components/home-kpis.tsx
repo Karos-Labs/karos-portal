@@ -10,10 +10,9 @@ import type { ScoreView } from "@/components/seo-geo/presenter";
 /**
  * A minimal inline sparkline — no charting dependency for a handful of points.
  *
- * INK, NOT ACCENT (round 6, rule 7). It was stroked in --neon, which spent the
- * screen's one rationed colour on a decorative trend line beside a button that
- * needed it. The daily bars below are the precedent: they are the same data at
- * the same size in `foreground`/`muted-3`, and nothing was lost.
+ * STROKED IN --neon (round 6, Albert 2026-09-06). Round 6 briefly made it ink
+ * on the argument that it spent the screen's rationed colour on a trend line;
+ * the ruling is that the ration applies to CONTROLS, and a sparkline is data.
  */
 function Sparkline({ counts }: { counts: number[] }) {
   if (counts.length < 2) return null;
@@ -37,7 +36,7 @@ function Sparkline({ counts }: { counts: number[] }) {
       <polyline
         points={points}
         fill="none"
-        stroke="var(--foreground)"
+        stroke="var(--neon)"
         strokeWidth="2"
         strokeLinejoin="round"
         strokeLinecap="round"
@@ -148,8 +147,8 @@ function Delta({
 }
 
 /**
- * The shared shell of a KPI cell: an eyebrow in grey, a static chevron, then
- * whatever the cell is.
+ * The shared shell of a KPI cell: an accented eyebrow glyph, a static chevron,
+ * then whatever the cell is.
  *
  * EVERY CELL IS A LINK (portal feedback round 5, 2026-09) — "all the KPIs
  * should be interactive and clickable". So `href` is required rather than
@@ -182,7 +181,7 @@ function Cell({
       )}
     >
       <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
         {/* Rule 1: ONE trailing chevron, static. It used to slide 2px on hover,
             which is a second hover event on a surface whose hover is already the
@@ -362,12 +361,14 @@ export function HomeKpisWidget({
           made three times, next to the number it is about, and each one is
           kept. */}
       <div className="mb-3">
-        {/* A BARE GLYPH, NOT AN ORANGE CHIP (round 6, rule 7). Three cards on
-            Home wore a `bg-neon/10` chip behind their heading icon, so the one
-            control that is meant to be orange competed with three decorations
-            for the eye. */}
+        {/* The orange chip stays (round 6, Albert 2026-09-06). Round 6 stripped
+            the three `bg-neon/10` heading chips on Home; the ruling restores
+            them — a heading glyph is decoration, and the accent ration is about
+            CONTROLS. */}
         <CardTitle className="flex min-w-0 items-center gap-2">
-          <Icon name="ChartColumn" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+            <Icon name="ChartColumn" className="h-3.5 w-3.5 text-neon" />
+          </span>
           <span className="min-w-0 truncate">Your numbers</span>
         </CardTitle>
       </div>

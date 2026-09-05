@@ -212,10 +212,11 @@ export function ClientRail({
                   className="focus-ring flex min-w-0 flex-1 items-center justify-between rounded-md border border-border px-3 py-1.5 text-xs text-muted transition-colors hover:bg-surface-2"
                 >
                   <span className="flex items-center gap-1.5">
-                    {/* Grey, not orange (round 6, rule 7). This glyph was one of
-                        the eleven orange things on Home that made the ladder's
-                        one orange button stop reading as the one. */}
-                    <Icon name="Coins" className="h-3.5 w-3.5 text-muted-2" />
+                    {/* Orange (round 6, Albert 2026-09-06). Round 6 greyed this
+                        out with the rest of Home's accents; the ruling puts it
+                        back — a coin beside a price is a sanctioned orange, and
+                        the ration is about controls. */}
+                    <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
                     Credits
                   </span>
                   <span className="stat-number font-medium text-foreground">{spendableCredits}</span>
@@ -262,7 +263,8 @@ export function ClientRail({
                  wearing a static box's shell. Same one fill step as the rail's. */
               className="focus-ring flex items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:bg-surface-2"
             >
-              <Icon name="Coins" className="h-3.5 w-3.5 text-muted-2" />
+              {/* Orange, as the rail's twin above (Albert 2026-09-06). */}
+              <Icon name="Coins" className="h-3.5 w-3.5 text-neon" />
               <span className="stat-number font-medium text-foreground">{spendableCredits}</span>
             </Link>
           )}

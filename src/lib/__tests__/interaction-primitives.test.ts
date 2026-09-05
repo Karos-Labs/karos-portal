@@ -22,9 +22,10 @@ import { readSource, stripComments } from "./source-scan";
  *    element including inputs.
  *  · rule 6 — a `Card` is a container and never hovers.
  *  · rule 2 — a button's hover is a colour change and nothing else.
- *  · rule 7 — Home's orange is the ladder's button, the progress fill,
- *    `row-lift` hovers and the bell badge. Not icon chips, not meter fills, not
- *    a sparkline, not an info band.
+ *  · rule 7 — Home's ONE orange CONTROL is the ladder's button. Data and
+ *    decoration keep their orange (round 6, Albert 2026-09-06): meter fills,
+ *    the sparkline, the card heading chips, the takeaway band, the credits
+ *    coin. What the rule forbids is a second orange thing you can press.
  */
 
 const SRC = path.resolve(__dirname, "../..");
@@ -128,11 +129,14 @@ describe("rule 2 · a button's hover is a colour change and nothing else", () =>
   });
 });
 
-describe("rule 7 · Home's orange is the one CTA, the progress fill and the hovers", () => {
-  it("spends none of it on icon chips, meter fills, a sparkline or an info band", () => {
-    // The eleven orange things on one screen that stopped the ladder's single
-    // orange button from reading as the one. Comments stripped: each file's own
-    // note names the class it used to carry.
+describe("rule 7 · Home's one orange CONTROL is the ladder's button", () => {
+  it("spends none of it on a second pressable thing", () => {
+    // round 6, Albert 2026-09-06: this used to assert Home's files contained no
+    // `neon` AT ALL, which took the orange off the data too. The rule is about
+    // CONTROLS, so what is pinned now is the absence of orange the hand reads
+    // as "press me": an accent button, an accent hover, an accent focus ring.
+    // Comments stripped: each file's own note quotes the classes it dropped.
+    const FORBIDDEN = [/variant="accent"/, /hover:[\w-]*neon/, /ring-neon/, /focus[\w:-]*neon/];
     for (const rel of [
       "components/home-kpis.tsx",
       "components/home-standing.tsx",
@@ -141,8 +145,44 @@ describe("rule 7 · Home's orange is the one CTA, the progress fill and the hove
       "components/client-rail.tsx",
       "components/rail-nav-link.tsx",
     ]) {
-      expect(code(rel), `${rel} still paints something orange`).not.toMatch(/\bneon\b/);
+      for (const pattern of FORBIDDEN) {
+        expect(code(rel), `${rel} carries a second orange control (${pattern})`).not.toMatch(
+          pattern,
+        );
+      }
     }
+  });
+
+  it("keeps the orange on the data and the decoration", () => {
+    // round 6, Albert 2026-09-06: pinned POSITIVELY, because the sweep that
+    // stripped these was reading the accent ration as a ban on the colour. A
+    // later pass that greys a meter fill or a sparkline fails here.
+    const standing = code("components/home-standing.tsx");
+    expect(standing, "the share meters lost their orange fill").toContain(
+      'className="h-full rounded-full bg-neon"',
+    );
+    expect(standing, "the share meters lost their tinted track").toContain("bg-neon/15");
+    expect(standing, "the takeaway band lost its tint").toContain("bg-neon/[0.06]");
+    const kpis = code("components/home-kpis.tsx");
+    expect(kpis, "the sparkline lost its orange stroke").toContain('stroke="var(--neon)"');
+    // The three card heading chips: one per Home card.
+    for (const rel of [
+      "components/home-kpis.tsx",
+      "components/home-standing.tsx",
+      "components/client-home-overview.tsx",
+    ]) {
+      expect(code(rel), `${rel} lost its heading chip`).toContain("bg-neon/10");
+    }
+    // Reporting's meters, and the client's own bar among the roster's.
+    const panel = code("components/seo-geo-panel.tsx");
+    expect(panel.match(/color="var\(--neon\)"/g) ?? [], "a Reporting meter went ink").toHaveLength(
+      2,
+    );
+    expect(panel, "your bar lost its orange").toContain('b.isClient ? "var(--neon)"');
+    // A coin beside a price is a sanctioned orange.
+    expect(code("components/client-rail.tsx"), "the credits coin went grey").toContain(
+      'name="Coins" className="h-3.5 w-3.5 text-neon"',
+    );
   });
 
   it("keeps the sanctioned uses, which live in globals.css rather than in a component", () => {

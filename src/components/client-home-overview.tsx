@@ -451,10 +451,13 @@ export function ClientHomeOverview({
       {/* Recent activity */}
       <Card className="flex min-w-0 flex-col">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          {/* Bare glyph, no orange chip (round 6, rule 7) — the third of the
-              three `bg-neon/10` chips Home carried. */}
+          {/* The orange chip stays (round 6, Albert 2026-09-06) — the third of
+              the three `bg-neon/10` heading chips Home carries. A heading glyph
+              is decoration; the accent ration is about CONTROLS. */}
           <CardTitle className="flex min-w-0 items-center gap-2">
-            <Icon name="Activity" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+              <Icon name="Activity" className="h-3.5 w-3.5 text-neon" />
+            </span>
             Recent activity
           </CardTitle>
         </div>

@@ -334,12 +334,12 @@ function EngineCard({ view }: { view: EngineView }) {
                     className="h-full rounded-sm"
                     style={{
                       width: `${b.pctOfMax}%`,
-                      // Ink for you, slate for them (round 6, rule 7): your bar
-                      // was --neon, so a tab with three engine cards on it drew
-                      // three orange meter fills. The contrast that makes your
-                      // bar findable is the pair of hues plus the weight on the
-                      // name, and ink carries both.
-                      background: b.isClient ? "var(--foreground)" : "var(--info)",
+                      // Orange for you, slate for them (round 6, Albert
+                      // 2026-09-06). Round 6 made your bar ink to save the
+                      // screen's one accent; the ruling is that the ration
+                      // governs CONTROLS, and a bar is data. Orange is what
+                      // makes your bar findable among the roster's.
+                      background: b.isClient ? "var(--neon)" : "var(--info)",
                       opacity: b.isClient ? 1 : 0.55,
                     }}
                   />
@@ -734,7 +734,9 @@ export function SeoGeoPanel({
                       srLabel={`${tile.heading}: ${tile.pctLabel}. See how this was measured.`}
                     />
                   </div>
-                  <Meter pct={tile.pct ?? 0} color="var(--foreground)" className="mt-1.5" />
+                  {/* round 6, Albert 2026-09-06: back to `--neon`. Meter fills
+                      are data, not controls. */}
+                  <Meter pct={tile.pct ?? 0} color="var(--neon)" className="mt-1.5" />
                 </>
               ) : (
                 <p className="mt-2 text-xs text-muted-2">{tile.emptyLine}</p>
@@ -757,7 +759,8 @@ export function SeoGeoPanel({
               <span className="stat-number text-lg font-medium text-foreground">
                 {presence.rosterShare.value}
               </span>
-              <Meter pct={presence.rosterShare.pct} color="var(--foreground)" className="flex-1" />
+              {/* round 6, Albert 2026-09-06: back to `--neon`, as above. */}
+              <Meter pct={presence.rosterShare.pct} color="var(--neon)" className="flex-1" />
             </div>
             <p className="mt-1 text-[11px] text-muted-2">{presence.rosterShare.caption}</p>
           </div>
