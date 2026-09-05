@@ -53,7 +53,7 @@ import {
 } from "@/lib/agent-service/linkedin-agent-context";
 import { hasNewsletterV2Setup } from "@/lib/agent-service/newsletter-agent-context";
 import { hasBlogV2Setup } from "@/lib/agent-service/blog-agent-context";
-import { hasReputationV2Setup } from "@/lib/agent-service/reputation-agent-context";
+import { hasReputationV2Setup, isReputationSetupInlinedForClient } from "@/lib/agent-service/reputation-agent-context";
 import type { AgentProfileScopeFields } from "@/lib/data";
 import type { BlogAgentIntake, BlogIntakeView } from "@/components/blog-agent-intake";
 import type {
@@ -782,12 +782,19 @@ export async function buildReputationAgentIntakeView(
   clientId: string,
   opts: { isStaff: boolean; jobs?: Job[]; viewerIsBilled?: boolean },
 ): Promise<ReputationAgentIntakeProps> {
-  const [companyIntake, isSetUp, jobs, setupCost] = await Promise.all([
+  // `isSetUp` is what the setup band keys off ("We need to set this up
+  // first" / "Set it up"). For a client whose reputation agent routes to
+  // agent-engine, setup is the run's own `00-roster-setup` pre-flight, so the
+  // band has nothing to ask for and reads as set up — the roster row the
+  // legacy predicate looks for is never written on that path.
+  const [companyIntake, hasRosterRow, inlined, jobs, setupCost] = await Promise.all([
     getAgentIntake(clientId, "reputation", null),
     hasReputationV2Setup(clientId),
+    isReputationSetupInlinedForClient(clientId),
     opts.jobs ?? listJobs({ clientId }),
     setupRunCredits(REPUTATION_SETUP_KEY, REPUTATION_RUN_CREDITS),
   ]);
+  const isSetUp = hasRosterRow || inlined;
 
   // Matched on the agent NAME the way its four siblings are, so both
   // reputation skills report into one history: a client asking "when did you
@@ -795,12 +802,17 @@ export async function buildReputationAgentIntakeView(
   // standalone monthly-review manager that used to also match this regex was
   // retired 2026-08-29, SCRUM-377/T-B25a — its past runs, if any, still show
   // here by name; nothing new will.)
+  //
+  // Engine runs count too: on the engine path a pulse is a `jobs` row with
+  // `agentId: "agent-engine"` and the product id, not an agent-service task,
+  // and a client who has only ever run there would otherwise read "never".
   const reputationJobs: Job[] = jobs
     .filter(
       (j) =>
-        j.agentId === "agent-service" &&
-        j.external?.taskType === "custom" &&
-        /reputation/i.test(j.agentName),
+        (j.agentId === "agent-service" &&
+          j.external?.taskType === "custom" &&
+          /reputation/i.test(j.agentName)) ||
+        (j.agentId === "agent-engine" && j.agentEngineProductId === "reputation-agent"),
     )
     .sort((a, b) => b.createdAt - a.createdAt);
 
