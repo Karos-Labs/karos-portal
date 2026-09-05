@@ -45,8 +45,10 @@ describe("custom agent launch profiles", () => {
     // The X agent is intake-driven (its agent data holds handles, off-limits,
     // rosters, takes) — the launch brief only scopes the run. It must never
     // ask for things the agent BUILDS (audience, themes, cadence) or already
-    // stores (account handles).
-    expect(x.fields.map((field) => field.key)).toEqual(["run_scope", "batch_size", "request"]);
+    // stores (account handles). `requestedMode` (agent-engine RFC-12) scopes
+    // the run too — which KIND of post this time — and is not something the
+    // agent builds or stores.
+    expect(x.fields.map((field) => field.key)).toEqual(["run_scope", "requestedMode", "batch_size", "request"]);
     expect(x.fields.map((field) => field.key)).not.toEqual(
       expect.arrayContaining(["account", "audience", "themes", "cadence"]),
     );
