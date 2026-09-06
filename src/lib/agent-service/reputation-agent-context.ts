@@ -27,7 +27,8 @@ import "server-only";
  */
 
 import { randomUUID } from "crypto";
-import { getAgentIntake, listReputationAgentState } from "@/lib/data";
+import { getAgentIntake, getClient, listReputationAgentState } from "@/lib/data";
+import { resolveDispatchedAgentEngineProductId } from "@/lib/agent-engine/health";
 import { uploadBytes } from "@/lib/storage";
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import type { AgentIntake, ReputationAgentState } from "@/lib/types";
@@ -70,6 +71,64 @@ export function isReputationSetupV2(agentKey: string): boolean {
  */
 export function hasReputationAgentIntake(clientId: string): Promise<boolean> {
   return getAgentIntake(clientId, "reputation", null).then((row) => row !== null);
+}
+
+/**
+ * Whether setup is something the ENGINE does for this client on the run itself,
+ * so the portal must not ask for it.
+ *
+ * agent-engine's `reputation-agent` runs a `00-roster-setup` pre-flight
+ * (`agents/reputation-agent/src/workflow/roster-setup.ts`): a client with no
+ * roster on file has one resolved from the intake the run carries and recorded
+ * in client config, then the pulse continues. So for a client whose reputation
+ * agent routes to the engine there is no stand-up step to press, no
+ * `reputationAgentState` roster row to wait for, and nothing to tell them —
+ * the first run simply works or says which named surface could not be
+ * resolved. `hasReputationV2Setup` below stays the truth for the legacy path
+ * only, and the two are asked together wherever the portal decides "ready".
+ *
+ * Resolved through the same three-part gate the submit core uses
+ * (`resolveDispatchedAgentEngineProductId`: dispatch flag, client allowlist,
+ * agent map), so a card can never call setup "handled" for a client whose run
+ * would in fact go nowhere.
+ */
+export async function isReputationSetupInlinedForClient(
+  clientId: string,
+  agentKey: string = REPUTATION_RUNNER_KEY,
+): Promise<boolean> {
+  const client = await getClient(clientId);
+  return resolveDispatchedAgentEngineProductId(agentKey, client?.agentsRepoSlug) !== undefined;
+}
+
+/**
+ * The reputation intake as the ENGINE's run input — the keys
+ * `00-roster-setup` reads (`ROSTER_SETUP_INPUT_KEYS` in
+ * `agents/reputation-agent/src/workflow/roster-setup.ts`; the two sides agree
+ * on spelling here and nowhere else).
+ *
+ * Only what is filled travels: an absent key means "the client said nothing",
+ * which the pre-flight reports as such, while an empty array would read as a
+ * client who named zero surfaces on purpose. The surfaces are the SEED the
+ * engine resolves into real listings; the no-gos become the never-say locks
+ * when the client has none on file; markets, crisis routing and context are
+ * recorded as provenance with the roster.
+ */
+export function toReputationEngineRunInput(intake: AgentIntake | null): Record<string, unknown> {
+  if (!intake) return {};
+  const list = (values: string[] | undefined) => (values ?? []).map((v) => v.trim()).filter((v) => v.length > 0);
+  const text = (value: string | undefined) => (value && value.trim().length > 0 ? value.trim() : undefined);
+  const surfaces = list(intake.reviewSurfaces);
+  const markets = list(intake.reviewMarkets);
+  const noGos = list(intake.responseNoGos);
+  const crisisRouting = text(intake.crisisRoutingTag);
+  const context = text(intake.reputationContext);
+  return {
+    ...(surfaces.length > 0 ? { reviewSurfaces: surfaces } : {}),
+    ...(markets.length > 0 ? { reviewMarkets: markets } : {}),
+    ...(noGos.length > 0 ? { responseNoGos: noGos } : {}),
+    ...(crisisRouting ? { crisisRoutingTag: crisisRouting } : {}),
+    ...(context ? { reputationContext: context } : {}),
+  };
 }
 
 /**

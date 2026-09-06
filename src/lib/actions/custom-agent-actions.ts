@@ -17,7 +17,7 @@ import {
 import { listClientAgents, updateClientAgent } from "@/lib/data-client-agents";
 import type { PlannedScheduledRun } from "@/lib/types";
 import { containsLabJargon } from "@/lib/agent-copy-rules";
-import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { submitCustomAgentJob, type SubmitCustomAgentResult } from "@/lib/jobs/submit-custom";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
@@ -32,15 +32,6 @@ const MAX_SKILL_DIR_CHARS = 300;
 const MAX_CLIENT_BLURB_CHARS = 300; // 1–2 sentences — it is a card line, not a spec
 const MAX_SKILL_ROOTS = 8;
 const SKILL_DIR_RE = /^(?!.*\.\.)(?!.*\/\/)(products|skills|clients)\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
-
-const GROUP_APPEARANCE: Record<string, { icon: string; color: string }> = {
-  Live: { icon: "Zap", color: "#A3E635" },
-  Building: { icon: "Bot", color: "#FBBF24" },
-  Onboarding: { icon: "Search", color: "#38BDF8" },
-  Internal: { icon: "TrendingUp", color: "#F87171" },
-  Amazon: { icon: "Package", color: "#F97316" },
-  Other: { icon: "Sparkles", color: "#E879F9" },
-};
 
 function normalizeSkillDir(dir: string): string {
   return dir.trim().replace(/\/SKILL\.md$/, "").replace(/\/+$/, "");
@@ -368,7 +359,7 @@ export async function runCustomAgentAction(input: {
    * refusal rather than the field being silently dropped.
    */
   requestedScheduledAt?: number;
-}): Promise<{ jobId?: string; error?: string }> {
+}): Promise<SubmitCustomAgentResult> {
   const user = await requireClientAccess(input.clientId);
   if (input.requestedScheduledAt != null) {
     if (!isStaffCopilotActor(user)) {

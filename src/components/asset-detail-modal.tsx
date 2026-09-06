@@ -8,6 +8,7 @@ import { Icon } from "@/components/icon";
 import { ContextGroundingNotice } from "@/components/context-grounding-notice";
 import { AudienceSimulation } from "@/components/audience-simulation";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
+import { EmailPreview } from "@/components/email-preview";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
 import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
@@ -230,6 +231,9 @@ export function AssetDetailModal({
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
+  // The engine's email-safe render of a newsletter edition (2026-09-05). Only an
+  // email asset carries one; every other type keeps the plain content view.
+  const emailHtml = asset.type === "email" && typeof asset.meta?.html === "string" && asset.meta.html.length > 0 ? asset.meta.html : undefined;
   const slides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
   const channels = asset.channels ?? [];
   const when = asset.scheduledAt ?? asset.recommendedAt;
@@ -393,6 +397,26 @@ export function AssetDetailModal({
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
               assetId={asset.id}
               accounts={xBatch.accounts}
+            />
+          </div>
+        ) : emailHtml ? (
+          <div>
+            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Edition</p>
+            {/* A newsletter's deliverable is the email, not the markdown: the
+                engine renders every approved edition to email-safe HTML in both
+                themes (asset.meta.html / htmlDark) and this shows that render,
+                with the text the reviewer read under its own tab. */}
+            <EmailPreview
+              html={emailHtml}
+              {...(typeof asset.meta?.htmlDark === "string" ? { htmlDark: asset.meta.htmlDark } : {})}
+              textFallback={
+                <div>
+                  <div className="mb-1.5 flex items-center justify-end">
+                    <CopyCaptionButton asset={asset} variant="full" />
+                  </div>
+                  <AssetContentBody content={asset.content} />
+                </div>
+              }
             />
           </div>
         ) : (

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { launchProfileFor, withEngineRunFields } from "@/lib/custom-agent-launch";
+import { launchProfileFor, withEngineRunFields, BATCH_SIZE_FIELD_KEY } from "@/lib/custom-agent-launch";
 import {
   isClientEnabledForEngineCustomAgents,
   KNOWN_ENGINE_PRODUCT_IDS,
@@ -65,14 +65,14 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
       "landing-builder", "branded-shorts", "karos-blog-writer-v2",
       "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
-      "karos-tiktok-agent",
+      "karos-tiktok-agent", "karos-reputation-setup",
     ]) {
       const productId = resolveAgentEngineProductIdForCustomAgent(key);
       expect(KNOWN.has(productId!), `${key} -> ${productId}`).toBe(true);
     }
   });
 
-  it("routes the two onboarding keys to the drafting agents that now absorb them", () => {
+  it("routes the three onboarding keys to the agents that now absorb them", () => {
     // These used to route to `linkedin-setup-agent`/`reddit-setup-agent`, which
     // were separate engine products. The setup routine is now each parent
     // agent's `00-channel-setup` pre-flight: the same filled form arrives on
@@ -84,6 +84,9 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
     // to start the right way.
     expect(resolveAgentEngineProductIdForCustomAgent("karos-linkedin-setup-v2")).toBe("linkedin-agent");
     expect(resolveAgentEngineProductIdForCustomAgent("karos-reddit-setup")).toBe("reddit-agent");
+    // The reputation pulse's `00-roster-setup` is the same shape, and the
+    // agent-service this key used to fall through to no longer exists.
+    expect(resolveAgentEngineProductIdForCustomAgent("karos-reputation-setup")).toBe("reputation-agent");
   });
 
   it("routes the three drafting agents whose engine workflows were built but idle", () => {
@@ -126,7 +129,6 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "karos-newsletter-manager-v2",
       "karos-blog-setup-v2",
       "karos-newsletter-setup-v2",
-      "karos-reputation-setup",
       "karos-compliance-lock-v2",
     ]) {
       expect(resolveAgentEngineProductIdForCustomAgent(key), key).toBeUndefined();
@@ -328,24 +330,25 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   productId: string;
   visibleFields: readonly string[];
 }> = [
-  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "request", "customPrompt"] },
-  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt"] },
-  { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt"] },
+  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "customPrompt", "mediaAssets"] },
+  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "customPrompt", "mediaAssets"] },
+  { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "mediaAssets"] },
   { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request", "customPrompt"] },
   { key: "karos-reddit-setup", name: "Reddit Setup", productId: "reddit-agent", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
-  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "post_count", "audience", "must_include", "customPrompt", "mediaAssets"] },
-  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "post_count", "audience", "must_include", "customPrompt", "mediaAssets"] },
+  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
+  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
   { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "mediaAssets"] },
   { key: "landing-builder", name: "Landing Page Builder", productId: "landing-builder-agent", visibleFields: ["request", "offer", "audience", "cta", "proof", "references", "customPrompt"] },
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
   { key: "karos-newsletter-writer-v2", name: "Newsletter Writer", productId: "newsletter-agent", visibleFields: ["request", "audience", "must_include", "cta", "tone", "customPrompt"] },
   { key: "karos-reputation-runner", name: "Reputation Runner", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
+  { key: "karos-reputation-setup", name: "Reputation Setup", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
   { key: "seo-geo-agent-v2", name: "SEO GEO Agent", productId: "seo-geo-agent", visibleFields: ["website", "scope", "request", "market", "competitors", "customPrompt"] },
 ];
 
 /** A plausible answer for one dialog field — typed where the field is typed. */
 function answerFor(key: string): string {
-  if (key === "post_count") return "7";
+  if (key === "batch_size") return "3";
   if (key === "mediaAssets") return '[{"uri": "gs://bucket/probe-mediaAssets.mp4", "role": "source"}]';
   if (key === "source_url" || key === "references" || key === "sources") {
     return `https://example.com/probe-${key}`;
@@ -376,6 +379,10 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
       // is silently discarded produces an identical payload, and that is
       // exactly what every one of these did before T-B12.
       for (const field of dialog.visibleFields) {
+        // The one visible field the engine is NOT meant to see: the submit
+        // core reads it as "how many separate runs" and pins it to "1" on each
+        // child before this function runs (submit-custom.ts's fan-out).
+        if (field === BATCH_SIZE_FIELD_KEY) continue;
         const without = { ...answers };
         delete without[field];
         expect(
@@ -397,8 +404,9 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
   });
 
   it("batch_size never reaches the engine, visible or not", () => {
-    // Hidden in every profile that declares it, pricing-inert by product
-    // ruling, and deleted outright by C3's x-agent and linkedin-agent rows.
+    // Visible again since 2026-09-04, but still not a wire field: N posts is
+    // honoured as N separate one-post runs by the submit core, so an engine
+    // run has nothing to do with the number and must never be asked for it.
     expect(toEngineRunInput({ request: "a topic", batch_size: "5" }, "x-agent")).toEqual({
       requestedTopic: "a topic",
     });
@@ -441,7 +449,7 @@ describe("toEngineRunInput — the C3 wire shape", () => {
 
   it("carries the per-agent dedicated fields under their wire names", () => {
     expect(toEngineRunInput({ run_scope: "the company page" }, "x-agent")).toEqual({ runScope: "the company page" });
-    expect(toEngineRunInput({ li_identity: "company" }, "linkedin-agent")).toEqual({ liIdentity: "company" });
+    expect(toEngineRunInput({ requestedExecutiveName: "Albert Kattan" }, "linkedin-agent")).toEqual({ requestedExecutiveName: "Albert Kattan" });
     expect(toEngineRunInput({ run_mode: "single" }, "blog-agent")).toEqual({ runMode: "single" });
     expect(
       toEngineRunInput({ offer: "a free audit", proof: "three case studies" }, "landing-builder-agent"),
@@ -451,10 +459,21 @@ describe("toEngineRunInput — the C3 wire shape", () => {
     ).toEqual({ website: "https://x.test", scope: "technical", market: "US", competitors: "acme.test" });
   });
 
-  it("sends post_count as a number, and only a sane one", () => {
-    expect(toEngineRunInput({ post_count: "3" }, "instagram-agent")).toEqual({ postCount: 3 });
-    expect(toEngineRunInput({ post_count: "0" }, "instagram-agent")).toEqual({});
-    expect(toEngineRunInput({ post_count: "three" }, "instagram-agent")).toEqual({});
+  it("translates the LinkedIn 'Post as' choice into the engine's own identity scope", () => {
+    // "liIdentity" was the wire key before, and no engine workflow ever read
+    // it: every run posted as the company page whatever the client chose.
+    expect(toEngineRunInput({ li_identity: "company" }, "linkedin-agent")).toEqual({ requestedIdentityScope: "company" });
+    expect(toEngineRunInput({ li_identity: "seat:exec-123" }, "linkedin-agent")).toEqual({ requestedIdentityScope: "executive" });
+    // The seat's NAME is the submit core's job (a Firestore lookup); once
+    // resolved it rides along under the engine's own key.
+    expect(toEngineRunInput({ li_identity: "seat:exec-123", requestedExecutiveName: "Albert Kattan" }, "linkedin-agent")).toEqual({
+      requestedIdentityScope: "executive",
+      requestedExecutiveName: "Albert Kattan",
+    });
+  });
+
+  it("no longer sends a post count: N posts are N runs, decided before this function is called", () => {
+    expect(toEngineRunInput({ post_count: "3" }, "instagram-agent")).toEqual({});
   });
 
   it("normalizes targetDate and never throws on a bad one", () => {
@@ -540,7 +559,7 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
     expect(submitCustomSource).toContain(
       "resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug)",
     );
-    expect(submitCustomSource).toContain("toEngineRunInput(input.briefValues, engineProductId)");
+    expect(submitCustomSource).toContain("toEngineRunInput(engineBriefValues, engineProductId)");
 
     const healthSource = readFileSync(resolve(__dirname, "../health.ts"), "utf8");
     expect(healthSource).toContain("resolveAgentEngineProductIdForCustomAgent(agentKey)");
@@ -553,7 +572,7 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
       "landing-builder", "branded-shorts", "karos-blog-writer-v2",
       "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
-      "karos-tiktok-agent",
+      "karos-tiktok-agent", "karos-reputation-setup",
     ]) {
       expect(swept.has(key), `${key} routes to agent-engine but has no dialog-coverage case`).toBe(true);
     }

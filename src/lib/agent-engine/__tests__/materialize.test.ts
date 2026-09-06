@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const {
   createAssetMock,
+  attachAssetToJobMock,
+  getJobMock,
   updateJobMock,
   getDeliverableMock,
   generateTitleMock,
@@ -13,6 +15,8 @@ const {
   readAgentEngineRunMock,
 } = vi.hoisted(() => ({
   createAssetMock: vi.fn(),
+  attachAssetToJobMock: vi.fn(),
+  getJobMock: vi.fn(),
   updateJobMock: vi.fn(),
   getDeliverableMock: vi.fn(),
   generateTitleMock: vi.fn(),
@@ -27,6 +31,8 @@ const {
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/data", () => ({
   createAsset: createAssetMock,
+  attachAssetToJob: attachAssetToJobMock,
+  getJob: getJobMock,
   updateJob: updateJobMock,
   // [T-B16/SCRUM-271] persist-seo-geo-insights.ts's own dependencies — a
   // seo-geo-agent materialization now also builds and persists `clientSeoGeo`;
@@ -56,7 +62,8 @@ vi.mock("../client", async (importOriginal) => ({
   getAgentEngineDeliverable: getDeliverableMock,
 }));
 
-import { materializeAgentEngineDeliverable, PRODUCT_DELIVERABLE_KINDS } from "../materialize";
+import { materializeAgentEngineDeliverable, materializeIntelReport, materializeSeoGeoReport, PRODUCT_DELIVERABLE_KINDS } from "../materialize";
+import { INTERNAL_DATA_PRODUCTS } from "../internal-data-products";
 import type { RoutableRecommendation } from "../routable-recommendation";
 import { parseXDrafts } from "@/lib/x-drafts";
 import { parseLiDrafts } from "@/lib/li-drafts";
@@ -84,6 +91,9 @@ function job(productId: string, overrides: Partial<Job> = {}): Job {
   } as Job;
 }
 
+/** What `createAsset(data, id)` answers when this writer wins the create. */
+const createdWithId = async (_data: unknown, id: string) => ({ id, created: true });
+
 /** The asset payload the one `createAsset` call was given. */
 function createdAsset(): Omit<Asset, "id"> {
   expect(createAssetMock).toHaveBeenCalledTimes(1);
@@ -96,8 +106,10 @@ async function materialize(productId: string, deliverable: unknown, overrides: P
 }
 
 beforeEach(() => {
-  createAssetMock.mockReset().mockResolvedValue("asset_1");
-  updateJobMock.mockReset();
+  createAssetMock.mockReset().mockImplementation(createdWithId);
+  attachAssetToJobMock.mockReset();
+  getJobMock.mockReset().mockResolvedValue(null); // no fresh information — the snapshot stands
+  updateJobMock.mockReset().mockResolvedValue(undefined);
   getDeliverableMock.mockReset();
   generateTitleMock.mockReset().mockResolvedValue(null);
   reflowMock.mockReset().mockResolvedValue(undefined);
@@ -151,20 +163,55 @@ describe("the product catalog is covered end to end", () => {
   it("fetches each product's deliverable by that exact kind — a mismatch 404s and silently delivers nothing", async () => {
     for (const [productId, kind] of Object.entries(ENGINE_CATALOG)) {
       getDeliverableMock.mockReset().mockResolvedValue({ text: "something" });
-      createAssetMock.mockReset().mockResolvedValue("asset_1");
+      createAssetMock.mockReset().mockImplementation(createdWithId);
       await materializeAgentEngineDeliverable(job(productId));
       expect(getDeliverableMock, productId).toHaveBeenCalledWith("pubsub-1", kind);
     }
   });
 
-  it("produces an asset for every product, never a silent no-op", async () => {
+  it("produces an asset for every content product, never a silent no-op", async () => {
     // The regression in one line: eight of eleven products used to fall through
     // `DELIVERABLE_KIND_BY_PRODUCT` and return undefined here.
-    for (const productId of Object.keys(ENGINE_CATALOG)) {
-      createAssetMock.mockReset().mockResolvedValue(`asset_${productId}`);
+    for (const productId of Object.keys(ENGINE_CATALOG).filter((id) => !INTERNAL_DATA_PRODUCTS.has(id))) {
+      createAssetMock.mockReset().mockImplementation(createdWithId);
       const assetId = await materialize(productId, { text: "body text", topic: "a topic" });
-      expect(assetId, productId).toBe(`asset_${productId}`);
+      expect(assetId, productId).toBe("agent-engine-pubsub-1");
     }
+  });
+
+  it("internal-data products (intel-report, seo-geo) create NO asset — their output is context for other agents, not a reviewable piece of content", async () => {
+    // Decided 2026-09-05: a research report shown as a "note" beside real posts
+    // was clutter a client could approve or schedule. The run is still fully
+    // materialized — insights persisted, job marked — just not into Assets.
+    for (const productId of INTERNAL_DATA_PRODUCTS) {
+      createAssetMock.mockReset().mockImplementation(createdWithId);
+      attachAssetToJobMock.mockReset();
+      updateJobMock.mockReset().mockResolvedValue(undefined);
+      const assetId = await materialize(productId, { narrative: "n", text: "body text" });
+      expect(assetId, productId).toBeUndefined();
+      expect(createAssetMock, productId).not.toHaveBeenCalled();
+      expect(attachAssetToJobMock, productId).not.toHaveBeenCalled();
+      // The idempotency marker reconcile reads in place of an asset id.
+      expect(updateJobMock, productId).toHaveBeenCalledWith("job_1", expect.objectContaining({ agentEngineMaterializedRunId: "pubsub-1" }));
+    }
+  });
+
+  it("seo-geo's insights record carries the routable recommendations the asset meta used to — the report's new home", async () => {
+    await materialize("seo-geo-agent", {
+      narrative: "n",
+      firedRecommendations: [{ recId: "SEO-02", recommendation: "Fix the title tag", owner: "client_manual", fixAction: "manual", actionKind: "guided_manual" }],
+    });
+    const insights = upsertClientSeoGeoMock.mock.calls[0]![0] as SeoGeoInsights;
+    const routable = insights.routableRecommendations as RoutableRecommendation[];
+    expect(routable).toHaveLength(1);
+    expect(routable[0]).toMatchObject({ recId: "SEO-02", owner: "client_manual", fixAction: "manual" });
+  });
+
+  it("does not re-materialize a job already marked for this run", async () => {
+    const assetId = await materialize("intel-report-agent", { text: "x" }, { agentEngineMaterializedRunId: "pubsub-1" });
+    expect(assetId).toBeUndefined();
+    expect(getDeliverableMock).not.toHaveBeenCalled();
+    expect(updateJobMock).not.toHaveBeenCalled();
   });
 });
 
@@ -302,6 +349,23 @@ describe("the long-form products land on the asset type their content actually i
     expect(asset.type).toBe("email");
     expect(asset.title).toBe("The brief is the decision");
     expect(asset.content).toBe("Full assembled edition body.");
+    // No render on this deliverable: the meta carries no html, and the modal falls back to the text.
+    expect(asset.meta).not.toHaveProperty("html");
+  });
+
+  it("newsletter-agent: carries the engine's email-safe HTML renders in meta, with the markdown text still as content", async () => {
+    const html = "<!DOCTYPE html><html><body><table><tr><td>Light edition</td></tr></table></body></html>";
+    const htmlDark = "<!DOCTYPE html><html><body><table><tr><td>Dark edition</td></tr></table></body></html>";
+    await materialize("newsletter-agent", {
+      subjectLine: "The brief is the decision",
+      previewText: "Why more output made things worse",
+      text: "Full assembled edition body.",
+      html,
+      htmlDark,
+    });
+    const asset = createdAsset();
+    expect(asset.content).toBe("Full assembled edition body.");
+    expect(asset.meta).toMatchObject({ subjectLine: "The brief is the decision", previewText: "Why more output made things worse", html, htmlDark });
   });
 
   it("newsletter-agent: stitches intro/sections/signoff when the agent recorded no assembled text", async () => {
@@ -326,7 +390,9 @@ describe("the long-form products land on the asset type their content actually i
 
 describe("the report and bundle products render to something a reviewer can read", () => {
   it("intel-report: real headings, a dimension-scores table, grouped recommendations and the SWOT — not a wall of JSON", async () => {
-    await materialize("intel-report-agent", {
+    // Rendered directly: intel-report creates no portal asset (INTERNAL_DATA_PRODUCTS),
+    // so the render is no longer observable through materializeAgentEngineDeliverable.
+    const asset = materializeIntelReport({
       overallScore: 72,
       overallGrade: "B",
       dimensionScores: [
@@ -342,8 +408,6 @@ describe("the report and bundle products render to something a reviewer can read
         { id: "r1" },
       ],
     });
-    const asset = createdAsset();
-    expect(asset.type).toBe("note");
     expect(asset.title).toBe("Competitive intelligence report (B)");
     expect(asset.content).toContain("## Overall Assessment");
     expect(asset.content).toContain("**Overall score: 72/100 (Grade B)**");
@@ -366,23 +430,20 @@ describe("the report and bundle products render to something a reviewer can read
     expect(asset.meta).toMatchObject({ overallScore: 72, recommendations: [{ title: "Ship the case-studies page", priorityLabel: "Priority 1", tag: "Content" }, { id: "r1" }] });
   });
 
-  it("intel-report: an empty deliverable renders to an empty string rather than broken markdown", async () => {
-    await materialize("intel-report-agent", {});
-    const asset = createdAsset();
-    expect(asset.type).toBe("note");
+  it("intel-report: an empty deliverable renders to an empty string rather than broken markdown", () => {
+    const asset = materializeIntelReport({});
     expect(asset.title).toBe("Competitive intelligence report");
     expect(asset.content).toBe("");
   });
 
-  it("seo-geo-report: the narrative leads, with both canonical scores above it", async () => {
-    await materialize("seo-geo-agent", {
+  it("seo-geo-report: the narrative leads, with both canonical scores above it", () => {
+    const asset = materializeSeoGeoReport({
       seoScore: { score: 61 },
       geoReadiness: { score: 44 },
       narrative: "Visibility is concentrated in two prompts.",
       firedRecommendations: [{ recId: "a", recommendation: "Add FAQ schema" }, { recId: "b", title: "Fix canonical tags" }],
       promptSet: { promptSetHash: "abc123" },
     });
-    const asset = createdAsset();
     expect(asset.content).toContain("**SEO 61 · GEO readiness 44**");
     expect(asset.content).toContain("Visibility is concentrated in two prompts.");
     expect(asset.content).toContain("## Recommendations (2)");
@@ -405,7 +466,7 @@ describe("the report and bundle products render to something a reviewer can read
    * covers the wiring rather than the parser's own unit tests a second time.
    */
   describe("seo-geo-report: the C2 routable-recommendation wiring", () => {
-    it("today's REAL agent-engine payload shape (zero owner/fixAction/engineProductId fields) renders no Owner-mix line at all", async () => {
+    it("today's REAL agent-engine payload shape (zero owner/fixAction/engineProductId fields) renders no Owner-mix line at all", () => {
       // Exactly what create-seo-geo-agent-workflow.ts writes today, verified
       // directly against that file: `firedRecommendations: recommendations`,
       // a bare `FiredRecommendation[]` with none of C2's routing fields.
@@ -413,14 +474,13 @@ describe("the report and bundle products render to something a reviewer can read
       // 0 tool/connector · 2 client action" — a false-looking triage result
       // manufactured entirely by the fail-safe default, not by any real
       // classification, and no test caught it.)
-      await materialize("seo-geo-agent", {
+      const asset = materializeSeoGeoReport({
         narrative: "Visibility is concentrated in two prompts.",
         firedRecommendations: [
           { recId: "SEO-02", recommendation: "Title length, truncation & rewrite-mismatch guard", fireState: "fail" },
           { recId: "BOTH-07", recommendation: "Canonical tag coverage", fireState: "approaching" },
         ],
       });
-      const asset = createdAsset();
       expect(asset.content).not.toContain("Owner mix");
       expect(asset.content).not.toContain("we run automatically");
       // The structured data is still there for a future consumer, correctly
@@ -432,8 +492,8 @@ describe("the report and bundle products render to something a reviewer can read
       expect(routable.every((r) => r.engineProductId === undefined)).toBe(true);
     });
 
-    it("once the wire carries real owner data, meta.routableRecommendations groups correctly AND the Owner-mix line reports it", async () => {
-      await materialize("seo-geo-agent", {
+    it("once the wire carries real owner data, meta.routableRecommendations groups correctly AND the Owner-mix line reports it", () => {
+      const asset = materializeSeoGeoReport({
         narrative: "Visibility is concentrated in two prompts.",
         firedRecommendations: [
           {
@@ -460,7 +520,6 @@ describe("the report and bundle products render to something a reviewer can read
           },
         ],
       });
-      const asset = createdAsset();
       expect(asset.content).toContain("**Owner mix:** 1 we run automatically · 1 tool/connector · 1 client action");
 
       const routable = asset.meta?.routableRecommendations as RoutableRecommendation[];
@@ -471,14 +530,13 @@ describe("the report and bundle products render to something a reviewer can read
       expect(byId["GEO-14"]).toMatchObject({ owner: "client_manual", fixAction: "manual" });
     });
 
-    it("a karos_agent record with no verifiable engineProductId is downgraded to client_manual through the real wiring, not just in the unit parser", async () => {
-      await materialize("seo-geo-agent", {
+    it("a karos_agent record with no verifiable engineProductId is downgraded to client_manual through the real wiring, not just in the unit parser", () => {
+      const asset = materializeSeoGeoReport({
         narrative: "n",
         firedRecommendations: [
           { recId: "SEO-06", recommendation: "Meta description coverage", owner: "karos_agent" /* no engineProductId */ },
         ],
       });
-      const asset = createdAsset();
       const routable = asset.meta?.routableRecommendations as RoutableRecommendation[];
       expect(routable[0]?.owner).toBe("client_manual");
       expect(routable[0]?.engineProductId).toBeUndefined();
@@ -488,9 +546,8 @@ describe("the report and bundle products render to something a reviewer can read
       expect(asset.content).toContain("**Owner mix:** 0 we run automatically · 0 tool/connector · 1 client action");
     });
 
-    it("no firedRecommendations at all: no crash, no Owner-mix line, empty routableRecommendations", async () => {
-      await materialize("seo-geo-agent", { narrative: "n" });
-      const asset = createdAsset();
+    it("no firedRecommendations at all: no crash, no Owner-mix line, empty routableRecommendations", () => {
+      const asset = materializeSeoGeoReport({ narrative: "n" });
       expect(asset.content).not.toContain("Owner mix");
       expect(asset.meta?.routableRecommendations).toEqual([]);
     });
@@ -589,8 +646,10 @@ describe("the report and bundle products render to something a reviewer can read
     it("never blocks the job when the client record can't be read", async () => {
       getClientMock.mockResolvedValue(null);
       await materialize("seo-geo-agent", { narrative: "n" });
-      expect(createdAsset().type).toBe("note"); // the note asset still lands
+      // The insights write is skipped, but the run still counts as materialized
+      // so reconcile does not retry it forever.
       expect(upsertClientSeoGeoMock).not.toHaveBeenCalled();
+      expect(updateJobMock).toHaveBeenCalledWith("job_1", expect.objectContaining({ agentEngineMaterializedRunId: "pubsub-1" }));
     });
 
     it("degrades honestly (no crash, zero engines scored) when the run's step 08 output can't be read", async () => {
@@ -726,7 +785,7 @@ describe("reputation-pulse", () => {
 
   it("survives a deliverable with none of these fields yet, without throwing", async () => {
     const assetId = await materialize("reputation-agent", {});
-    expect(assetId).toBe("asset_1");
+    expect(assetId).toBe("agent-engine-pubsub-1");
     expect(createdAsset().content).toBe("");
     expect(createdAsset().title).toBe("Reputation pulse");
   });
@@ -910,11 +969,51 @@ describe("the three products that already worked keep working", () => {
     expect(asset.imageUrl).toBe("https://karos.example/agent-engine/job_1/slide-2.png");
   });
 
-  it("landing-page-site names where the reviewed source tree lives", async () => {
+  it("landing-page-site (v1 shape) names where the reviewed source tree lives", async () => {
     await materialize("landing-builder-agent", { gcsPrefix: "gs://bucket/sites/acme", fileCount: 12, status: "ok" });
     const asset = createdAsset();
     expect(asset.type).toBe("note");
+    expect(asset.title).toBe("Landing page");
     expect(asset.content).toContain("gs://bucket/sites/acme");
+  });
+
+  it("landing-page-site (v2, RFC-11) leads with the live URL, keeps the preview, and rehosts the desktop screenshot as the cover", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    uploadBytesMock.mockImplementation(async ({ path }: { path: string }) => ({ url: `https://karos.example/${path}` }));
+    await materialize("landing-builder-agent", {
+      title: "Karos Labs: the AI CMO that moves first",
+      description: "Always-on agents that run strategy, content and distribution.",
+      status: "ok",
+      gate: "pass",
+      craftVerdict: "pass",
+      liveUrl: "https://karos-karoslabs.web.app",
+      previewUrl: "https://karos-karoslabs--run-abc123.web.app",
+      versionName: "sites/karos-karoslabs/versions/v1",
+      indexSignedUrl: "https://signed.example/landing/karoslabs/run/index.html",
+      gcsPrefix: "gs://bucket/landing/karoslabs/run/",
+      fileCount: 3,
+      screenshots: [
+        { label: "mobile", url: "https://signed.example/render-v1-mobile.png" },
+        { label: "desktop", url: "https://signed.example/render-v1-desktop.png" },
+      ],
+      assumptions: ["no product-information document is on file"],
+      revision: false,
+    });
+    const asset = createdAsset();
+    expect(asset.type).toBe("note");
+    expect(asset.title).toBe("Karos Labs: the AI CMO that moves first");
+    expect(asset.content.split("\n")[0]).toBe("Live: https://karos-karoslabs.web.app");
+    expect(asset.content).toContain("Preview: https://karos-karoslabs--run-abc123.web.app");
+    expect(asset.imageUrl).toBe("https://karos.example/agent-engine/job_1/landing-desktop.png");
+    expect(asset.meta).toMatchObject({ taskType: "landing_page", liveUrl: "https://karos-karoslabs.web.app", hostingVersion: "sites/karos-karoslabs/versions/v1", craftVerdict: "pass", buildStatus: "ok" });
+  });
+
+  it("landing-page-site (v2) without Hosting falls back to the signed page link and flags a needs_human build", async () => {
+    await materialize("landing-builder-agent", { title: "Northwind", status: "needs_human", gate: "fail", indexSignedUrl: "https://signed.example/index.html", gcsPrefix: "gs://bucket/landing/northwind/run/", screenshots: [] });
+    const asset = createdAsset();
+    expect(asset.content).toContain("Page (signed link, 7 days): https://signed.example/index.html");
+    expect(asset.content).toContain("review before sharing");
+    expect(asset.imageUrl ?? null).toBeNull();
   });
 });
 
@@ -942,12 +1041,14 @@ describe("SCRUM-404: the context-grounding marker survives onto the asset", () =
     reason: "output is a client-facing deliverable that names external parties (competitors) — ungrounded is worse than absent — exempted from BLOCK because this is a runKind:\"setup\" run",
   };
 
-  it("carries the marker through for each of the three agents whose policy row can produce one", async () => {
+  it("carries the marker through for each content agent whose policy row can produce one", async () => {
+    // intel-report-agent also produces a marker, but since 2026-09-05 it creates
+    // no portal asset (INTERNAL_DATA_PRODUCTS), so there is no asset for the
+    // marker to ride on — the run panel is where its grounding is read.
     // The CONTEXT_DOC_POLICY rows actually wired to a call site
     // (`context-doc-policy.ts`): intel-report degrades under `bootstrapExempt`,
     // instagram and branded-shorts degrade outright.
     for (const [productId, deliverable] of [
-      ["intel-report-agent", { headline: "Three competitors moved", sections: [] }],
       ["instagram-agent", { caption: "A caption", slides: [] }],
       ["branded-shorts-agent", { title: "A short", scriptMarkdown: "# Script" }],
     ] as const) {
@@ -963,7 +1064,7 @@ describe("SCRUM-404: the context-grounding marker survives onto the asset", () =
   });
 
   it("leaves the field ABSENT on a fully-grounded deliverable — no scare copy on the normal path", async () => {
-    await materialize("intel-report-agent", { headline: "Three competitors moved", sections: [] });
+    await materialize("instagram-agent", { caption: "A caption", slides: [] });
     expect("contextGrounding" in createdAsset()).toBe(false);
   });
 
@@ -978,7 +1079,7 @@ describe("SCRUM-404: the context-grounding marker survives onto the asset", () =
       "degraded",
     ]) {
       createAssetMock.mockClear();
-      await materialize("intel-report-agent", { headline: "H", sections: [], contextGrounding: bad });
+      await materialize("instagram-agent", { caption: "A caption", slides: [], contextGrounding: bad });
       expect("contextGrounding" in createdAsset(), `${JSON.stringify(bad)} must not become an asset label`).toBe(false);
     }
   });
@@ -987,9 +1088,9 @@ describe("SCRUM-404: the context-grounding marker survives onto the asset", () =
     // The marker is still a true statement about the run when the list is
     // empty, and a list with junk in it is narrowed to the strings present
     // rather than dropped — the count a client reads must stay honest.
-    await materialize("intel-report-agent", {
-      headline: "H",
-      sections: [],
+    await materialize("instagram-agent", {
+      caption: "A caption",
+      slides: [],
       contextGrounding: { ...marker, missingDocTypes: ["market-strategy", 7, null, ""] },
     });
     expect(createdAsset().contextGrounding?.missingDocTypes).toEqual(["market-strategy"]);
@@ -1025,7 +1126,7 @@ describe("what it deliberately does not do", () => {
     // Every field read defensively — the alternative is an exception this module
     // swallows, which lands the job right back at "review with nothing attached".
     const assetId = await materialize("linkedin-agent", { archetype: 42, hashtags: "not-an-array", text: null });
-    expect(assetId).toBe("asset_1");
+    expect(assetId).toBe("agent-engine-pubsub-1");
     const asset = createdAsset();
     expect(asset.content).toBe("");
     expect(asset.title).toBe("LinkedIn post");
@@ -1052,12 +1153,45 @@ describe("titling", () => {
 describe("the job is wired to its new asset", () => {
   it("attaches the asset id and reflows the client's calendar chain", async () => {
     await materialize("x-agent", { text: "post" });
-    expect(updateJobMock).toHaveBeenCalledWith("job_1", expect.objectContaining({ assetIds: ["asset_1"] }));
+    expect(attachAssetToJobMock).toHaveBeenCalledWith("job_1", "agent-engine-pubsub-1");
     expect(reflowMock).toHaveBeenCalledWith("client_1");
   });
 
   it("stamps the run and product onto the asset's meta for traceability", async () => {
     await materialize("x-agent", { text: "post" });
     expect(createdAsset().meta).toMatchObject({ agentEngineRunId: "pubsub-1", agentEngineProductId: "x-agent" });
+  });
+});
+
+describe("two materializations of one run cannot produce two assets", () => {
+  // Prep, 2026-08-25: eight Job-page renders in 16 s during one run's
+  // completion, eight identical instagram assets — every deferred sync held a
+  // job snapshot with `assetIds: []`. The three layers below are the fix.
+
+  it("bails on the FRESH job before spending anything when another writer already attached an asset", async () => {
+    getJobMock.mockResolvedValue({ ...job("x-agent"), assetIds: ["agent-engine-pubsub-1"] });
+    const assetId = await materialize("x-agent", { text: "post" });
+    expect(assetId).toBeUndefined();
+    expect(getDeliverableMock).not.toHaveBeenCalled();
+    expect(generateTitleMock).not.toHaveBeenCalled();
+    expect(createAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("mints the asset under a deterministic id derived from the run, via the idempotent create", async () => {
+    await materialize("x-agent", { text: "post" });
+    expect(createAssetMock).toHaveBeenCalledWith(expect.objectContaining({ jobId: "job_1" }), "agent-engine-pubsub-1");
+  });
+
+  it("when it loses the create race it still attaches the winner's asset, and neither reflows nor duplicates", async () => {
+    createAssetMock.mockImplementation(async (_data: unknown, id: string) => ({ id, created: false }));
+    const assetId = await materialize("x-agent", { text: "post" });
+    expect(assetId).toBe("agent-engine-pubsub-1");
+    expect(attachAssetToJobMock).toHaveBeenCalledWith("job_1", "agent-engine-pubsub-1");
+    expect(reflowMock).not.toHaveBeenCalled();
+  });
+
+  it("treats a failed fresh read as no information rather than as a reason to throw or to skip", async () => {
+    getJobMock.mockRejectedValue(new Error("firestore hiccup"));
+    expect(await materialize("x-agent", { text: "post" })).toBe("agent-engine-pubsub-1");
   });
 });

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { updateJobMock, refundJobChargeMock, materializeMock, settleJobChargeMock, logUsageMock } =
+const { updateJobMock, refundJobChargeMock, materializeMock, settleJobChargeMock, logUsageMock, afterMock } =
   vi.hoisted(() => ({
     updateJobMock: vi.fn(),
+    afterMock: vi.fn(),
     refundJobChargeMock: vi.fn(),
     materializeMock: vi.fn(),
     settleJobChargeMock: vi.fn(),
@@ -10,6 +11,7 @@ const { updateJobMock, refundJobChargeMock, materializeMock, settleJobChargeMock
   }));
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/server", () => ({ after: afterMock }));
 vi.mock("@/lib/data", () => ({ updateJob: updateJobMock }));
 vi.mock("@/lib/credit-reconcile", () => ({ refundJobCharge: refundJobChargeMock }));
 vi.mock("@/lib/credit-settle", () => ({ settleJobCharge: settleJobChargeMock }));
@@ -22,7 +24,7 @@ vi.mock("@/services/logger", () => ({ logger: { logUsage: logUsageMock } }));
 // client, so the accident was also getting more expensive.
 vi.mock("../materialize", () => ({ materializeAgentEngineDeliverable: materializeMock }));
 
-import { syncAgentEngineJobStatusFromView } from "../reconcile";
+import { scheduleAgentEngineJobStatusSync, syncAgentEngineJobStatusFromView } from "../reconcile";
 import type { AgentEngineRunView } from "../read-run";
 import type { Job } from "@/lib/types";
 
@@ -154,10 +156,11 @@ describe("syncAgentEngineJobStatusFromView", () => {
 
     expect(materializeMock).toHaveBeenCalledTimes(1);
     expect(result.assetIds).toEqual(["asset_new"]);
-    // Only `assetIds` is written — the status already said the right thing.
-    const patch = updateJobMock.mock.calls[0]![1] as Record<string, unknown>;
-    expect(patch).toMatchObject({ assetIds: ["asset_new"] });
-    expect(patch).not.toHaveProperty("status");
+    // NOTHING is written from here: the materializer attaches its own asset
+    // with `attachAssetToJob` (an arrayUnion). A `[...job.assetIds, assetId]`
+    // patch from this stale snapshot is exactly the overwrite that left every
+    // duplicated prep job pointing at one asset with the rest orphaned.
+    expect(updateJobMock).not.toHaveBeenCalled();
   });
 
   it("does not re-attempt the refund on every view of an already-failed job", async () => {
@@ -396,5 +399,39 @@ describe("usage logging across a hold and a resume", () => {
     expect(updateJobMock).toHaveBeenCalledTimes(1);
     expect(updateJobMock.mock.calls[0]![1].external.totalCostUsd).toBe(1.5);
     expect(logUsageMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("scheduleAgentEngineJobStatusSync — defers a sync only when one has work left", () => {
+  beforeEach(() => {
+    afterMock.mockReset();
+    materializeMock.mockReset();
+  });
+
+  it("schedules nothing for a job that is already fully synced with its asset attached", () => {
+    // Every render of a finished job's page used to defer a full sync holding
+    // that render's snapshot; with the page refreshing every 4 s around
+    // completion, that is where prep's 2–8 identical assets per run came from.
+    const result = scheduleAgentEngineJobStatusSync(
+      job({ status: "review", assetIds: ["asset_1"], external: { totalCostUsd: 0.5 } }),
+      view("completed", { totalCostUsd: 0.5 }),
+    );
+    expect(afterMock).not.toHaveBeenCalled();
+    expect(result.status).toBe("review");
+  });
+
+  it("schedules one sync when the status still needs writing", () => {
+    scheduleAgentEngineJobStatusSync(job({ status: "running" }), view("completed"));
+    expect(afterMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules one sync when the status is right but the deliverable is still unattached", () => {
+    scheduleAgentEngineJobStatusSync(job({ status: "review", assetIds: [] }), view("completed"));
+    expect(afterMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("schedules nothing while the run is still in flight", () => {
+    scheduleAgentEngineJobStatusSync(job(), view("running"));
+    expect(afterMock).not.toHaveBeenCalled();
   });
 });

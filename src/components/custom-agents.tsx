@@ -2370,6 +2370,8 @@ export function RunCustomAgentModal({
   const [started, setStarted] = useState(false);
   /** The run this press produced, so a staff confirmation can link it (AF-9). */
   const [startedJobId, setStartedJobId] = useState<string | null>(null);
+  /** How many runs this press produced — more than one when "Number of posts" was raised. */
+  const [startedCount, setStartedCount] = useState(1);
   const intake = intakeFor(setup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
@@ -2663,6 +2665,7 @@ export function RunCustomAgentModal({
         // the refresh is what makes it start doing so — the in-flight mark and
         // the poller both key off a job that only exists after this await.
         if (result.jobId) setStartedJobId(result.jobId);
+        setStartedCount(result.jobIds?.length ?? 1);
         setStarted(true);
         router.refresh();
       } else if (result.jobId) {
@@ -2680,6 +2683,19 @@ export function RunCustomAgentModal({
               reader asked for, not that a "Run" has a status. "Your post is on
               its way" is the same noun the title and the button used, so the
               three sentences the client reads across one press are one voice.
+              COUNT is the one thing that noun cannot carry: a batch is N
+              SEPARATE runs, one post each, and a reader who asked for four has
+              to see four acknowledged — so the plural line survives and the
+              singular one, which only announced that a "Run" had a status, does
+              not. */}
+          {startedCount > 1 && (
+            <p className="text-sm text-foreground">{startedCount} runs started · one post each</p>
+          )}
+          {/* Drafts no longer reach the client archive at all: F149 filters it
+              to approved, non-future items. phase3-design §3's sentence is for
+              run-FINISHED surfaces; this one fires the moment a run starts, so
+              it takes the future-tense "reviews it when it lands" form —
+              nobody is reviewing anything yet.
 
               STAFF GET THEIR OWN SENTENCE (AF-9). This card is what a staff
               member now sees instead of being redirected, and the client's line

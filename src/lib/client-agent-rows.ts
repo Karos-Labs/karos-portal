@@ -22,6 +22,7 @@ import { hasBlogAgentIntake, hasBlogV2Setup } from "@/lib/agent-service/blog-age
 import {
   hasReputationAgentIntake,
   hasReputationV2Setup,
+  isReputationSetupInlinedForClient,
 } from "@/lib/agent-service/reputation-agent-context";
 import {
   agentKeyMatchesClientSlug,
@@ -587,10 +588,18 @@ export async function buildAgentSetup(
         // ROSTER setup resolves, and a pulse without one has nowhere to read —
         // the submit core gates on both, so a one-rung answer here would offer a
         // run the server refuses.
-        const [hasIntake, isSetUp] = await Promise.all([
+        //
+        // Unless the engine does setup for this client itself: agent-engine's
+        // `reputation-agent` resolves and records the roster as its own
+        // `00-roster-setup` pre-flight, so an engine-routed client is ready the
+        // moment their details are on file — the roster row this used to wait
+        // for is never written on that path and never needed.
+        const [hasIntake, isSetUp, inlined] = await Promise.all([
           hasReputationAgentIntake(clientId),
           hasReputationV2Setup(clientId),
+          isReputationSetupInlinedForClient(clientId, agent.key),
         ]);
+        const ready = hasIntake && (isSetUp || inlined);
         const href = intakePageHref(clientId, "reputation");
         const label = "Reputation agent data";
         const clientLabel = "Reputation agent details";
@@ -604,7 +613,7 @@ export async function buildAgentSetup(
           // See the field's doc on AgentSetupState.
           panes?.reputation
             ? {
-                ready: hasIntake && isSetUp,
+                ready,
                 standUpDone: true,
                 href,
                 label,
@@ -612,7 +621,7 @@ export async function buildAgentSetup(
                 kind: "reputation",
                 data: panes.reputation,
               }
-            : { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel },
+            : { ready, standUpDone: true, href, label, clientLabel },
         ];
       }
       // The karos-carousel-runner branch used to live here. The whole family

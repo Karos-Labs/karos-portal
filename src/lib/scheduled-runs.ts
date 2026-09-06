@@ -82,6 +82,23 @@ export function scheduleLimitsFor(agentKey: string): {
 }
 
 /**
+ * How many SEPARATE RUNS one press (or one scheduled fire) may fan out into on
+ * the agent-engine path, where a run always delivers exactly one post and a
+ * request for N posts is honoured as N runs (submit-custom.ts).
+ *
+ * Distinct from `maxOutputsPerRun` above, which caps how many outputs ONE
+ * legacy agent-service run is told to write. X's own cap there is 1 ("one
+ * run drafts one post") and that still holds here — each of the N runs is one
+ * post — so X takes the general ceiling. Reddit stays at 1 as the hard product
+ * rule: one run drafts ONE reply, and a batch of replies into someone else's
+ * community is not a product.
+ */
+export function maxPostsPerSubmission(agentKey: string): number {
+  if (isRedditAgentIdentity(agentKey)) return REDDIT_OUTPUTS_PER_RUN;
+  return MAX_OUTPUTS_PER_RUN;
+}
+
+/**
  * The plain calendar day an instant falls on, as a comparable number
  * (midnight-UTC of that Y/M/D). Read in `timeZone` when the row carries one,
  * else on the runtime's clock — the same two-branch split computeNextRun

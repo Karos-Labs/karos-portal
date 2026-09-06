@@ -8,6 +8,7 @@ import type { ActivityLog, AppUser, Client, ClientTask } from "@/lib/types";
 
 import { SYSTEM_AI_ACTOR_NAME, sessionSafeActor } from "@/lib/activity-actors";
 import { needsOnboarding } from "@/lib/onboarding";
+import { logStructured } from "@/lib/telemetry/structured-log";
 export async function requireStaff(): Promise<AppUser> {
   const user = await getCurrentUser();
   if (!user || user.disabled) throw new Error("Unauthorized");
@@ -295,8 +296,15 @@ export async function logActivity(input: Omit<ActivityLog, "id">): Promise<void>
     // went red. Rename either binding and it reds again.
     const data = await honestlyAttributed(input);
     await createActivityLog(data);
-  } catch {
-    // Non-fatal
+  } catch (err) {
+    // Non-fatal for the caller — but not silent: a dropped row is a hole in an
+    // audit trail both staff and the client read, and a bare catch made a
+    // Firestore outage here indistinguishable from nothing having happened.
+    logStructured("WARNING", "logActivity: activity row was not written", {
+      clientId: input.clientId,
+      type: input.type,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

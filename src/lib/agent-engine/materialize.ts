@@ -1,5 +1,5 @@
 import "server-only";
-import { createAsset, updateJob } from "@/lib/data";
+import { attachAssetToJob, createAsset, getJob, updateJob } from "@/lib/data";
 import { uploadBytes } from "@/lib/storage";
 import { reflowClientChain } from "@/lib/chain";
 import { orderKeyForCreatedAt } from "@/lib/post-chain";
@@ -69,7 +69,18 @@ interface ProductDeliverableSpec {
   taskType: WireTaskType;
   /** Honored by `deliverableAssetType` only when `taskType` is `"custom"`, and only if whitelisted there. */
   assetTypeHint?: AssetType;
+  /**
+   * `false` for products whose deliverable is INTERNAL DATA — context the
+   * other agents consume — rather than a reviewable piece of content. Their
+   * deliverable is still read and persisted (insights, report store), but no
+   * `assets` row is created and nothing lands in the client's Assets view.
+   * Defaults to `true`.
+   */
+  portalAsset?: boolean;
 }
+
+export { INTERNAL_DATA_PRODUCTS, isInternalDataProduct, hasMaterialized } from "./internal-data-products";
+import { hasMaterialized } from "./internal-data-products";
 
 const PRODUCT_DELIVERABLES = {
   "x-agent": { kind: "x-post", taskType: "social_post" },
@@ -88,8 +99,8 @@ const PRODUCT_DELIVERABLES = {
   // The three report/bundle products have no publishable shape at all: they are
   // internal analysis a staff member reads, so `note` (target-less, pinned as
   // such in platforms-publishable.test.ts) is the honest type, not a hedge.
-  "intel-report-agent": { kind: "intel-report", taskType: "custom", assetTypeHint: "note" },
-  "seo-geo-agent": { kind: "seo-geo-report", taskType: "custom", assetTypeHint: "note" },
+  "intel-report-agent": { kind: "intel-report", taskType: "custom", assetTypeHint: "note", portalAsset: false },
+  "seo-geo-agent": { kind: "seo-geo-report", taskType: "custom", assetTypeHint: "note", portalAsset: false },
   "campaign-orchestrator": { kind: "campaign-bundle", taskType: "custom", assetTypeHint: "note" },
   // The reputation pulse. `note` for the same reason Reddit is fenced to it —
   // a review reply is posted from the CLIENT'S OWN business listing (Google,
@@ -328,6 +339,11 @@ function materializeBlogPost(deliverable: Record<string, unknown>): AssetMateria
  * The newsletter edition. `text` is the agent's own assembled body; when it is
  * absent the intro/sections/signoff are stitched into one readable document
  * rather than handing over an empty asset with the real content buried in meta.
+ *
+ * `html` / `htmlDark` (2026-09-05) are the engine's email-safe renders of the
+ * same edition (600px table layout, inline styles, both themes), carried in
+ * meta so the asset modal can show the real email and hand the customer the
+ * HTML to paste into their email platform. `content` stays the markdown text.
  */
 function materializeNewsletterEdition(deliverable: Record<string, unknown>): AssetMaterialization {
   const stitched = joinBlocks([
@@ -351,6 +367,8 @@ function materializeNewsletterEdition(deliverable: Record<string, unknown>): Ass
       "footerDisclaimer",
       "unsubscribeUrl",
       "companyAddress",
+      "html",
+      "htmlDark",
     ]),
   };
 }
@@ -501,27 +519,75 @@ async function materializeTiktokClip(job: Job, deliverable: TiktokClipDeliverabl
 }
 
 interface LandingPageSiteDeliverable {
+  /** Landing Builder v2 (agent-engine RFC-11): the page's <title>. */
+  title?: string;
+  description?: string;
+  /** `https://<site>.web.app` once the reviewed version was released live. */
+  liveUrl?: string;
+  /** The auto-expiring Firebase Hosting preview channel the reviewer saw. */
+  previewUrl?: string;
+  versionName?: string;
+  /** 7-day signed URL to the archived index.html; the fallback link when Hosting is not configured. */
+  indexSignedUrl?: string;
+  screenshots?: Array<{ label?: string; url?: string; gcsUri?: string }>;
+  craftVerdict?: string;
+  assumptions?: string[];
+  revision?: boolean;
+  gate?: string;
   gcsPrefix?: string;
   fileCount?: number;
   status?: string;
 }
 
 /**
- * No landing-page-bundle concept exists anywhere in `Asset` today (confirmed:
- * the legacy webhook has zero special-casing for `landing_page` either — it
- * lands as a slot-less `"note"`, same as here). `gcsPrefix` is a directory
- * tree, not a single fetchable URL, so there is nothing to rehost — the
- * asset's `content` names where the reviewed source tree lives, and staff
- * retrieve it out-of-band until a real bundle/preview concept exists on
- * either side.
+ * Landing Builder v2 (agent-engine RFC-11) ships a real page, not a source
+ * tree: a live `.web.app` URL after approval, the preview channel the reviewer
+ * saw, an archived `index.html` with a signed URL, and the render
+ * screenshots. The asset therefore gets a title the client would recognise,
+ * a body that leads with the live link, and the desktop screenshot rehosted
+ * as its cover, the same way a carousel's first slide is. Still a `note`:
+ * the page is published by Hosting, not scheduled to a channel.
+ *
+ * A v1 deliverable (only `gcsPrefix`/`fileCount`) still materialises, with
+ * the old "site source uploaded to ..." body, so historical jobs render.
  */
-function materializeLandingPageSite(deliverable: LandingPageSiteDeliverable): AssetMaterialization {
+async function materializeLandingPageSite(job: Job, deliverable: LandingPageSiteDeliverable): Promise<AssetMaterialization> {
+  const screenshots = Array.isArray(deliverable.screenshots) ? deliverable.screenshots : [];
+  const desktop = screenshots.find((s) => s.label === "desktop" && typeof s.url === "string") ?? screenshots.find((s) => typeof s.url === "string");
+  const imageUrl = desktop?.url ? await rehostIfFetchable(desktop.url, `agent-engine/${job.id}/landing-desktop.png`, "image/png") : undefined;
+
+  const lines: string[] = [];
+  if (deliverable.liveUrl) lines.push(`Live: ${deliverable.liveUrl}`);
+  if (deliverable.previewUrl) lines.push(`Preview: ${deliverable.previewUrl}`);
+  if (!deliverable.liveUrl && !deliverable.previewUrl && deliverable.indexSignedUrl) lines.push(`Page (signed link, 7 days): ${deliverable.indexSignedUrl}`);
+  if (deliverable.description) lines.push("", deliverable.description);
+  if (deliverable.status === "needs_human") lines.push("", "The engine's own checks did not all pass; review before sharing.");
+  if (lines.length === 0) {
+    lines.push(
+      deliverable.gcsPrefix
+        ? `Site source (${deliverable.fileCount ?? "?"} files) uploaded to ${deliverable.gcsPrefix}`
+        : "Landing page build completed — no site bundle was uploaded (GCS_ARTIFACTS_BUCKET not configured on agent-engine).",
+    );
+  }
+
   return {
-    title: "Landing page",
-    content: deliverable.gcsPrefix
-      ? `Site source (${deliverable.fileCount ?? "?"} files) uploaded to ${deliverable.gcsPrefix}`
-      : "Landing page build completed — no site bundle was uploaded (GCS_ARTIFACTS_BUCKET not configured on agent-engine).",
-    meta: { taskType: "landing_page", gcsPrefix: deliverable.gcsPrefix, fileCount: deliverable.fileCount, buildStatus: deliverable.status },
+    title: deliverable.title ?? "Landing page",
+    content: lines.join("\n"),
+    ...(imageUrl ? { imageUrl } : {}),
+    meta: {
+      taskType: "landing_page",
+      ...(deliverable.liveUrl ? { liveUrl: deliverable.liveUrl } : {}),
+      ...(deliverable.previewUrl ? { previewUrl: deliverable.previewUrl } : {}),
+      ...(deliverable.indexSignedUrl ? { pageUrl: deliverable.indexSignedUrl } : {}),
+      ...(deliverable.versionName ? { hostingVersion: deliverable.versionName } : {}),
+      ...(deliverable.craftVerdict ? { craftVerdict: deliverable.craftVerdict } : {}),
+      ...(Array.isArray(deliverable.assumptions) ? { assumptions: deliverable.assumptions } : {}),
+      ...(deliverable.revision !== undefined ? { revision: deliverable.revision } : {}),
+      gcsPrefix: deliverable.gcsPrefix,
+      fileCount: deliverable.fileCount,
+      buildStatus: deliverable.status,
+      gate: deliverable.gate,
+    },
   };
 }
 
@@ -541,7 +607,10 @@ function materializeLandingPageSite(deliverable: LandingPageSiteDeliverable): As
  * rendered, so a future dedicated viewer can still read the typed data
  * directly without a re-delivery.
  */
-function materializeIntelReport(deliverable: Record<string, unknown>): AssetMaterialization {
+// Exported so the render can be tested directly: these two products no longer
+// create a portal asset (see `INTERNAL_DATA_PRODUCTS`), so the render is not
+// observable through `materializeAgentEngineDeliverable` any more.
+export function materializeIntelReport(deliverable: Record<string, unknown>): AssetMaterialization {
   const { title, content } = renderIntelReport(deliverable);
   return {
     title,
@@ -570,7 +639,10 @@ function materializeIntelReport(deliverable: Record<string, unknown>): AssetMate
  * above it and the fired recommendations under it. Every score object, the
  * frozen prompt set and the reproducibility digest stay in `meta`.
  */
-function materializeSeoGeoReport(deliverable: Record<string, unknown>): AssetMaterialization {
+// Exported so the render can be tested directly: these two products no longer
+// create a portal asset (see `INTERNAL_DATA_PRODUCTS`), so the render is not
+// observable through `materializeAgentEngineDeliverable` any more.
+export function materializeSeoGeoReport(deliverable: Record<string, unknown>): AssetMaterialization {
   const seoScore = rec(deliverable["seoScore"])["score"];
   const geoScore = rec(deliverable["geoReadiness"])["score"];
   const recommendations = objArray(deliverable["firedRecommendations"]);
@@ -787,7 +859,7 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
     case "tiktok-agent":
       return materializeTiktokClip(job, deliverable as TiktokClipDeliverable);
     case "landing-builder-agent":
-      return materializeLandingPageSite(deliverable as LandingPageSiteDeliverable);
+      return materializeLandingPageSite(job, deliverable as LandingPageSiteDeliverable);
     case "intel-report-agent":
       return materializeIntelReport(fields);
     case "seo-geo-agent":
@@ -814,9 +886,36 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
  * already materialized) — never throws, since a materialization failure
  * must not block the job from reaching `status: "review"`.
  */
+export function agentEngineAssetId(runId: string): string {
+  return `agent-engine-${runId}`;
+}
+
 export async function materializeAgentEngineDeliverable(job: Job): Promise<string | undefined> {
   if (!job.agentEngineRunId || !job.agentEngineProductId) return undefined;
-  if (job.assetIds.length > 0) return undefined;
+  if (hasMaterialized(job)) return undefined;
+
+  // THE SNAPSHOT GUARD ABOVE IS NOT A LOCK, and prep has the receipts: 13 jobs
+  // with 2–8 identical assets each, every copy minted within seconds of the
+  // others (e.g. job 0ltqevQ4rBQDPqdQ2TzT — eight page renders in 16 s, eight
+  // assets). Each Job page render defers a sync via `after()` holding the job
+  // as it was at render time, so N renders during one materialization all see
+  // `assetIds: []` and all reach `createAsset`. Three layers close it:
+  //
+  //  1. a FRESH read here, so a deferred sync built on a stale snapshot bails
+  //     before it spends the deliverable fetch, the rehost and the title call;
+  //  2. a DETERMINISTIC asset id (`agent-engine-<runId>`) created with
+  //     `create()`, so of two writers that both pass (1) exactly one wins —
+  //     the same discipline lab-import uses on `itemKey`;
+  //  3. `attachAssetToJob`'s `arrayUnion`, so the job never loses an attached
+  //     id to a stale-spread overwrite.
+  //
+  // Read into a local rather than overwriting `job`: the caller's object is
+  // what reconcile.ts returns for the render, and it stays that.
+  // `.catch(() => null)`: this runs outside the try below, and a failed read
+  // must degrade to "no fresh information" rather than break the never-throws
+  // contract — layer (2) still holds without it.
+  const live = await getJob(job.id).catch(() => null);
+  if (live && hasMaterialized(live)) return undefined;
 
   // Widened to a plain index signature for this one lookup: `job.agentEngineProductId`
   // is an arbitrary string that crossed a service boundary, not a key of the
@@ -841,6 +940,20 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
     // fully-grounded one. Declaring it on each shape instead would be eleven
     // edits for one concept and would silently omit every product added later.
     // See `context-grounding.ts` for the full reasoning.
+    if (spec.portalAsset === false) {
+      // Internal data: everything the rest of the system reads from this run
+      // is written here — nothing goes to Assets. The job is marked so
+      // reconcile's "already materialized?" check has something to read in
+      // place of an asset id.
+      const now = Date.now();
+      if (job.agentEngineProductId === "seo-geo-agent") {
+        await persistSeoGeoInsightsFromDeliverable(job.clientId, job.agentEngineRunId, deliverable as AgentEngineSeoGeoReport, now);
+      }
+      await updateJob(job.id, { agentEngineMaterializedRunId: job.agentEngineRunId, updatedAt: now });
+      console.info(`[agent-engine materialize] job "${job.id}" (${job.agentEngineProductId}) materialized as internal data — no portal asset by design`);
+      return undefined;
+    }
+
     const contextGrounding = readContextGroundingMarker(deliverable);
 
     // The one shared point every runtime-derived asset type in this codebase goes
@@ -866,7 +979,8 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
       : null;
 
     const now = Date.now();
-    const assetId = await createAsset({
+    const assetId = agentEngineAssetId(job.agentEngineRunId);
+    const { created } = await createAsset({
       clientId: job.clientId,
       jobId: job.id,
       agentId: "agent-engine",
@@ -887,9 +1001,17 @@ export async function materializeAgentEngineDeliverable(job: Job): Promise<strin
       createdBy: "agent-engine",
       createdAt: now,
       updatedAt: now,
-    });
+    }, assetId);
 
-    await updateJob(job.id, { assetIds: [...job.assetIds, assetId], updatedAt: Date.now() });
+    // Attach in BOTH branches: the writer that lost the create race may still be
+    // the one that survives to attach (the winner could crash between its own
+    // create and attach), and `arrayUnion` makes the second attach free.
+    await attachAssetToJob(job.id, assetId);
+
+    if (!created) {
+      console.warn(`[agent-engine materialize] asset "${assetId}" already existed for job "${job.id}" — a concurrent materialization won the create; nothing duplicated`);
+      return assetId;
+    }
 
     // Best-effort, same as the legacy webhook's own reflow call: the job already has its
     // asset and its "review" status regardless of whether the calendar slot lands.

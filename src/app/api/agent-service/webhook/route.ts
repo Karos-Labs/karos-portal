@@ -118,6 +118,7 @@ import {
 import { notifyJobFailure } from "@/lib/job-alerts";
 import { buildStepBreakdown, buildStepBreakdownFromCheckpoints } from "@/lib/jobs/step-breakdown";
 import { logger } from "@/services/logger";
+import { logStructured } from "@/lib/telemetry/structured-log";
 
 // The re-host phase is budgeted to end well inside this (rehost-budget.ts),
 // leaving the claim and the writes after it the remainder.
@@ -391,6 +392,27 @@ function mbAtMost(bytes: number): number {
 /** An exact limit. The constants are whole megabytes, so this is lossless. */
 function mbExact(bytes: number): number {
   return bytes / MB;
+}
+
+/**
+ * A state-capture leg failed and the run is being delivered anyway.
+ *
+ * Six capture legs below (newsletter, its ledger, blog, reputation, reddit,
+ * linkedin) are best-effort by design — the deliverable in front of the client
+ * is finished whether or not the NEXT run's memory was saved — and each used to
+ * swallow its error in a bare `catch {}`. That kept a broken capture pipeline
+ * indistinguishable from a quiet one in the logs: an expired artifact URL, a
+ * runner that stopped emitting the file, or a store outage all looked like
+ * "nothing to capture" until an agent visibly lost its memory a run later. One
+ * structured WARNING per failed leg, with the job and the artifact path, is what
+ * lets that be found from Cloud Logging instead of from a client's complaint.
+ */
+function warnStateCaptureFailed(leg: string, jobId: string, artifactPath: string, err: unknown): void {
+  logStructured("WARNING", `agent-service webhook: ${leg} state capture failed; delivering without it`, {
+    jobId,
+    artifactPath,
+    error: err instanceof Error ? err.message : String(err),
+  });
 }
 
 /**
@@ -875,10 +897,12 @@ export async function POST(req: NextRequest) {
               }
             }
           }
-        } catch {
+        } catch (err) {
           // Best-effort and not reported to the client: the issue in front of
           // them is finished either way. The cost is the NEXT run's memory, and
-          // the events below record that for staff.
+          // the events below record that for staff. Logged, not swallowed: a
+          // silent catch here made a dead state pipeline look like a quiet one.
+          warnStateCaptureFailed("newsletter", job.id, liPath, err);
         }
       }
       // The two LEDGER files a newsletter run publishes FOR THE BLOG. Fetched on
@@ -910,9 +934,10 @@ export async function POST(req: NextRequest) {
               }
             }
           }
-        } catch {
+        } catch (err) {
           // Best-effort. The issue in front of the client is finished either way;
           // the cost is the BLOG's next run, and the events below record it.
+          warnStateCaptureFailed("newsletter-ledger", job.id, liPath, err);
         }
       }
       const blogState = isBlogStateJob ? blogStateKindFor(liPath) : null;
@@ -936,8 +961,9 @@ export async function POST(req: NextRequest) {
               }
             }
           }
-        } catch {
+        } catch (err) {
           // Best-effort, same as its three siblings.
+          warnStateCaptureFailed("blog", job.id, liPath, err);
         }
       }
       const reputationState = isReputationStateJob ? reputationStateKindFor(liPath) : null;
@@ -964,8 +990,9 @@ export async function POST(req: NextRequest) {
               }
             }
           }
-        } catch {
+        } catch (err) {
           // Best-effort, same as its four siblings.
+          warnStateCaptureFailed("reputation", job.id, liPath, err);
         }
       }
       const redditState = isRedditStateJob ? redditStateKindFor(liPath) : null;
@@ -992,10 +1019,11 @@ export async function POST(req: NextRequest) {
               }
             }
           }
-        } catch {
+        } catch (err) {
           // Best-effort, and NOT reported to the client: the delivery in front of
           // them is a finished set of replies either way. The cost is the NEXT
           // run's memory, which the events below record for staff.
+          warnStateCaptureFailed("reddit", job.id, liPath, err);
         }
       } else if (!artifact.client_facing && (liStateKind || liIsCommit) && artifact.url) {
         try {
@@ -1018,11 +1046,12 @@ export async function POST(req: NextRequest) {
               if (text.trim() && liIsCommit) liCommitJson = text;
             }
           }
-        } catch {
+        } catch (err) {
           // Best-effort by design, and NOT reported to the client. State that
           // fails to capture costs the NEXT run its memory, which the events
           // below record for staff — but the delivery in front of this client is
           // a finished post either way, and failing it would throw that away.
+          warnStateCaptureFailed("linkedin", job.id, liPath, err);
         }
       } else if (!artifact.client_facing) {
         // Internal working file: never re-hosted, never on the asset, not a
