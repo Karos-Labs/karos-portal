@@ -267,28 +267,74 @@ function materializeDraftBatch(
   };
 }
 
-function materializeXPost(deliverable: Record<string, unknown>): AssetMaterialization {
-  return materializeDraftBatch(deliverable, {
+/**
+ * The picture an X or LinkedIn deliverable resolved for itself (agent-engine
+ * RFC-12, 2026-09): `deliverable.media` carries the staged signed URL of the
+ * screenshot / article image / stock photo / generated frame the run chose,
+ * plus its provenance. The signed URL expires in seven days and points at a
+ * bucket this portal does not control, so it is re-hosted the same way a
+ * carousel slide is, and lands in two places the reader already understands:
+ * `imageUrl` (the card's cover) and `meta.artifacts` (the LinkedIn reader's
+ * "attach when posting" list, `assetLiMedia`). Provenance rides in `meta.media`
+ * so a reviewer can see WHY this picture (a credited screenshot of the cited
+ * page is not the same thing as a licensed stock photo).
+ *
+ * Before this, prep job eIruxfiBhYTFHgfXKWK5 resolved a TechCrunch screenshot,
+ * staged it, wrote `Media: <signed url>` into the DRAFTS.md — and the asset
+ * showed no image at review, because nothing here ever read `media`.
+ */
+async function rehostDeliverableMedia(
+  job: Job,
+  deliverable: Record<string, unknown>,
+): Promise<{ imageUrl: string; artifact: { name: string; url: string; contentType: string } } | undefined> {
+  const media = rec(deliverable.media);
+  const url = typeof media.url === "string" ? media.url : undefined;
+  if (!url || !url.startsWith("https://")) return undefined;
+  const source = typeof media.path === "string" ? media.path : url.split("?")[0] ?? "";
+  const ext = /\.(jpe?g|png|webp)$/i.exec(source)?.[1]?.toLowerCase() ?? "png";
+  const contentType = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  const name = `media.${ext === "jpeg" ? "jpg" : ext}`;
+  const rehosted = await rehostIfFetchable(url, `agent-engine/${job.id}/${name}`, contentType);
+  if (!rehosted) return undefined;
+  return { imageUrl: rehosted, artifact: { name, url: rehosted, contentType } };
+}
+
+async function withDeliverableMedia(job: Job, deliverable: Record<string, unknown>, base: AssetMaterialization): Promise<AssetMaterialization> {
+  const media = await rehostDeliverableMedia(job, deliverable);
+  if (!media) return base;
+  return {
+    ...base,
+    imageUrl: media.imageUrl,
+    meta: { ...base.meta, artifacts: [media.artifact] },
+  };
+}
+
+async function materializeXPost(job: Job, deliverable: Record<string, unknown>): Promise<AssetMaterialization> {
+  const base = materializeDraftBatch(deliverable, {
     readerField: "draftsMarkdown",
     rawTextFields: ["text", "mainPostText"],
     channels: ["twitter"],
     titleFrom: ["hook", "text", "mainPostText"],
     titleWhenAbsent: "X post",
-    metaFields: ["lane", "angle", "targetHandle", "hook", "mediaRefs"],
+    // `media`/`mediaStatus`/`mediaRationale`/`contentMode`/`thread`: RFC-12's
+    // additions — provenance of the picture, the kind of post, the thread parts.
+    metaFields: ["lane", "angle", "targetHandle", "hook", "mediaRefs", "media", "mediaStatus", "mediaRationale", "contentMode", "thread"],
   });
+  return withDeliverableMedia(job, deliverable, base);
 }
 
-function materializeLinkedInPost(deliverable: Record<string, unknown>): AssetMaterialization {
+async function materializeLinkedInPost(job: Job, deliverable: Record<string, unknown>): Promise<AssetMaterialization> {
   // `hashtags` keeps that exact key: the AssetCard reads `meta.hashtags`
   // directly for its own chip row, so it may not travel inside a nested blob.
-  return materializeDraftBatch(deliverable, {
+  const base = materializeDraftBatch(deliverable, {
     readerField: "draftsMarkdown",
     rawTextFields: ["text", "body"],
     channels: ["linkedin"],
     titleFrom: ["headline", "hook", "text"],
     titleWhenAbsent: "LinkedIn post",
-    metaFields: ["archetype", "hook", "hashtags", "callToAction", "targetAudience"],
+    metaFields: ["archetype", "hook", "hashtags", "callToAction", "targetAudience", "takeaway", "media", "mediaStatus", "mediaRationale", "contentMode", "formattingNotes"],
   });
+  return withDeliverableMedia(job, deliverable, base);
 }
 
 function materializeRedditReply(deliverable: Record<string, unknown>): AssetMaterialization {
@@ -771,9 +817,9 @@ async function buildMaterialization(job: Job, productId: string, deliverable: un
   const fields = rec(deliverable);
   switch (productId) {
     case "x-agent":
-      return materializeXPost(fields);
+      return materializeXPost(job, fields);
     case "linkedin-agent":
-      return materializeLinkedInPost(fields);
+      return materializeLinkedInPost(job, fields);
     case "reddit-agent":
       return materializeRedditReply(fields);
     case "blog-agent":

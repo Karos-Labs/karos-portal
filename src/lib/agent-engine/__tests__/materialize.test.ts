@@ -1101,3 +1101,62 @@ describe("two materializations of one run cannot produce two assets", () => {
     expect(await materialize("x-agent", { text: "post" })).toBe("agent-engine-pubsub-1");
   });
 });
+
+describe("RFC-12: the picture an X or LinkedIn run resolved reaches the asset", () => {
+  // prep job eIruxfiBhYTFHgfXKWK5: the run staged a TechCrunch screenshot and
+  // wrote its signed URL into the deliverable's `media`, and the asset showed
+  // no image at review because nothing here read that field.
+  it("linkedin-post re-hosts deliverable.media.url into imageUrl and the reader's artifacts list, and keeps the provenance in meta", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    await materialize("linkedin-agent", {
+      headline: "Adobe acquisition signals enterprise AI marketing shift",
+      text: "Adobe just paid to acquire a six-person AI marketing startup.",
+      takeaway: "Enterprise buys speed; growth-stage brands need it now.",
+      archetype: "milestone-launch",
+      contentMode: "hot-news",
+      draftsMarkdown: "# LinkedIn drafts\n\n## Account 1 · Company page\n\n### Post 1 · Milestone launch\n\n> Adobe just paid.\n\n`40 chars`\n\n- **Topic:** Adobe\n- **Media:** https://storage.googleapis.com/b/agent-engine/pubsub-1/screenshot-73ec.png?sig=1",
+      mediaStatus: "screenshot",
+      mediaRationale: "a screenshot of the cited page",
+      media: {
+        url: "https://storage.googleapis.com/b/agent-engine/pubsub-1/screenshot-73ec.png?sig=1",
+        path: ".media-cache/pubsub-1/screenshot-73ec.png",
+        provider: "screenshot",
+        licenseConfidence: "unknown",
+        requiresCredit: true,
+        creditUrl: "https://techcrunch.com/2026/09/02/adobe-acquires-rilo/",
+      },
+    });
+    const asset = createdAsset();
+    expect(asset.imageUrl).toBe("https://karos.example/rehosted.png");
+    expect(uploadBytesMock).toHaveBeenCalledWith(expect.objectContaining({ path: "agent-engine/job_1/media.png", contentType: "image/png", ifAbsent: true }));
+    const meta = asset.meta as Record<string, unknown>;
+    expect(meta.artifacts).toEqual([{ name: "media.png", url: "https://karos.example/rehosted.png", contentType: "image/png" }]);
+    expect((meta.media as Record<string, unknown>).provider).toBe("screenshot");
+    expect(meta.mediaStatus).toBe("screenshot");
+    expect(meta.takeaway).toBe("Enterprise buys speed; growth-stage brands need it now.");
+    expect(meta.contentMode).toBe("hot-news");
+  });
+
+  it("x-post does the same, and a deliverable with no media (or a non-https path) leaves imageUrl unset", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) }) as unknown as typeof fetch;
+    await materialize("x-agent", {
+      text: "Four-day weeks are spreading.",
+      mainPostText: "Four-day weeks are spreading.",
+      hook: "Four-day weeks are spreading.",
+      lane: "knowledge",
+      thread: ["Part two.", "Part three."],
+      media: { url: "https://storage.googleapis.com/b/agent-engine/pubsub-1/n1-a.jpg?sig=1", path: ".media-cache/pubsub-1/n1-a.jpg", provider: "unsplash", licenseConfidence: "blanket", requiresCredit: false },
+    });
+    const withMedia = createdAsset();
+    expect(withMedia.imageUrl).toBe("https://karos.example/rehosted.png");
+    expect(uploadBytesMock).toHaveBeenCalledWith(expect.objectContaining({ path: "agent-engine/job_1/media.jpg", contentType: "image/jpeg" }));
+    expect((withMedia.meta as Record<string, unknown>).thread).toEqual(["Part two.", "Part three."]);
+
+    createAssetMock.mockReset().mockImplementation(createdWithId);
+    uploadBytesMock.mockReset().mockResolvedValue({ url: "https://karos.example/rehosted.png" });
+    await materialize("x-agent", { text: "No picture.", mainPostText: "No picture.", hook: "No picture.", lane: "pov", media: { url: ".media-cache/pubsub-1/local.png", path: ".media-cache/pubsub-1/local.png" } });
+    const without = createdAsset();
+    expect(without.imageUrl ?? null).toBeNull();
+    expect(uploadBytesMock).not.toHaveBeenCalled();
+  });
+});
