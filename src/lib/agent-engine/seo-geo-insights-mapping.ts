@@ -64,6 +64,7 @@ import {
   computeRosterSharePct,
   computeVisibilityIndex,
   dedupeGapsByRecId,
+  findMention,
   intentBasis,
   isEngineId,
   normalizeBrandKey,
@@ -97,7 +98,12 @@ const AGENT_ENGINE_SOURCE_BY_ENGINE: Record<EngineId, ProviderSource> = {
 };
 
 /** Every engine T-A3 captures, in the portal's fixed roster order. */
-const AGENT_ENGINE_ROSTER: readonly EngineId[] = ["chatgpt", "perplexity", "gemini", "claude", "copilot"];
+// Four since 2026-09-05: Copilot left agent-engine's capture fan-out by product
+// decision (SCRUM-396 decision record, "2026-09-05 addendum"). Keeping it here
+// would put a permanent UNAVAILABLE column in the answer grid and count it in
+// every coverage denominator — measuring nothing while lowering the number a
+// client reads.
+const AGENT_ENGINE_ROSTER: readonly EngineId[] = ["chatgpt", "perplexity", "gemini", "claude"];
 
 const KNOWN_PROMPT_INTENTS: ReadonlySet<string> = new Set([
   "discovery",
@@ -107,8 +113,27 @@ const KNOWN_PROMPT_INTENTS: ReadonlySet<string> = new Set([
   "navigational",
 ]);
 
+/** True when the prompt text itself names the client (an alias) or its domain. */
+function promptNamesClient(prompt: string, gazetteer: Gazetteer): boolean {
+  if (gazetteer.client.some((alias) => findMention(prompt, alias) >= 0)) return true;
+  return gazetteer.clientDomain !== null && prompt.toLowerCase().includes(gazetteer.clientDomain);
+}
+
 function asPromptIntent(value: string | undefined, prompt: string, gazetteer: Gazetteer): PromptIntent {
-  if (value && KNOWN_PROMPT_INTENTS.has(value)) return value as PromptIntent;
+  if (value && KNOWN_PROMPT_INTENTS.has(value)) {
+    const labelled = value as PromptIntent;
+    // A branded label the text does not support is not honoured. The portal
+    // files `brand`/`navigational` under "When buyers ask about you by name"
+    // and excludes them from the competitor comparison; prep showed "How do I
+    // find a good AI Digital Marketing provider near me?" under that heading
+    // because the engine's template was labelled navigational while naming
+    // nobody. The engine's templates are fixed (PROMPT_TEMPLATE_VERSION 3),
+    // but a label is a claim about the text and the text is here to check.
+    if (intentBasis(labelled) === "branded" && !promptNamesClient(prompt, gazetteer)) {
+      return classifyIntent(prompt, gazetteer);
+    }
+    return labelled;
+  }
   // Payload drift (a missing/unrecognized intentType) never blocks the mapping
   // — re-derive deterministically with the same classifier a portal-direct
   // capture uses, rather than dropping the prompt.
