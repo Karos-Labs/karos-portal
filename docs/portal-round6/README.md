@@ -1,6 +1,7 @@
 # Client portal, round 6 — planning handoff (2026-09-04)
 
-State of play: **planning complete, awaiting Albert's approval of the PDF. No code written for round 6.** Everything from rounds 1–5 is
+State of play: **implemented on `claude/portal-round6`, ops check done, PR pending Albert's localhost walk** (see "State on
+2026-09-06" and "Next steps" below). Everything from rounds 1–5 is
 merged and live on **prep** (PRs #73, #76, #79, #81 on top of `532bf1b`). Production has not
 been touched since the manual promote of `0fef40a`; keep it that way (merges reach prep only,
 the "Promote to Production" workflow is manual and must not be run as part of this work).
@@ -35,14 +36,34 @@ Rulings added during implementation, all final:
 - Ladder step 5 is done when the client opened a post or has a deliverable that aged out of the archive
   window; the card hides only when dismissed AND complete, so a later grant can reopen it.
 
+## Ops attribution check, run 2026-09-06 (read-only, both databases)
+
+`scripts/check-upcoming-attribution.ts` calls the roster's own functions over real data and prints, per
+client, which agents flip to Live under the widened predicate and which upcoming posts no candidate agent
+claims. It is the check `think-agents.md` §0 and `risk-review.md` §F asked for, kept in the repo so it can
+be re-run before any later change to the attribution rungs:
+
+    NODE_OPTIONS=--conditions=react-server FIRESTORE_DATABASE_ID="(default)" npx tsx scripts/check-upcoming-attribution.ts
+
+Result: **no status flips in production.** The feared combined-card-vs-plain-folder mismatch does not
+occur: no production client holds the combined Instagram+TikTok card, and `karos-instagram-agent` slugs
+equal to the `instagram-agent` folder. What the check did surface, none of it a round-6 regression:
+
+- Pitch by Deel (production and prep): 28 scheduled TikTok posts inside the window (137 in total) are lab
+  imports from folder `tiktok-agent`, and the granted `karos-tiktok-agent` is `enabled: false` in both
+  databases, so the card reads "Coming Soon" while the calendar is full. Enabling that agent makes it Live
+  at once. Ops decision, not code.
+- XO Digital (production): 5 approved future posts are bulk uploads (`meta.bulkUpload`, no job, no folder).
+  They belong to no agent by design.
+- Karos Labs (prep only): `karos-instagram-agent` and `karos-x-agent-v2` flip to Live on merge, which is
+  the behaviour Albert asked for.
+
 ## Next steps
 
 1. Albert walks the portal on localhost (`npm run dev` in a worktree with `node_modules` and `.env.local`;
    the pane needs a normal sign-in, never a minted token). Never click writes on localhost: `.env.local`
    is production Firestore.
-2. Before the PR: the ops attribution check from `think-agents.md` §0 against production (combined
-   `karos-instagram-tiktok-content-agent` card vs posts imported from the plain `instagram-agent` folder),
-   because widening "upcoming" flips every client with imported future drafts to Live at once.
+2. ~~Before the PR: the ops attribution check~~ Done 2026-09-06, see above.
 3. Expect existing clients who never pressed "Hide this" to see the checklist at 5 of 6 with "Open your
    first post" on ship day; one click clears it.
 4. PR from `claude/portal-round6` to main with auto-merge, lands on **prep only**. Do not run the
