@@ -622,10 +622,11 @@ describe("the report and bundle products render to something a reviewer can read
       expect(aioAbsentCell?.state).not.toBe(plainAbsentCell?.state);
     });
 
-    it("real per-engine data (chatgpt, perplexity, gemini, claude, copilot) maps onto the widened 5-engine EngineId, not just the old 3", async () => {
+    it("real per-engine data maps onto the four captured engines; Copilot (accepted, not captured since 2026-09-05) gets no column", async () => {
       readAgentEngineRunMock.mockResolvedValue(
         stepsWithCells([
           { promptId: "p1", engine: "perplexity", captureTier: "MEASURED", brandMentioned: true, brandFirstMentionCharOffset: 0, brandCited: false },
+          // A stale copilot cell from an older run must not resurrect the column.
           { promptId: "p1", engine: "copilot", captureTier: "MEASURED", brandMentioned: false, brandCited: false },
         ]),
       );
@@ -640,7 +641,9 @@ describe("the report and bundle products render to something a reviewer can read
       const copilot = insights.perEngine.find((e) => e.engine === "copilot");
       expect(perplexity?.captureTier).toBe("MEASURED");
       expect(perplexity?.promptsMeasured).toBe(1);
-      expect(copilot?.captureTier).toBe("MEASURED");
+      expect(copilot).toBeUndefined();
+      expect(insights.perEngine.map((e) => e.engine)).toEqual(["chatgpt", "perplexity", "gemini", "claude"]);
+      expect(insights.geoVisibilityEnginesTotal).toBe(4);
     });
 
     it("never blocks the job when the client record can't be read", async () => {
