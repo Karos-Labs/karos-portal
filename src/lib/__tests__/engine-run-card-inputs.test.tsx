@@ -26,6 +26,7 @@ vi.mock("@/lib/actions/control-plane-actions", () => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
 import { EngineAgentCard } from "@/components/agents/engine-agent-card";
+import { mediaSourceHint } from "@/lib/custom-agent-launch";
 import type { EngineAgentCardModel } from "@/lib/agent-engine/catalog-union";
 
 function card(slug: string, overrides: Partial<EngineAgentCardModel> = {}): EngineAgentCardModel {
@@ -50,22 +51,18 @@ function markup(slug: string, overrides?: Partial<EngineAgentCardModel>): string
   );
 }
 
-/** The engine workflows that actually read `mediaAssets` off the run input. */
-const READS_MEDIA_ASSETS = ["instagram-agent", "tiktok-agent"];
+/**
+ * The engine workflows that actually read `mediaAssets` off the run input —
+ * the same set `agentEngineProductAcceptsMediaAssets` names, which is what the
+ * card now asks (2026-09-06). x-agent and linkedin-agent joined with RFC-12
+ * (an attached picture is analysed and the post written to it);
+ * branded-shorts-agent joined 2026-09-06 (an attached source video IS the
+ * footage, whatever the standing `brandedShortsIntake` says).
+ */
+const READS_MEDIA_ASSETS = ["instagram-agent", "tiktok-agent", "x-agent", "linkedin-agent", "branded-shorts-agent"];
 
-/** Agents an attach control would be a lie on — including the near-misses. */
-const DOES_NOT = [
-  "blog-agent",
-  "linkedin-agent",
-  "x-agent",
-  "newsletter-agent",
-  "reddit-agent",
-  // A video agent, and still no: it takes its source from the repo-side
-  // `brandedShortsIntake`, never from a run attachment.
-  "branded-shorts-agent",
-  "landing-builder-agent",
-  "intel-report-agent",
-];
+/** Agents an attach control would be a lie on. */
+const DOES_NOT = ["blog-agent", "newsletter-agent", "reddit-agent", "landing-builder-agent", "intel-report-agent"];
 
 describe("the run card only offers what the workflow behind it reads", () => {
   it.each(READS_MEDIA_ASSETS)("offers the attach control on %s", (slug) => {
@@ -80,11 +77,38 @@ describe("the run card only offers what the workflow behind it reads", () => {
     const html = markup("instagram-agent");
     expect(html).toContain("Attach images");
     // The whole affordance: someone picking which photo goes where has to see
-    // the order they are creating.
-    expect(html).toContain("first file on slide 1");
+    // the order they are creating. The default (system-managed) sentence says
+    // the uploads take the first slides; the client-only sentence spells out
+    // "first file on slide 1" (pinned in media-source-controls.test.ts).
+    expect(html).toContain(mediaSourceHint("instagram-agent", "system"));
+    expect(html).toContain("first slides");
     // Images only — a slide is a picture, and the carousel renderer takes no video.
     expect(html).toContain("image/jpeg");
     expect(html).not.toContain("video/mp4");
+  });
+
+  it("offers the media-source choice on every media card and on no other (2026-09-06)", () => {
+    for (const slug of READS_MEDIA_ASSETS) {
+      const html = markup(slug);
+      expect(html, slug).toContain(`id="media-source-${slug}"`);
+      expect(html, slug).toContain("Only media uploaded for this job");
+    }
+    for (const slug of DOES_NOT) {
+      expect(markup(slug), slug).not.toContain("media-source-");
+    }
+  });
+
+  it("asks the text-first channels for one picture, and branded-shorts for the footage", () => {
+    for (const slug of ["x-agent", "linkedin-agent"]) {
+      const html = markup(slug);
+      expect(html, slug).toContain("Attach an image");
+      expect(html, slug).toContain("image/jpeg");
+      expect(html, slug).not.toContain("video/mp4");
+      expect(html, slug).not.toContain("multiple");
+    }
+    const shorts = markup("branded-shorts-agent");
+    expect(shorts).toContain("Attach source video");
+    expect(shorts).toContain("video/mp4");
   });
 
   it("asks tiktok for one video and says nothing about slides", () => {

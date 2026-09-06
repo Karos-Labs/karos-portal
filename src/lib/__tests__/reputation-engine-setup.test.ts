@@ -74,16 +74,15 @@ describe("isReputationSetupInlinedForClient — the engine gate, asked the way t
   beforeEach(() => {
     vi.mocked(data.getClient).mockResolvedValue({ id: "c1", name: "Acme", agentsRepoSlug: "acme" } as Client);
     vi.stubEnv("AGENT_ENGINE_DISPATCH_ENABLED", "true");
-    vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "acme");
   });
 
   it("is true for a client whose reputation agent routes to the engine", async () => {
     await expect(isReputationSetupInlinedForClient("c1")).resolves.toBe(true);
   });
 
-  it("is false when the client is outside the allowlist — the run would go nowhere, so setup is not 'handled'", async () => {
+  it("is true regardless of the retired AGENT_ENGINE_CUSTOM_AGENT_CLIENTS allowlist — every client with a slug routes to the engine", async () => {
     vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "someone-else");
-    await expect(isReputationSetupInlinedForClient("c1")).resolves.toBe(false);
+    await expect(isReputationSetupInlinedForClient("c1")).resolves.toBe(true);
   });
 
   it("is false when dispatch is off, or the client has no lab slug", async () => {

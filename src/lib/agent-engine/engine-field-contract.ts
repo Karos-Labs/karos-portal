@@ -286,6 +286,22 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     sentButUnread: ["branded-shorts-agent", "landing-builder-agent", "blog-agent"],
   },
 
+  mediaSource: {
+    // 2026-09-06: "system" (the agent sources/generates/renders its own
+    // visuals; attachments go first) or "client" (only what was uploaded for
+    // this job is used, nothing sourced or generated). Read engine-side off
+    // the shared primitive (`readRichRunInput` → `RunDirection.mediaSource`)
+    // and honoured by every product that has a sourcing or generation tier.
+    readBy: [
+      { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts (resolveSocialMedia(..., { clientMediaOnly: runDirection.mediaSource === \"client\" }))" },
+      { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (resolveSocialMedia(..., { clientMediaOnly }))" },
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts (05z-attach-user-media refuses an empty client-only run; 05b and the 06b-06e rescue tiers are skipped when clientMediaOnly)" },
+      { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts (01b-resolve-source: client-only stops after the user-asset tier)" },
+      { product: "branded-shorts-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts (01-load-intake takes the attached source video; plate generation disabled when clientMediaOnly)" },
+    ],
+    sentButUnread: [],
+  },
+
   // ── requestedTopic: read by 4 of the 6 products whose dialog can send it ──
 
   requestedTopic: {

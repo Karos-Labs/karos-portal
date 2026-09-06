@@ -377,6 +377,10 @@ export const DEDICATED_FIELDS = [
 export const SPECIAL_CASED_WIRE_KEYS = [
   "customPrompt",
   "mediaAssets",
+  // `media_source` → `mediaSource`, validated to its two legal values rather
+  // than passed through: an unknown value must read engine-side as the
+  // default ("system"), never as a third mode nobody defined.
+  "mediaSource",
   "requestedTopic",
   "targetDate",
   "requestedIdentityScope",
@@ -570,6 +574,12 @@ export function toEngineRunInput(
   }
   if (mediaAssets.length > 0) input.mediaAssets = mediaAssets;
 
+  // Where a media agent's visuals come from (custom-agent-launch.ts's
+  // MEDIA_SOURCE_FIELD_KEY). Only the two legal values travel; anything else
+  // is omitted so the engine applies its own default rather than a guess.
+  const mediaSource = at("media_source");
+  if (mediaSource === "system" || mediaSource === "client") input.mediaSource = mediaSource;
+
   for (const [dialogKey, label] of FOLDED_INTO_CUSTOM_PROMPT) {
     const value = at(dialogKey);
     if (value) promptParts.push(`${label}\n${value}`);
@@ -622,44 +632,3 @@ export function parseMediaAssets(raw: string | undefined): Array<Record<string, 
   return out;
 }
 
-/**
- * Which clients may have their custom-agent jobs routed to agent-engine.
- *
- * Per-agent routing alone is not enough to cut over safely, and production
- * shows why: all seven clients are granted the X agent, but only one has an
- * `xHandle` in the engine's workspace store. Routing on the agent key alone
- * would send six clients' X jobs to `blocked_intake`.
- *
- * That sentence used to end "— work that succeeds on agent-service today", and
- * it does not any more: agent-service was deleted on 2026-09-02 (see
- * `ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY`'s note above). The trade this allowlist
- * was protecting has therefore inverted. It was "do not break six clients whose
- * work succeeds elsewhere"; it is now "six clients have no working route
- * either way, and opening the allowlist without filling in their engine-side
- * context only changes the error they get." Verified live 2026-09-02: seven
- * active clients in each of prep and prod, and this allowlist naming exactly
- * one (`karoslabs`) in both.
- *
- * `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS` is a comma-separated list of
- * `agentsRepoSlug` values, or `*` for all. Unset means NOBODY, so deploying
- * this code changes nothing until someone names a client — which is what lets
- * the build ship to production ahead of the cutover decision.
- *
- * A client is added once its engine-side context is in place and one real run
- * has been verified. That is the unit of this drain: not "the X agent is
- * migrated" but "this client's X agent is migrated".
- */
-export function isClientEnabledForEngineCustomAgents(
-  clientSlug: string | undefined,
-  env: Record<string, string | undefined> = process.env,
-): boolean {
-  if (!clientSlug) return false;
-  const raw = env.AGENT_ENGINE_CUSTOM_AGENT_CLIENTS?.trim();
-  if (!raw) return false;
-  if (raw === "*") return true;
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .includes(clientSlug);
-}

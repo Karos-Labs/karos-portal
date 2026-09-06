@@ -88,7 +88,7 @@ export function hasReputationAgentIntake(clientId: string): Promise<boolean> {
  * only, and the two are asked together wherever the portal decides "ready".
  *
  * Resolved through the same three-part gate the submit core uses
- * (`resolveDispatchedAgentEngineProductId`: dispatch flag, client allowlist,
+ * (`resolveDispatchedAgentEngineProductId`: dispatch flag, client lab slug,
  * agent map), so a card can never call setup "handled" for a client whose run
  * would in fact go nowhere.
  */

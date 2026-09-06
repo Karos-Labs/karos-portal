@@ -1390,11 +1390,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // `resolveAgentEngineProductIdForCustomAgent` alone: the earlier
       // predicate only asks "does agent-engine have a workflow for this
       // agent key", which says nothing about whether agent-engine dispatch
-      // is enabled at all or whether THIS client (`client.agentsRepoSlug`)
-      // has actually been cut over to it (`AGENT_ENGINE_CUSTOM_AGENT_CLIENTS`
-      // — unset/not-listed is the normal state for most clients mid-
-      // migration). Using the narrower predicate meant a client not yet cut
-      // over was told "Attached ... as source media for this run" for a run
+      // is enabled at all or whether THIS client has a lab slug
+      // (`client.agentsRepoSlug`) for the engine to run as. (Until 2026-09-06 a
+      // per-client allowlist sat in that gate too; see health.ts for why it is
+      // gone.) Using the narrower predicate meant a client whose run did not
+      // reach the engine was told "Attached ... as source media for this run" for a run
       // that silently fell through to the legacy agent-service path, which
       // never reads `mediaAssets` at all. `resolveDispatchedAgentEngineProductId`
       // (agent-engine/health.ts) is the SAME three-part gate
