@@ -71,8 +71,16 @@ import {
   withEngineRunFields,
   perClientAgentSlug,
   withLinkedInIdentityOptions,
+  attachmentModeForEngineProduct,
+  clientOnlyMediaIsRequired,
+  isMediaSource,
+  mediaSourceHint,
+  parseRunAttachmentsJson,
   ADD_SEAT_OPTION_VALUE,
   LINKEDIN_IDENTITY_FIELD_KEY,
+  MEDIA_ASSETS_FIELD_KEY,
+  MEDIA_SOURCE_DEFAULT,
+  MEDIA_SOURCE_FIELD_KEY,
   BLOG_SETUP_REQUIRED_PREFIX,
   LINKEDIN_SETUP_REQUIRED_PREFIX,
   NEWSLETTER_SETUP_REQUIRED_PREFIX,
@@ -86,6 +94,7 @@ import {
   engineProductIdForPair,
   type EngineDispatchMap,
 } from "@/lib/agent-engine/engine-dispatch-map";
+import { RunAttachments } from "@/components/agents/run-attachments";
 import type { ContextItem, CustomAgent, JobRunType, JobStatus } from "@/lib/types";
 import { cn, formatDate, relativeTime } from "@/lib/utils";
 
@@ -2434,9 +2443,17 @@ export function RunCustomAgentModal({
   const staffOnlyFields = visibleFields.filter(
     (field) => field !== primaryField && STAFF_ONLY_FIELD_KEYS.has(field.key),
   );
+  /* The media block: where a media agent's visuals come from, and the files.
+     Its own partition, painted under the primary question rather than behind
+     the disclosure — for an Instagram or TikTok run "whose pictures" is the
+     second question a person answers, and a client who wants to hand over
+     their own footage should not have to find it under "More options". */
+  const MEDIA_FIELD_KEYS = new Set([MEDIA_SOURCE_FIELD_KEY, MEDIA_ASSETS_FIELD_KEY]);
+  const mediaFields = visibleFields.filter((field) => field !== primaryField && MEDIA_FIELD_KEYS.has(field.key));
   const moreFields = visibleFields.filter(
-    (field) => field !== primaryField && !STAFF_ONLY_FIELD_KEYS.has(field.key),
+    (field) => field !== primaryField && !STAFF_ONLY_FIELD_KEYS.has(field.key) && !MEDIA_FIELD_KEYS.has(field.key),
   );
+  const mediaSource = isMediaSource(fields[MEDIA_SOURCE_FIELD_KEY]) ? fields[MEDIA_SOURCE_FIELD_KEY] as "system" | "client" : MEDIA_SOURCE_DEFAULT;
   /* The defaults line: "Instagram + TikTok · 1 post · Produce content now".
      Selects print their chosen option's LABEL and numbers print the output noun,
      because "3" beside "Number of posts" is a form and "3 posts" is a sentence.
@@ -2549,6 +2566,27 @@ export function RunCustomAgentModal({
       viewerIsClient &&
       Boolean(profile.attachments.required) &&
       field.key === profile.attachments.satisfyWithFieldKey;
+    if (field.type === "media") {
+      // The engine's `mediaAssets`, uploaded browser → GCS through the signed
+      // route and kept in the brief as JSON so the submit carries it like any
+      // other answer. Required only for a client-only run of an agent with no
+      // text fallback (see `clientOnlyMediaIsRequired`), and the sentence under
+      // the button says which case this is.
+      const required = mediaSource === "client" && clientOnlyMediaIsRequired(engineProductId);
+      return (
+        <div key={field.key} className="sm:col-span-2">
+          <span className="text-xs font-medium text-muted">{required ? field.label : `${field.label} (optional)`}</span>
+          <RunAttachments
+            clientId={selectedClientId}
+            attachments={parseRunAttachmentsJson(fields[field.key])}
+            onChange={(next) => setField(field.key, next.length > 0 ? JSON.stringify(next) : "")}
+            disabled={pending}
+            mode={attachmentModeForEngineProduct(engineProductId) ?? "slides"}
+            hint={mediaSourceHint(engineProductId, mediaSource)}
+          />
+        </div>
+      );
+    }
     return (
       <div key={field.key} className={field.type === "textarea" ? "sm:col-span-2" : undefined}>
         <Label htmlFor={id}>{fieldLabel(field, standsInForFiles)}</Label>
@@ -2597,6 +2635,18 @@ export function RunCustomAgentModal({
     const missing = profile.fields.find((field) => field.required && !fields[field.key]?.trim());
     if (missing) {
       setError(`${missing.label} is required.`);
+      return;
+    }
+    // "Only media I upload" on an agent with no text fallback, and nothing
+    // uploaded: refused here, with both ways out named, rather than dispatched
+    // to an engine that would refuse it after the client has waited.
+    if (
+      mediaFields.length > 0 &&
+      mediaSource === "client" &&
+      clientOnlyMediaIsRequired(engineProductId) &&
+      parseRunAttachmentsJson(fields[MEDIA_ASSETS_FIELD_KEY]).length === 0
+    ) {
+      setError("Attach the media this run should use, or switch \"Media for this run\" back to letting Karos source the visuals.");
       return;
     }
     const attachmentAlternative = profile.attachments.satisfyWithFieldKey;
@@ -2981,6 +3031,11 @@ export function RunCustomAgentModal({
                 onChange={(event) => {
                   setSelectedClientId(event.target.value);
                   setSelectedFiles([]);
+                  // An attachment lands under `clients/<id>/run-attachments/`
+                  // for the client chosen when its upload started; carrying it
+                  // to another client would dispatch a run that reads out of the
+                  // first client's folder (see EngineAgentCard's selectClient).
+                  if (fields[MEDIA_ASSETS_FIELD_KEY]) setField(MEDIA_ASSETS_FIELD_KEY, "");
                 }}
               >
                 {clients.map((c) => (
@@ -3027,6 +3082,16 @@ export function RunCustomAgentModal({
             </div>
           )}
         </div>
+
+        {/* MEDIA, for the agents that make or carry it: where the visuals come
+            from, then the files. One bordered block so the two controls read as
+            one decision, and the sentence under the attach button changes with
+            the choice above it. */}
+        {mediaFields.length > 0 && (
+          <div className="space-y-3 rounded-lg border border-border bg-surface-1 p-3">
+            {mediaFields.map((field) => briefFieldControl(field))}
+          </div>
+        )}
 
         {/* THE DEFAULTS, as one line, and ONE disclosure for everything else.
             Nothing renders here when there is nothing behind it: a client on an

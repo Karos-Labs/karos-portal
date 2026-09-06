@@ -356,8 +356,8 @@ export default async function ClientAgentDetailPage({
   //
   // Resolved HERE, on the server, and handed to the three components that mount
   // the run dialog. `resolveDispatchedAgentEngineProductId` is the same call
-  // `submit-custom.ts` makes per run — dispatch enabled, this client on
-  // `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS`, this agent key routable — and it is
+  // `submit-custom.ts` makes per run — dispatch enabled, this client has a
+  // lab slug to run as, this agent key routable — and it is
   // the single definition of that predicate, deliberately not re-derived
   // anywhere else (see its own doc comment). It reads `process.env` behind
   // `server-only`, so the dialog physically cannot ask it and has to be told.

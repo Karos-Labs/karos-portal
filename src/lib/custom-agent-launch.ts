@@ -14,7 +14,13 @@ import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import type { CustomAgent } from "@/lib/types";
 import { RUN_ESTIMATE } from "@/lib/run-estimate";
 
-export type AgentBriefFieldType = "text" | "textarea" | "number" | "select";
+/**
+ * `media` is the run-attachment control (`RunAttachments`): the value is the
+ * JSON array of uploaded assets the engine reads as `mediaAssets`. A field
+ * type rather than a special-cased key so the dialog paints it with the same
+ * renderer as every other answer and the submit reads it from the same brief.
+ */
+export type AgentBriefFieldType = "text" | "textarea" | "number" | "select" | "media";
 
 export interface AgentBriefField {
   key: string;
@@ -1333,6 +1339,99 @@ export const CUSTOM_PROMPT_FIELD_KEY = "customPrompt";
 export const MEDIA_ASSETS_FIELD_KEY = "mediaAssets";
 
 /**
+ * The run-dialog key for WHERE a media agent's visuals come from.
+ *
+ *   `system` — the agent sources, generates, scrapes or renders its own visuals
+ *              through the existing pipeline (stock, screenshots, generation,
+ *              the client's owned footage). Anything the client attaches is
+ *              still used first; the pipeline fills what they did not supply.
+ *   `client` — the agent uses ONLY what the client uploaded for this job. It
+ *              never sources or generates a picture or a clip. X and LinkedIn
+ *              ship as text when nothing was attached; Instagram, TikTok and
+ *              Branded Shorts have no typographic fallback and refuse the run
+ *              until something is.
+ *
+ * Wire key `mediaSource` (product-mapping.ts); read engine-side by
+ * `readRichRunInput` and honoured by every media agent.
+ */
+export const MEDIA_SOURCE_FIELD_KEY = "media_source";
+export type MediaSource = "system" | "client";
+export const MEDIA_SOURCE_DEFAULT: MediaSource = "system";
+
+export function isMediaSource(value: unknown): value is MediaSource {
+  return value === "system" || value === "client";
+}
+
+/**
+ * How the attach-media control behaves for one engine product — the same three
+ * shapes `RunAttachments` paints (`AttachmentMode`), decided here so the client
+ * run dialog and the admin engine card cannot disagree about which agent takes
+ * a stack of slides, one episode, or one picture.
+ */
+export type EngineAttachmentMode = "slides" | "source-video" | "picture";
+
+export function attachmentModeForEngineProduct(engineProductId: string | undefined): EngineAttachmentMode | undefined {
+  switch (engineProductId) {
+    case "instagram-agent":
+      return "slides";
+    case "tiktok-agent":
+    case "branded-shorts-agent":
+      return "source-video";
+    case "x-agent":
+    case "linkedin-agent":
+      return "picture";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Whether "client-provided media only" is a run that CANNOT proceed with
+ * nothing attached. A text-first channel ships as text; a video or carousel
+ * agent has nothing to make.
+ */
+export function clientOnlyMediaIsRequired(engineProductId: string | undefined): boolean {
+  return engineProductId === "instagram-agent" || engineProductId === "tiktok-agent" || engineProductId === "branded-shorts-agent";
+}
+
+/** The sentence under the attach control, for this product and this choice of source. */
+export function mediaSourceHint(engineProductId: string | undefined, source: MediaSource): string {
+  const mode = attachmentModeForEngineProduct(engineProductId);
+  if (source === "client") {
+    if (mode === "slides") return "Only these images are used, in this order, first file on slide 1. Nothing is sourced or generated for the slides you leave uncovered.";
+    if (mode === "source-video") return "The footage this run works from. Nothing else is harvested or generated.";
+    return "Optional. Attach a picture and the post is written to it; leave it empty and the post ships as text — no picture is sourced or generated.";
+  }
+  if (mode === "slides") return "Optional. Anything you attach goes on the first slides; the rest is sourced or generated as usual.";
+  if (mode === "source-video") return "Optional. Attach footage to work from, or leave it empty and the agent finds or generates its own.";
+  return "Optional. Attach a picture and the post is written to it; leave it empty and the agent sources one when the post wants a visual.";
+}
+
+/** The dialog's JSON attachment list, parsed leniently — a malformed value is no attachments, never a crash in a client's dialog. */
+export function parseRunAttachmentsJson(raw: string | undefined): Array<{ uri: string; role: "source" | "reference"; contentType?: string; label?: string }> {
+  if (!raw?.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const e = entry as Record<string, unknown>;
+      if (typeof e.uri !== "string" || !e.uri) return [];
+      return [
+        {
+          uri: e.uri,
+          role: e.role === "reference" ? ("reference" as const) : ("source" as const),
+          ...(typeof e.contentType === "string" && e.contentType ? { contentType: e.contentType } : {}),
+          ...(typeof e.label === "string" && e.label ? { label: e.label } : {}),
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Which engine products work FROM a piece of media rather than producing one.
  *
  * Only these get the attachment field, because for everything else there is no
@@ -1398,15 +1497,30 @@ export function withEngineRunFields(
       helper: "How to treat the topic this time — an angle to take, something to avoid, a tone to hit.",
     });
   }
-  if (agentEngineProductAcceptsMediaAssets(engineProductId) && !profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
-    extra.push({
-      key: MEDIA_ASSETS_FIELD_KEY,
-      label: "Source media",
-      type: "textarea",
-      placeholder: '[{"uri": "gs://bucket/episode.mp4", "role": "source"}]',
-      helper:
-        "A gs:// or https:// URI per asset. For the video agents this is the footage to work from; for X, LinkedIn and Instagram it is optional — attach a picture and the post is written to it, leave it blank and the agent sources one.",
-    });
+  if (agentEngineProductAcceptsMediaAssets(engineProductId)) {
+    // The two media controls travel together: where the visuals come from, and
+    // the files themselves. Painted by the dialog as one "Media for this run"
+    // block under the primary question rather than behind "More options",
+    // because for a media agent this is the second question, not a detail.
+    if (!profile.fields.some((f) => f.key === MEDIA_SOURCE_FIELD_KEY)) {
+      extra.push({
+        key: MEDIA_SOURCE_FIELD_KEY,
+        label: "Media for this run",
+        type: "select",
+        defaultValue: MEDIA_SOURCE_DEFAULT,
+        options: [
+          { value: "system", label: "Karos sources or generates the visuals" },
+          { value: "client", label: "Only media I upload for this job" },
+        ],
+      });
+    }
+    if (!profile.fields.some((f) => f.key === MEDIA_ASSETS_FIELD_KEY)) {
+      extra.push({
+        key: MEDIA_ASSETS_FIELD_KEY,
+        label: "Your media",
+        type: "media",
+      });
+    }
   }
   if (extra.length === 0) return profile;
   return { ...profile, fields: [...profile.fields, ...extra] };
@@ -1870,7 +1984,10 @@ export function buildCustomAgentPrompt(
   values: Record<string, string>,
 ): string {
   return profile.fields
-    .filter((field) => field.key !== BATCH_SIZE_FIELD_KEY)
+    // The count is read separately (see BATCH_SIZE_FIELD_KEY); the two media
+    // controls are DATA for the engine (`mediaSource`, `mediaAssets` on the
+    // wire), and a JSON array of gs:// URIs is not prose an agent should read.
+    .filter((field) => field.key !== BATCH_SIZE_FIELD_KEY && field.key !== MEDIA_ASSETS_FIELD_KEY && field.key !== MEDIA_SOURCE_FIELD_KEY)
     .map((field) => ({ label: field.label, value: values[field.key]?.trim() }))
     .filter((entry): entry is { label: string; value: string } => Boolean(entry.value))
     .map((entry) => `${entry.label}\n${entry.value}`)

@@ -15,7 +15,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  * They disagreed. `submit-custom.ts:548` asks
  * `resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug)` —
  * the three-part gate (dispatch flag ON, this client on
- * `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS`, key routable). The dialog asked
+ * key routable; the per-client allowlist was removed 2026-09-06). The dialog asked
  * `resolveAgentEngineProductIdForCustomAgent(agent.key)`, which answers only
  * the third part. For every client not yet cut over — the normal state
  * mid-migration, and the state this whole drain exists to move clients out of
@@ -112,52 +112,40 @@ const AGENT = {
  * The environment for one row of the matrix, set on the real `process.env` the
  * two flag functions read — stubbing the predicate itself would test the mock.
  */
-function applyFlags(row: { dispatchEnabled: boolean; clientAllowlisted: boolean }) {
+function applyFlags(row: { dispatchEnabled: boolean }) {
   vi.stubEnv("AGENT_ENGINE_DISPATCH_ENABLED", row.dispatchEnabled ? "true" : "false");
-  // A non-empty allowlist that names SOMEONE ELSE, never an empty one: unset
-  // means nobody, so an empty string would let a row pass for the wrong reason.
-  vi.stubEnv(
-    "AGENT_ENGINE_CUSTOM_AGENT_CLIENTS",
-    row.clientAllowlisted ? CLIENT.agentsRepoSlug : "some-other-client",
-  );
+  // The per-client allowlist was removed 2026-09-06 (see health.ts). A stale
+  // value naming SOMEONE ELSE is set on every row so the matrix proves it no
+  // longer gates anything — a row that dispatches does so despite it.
+  vi.stubEnv("AGENT_ENGINE_CUSTOM_AGENT_CLIENTS", "some-other-client");
 }
 
 const MATRIX = [
   {
-    name: "dispatch flag off, client allowlisted, key routable → legacy path",
+    name: "dispatch flag off, key routable → legacy path",
     dispatchEnabled: false,
-    clientAllowlisted: true,
     agentKey: ROUTABLE_KEY,
     expected: undefined,
   },
   {
-    name: "dispatch flag on, client NOT allowlisted, key routable → legacy path",
+    name: "dispatch flag on, key NOT routable → legacy path",
     dispatchEnabled: true,
-    clientAllowlisted: false,
-    agentKey: ROUTABLE_KEY,
-    expected: undefined,
-  },
-  {
-    name: "dispatch flag on, client allowlisted, key NOT routable → legacy path",
-    dispatchEnabled: true,
-    clientAllowlisted: true,
     agentKey: UNROUTABLE_KEY,
     expected: undefined,
   },
   {
-    name: "dispatch flag on, client allowlisted, key routable → dispatches",
+    name: "dispatch flag on, key routable → dispatches (for every client with a slug; no allowlist)",
     dispatchEnabled: true,
-    clientAllowlisted: true,
     agentKey: ROUTABLE_KEY,
     expected: ROUTABLE_PRODUCT,
   },
 ] as const;
 
-/** The two fields `withEngineRunFields` appends, and nothing else. */
+/** The fields `withEngineRunFields` appends, and nothing else. */
 function engineFieldKeys(profile: { fields: ReadonlyArray<{ key: string }> }): string[] {
   return profile.fields
     .map((field) => field.key)
-    .filter((key) => key === "customPrompt" || key === "mediaAssets");
+    .filter((key) => key === "customPrompt" || key === "media_source" || key === "mediaAssets");
 }
 
 describe("the run dialog resolves the engineProductId the submit core resolves", () => {
@@ -193,16 +181,16 @@ describe("the run dialog resolves the engineProductId the submit core resolves",
         dialogProductId,
       );
       expect(engineFieldKeys(profile)).toEqual(
-        row.expected === undefined ? [] : ["customPrompt", "mediaAssets"],
+        row.expected === undefined ? [] : ["customPrompt", "media_source", "mediaAssets"],
       );
     });
   }
 
-  it("is not vacuous: the key-only resolver the dialog used to call disagrees on two of these rows", () => {
+  it("is not vacuous: the key-only resolver the dialog used to call disagrees on the dispatch-off row", () => {
     // The guard that makes the matrix mean something. `resolveAgentEngine
-    // ProductIdForCustomAgent` is blind to both flags, so it answers
-    // "instagram-agent" for rows 1 and 2 — where the run demonstrably goes to
-    // agent-service. If the dialog ever goes back to asking it, the rows above
+    // ProductIdForCustomAgent` is blind to the dispatch flag, so it answers
+    // "instagram-agent" for row 1 — where the run demonstrably does not reach
+    // the engine. If the dialog ever goes back to asking it, the rows above
     // fail; this states why, so the next reader does not have to reconstruct it.
     for (const row of MATRIX.filter((r) => r.agentKey === ROUTABLE_KEY && r.expected === undefined)) {
       applyFlags(row);
@@ -215,9 +203,10 @@ describe("the run dialog resolves the engineProductId the submit core resolves",
     // "An entry exists only where it dispatches" is a property of the built
     // map, not only of how it is read — so a caller that iterates it sees the
     // truth too.
-    applyFlags({ dispatchEnabled: true, clientAllowlisted: false });
+    applyFlags({ dispatchEnabled: true });
+    // A client with no lab slug: the one per-client condition left in the gate.
     expect(
-      buildEngineDispatchMap([CLIENT], [ROUTABLE_KEY], resolveDispatchedAgentEngineProductId),
+      buildEngineDispatchMap([{ ...CLIENT, agentsRepoSlug: undefined }], [ROUTABLE_KEY], resolveDispatchedAgentEngineProductId),
     ).toEqual({});
   });
 });
@@ -241,16 +230,17 @@ describe("what the dialog actually renders for a client on the legacy path", () 
     // and a dialog that stopped rendering would prove nothing.
     const markup = dialogMarkup({ [CLIENT.id]: { [ROUTABLE_KEY]: ROUTABLE_PRODUCT } });
     expect(markup).toContain("Direction for this run");
-    expect(markup).toContain("Source media");
+    expect(markup).toContain("Media for this run");
+    expect(markup).toContain("Only media I upload for this job");
   });
 
-  it("paints NEITHER for a client who is not cut over — the T-B5 bug, at its second call site", () => {
-    // The empty map is what the page hands down for every client not yet on
-    // `AGENT_ENGINE_CUSTOM_AGENT_CLIENTS`. Before T-B21 both fields appeared
-    // here, and both answers went to agent-service and vanished.
+  it("paints NEITHER for a pair that does not dispatch — the T-B5 bug, at its second call site", () => {
+    // The empty map is what the page hands down when dispatch is off or the
+    // client has no lab slug. Before T-B21 both fields appeared here, and both
+    // answers went to agent-service and vanished.
     const markup = dialogMarkup({});
     expect(markup).not.toContain("Direction for this run");
-    expect(markup).not.toContain("Source media");
+    expect(markup).not.toContain("Media for this run");
   });
 });
 

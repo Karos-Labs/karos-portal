@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { launchProfileFor, withEngineRunFields, BATCH_SIZE_FIELD_KEY } from "@/lib/custom-agent-launch";
 import {
-  isClientEnabledForEngineCustomAgents,
   KNOWN_ENGINE_PRODUCT_IDS,
   resolveAgentEngineProductId,
   resolveAgentEngineProductIdForCustomAgent,
@@ -251,44 +250,6 @@ describe("toEngineRunInput", () => {
   });
 });
 
-describe("isClientEnabledForEngineCustomAgents", () => {
-  it("routes nobody when unset, so shipping the code is not the cutover", () => {
-    // Production has all seven clients granted the X agent and engine context
-    // for one. Deploying the routing must change nothing until a human names
-    // a client.
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", {})).toBe(false);
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "" })).toBe(false);
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "   " })).toBe(false);
-  });
-
-  it("routes only the named clients", () => {
-    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "karoslabs,geektime" };
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", env)).toBe(true);
-    expect(isClientEnabledForEngineCustomAgents("geektime", env)).toBe(true);
-    expect(isClientEnabledForEngineCustomAgents("sitti", env)).toBe(false);
-  });
-
-  it("tolerates spacing in the list", () => {
-    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: " karoslabs , geektime " };
-    expect(isClientEnabledForEngineCustomAgents("geektime", env)).toBe(true);
-  });
-
-  it("supports * once every client is ready", () => {
-    expect(isClientEnabledForEngineCustomAgents("anyone", { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "*" })).toBe(true);
-  });
-
-  it("never routes a client with no slug", () => {
-    // agentsRepoSlug is what the engine resolves its workspace against; without
-    // one there is no tenant to run as.
-    expect(isClientEnabledForEngineCustomAgents(undefined, { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "*" })).toBe(false);
-  });
-
-  it("does not match on a prefix", () => {
-    const env = { AGENT_ENGINE_CUSTOM_AGENT_CLIENTS: "karos" };
-    expect(isClientEnabledForEngineCustomAgents("karoslabs", env)).toBe(false);
-  });
-});
-
 describe("resolveAgentEngineRunKind", () => {
   it("sends landing-builder a first build, not a rebuild", () => {
     // agent-engine's landing-builder reads runKind "recurring" as MODE=rebuild
@@ -330,14 +291,14 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   productId: string;
   visibleFields: readonly string[];
 }> = [
-  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "customPrompt", "mediaAssets"] },
-  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "customPrompt", "mediaAssets"] },
-  { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "mediaAssets"] },
+  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "media_source", "mediaAssets"] },
   { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request", "customPrompt"] },
   { key: "karos-reddit-setup", name: "Reddit Setup", productId: "reddit-agent", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
-  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
-  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "mediaAssets"] },
-  { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "mediaAssets"] },
+  { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "branded-shorts", name: "Branded Shorts", productId: "branded-shorts-agent", visibleFields: ["request", "source_url", "platform", "duration", "cta", "editing_notes", "customPrompt", "media_source", "mediaAssets"] },
   { key: "landing-builder", name: "Landing Page Builder", productId: "landing-builder-agent", visibleFields: ["request", "offer", "audience", "cta", "proof", "references", "customPrompt"] },
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
   { key: "karos-newsletter-writer-v2", name: "Newsletter Writer", productId: "newsletter-agent", visibleFields: ["request", "audience", "must_include", "cta", "tone", "customPrompt"] },
@@ -350,6 +311,8 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
 function answerFor(key: string): string {
   if (key === "batch_size") return "3";
   if (key === "mediaAssets") return '[{"uri": "gs://bucket/probe-mediaAssets.mp4", "role": "source"}]';
+  // The non-default value, so dropping the field changes the payload.
+  if (key === "media_source") return "client";
   if (key === "source_url" || key === "references" || key === "sources") {
     return `https://example.com/probe-${key}`;
   }
@@ -410,6 +373,25 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
     expect(toEngineRunInput({ request: "a topic", batch_size: "5" }, "x-agent")).toEqual({
       requestedTopic: "a topic",
     });
+  });
+});
+
+describe("toEngineRunInput — media_source → mediaSource (2026-09-06)", () => {
+  it("passes exactly the two legal values through under the engine's key", () => {
+    expect(toEngineRunInput({ media_source: "client" }, "x-agent")).toEqual({ mediaSource: "client" });
+    expect(toEngineRunInput({ media_source: "system" }, "instagram-agent")).toEqual({ mediaSource: "system" });
+  });
+
+  it("omits anything else, so the engine applies its own default rather than a third mode nobody defined", () => {
+    expect(toEngineRunInput({ media_source: "" }, "x-agent")).toEqual({});
+    expect(toEngineRunInput({ media_source: "CLIENT" }, "x-agent")).toEqual({});
+    expect(toEngineRunInput({ media_source: "generate" }, "x-agent")).toEqual({});
+  });
+
+  it("travels alongside the attachments it governs", () => {
+    expect(
+      toEngineRunInput({ media_source: "client", mediaAssets: '[{"uri":"gs://b/pic.png","role":"source"}]' }, "linkedin-agent"),
+    ).toEqual({ mediaSource: "client", mediaAssets: [{ uri: "gs://b/pic.png", role: "source" }] });
   });
 });
 
