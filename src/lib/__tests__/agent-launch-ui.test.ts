@@ -171,17 +171,29 @@ describe("custom agent launch profiles", () => {
       // round 6: was "3". The count is the quote's multiplier now, and a default
       // above 1 makes the first number a client reads a number they did not ask
       // for.
-      const postCount = instagram.fields.find((field) => field.key === POST_COUNT_FIELD_KEY);
-      expect(postCount?.defaultValue).toBe("1");
-      expect(postCountFrom(initialAgentBrief(instagram))).toBe(1);
+      //
+      // THE KEY IS `batch_size`, not `post_count`. Round 6 and the 2026-09-05
+      // run-dialog pass fixed the same defect from opposite ends and met here:
+      // that pass made Instagram's count VISIBLE as the shared batch key, which
+      // is the only one the submit core splits into N runs and charges for.
+      // `post_count` stayed a dialog-only number no engine workflow ever read,
+      // so quoting off it would have gone back to promising a client something
+      // the run does not do. It is not in this profile's brief at all.
+      const count = instagram.fields.find((field) => field.key === BATCH_SIZE_FIELD_KEY);
+      expect(count?.defaultValue).toBe("1");
+      expect(count?.hidden ?? false).toBe(false);
+      expect(postCountFrom(initialAgentBrief(instagram))).toBeUndefined();
       expect(quoteMultiplierFrom(initialAgentBrief(instagram))).toBe(1);
     });
 
     it("follows the count the reader can see", () => {
-      expect(quoteMultiplierFrom({ ...initialAgentBrief(instagram), post_count: "4" })).toBe(4);
+      expect(quoteMultiplierFrom({ ...initialAgentBrief(instagram), [BATCH_SIZE_FIELD_KEY]: "4" })).toBe(4);
       // The defect itself: this used to be 1 for every count, because the count
       // and the multiplier were different keys.
-      expect(quoteMultiplierFrom({ post_count: "10" })).toBe(10);
+      expect(quoteMultiplierFrom({ [BATCH_SIZE_FIELD_KEY]: "5" })).toBe(5);
+      // `post_count` remains the fallback the round-6 helper was written for, so
+      // a profile that still shows one quotes off it rather than off nothing.
+      expect(quoteMultiplierFrom({ [POST_COUNT_FIELD_KEY]: "10" })).toBe(10);
     });
 
     it("multiplies exactly once, and never by a count it cannot trust", () => {
