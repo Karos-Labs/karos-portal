@@ -17,27 +17,40 @@ the "Promote to Production" workflow is manual and must not be run as part of th
 | `round6-approval.pdf` (+ `.html` source) | The one short document Albert approves. 7 pages: cover, 8 areas, decisions, shipping order. Rebuild: Chrome headless `--print-to-pdf` over the html (brand fonts from `~/Library/Fonts`). | sent to Albert 2026-09-04 |
 | `context/` | Rounds 4–5 design docs (ladder, credits, flow audit, UX deep dive with the recommendation status list) and the PR log text sent to Tomer. | implemented |
 
-## Where the process stopped
+## State on 2026-09-06: implemented, on this branch, not merged
 
-1. Three "thinking" docs written in parallel, complete.
-2. Risk review done (`risk-review.md`). Main cuts: no six-state status rename, no client uploads in the run
-   dialog, no "Ask about it", no site-access flag, "Coming Soon" is not "Paused". Main rulings: one
-   `RosterStatusBadge` everywhere; the run/setup/launch control keeps the one `accent`, the dialog confirm
-   and kickoff strip go `primary`; Live = `rosterStatus` with `isUpcomingPost` + 14-day ceiling, read by the
-   ladder too; Reporting's per-agent control is `Button outline` "Open {name}"; not-on-plan rows get Support
-   only (clients get `notFound()` on ungranted agent pages).
-3. The approval PDF is written and sent to Albert (`round6-approval.pdf`). **Waiting on his approval and
-   his answers to the 10 decisions on page 6.**
+Everything approved in `round6-approval.pdf` is built on **`claude/portal-round6`** (commits f25ee787 and
+28f52767). Typecheck clean, 5753 tests green, `npm run build` passes. No PR is open yet; Albert reviews it
+on localhost first. Process record: `impl-brief.md` (the contract the executors worked from, with file
+ownership), `risk-review.md`, `alignment-review.md`, `verify-ACF.md`, `verify-BDE.md`, and
+`handoffs/INTEGRATION.md` (every integration, review fix and the 2026-09-06 orange restore).
 
-## Next steps, in order
+Rulings added during implementation, all final:
+- Meters, bars, sparklines and card icon chips KEEP their orange; the one-orange rule is about controls
+  (Albert, 2026-09-06). The primitives test pins this.
+- One status source: `buildClientRosterEntries` in `src/lib/client-roster.ts` feeds Home's ladder, the
+  Agents tab (client and staff scope), the agent page and Reporting. Never assemble `rosterStatus` inputs
+  elsewhere.
+- Documents are confirmed only by the client (`canConfirm={isClientViewer}`); staff see the read-only line.
+- Ladder step 5 is done when the client opened a post or has a deliverable that aged out of the archive
+  window; the card hides only when dismissed AND complete, so a later grant can reopen it.
 
-1. Albert approves the PDF and answers the decisions (a plain "yes" takes every recommendation).
-2. Branch from **`origin/main`** (never the stale local `main`). Ship in the PDF's order, one PR each, prep
-   only: primitives + status predicate; Reporting; status badge + Agents tab + rail; Get set up; Create a
-   post; notifications clean-up. Executors on Opus 5, logic/copy on Fable 5.1, a risk agent reads each PR
-   against `albert-brief-round6.md` and `risk-review.md` before merge.
-3. Test pins that change on purpose are listed in `risk-review.md` §F; invert
-   `agent-detail-archetypes.test.ts` ~:726 with the predicate fix or CI fails.
+## Next steps
+
+1. Albert walks the portal on localhost (`npm run dev` in a worktree with `node_modules` and `.env.local`;
+   the pane needs a normal sign-in, never a minted token). Never click writes on localhost: `.env.local`
+   is production Firestore.
+2. Before the PR: the ops attribution check from `think-agents.md` §0 against production (combined
+   `karos-instagram-tiktok-content-agent` card vs posts imported from the plain `instagram-agent` folder),
+   because widening "upcoming" flips every client with imported future drafts to Live at once.
+3. Expect existing clients who never pressed "Hide this" to see the checklist at 5 of 6 with "Open your
+   first post" on ship day; one click clears it.
+4. PR from `claude/portal-round6` to main with auto-merge, lands on **prep only**. Do not run the
+   production promote.
+
+Round-7 candidates (from `alignment-review.md`): Profile's two orange saves and the document panel's orange,
+the whole-rail restyle beyond the agents block, the phase-2 client notification feed, "More ways to get
+value" after the ladder.
 
 ## Non-negotiables while implementing (all confirmed by Albert in earlier rounds)
 
