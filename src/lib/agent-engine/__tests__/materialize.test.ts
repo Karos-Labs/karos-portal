@@ -309,6 +309,23 @@ describe("the long-form products land on the asset type their content actually i
     expect(asset.type).toBe("email");
     expect(asset.title).toBe("The brief is the decision");
     expect(asset.content).toBe("Full assembled edition body.");
+    // No render on this deliverable: the meta carries no html, and the modal falls back to the text.
+    expect(asset.meta).not.toHaveProperty("html");
+  });
+
+  it("newsletter-agent: carries the engine's email-safe HTML renders in meta, with the markdown text still as content", async () => {
+    const html = "<!DOCTYPE html><html><body><table><tr><td>Light edition</td></tr></table></body></html>";
+    const htmlDark = "<!DOCTYPE html><html><body><table><tr><td>Dark edition</td></tr></table></body></html>";
+    await materialize("newsletter-agent", {
+      subjectLine: "The brief is the decision",
+      previewText: "Why more output made things worse",
+      text: "Full assembled edition body.",
+      html,
+      htmlDark,
+    });
+    const asset = createdAsset();
+    expect(asset.content).toBe("Full assembled edition body.");
+    expect(asset.meta).toMatchObject({ subjectLine: "The brief is the decision", previewText: "Why more output made things worse", html, htmlDark });
   });
 
   it("newsletter-agent: stitches intro/sections/signoff when the agent recorded no assembled text", async () => {
