@@ -481,7 +481,11 @@ describe("rosterStatus tells the truth about an agent that has never been asked"
     // up yet" — directly above a working Run button. Invisible on X (it has
     // delivered twice) and waiting for the first LinkedIn client the moment
     // their stand-up run finished.
-    expect(rosterStatus({ ...base, hasDelivered: false, readyToRun: true })).toEqual({
+    // round 6 review (C2): the readiness pair is handed over whole and
+    // `agentReadyToRun` owns the conjunction, so no caller spells it.
+    expect(
+      rosterStatus({ ...base, hasDelivered: false, setup: { ready: true, standUpDone: true } }),
+    ).toEqual({
       tone: "idle",
       label: "Runs on request",
     });
@@ -491,7 +495,11 @@ describe("rosterStatus tells the truth about an agent that has never been asked"
     // True for LinkedIn today: the forms are saved but the stand-up run has not
     // happened, so the phrase is accurate — and the band beneath it is what
     // explains which step is missing.
-    expect(rosterStatus({ ...base, hasDelivered: false, readyToRun: false })).toEqual({
+    // round 6 review (C2): either rung false is "not ready" — the conjunction
+    // lives in `agentReadyToRun` now.
+    expect(
+      rosterStatus({ ...base, hasDelivered: false, setup: { ready: true, standUpDone: false } }),
+    ).toEqual({
       tone: "idle",
       label: "Not set up yet",
     });

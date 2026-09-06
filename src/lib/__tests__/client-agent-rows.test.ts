@@ -34,8 +34,16 @@ vi.mock("@/lib/agent-service/x-agent-context", () => ({ hasXAgentIntake: vi.fn()
 vi.mock("@/lib/agent-service/linkedin-agent-context", () => ({ hasLinkedInAgentIntake: vi.fn() }));
 vi.mock("@/lib/agent-service/reddit-agent-context", () => ({ hasRedditAgentIntake: vi.fn() }));
 
-const { scheduleZonesByAgent, toClientAgentRows, toRunRows, toScheduleRows, toSummary } =
-  await import("@/lib/client-agent-rows");
+const {
+  rosterNextLabel,
+  rosterRowVerb,
+  rosterRunVerb,
+  scheduleZonesByAgent,
+  toClientAgentRows,
+  toRunRows,
+  toScheduleRows,
+  toSummary,
+} = await import("@/lib/client-agent-rows");
 
 /**
  * The strip's horizon, as a literal. `WEEK_STRIP_DAYS` is deliberately NOT
@@ -1613,5 +1621,139 @@ describe("toClientAgentRows — the card projection", () => {
     expect(listFeedbackMock).not.toHaveBeenCalled();
     expect(rows[0]).toMatchObject({ week: [], feedback: [], today: null, runnable: null });
     expect(rows[0].templateGates).toEqual({});
+  });
+});
+
+/* ═════════════════ the roster row's derived labels (round 6) ═════════════════ */
+
+describe("rosterRunVerb — what one run of this agent makes", () => {
+  it("says reply for Reddit, and never post", () => {
+    // The product rule, not a preference: Reddit is draft-only and a human posts
+    // the reply from their own account. A roster row that says "Create post"
+    // above it contradicts the one promise the agent is built around.
+    expect(rosterRunVerb("karos-reddit-runner Reddit Agent")).toBe("Draft reply");
+    expect(rosterRunVerb("karos-reddit-agent Reddit Agent")).toBe("Draft reply");
+  });
+
+  it("says clip for the clip makers", () => {
+    expect(rosterRunVerb("karos-interview-clips Interview Clips")).toBe("Create clip");
+    expect(rosterRunVerb("karos-branded-shorts Branded Shorts")).toBe("Create clip");
+  });
+
+  it("says post for the combined content engine, which names TikTok but makes posts", () => {
+    // The ordering hazard agent-archetype.ts documents, asked of the verb: the
+    // flagship agent's key contains "tiktok" and its deliverable is a feed post.
+    expect(rosterRunVerb("karos-instagram-tiktok-content-agent Instagram Agent")).toBe(
+      "Create post",
+    );
+  });
+
+  it("says post for an agent nobody has classified", () => {
+    expect(rosterRunVerb("karos-something-new Something New")).toBe("Create post");
+  });
+
+  it("reads an identity with no name at all rather than throwing", () => {
+    // `identity` is `"<key> <name>"` by construction, but a row is not the place
+    // to discover that an agent was stored without one.
+    expect(rosterRunVerb("karos-reddit-runner")).toBe("Draft reply");
+  });
+});
+
+describe("rosterRowVerb — the verb a roster row offers per status", () => {
+  const identity = "karos-instagram-tiktok-content-agent Instagram Agent";
+
+  it("offers the run verb for the two set-up words", () => {
+    expect(rosterRowVerb({ status: { tone: "live", label: "Live" }, identity })).toBe(
+      "Create post",
+    );
+    expect(
+      rosterRowVerb({ status: { tone: "idle", label: "Runs on request" }, identity }),
+    ).toBe("Create post");
+  });
+
+  it("offers setup, launch or credits per the reason behind an attention word", () => {
+    for (const label of ["Needs attention", "Setup needs attention"]) {
+      expect(
+        rosterRowVerb({ status: { tone: "attention", label }, identity, attentionReason: "intake" }),
+      ).toBe("Set up");
+      expect(
+        rosterRowVerb({ status: { tone: "attention", label }, identity, attentionReason: "launch" }),
+      ).toBe("Launch");
+      expect(
+        rosterRowVerb({
+          status: { tone: "attention", label },
+          identity,
+          attentionReason: "credits",
+        }),
+      ).toBe("Add credits");
+    }
+  });
+
+  it("falls back to Open when the reason behind an attention word is unknown", () => {
+    // The page behind the row is where the reason and its fix both live, so it
+    // is the honest offer. Naming a fix we cannot see sends a client to the
+    // wrong lever.
+    expect(rosterRowVerb({ status: { tone: "attention", label: "Needs attention" }, identity })).toBe(
+      "Open",
+    );
+  });
+
+  it("offers Open while an agent is being set up", () => {
+    expect(rosterRowVerb({ status: { tone: "progress", label: "Setting up" }, identity })).toBe(
+      "Open",
+    );
+  });
+
+  it("offers Request setup for a never-set-up agent", () => {
+    expect(rosterRowVerb({ status: { tone: "idle", label: "Not set up yet" }, identity })).toBe(
+      "Request setup",
+    );
+  });
+
+  it("fails safe: any idle word it does not know asks for setup rather than a run", () => {
+    // F131 shape. Offering a run the server would refuse is the failure this
+    // direction of the fallback exists to prevent; offering setup on something
+    // already set up is merely redundant.
+    expect(rosterRowVerb({ status: { tone: "idle", label: "Something new" }, identity })).toBe(
+      "Request setup",
+    );
+  });
+
+  it("offers nothing at all for a paused agent", () => {
+    // Null is what makes the row static: no verb, no chevron, no destination.
+    expect(rosterRowVerb({ status: { tone: "disabled", label: "Coming Soon" }, identity })).toBeNull();
+  });
+});
+
+describe("rosterNextLabel — the next planned day", () => {
+  const noon = (year: number, month: number, day: number) =>
+    new Date(year, month, day, 12, 0, 0).getTime();
+
+  it("names today and tomorrow in words", () => {
+    const now = noon(2026, 8, 4);
+    expect(rosterNextLabel(now + 60_000, now)).toBe("Today");
+    expect(rosterNextLabel(noon(2026, 8, 5), now)).toBe("Tomorrow");
+  });
+
+  it("names any later day as weekday then date, in that order", () => {
+    // "5 Thu" is what the en-US `{ weekday, day }` pattern renders, and it reads
+    // as a quantity. The label is composed for exactly that reason.
+    const now = noon(2026, 8, 4);
+    expect(rosterNextLabel(noon(2026, 8, 10), now)).toBe("Thu 10");
+  });
+
+  it("compares DAYS, not the 24-hour gap between two instants", () => {
+    // 11pm tonight and 1am tomorrow are two hours apart and are not the same
+    // day, which is the only distinction this label makes.
+    const lateTonight = new Date(2026, 8, 4, 23, 0, 0).getTime();
+    const earlyTomorrow = new Date(2026, 8, 5, 1, 0, 0).getTime();
+    expect(rosterNextLabel(earlyTomorrow, lateTonight)).toBe("Tomorrow");
+  });
+
+  it("says Today rather than a past day for a stamp that has already gone by", () => {
+    // A roster row only ever asks this about a future day; if a stale one
+    // arrives, the row must not print a date in the past under the word "Next".
+    const now = noon(2026, 8, 4);
+    expect(rosterNextLabel(noon(2026, 8, 1), now)).toBe("Today");
   });
 });

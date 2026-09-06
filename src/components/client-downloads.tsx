@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardTitle } from "@/components/ui";
+import { buttonClass, Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { cn } from "@/lib/utils";
 import { markActionDoneAction } from "@/lib/actions/action-list-actions";
 
 /** Today's date in the browser's own local zone, as a `<input type="date">` value. */
@@ -63,9 +62,10 @@ export function ClientDownloads({
           onClick={() => {
             if (viewerIsClient) void markActionDoneAction(clientId, "15");
           }}
-          className={cn(
-            "inline-flex h-10 items-center justify-center gap-2 rounded-md bg-neon px-4 text-sm font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_color-mix(in_srgb,var(--neon)_55%,transparent)]",
-          )}
+          /* round 6 (rule 2): `Button variant="accent"`'s own recipe, read from
+             `buttonClass` on an anchor rather than restated with a lift and a
+             shadow bloom. A hover here is a colour change and nothing else. */
+          className={buttonClass({ variant: "accent" })}
         >
           <Icon name="Download" className="h-4 w-4" />
           Download .zip

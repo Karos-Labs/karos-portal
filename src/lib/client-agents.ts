@@ -644,22 +644,80 @@ export function latestBlockedIntake(
  */
 export const SCHEDULE_REFUSAL_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
 
+/* ──────────────── readiness: the conjunction, spelled once ──────────────── */
+
+/**
+ * The two readiness rungs of an intake-driven agent, as the run gates read them
+ * (`AgentSetupState` is a superset of this).
+ *
+ * NULL IS A THIRD ANSWER and it is not "no": an agent that runs on no intake at
+ * all has no readiness this server can resolve, and every consumer below treats
+ * that as "do not know" rather than as "not ready".
+ */
+export interface AgentReadiness {
+  /** The intake document is saved (`AgentSetupState.ready`). */
+  ready: boolean;
+  /** The one-time stand-up run has happened, where the family has one. */
+  standUpDone: boolean;
+}
+
+/**
+ * "COULD THIS AGENT BE RUN RIGHT NOW" — the conjunction, in ONE place.
+ *
+ * `setup.ready && setup.standUpDone` was spelled by hand in four callers (the
+ * agent detail page, the roster build, the staff roster and Home's ladder), and
+ * a conjunction copied four times is a conjunction three of them will forget to
+ * update (round 6 review, finding C2). Callers hand over the OBJECT now and this
+ * answers.
+ *
+ * `undefined` out for `undefined`/`null` in, deliberately: it is the same
+ * "do not know" `rosterStatus` documents on the input it feeds.
+ */
+export function agentReadyToRun(setup: AgentReadiness | null | undefined): boolean | undefined {
+  return setup ? setup.ready && setup.standUpDone : undefined;
+}
+
+/**
+ * DOES THIS AGENT STILL NEED SETTING UP — the detail page's `needsSetup`, and
+ * the AF-5 gate, as one predicate (round 6 review, findings C2/C3/C8).
+ *
+ * The two were the same question asked in two spellings:
+ * `intakeDriven && !hasDelivered && !(setup.ready && setup.standUpDone)` on the
+ * agent detail page, and `readyToRun === false && !hasDelivered` inside
+ * `statusWord`. They have to agree exactly, because one decides whether the page
+ * paints a setup hero and the other decides whether the badge above that hero is
+ * allowed to say "Live". They drifted apart once already and the client read
+ * "Live" over "it starts producing for you".
+ *
+ * An agent with no intake (`setup: null`) needs no setup: it is the imported-
+ * stream shape, it has no form for a client to finish and no hero to contradict.
+ * An agent that has already delivered is past setup whatever the flags say now —
+ * a later intake edit cannot un-launch a live agent.
+ */
+export function agentNeedsSetup(input: {
+  setup: AgentReadiness | null | undefined;
+  hasDelivered: boolean;
+}): boolean {
+  if (input.hasDelivered) return false;
+  return agentReadyToRun(input.setup) === false;
+}
+
 export type RosterStatusTone = "live" | "attention" | "progress" | "idle" | "disabled";
 
 export interface RosterStatus {
   tone: RosterStatusTone;
   label: string;
   /**
-   * The operational truth behind a word that does not come from this agent's own
-   * machinery — today only the AF-5 rung, where "Live" is claimed on the strength
-   * of content already on the client's calendar rather than on a schedule that is
-   * firing.
+   * The operational truth behind a word that the client's own reading of this
+   * agent does not explain — the AF-5 rung, where "Live" is claimed on the
+   * strength of content already on the client's calendar rather than on a
+   * schedule that is firing, and (round 6) a last run that failed on our side.
    *
-   * STAFF SURFACES ONLY. It is set unconditionally (the function has no viewer
-   * argument and does not want one: the CLIENT-FACING word is the same for both
-   * readers by ruling, and a status that changed shape per viewer is how two
-   * surfaces come to disagree). Callers decide whether to paint it, and the
-   * client's branches do not.
+   * STAFF SURFACES ONLY, and it is the ONLY thing on this object that a viewer
+   * can change: the WORD is the same for both readers by ruling (round 6), so
+   * `viewerIsStaff` may only ever add this sentence. Two facts join with a
+   * middot rather than fighting over the slot; the surfaces that paint it render
+   * it as the `Internal` line beside the client-facing word.
    */
   staffNote?: string;
 }
@@ -672,6 +730,24 @@ export interface RosterStatus {
  */
 export const IMPORTED_CONTENT_STAFF_NOTE =
   "Schedule is not firing. The client-facing status reads Live because upcoming content for this agent is already on their calendar, produced internally.";
+
+/**
+ * The other half of the same Internal line (round 6): this agent's last run with
+ * a verdict failed.
+ *
+ * IT NO LONGER MOVES THE WORD. Until round 6 a failed last run returned "Needs
+ * attention" for a staff reader and nothing at all for a client, so the same
+ * agent at the same instant read "Live" to the client and "Needs attention" to
+ * the person sitting beside them — the one place in the product where the status
+ * word differed per viewer, which the parity ruling forbids. AF-14 (clients never
+ * see our failures) and parity are both satisfied by making the failure ADDITIVE:
+ * the word is the client's, and staff get this sentence next to it.
+ *
+ * Operator voice, like its sibling above: the reader is the person who would
+ * otherwise open a ticket about a green badge over a failed run.
+ */
+export const LAST_RUN_FAILED_STAFF_NOTE =
+  "Last run failed. The client-facing status is unchanged, because a failure on our side is not theirs to attend to.";
 
 /**
  * Whether a stored schedule refusal is recent enough to still be the client's
@@ -693,8 +769,14 @@ export const IMPORTED_CONTENT_STAFF_NOTE =
  * Keyed to `=== false`, so a caller that does not know the status still gets
  * the alarm. That is the loud direction on purpose: an unanswerable "is it
  * paused?" must not silence a refusal.
+ *
+ * EXPORTED since round 6 (review finding D7). The roster row's `attentionReason`
+ * has to know whether the refusal it can see is the one that produced the
+ * attention tone — a stale refusal did not, and pointing a client at "Add
+ * credits" over a denial that aged out three weeks ago is the stale-alarm bug
+ * this window exists to prevent, one surface further out.
  */
-function refusalIsCurrent(input: {
+export function isCurrentScheduleRefusal(input: {
   scheduleRefusal?: string | null;
   scheduleRefusalAt?: number | null;
   scheduleActive?: boolean;
@@ -719,21 +801,21 @@ function refusalIsCurrent(input: {
  * umbrella says, and painting it green because a database field says `live`
  * is the exact lie those two defects were about.
  *
- * A FAILED LAST RUN outranks "Live" for the same reason and closes the other
- * half of it. The refusal rung can only see a fire the scheduler turned away
- * BEFORE a job existed; a run that submits cleanly and then fails at the agent
- * service is invisible to it, which is how the pilot client's Instagram Agent
- * came to show a green "Live" badge two days after its only run failed. The
- * verdict comes from `lastRunFailedAgentIds`, which every call site shares so
- * the card and the page it opens cannot hold two opinions of the ordering rule.
- * It is a STAFF rung only — see `viewerIsStaff`, and AF-14 — because the green
- * badge it was written to correct is on a staff surface, while on a client's it
- * asks them to attend to a failure that is ours.
+ * A FAILED LAST RUN IS NOT A WORD ANY MORE (round 6). It used to return "Needs
+ * attention" for a staff reader and nothing for a client, which made this the
+ * one function in the product whose WORD depended on who was looking: the same
+ * agent, the same instant, "Live" on the client's screen and "Needs attention"
+ * on ours. The parity ruling forbids that, and AF-14 forbids the other
+ * direction, so the failure became additive instead — see
+ * `LAST_RUN_FAILED_STAFF_NOTE` and the `Internal` line the surfaces paint. The
+ * fact still arrives through `lastRunFailedAgentIds`, so no surface holds an
+ * opinion of its own about what "failed last" means.
  *
- * Both rungs say "Needs attention" — one phrase, deliberately. The roster
- * answers "is this working for me right now", and "no" is one answer however it
- * got there; WHY is the detail page's job. A second phrase here would also be a
- * second label map, and those are a standing defect class in this codebase.
+ * A REFUSAL IS UNAFFECTED and still says "Needs attention" for everyone
+ * (F24/F129). The two are different facts: a refusal is the scheduler turning a
+ * fire away for a reason the client owns (out of credits, an empty intake), and
+ * telling them is the whole point; a run that submitted cleanly and then broke
+ * is ours.
  *
  * "Live" is then either of the two things a client would call live: an umbrella
  * that has gone live, or — for an agent with no umbrella at all — a weekly
@@ -763,6 +845,14 @@ function refusalIsCurrent(input: {
  * producing agent idle, not that we start calling a broken one live. The staff
  * note rides along so the surfaces that carry operator state can say why the word
  * disagrees with the schedule row underneath it.
+ *
+ * AND NOT A BROKEN ONE, NOR ONE STILL ASKING FOR ITS FORM (round 6). An
+ * intake-driven agent whose intake is unsaved renders a setup hero on its own
+ * page, and this rung was painting "Live" over it. `agentNeedsSetup` — the ONE
+ * predicate the detail page's own `needsSetup` is now also read from — is
+ * skipped for that reason. An agent with no intake at all (`setup` absent) still
+ * promotes: it is the imported-stream shape AF-5 exists for, and it has no setup
+ * to finish.
  */
 export function rosterStatus(input: {
   /** Null for a granted agent with no umbrella bound. */
@@ -770,7 +860,7 @@ export function rosterStatus(input: {
   /**
    * The agent's schedule refusal, already client-redacted — passed RAW, as
    * stored. Callers used to null it out themselves for a paused schedule;
-   * `refusalIsCurrent` owns that rule now, so hand it over unfiltered or the
+   * `isCurrentScheduleRefusal` owns that rule now, so hand it over unfiltered or the
    * rule exists in two places again.
    */
   scheduleRefusal?: string | null;
@@ -795,21 +885,28 @@ export function rosterStatus(input: {
    */
   hasDelivered?: boolean;
   /**
-   * True when this agent COULD be run right now — both readiness questions
-   * answered yes (its intake is saved AND, where the family has one, its one-time
-   * stand-up run has happened). Resolved by the caller from the same
-   * `AgentSetupState` the run gate reads, so the word on the badge and the state
-   * of the button beneath it come off one answer.
+   * This agent's two readiness rungs, as the run gate reads them — the SAME
+   * `AgentSetupState` object, handed over whole.
    *
-   * Optional, and absent means "do not know": a caller that cannot answer it gets
-   * the old delivered-work-only behaviour rather than a guess.
+   * IT USED TO BE A PRE-COMPUTED `readyToRun` BOOLEAN (round 6 review, C2), and
+   * every caller spelled the conjunction `setup.ready && setup.standUpDone`
+   * itself: four spellings of one rule, which is four places for it to drift
+   * from the run gate it is supposed to mirror. `agentReadyToRun` and
+   * `agentNeedsSetup` are the only readers of the pair now, and both live above.
+   *
+   * Optional/null means "do not know": an agent that runs on no intake has no
+   * server-answerable readiness, and an unknown must never read as ready.
    */
-  readyToRun?: boolean;
+  setup?: AgentReadiness | null;
   /**
    * True when this agent's most recent run WITH A VERDICT failed. Resolved by
    * the callers through `lastRunFailedAgentIds` — the ordering rule lives there,
    * not here, so no surface holds an opinion of its own about what "failed last"
    * means. That helper's doc states where the shared answer stops.
+   *
+   * IT MOVES NO WORD (round 6). With `viewerIsStaff` it adds
+   * `LAST_RUN_FAILED_STAFF_NOTE` to `staffNote` and nothing else; see the
+   * function's doc for why it stopped being a rung.
    */
   lastRunFailed?: boolean;
   /**
@@ -823,31 +920,20 @@ export function rosterStatus(input: {
    */
   enabled?: boolean;
   /**
-   * Whether the reader is STAFF — the gate on the `lastRunFailed` rung, and the
-   * only thing on this input that asks who is looking.
+   * Whether the reader is STAFF — the only thing on this input that asks who is
+   * looking, and since round 6 it can only ever ADD `staffNote`. It cannot reach
+   * the word: every rung below is viewer-independent, which is the parity ruling
+   * expressed as a type rather than as a convention.
    *
-   * AF-14 is absolute: "clients never see failed runs." The failed-last-run rung
-   * was added for the roster card that sat green above a run history whose last
-   * row read Failed, which is a STAFF complaint about a STAFF surface — but it
-   * was wired for both readers, so a production fire that failed at the agent
-   * service put "Needs attention" on the client's card. That badge asks the
-   * client to do something about an internal failure they cannot see, did not
-   * cause and have no lever over, and it does it on exactly the agents AF-5 is
-   * about: a stream we produce internally, whose posts are sitting on their
-   * calendar, is not something the client needs to attend to.
+   * AF-14 is absolute ("clients never see failed runs"), so the failed-run fact
+   * is gated HERE rather than left to each caller to remember: the function that
+   * knows the reader is the one that can guarantee the sentence is absent from a
+   * client's payload, and `lastRunFailedAgentIds` already takes the same `staff`
+   * flag, so the pair travels together.
    *
-   * A SCHEDULE REFUSAL IS NOT AFFECTED and still outranks Live for everyone
-   * (F24/F129). The two are different facts: a refusal is the scheduler turning a
-   * fire away for a reason the client owns (out of credits, an empty intake), and
-   * telling them is the whole point. A run that submitted cleanly and then broke
-   * is ours.
-   *
-   * DEFAULTS TO FALSE, which skips the rung — the quiet direction, opposite to
-   * `refusalIsCurrent`'s. The two defaults are chosen against their own failure
-   * modes: an undatable refusal that goes unsaid leaves a client stuck with no
-   * idea why, while an internal failure shown to a client is the thing AF-14
-   * forbids outright. Every staff call site passes it, and `lastRunFailedAgentIds`
-   * already takes the same `staff` flag, so the pair travels together.
+   * DEFAULTS TO FALSE, the quiet direction — opposite to `isCurrentScheduleRefusal`'s,
+   * and for the same reason it always was: an internal failure shown to a client
+   * is the thing AF-14 forbids outright.
    */
   viewerIsStaff?: boolean;
   /**
@@ -866,48 +952,62 @@ export function rosterStatus(input: {
   /** Clock, for the refusal's freshness window. Defaults to now. */
   now?: number;
 }): RosterStatus {
-  // An admin's pause outranks everything — refusal, failed run, AF-5 — because
-  // a paused agent isn't in any of those states: it simply isn't running for
-  // anyone right now, and "Coming Soon" is the one honest word for that.
+  const status = statusWord(input);
+  // The staff-only Internal line, and the ONE place a viewer touches this
+  // object. It rides after the word rather than into it (round 6), and it joins
+  // whatever AF-5 already put there rather than replacing it: an imported stream
+  // whose last internal fire broke is both facts at once, and a slot that can
+  // only hold one of them would drop whichever arrived second.
+  if (!input.lastRunFailed || !input.viewerIsStaff) return status;
+  return {
+    ...status,
+    staffNote: [status.staffNote, LAST_RUN_FAILED_STAFF_NOTE].filter(Boolean).join(" · "),
+  };
+}
+
+/** The client-facing word alone — viewer-independent by construction. */
+function statusWord(input: Parameters<typeof rosterStatus>[0]): RosterStatus {
+  // An admin's pause outranks everything — refusal, AF-5 — because a paused
+  // agent isn't in any of those states: it simply isn't running for anyone right
+  // now, and "Coming Soon" is the one honest word for that.
   if (input.enabled === false) return { tone: "disabled", label: "Coming Soon" };
   const status = rosterStatusCore(input);
   // The AF-5 rung. Only an IDLE outcome is eligible: see the doc above for why
   // this may not reach past an alarm or a launch narration.
   if (status.tone !== "idle" || !input.hasUpcomingContent) return status;
+  /**
+   * AND NOT OVER AN AGENT'S OWN SETUP HERO (round 6, verify-BDE).
+   *
+   * An INTAKE-DRIVEN agent whose form is not saved and stood up renders
+   * `AgentSetupHero` on its own page — "it starts producing for you" — and this
+   * rung was painting "Live" directly above it, telling the client the opposite
+   * of what the screen said and inviting them to press nothing.
+   *
+   * The gate is `agentNeedsSetup`, which IS the detail page's `needsSetup` — one
+   * predicate, both readers (round 6 review, C2/C3). It used to be re-spelled
+   * here as `readyToRun === false && !hasDelivered`, i.e. the same conjunction
+   * written a second way beside the page it has to agree with. An agent with no
+   * intake at all is not blocked: that is the imported-stream shape AF-5 was
+   * written for, and it has no setup for a client to finish and no hero to
+   * contradict.
+   */
+  if (agentNeedsSetup({ setup: input.setup, hasDelivered: input.hasDelivered ?? false })) {
+    return status;
+  }
   return { tone: "live", label: "Live", staffNote: IMPORTED_CONTENT_STAFF_NOTE };
 }
 
-/** The four original rungs — see `rosterStatus` for the ordering rules. */
+/** The rungs behind the word — see `rosterStatus` for the ordering rules. */
 function rosterStatusCore(input: {
   launchState: ClientAgentLaunchState | null;
   scheduleRefusal?: string | null;
   scheduleRefusalAt?: number | null;
   scheduleActive?: boolean;
   hasDelivered?: boolean;
-  readyToRun?: boolean;
-  lastRunFailed?: boolean;
-  viewerIsStaff?: boolean;
+  setup?: AgentReadiness | null;
   now?: number;
 }): RosterStatus {
-  const attention: RosterStatus = { tone: "attention", label: "Needs attention" };
-  if (refusalIsCurrent(input)) return attention;
-  // A failed last run outranks Live, but never the launch states: `launching`
-  // and `curating` are a NEWER event than any finished run and the launch card
-  // is already narrating them, and `launch_failed` is the same alarm in more
-  // specific words. Replacing either with the generic phrase would lose
-  // information, not add it.
-  //
-  // STAFF ONLY (AF-14) — see `viewerIsStaff` for why a client's badge may not be
-  // moved by a run that broke on our side of the wire.
-  if (
-    input.lastRunFailed &&
-    input.viewerIsStaff &&
-    input.launchState !== "launching" &&
-    input.launchState !== "curating" &&
-    input.launchState !== "launch_failed"
-  ) {
-    return attention;
-  }
+  if (isCurrentScheduleRefusal(input)) return { tone: "attention", label: "Needs attention" };
 
   if (input.launchState === null) {
     // No umbrella and no schedule firing: nobody has set this agent up for this
@@ -923,11 +1023,12 @@ function rosterStatusCore(input: {
     // a Run button. It was invisible on X (delivered twice) and was going to
     // greet the first LinkedIn client the moment their stand-up run finished.
     //
-    // `readyToRun` is the second proof, and it is deliberately the CONJUNCTION of
-    // both readiness questions (intake saved AND stood up) resolved by the caller
-    // from the same AgentSetupState the run gate reads. An agent still waiting on
-    // either one keeps "Not set up yet", because for it the phrase is true.
-    return input.hasDelivered || input.readyToRun
+    // Readiness is the second proof, and it is deliberately the CONJUNCTION of
+    // both readiness questions (intake saved AND stood up), read through
+    // `agentReadyToRun` off the same AgentSetupState the run gate reads. An agent
+    // still waiting on either one keeps "Not set up yet", because for it the
+    // phrase is true.
+    return input.hasDelivered || agentReadyToRun(input.setup)
       ? { tone: "idle", label: "Runs on request" }
       : { tone: "idle", label: "Not set up yet" };
   }

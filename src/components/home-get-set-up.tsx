@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { Card, CardTitle } from "@/components/ui";
+import { useState, useTransition, type ComponentProps } from "react";
+import { Button, Card, CardTitle } from "@/components/ui";
 import { HomeTaskRow } from "@/components/home-task-row";
 import { dismissActionAction } from "@/lib/actions";
 import {
-  nextSetupStep,
   setupLadderComplete,
   setupLadderProgress,
   SETUP_LADDER_HIDDEN_ACTION_ID,
@@ -37,15 +36,17 @@ import type { SetupStepView } from "@/lib/setup-ladder";
  *
  * ── THE THREE RULES THE ROWS KEEP ────────────────────────────────────────
  *
- *  1. DONE ROWS STAY. Checked, muted, no controls — GOV.UK's task-list
- *     pattern: "the status should show as Completed and be black text with no
- *     background colour. This will draw more attention to tasks that require
- *     action." Removing them would also delete the progress the bar is
+ *  1. DONE ROWS STAY. Checked, muted, no controls and NO LINK — GOV.UK's
+ *     task-list pattern: "the status should show as Completed and be black text
+ *     with no background colour. This will draw more attention to tasks that
+ *     require action." Removing them would also delete the progress the bar is
  *     counting.
- *  2. ONLY THE NEXT STEP CARRIES A BUTTON AND A REASON. Every row is a
- *     legitimate destination and the client may do them in any order (GOV.UK),
- *     but six primary buttons stacked on Home is six things competing for one
- *     press. The affordance is ordered; the links are not.
+ *  2. EVERY INCOMPLETE ROW IS A LINK; ONLY THE CURRENT ONE CARRIES THE BUTTON
+ *     (round 6, §2.1). Four of six rows used to be inert, because `start` was
+ *     passed to `next` alone — so the module that resolved them claimed "every
+ *     row stays a legitimate destination" while the client could press exactly
+ *     one. The affordance is still ordered (six accent buttons on Home is six
+ *     things competing for one press); the ACCESS is not.
  *  3. NO X, ANYWHERE. `HomeTaskRow`'s dismiss is simply never passed. None of
  *     the six is optional — each is a real gate the server refuses on — so
  *     "Not for us" would offer a client a way to skip the thing that is
@@ -57,7 +58,7 @@ import type { SetupStepView } from "@/lib/setup-ladder";
  * app already stores (Chameleon: "mark items completed based on user activity
  * within the app rather than just by clicking or starting the items").
  *
- * ── "HIDE THIS" IS THE CLIENT'S, AND IT IS NOT PERMANENT (review wave,
+ * ── THE DONE PRESS IS THE CLIENT'S, AND IT IS NOT PERMANENT (review wave,
  * 2026-09) ───────────────────────────────────────────────────────────────
  *
  * Two things were wrong with the one control on this card. It wrote
@@ -83,11 +84,17 @@ export function GetSetUpWidget({
   /** The six, in order, already resolved server-side. */
   steps: SetupStepView[];
   /**
-   * The client already pressed "Hide this" on a finished ladder and the cooldown
-   * has not run out — a stored `ClientActionState` row under
-   * `SETUP_LADDER_HIDDEN_ACTION_ID`. Resolved on the page from the same state set
-   * the checklist signals come from, together with the completion test: a ladder
-   * that has reopened is shown again whatever this row says.
+   * The client already pressed "Done" on a finished ladder — a stored
+   * `ClientActionState` row under `SETUP_LADDER_HIDDEN_ACTION_ID`. Resolved on
+   * the page from the same state set the checklist signals come from. No time
+   * window (round 6, decision 9): the row is read as "this client has seen the
+   * done state", not as a snooze.
+   *
+   * AND IT IS NOT RE-TESTED AGAINST COMPLETENESS (round 6, ladder-reopen
+   * ruling). The page used to `&&` this with `setupLadderComplete`, so the card
+   * came back the moment any step un-ticked — and round 6 re-based step 5 on an
+   * event no existing client has recorded. See the note on
+   * `SETUP_LADDER_HIDDEN_ACTION_ID`.
    */
   hidden?: boolean;
   /**
@@ -109,15 +116,18 @@ export function GetSetUpWidget({
   // unconditionally, so the branch was unreachable (review wave, 2026-09).
   if (hidden || dismissed) return null;
 
-  // The count, the bar and the one row that carries the press all come from the
-  // SAME resolved array, through the same pure helpers — so they cannot
-  // disagree about how far along this client is or about which step they are on.
+  // The count, the bar and the row that carries the press all come from the SAME
+  // resolved array, through the same pure helpers — so they cannot disagree
+  // about how far along this client is or about which step they are on. WHICH
+  // row carries the press is `SetupStepKind` (round 6 review, E7): this
+  // component no longer asks `nextSetupStep` itself, because asking it here and
+  // comparing by object identity was half of the shape derivation the resolver
+  // now does.
   const { done: doneCount, total, percent } = setupLadderProgress(steps);
-  const next = nextSetupStep(steps);
-  // ASKED SEPARATELY FROM `next` (review wave, 2026-09). A ladder waiting on
-  // Karos has no pressable step left, and `next === null` used to be the whole
-  // test for "You are all set up" — which would now congratulate a client whose
-  // agent we have not stood up yet, and offer them a Hide on it.
+  // ASKED SEPARATELY FROM the current step (review wave, 2026-09). A ladder
+  // waiting on Karos has no pressable step left, and "no current step" used to
+  // be the whole test for "You are all set up" — which would congratulate a
+  // client whose agent we have not stood up yet, and offer them a Hide on it.
   const complete = setupLadderComplete(steps);
 
   return (
@@ -144,14 +154,20 @@ export function GetSetUpWidget({
         />
       </div>
       {complete ? (
+        /* THE DONE STATE SHOWS ONCE (round 6, decision 9). "Hide this" is
+           "Done": the ladder is over, the press acknowledges it, and the card
+           is gone for good. It used to be read through the checklist's
+           seven-day cooldown, so a finished ladder came back every week. `outline`, not accent — Home's one orange belongs to
+           a step that still needs doing, and there is none left. */
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5">
           <div className="min-w-0 flex-1">
-            <p className="text-sm text-foreground">You are all set up. Your agents are running.</p>
+            <p className="text-sm text-foreground">You&apos;re set up. Your agents are running.</p>
             {hideError && <p className="mt-1 text-xs text-danger">{hideError}</p>}
           </div>
           {canHide && (
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => {
                 setDismissed(true);
                 setHideError(null);
@@ -162,15 +178,14 @@ export function GetSetUpWidget({
                     // explanation, so it comes back NOW with one.
                     if (!res.ok) {
                       setDismissed(false);
-                      setHideError("We could not hide this. Please try again.");
+                      setHideError("We could not save that. Please try again.");
                     }
                   });
                 });
               }}
-              className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:border-neon/50 hover:text-neon focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon"
             >
-              Hide this
-            </button>
+              Done
+            </Button>
           )}
         </div>
       ) : (
@@ -185,14 +200,7 @@ export function GetSetUpWidget({
                 icon={step.done ? "Check" : step.waiting ? "Clock" : "Circle"}
                 title={step.label}
                 muted={step.done}
-                {...(step === next
-                  ? { description: step.why, ...(step.href ? { start: { href: step.href } } : {}) }
-                  : // A waiting row explains itself wherever it sits in the
-                    // list: it is the only row whose title alone does not say
-                    // why nothing is happening, and it never carries a press.
-                    step.waiting
-                    ? { description: step.why }
-                    : {})}
+                {...taskRowProps(step)}
               />
             </li>
           ))}
@@ -200,4 +208,46 @@ export function GetSetUpWidget({
       )}
     </Card>
   );
+}
+
+/**
+ * WHICH PROPS A ROW TAKES, switched on the kind the resolver stamped (round 6
+ * review, E7). It was a four-deep ternary inline in the JSX; `SetupStepKind` is
+ * that decision, made where the rows are resolved.
+ */
+function taskRowProps(step: SetupStepView): Partial<ComponentProps<typeof HomeTaskRow>> {
+  switch (step.kind) {
+    // Done rows are plain: no link, no control, no status word.
+    case "done":
+      return {};
+    // The current row: its own line says what is already done and what is left,
+    // and its control names the action. It is a STATIC row when it carries the
+    // control, because an anchor may not contain a control (see HomeTaskRow's
+    // `href`) — and a link when there is no specific action to name, which is
+    // only the client with no granted agent at all, whose step 3 points at the
+    // roster. Either way it keeps its line rather than becoming a box with no
+    // way out.
+    case "current":
+      return step.href && step.action
+        ? { description: step.why, start: { href: step.href, label: step.action } }
+        : { description: step.why, ...(step.href ? { href: step.href } : {}) };
+    // Outstanding and OURS. It carries its sentence because it is the only row
+    // whose title alone does not say why nothing is happening, and it never
+    // takes the button.
+    case "waiting":
+      return {
+        description: step.why,
+        ...(step.href ? { href: step.href } : {}),
+        ...(step.status ? { trailing: step.status } : {}),
+      };
+    // Blocked and not-yet-started rows read the same: the whole row is the link,
+    // with the status word ("After step 4" / "Not started") where the control
+    // would be. Kept as two cases because they are two different facts.
+    case "blocked":
+    case "link":
+      return {
+        ...(step.href ? { href: step.href } : {}),
+        ...(step.status ? { trailing: step.status } : {}),
+      };
+  }
 }

@@ -209,13 +209,20 @@ export function AgentInputFiles({
             );
           })}
         </div>
-      ) : (
-        <div className="rounded-md border border-dashed border-border px-3 py-3 text-xs text-muted-2">
-          {canUpload
-            ? "No files are in this client’s context yet. Upload the source material for this run."
-            : "No reference files are available. Your Karos team can add source material to the client context."}
-        </div>
-      )}
+      ) : canUpload ? (
+        /* Round 6: the dashed empty box is gone. It told anyone who could not
+           upload that none were available and that their Karos team could add
+           source material to the client context - a sentence addressed to
+           exactly the reader who could do nothing about it, since the upload
+           route refuses clients on purpose
+           (api/clients/[id]/context/route.ts). The run dialog now
+           renders this fieldset for staff only, so the remaining line is the one
+           an operator can act on, and it is a plain hint rather than a box that
+           wears the shell of a drop target it never was. */
+        <p className="text-xs text-muted-2">
+          No files are in this client’s context yet. Upload the source material for this run.
+        </p>
+      ) : null}
 
       {error ? <p className="text-xs text-danger" role="alert">{error}</p> : null}
       {uploading ? <p className="text-xs text-muted-2" aria-live="polite">Uploading input files…</p> : null}

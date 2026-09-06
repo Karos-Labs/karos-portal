@@ -36,7 +36,7 @@ export function ClientAgentRunHistory({ runs }: { runs: CustomAgentRunRow[] }) {
             type="button"
             onClick={() => setExpanded((e) => !e)}
             aria-expanded={expanded}
-            className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
+            className="focus-ring text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
           >
             {expanded ? "Show fewer" : "Show all"}
           </button>
@@ -48,13 +48,19 @@ export function ClientAgentRunHistory({ runs }: { runs: CustomAgentRunRow[] }) {
           return (
             <li
               key={run.id}
-              /* INERT, AND DRESSED AS INERT (flow audit 2026-09, R8). A client's
-                 run row has no destination — /jobs/[id] is staff-only and this
-                 view is built from client-safe rows with no href on them — so it
-                 carries neither `row-lift` nor a trailing chevron, which is the
-                 other half of the rule the rows that DO open now keep. Do not
-                 add a hover treatment here without adding somewhere to go. */
-              className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5"
+              /* INERT, AND DRESSED AS INERT (flow audit 2026-09, R8; round 6
+                 rule 3). A client's run row has no destination — /jobs/[id] is
+                 staff-only and this view is built from client-safe rows with no
+                 href on them — so it carries neither `row-lift` nor a trailing
+                 chevron, which is the other half of the rule the rows that DO
+                 open now keep. Round 6 took the last piece of the link's
+                 costume: the border and the `surface-2` fill are what a row that
+                 opens something wears on this very page (agent-archive-rows.tsx,
+                 two sections up), so a static box in the same shell is a dead
+                 end that looks pressable. It sits on a divider instead. Do not
+                 add a hover treatment, a border or a fill here without adding
+                 somewhere to go. */
+              className="flex items-center justify-between gap-3 border-b border-border px-1 py-2.5 last:border-b-0"
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-foreground">{run.label}</p>

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { ContentPlatformMark, SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
-import { Badge, Button } from "@/components/ui";
+import { Badge, Button, buttonClass } from "@/components/ui";
 import { jobStatusMeta } from "@/components/job-status";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
@@ -1039,10 +1039,6 @@ function PausedRunNotice({ run, onDone }: { run: PausedRunMemo; onDone: () => vo
  */
 const NO_RUN_STATUS = { tone: "neutral" as const, label: "Done" };
 
-/** `Button` renders a <button>; an anchor can't nest one, so it borrows the look. */
-const REVIEW_BUTTON_CLASS =
-  "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-xs text-foreground transition-all duration-200 hover:border-foreground/30 hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25";
-
 function PastRunCard({
   run,
   canOpenJob,
@@ -1167,14 +1163,19 @@ function PastRunCard({
           {showReviewControl && (
             <div className="mt-2">
               {href ? (
-                <Link href={href} className={REVIEW_BUTTON_CLASS}>
+                /* round 6 (rule 2): no glyph after a button label. A trailing
+                   chevron belongs to a row that navigates, not to a control.
+                   round 6 review (E3): `Button` renders a <button> and an anchor
+                   cannot nest one, so it borrows the recipe rather than
+                   restating it — the `REVIEW_BUTTON_CLASS` const that used to
+                   live here had drifted to `transition-all` and its own
+                   focus-visible ring. */
+                <Link href={href} className={buttonClass({ variant: "outline", size: "sm" })}>
                   Review deliverable
-                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
                 </Link>
               ) : (
                 <Button size="sm" variant="outline" onClick={openAsset ?? undefined}>
                   Review deliverable
-                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
                 </Button>
               )}
             </div>
@@ -1548,6 +1549,7 @@ export function RunCalendar({
   initialArchiveAgent,
   initialArchiveSearch,
   initialHiddenStatuses,
+  initialAssetId,
   suggestions = [],
   suggestionsClientId,
 }: {
@@ -1641,6 +1643,15 @@ export function RunCalendar({
    * different screen from the one the sender was looking at.
    */
   initialHiddenStatuses?: readonly CalendarFilterKey[];
+  /**
+   * ONE DELIVERABLE, OPENED ON LOAD, from `?asset=` (round 6, decision 8).
+   *
+   * Handed straight to the archive, which is the view that holds the tiles and
+   * the detail modal. The page validates nothing beyond its presence: what may
+   * be shown is `isInClientArchive`'s answer, and the archive already refuses an
+   * id it does not hold rather than opening an empty modal.
+   */
+  initialAssetId?: string;
   /**
    * Task-Map proposals (pending, karos_managed/copilot), already carrying an
    * inferred `at` (lib/calendar-suggestion-placement.ts) — placed on their own
@@ -1897,6 +1908,42 @@ export function RunCalendar({
       }, 300);
     },
     [writeCalendarQuery],
+  );
+
+  /**
+   * A DELIVERABLE WAS OPENED (round 6, decision 8).
+   *
+   * Two jobs, both of them the point of `?asset=`:
+   *
+   *  · The param leaves the URL, with `replaceState` like every other refinement
+   *    this component writes. The modal is a gesture rather than a view — Back
+   *    should step out of the archive, not reopen a post the reader has closed —
+   *    and a link that keeps reopening on reload is a link nobody can leave.
+   *  · Action 05 is written for a CLIENT. "See your first output" was proxied by
+   *    "an output exists", a fact about us; this is the event itself, recorded
+   *    the same way `12` is recorded above when a client opens their week.
+   *
+   * ONCE PER MOUNT (round 6, alignment fix 4). The row is a flag — "this client
+   * has opened a deliverable" — and it is an upsert, so firing it on the second
+   * and the ninetieth open of the archive buys nothing and costs a write each
+   * time. The ref is the whole gate: the state that would let this ask "is 05
+   * already done?" is not read by either calendar page, and adding a Firestore
+   * read to answer a question a boolean answers is the trade ruling 8 forbids.
+   */
+  const resultActionWritten = useRef(false);
+  const onArchiveAssetOpened = useCallback(
+    // round 6 review (D2): no parameter. Neither half of this needs to know
+    // WHICH deliverable was opened — the param comes off the URL wholesale and
+    // action 05 is a flag — and an unread argument only invites a reader to
+    // think one of them is keyed on it.
+    () => {
+      writeCalendarQuery({ asset: null }, "replace");
+      if (!viewerIsClient || !defaultClientId) return;
+      if (resultActionWritten.current) return;
+      resultActionWritten.current = true;
+      void markActionDoneAction(defaultClientId, "05");
+    },
+    [defaultClientId, viewerIsClient, writeCalendarQuery],
   );
 
   /**
@@ -2475,6 +2522,8 @@ export function RunCalendar({
                 // branch anyway.
                 {...(defaultClientId ? { agentsHref: `/clients/${defaultClientId}/agents` } : {})}
                 onFiltersChange={onArchiveFiltersChange}
+                {...(initialAssetId ? { initialAssetId } : {})}
+                onAssetOpened={onArchiveAssetOpened}
               />
             ) : (
               <p className="text-xs text-muted-2">Archive isn&apos;t available from this view.</p>

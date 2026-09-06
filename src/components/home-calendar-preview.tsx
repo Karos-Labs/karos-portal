@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
-import { Card, CardTitle, EmptyState, Badge } from "@/components/ui";
+import { Badge, buttonClass, Card, CardTitle, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
 import { postKind, postKindLabel } from "@/lib/calendar-kind";
@@ -12,6 +12,11 @@ import { platformForAsset } from "@/lib/content-platform";
 import type { Asset } from "@/lib/types";
 
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** `Button variant="outline"`'s own recipe, for the one place here that needs it
+ *  on an anchor. READ from `buttonClass` (round 6) rather than restated, so a
+ *  change to the outline voice reaches this link too. */
+const OUTLINE_LINK_CLASS = buttonClass({ variant: "outline", size: "sm" });
 
 /**
  * How many dates the preview shows.
@@ -258,7 +263,7 @@ export function CalendarPreviewWidget({
         <CardTitle className="min-w-0 truncate">Calendar</CardTitle>
         <Link
           href={calendarHref}
-          className="shrink-0 whitespace-nowrap text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
+          className="focus-ring shrink-0 whitespace-nowrap text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
         >
           Open calendar
         </Link>
@@ -271,12 +276,13 @@ export function CalendarPreviewWidget({
           {...(agentsHref
             ? {
                 action: (
-                  <Link
-                    href={agentsHref}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-neon/50 hover:text-neon"
-                  >
+                  /* The `outline` button's own look, borrowed by a Link (round
+                     6): `Button` renders a real <button> and an anchor cannot
+                     nest one. It was a fourth hand-rolled outline recipe whose
+                     hover turned the border and the label orange, and it carried
+                     a chevron after a button label. Both go: rule 2. */
+                  <Link href={agentsHref} className={OUTLINE_LINK_CLASS}>
                     See your agents
-                    <Icon name="ChevronRight" className="h-3.5 w-3.5" />
                   </Link>
                 ),
               }
@@ -311,7 +317,7 @@ export function CalendarPreviewWidget({
                   type="button"
                   onClick={() => setOpenAssetId(a.id)}
                   aria-label={`Open ${title} on ${dayLabel(at)}${time ? ` at ${time}` : ""}`}
-                  className="row-lift flex w-full items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2 text-left"
+                  className="row-lift focus-ring flex w-full items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2 text-left"
                 >
                   {/* `suppressHydrationWarning`: both halves are formatted in the
                       reader's own zone (see timeLabel), so the server's render

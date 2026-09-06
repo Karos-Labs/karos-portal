@@ -47,21 +47,25 @@ export function AgentSetupHero({
 
   return (
     <Card>
-      <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface-2">
-        {previewVideoUrl ? (
+      {/* NO PLACEHOLDER FRAME (round 6, think-agents §4). An empty 16:9 box
+          reading "A preview of what this agent does is coming soon" was the
+          largest thing on the first screen a client ever sees of an agent, and
+          it promised a video nothing in the product produces. The frame returns
+          only when there is a video in it. */}
+      {previewVideoUrl && (
+        <div className="mb-4 overflow-hidden rounded-[var(--radius)] border border-border bg-surface-2">
           <video src={previewVideoUrl} controls className="aspect-video w-full bg-black" />
-        ) : (
-          <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 text-muted-2">
-            <Icon name="Video" className="h-8 w-8" />
-            <p className="text-xs">A preview of what this agent does is coming soon.</p>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="mt-4 flex flex-col items-center gap-2 text-center">
+      <div className="flex flex-col items-center gap-2 text-center">
         <p className="text-sm text-muted-2">
           Save what {agent.name} needs to know, and it starts producing for you.
         </p>
+        {/* KEEPS `accent` (round 6 risk review B2). Zero orange is not the rule,
+            one is: the setup hero, the launch card and the run panel are
+            mutually exclusive states of this page, so exactly one of them
+            renders, and this is the control that moves the client forward. */}
         <Button variant="accent" size="lg" onClick={() => setSettingUp(true)}>
           <Icon name="Sparkles" className="h-4 w-4" />
           Set up this agent

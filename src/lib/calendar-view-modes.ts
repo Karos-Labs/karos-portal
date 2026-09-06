@@ -72,6 +72,21 @@ export const CALENDAR_QUERY_KEYS = {
    * has to arrive that way or the link is describing a different screen.
    */
   hidden: "hidden",
+  /**
+   * ONE DELIVERABLE, OPENED ON LOAD (portal feedback round 6, decision 8).
+   *
+   * `/calendar?view=archive&asset={id}` opens that item's detail modal as the
+   * page arrives. Until this key existed, the one object a client would actually
+   * send a colleague — a finished post — had no URL at all: every link into the
+   * archive landed on the whole list, and the setup ladder's last step ("See
+   * your first result") could only point at that list and hope.
+   *
+   * NOT part of `CalendarUrlState` below, deliberately: the other five keys
+   * describe a VIEW that Back has to be able to restore, and this one describes
+   * a one-time gesture. The archive drops it with `replaceState` the moment the
+   * modal opens, so a reload does not reopen what the reader has closed.
+   */
+  asset: "asset",
 } as const;
 
 /**

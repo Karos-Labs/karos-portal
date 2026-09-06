@@ -19,7 +19,9 @@ function signals(overrides: Partial<ActionSignals> = {}): ActionSignals {
     grantedAgentCount: 0,
     hasRun: false,
     runCount: 0,
-    hasOutput: false,
+    // round 6 (decision 8): `hasOutput` left ActionSignals with id 05's proxy —
+    // "a deliverable exists" is a fact about US, and the row means the client
+    // opened one. It is event-tracked now, from the archive's detail modal.
     hasStarredAgent: false,
     hasManualCompetitor: false,
     hasUsableChannel: false,
@@ -149,6 +151,20 @@ describe("resolveActionList", () => {
     expect(byId.get("12")).toBe("eligible");
     expect(byId.get("13")).toBe("eligible");
     expect(byId.get("14")).toBe("eligible");
+  });
+
+  // round 6 (decision 8): 05 joined the event-tracked set. It cannot be answered
+  // from signals at all any more — a deliverable existing says nothing about
+  // whether the client has ever opened one.
+  it("05 (see your first output) is event-tracked, not proxied by 'one exists'", () => {
+    const resolved = resolveActionList(signals(), noStates, NOW);
+    expect(resolved.find((a) => a.id === "05")?.status).toBe("eligible");
+    const opened = new Map([["05", { status: "done" as const, updatedAt: NOW }]]);
+    expect(resolveActionList(signals(), opened, NOW).find((a) => a.id === "05")?.status).toBe(
+      "done",
+    );
+    // And the live-signal table no longer answers for it at all.
+    expect(Object.keys(computeActionDone(signals()))).not.toContain("05");
   });
 
   it("21/22/23 (brand voice, persona, competitor analysis docs) are event-tracked the same way", () => {

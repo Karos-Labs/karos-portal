@@ -25,23 +25,19 @@ import {
   isUnlistedAgent,
 } from "@/lib/custom-agent-launch";
 import { isLabOutputsConfigured } from "@/lib/lab-outputs";
-import { clientAgentBlurb } from "@/lib/agent-blurbs";
-import { selectAgentSchedules } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
-import { agentsWithDeliveredWork, agentsWithUpcomingContent } from "@/lib/agent-detail-archetypes";
+import { isLaunchInFlight } from "@/lib/client-agents";
 import { umbrellaOwnsClientCard } from "@/lib/client-agent-runs";
 import { BindAgentControl } from "@/components/client-agents/client-agents-section";
 import { StaffOnlySection } from "@/components/staff-only-section";
-import { ClientAgentRoster, type AgentRosterEntry } from "@/components/client-agents/roster";
+import { ClientAgentRoster } from "@/components/client-agents/roster";
+import { buildClientRosterEntries } from "@/lib/client-roster";
 import { TaskKickoffStrip } from "@/components/client-agents/task-kickoff-strip";
 import { buildTaskKickoffView } from "@/lib/task-kickoff";
 import {
   bindableAgents,
-  buildAgentSetup,
   hasActiveTemplateRun,
   toRunRows,
-  toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
 
@@ -77,7 +73,7 @@ export default async function ClientAgentsPage({
 }: {
   params: Promise<{ id: string }>;
   /**
-   * `task` — Home's "Let's do this" for a recommended task that names no single
+   * `task` — Home's recommended-task press for a task that names no single
    * custom agent (portal feedback round 2, 2026-09): a managed product has no
    * page of its own, so the roster is where the client lands. The kickoff strip
    * sits above the roster and carries the same Start / Not for us / Later it
@@ -103,7 +99,6 @@ export default async function ClientAgentsPage({
   // Client users: explicitly granted agents plus any agent that has already
   // delivered a successful run for this workspace.
   if (!isStaff) {
-    const allowedIds = new Set(client.customAgentIds ?? []);
     // No listContextItems here any more: it fed the generic run dialog's
     // attachment picker, and a client's run gesture has moved to the detail
     // page (CD-G1). The roster reads nothing from it, so the roster no longer
@@ -134,7 +129,6 @@ export default async function ClientAgentsPage({
       // is 30 days anyway. Either is a change to the data layer, not to this page.
       listAssets({ clientId: id }),
     ]);
-    const agentIdByName = new Map(allAgents.map((agent) => [agent.name, agent.id]));
     // The clock the delivered-work read and every roster entry's refusal window
     // age against — resolved once so the whole page agrees. (It used to roll the
     // credit spend windows too; that read left with #130.)
@@ -149,111 +143,36 @@ export default async function ClientAgentsPage({
       scheduledAt: assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
       now,
     });
-    // Every agent that could ever appear on this roster: enabled, and bound to
-    // this client. The binding wins over both routes in below — a grant and an
-    // inherited delivered run are equally unable to move an instance off its
-    // client — so it is applied before anything else can widen the list.
-    const candidateAgents = allAgents.filter(
-      (agent) =>
-        agent.enabled &&
-        // A step of another agent is never its own card — the LinkedIn setup and
-        // manager are fired by the LinkedIn agent's own surface. Structural, off
-        // the document's parentKey.
-        !isUnlistedAgent(agent) &&
-        agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
-    );
-    // The same set answers two questions on this page: which agents a client
-    // inherits by having been delivered to, and — through rosterStatus — which
-    // of them are plainly set up already. It reads JOBS AND ASSETS through the
-    // one shared answer the agent's own page reads, because it was a job-only
-    // join here: an agent whose only delivered work was a lab import (jobId:
-    // null) was missing from this roster altogether while its posts sat in the
-    // client's Workspace.
-    const completedAgentIds = agentsWithDeliveredWork({
-      assets,
-      jobs,
-      agents: candidateAgents,
-      umbrellas,
-      clientSlug: client.agentsRepoSlug,
-      viewerIsClient: true,
-      now,
-    });
-    // NO PRICE IS RESOLVED ON THIS PAGE (review wave, 2026-09). It used to
-    // compute a per-agent run estimate for every card and thread it into
-    // `toSummary`, and nothing on either roster branch renders one: a roster
-    // entry carries a mark, a name, a blurb and a status word (see
-    // AgentRosterEntry, which is deliberately not the card row), and
-    // AgentRunHistory reads its `agents` for the platform mark alone. The
-    // comment that justified it named "the dialog it opens" — this page mounts
-    // no run dialog; CD-I1 moved every run gesture to the agent detail page,
-    // which is where the quote now lives and where the press it prices is.
+    // ── The roster (CD-G1) ──
+    // One row per GRANTED agent, umbrella-bound or not, carrying a mark, a
+    // name, one line of what it gives you and one status word. No Run button
+    // anywhere: a client's run gesture lives only inside a detail page, beside
+    // the context that explains what it costs and produces.
     //
-    // The reads it cost were not free either: a pass over this client's whole
-    // job history per card, for a number with no reader.
-    // The other half of the same read: which agents' most recent finished run
-    // FAILED. A schedule refusal cannot see that — it only records a fire the
-    // scheduler turned away before a job existed — so without this a green
-    // "Live" badge sits above a run history whose last row says Failed.
-    const failedAgentIds = lastRunFailedAgentIds(jobs, agentIdByName, { staff: false });
-    // AF-5. The third half of the same read: which agents have content sitting on
-    // this client's calendar for a day that has not happened. It reads the assets
-    // already in hand (no extra query) and returns ids only, so what reaches this
-    // page is one boolean per agent and nothing about the items themselves.
-    const producingAgentIds = agentsWithUpcomingContent({
-      assets,
-      jobs,
-      agents: candidateAgents,
-      umbrellas,
-      clientSlug: client.agentsRepoSlug,
+    // EXTRACTED IN ROUND 6 (2026-09) to `lib/client-roster.ts`, and since the
+    // review pass it is the ONLY assembler of `rosterStatus`'s inputs anywhere:
+    // this branch, the staff branch below, Reporting and Home's setup ladder all
+    // read the rows it returns. A second page assembling those order-sensitive
+    // inputs by hand is how "Live" comes to mean two things — the bug Albert
+    // flagged on the agent detail page. Everything below reads the returned rows
+    // rather than re-deriving anything from them.
+    const rosterEntries = await buildClientRosterEntries({
+      clientId: id,
+      client,
+      // The seat gate (round 6 review, D3): `lastMade` prints a deliverable's
+      // title, and one seat's personal post is not another seat's to read.
+      viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
       now,
+      data: { allAgents, jobs, plannedRuns: scheduledRuns, umbrellas, assets },
     });
-    // NOT `.map(toSummary)`: `toSummary` takes pricing as its OPTIONAL second
-    // argument and `Array.map` would hand it the index — a summary priced at
-    // whatever position the agent happened to sit in. Wrapped explicitly, with
-    // no pricing, for the reason given above the roster reads.
-    const agents = candidateAgents
-      .filter((agent) => allowedIds.has(agent.id) || completedAgentIds.has(agent.id))
-      .map((agent) => toSummary(agent));
-    // A8 (parity pass 2026-09). NEITHER roster branch passed `readyToRun`, so a
-    // configured agent that had simply never been asked yet read "Not set up
-    // yet" on its card and "Runs on request" on the page that card opens — the
-    // one state where the phrase is actively wrong, because the reader HAS
-    // finished setting it up. Resolved through the same `buildAgentSetup` the
-    // detail route and the staff branch below use, so the three surfaces answer
-    // readiness off one object rather than three derivations. No panes: those
-    // belong to the run dialog, which is not on this page for either role.
-    const clientAgentSetup = await buildAgentSetup(id, agents);
-    // Paused agents stay ON the roster as their own card, badged "Coming Soon"
-    // (rosterStatus's enabled:false short-circuit), rather than vanishing and
-    // leaving the client wondering where an agent they were told about went.
-    // Kept OUT of `agents` above: they never enter the interactive
-    // umbrella/credit/setup pipeline, so there is no Run or launch affordance
-    // to gate. Delivered-work is asked of the SAME shared join, over the
-    // disabled set — `candidateAgents` filters on enabled, so the main
-    // completedAgentIds cannot answer for these.
-    const disabledBound = allAgents.filter(
-      (agent) =>
-        !agent.enabled &&
-        !isUnlistedAgent(agent) &&
-        agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug),
-    );
-    const disabledDeliveredIds = agentsWithDeliveredWork({
-      assets,
-      jobs,
-      agents: disabledBound,
-      umbrellas,
-      clientSlug: client.agentsRepoSlug,
-      viewerIsClient: true,
-      now,
-    });
-    const disabledAgents = disabledBound
-      .filter((agent) => allowedIds.has(agent.id) || disabledDeliveredIds.has(agent.id))
-      // A paused agent could not be run even if something here quoted a price.
-      .map((agent) => toSummary(agent));
+    // The enabled half of the roster, which is what the two notices below are
+    // about: an outage has nothing to say about a paused agent, and the engine
+    // health banner is keyed on the keys of agents that can actually run.
+    const liveEntries = rosterEntries.filter((entry) => entry.enabled);
     // ── Card selection: exactly one card per agent ──
     // An umbrella owns its agent's card as soon as it is bound - the launch
     // card while it is being set up, the live card once it is producing. The
-    // agent is dropped from the generic run cards below, so a client is never
+    // agent is dropped from the generic run rows below, so a client is never
     // offered a Run button beside a "not set up yet" state, and never sees the
     // same agent twice under two identities.
     //
@@ -264,31 +183,26 @@ export default async function ClientAgentsPage({
     // the roles reversed.
     const ownedByUmbrella = umbrellas.filter((u) => umbrellaOwnsClientCard(u));
     const ownedAgentIds = new Set(ownedByUmbrella.map((u) => u.customAgentId));
-    const runnableAgents = agents.filter((agent) => !ownedAgentIds.has(agent.id));
     // Client viewers see only runs of agents they're allowed - not the history
     // of staff-fired agents outside their allowlist, and (§4.1 item 3) not the
     // batch rows of an umbrella-owned agent: "ran 2 hours ago · 7 drafts" beside
     // a week of daily slots is the tell that the days are a presentation of a
     // batch. Staff rows are unchanged.
-    const runnableNames = new Set(runnableAgents.map((a) => a.name));
+    //
     // Still filtered on the STORED name (that is the join to the runnable set);
     // what each row prints is its resolved §7.3 identity (F147).
+    const runnableNames = new Set(
+      liveEntries.filter((e) => !ownedAgentIds.has(e.customAgentId)).map((e) => e.agentName),
+    );
     const runs = toRunRows(jobs, false, umbrellas).filter((r) => runnableNames.has(r.agentName));
-    const clientScheduleRows = toScheduleRows(scheduledRuns, true);
     // A client run takes 10–20 minutes and the client's rows carry no link, so
     // without this the page never moved again after "Start run". Mounted only
     // while something is actually in flight; it unmounts when the server
     // renders a terminal status. A setup run in flight moves the launch card
     // the same way — it is the same medicine for a longer wait.
     //
-    // The third clause used to be `clientAgentRows.some(row => row.activeRun
-    // !== null)` — the whole card projection, awaited for one boolean and then
-    // thrown away (#130). This branch renders no card at all: it renders the
-    // CD-G1 roster below, whose entries carry a mark, a name, a blurb and a
-    // status word, and not one of them comes from that projection — the week
-    // strip, the template gates, today's option texts and the feedback list
-    // belong to the agent's own page. `hasActiveTemplateRun` asks the same
-    // question of the same two lists, both already in hand, with no query.
+    // `hasActiveTemplateRun` asks the same question of the same two lists, both
+    // already in hand, with no query.
     const runInFlight =
       runs.some((run) => run.status === "queued" || run.status === "running") ||
       umbrellas.some((u) => isLaunchInFlight(u.launchState)) ||
@@ -301,76 +215,6 @@ export default async function ClientAgentsPage({
         viewerIsClient: true,
         viewerUid: user.uid,
       });
-    // ── The roster (CD-G1) ──
-    // One card per GRANTED agent, umbrella-bound or not, carrying a mark, a
-    // name, one line of what it gives you and one status word. No Run button
-    // anywhere: a client's run gesture lives only inside a detail page, beside
-    // the context that explains what it costs and produces.
-    //
-    // Built from the agent list rather than from the umbrellas, because a
-    // client's roster is "the agents I have", not "the agents someone has bound
-    // an umbrella for". An agent with no umbrella is not missing from the
-    // roster - it is simply not set up yet, and says so.
-    const umbrellaByAgentId = new Map(ownedByUmbrella.map((u) => [u.customAgentId, u]));
-    const scheduleByAgentId = new Map(clientScheduleRows.map((row) => [row.agentId, row]));
-    const rosterEntries: AgentRosterEntry[] = agents.map((agent) => {
-      const umbrella = umbrellaByAgentId.get(agent.id) ?? null;
-      const schedule = scheduleByAgentId.get(agent.id) ?? null;
-      const setup = clientAgentSetup[agent.id] ?? null;
-      return {
-        customAgentId: agent.id,
-        identity: `${agent.key} ${agent.name}`,
-        icon: agent.icon ?? null,
-        displayName: umbrella?.displayName ?? agent.name,
-        blurb: clientAgentBlurb({
-          key: agent.key,
-          name: agent.name,
-          clientBlurb: agent.clientBlurb ?? null,
-        }),
-        status: rosterStatus({
-          launchState: umbrella?.launchState ?? null,
-          // Already client-redacted by toScheduleRows, and passed RAW: a
-          // refusal outranks "Live" (F24/F129), but WHEN it stops counting —
-          // aged out, or answered by a pause — is `rosterStatus`'s rule, not
-          // this page's. The `status === "active" ? … : null` that used to sit
-          // here was the same rule written at each of three call sites.
-          scheduleRefusal: schedule?.lastError ?? null,
-          scheduleRefusalAt: schedule?.lastErrorAt ?? null,
-          scheduleActive: schedule?.status === "active",
-          // "Not set up yet" beside a shelf of delivered work is the card
-          // contradicting itself; an agent that has produced says so instead.
-          hasDelivered: completedAgentIds.has(agent.id),
-          // A8: the second readiness proof, the same conjunction the detail
-          // page passes. Omitted (not `false`) when this agent runs on no
-          // intake — `rosterStatus` reads absent as "do not know", and an
-          // unknown must not read as ready.
-          ...(setup ? { readyToRun: setup.ready && setup.standUpDone } : {}),
-          // Resolved, and then deliberately not acted on: `viewerIsStaff` is
-          // false on this branch, so the rung is skipped (AF-14). The value is
-          // still passed rather than dropped, because the flag is what decides
-          // and a caller that stopped computing it would hide the decision.
-          lastRunFailed: failedAgentIds.has(agent.id),
-          viewerIsStaff: false,
-          // AF-5: an agent whose posts we produce internally has no schedule of
-          // its own to read Live from, and the client can see its work filling
-          // next week's calendar. The staff note the rung also returns is not
-          // painted here — this is the client's roster.
-          hasUpcomingContent: producingAgentIds.has(agent.id),
-          now,
-        }),
-      };
-    });
-    // Paused agents ride the SAME card component, just with rosterStatus's
-    // enabled:false short-circuit (-> "Coming Soon", every other input moot).
-    const disabledRosterEntries: AgentRosterEntry[] = disabledAgents.map((agent) => ({
-      customAgentId: agent.id,
-      identity: `${agent.key} ${agent.name}`,
-      icon: agent.icon ?? null,
-      displayName: agent.name,
-      blurb: clientAgentBlurb({ key: agent.key, name: agent.name, clientBlurb: agent.clientBlurb ?? null }),
-      status: rosterStatus({ launchState: null, enabled: false }),
-    }));
-    const allRosterEntries = [...rosterEntries, ...disabledRosterEntries];
 
     return (
       <>
@@ -393,17 +237,20 @@ export default async function ClientAgentsPage({
             and a run history that they had never been set up. Only an empty
             allowlist gets that copy now; an unconfigured service keeps the
             agents, schedules and history on screen behind an honest notice. */}
-        {agents.length > 0 && !agentServiceConfigured && (
+        {liveEntries.length > 0 && !agentServiceConfigured && (
           <RunsPausedNotice viewerIsClient cause="service" />
         )}
         {/* SCRUM-264: a client cut over to agent-engine got no warning of any
             kind when it broke - agentServiceConfigured above has nothing to
             say about it, since these runs never touch agent-service. */}
-        {shouldShowEngineHealthBanner(client.agentsRepoSlug, agents.map((a) => a.key)) && (
+        {shouldShowEngineHealthBanner(
+          client.agentsRepoSlug,
+          liveEntries.map((e) => e.agentKey),
+        ) && (
           <EngineHealthBanner viewerIsClient />
         )}
-        {allRosterEntries.length > 0 ? (
-          <ClientAgentRoster clientId={id} entries={allRosterEntries} />
+        {rosterEntries.length > 0 ? (
+          <ClientAgentRoster clientId={id} entries={rosterEntries} now={now} />
         ) : (
           /* R9 (flow audit 2026-09 · NN/g *Empty States*): this told a client
              what would eventually happen and gave them nothing to do about it —
@@ -482,14 +329,14 @@ export default async function ClientAgentsPage({
 
   // No `intakePanes` here any more, and no listContextItems: both fed the run
   // DIALOG, and CD-I1 moved every staff run gesture to the agent detail page.
-  // The roster asks buildAgentSetup for readiness alone - which is what its
-  // status word needs - and the detail route builds the panes for the one
-  // agent it is about, rather than this page building them for all of them
-  // (three full reads of seats, intake, drops and run history, per agent, for
-  // a dialog that is no longer on this page).
-  const agentSetup = await buildAgentSetup(id, enabledAgents);
+  // The detail route builds the panes for the one agent it is about, rather than
+  // this page building them for all of them (three full reads of seats, intake,
+  // drops and run history, per agent, for a dialog that is no longer on this
+  // page). Readiness is not asked here either any more: `buildAgentSetup` is
+  // fired once, inside `buildClientRosterEntries`, for the set it lists (round 6
+  // review C1) — this branch was paying for a second full pass over the same
+  // agents to answer the same question.
   const staffRuns = toRunRows(jobs, true, umbrellas);
-  const staffScheduleRows = toScheduleRows(scheduledRuns, false);
 
   const boundAgentIds = new Set(umbrellas.map((u) => u.customAgentId));
   // THE BINDING FILTER BELONGS HERE TOO (#131). This list used to ask only
@@ -510,34 +357,6 @@ export default async function ClientAgentsPage({
   const nothingToShow =
     enabledAgents.length === 0 && disabledStaffAgents.length === 0 && staffRuns.length === 0;
 
-  // ── The staff roster (CD-I1) ──
-  // The same roster + detail model the client has, for the same reason Albert
-  // gave for the client's: "they can just click on it, and then it opens… over
-  // the whole page." Staff were the only audience still meeting an agent as a
-  // card that carried four controls and a status line, which meant the two
-  // audiences read the same agent on two different surfaces - and every fix to
-  // one had to be remembered for the other.
-  //
-  // Built from the AGENT list, not the umbrellas: an unbound agent is not
-  // missing from a staff roster, it is an agent nobody has set up yet, and the
-  // page it opens is where it gets set up.
-  const staffUmbrellaByAgentId = new Map(umbrellas.map((u) => [u.customAgentId, u]));
-  const staffScheduleByAgentId = new Map(staffScheduleRows.map((row) => [row.agentId, row]));
-  // The rows `toScheduleRows` did NOT pick. It returns one governing row per
-  // agent (see selectAgentSchedules) — which is what stops two surfaces showing
-  // two different schedules — so without this the extras would simply be gone
-  // from staff's view as well as the client's, and the point of picking one is
-  // that somebody is told there were two.
-  const staffScheduleSelection = selectAgentSchedules(scheduledRuns);
-  // The legacy generator, indexed by the agent it fires. Its rows key the agent
-  // on `agentId` (the planned rows use `customAgentId`) — same collection of
-  // custom agents, different field name.
-  const legacyByAgentId = new Map<string, typeof legacyScheduledRuns>();
-  for (const run of legacyScheduledRuns) {
-    const bucket = legacyByAgentId.get(run.agentId);
-    if (bucket) bucket.push(run);
-    else legacyByAgentId.set(run.agentId, [run]);
-  }
   // The clock the refusal window is measured against — resolved once for the
   // whole roster so every card ages a refusal from the same instant.
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
@@ -551,144 +370,50 @@ export default async function ClientAgentsPage({
     scheduledAt: assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
     now: staffNow,
   });
-  // Same delivered-work read the client branch makes, through the same function,
-  // so the two rosters cannot call one agent "Not set up yet" and the other
-  // "Runs on request". `viewerIsClient: false` keeps every asset in scope —
-  // staff lose nothing to the client archive window, and the lab imports the
-  // job-only join could not see are now in scope for them too.
-  const staffAgentIdByName = new Map(customAgents.map((a) => [a.name, a.id]));
-  const staffDeliveredAgentIds = agentsWithDeliveredWork({
-    assets,
-    jobs,
-    agents: enabledAgents,
-    umbrellas,
-    clientSlug: client.agentsRepoSlug,
-    viewerIsClient: false,
+
+  // ── The staff roster (CD-I1) ──
+  // The same roster + detail model the client has, for the same reason Albert
+  // gave for the client's: "they can just click on it, and then it opens… over
+  // the whole page." Staff were the only audience still meeting an agent as a
+  // card that carried four controls and a status line, which meant the two
+  // audiences read the same agent on two different surfaces - and every fix to
+  // one had to be remembered for the other.
+  //
+  // Built from the AGENT list, not the umbrellas: an unbound agent is not
+  // missing from a staff roster, it is an agent nobody has set up yet, and the
+  // page it opens is where it gets set up.
+  //
+  // ── AND BUILT BY THE ONE ASSEMBLER (round 6 review, findings C1/C2/C3) ──
+  //
+  // This block used to hand-assemble `rosterStatus`'s inputs a second time,
+  // beside the client branch above doing the same thing with the same functions.
+  // Four differences had already crept in — the raw umbrella instead of the
+  // card-owning one, `viewerIsClient: false` on the delivered-work join, a
+  // separate `toScheduleRows` call and a re-spelled readiness conjunction — and
+  // any one of them can change the WORD, which ruling 1 forbids outright. The
+  // staff scope is the CANDIDATE SET (every enabled bound agent, granted or not,
+  // plus the paused ones) and the additive `note` / `notGranted`; the status
+  // inputs are the client's, computed once, in `lib/client-roster.ts`.
+  const staffRosterEntries = await buildClientRosterEntries({
+    clientId: id,
+    client,
+    scope: "staff",
+    // The seat gate (D3): `lastMade` prints a deliverable's title, and an
+    // operator reading a client's roster is not a licence to name a seat's
+    // personal post. Same viewing context the client branch passes.
+    viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
     now: staffNow,
+    data: {
+      allAgents: customAgents,
+      jobs,
+      plannedRuns: scheduledRuns,
+      umbrellas,
+      assets,
+      // The OTHER scheduling system, for the staff-only note. Read on this
+      // branch only; the client's roster neither reads nor mentions it.
+      legacyScheduledRuns: legacyScheduledRuns,
+    },
   });
-  // Same failed-last-run read the client branch makes, for the same reason: the
-  // two rosters must not disagree about whether an agent needs someone.
-  const staffFailedAgentIds = lastRunFailedAgentIds(jobs, staffAgentIdByName, { staff: true });
-  // AF-5, and deliberately the SAME call the client branch makes — no viewer
-  // argument. The word is the client-facing one by ruling, so a staff roster that
-  // asked a staff-flavoured version of the question would call an agent idle on
-  // one screen and live on the other. What staff get extra is the note below.
-  const staffProducingAgentIds = agentsWithUpcomingContent({
-    assets,
-    jobs,
-    agents: enabledAgents,
-    umbrellas,
-    clientSlug: client.agentsRepoSlug,
-    now: staffNow,
-  });
-  // Drafts waiting on staff, per agent — the queue the retired card surfaced
-  // as its "N ready" chip. Counted from the jobs already loaded.
-  const reviewCountByAgentName = new Map<string, number>();
-  for (const job of jobs) {
-    if (job.external?.taskType !== "custom" || job.status !== "review") continue;
-    if (job.assetIds.length === 0) continue;
-    reviewCountByAgentName.set(
-      job.agentName,
-      (reviewCountByAgentName.get(job.agentName) ?? 0) + job.assetIds.length,
-    );
-  }
-  // A4 (parity pass 2026-09). The staff roster is a SUPERSET of the client's —
-  // every enabled bound agent, granted or not — and nothing on it said which
-  // cards the client would actually see. An operator previewing an account read
-  // a fuller grid as if it were the client's own. The set is kept (staff need
-  // to see what is available to grant) and each extra card now says so.
-  const grantedAgentIds = new Set(client.customAgentIds ?? []);
-  const staffRosterEntries: AgentRosterEntry[] = enabledAgents.map((agent) => {
-    const umbrella = staffUmbrellaByAgentId.get(agent.id) ?? null;
-    const schedule = staffScheduleByAgentId.get(agent.id) ?? null;
-    const review = reviewCountByAgentName.get(agent.name) ?? 0;
-    const setup = agentSetup[agent.id] ?? null;
-    // One line of operator state, so the roster still answers "which of these
-    // needs me" without becoming a control panel again. Highest-priority fact
-    // only — the detail page carries the full ladder.
-    //
-    // A DUPLICATE SCHEDULE OUTRANKS ALL OF IT. Two live rows for one client and
-    // one agent is not a state anyone chose: nothing refuses to create the
-    // second, every surface renders only the one `selectAgentSchedules` picks,
-    // and the other keeps firing and billing where nobody can see or pause it.
-    // Ranked above the review queue because a queue is work and this is a
-    // defect that produced some of it.
-    const extraSchedules = staffScheduleSelection.get(agent.id)?.duplicates.length ?? 0;
-    const note =
-      extraSchedules > 0
-        ? `${extraSchedules + 1} schedules for this agent. Only the next to fire is shown here or editable`
-        : review > 0
-          ? `${review} draft${review === 1 ? "" : "s"} waiting for review`
-          : setup && !setup.ready
-            ? `${setup.label} is still empty`
-            : schedule
-              ? `${schedule.postsPerWeek} run${schedule.postsPerWeek === 1 ? "" : "s"}/week · ${schedule.outputsPerRun} output${schedule.outputsPerRun === 1 ? "" : "s"} each`
-              : null;
-    // APPENDED, NOT RANKED. The legacy generator is a different fact from every
-    // rung above — it names a SECOND system firing this agent, not a competing
-    // status — so ranking it would mean either hiding it behind a review count
-    // or hiding the review count behind it. It says "not billed" out loud
-    // because that is the whole reason it is easy to forget: its fires cost the
-    // client nothing, appear in no credit ledger, and still spend real money at
-    // the model.
-    const legacy = legacyByAgentId.get(agent.id) ?? [];
-    const legacyNote =
-      legacy.length > 0
-        ? `${legacy.length} settings-page schedule${legacy.length === 1 ? "" : "s"} (${legacy.filter((r) => r.enabled).length} on). Not billed to the client`
-        : null;
-    const status = rosterStatus({
-      launchState: umbrella?.launchState ?? null,
-      // Raw refusal + raw status — the pause and freshness rules are the
-      // helper's (see the client branch above).
-      scheduleRefusal: schedule?.lastError ?? null,
-      scheduleRefusalAt: schedule?.lastErrorAt ?? null,
-      scheduleActive: schedule?.status === "active",
-      hasDelivered: staffDeliveredAgentIds.has(agent.id),
-      lastRunFailed: staffFailedAgentIds.has(agent.id),
-      // The rung the client's branch skips. This is the surface it was written
-      // for: a green badge above a run history whose last row reads Failed.
-      viewerIsStaff: true,
-      hasUpcomingContent: staffProducingAgentIds.has(agent.id),
-      now: staffNow,
-    });
-    // LEADS the note (AF-5). When the badge says Live and the schedule row under
-    // it says nothing is firing, "why" is the first question an operator has —
-    // ahead of a review queue or a duplicate-schedule warning, both of which are
-    // still true and still appended. `status.staffNote` is set only on the rung
-    // that creates the discrepancy, so on every other agent this line adds
-    // nothing.
-    const fullNote =
-      [status.staffNote ?? null, note, legacyNote].filter(Boolean).join(" · ") || null;
-    return {
-      customAgentId: agent.id,
-      identity: `${agent.key} ${agent.name}`,
-      icon: agent.icon ?? null,
-      displayName: umbrella?.displayName ?? agent.name,
-      blurb: clientAgentBlurb({
-        key: agent.key,
-        name: agent.name,
-        clientBlurb: agent.clientBlurb ?? null,
-      }),
-      status,
-      note: fullNote,
-      // A4. Not a status word — the agent's status is whatever it is — but a
-      // fact about THIS client's view of it, which is why it is its own flag
-      // and its own neutral badge rather than another `rosterStatus` rung.
-      notGranted: !grantedAgentIds.has(agent.id),
-    };
-  });
-  // Same enabled:false short-circuit as the client branch - every other
-  // rosterStatus input is moot once an agent is paused.
-  const disabledStaffRosterEntries: AgentRosterEntry[] = disabledStaffAgents.map((agent) => ({
-    customAgentId: agent.id,
-    identity: `${agent.key} ${agent.name}`,
-    icon: agent.icon ?? null,
-    displayName: agent.name,
-    blurb: clientAgentBlurb({ key: agent.key, name: agent.name, clientBlurb: agent.clientBlurb ?? null }),
-    status: rosterStatus({ launchState: null, enabled: false }),
-    notGranted: !grantedAgentIds.has(agent.id),
-  }));
-  const allStaffRosterEntries = [...staffRosterEntries, ...disabledStaffRosterEntries];
 
   return (
     <>
@@ -819,8 +544,8 @@ export default async function ClientAgentsPage({
               could not be compared with the real thing at a glance. The
               heading is gone and the bind control moved below, into the frame
               that says who it is for. */}
-          {allStaffRosterEntries.length > 0 && (
-            <ClientAgentRoster clientId={id} entries={allStaffRosterEntries} />
+          {staffRosterEntries.length > 0 && (
+            <ClientAgentRoster clientId={id} entries={staffRosterEntries} now={staffNow} />
           )}
           {/* The bind control is roster-level: it answers "which agents does
               this client have", which is exactly the question the roster asks.

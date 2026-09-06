@@ -256,7 +256,82 @@ describe("parseCalendarDate / formatCalendarDate", () => {
       agent: "agent",
       search: "q",
       hidden: "hidden",
+      // round 6 (decision 8): `?asset=` opens ONE deliverable's detail modal on
+      // load. It is the one key the setup ladder's last step and any future
+      // "your post is ready" row both need, and until it existed the one object
+      // a client would send a colleague had no URL at all.
+      asset: "asset",
     });
+  });
+
+  // round 6: and it is deliberately NOT part of the restorable view state. The
+  // other five describe a screen Back has to be able to rebuild; this one is a
+  // gesture, and the archive drops it with `replaceState` when the modal opens.
+  it("keeps ?asset= out of the state Back restores", () => {
+    const state = calendarStateFromQuery("?view=archive&asset=a1");
+    expect(state.view).toBe("archive");
+    expect(Object.keys(state)).not.toContain("asset");
+  });
+});
+
+/* ── round 6 review (D2): the open event means a real open ───────────── */
+
+/**
+ * AN `?asset=` ID THE ARCHIVE CANNOT SHOW OPENS NOTHING AND WRITES NOTHING.
+ *
+ * Decision 8 shipped with two channels reporting the same event: the tile's
+ * click handler, and a seeded `useEffect` that fired for `initialAssetId` on
+ * mount — before the id had been looked up. So a stale, expired or hand-typed
+ * link (the archive's own projection drops drafts, future posts and anything
+ * past 30 days) rendered no modal at all and still told the host a deliverable
+ * had been read: `?asset=` came off the URL and, for a client, action 05 —
+ * "See your first output" — was written against an empty screen. The ladder
+ * step would tick for work the client never saw.
+ *
+ * One effect, keyed on the RESOLVED asset, is what makes the event true: the
+ * click sets the state, the deep link seeds it, and either way the report
+ * happens only once the lookup has produced an asset the list holds.
+ */
+describe("only a deliverable that actually opened is reported as opened", () => {
+  it("reports from one effect keyed on the resolved asset", () => {
+    const src = code(ARCHIVE);
+    // The lookup that is allowed to fail. The whole fix rests on the event
+    // being downstream of THIS, not of the raw param.
+    expect(src).toMatch(
+      /const openAsset = openAssetId \? assets\.find\(\(a\) => a\.id === openAssetId\) \?\? null : null;/,
+    );
+    const at = src.indexOf("const openedAssetId");
+    expect(at, "the resolved-id key is gone").toBeGreaterThan(-1);
+    const effect = src.slice(at, at + 300);
+    expect(effect).toContain("const openedAssetId = openAsset?.id ?? null;");
+    expect(effect, "an unresolved id still reports").toContain("if (!openedAssetId) return;");
+    expect(effect).toContain("onAssetOpened?.(openedAssetId)");
+    expect(effect).toMatch(/\}, \[openedAssetId, onAssetOpened\]\)/);
+  });
+
+  it("has exactly one channel, so a seeded id cannot report twice or early", () => {
+    const src = code(ARCHIVE);
+    expect(src, "the blind seeded effect is back").not.toContain("onAssetOpened?.(initialAssetId)");
+    expect(
+      src.match(/onAssetOpened\?\.\(/g)?.length,
+      "a second place reports an open",
+    ).toBe(1);
+    // The click handler moves state and nothing else — the effect above sees it.
+    const at = src.indexOf("const handleOpenAsset");
+    expect(at).toBeGreaterThan(-1);
+    expect(src.slice(at, at + 200)).not.toContain("onAssetOpened");
+  });
+
+  it("hands the host no id it does not read", () => {
+    const src = code(CALENDAR);
+    const at = src.indexOf("const onArchiveAssetOpened");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, at + 500);
+    expect(body, "the unread `_assetId` parameter is back").not.toContain("assetId");
+    expect(body).toMatch(/useCallback\(\s*\(\) =>/);
+    // Still the two jobs the event exists for, and still once per mount.
+    expect(body).toContain('writeCalendarQuery({ asset: null }, "replace")');
+    expect(body).toContain("resultActionWritten.current");
   });
 });
 

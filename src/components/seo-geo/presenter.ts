@@ -1106,15 +1106,23 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
   const brandRate = b.measured > 0 ? b.named / b.measured : null;
   const catRate = c.measured > 0 ? c.named / c.measured : null;
 
+  /**
+   * NOT "the work below" any more (round 6). This sentence renders in two
+   * places — Home's "SEO & AI visibility" card and the panel's presence section
+   * — and there is no plan under either of them: the Karos-owned action plan was
+   * unmounted from the client report, and on Home the takeaway was never above
+   * anything. Naming the agents instead is true on both surfaces and says who is
+   * doing it.
+   */
   let takeaway: string | null = null;
   if (brandRate !== null && catRate !== null) {
     if (brandRate >= 0.5 && catRate < 0.25) {
       takeaway =
-        "Engines know who you are, but you're missing from the questions new customers ask. That's the gap the work below closes.";
+        "Engines know who you are, but you're missing from the questions new customers ask. That's the gap our agents are working on.";
     } else if (brandRate < 0.5 && catRate < 0.25) {
       takeaway = "Engines rarely name you even when asked directly. Improving your AI readiness comes first.";
     } else if (brandRate >= 0.5 && catRate >= 0.25) {
-      takeaway = "You show up both by name and in open category questions. The work below protects that position.";
+      takeaway = "You show up both by name and in open category questions. Our agents' job now is to protect that position.";
     } else {
       takeaway =
         "You appear in category questions more often than when buyers ask about you by name. Strengthening your brand signals makes that recognition stick.";

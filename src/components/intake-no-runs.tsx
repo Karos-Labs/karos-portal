@@ -41,7 +41,9 @@ export function IntakeNoRuns({
         action={
           <a
             href={`/clients/${clientId}/agents`}
-            className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-neon"
+            /* round 6 (rule 3): a quiet link hovers muted to foreground with
+               an underline. `hover:text-neon` is not a rule. */
+            className="focus-ring inline-flex items-center gap-1 rounded-md text-sm font-medium text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
           >
             See your agents
             <Icon name="ChevronRight" className="h-3.5 w-3.5" />

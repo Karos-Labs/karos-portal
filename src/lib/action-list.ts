@@ -65,7 +65,15 @@ export interface ActionSignals {
   grantedAgentCount: number;
   hasRun: boolean;
   runCount: number;
-  hasOutput: boolean;
+  /**
+   * `hasOutput` LEFT THIS LIST (portal feedback round 6, decision 8). Id 05
+   * ("See your first output") was proxied by "a deliverable exists at all",
+   * which is a fact about US, not about the client: nothing recorded that they
+   * had ever opened one. The calendar's archive writes the row when its detail
+   * modal opens now (`?asset=`), so 05 is event-tracked like 12-15 and 21-23,
+   * and the proxy that stood in for the event is gone rather than left to
+   * disagree with it.
+   */
   hasStarredAgent: boolean;
   /** Id 07's proxy. Optional: no rendered surface asks it today. */
   hasManualCompetitor?: boolean;
@@ -295,11 +303,29 @@ export const ACTION_DEFINITIONS: ActionDefinition[] = [
  * "brand-voice"/"target-audience"/"competitor-analysis" — client-documents.tsx),
  * not a client-authored profile field. There is nothing to query for "has the
  * client looked at this" beyond the moment they open it, so completion is a
- * row client-documents.tsx writes on open, the same as 12-15's writers.
+ * row client-documents.tsx writes, the same as 12-15's writers — from the
+ * document's own "Looks right" since round 6, rather than from the moment the
+ * row was opened (decision 3).
  * (`client.brandVoice` looks like a live signal but is dead — nothing in the
  * portal writes to it any more — so it is deliberately not read here.)
+ *
+ * "05" JOINED THEM IN ROUND 6 (decision 8). It was the SOW's "the output was
+ * opened", proxied by "an output exists" because nothing logged the open. The
+ * calendar's `?asset=` key gives the archive's detail modal a URL, and the
+ * modal writes this row when it opens for a client — so the literal event is
+ * recorded at last, and the setup ladder's "See your first result" stops
+ * ticking off work the client has never looked at.
  */
-export const EVENT_TRACKED_ACTION_IDS = new Set(["12", "13", "14", "15", "21", "22", "23"]);
+export const EVENT_TRACKED_ACTION_IDS = new Set([
+  "05",
+  "12",
+  "13",
+  "14",
+  "15",
+  "21",
+  "22",
+  "23",
+]);
 
 /**
  * Every action's live-computed "done" answer, for the ids NOT in
@@ -309,9 +335,6 @@ export const EVENT_TRACKED_ACTION_IDS = new Set(["12", "13", "14", "15", "21", "
  *  · 02 ("discover what agents do", SOW event: a video opened) — no open is
  *    tracked, so this is DONE exactly when 03 is: setting up an agent means
  *    its data page has already been seen.
- *  · 05 ("see your first output", SOW event: the output opened) — proxied by
- *    "a deliverable exists at all" (`hasOutput`), since nothing logs a client
- *    opening one.
  *  · 07 ("review your competitors", SOW event: the competitors opened) —
  *    proxied by `hasManualCompetitor` (the client added one themselves)
  *    rather than "any competitor row exists", which the intel pipeline seeds
@@ -334,8 +357,11 @@ export function computeActionDone(signals: ActionSignals): Record<string, boolea
     "01": signals.profileComplete,
     "02": done03,
     "03": done03,
+    // "04" means a run that PRODUCED something (round 6, §2.6): the caller
+    // resolves `hasRun` from jobs that reached review, approved or delivered,
+    // so a failed run no longer ticks "Run your first agent".
     "04": signals.hasRun,
-    "05": signals.hasOutput,
+    // No "05": event-tracked now — see EVENT_TRACKED_ACTION_IDS.
     "06": signals.hasStarredAgent,
     // The optional three (see ActionSignals): an unanswered signal is "not yet",
     // never "done" — the safe direction for a checklist row is to keep asking.

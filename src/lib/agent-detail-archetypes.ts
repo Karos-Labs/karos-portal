@@ -12,7 +12,7 @@ import {
   isTestRunAsset,
   type AssetViewer,
 } from "@/lib/asset-visibility";
-import { isClientCalendarStatus, postKind } from "@/lib/calendar-kind";
+import { isUpcomingPost } from "@/lib/calendar-kind";
 import { assetImages, assetVideos } from "@/lib/asset-images";
 import { parseRedditDrafts, type RedditParsedAccount } from "@/lib/reddit-drafts";
 import type { ClientAgentIdentity } from "@/lib/agent-identity-map";
@@ -232,6 +232,93 @@ function assetBelongsToAgent(
   return folder !== null && agent.slugs.has(folder);
 }
 
+/* ─────────────── the per-page index (round 6 review, E9/E10) ─────────────── */
+
+/**
+ * THE THREE THINGS EVERY ATTRIBUTION ANSWER NEEDS, BUILT ONCE PER PAGE.
+ *
+ * Every helper below used to build its own `jobById` map and run its own
+ * `viewerVisibleAssets` / `isUpcomingCalendarItem` pass. On a roster that is
+ * four functions × one client's whole asset and job history, per render, for
+ * answers that are all derived from the same two lists — and the roster build
+ * called three of those functions twice (once for the enabled set, once for the
+ * paused one). Findings E9/E10: build the index once, hand it down.
+ *
+ * OPTIONAL EVERYWHERE. Every helper still works with no index: it builds the
+ * one it needs from the `assets`/`jobs` it was given, exactly as before, so a
+ * caller with one agent to ask about (the detail page) pays nothing to think
+ * about this.
+ */
+export interface AgentAssetIndex {
+  /** `Job.id` → job. The join `assetBelongsToAgent` walks on every asset. */
+  jobById: Map<string, Job>;
+  /** What this viewer may be told exists at all (`viewerVisibleAssets`). */
+  visible: Asset[];
+  /** The AF-5 candidate set: client-visible content on a day that has not happened. */
+  upcoming: Asset[];
+}
+
+export function buildAgentAssetIndex(args: {
+  assets: Asset[];
+  jobs: Job[];
+  viewerIsClient: boolean;
+  now: number;
+  viewer?: AssetViewer;
+}): AgentAssetIndex {
+  return {
+    jobById: new Map(args.jobs.map((job) => [job.id, job])),
+    visible: viewerVisibleAssets(args),
+    // NOT viewer-projected, and deliberately: `isUpcomingCalendarItem` is the
+    // AF-5 predicate, and the archive drops future-dated posts by construction,
+    // so projecting first would empty this list for every client. What leaves
+    // this set is one boolean (or one DAY) per agent — never a title, a count or
+    // a generation instant — which is the A3/A4 argument stated on
+    // `agentUpcomingCalendarDays`.
+    upcoming: args.assets.filter((asset) => isUpcomingCalendarItem(asset, args.now)),
+  };
+}
+
+/**
+ * WHICH VISIBLE ASSETS BELONG TO WHICH AGENT — one pass over the assets.
+ *
+ * The rungs are per-agent (`agentAttribution` resolves one agent's spellings),
+ * so a caller asking about N agents used to walk the whole asset list N times.
+ * This resolves every agent's attribution first and then walks the list ONCE,
+ * which is the same rungs in the same order with the loops swapped (finding
+ * E11). Every id in `agents` gets a key, so an agent with nothing reads as an
+ * empty array rather than as absent.
+ *
+ * `assets` must ALREADY be viewer-projected — pass `AgentAssetIndex.visible` or
+ * `AgentAssetIndex.upcoming`. This function applies no visibility rule of its
+ * own, which is the same contract `templateDetails` carries below and for the
+ * same reason: a set that skipped the projection would hand a client the whole
+ * batch at generation time.
+ */
+export function groupAssetsByAgent(args: {
+  assets: readonly Asset[];
+  jobById: Map<string, Job>;
+  agents: readonly { id: string; name: string; key?: string }[];
+  umbrellas: ClientAgent[];
+}): Map<string, Asset[]> {
+  const grouped = new Map<string, Asset[]>();
+  const attributions = args.agents.map((agent) => {
+    grouped.set(agent.id, []);
+    return agentAttribution({
+      agent,
+      umbrella: umbrellaForAgent(args.umbrellas, agent.id),
+      umbrellas: args.umbrellas,
+    });
+  });
+  for (const asset of args.assets) {
+    for (const attribution of attributions) {
+      if (assetBelongsToAgent(asset, args.jobById, attribution)) {
+        grouped.get(attribution.id)!.push(asset);
+      }
+    }
+  }
+  return grouped;
+}
+
 /** Everything this agent has produced that THIS viewer may see. */
 export function agentProducedAssets(args: {
   assets: Asset[];
@@ -243,10 +330,12 @@ export function agentProducedAssets(args: {
   viewerIsClient: boolean;
   now: number;
   viewer?: AssetViewer;
+  /** Prebuilt by the caller (`buildAgentAssetIndex`); built here when absent. */
+  index?: Pick<AgentAssetIndex, "jobById" | "visible">;
 }): Asset[] {
-  const jobById = new Map(args.jobs.map((job) => [job.id, job]));
+  const jobById = args.index?.jobById ?? new Map(args.jobs.map((job) => [job.id, job]));
   const attribution = agentAttribution(args);
-  return viewerVisibleAssets(args).filter((asset) =>
+  return (args.index?.visible ?? viewerVisibleAssets(args)).filter((asset) =>
     assetBelongsToAgent(asset, jobById, attribution),
   );
 }
@@ -322,6 +411,15 @@ export function agentsWithDeliveredWork(args: {
   clientSlug: string | null | undefined;
   viewerIsClient: boolean;
   now: number;
+  /**
+   * The seat gate (round 6 review, D3). `getClientArchiveAssets` drops another
+   * seat's personal content only when it is told who is asking, so a roster
+   * built without this counted a colleague's personal post as this agent's
+   * delivered work for every viewer in the workspace.
+   */
+  viewer?: AssetViewer;
+  /** Prebuilt by the caller (`buildAgentAssetIndex`); built here when absent. */
+  index?: Pick<AgentAssetIndex, "jobById" | "visible">;
 }): Set<string> {
   const bound = args.agents.filter((agent) =>
     agentKeyMatchesClientSlug(agent.key, args.clientSlug),
@@ -334,27 +432,30 @@ export function agentsWithDeliveredWork(args: {
   // One archive filter and one job index for the whole roster, then the rungs
   // per agent. The rungs are the same function the detail page's own list runs
   // on, which is what makes the two answers one answer.
-  const jobById = new Map(args.jobs.map((job) => [job.id, job]));
-  const visible = viewerVisibleAssets(args);
+  const jobById = args.index?.jobById ?? new Map(args.jobs.map((job) => [job.id, job]));
+  const visible = args.index?.visible ?? viewerVisibleAssets(args);
 
   const delivered = new Set<string>();
-  for (const agent of bound) {
-    // The job half, asked about THIS agent only: its own binding, then the
-    // pre-`customAgentId` name fallback. Both are lookups into facts about the
-    // jobs, so the answer is the same whether this agent was asked about alone
-    // or in a list.
+  // The job half first, per agent: its own binding, then the pre-`customAgentId`
+  // name fallback. Both are lookups into facts about the jobs, so the answer is
+  // the same whether this agent was asked about alone or in a list.
+  const unanswered = bound.filter((agent) => {
     if (byJob.ids.has(agent.id) || byJob.names.has(agent.name)) {
       delivered.add(agent.id);
-      continue;
+      return false;
     }
-    const attribution = agentAttribution({
-      agent,
-      umbrella: umbrellaForAgent(args.umbrellas, agent.id),
+    return true;
+  });
+  // The asset half, in ONE pass over the visible set for however many agents are
+  // left (finding E11) rather than one pass each.
+  if (unanswered.length > 0) {
+    const grouped = groupAssetsByAgent({
+      assets: visible,
+      jobById,
+      agents: unanswered,
       umbrellas: args.umbrellas,
     });
-    if (visible.some((asset) => assetBelongsToAgent(asset, jobById, attribution))) {
-      delivered.add(agent.id);
-    }
+    for (const [agentId, assets] of grouped) if (assets.length > 0) delivered.add(agentId);
   }
   return delivered;
 }
@@ -362,31 +463,49 @@ export function agentsWithDeliveredWork(args: {
 /* ─────────────────── upcoming calendar content (AF-5) ─────────────────── */
 
 /**
+ * How far ahead a planned day still counts as "upcoming" for the status word
+ * (round 6, decision 1).
+ *
+ * A CEILING, not a horizon. "Live" is a claim about now, and a single post dated
+ * eight months out is not evidence that anything is producing this week — while
+ * an imported daily stream always has the next fortnight filled, which is the
+ * case the rung exists for. Fourteen days is also exactly the window the client's
+ * own calendar shows as planned days ahead of the current week, so the word and
+ * the surface underneath it are reading the same fortnight.
+ */
+export const UPCOMING_WINDOW_DAYS = 14;
+const UPCOMING_WINDOW_MS = UPCOMING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+/**
  * Is this asset an item the CLIENT's calendar shows on a day that has not
- * happened yet?
+ * happened yet, inside the window above?
  *
  * THE CLIENT'S CALENDAR RULE, whoever is asking. The status word it feeds is the
  * client-facing one by ruling, so staff must be told the same thing the client is
- * being told — and a staff-flavoured version of this predicate (drafts included,
- * say) would give the two rosters different answers about the same agent, which
- * is the one failure `agentsWithDeliveredWork` exists to prevent. The rules are
- * therefore lifted from the surfaces that build a client's calendar rather than
- * invented here:
+ * being told — and a staff-flavoured version of this predicate would give the two
+ * rosters different answers about the same agent, which is the one failure
+ * `agentsWithDeliveredWork` exists to prevent.
+ *
+ * ONE SPELLING OF "UPCOMING" (round 6). The rule is `isUpcomingPost`, the
+ * predicate Home's calendar widget already asks (`lib/calendar-kind.ts`), plus
+ * the two exclusions that are about attribution rather than about the day, plus
+ * the ceiling. It used to be written out again here — `isClientCalendarStatus`,
+ * then a chip kind of `scheduled` or `placeholder` — and the reason given for
+ * refusing `draft` ("content still in review, not yet planned") was the
+ * pre-August doctrine that `isClientCalendarStatus` itself reversed: a client's
+ * calendar now shows the same pending work staff see, unapproved drafts
+ * included, and the post chain only ever moves DRAFTS onto future days
+ * (`lib/post-chain.ts`). So every future day of an imported, chained stream was
+ * a draft by construction, and this predicate answered `false` for the exact
+ * agents the AF-5 rung was written for: the client read "your week is planned"
+ * on the calendar and "Runs on request" on the agent above it.
  *
  *  • not a launch deliverable and not a test run — `getClientLibraryAssets` drops
  *    both, so neither is ever on anyone's calendar;
- *  • `isClientCalendarStatus` — kept for the call, even though it now always
- *    returns `true` (the calendar no longer hides drafts from a client — see its
- *    docstring); this predicate's own "planned, not yet done" answer for a draft
- *    still comes out `false` below, because a draft's chip kind is `draft`, never
- *    `scheduled` or `placeholder`;
- *  • a chip kind of `scheduled` or `placeholder`. Those are the two `postKind`
- *    answers that mean "planned for a day, not yet done". `published` is history,
- *    `failed` and `held` are a publish attempt that went wrong (an agent whose
- *    posts will not go out is not the thing Albert asked to be called Live), and
- *    `draft` is content still in review, not yet planned.
- *  • `scheduledAt` strictly in the future. A past-due scheduled post is a post
- *    that did not go out, not upcoming work.
+ *  • `isUpcomingPost` — `scheduledAt` strictly in the future (a past-due
+ *    scheduled post is one that did NOT go out, not upcoming work) and a chip
+ *    kind of `scheduled`, `placeholder` or `draft`;
+ *  • `scheduledAt` no further out than `UPCOMING_WINDOW_DAYS`.
  *
  * PLACEHOLDER COUNTS, deliberately. It is a planned item the client sees on their
  * calendar for a future day, which is exactly the trigger in the ruling ("if
@@ -395,10 +514,8 @@ export function agentsWithDeliveredWork(args: {
  */
 function isUpcomingCalendarItem(asset: Asset, now: number): boolean {
   if (isLaunchDeliverable(asset) || isTestRunAsset(asset)) return false;
-  if (!isClientCalendarStatus(asset.status)) return false;
-  if (asset.scheduledAt == null || asset.scheduledAt <= now) return false;
-  const kind = postKind(asset);
-  return kind === "scheduled" || kind === "placeholder";
+  if (asset.scheduledAt == null || asset.scheduledAt > now + UPCOMING_WINDOW_MS) return false;
+  return isUpcomingPost(asset, now);
 }
 
 /**
@@ -432,26 +549,87 @@ export function agentsWithUpcomingContent(args: {
   /** `Client.agentsRepoSlug` — the binding rung, as everywhere else. */
   clientSlug: string | null | undefined;
   now: number;
+  /** Prebuilt by the caller (`buildAgentAssetIndex`); built here when absent. */
+  index?: Pick<AgentAssetIndex, "jobById" | "upcoming">;
 }): Set<string> {
   const bound = args.agents.filter((agent) =>
     agentKeyMatchesClientSlug(agent.key, args.clientSlug),
   );
-  const upcoming = args.assets.filter((asset) => isUpcomingCalendarItem(asset, args.now));
+  const upcoming =
+    args.index?.upcoming ??
+    args.assets.filter((asset) => isUpcomingCalendarItem(asset, args.now));
   if (upcoming.length === 0 || bound.length === 0) return new Set();
 
-  const jobById = new Map(args.jobs.map((job) => [job.id, job]));
+  const jobById = args.index?.jobById ?? new Map(args.jobs.map((job) => [job.id, job]));
   const producing = new Set<string>();
-  for (const agent of bound) {
-    const attribution = agentAttribution({
-      agent,
-      umbrella: umbrellaForAgent(args.umbrellas, agent.id),
-      umbrellas: args.umbrellas,
-    });
-    if (upcoming.some((asset) => assetBelongsToAgent(asset, jobById, attribution))) {
-      producing.add(agent.id);
-    }
+  // One pass over the upcoming set for the whole roster (finding E11).
+  for (const [agentId, assets] of groupAssetsByAgent({
+    assets: upcoming,
+    jobById,
+    agents: bound,
+    umbrellas: args.umbrellas,
+  })) {
+    if (assets.length > 0) producing.add(agentId);
   }
   return producing;
+}
+
+/** One planned day ahead of this client, as the status line says it. */
+export interface UpcomingCalendarDay {
+  /** "YYYY-MM-DD" in the runtime zone — what the calendar's `?date=` key takes. */
+  dateKey: string;
+  /** The earliest instant planned on that day, for the label ("Thu 5"). */
+  at: number;
+}
+
+/**
+ * WHICH DAYS this one agent has planned inside the window, for its own page.
+ *
+ * The same predicate and the same attribution rungs as
+ * `agentsWithUpcomingContent` — this is that function's answer with the days
+ * kept, asked about one agent instead of a roster, so the status word and the
+ * facts beside it can never come from two different readings of the calendar.
+ *
+ * DAYS, NOT ITEMS, and that is the whole of the A3/A4 argument (round 6). Its
+ * sibling returns a bare set of ids because the ROSTER may only learn that
+ * something exists; this is the agent's own page, and what it prints is the
+ * count of distinct days and the first of them — which is exactly what the
+ * client's calendar already shows them as locked "Upcoming post" chips. No
+ * title, no per-day count, no batch shape and no generation instant leaves
+ * here, so a reader still cannot decompose a week into the lump it was made in.
+ */
+export function agentUpcomingCalendarDays(args: {
+  assets: Asset[];
+  jobs: Job[];
+  agent: { id: string; name: string; key: string };
+  umbrellas: ClientAgent[];
+  /** `Client.agentsRepoSlug` — the binding rung, as everywhere else. */
+  clientSlug: string | null | undefined;
+  now: number;
+  /** Prebuilt by the caller (`buildAgentAssetIndex`); built here when absent. */
+  index?: Pick<AgentAssetIndex, "jobById" | "upcoming">;
+}): UpcomingCalendarDay[] {
+  if (!agentKeyMatchesClientSlug(args.agent.key, args.clientSlug)) return [];
+  const jobById = args.index?.jobById ?? new Map(args.jobs.map((job) => [job.id, job]));
+  const attribution = agentAttribution({
+    agent: args.agent,
+    umbrella: umbrellaForAgent(args.umbrellas, args.agent.id),
+    umbrellas: args.umbrellas,
+  });
+  const zone = runtimeTimeZone();
+  const earliestByDay = new Map<string, number>();
+  // `index.upcoming` is the same predicate, applied once for the page.
+  for (const asset of args.index?.upcoming ?? args.assets) {
+    if (!args.index && !isUpcomingCalendarItem(asset, args.now)) continue;
+    if (!assetBelongsToAgent(asset, jobById, attribution)) continue;
+    const at = asset.scheduledAt!;
+    const dateKey = dateKeyInZone(at, zone);
+    const seen = earliestByDay.get(dateKey);
+    if (seen === undefined || at < seen) earliestByDay.set(dateKey, at);
+  }
+  return [...earliestByDay.entries()]
+    .map(([dateKey, at]) => ({ dateKey, at }))
+    .sort((a, b) => a.at - b.at);
 }
 
 /**

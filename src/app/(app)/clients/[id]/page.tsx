@@ -4,10 +4,12 @@ import {
   getClientSeoGeo,
   listAssets,
   listJobs,
+  listClientContextDocs,
   listClientIntegrations,
   listClientTasks,
   listClientActionStates,
   listCustomAgents,
+  listPlannedScheduledRuns,
 } from "@/lib/data";
 import { listClientAgents } from "@/lib/data-client-agents";
 import { isBillableClientActor } from "@/lib/credits";
@@ -30,14 +32,15 @@ import {
 import { platformForAgentRow } from "@/lib/content-platform";
 import { GetSetUpWidget } from "@/components/home-get-set-up";
 import {
-  ACTION_DISMISS_COOLDOWN_MS,
   resolveActionList,
   toClientActions,
   type ActionSignals,
 } from "@/lib/action-list";
 import {
+  agentRunLabel,
   agentSetupHref,
   familyHasIntakePage,
+  hasReadableClientDoc,
   pickSetupLadderAgent,
   resolveSetupLadderOrder,
   resolveSetupLadder,
@@ -47,8 +50,14 @@ import {
   type SetupLadderAgentCandidate,
 } from "@/lib/setup-ladder";
 import { buildAgentSetup } from "@/lib/client-agent-rows";
+import { buildClientRosterEntries } from "@/lib/client-roster";
 import { railAgentsForClient } from "@/lib/rail-agents";
 import { isUpcomingPost } from "@/lib/calendar-kind";
+import {
+  CLIENT_ARCHIVE_WINDOW_MS,
+  clientDeliveryStamp,
+  getClientArchiveAssets,
+} from "@/lib/asset-visibility";
 import {
   CalendarPreviewWidget,
   CALENDAR_PREVIEW_ROWS,
@@ -92,8 +101,18 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // other.
   const viewerIsBilled = isBillableClientActor(user);
 
-  const [assets, jobs, integrations, seoGeo, tasks, umbrellas, actionStates, allCustomAgents] =
-    await Promise.all([
+  const [
+    assets,
+    jobs,
+    integrations,
+    seoGeo,
+    tasks,
+    umbrellas,
+    actionStates,
+    allCustomAgents,
+    scheduledRuns,
+    contextDocs,
+  ] = await Promise.all([
     // TODO(bounded-reads): `listAssets`/`listJobs` read this client's ENTIRE
     // history to render a dashboard whose widest reader is a 30-day window —
     // they want a `limit` / date-window option in data.ts, the same shape
@@ -140,6 +159,23 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
     // small, staff-managed collection, on both branches, because the ladder is
     // mounted on both.
     listCustomAgents(),
+    // TWO READS JOINED THIS BLOCK IN ROUND 6, both for the setup ladder, and
+    // both for the same reason: two of its six steps were answering from a
+    // signal that could not see what the client sees.
+    //
+    //  · The planned schedule rows, so step 3's "live" can be asked of
+    //    `rosterStatus` — the ONE function the roster and the agent page ask —
+    //    instead of the bare `launchState === "live"` this page used to test.
+    //    That test is the logic bug the brief names: a client receiving
+    //    pre-created posts every day still read "We are setting up your first
+    //    agent". A schedule that is refusing outranks Live, and a schedule that
+    //    is active qualifies as Live, so the rows have to be in hand.
+    //  · The client-tier context documents, so step 2 can tell "not read yet"
+    //    from "not written yet". The Documents list filters an unwritten
+    //    document out of itself entirely, so the old row pointed a client at an
+    //    empty section (§2.4).
+    listPlannedScheduledRuns({ clientId: id }),
+    listClientContextDocs(id, "client"),
   ]);
 
   const firstName = user.name?.trim().split(/\s+/)[0];
@@ -344,13 +380,34 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
    * projection, unlocked rows only.
    */
   const clientVisibleJobs = jobs.filter((j) => j.runType !== "launch" && j.runType !== "test");
+  /**
+   * "RUN YOUR FIRST AGENT" NEEDS A RUN THAT PRODUCED SOMETHING (round 6, §2.6).
+   *
+   * `clientVisibleJobs.length > 0` counted a FAILED run and a cancelled one, so
+   * the step ticked for a client who had pressed the button and got nothing —
+   * the checklist telling them the thing they are waiting for already happened.
+   * `review` is the first status that means an output exists (the Karos review
+   * queue); `approved` and `delivered` are the two beyond it.
+   */
+  const RUN_PRODUCED = new Set(["review", "approved", "delivered"]);
+  const producedJobs = clientVisibleJobs.filter((j) => RUN_PRODUCED.has(j.status));
+  /** The three named halves of "profile complete" (decision 2). */
+  const profileFields = {
+    category: Boolean(client.category?.trim()),
+    // `client.description` alone, NOT `description || brief`: the brief is ours,
+    // not theirs. The Brand Profile sheet pre-fills the About field with it so
+    // the client confirms a sentence rather than writing one (§2.3).
+    description: Boolean(client.description?.trim()),
+    website: Boolean(client.website?.trim()),
+  };
   const actionSignals: ActionSignals = {
-    profileComplete: Boolean(client.description?.trim() && client.category?.trim()),
+    profileComplete: profileFields.category && profileFields.description && profileFields.website,
     hasGrantedAgent: (client.customAgentIds?.length ?? 0) > 0,
     grantedAgentCount: client.customAgentIds?.length ?? 0,
-    hasRun: clientVisibleJobs.length > 0,
+    hasRun: producedJobs.length > 0,
     runCount: clientVisibleJobs.length,
-    hasOutput: clientVisibleAssets.length > 0,
+    // NO `hasOutput` (round 6, decision 8): action 05 is event-tracked now — the
+    // client opened a deliverable — and "one exists" was only ever its proxy.
     hasStarredAgent: (client.starredAgentIds?.length ?? 0) > 0,
     hasUsableChannel: integrations.some((i) => integrationIsUsable(i)),
     connectedPlatformIds: integrations.filter((i) => integrationIsUsable(i)).map((i) => i.platform),
@@ -444,6 +501,47 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         )
       : {};
   const umbrellaByCustomAgentId = new Map(umbrellas.map((u) => [u.customAgentId, u]));
+  /**
+   * IS THIS AGENT LIVE? ASKED OF THE ONE ASSEMBLER (risk-review B3, then round 6
+   * review C1/C3).
+   *
+   * This page used to test `launchState === "live"` on its own, which is the
+   * logic bug the round-6 brief names: an agent whose posts fill the client's
+   * calendar every day has no schedule and no umbrella launch state of its own,
+   * so the ladder said "We are setting up your first agent" over a week of their
+   * content. B3 replaced that with a `rosterStatus` call — and left this page
+   * assembling that function's order-sensitive inputs by hand, as a FOURTH
+   * assembly, missing `hasDelivered`. So a client with a delivered post and a
+   * future draft still read "We are setting up your first agent" on Home while
+   * their roster said "Live" (review finding C1).
+   *
+   * The rows come from `buildClientRosterEntries` now — the same call the Agents
+   * page and Reporting read — so the ladder gets the WORD those surfaces show
+   * rather than a private re-derivation of it. `withRowFacts: false`: the ladder
+   * reads one boolean per agent and prints no titles or dates.
+   *
+   * NO NEW READS. All five inputs are already in this page's `Promise.all`
+   * above, and `agentSetup` is handed over as a cache so the intake reads
+   * `buildAgentSetup` makes are not made twice (ruling 8).
+   */
+  const rosterEntries = await buildClientRosterEntries({
+    clientId: id,
+    client,
+    // The seat gate (round 6 review, D3), and the same viewer the client
+    // library projection above uses.
+    viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
+    withRowFacts: false,
+    now,
+    data: {
+      allAgents: allCustomAgents,
+      jobs,
+      plannedRuns: scheduledRuns,
+      umbrellas,
+      assets,
+      agentSetup,
+    },
+  });
+  const rosterByAgentId = new Map(rosterEntries.map((entry) => [entry.customAgentId, entry]));
   const ladderCandidates: SetupLadderAgentCandidate[] = grantedAgents.map((agent) => {
     const setup = agentSetup[agent.id];
     return {
@@ -455,9 +553,17 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       runHref: `/clients/${id}/agents/${agent.id}`,
       selfServe: familyHasIntakePage(setupLadderFamily(agent)),
       setupReady: Boolean(setup?.ready && setup?.standUpDone),
-      // The only "set up" answer an agent with no self-service path can have:
-      // the Instagram/TikTok content engine is bound and taken live by staff.
-      live: umbrellaByCustomAgentId.get(agent.id)?.launchState === "live",
+      // The two rungs separately, so step 3 can name the one that is missing
+      // instead of sending a client back to a form they already filled in.
+      hasIntake: Boolean(setup?.ready),
+      standUpDone: Boolean(setup?.standUpDone),
+      // The roster's own word. An agent with no roster row at all reads NOT
+      // live, which is the safe direction: step 3 stays a task rather than
+      // ticking on an absence. (`railAgentsForClient` and the roster's candidate
+      // filter ask the same three questions, so the sets agree today.)
+      live: rosterByAgentId.get(agent.id)?.status.tone === "live",
+      runLabel: agentRunLabel(agent),
+      intakeLabel: setup?.clientLabel ?? `${agent.name} details`,
     };
   });
   /**
@@ -493,44 +599,107 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         .filter((entry): entry is readonly [string, number] => entry[1] != null),
     ),
   });
+  /**
+   * WHICH DELIVERABLE "Open your first post" OPENS (round 6, decision 8).
+   *
+   * The newest row of the CLIENT ARCHIVE, not of the library: `?asset=` opens
+   * the archive's own detail modal, and the archive drops drafts, future-dated
+   * posts and anything older than 30 days by construction. Linking a row that
+   * list provably excludes would land the client on a screen with no such item
+   * on it — the one thing `isInClientArchive` exists to prevent. Already
+   * sorted newest-first by the same helper the calendar's archive uses, so
+   * `[0]` is the same row that list will show at the top.
+   */
+  const newestArchived = getClientArchiveAssets(assets, {
+    now,
+    viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
+  })[0];
+  /**
+   * STEP 5'S SECOND HALF: WORK THE PORTAL CAN NO LONGER SHOW (round 6 review,
+   * C4/C5).
+   *
+   * Action 05 is an EVENT — the client opened a deliverable, written when the
+   * archive modal opens — so no client alive on ship day had ever recorded one.
+   * The first answer to that was a fixed grandfather date
+   * (`RESULT_STEP_LEGACY_BEFORE`), which is a fact about OUR release timeline
+   * and read as one: it ticked step 5 for a client who had never opened
+   * anything, and it went stale the moment the date passed, at which point a
+   * client with one three-month-old post was told forever to "open what came
+   * back" from a Workspace that no longer lists it.
+   *
+   * The honest question is about the CLIENT'S ARCHIVE, and it does not go stale:
+   * a non-draft posted deliverable older than the window is one
+   * `getClientArchiveAssets` will not show them, so the step cannot be asked.
+   * `published` is the only status the archive ages out (`isInClientArchive` —
+   * approved, scheduled and delivered work stays until the client marks it
+   * posted), so it is the only one this can be true of.
+   *
+   * Derived on read from the projection computed above — this page writes
+   * nothing to Firestore — so it costs no read and no second clock.
+   */
+  const agedOutDeliverable = clientVisibleAssets.some(
+    (a) => a.status === "published" && clientDeliveryStamp(a) < now - CLIENT_ARCHIVE_WINDOW_MS,
+  );
+  // Staff read this page for ONE client, so the flat route (which scopes itself
+  // to the VIEWER's own client) is rewritten the same way `toClientActions`
+  // rewrites the checklist's calendar rows.
+  const calendarBase = isClientViewer ? "/calendar" : `/clients/${id}/calendar`;
   const setupSteps = resolveSetupLadder({
     profileDone: actionDone("01"),
     profileHref: actionById.get("01")?.href ?? profileTabHref,
+    profile: profileFields,
     // Two ids, one step: brand voice and target persona are one gesture (both
-    // are context documents opened from the same place), spelled as two rows.
-    brandVoiceDone: actionDone("21"),
-    audienceDone: actionDone("22"),
-    documentsHref: actionById.get("21")?.href ?? `${profileTabHref}#documents`,
+    // are context documents read from the same place), spelled as two rows.
+    // `present` is what keeps the step honest while the pipeline is still
+    // writing them — an unwritten document is not an unread one.
+    brandVoice: {
+      present: hasReadableClientDoc(contextDocs, "brand-voice"),
+      confirmed: actionDone("21"),
+    },
+    audience: {
+      present: hasReadableClientDoc(contextDocs, "target-audience"),
+      confirmed: actionDone("22"),
+    },
     agent: pickSetupLadderAgent(ladderCandidates, setupLadderOrder),
     agentsHref,
     runDone: actionDone("04"),
-    resultDone: actionDone("05"),
-    resultHref: actionById.get("05")?.href ?? "/calendar?view=archive",
+    // TWO FACTS, one rule, and the rule lives in `resolveSetupLadder`.
+    resultOpened: actionDone("05"),
+    agedOutDeliverable,
+    resultHref: `${calendarBase}?view=archive${newestArchived ? `&asset=${newestArchived.id}` : ""}`,
+    // Only an item the archive will actually SHOW arms the button (alignment
+    // fix 1). Same list `resultHref` points into, so the two cannot disagree.
+    resultReady: Boolean(newestArchived),
   });
   /**
-   * WHEN THE FINISHED CARD STAYS HIDDEN, AND FOR WHOM (review wave, 2026-09).
+   * WHEN THE FINISHED CARD STAYS HIDDEN, AND FOR WHOM.
    *
-   * Two rules, both of them the point of the change:
+   * TWO CONDITIONS, and both are about the FINISHED card (round 6, decision 9,
+   * corrected in the review pass):
    *
-   *  · IT IS A COOLDOWN, NOT A TOMBSTONE. The press wrote `not_relevant` — the
-   *    portal's one irreversible skip, with no un-mark action on the client's
-   *    side — for a card that legitimately comes back: grant a second agent and
-   *    the ladder reopens with real steps in it, which a permanent flag would
-   *    have buried forever. `dismissed` is read with the same
-   *    `ACTION_DISMISS_COOLDOWN_MS` window the checklist rows use.
-   *  · IT ONLY HIDES A FINISHED LADDER. `setupLadderComplete` is asked here as
-   *    well as in the widget, so a reopened ladder is shown again whatever the
-   *    stored row says, without needing anybody to clear it.
+   *  · THE STORED ROW, read WITHOUT `ACTION_DISMISS_COOLDOWN_MS`. That window is
+   *    the checklist's seven-day snooze, and applying it here brought a card
+   *    whose own copy says "You're set up" back onto the dashboard every week.
+   *    The press is "Done" now, and done is not a snooze.
+   *  · AND THE LADDER STILL BEING COMPLETE. This conjunct was removed in the
+   *    same change and should not have been: decision 9 says the SLOT STAYS
+   *    EMPTY after completion, not that an incomplete ladder stays hidden. Grant
+   *    a client a second agent and the ladder legitimately reopens with real
+   *    steps in it — with the conjunct gone, that client was never told, on the
+   *    one surface built to tell them (review finding C6).
+   *
+   * What the conjunct was removed to guard against was step 5 un-ticking for
+   * every existing client on ship day; that is fixed at the source instead
+   * (`agedOutDeliverable` above), so the reopen only fires on real outstanding
+   * work.
    *
    * The legacy `not_relevant` row is still honoured: clients who pressed Hide
-   * before this change are not shown the card again on a finished ladder.
+   * before the row's meaning changed are not shown the card again either.
    */
   const ladderHiddenState = actionStatesById.get(SETUP_LADDER_HIDDEN_ACTION_ID);
-  const ladderHidden =
-    setupLadderComplete(setupSteps) &&
-    (ladderHiddenState?.status === "not_relevant" ||
-      (ladderHiddenState?.status === "dismissed" &&
-        now - ladderHiddenState.updatedAt < ACTION_DISMISS_COOLDOWN_MS));
+  const ladderDismissed =
+    ladderHiddenState?.status === "not_relevant" || ladderHiddenState?.status === "dismissed";
+  const ladderHidden = ladderDismissed && setupLadderComplete(setupSteps);
   // ONE element, mounted by both branches below — the parity rule for this page.
   const getSetUpWidget = (
     <GetSetUpWidget

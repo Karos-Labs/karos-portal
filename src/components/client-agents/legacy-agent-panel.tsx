@@ -34,8 +34,8 @@ import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
  * charge path the generic card uses, not a second implementation. "Adjust pace"
  * is the same paceOnly schedule modal the live card uses, and it is offered
  * because the schedule is exactly what this shape DOES have - it lives in
- * SchedulePaceCard below, which the page seats in the status strip's aside
- * slot rather than in this panel's own column.
+ * `SchedulePaceControl` below, which the page seats at the end of its status
+ * line rather than in this panel's own column.
  *
  * IT ALSO GETS THE RUN BACK (F31). Pressing "Create a new post" here used to
  * produce no visible change whatsoever: the panel showed no run row and no
@@ -180,15 +180,14 @@ export function LegacyAgentPanel({
                 B5 (parity pass 2026-09): the line exists for BOTH readers, so
                 the card is the same height and says the same thing in the same
                 slot. Only the register differs — a staff run is not charged to
-                the person pressing it, so theirs names whose credits move and
-                drops the orange coin, because the rationed accent belongs to
-                the reader who is actually spending. */}
+                the person pressing it, so theirs names whose credits move.
+
+                round 6 (ruling 2): the coin was `text-neon` for a client, which
+                put a second orange on a page whose one accent is the run
+                control. Icon chips are ink or grey, for both readers. */}
             {cost != null && (
               <p className="mt-1 flex items-center gap-1 text-xs text-muted-2">
-                <Icon
-                  name="Coins"
-                  className={`h-3 w-3 ${viewerIsClient ? "text-neon" : "text-muted-2"}`}
-                />
+                <Icon name="Coins" className="h-3 w-3 text-muted-2" />
                 {/* "About" only when the price is a hold that settles to real
                     usage — the flag rides on the agent summary because a client
                     component cannot read it (credits rework, 2026-09). */}
@@ -211,8 +210,13 @@ export function LegacyAgentPanel({
           <div className="mt-2 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-2.5">
             <p className="text-xs text-warning">{gate.reason}</p>
             {gate.href && gate.hrefLabel && (
-              <a href={gate.href} className="mt-1 inline-block text-xs text-neon hover:underline">
-                {gate.hrefLabel} →
+              // A quiet text link, and no arrow character after the label
+              // (round 6 rule 3).
+              <a
+                href={gate.href}
+                className="focus-ring mt-1 inline-block text-xs text-muted hover:text-foreground hover:underline"
+              >
+                {gate.hrefLabel}
               </a>
             )}
             {gate.code === "credits_short" && viewer && (
@@ -245,17 +249,22 @@ export function LegacyAgentPanel({
 }
 
 /**
- * The legacy shape's pace summary, seated in the status strip's aside slot by
- * the agent detail page (the strip's `aside` prop).
+ * "Adjust pace", at the end of the agent page's status line (round 6).
  *
- * It replaces the "How often it posts" section this panel used to render
- * mid-column. The price moved out entirely: the run button is the one gesture
- * that spends and already quotes its cost, so a "credits per post" line here
- * said the same number twice and misstated the unit (a run is priced flat,
- * whatever it yields). "Adjust pace" keeps the same paceOnly schedule modal —
- * clients get how many posts a week, never how they are batched (D3 / A3-A4).
+ * IT WAS A CARD, and the card was the aside of a tinted status band: a
+ * "How often it posts" heading, a sentence, and this control. Two of those three
+ * said nothing the reader could act on, and the sentence had a second face —
+ * "No schedule yet. Your Karos team sets one up." — which is exactly what an
+ * imported daily stream printed while filling the client's calendar (the §0
+ * bug's loudest symptom). A schedule the client has is a control; a schedule
+ * they do not have is not a card telling them so.
+ *
+ * So: nothing renders without a schedule, and with one the whole card is this
+ * control, seated at the end of the status line by the page. Same paceOnly
+ * modal — clients get how many posts a week, never how they are batched
+ * (D3 / A3-A4).
  */
-export function SchedulePaceCard({
+export function SchedulePaceControl({
   clientId,
   agent,
   schedule,
@@ -269,42 +278,29 @@ export function SchedulePaceCard({
   availableCredits?: number;
 }) {
   const [scheduling, setScheduling] = useState(false);
+  if (!schedule) return null;
   return (
-    // Opaque bg-surface, not /70: the card sits on the strip's TINTED
-    // backgrounds, and in light mode a translucent fill dragged muted-2's
-    // 12px copy just under the 4.5:1 floor QA F119 re-established for it
-    // (~4.46:1). Opaque surface keeps the documented ~4.7:1.
-    // No price line here: the run button below the strip already quotes the
-    // cost of the one gesture that spends, and a second number in the corner
-    // was the strip's tallest row.
-    <div className="rounded-md border border-border/70 bg-surface px-3 py-2">
-      <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-        How often it posts
-      </h2>
-      <p className="mt-1 text-xs text-muted-2">
-        {schedule
-          ? "This agent is already posting for you on a schedule. Change how often whenever you like."
-          : "No schedule yet. Your Karos team sets one up."}
-      </p>
-      {schedule && (
-        <div className="mt-2">
-          <Button size="sm" variant="subtle" onClick={() => setScheduling(true)}>
-            <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" /> Adjust pace
-          </Button>
-        </div>
-      )}
-      {scheduling && schedule && (
+    <>
+      {/* A quiet text control, not a button: the page's one orange is the run
+          gesture, and a second bordered control at the end of a status line
+          would compete with it. No glyph after the label (round 6 rule 3). */}
+      <button
+        type="button"
+        onClick={() => setScheduling(true)}
+        className="focus-ring text-[13px] text-muted transition-colors hover:text-foreground hover:underline"
+      >
+        Adjust pace
+      </button>
+      {scheduling && (
         <AgentScheduleModal
           agent={agent}
           clientId={clientId}
           schedule={schedule}
-          // Clients get the pace face: how many posts a week, never how they
-          // are batched (D3 / A3-A4).
           paceOnly={viewerIsClient}
           {...(availableCredits !== undefined ? { availableCredits } : {})}
           onClose={() => setScheduling(false)}
         />
       )}
-    </div>
+    </>
   );
 }

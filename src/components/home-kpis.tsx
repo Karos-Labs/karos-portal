@@ -7,7 +7,13 @@ import { THROUGHPUT_WINDOW_DAYS, type ContentThroughput } from "@/lib/content-th
 import type { FollowerPoint } from "@/lib/follower-tracking";
 import type { ScoreView } from "@/components/seo-geo/presenter";
 
-/** A minimal inline sparkline — no charting dependency for a handful of points. */
+/**
+ * A minimal inline sparkline — no charting dependency for a handful of points.
+ *
+ * STROKED IN --neon (round 6, Albert 2026-09-06). Round 6 briefly made it ink
+ * on the argument that it spent the screen's rationed colour on a trend line;
+ * the ruling is that the ration applies to CONTROLS, and a sparkline is data.
+ */
 function Sparkline({ counts }: { counts: number[] }) {
   if (counts.length < 2) return null;
   const width = 160;
@@ -141,8 +147,8 @@ function Delta({
 }
 
 /**
- * The shared shell of a KPI cell: an accented eyebrow, a chevron, then whatever
- * the cell is.
+ * The shared shell of a KPI cell: an accented eyebrow glyph, a static chevron,
+ * then whatever the cell is.
  *
  * EVERY CELL IS A LINK (portal feedback round 5, 2026-09) — "all the KPIs
  * should be interactive and clickable". So `href` is required rather than
@@ -170,18 +176,17 @@ function Cell({
     <Link
       href={href}
       className={cn(
-        "row-lift group block h-full rounded-md border border-border bg-surface-2 p-3.5",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon",
+        "row-lift focus-ring block h-full rounded-md border border-border bg-surface-2 p-3.5",
         className,
       )}
     >
       <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
         <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        <Icon
-          name="ChevronRight"
-          className="h-3.5 w-3.5 shrink-0 text-muted-3 transition-transform group-hover:translate-x-0.5"
-        />
+        {/* Rule 1: ONE trailing chevron, static. It used to slide 2px on hover,
+            which is a second hover event on a surface whose hover is already the
+            fill step plus `row-lift`'s hairline. */}
+        <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
       </p>
       {children}
     </Link>
@@ -356,6 +361,10 @@ export function HomeKpisWidget({
           made three times, next to the number it is about, and each one is
           kept. */}
       <div className="mb-3">
+        {/* The orange chip stays (round 6, Albert 2026-09-06). Round 6 stripped
+            the three `bg-neon/10` heading chips on Home; the ruling restores
+            them — a heading glyph is decoration, and the accent ration is about
+            CONTROLS. */}
         <CardTitle className="flex min-w-0 items-center gap-2">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
             <Icon name="ChartColumn" className="h-3.5 w-3.5 text-neon" />

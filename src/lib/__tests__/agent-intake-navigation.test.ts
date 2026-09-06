@@ -313,20 +313,24 @@ describe("#85 — every row the band paints has somewhere to land", () => {
       expect(hrefValues(tag)).toEqual(["{intakeRowHref(view.href, row.id)}"]);
     }
 
-    // The hover border that made the old `<li>`s look clickable is on the thing
-    // that IS clickable — the Link on the plain branch, the `<details>` on the
+    // The hover that made the old `<li>`s look clickable is on the thing that IS
+    // clickable — the Link on the plain branch, the `<details>` on the
     // disclosure branch. Asserted as a count over the row block so neither shape
     // can lose it, and so it cannot drift onto some inner span again.
-    const hovers = block.match(/hover:border-neon\/40/g) ?? [];
+    //
+    // round 6: the hand-written `hover:border-neon/40` is the shared `row-lift`
+    // utility now (globals.css) — one fill step plus the accent hairline, the
+    // one hover a bordered interactive row gets portal-wide (rule 3).
+    const hovers = block.match(/row-lift/g) ?? [];
     expect(hovers.length, "each row shape wears the hover affordance").toBe(2);
     const detailsAt = elementOpensAt(block, "details");
     expect(detailsAt, "the answers row is not a disclosure").toBeGreaterThan(-1);
     expect(
       elementAt(block, "details", detailsAt)!.tag,
       "the disclosure is not the thing that looks clickable",
-    ).toContain("hover:border-neon/40");
+    ).toContain("row-lift");
     expect(
-      links.some((tag) => tag.includes("hover:border-neon/40")),
+      links.some((tag) => tag.includes("row-lift")),
       "the plain row's link is not the thing that looks clickable",
     ).toBe(true);
   });

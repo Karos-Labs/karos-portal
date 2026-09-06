@@ -181,8 +181,11 @@ describe("R8 · one row affordance", () => {
   /** A row that opens nothing. */
   const INERT = [
     "components/client-agents/client-agent-run-history.tsx",
-    // The shared Home row: its two BUTTONS act, the row itself opens nothing.
-    "components/home-task-row.tsx",
+    // round 6 (§2.1): `home-task-row.tsx` LEFT this list. It was inert because
+    // the setup ladder's rows had no destinations — four of six were not
+    // clickable at all — and the round-6 ruling is that every incomplete step
+    // is a link to its own landing. The row now has BOTH shapes, mutually
+    // exclusive, and the test below pins the split rather than the old half.
   ];
 
   it("makes the whole row the trigger, with row-lift and one chevron", () => {
@@ -212,6 +215,26 @@ describe("R8 · one row affordance", () => {
     expect(c, "the row grew a second control again").not.toContain("<Button");
     // The modal mount stays — it is what the row opens.
     expect(c).toContain("<AssetDetailModal");
+  });
+
+  // round 6 (§2.1, rule 3): the shared Home row is a link when it has somewhere
+  // to go and a plain container when its own control is the affordance. Both
+  // halves obey the same rule; what must never happen is one wearing the
+  // other's shell, or an anchor holding a control inside it.
+  it("gives the shared Home row exactly two shapes, and never mixes them", () => {
+    const c = code("components/home-task-row.tsx");
+    // The link half: whole-row anchor, one fill-and-hairline hover, one static
+    // chevron, one focus rule.
+    const splitAt = c.lastIndexOf("return (");
+    const linkBranch = c.slice(c.indexOf("if (href && !start && !dismiss)"), splitAt);
+    expect(linkBranch).toContain("<Link");
+    expect(linkBranch).toContain("row-lift focus-ring");
+    expect([...linkBranch.matchAll(/name="ChevronRight"/g)]).toHaveLength(1);
+    // The static half: no lift, no chevron, no hover treatment on the row.
+    const staticBranch = c.slice(splitAt);
+    expect(staticBranch).not.toContain("row-lift");
+    expect(staticBranch).not.toContain('name="ChevronRight"');
+    expect(staticBranch).not.toContain("hover:border-border-strong");
   });
 
   it("leaves an inert row dressed as one: no lift, no chevron, no hover", () => {
@@ -255,20 +278,20 @@ const ALERT = (over: Partial<TaskAlert>): TaskAlert => ({
 });
 
 describe("R10 · the bell says nothing a client cannot act on in the shape of a link", () => {
-  it("collapses a client's task feed to one line per status group", () => {
+  // round 6: R10 collapsed a client's task rows into one summary line per
+  // status group; Albert's ruling that every notification row must lead
+  // somewhere finishes the job, because that line led nowhere either. Sign-off
+  // is staff-only (`approveAssetAction` calls `requireStaff`) and the counts
+  // still live on Home's attention card, so a client's bell carries no task
+  // feed at all now.
+  it("gives a client no task rows at all, whatever the statuses", () => {
     const alerts = [
       ALERT({ id: "a", status: "pending" }),
       ALERT({ id: "b", status: "pending" }),
       ALERT({ id: "c", status: "review_pending" }),
     ];
-    expect(taskAlertRows(alerts, { viewerIsClient: true })).toEqual([
-      { kind: "summary", status: "review_pending" },
-      { kind: "summary", status: "pending" },
-    ]);
-    // An empty group is no row at all, or the bell would ring over nothing.
-    expect(
-      taskAlertRows([ALERT({ status: "pending" })], { viewerIsClient: true }),
-    ).toEqual([{ kind: "summary", status: "pending" }]);
+    expect(taskAlertRows(alerts, { viewerIsClient: true })).toEqual([]);
+    expect(taskAlertRows([ALERT({ status: "pending" })], { viewerIsClient: true })).toEqual([]);
     expect(taskAlertRows([], { viewerIsClient: true })).toEqual([]);
   });
 
@@ -288,7 +311,9 @@ describe("R10 · the bell says nothing a client cannot act on in the shape of a 
       taskAlerts: [ALERT({ id: "a" }), ALERT({ id: "b" }), ALERT({ id: "c" })],
     };
     const opts = { dismissed: new Set<string>() };
-    expect(unreadNotificationCount(feeds, { ...opts, viewerIsClient: true })).toBe(1);
+    // round 6: zero for a client, because the panel renders no task row for
+    // them. Staff are untouched: one row per task, one count per row.
+    expect(unreadNotificationCount(feeds, { ...opts, viewerIsClient: true })).toBe(0);
     expect(unreadNotificationCount(feeds, { ...opts, viewerIsClient: false })).toBe(3);
   });
 
@@ -302,20 +327,27 @@ describe("R10 · the bell says nothing a client cannot act on in the shape of a 
     expect(rhs, "a client is offered the meetings list from the bell again").toContain(
       "!viewerIsClient",
     );
-    // The summary line itself is a status line: no link, no count, no stamp.
-    const summary = functionBody(bell, "TaskSummaryRow");
-    expect(summary).not.toContain("<Link");
-    expect(summary).not.toContain("relativeTime");
+    // round 6: the summary line it used to also pin is gone rather than
+    // softened — `TaskSummaryRow` and `ReviewSummaryRow` are deleted, so the
+    // assertion is that neither can come back as a component either.
+    expect(bell).not.toContain("TaskSummaryRow");
+    expect(bell).not.toContain("ReviewSummaryRow");
   });
 });
 
 describe("R7/R11 · one vocabulary, and a desktop route to /team", () => {
-  it("says Pin and Unpin in the rail, the same as the agent page's control", () => {
+  it("keeps ONE pin control, on the agent's page, in R7's words", () => {
+    // round 6: R7's ruling was that the rail's star and the agent page's button
+    // must not narrate one flag with two verbs. The rail no longer has the
+    // control at all (think-agents §3), which settles the vocabulary question by
+    // removing the second voice — so what is pinned here is the absence, plus
+    // the surviving control's wording.
     const nav = code("components/client-rail-agents-nav.tsx");
-    expect(nav).toContain("Pin ${agent.name} to the sidebar");
-    expect(nav).toContain("Unpin ${agent.name} from the sidebar");
-    expect(nav, "the rail still stars agents").not.toMatch(/`(Un)?[Ss]tar \$\{agent\.name\}/);
-    expect(code("components/client-agents/agent-star-button.tsx")).toContain("Pin to sidebar");
+    expect(nav, "the rail pins agents again").not.toMatch(/`(Un)?[PpSs]\w+ \$\{agent\.name\}/);
+    expect(nav).not.toContain("aria-pressed");
+    const button = code("components/client-agents/agent-star-button.tsx");
+    expect(button).toContain("Pin to sidebar");
+    expect(button).toContain("Unpin from sidebar");
   });
 
   it("keeps one noun for the archive in prose as well as on controls", () => {

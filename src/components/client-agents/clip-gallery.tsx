@@ -99,7 +99,10 @@ function ClipTile({
     <button
       type="button"
       onClick={onOpen}
-      className="group flex w-full flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-neon/50 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/60"
+      /* round 6 (rule 3): one fill step and the accent hairline (`row-lift`),
+         no lift and no shadow, and the portal's one focus treatment rather
+         than a second ring recipe of its own. */
+      className="focus-ring row-lift group flex w-full flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left"
     >
       <div className="relative aspect-[9/16] w-full overflow-hidden border-b border-border bg-black/60">
         {poster ? (

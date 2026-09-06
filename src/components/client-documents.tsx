@@ -2,9 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { HereFor } from "@/components/here-for";
+import { ContactUsButton } from "@/components/contact-us-modal";
+import { SETUP_LANDING_COPY, SETUP_LANDING_KEYS } from "@/lib/setup-ladder";
+import { dropLandingParams, landedFromLadder } from "@/lib/setup-landing-params";
 import {
   GENERATED_BLOCK_LINE_RE,
   isSafeHref,
@@ -432,6 +436,11 @@ function DocPanel({
   correctionPricing,
   onClose,
   onDocUpdated,
+  landed = false,
+  onLandingDone,
+  confirmed = false,
+  canConfirm = false,
+  onConfirm,
 }: {
   doc: ClientContextDoc;
   label: string;
@@ -439,6 +448,19 @@ function DocPanel({
   correctionPricing?: { cost: number; blockReason?: string };
   onClose: () => void;
   onDocUpdated?: () => void;
+  /** The setup ladder sent the client straight to this document (`?doc=&for=`). */
+  landed?: boolean;
+  /** Clears the landing band and its query params. */
+  onLandingDone?: () => void;
+  /** This document's action-list row already says "confirmed" (21 / 22 / 23). */
+  confirmed?: boolean;
+  /** This viewer may answer the confirmation — see `ClientDocuments`. */
+  canConfirm?: boolean;
+  /**
+   * "Looks right" — omitted when this document has no checklist row to write,
+   * and the foot then carries the Support half alone. See `DocConfirmFoot`.
+   */
+  onConfirm?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -463,6 +485,7 @@ function DocPanel({
   const sections = parseDocSections(doc.content);
   const indexed = sections.length >= 2;
   const lead = leadIn(doc.content);
+  const landingCopy = SETUP_LANDING_COPY[doc.docType];
 
   // No body-scroll lock any more: this is a panel on the page, not an overlay
   // over it, and freezing the page behind a panel that IS the page is what made
@@ -527,7 +550,7 @@ function DocPanel({
                   to the list" — flow audit 2026-09, R13. */}
               <button
                 onClick={onClose}
-                className="mb-1 inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+                className="focus-ring mb-1 inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium text-muted transition-colors hover:text-foreground"
               >
                 <Icon name="ChevronLeft" className="h-3.5 w-3.5" />
                 All documents
@@ -564,6 +587,19 @@ function DocPanel({
               </button>
             </div>
           </div>
+
+          {/* The ladder's landing band (round 6, §2.8): the client pressed
+              "Read your Target Audience" on Home and this says so, at the top
+              of the document they were sent to. */}
+          {landed && landingCopy && (
+            <div className="border-b border-border px-6 py-3">
+              <HereFor
+                action={landingCopy.action}
+                reason={landingCopy.reason}
+                onDismiss={() => onLandingDone?.()}
+              />
+            </div>
+          )}
 
           {/* What the correction actually did (flow audit 2026-09, R13).
               `role="status"` because this appears without the reader moving:
@@ -671,6 +707,14 @@ function DocPanel({
                 dangerouslySetInnerHTML={{ __html: body }}
               />
             )}
+            {body && (
+              <DocConfirmFoot
+                docLabel={label}
+                confirmed={confirmed}
+                canConfirm={canConfirm}
+                onConfirm={onConfirm}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -698,6 +742,97 @@ function DocPanel({
         }}
       />
     </>
+  );
+}
+
+/* ── "Looks right" / "Something is off" ───────────────────────────────── */
+
+/**
+ * THE CONFIRMATION THE SETUP LADDER WAS MISSING (round 6, decision 3 · §2.4).
+ *
+ * Step 2 used to tick the moment a client OPENED one of these documents — the
+ * row was written by the list's own button, so "Confirm your brand voice and
+ * audience" completed without anybody confirming anything, and "opened it once"
+ * is the weakest activity signal there is. This is the gesture instead: a quiet
+ * pair at the foot of the document a person has just read.
+ *
+ * TWO CONTROLS, AND NEITHER IS THE BILLABLE ONE. "Looks right" writes the
+ * checklist row (21 / 22 / 23) and nothing else. "Something is off" opens
+ * Support with the document named, which is the answer Albert's open question
+ * about brand-voice editability does NOT depend on: no field here becomes
+ * editable, and "Correct Info" — which spends credits on a rewrite — stays
+ * where it is, in the header, untouched and unpromoted.
+ *
+ * Support is the one word for every help trigger (R7), so the trigger keeps its
+ * own label and the sentence beside it carries "Something is off" and the
+ * document's name. That way one dialog still has one name.
+ *
+ * NEITHER CONTROL IS STAFF'S TO PRESS (round 6 review, D1). `canConfirm` is
+ * false for every staff reader, client context included: both halves are the
+ * client's answer about their own document, so with it false this foot renders
+ * the read-only "Confirmed" line if the client has already answered, and
+ * nothing at all if they have not — no button, no Support trigger, no question
+ * addressed to somebody who cannot answer it.
+ */
+function DocConfirmFoot({
+  docLabel,
+  confirmed,
+  canConfirm,
+  onConfirm,
+}: {
+  docLabel: string;
+  confirmed: boolean;
+  /** This viewer may answer. False = read-only, see the note above. */
+  canConfirm: boolean;
+  /** Absent for a document with no checklist row: the Support half stands alone. */
+  onConfirm?: () => void;
+}) {
+  const [justConfirmed, setJustConfirmed] = useState(false);
+  const done = confirmed || justConfirmed;
+  // A read-only viewer with nothing to read: no foot. The alternative is a
+  // hairline and a question nobody on this screen is allowed to answer.
+  if (!canConfirm && !done) return null;
+  return (
+    <div className="mx-auto mt-8 w-full max-w-3xl border-t border-border pt-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="min-w-0 flex-1 text-xs text-muted">
+          {done
+            ? `You told us your ${docLabel} looks right. Every draft is checked against it.`
+            : `Does your ${docLabel} describe you?`}
+        </p>
+        {canConfirm && onConfirm && !done && (
+          <button
+            type="button"
+            onClick={() => {
+              setJustConfirmed(true);
+              onConfirm();
+            }}
+            className="focus-ring shrink-0 rounded-md text-xs font-medium text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
+          >
+            Looks right
+          </button>
+        )}
+        {done && (
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-success">
+            <Icon name="Check" className="h-3.5 w-3.5" />
+            Confirmed
+          </span>
+        )}
+      </div>
+      {/* The other half. `w-fit` because the row variant is `w-full` by design
+          (it is an account-menu row elsewhere), and here it is one quiet
+          control at the end of a sentence. Gated with the first half (round 6
+          review, D1): it opens Support about the CLIENT's document, and the
+          sentence says "your", which is not true for a staff reader. */}
+      {canConfirm && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p className="text-xs text-muted-2">Something is off in your {docLabel}?</p>
+          <div className="-mx-3 w-fit">
+            <ContactUsButton variant="row" />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -814,7 +949,7 @@ export function RegenerateModal({
               disabled={running}
               rows={5}
               placeholder={`e.g. "Lean heavily into social media assets and downplay SEO. Focus the competitor analysis on emerging brands, not industry giants."`}
-              className="w-full resize-none rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 text-sm text-foreground placeholder:text-muted-2 focus:border-neon focus:outline-none disabled:opacity-50"
+              className="focus-ring w-full resize-none rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 text-sm text-foreground placeholder:text-muted-2 focus:border-border-strong disabled:opacity-50"
             />
           </div>
           {error && (
@@ -859,7 +994,14 @@ function formatDate(ms: number | null): string {
 /* ── Documents list ───────────────────────────────────────────────────── */
 
 
-/** Maps a doc row's open event onto the action-list id it counts toward, when any. */
+/**
+ * Maps a document onto the action-list id it counts toward, when any.
+ *
+ * WRITTEN BY "LOOKS RIGHT" NOW, NOT BY OPENING THE ROW (round 6, decision 3).
+ * The ids and their storage are unchanged, so nobody's stored progress resets;
+ * what changed is the event they record — from "the client opened this once" to
+ * "the client told us it describes them".
+ */
 const ACTION_ID_BY_DOC_TYPE: Partial<Record<ContextDocType, string>> = {
   "brand-voice": "21",
   "target-audience": "22",
@@ -877,7 +1019,8 @@ export function ClientDocuments({
   intelSchedule: _intelSchedule,
   allowInternalFallback = false,
   correctionPricing,
-  viewerIsClient = false,
+  confirmedDocTypes,
+  canConfirm = false,
 }: {
   contextDocs: ClientContextDoc[];
   isAdmin?: boolean;
@@ -905,12 +1048,29 @@ export function ClientDocuments({
    */
   correctionPricing?: { cost: number; blockReason?: string };
   /**
-   * The REAL client-role flag, not `!isAdmin` — a KAROS_EMPLOYEE viewer also
-   * has `isAdmin: false` but is not a client, and the action-list ids 21/22/23
-   * this component fires on doc-open must only ever be marked done for the
-   * client whose checklist they belong to.
+   * Which documents this client has already told us look right (action ids
+   * 21 / 22 / 23). OPTIONAL: absent means the foot asks again, and a second
+   * press writes the same row — the store is an upsert, so re-confirming is
+   * harmless. handoffs/C.md asks the settings page to pass it, which is where
+   * the client's action states are already read.
    */
-  viewerIsClient?: boolean;
+  confirmedDocTypes?: readonly ContextDocType[];
+  /**
+   * Whether THIS viewer may answer the confirmation (round 6 review, D1).
+   *
+   * FALSE FOR STAFF, INCLUDING "View as Client". "Looks right" writes a
+   * `ClientActionState` row against the client's own account and ticks the
+   * client's setup ladder — an operator reading the document for their own
+   * reasons must not be able to answer for them, and "Something is off" opens
+   * Support on the client's behalf, which is the same problem in the other
+   * direction. Same shape as `GetSetUpWidget`'s `canHide`: the controls are not
+   * RENDERED rather than gated inside the handler, because a control you can
+   * see and must not press is worse than one that is not there. Staff still
+   * read the document, and still see the read-only "Confirmed" line when the
+   * client has already answered — the layout is the client's, with one control
+   * withheld.
+   */
+  canConfirm?: boolean;
 }) {
   const router = useRouter();
   /**
@@ -924,8 +1084,32 @@ export function ClientDocuments({
   // Typed as the union it actually holds (review wave, 2026-09): every value
   // put in it comes from DOC_TABS, and `string` let a typo compile into a
   // reader that silently opens nothing.
-  const [openDocType, setOpenDocType] = useState<ContextDocType | null>(null);
+  /**
+   * OPENED FROM THE URL WHEN THE LADDER SENT THEM (round 6, §2.4).
+   *
+   * `?doc=target-audience&for=voice#documents` — the query, not the fragment:
+   * the anchor scrolls the section into view and these two params say WHICH
+   * document to open, which a fragment-only link could not (nothing can read
+   * search params out of a hash). Validated against `DOC_TABS`, so a stale link
+   * opens the list rather than nothing.
+   */
+  const params = useSearchParams();
+  const landedDocType =
+    DOC_TABS.map((t) => t.docType).find((t) => t === params.get(SETUP_LANDING_KEYS.doc)) ?? null;
+  // round 6 review (E14): shared with the profile panel — see
+  // `setup-landing-params.ts`.
+  const landed = landedFromLadder(params);
+  const [openDocType, setOpenDocType] = useState<ContextDocType | null>(landedDocType);
+  const [landingCleared, setLandingCleared] = useState(false);
   const [regenModalOpen, setRegenModalOpen] = useState(false);
+
+  /** Clears the landing band and drops `doc=` / `for=` without a navigation.
+   *  round 6 review (E14): the URL surgery is shared — `setup-landing-params.ts`
+   *  keeps the hash (this landing arrives at `#documents`). */
+  function landingDone() {
+    setLandingCleared(true);
+    dropLandingParams([SETUP_LANDING_KEYS.doc, SETUP_LANDING_KEYS.for]);
+  }
 
   const available = DOC_TABS.map((t) => ({
     ...t,
@@ -948,6 +1132,7 @@ export function ClientDocuments({
   // 2026-09, R13) — one thing on the tab at a time, and "All documents" inside
   // the panel is the way back.
   if (openDoc) {
+    const actionId = ACTION_ID_BY_DOC_TYPE[openDoc.doc.docType];
     return (
       <div>
         <DocPanel
@@ -955,8 +1140,28 @@ export function ClientDocuments({
           label={openDoc.label}
           clientId={clientId}
           correctionPricing={correctionPricing}
-          onClose={() => setOpenDocType(null)}
+          onClose={() => {
+            setOpenDocType(null);
+            // Leaving the document leaves the landing behind with it: the band
+            // belongs to the document the client was sent to, not to the list.
+            if (!landingCleared && landed) landingDone();
+          }}
           onDocUpdated={() => router.refresh()}
+          landed={landed && !landingCleared && openDocType === landedDocType}
+          onLandingDone={landingDone}
+          confirmed={(confirmedDocTypes ?? []).includes(openDoc.doc.docType)}
+          canConfirm={canConfirm}
+          onConfirm={
+            // round 6 review (D1): `canConfirm` first — without it the write is
+            // one prop-drill away from firing for a staff reader.
+            canConfirm && clientId && actionId
+              ? () => {
+                  void markActionDoneAction(clientId, actionId);
+                  // The band's job is done the moment the client answers it.
+                  if (!landingCleared && landed) landingDone();
+                }
+              : undefined
+          }
         />
       </div>
     );
@@ -1000,19 +1205,15 @@ export function ClientDocuments({
             item.pick.kind === "doc" ? (
               <li key={item.docType}>
                 <button
-                  onClick={() => {
-                    setOpenDocType(item.docType);
-                    // Event-tracked action-list ids (21/22/23, lib/action-list.ts) —
-                    // these three docs have nothing to query for "has the client
-                    // looked at this" beyond the moment they open it.
-                    const actionId = ACTION_ID_BY_DOC_TYPE[item.docType];
-                    if (viewerIsClient && clientId && actionId) {
-                      void markActionDoneAction(clientId, actionId);
-                    }
-                  }}
+                  // NO WRITE HERE ANY MORE (round 6, decision 3). Opening a
+                  // document used to mark ids 21/22/23 done, so the setup
+                  // ladder's "Confirm your brand voice and audience" completed
+                  // without anybody confirming anything. The row opens the
+                  // document; the document's own foot carries the confirmation.
+                  onClick={() => setOpenDocType(item.docType)}
                   /* Compact rows: the rail is a no-scroll fixed layout (CD-E3),
                      and seven of these were its single tallest block. */
-                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
+                  className="focus-ring group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
                 >
                   <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted group-hover:text-foreground">

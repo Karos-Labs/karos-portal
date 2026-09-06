@@ -77,7 +77,7 @@ export function FlagButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1 rounded-md text-xs text-muted underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+        className="focus-ring inline-flex items-center gap-1 rounded-md text-xs text-muted underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground"
       >
         {/* The same mark and the same word as every other support trigger in
             the portal (review wave, 2026-09). The flag icon was left over from
@@ -116,7 +116,7 @@ export function FlagButton({
                 </div>
                 <button
                   onClick={handleClose}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
+                  className="focus-ring flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
                   aria-label="Close dialog"
                 >
                   <Icon name="X" className="h-4 w-4" />

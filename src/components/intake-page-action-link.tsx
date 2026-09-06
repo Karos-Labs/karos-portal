@@ -22,17 +22,19 @@ export function IntakePageActionLink({
 }: {
   href: string;
   label: string;
-  /** Arrow direction: true draws a left chevron (returning), false a right arrow. */
+  /** Chevron direction: true draws a left chevron (returning), false a right one. */
   back: boolean;
 }) {
   return (
     <Link
       href={href}
-      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-3"
+      className="focus-ring inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-foreground transition-colors duration-150 hover:bg-surface-3"
     >
       {back && <Icon name="ChevronLeft" className="h-3.5 w-3.5" aria-hidden="true" />}
       {label}
-      {!back && <Icon name="ArrowRight" className="h-3.5 w-3.5" aria-hidden="true" />}
+      {/* round 6 (rule 3): a ChevronRight, not an ArrowRight - the portal has
+          one forward glyph, and it does not slide or change colour. */}
+      {!back && <Icon name="ChevronRight" className="h-3.5 w-3.5 text-muted-2" aria-hidden="true" />}
     </Link>
   );
 }

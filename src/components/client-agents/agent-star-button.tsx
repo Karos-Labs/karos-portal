@@ -7,12 +7,25 @@ import { cn } from "@/lib/utils";
 import { toggleStarredAgentAction } from "@/lib/actions";
 
 /**
- * "Pin to sidebar" on the agent's own page — a direct, unmistakable way to
- * star an agent, alongside the sidebar list's star (client-rail-agents-nav.tsx).
- * Same optimistic-then-refresh pattern as that component and for the same
- * reason: `toggleStarredAgentAction`'s server-side revalidatePath cannot
- * reliably reach the ROOT `(app)/layout.tsx` that renders the pinned rows
- * (see that action's own note), so this component drives the refresh itself.
+ * "Pin to sidebar" on the agent's own page — and, since round 6, the ONLY place
+ * an agent is pinned.
+ *
+ * The rail used to carry a star on every row: grey glyphs that meant nothing
+ * until hovered and orange ones that spent the rationed accent once per pin, so
+ * a client with four pins spent it four times in the nav. The rail is now marks
+ * and names, and this is the control (think-agents §3).
+ *
+ * NO ORANGE IN EITHER STATE. Pinned is ink on `surface-2` with a filled star,
+ * unpinned is an outline star on a hairline — the same two-state treatment a
+ * toggle gets everywhere, without claiming the one colour reserved for the
+ * control that moves the client forward.
+ *
+ * Optimistic-then-refresh because `toggleStarredAgentAction`'s server-side
+ * revalidatePath cannot reliably reach the ROOT `(app)/layout.tsx` that renders
+ * the pinned rows (see that action's own note), so this component drives the
+ * refresh itself. It does not need the rail's old active-client write-back: this
+ * control only exists under `/clients/[id]`, whose layout mounts
+ * ClientContextSync, so the refresh reads a context that has been updated.
  *
  * Rendered for both viewer types — the same authorization
  * `toggleStarredAgentAction` already grants a CLIENT_USER for their own
@@ -48,9 +61,9 @@ export function AgentStarButton({
       aria-pressed={optimisticStarred}
       aria-label={optimisticStarred ? "Unpin from sidebar" : "Pin to sidebar"}
       className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50",
+        "focus-ring inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-50",
         optimisticStarred
-          ? "border-neon/30 bg-neon-soft text-neon hover:bg-neon/20"
+          ? "border-border bg-surface-2 text-foreground hover:bg-surface-3"
           : "border-border text-muted hover:bg-surface-2 hover:text-foreground",
       )}
     >

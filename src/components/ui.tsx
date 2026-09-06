@@ -4,43 +4,78 @@ import { Icon } from "@/components/icon";
 
 /* -------------------------------- Button --------------------------------
    Ember voices (§7): primary = paper/ink (flips in light mode), accent = the
-   one orange CTA (rationed), ghost/outline = hairline utilities. */
+   one orange CTA (rationed), ghost/outline = hairline utilities.
+
+   A HOVER HERE IS A COLOUR CHANGE AND NOTHING ELSE (round 6). `primary` and
+   `accent` used to rise 2px and bloom a shadow, which made every button in the
+   product a small animation and made a row of them ripple; in this brand the
+   hover is a colour event. `accent` goes to --neon-bright, `primary` to 90% of
+   its own fill, both in 150ms, and no variant moves.
+
+   NO GLYPH AFTER A LABEL either (rule 3): a trailing chevron belongs to a row
+   that navigates, and callers that had an ArrowRight after the words have lost
+   it. Focus is the one `.focus-ring` from globals.css. */
+
+export type ButtonVariant = "primary" | "ghost" | "outline" | "danger" | "subtle" | "accent";
+export type ButtonSize = "sm" | "md" | "lg" | "icon";
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "ghost" | "outline" | "danger" | "subtle" | "accent";
-  size?: "sm" | "md" | "lg" | "icon";
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   loading?: boolean;
 };
 
+const BUTTON_BASE =
+  "focus-ring inline-flex cursor-pointer items-center justify-center rounded-md transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50";
+
+const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
+  primary: "bg-primary text-primary-foreground font-semibold hover:bg-primary/90",
+  accent: "bg-neon text-accent-ink font-semibold hover:bg-neon-bright",
+  ghost: "text-muted hover:bg-surface-2 hover:text-foreground",
+  outline:
+    "border border-border text-foreground hover:border-foreground/30 hover:bg-foreground/[0.04]",
+  subtle: "bg-surface-2 text-foreground hover:bg-surface-3 border border-border",
+  danger: "bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25",
+};
+
+const BUTTON_SIZES: Record<ButtonSize, string> = {
+  sm: "h-8 px-3 text-xs gap-1.5",
+  md: "h-10 px-4 text-sm gap-2",
+  lg: "h-12 px-6 text-base gap-2",
+  icon: "h-10 w-10 justify-center",
+};
+
+/**
+ * BUTTON'S RECIPE, FOR THE CALL SITES THAT CANNOT BE A `<button>` (round 6,
+ * handoff C→A).
+ *
+ * Several round-6 controls wear the button voice but NAVIGATE: the ladder's one
+ * accent control opens the field that completes the step, Reporting's "Open
+ * {agent}" opens the agent. Those have to be a `<Link>` — `Button` renders a
+ * real `<button>`, has no `asChild`, and a `<button>` inside an `<a>` is
+ * invalid markup. Before this helper each of those sites restated the variant
+ * and size class list verbatim, which is the duplicated-recipe problem
+ * think-home §1.3 counts everywhere else.
+ *
+ * `Button` itself calls it, so there is exactly one copy of the recipe and a
+ * change to a variant reaches the Links for free.
+ */
+export function buttonClass(opts?: {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  className?: string;
+}): string {
+  const { variant = "primary", size = "md", className } = opts ?? {};
+  return cn(BUTTON_BASE, BUTTON_VARIANTS[variant], BUTTON_SIZES[size], className);
+}
+
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = "primary", size = "md", loading, children, disabled, ...props }, ref) => {
-    const variants: Record<string, string> = {
-      primary:
-        "bg-primary text-primary-foreground font-semibold shadow-[0_8px_22px_-8px_color-mix(in_srgb,var(--primary)_55%,transparent)] hover:-translate-y-0.5",
-      accent:
-        "bg-neon text-accent-ink font-semibold hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-10px_color-mix(in_srgb,var(--neon)_55%,transparent)]",
-      ghost: "text-muted hover:bg-surface-2 hover:text-foreground",
-      outline:
-        "border border-border text-foreground hover:border-foreground/30 hover:bg-foreground/[0.04]",
-      subtle: "bg-surface-2 text-foreground hover:bg-surface-3 border border-border",
-      danger: "bg-danger/15 text-danger border border-danger/30 hover:bg-danger/25",
-    };
-    const sizes: Record<string, string> = {
-      sm: "h-8 px-3 text-xs gap-1.5",
-      md: "h-10 px-4 text-sm gap-2",
-      lg: "h-12 px-6 text-base gap-2",
-      icon: "h-10 w-10 justify-center",
-    };
     return (
       <button
         ref={ref}
         disabled={disabled || loading}
-        className={cn(
-          "inline-flex items-center justify-center rounded-md transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25 cursor-pointer",
-          variants[variant],
-          sizes[size],
-          className,
-        )}
+        className={buttonClass({ variant, size, ...(className ? { className } : {}) })}
         {...props}
       >
         {loading && <Spinner className="h-4 w-4" />}
@@ -60,15 +95,19 @@ Button.displayName = "Button";
  * paper they are what makes a white card sit ON the ground rather than beside
  * it, which is the "slightly flat light mode" this pass was opened for.
  *
- * `transition-colors` became `transition-[color,background-color,border-color,box-shadow]`
- * for the same reason the shadow was added: a hover that changes the shadow but
- * only transitions the border snaps.
+ * A CARD IS A CONTAINER AND NEVER HOVERS (round 6, rule 6). It used to tint its
+ * border and raise to --shadow-2 on hover, in 52 files, so every static panel in
+ * the product answered a passing mouse as though it were pressable — the single
+ * biggest reason a client could not tell what on a screen was clickable.
+ * Interactivity lives in the rows and cells inside a card, or the whole card is
+ * a link and follows rule 1. The transition list came down with the hover: what
+ * is left transitions only for a theme switch.
  */
 export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        "card-grad rounded-[var(--radius)] border border-border p-5 shadow-[var(--shadow-1)] transition-[color,background-color,border-color,box-shadow] duration-200 hover:border-border-strong hover:shadow-[var(--shadow-2)]",
+        "card-grad rounded-[var(--radius)] border border-border p-5 shadow-[var(--shadow-1)] transition-colors duration-200",
         className,
       )}
       {...props}
@@ -80,7 +119,12 @@ export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHead
   return <h3 className={cn("text-lg text-foreground", className)} {...props} />;
 }
 
-/* -------------------------------- Inputs -------------------------------- */
+/* -------------------------------- Inputs --------------------------------
+   All three take `.focus-ring` (round 6). They used to set `outline-none` and
+   put back only a hairline moving from 1.57:1 to 2.15:1, which is not a visible
+   focus state: a keyboard reader filling in the run brief could not tell which
+   field they were in. The border still warms on focus — that is the field's own
+   feedback — and the ring is what makes it perceivable. */
 
 export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return (
@@ -96,7 +140,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
     <input
       ref={ref}
       className={cn(
-        "w-full h-10 rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 text-sm text-foreground placeholder:text-foreground/35 outline-none transition-colors focus:border-foreground/25",
+        "focus-ring w-full h-10 rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 text-sm text-foreground placeholder:text-foreground/35 transition-colors focus:border-foreground/25",
         className,
       )}
       {...props}
@@ -110,7 +154,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTML
     <textarea
       ref={ref}
       className={cn(
-        "w-full min-h-[96px] rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 py-2.5 text-sm text-foreground placeholder:text-foreground/35 outline-none transition-colors focus:border-foreground/25 resize-y",
+        "focus-ring w-full min-h-[96px] rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 py-2.5 text-sm text-foreground placeholder:text-foreground/35 transition-colors focus:border-foreground/25 resize-y",
         className,
       )}
       {...props}
@@ -124,7 +168,7 @@ export const Select = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttrib
     <select
       ref={ref}
       className={cn(
-        "w-full h-10 rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 text-sm text-foreground outline-none transition-colors focus:border-foreground/25 cursor-pointer [&>option]:bg-surface",
+        "focus-ring w-full h-10 rounded-md bg-foreground/[0.04] border border-foreground/15 px-3 text-sm text-foreground transition-colors focus:border-foreground/25 cursor-pointer [&>option]:bg-surface",
         className,
       )}
       {...props}
@@ -269,7 +313,7 @@ export function TabButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
+        "focus-ring -mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition-colors",
         active
           ? "border-neon text-foreground"
           : "border-transparent text-muted-2 hover:text-muted",

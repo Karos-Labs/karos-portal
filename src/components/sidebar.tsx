@@ -115,8 +115,9 @@ const NAV: NavItem[] = [
 // It used to be a plain row here on the reasoning that the staff shell is a
 // "quick-preview strip, not the client's own nav" — the product owner ruled the
 // opposite: the client-context shell IS the client's nav, so this arm mounts
-// the client's real ClientRailAgentsNav (roster, stars and all) between Home
-// and Calendar, exactly where client-rail.tsx puts it. Same reason its absence
+// the client's real ClientRailAgentsNav between Home and Calendar, exactly
+// where client-rail.tsx puts it (round 6 took the stars off it; Pin lives on
+// the agent's own page and the nav reads the order it sets). Same reason its absence
 // from `tabNav` is deliberate over there.
 //
 // Calendar keeps the CLIENT-SCOPED route, and that href difference from the
@@ -824,7 +825,6 @@ export function Sidebar({
           <nav className="flex flex-col gap-0.5 border-t border-border pt-4">
             <NavLink item={items[0]} pathname={pathname} />
             <ClientRailAgentsNav
-              clientId={clientCtx.client.id}
               home={clientHome!}
               agents={clientCtx.railAgents}
               starredIds={clientCtx.client.starredAgentIds ?? []}
@@ -1007,7 +1007,6 @@ export function Sidebar({
                 mobile — same one-line decision the client's sheet makes. */}
             <div className="border-t border-border pt-4">
               <ClientRailAgentsNav
-                clientId={clientCtx.client.id}
                 home={clientHome!}
                 agents={clientCtx.railAgents}
                 starredIds={clientCtx.client.starredAgentIds ?? []}

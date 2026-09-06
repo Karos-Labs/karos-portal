@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AgentIdentity } from "@/components/agent-identity";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
@@ -140,6 +140,8 @@ export function ArchiveView({
   search,
   onFiltersChange,
   agentsHref,
+  initialAssetId,
+  onAssetOpened,
 }: {
   assets: Asset[];
   /**
@@ -189,8 +191,35 @@ export function ArchiveView({
    * carries no action rather than a link to a page that does not exist.
    */
   agentsHref?: string;
+  /**
+   * THE ITEM THIS PAGE WAS OPENED FOR (portal feedback round 6, decision 8).
+   *
+   * `/calendar?view=archive&asset={id}` — validated and threaded down by the
+   * host, and read ONCE, into this state's initial value: the archive is where
+   * a client's finished work lives, and until this existed no single deliverable
+   * had a URL, so the setup ladder's "Open your first post" and any future "your
+   * post is ready" row could only point at the list.
+   *
+   * An id this list does not hold simply opens nothing — the modal's asset is a
+   * lookup, and the archive's own projection (drafts, future-dated posts and
+   * anything past 30 days are not in it) is the authority on what it can show.
+   * And it reports nothing either: see `onAssetOpened`.
+   */
+  initialAssetId?: string;
+  /**
+   * Fired when a deliverable is actually OPEN — a click or the seed above, and
+   * only once the id has resolved to an asset this list holds (round 6 review,
+   * D2). An `?asset=` id the archive cannot show fires nothing.
+   *
+   * The host does two things with it: it drops `?asset=` from the URL (the modal
+   * is a gesture, not a view Back should restore) and, for a client, it writes
+   * action 05 — "See your first output", which was proxied by "an output
+   * exists" until this event existed to record.
+   */
+  onAssetOpened?: (assetId: string) => void;
 }) {
-  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
+  const [openAssetId, setOpenAssetId] = useState<string | null>(initialAssetId ?? null);
+  const handleOpenAsset = useCallback((assetId: string) => setOpenAssetId(assetId), []);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
@@ -251,6 +280,26 @@ export function ArchiveView({
   }
 
   const openAsset = openAssetId ? assets.find((a) => a.id === openAssetId) ?? null : null;
+
+  /**
+   * "A DELIVERABLE WAS OPENED" MEANS THE MODAL HAS ONE (round 6 review, D2).
+   *
+   * Keyed on the RESOLVED asset, which is the only thing that can answer the
+   * question the event claims to answer. It used to be two channels: the click
+   * handler fired it, and a second effect fired it on mount for `initialAssetId`
+   * — blindly, before the lookup, so a stale or hand-typed `?asset=` id opened
+   * nothing at all and still told the host a deliverable had been read (a
+   * Firestore write for action 05, on a modal with no asset in it).
+   *
+   * One effect covers both routes because both end in the same place: a click
+   * sets the state, a deep link seeds it, and either way this fires exactly
+   * once per id that actually resolves to an asset in the list.
+   */
+  const openedAssetId = openAsset?.id ?? null;
+  useEffect(() => {
+    if (!openedAssetId) return;
+    onAssetOpened?.(openedAssetId);
+  }, [openedAssetId, onAssetOpened]);
 
   if (assets.length === 0) {
     return (
@@ -407,7 +456,7 @@ export function ArchiveView({
                         key={asset.id}
                         asset={asset}
                         viewerIsClient={viewerIsClient}
-                        onOpen={() => setOpenAssetId(asset.id)}
+                        onOpen={() => handleOpenAsset(asset.id)}
                       />
                     ))}
                   </div>
@@ -476,12 +525,17 @@ function ArchiveTile({
     <button
       type="button"
       onClick={onOpen}
-      className="group flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-border-strong hover:shadow-lg"
+      /* round 6 (rule 3): a tile that opens something hovers with ONE fill
+         step and the accent hairline (`row-lift`), and does not move. It used
+         to rise 2px and bloom a shadow, so a grid of them rippled under the
+         cursor — in this brand the hover is a colour event. `focus-ring` is
+         the portal's one focus treatment (globals.css). */
+      className="focus-ring row-lift flex flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left"
     >
       {thumb ? (
         <div className="relative aspect-[4/3] w-full overflow-hidden border-b border-border bg-surface-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={thumb.url} alt="" className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]" />
+          <img src={thumb.url} alt="" className="h-full w-full object-cover" />
           {hasVideo && (
             <span className="absolute inset-0 flex items-center justify-center bg-black/25 text-white">
               <Icon name="Play" className="h-8 w-8" />

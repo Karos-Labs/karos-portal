@@ -220,7 +220,7 @@ export function CompetitorTrack({
         <button
           onClick={openAdd}
           aria-expanded={addOpen}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+          className="focus-ring inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
         >
           <Icon name="Plus" className="h-3.5 w-3.5" />
           Add competitor
@@ -246,7 +246,7 @@ export function CompetitorTrack({
               disabled={adding}
               placeholder="Competitor name…"
               autoFocus
-              className="flex-1 rounded-[6px] border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-2 outline-none transition-colors focus:border-neon/50 disabled:opacity-50"
+              className="focus-ring flex-1 rounded-[6px] border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-2 transition-colors focus:border-border-strong disabled:opacity-50"
             />
             <button
               onClick={handleAdd}
@@ -458,7 +458,7 @@ export function CompetitorTrack({
                       href={c.href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[11px] font-medium text-muted transition-colors hover:text-neon"
+                      className="focus-ring inline-flex items-center gap-1 text-[11px] font-medium text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
                     >
                       Visit website
                       <Icon name="ArrowUpRight" className="h-3 w-3" />
@@ -588,7 +588,7 @@ export function BrandColorsSection({
               <button
                 type="button"
                 onClick={() => copyHex(color.hex, i)}
-                className="block h-5 w-5 shrink-0 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon"
+                className="focus-ring block h-5 w-5 shrink-0 rounded-full shadow-sm ring-1 ring-white/10 transition-transform group-hover:scale-110"
                 style={{ backgroundColor: color.hex }}
                 title={color.role ? `${color.role} · ${color.hex}` : color.hex}
                 aria-label={`Copy ${color.role ? `${color.role} ` : ""}${color.hex}`}
