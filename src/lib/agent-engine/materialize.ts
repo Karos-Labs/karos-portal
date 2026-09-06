@@ -339,6 +339,11 @@ function materializeBlogPost(deliverable: Record<string, unknown>): AssetMateria
  * The newsletter edition. `text` is the agent's own assembled body; when it is
  * absent the intro/sections/signoff are stitched into one readable document
  * rather than handing over an empty asset with the real content buried in meta.
+ *
+ * `html` / `htmlDark` (2026-09-05) are the engine's email-safe renders of the
+ * same edition (600px table layout, inline styles, both themes), carried in
+ * meta so the asset modal can show the real email and hand the customer the
+ * HTML to paste into their email platform. `content` stays the markdown text.
  */
 function materializeNewsletterEdition(deliverable: Record<string, unknown>): AssetMaterialization {
   const stitched = joinBlocks([
@@ -362,6 +367,8 @@ function materializeNewsletterEdition(deliverable: Record<string, unknown>): Ass
       "footerDisclaimer",
       "unsubscribeUrl",
       "companyAddress",
+      "html",
+      "htmlDark",
     ]),
   };
 }
