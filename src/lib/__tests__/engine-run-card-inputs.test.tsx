@@ -35,7 +35,7 @@ function card(slug: string, overrides: Partial<EngineAgentCardModel> = {}): Engi
     name: slug,
     description: null,
     status: "active",
-    model: null,
+    models: [],
     tags: [],
     icon: "Sparkles",
     category: null,
