@@ -184,7 +184,7 @@ export const AI_ROLES = {
   // mechanism competing with the two escalation roles below.
   "intel.condense": {
     tier: "SONNET",
-    sites: ["src/lib/intel/context-doc-routing.ts:329"],
+    sites: ["src/lib/intel/context-doc-routing.ts:291"],
   },
   // SCRUM-387 — the complexity-driven premium escalation for a `high`-tier
   // document (`assessContextDocComplexity`). "caller"-tier and Anthropic-only
@@ -193,7 +193,7 @@ export const AI_ROLES = {
   // see context-doc-routing.ts's own comment on HIGH_COMPLEXITY_MODEL.
   "intel.condense.complexity_escalation": {
     tier: "caller",
-    sites: ["src/lib/intel/context-doc-routing.ts:312"],
+    sites: ["src/lib/intel/context-doc-routing.ts:332"],
   },
   // SCRUM-387 — the large-context escalation for a document that would not
   // fit Claude's context window even before considering complexity.
@@ -202,7 +202,7 @@ export const AI_ROLES = {
   // LARGE_CONTEXT_MODEL comment.
   "intel.condense.context_overflow": {
     tier: "caller",
-    sites: ["src/lib/intel/context-doc-routing.ts:293"],
+    sites: ["src/lib/intel/context-doc-routing.ts:308"],
   },
   "branding.extract": {
     tier: "HAIKU",

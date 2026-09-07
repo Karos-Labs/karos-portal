@@ -94,9 +94,13 @@ describe("routeContextDocCondensation — complexity-driven Opus/Gemini selectio
     expect(complex.attempts[0]!.modelId).toBe(HIGH_COMPLEXITY_MODEL);
     expect(complex.attempts[0]!.vendor).toBe("anthropic");
     expect(complex.escalated).toBe(true);
-    // The escalation is a single, same-vendor candidate — no Vertex hop for
-    // this model (see context-doc-routing.ts's HIGH_COMPLEXITY_MODEL comment).
-    expect(complex.attempts).toHaveLength(1);
+    // Opus is tried first, on its own vendor (no Vertex hop for this model —
+    // see context-doc-routing.ts's HIGH_COMPLEXITY_MODEL comment), and the
+    // Sonnet baseline stands behind it: a 2026-09-07 Regenerate failed outright
+    // when Opus alone answered nothing for two escalated documents.
+    expect(complex.attempts).toHaveLength(3);
+    expect(complex.attempts.map((a) => a.vendor)).toEqual(["anthropic", "vertex", "anthropic"]);
+    expect(complex.attempts[1]!.modelId).toBe(simple.attempts[0]!.modelId);
   });
 
   it("routes a document too large to fit Claude's window to Gemini, regardless of section count", () => {
@@ -106,9 +110,11 @@ describe("routeContextDocCondensation — complexity-driven Opus/Gemini selectio
     const huge = docWithSections(0) + "x".repeat(600_000);
     const route = routeContextDocCondensation("market-strategy", huge, { maxOutputTokens: 8_000 });
     expect(route.escalated).toBe(true);
-    expect(route.attempts).toHaveLength(1);
+    // Gemini first, the Sonnet baseline behind it (see the Opus case above).
+    expect(route.attempts).toHaveLength(3);
     expect(route.attempts[0]!.vendor).toBe("google");
     expect(route.attempts[0]!.modelId).toBe(LARGE_CONTEXT_MODEL);
+    expect(route.attempts.slice(1).map((a) => a.vendor)).toEqual(["vertex", "anthropic"]);
   });
 
   it("checks fit BEFORE complexity — an oversized-but-otherwise-simple document still goes to Gemini, not Opus", () => {

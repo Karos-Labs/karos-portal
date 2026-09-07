@@ -693,12 +693,27 @@ export function materializeSeoGeoReport(deliverable: Record<string, unknown>): A
   const geoScore = rec(deliverable["geoReadiness"])["score"];
   const recommendations = objArray(deliverable["firedRecommendations"]);
 
-  const scoreLine = [
-    typeof seoScore === "number" ? `SEO ${seoScore}` : undefined,
-    typeof geoScore === "number" ? `GEO readiness ${geoScore}` : undefined,
-  ]
+  const seoBasis = rec(deliverable["seoScore"])["measuredBasisScore"];
+  const geoBasis = rec(deliverable["geoReadiness"])["measuredBasisScore"];
+  const seoCoverage = rec(deliverable["seoScore"])["dataCoveragePct"];
+  const geoCoverage = rec(deliverable["geoReadiness"])["dataCoveragePct"];
+  const withBasis = (label: string, score: unknown, coverage: unknown, basis: unknown): string | undefined => {
+    if (typeof score !== "number") return undefined;
+    // Both halves when the engine reported them: the coverage-weighted score
+    // alone reads low for a site that passed everything the audit could see.
+    const detail = [
+      typeof coverage === "number" ? `${Math.round(coverage)}% measured` : undefined,
+      typeof basis === "number" ? `${basis} on measured checks` : undefined,
+    ].filter((part): part is string => Boolean(part));
+    return `${label} ${score}${detail.length ? ` (${detail.join(", ")})` : ""}`;
+  };
+  const scoreLine = [withBasis("SEO", seoScore, seoCoverage, seoBasis), withBasis("GEO readiness", geoScore, geoCoverage, geoBasis)]
     .filter((part): part is string => Boolean(part))
     .join(" · ");
+  const measuredFactsBlock = (Array.isArray(deliverable["measuredFacts"]) ? deliverable["measuredFacts"] : [])
+    .filter((fact): fact is string => typeof fact === "string" && fact.trim().length > 0)
+    .map((fact) => `- ${fact}`)
+    .join("\n");
 
   // Never narrower than the raw payload: an older/partial record (missing
   // `recommendation`, or predating C2's routing fields entirely) still gets
@@ -749,6 +764,9 @@ export function materializeSeoGeoReport(deliverable: Record<string, unknown>): A
     content: joinBlocks([
       scoreLine ? `**${scoreLine}**` : undefined,
       str(deliverable["narrative"]),
+      // The engine's own observations (2026-09-07+): what the crawl, the page
+      // audit, Core Web Vitals and Wikidata actually saw. Absent on older reports.
+      measuredFactsBlock ? `## What the audit measured\n\n${measuredFactsBlock}` : undefined,
       recommendationBlock ? `## Recommendations (${recommendations.length})\n\n${recommendationBlock}` : undefined,
       ownerMixLine,
     ]),

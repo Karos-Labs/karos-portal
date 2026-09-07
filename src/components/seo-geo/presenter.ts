@@ -230,6 +230,19 @@ const NO_ENGINE_DATA = {
   sentence: "This snapshot carries no AI engine data.",
 } as const;
 
+/**
+ * The line under a score tile. The score counts an unmeasured check as zero,
+ * so on its own it reads low for a site that passed everything the audit
+ * could see; when the engine reported how the site did on the checks that
+ * DID run, say both halves in one breath. Snapshots from before that field
+ * existed keep the line they always had.
+ */
+export function coverageLineFor(coveragePct: number, measuredBasisScore: number | null | undefined): string {
+  const base = `measured ${coveragePct}% of checks`;
+  if (typeof measuredBasisScore !== "number" || coveragePct <= 0 || coveragePct >= 100) return base;
+  return `${base} · ${measuredBasisScore}/100 on the checks that ran`;
+}
+
 export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoBand = scoreBand(insights.seoScore);
   const geoBand = scoreBand(insights.geoReadiness);
@@ -276,7 +289,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       tone: seoMeasured ? seoBand.tone : "neutral",
       bandLabel: seoMeasured ? seoBand.label : "not measured yet",
       coveragePct: insights.seoDataCoveragePct,
-      coverageLine: `measured ${insights.seoDataCoveragePct}% of checks`,
+      coverageLine: coverageLineFor(insights.seoDataCoveragePct, insights.seoMeasuredBasisScore),
       breakdownTitle: "What's behind this score",
       breakdown: checkBreakdown(SEO_CHECKS, insights.seoChecks),
     },
@@ -289,7 +302,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       tone: readinessMeasured ? geoBand.tone : "neutral",
       bandLabel: readinessMeasured ? geoBand.label : "not measured yet",
       coveragePct: insights.geoReadinessCoveragePct,
-      coverageLine: `measured ${insights.geoReadinessCoveragePct}% of checks`,
+      coverageLine: coverageLineFor(insights.geoReadinessCoveragePct, insights.geoReadinessMeasuredBasisScore),
       breakdownTitle: "What's behind this score",
       breakdown: checkBreakdown(GEO_READINESS_CHECKS, insights.geoChecks),
     },

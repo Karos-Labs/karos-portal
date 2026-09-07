@@ -357,8 +357,15 @@ export function mapAgentEngineSeoGeoToInsights(input: SeoGeoMappingInput): SeoGe
     capturedAt,
     seoScore: seo.score,
     seoDataCoveragePct: seo.dataCoveragePct,
+    // Present only when the engine reported it — an older deliverable must not
+    // read as "measured basis unknown = null", which is a different statement.
+    ...(report.seoScore?.measuredBasisScore !== undefined ? { seoMeasuredBasisScore: report.seoScore.measuredBasisScore } : {}),
     geoReadiness: geo.score,
     geoReadinessCoveragePct: geo.dataCoveragePct,
+    ...(report.geoReadiness?.measuredBasisScore !== undefined ? { geoReadinessMeasuredBasisScore: report.geoReadiness.measuredBasisScore } : {}),
+    ...(Array.isArray(report.measuredFacts) && report.measuredFacts.length > 0
+      ? { measuredFacts: report.measuredFacts.filter((f): f is string => typeof f === "string" && f.trim().length > 0).slice(0, 20) }
+      : {}),
     geoVisibilityIndex: visibility.index,
     geoVisibilityCoveragePct: visibility.dataCoveragePct,
     geoVisibilityModel: visibility.model,
