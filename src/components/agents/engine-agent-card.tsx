@@ -155,7 +155,9 @@ export function EngineAgentCard({
           onClick={() =>
             startTransition(async () => {
               const trimmed = customPrompt.trim();
-              const result = await dispatchControlPlaneAgentAction(agent.slug, {
+              let result: Awaited<ReturnType<typeof dispatchControlPlaneAgentAction>>;
+              try {
+                result = await dispatchControlPlaneAgentAction(agent.slug, {
                 clientId,
                 // Both omitted when empty rather than sent as ""/[]: the engine
                 // reads an empty direction as "use the client's strategy", and
@@ -169,6 +171,11 @@ export function EngineAgentCard({
                   ...(acceptsMedia && mediaSource !== MEDIA_SOURCE_DEFAULT ? { mediaSource } : {}),
                 },
               });
+              } catch (error) {
+                // An action that throws (an employee on an admin-only action, a
+                // network drop) is a notice here, not Next's generic error.
+                result = { ok: false, error: error instanceof Error && /forbidden/i.test(error.message) ? "Only a Karos admin can dispatch from here." : "The run could not be dispatched. Refresh and try again." };
+              }
               setNotice(
                 result.ok
                   ? { ok: true, text: `Dispatched — job ${result.jobId}` }

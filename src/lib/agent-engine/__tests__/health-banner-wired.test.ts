@@ -31,7 +31,12 @@ const detailSource = readFileSync(DETAIL_PAGE, "utf8");
 describe("the roster page (clients/[id]/agents) mounts the engine health banner", () => {
   it("imports EngineHealthBanner and its gate", () => {
     expect(rosterSource).toMatch(/import\s*\{\s*EngineHealthBanner\s*\}\s*from\s*"@\/components\/engine-health-banner"/);
-    expect(rosterSource).toMatch(/import\s*\{\s*shouldShowEngineHealthBanner\s*\}\s*from\s*"@\/lib\/agent-engine\/health"/);
+    // Since 2026-09-07 the roster page also imports `clientHasEngineRoutedCustomAgent`
+    // from the same module (engine-routed agents are not "paused" by agent-service),
+    // so, as on the detail page below, one import statement carries two names.
+    expect(rosterSource).toMatch(
+      /import\s*\{[^}]*\bshouldShowEngineHealthBanner\b[^}]*\}\s*from\s*"@\/lib\/agent-engine\/health"/,
+    );
   });
 
   it("renders <EngineHealthBanner ...> gated by shouldShowEngineHealthBanner, on both the client and staff branches", () => {
