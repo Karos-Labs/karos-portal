@@ -78,8 +78,11 @@ describe("buildEngineAgentCards", () => {
         creditCost: 6,
         model: "claude-sonnet-4-6-on-vertex",
         stages: [
-          { id: "00-intake-check", label: "Intake check", description: null, isGate: false, kind: "agent" as const, modelId: null, skillRef: null },
-          { id: "15-batch-review", label: "Human review", description: null, isGate: true, kind: "gate" as const, modelId: null, skillRef: null },
+          { id: "00-intake-check", label: "Intake check", description: null, isGate: false, kind: "code" as const, modelId: null, skillRef: null, agentId: null, defaultModel: null, vendor: null },
+          { id: "10-draft-post", label: "Draft", description: null, isGate: false, kind: "agent" as const, modelId: null, skillRef: "x-craft@5", agentId: "x-draft", defaultModel: "claude-opus-4-8", vendor: "anthropic" },
+          { id: "10b-vision", label: "Vision", description: null, isGate: false, kind: "agent" as const, modelId: null, skillRef: null, agentId: "x-vision", defaultModel: "gemini-2.5-flash", vendor: "gemini" },
+          { id: "10c-vision-again", label: "Vision again", description: null, isGate: false, kind: "agent" as const, modelId: null, skillRef: null, agentId: "x-vision-2", defaultModel: "gemini-2.5-flash", vendor: "gemini" },
+          { id: "15-batch-review", label: "Human review", description: null, isGate: true, kind: "gate" as const, modelId: null, skillRef: null, agentId: null, defaultModel: null, vendor: null },
         ],
       }),
     ]);
@@ -88,8 +91,11 @@ describe("buildEngineAgentCards", () => {
       name: "X / Twitter Content Specialist",
       icon: "AtSign",
       creditCost: 6,
-      stageCount: 2,
-      model: "claude-sonnet-4-6-on-vertex",
+      stageCount: 5,
+      // Per-stage compiled defaults, de-duplicated, in order. NOT the
+      // agent-level `model`, which the engine never reads and which said
+      // "Sonnet" for every agent.
+      models: ["claude-opus-4-8", "gemini-2.5-flash"],
     });
   });
 

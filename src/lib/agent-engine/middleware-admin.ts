@@ -69,6 +69,25 @@ export interface AgentStage {
    * configuration the engine reads per run.
    */
   modelId: string | null;
+  /**
+   * The engine's own id for the agent class this stage runs (`x-draft`). This,
+   * not the step id, is what the engine keys a stage override by. Null on
+   * code steps and on stages seeded before the field existed.
+   */
+  agentId: string | null;
+  /**
+   * The model this stage runs when nothing overrides it, as the engine's
+   * canonical id (`claude-opus-4-8`). Read from the agent class's compiled
+   * `modelPolicy`, so "engine default" can be named per stage rather than
+   * guessed agent-wide.
+   */
+  defaultModel: string | null;
+  /**
+   * The engine vendor whose adapter serves this stage (`anthropic`, `gemini`,
+   * `model-garden`, `openai-compatible`). An override must stay within it; the
+   * engine refuses a cross-vendor stage override and so does the control plane.
+   */
+  vendor: string | null;
 }
 
 export interface AgentInputDef {
@@ -235,6 +254,9 @@ function toAgent(row: Row): MiddlewareAgent {
             kind: f.kind === "agent" || f.kind === "gate" ? f.kind : "code",
             skillRef: typeof f.skill_ref === "string" ? f.skill_ref : null,
             modelId: typeof f.model_id === "string" ? f.model_id : null,
+            agentId: strOrNull(f.agent_id),
+            defaultModel: strOrNull(f.default_model),
+            vendor: strOrNull(f.vendor),
           };
         })
       : [],
@@ -399,6 +421,11 @@ export async function updateAgent(agentRef: string, patch: AgentPatch): Promise<
       kind: stage.kind,
       skill_ref: stage.skillRef,
       model_id: stage.modelId,
+      // The middleware PATCH replaces the stage list wholesale, so every
+      // engine fact the seed wrote has to travel back or the edit erases it.
+      agent_id: stage.agentId,
+      default_model: stage.defaultModel,
+      vendor: stage.vendor,
     }));
   }
 
@@ -573,6 +600,12 @@ export interface MiddlewareModel {
   supportsTools: boolean;
   tiers: string[];
   notes: string | null;
+  /**
+   * What the engine does when this model's primary route fails, in words.
+   * Null on rows seeded before the field existed; the Studio says so rather
+   * than inventing a chain.
+   */
+  fallback: string | null;
 }
 
 function toModel(row: Row): MiddlewareModel {
@@ -591,6 +624,7 @@ function toModel(row: Row): MiddlewareModel {
     supportsTools: row.supports_tools !== false,
     tiers: strList(row.tiers),
     notes: strOrNull(row.notes),
+    fallback: strOrNull(row.fallback),
   };
 }
 

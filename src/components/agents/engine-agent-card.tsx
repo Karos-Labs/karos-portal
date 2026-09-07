@@ -92,7 +92,7 @@ export function EngineAgentCard({
       <p className="mt-2 text-xs opacity-60">
         {agent.stageCount} stages
         {agent.creditCost !== null ? ` · ${agent.creditCost} credits per run` : ""}
-        {agent.model ? ` · ${agent.model}` : ""}
+        {agent.models.length > 0 ? ` · ${agent.models.join(", ")}` : ""}
       </p>
 
       {/* Offered on every agent in the catalog. The one exception used to be the

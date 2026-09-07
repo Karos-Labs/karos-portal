@@ -9,7 +9,6 @@ import {
   promoteFeedbackAction,
   requestModelAccessAction,
   savePromptVersionAction,
-  setAgentModelAction,
   getStagePromptAction,
   saveStagePromptAction,
   setStageModelAction,
@@ -101,7 +100,7 @@ export function AgentStudio({
       </Card>
 
       <StagesPanel agent={agent} models={models} pending={pending} apply={apply} />
-      <ModelPanel agent={agent} models={models} pending={pending} apply={apply} />
+      <ModelsPanel agent={agent} models={models} pending={pending} apply={apply} />
       <PromptPanel agent={agent} activePrompt={activePrompt} history={promptHistory} pending={pending} apply={apply} />
       <TemplatePanel agent={agent} templates={templates} pending={pending} apply={apply} />
       <FeedbackPanel agent={agent} feedback={feedback} pending={pending} apply={apply} />
@@ -294,17 +293,97 @@ function StagePromptEditor({
 }
 
 /**
+ * Which catalog vendors may serve a stage wired to each engine vendor.
+ *
+ * The engine selects an adapter from a stage's compiled `ModelPolicy.vendor`
+ * alone, never from the model id, and `assertModelCatalogued` refuses a stage
+ * override whose model belongs to another vendor. The control plane refuses
+ * the same edit (its `ENGINE_VENDOR_TO_CATALOG_VENDORS`); the picker below
+ * simply never offers it.
+ */
+const CATALOG_VENDORS_FOR_ENGINE_VENDOR: Record<string, readonly string[]> = {
+  anthropic: ["anthropic"],
+  gemini: ["google"],
+  "model-garden": ["meta", "other"],
+  "openai-compatible": ["other"],
+};
+
+/**
+ * How each engine vendor is routed, and what happens when the route fails.
+ * The per-model `fallback` text in the catalog is the authority; this is the
+ * one-line version for a stage whose model has no catalog row.
+ */
+const ENGINE_VENDOR_ROUTE: Record<string, { label: string; fallback: string }> = {
+  anthropic: {
+    label: "Claude via Vertex AI",
+    fallback: "On a 429 or 404 the same model is retried on Anthropic's direct API, then Gemini 2.5 Flash answers as the last resort.",
+  },
+  gemini: {
+    label: "Gemini via Vertex AI",
+    fallback: "None. A failure on Vertex fails the step; no other transport carries Gemini.",
+  },
+  "model-garden": {
+    label: "Vertex Model Garden (MaaS)",
+    fallback: "None, and not routed in this deployment.",
+  },
+  "openai-compatible": {
+    label: "OpenAI-compatible endpoint",
+    fallback: "None, and not routed in this deployment.",
+  },
+};
+
+/** The catalog rows a stage may be pointed at: same engine vendor, or every row when the stage's vendor is unknown. */
+function modelsForStage(stage: MiddlewareAgent["stages"][number], models: MiddlewareModel[]): MiddlewareModel[] {
+  if (!stage.vendor) return models;
+  const allowed = CATALOG_VENDORS_FOR_ENGINE_VENDOR[stage.vendor];
+  return allowed ? models.filter((m) => allowed.includes(m.vendor)) : models;
+}
+
+/** The catalog row whose provider name is the engine's canonical id, e.g. `claude-opus-4-8`. */
+function catalogRowForEngineModel(models: MiddlewareModel[], engineModelId: string | null): MiddlewareModel | undefined {
+  if (!engineModelId) return undefined;
+  return models.find((m) => m.providerModelName === engineModelId || m.modelId === engineModelId);
+}
+
+/**
+ * What a stage actually runs on right now: its Studio override when one is set,
+ * else its compiled engine default. Returned with the catalog row when the
+ * catalog has one, so the fallback chain can be quoted from the catalog.
+ */
+function effectiveModel(
+  stage: MiddlewareAgent["stages"][number],
+  models: MiddlewareModel[],
+): { engineModelId: string | null; row: MiddlewareModel | undefined; overridden: boolean } {
+  if (stage.modelId) {
+    const row = models.find((m) => m.modelId === stage.modelId);
+    return { engineModelId: row?.providerModelName ?? stage.modelId, row, overridden: true };
+  }
+  return { engineModelId: stage.defaultModel, row: catalogRowForEngineModel(models, stage.defaultModel), overridden: false };
+}
+
+function fallbackFor(stage: MiddlewareAgent["stages"][number], row: MiddlewareModel | undefined): string {
+  if (row?.fallback) return row.fallback;
+  if (stage.vendor && ENGINE_VENDOR_ROUTE[stage.vendor]) return ENGINE_VENDOR_ROUTE[stage.vendor]!.fallback;
+  return "Not documented for this model.";
+}
+
+/**
  * One stage's own model.
  *
  * Rendered only on `"agent"` stages — the engine's own name for a model step
- * — because a code step has no model to set and
- * a disabled control that explains itself is still a control someone has to
- * read past.
+ * — because a code step has no model to set and a disabled control that
+ * explains itself is still a control someone has to read past.
  *
- * "Agent default" is the empty option rather than a repeat of the agent-level
- * model id: the point of leaving a stage unset is that it FOLLOWS the agent,
- * so naming the current default here would make it look pinned, and it would
- * go stale the moment the agent-level model changed.
+ * The empty option NAMES the compiled default (`Engine default · claude-opus-4-8`)
+ * instead of saying "Agent default". Until 2026-09-07 it said the latter, the
+ * agent-level model field it implied was seeded as Sonnet for every agent and
+ * never read by the engine, and so the Studio read "Sonnet" over stages that
+ * run on Opus and on Gemini. The default is now read from the agent class's
+ * own `modelPolicy` by the middleware's stage generator, per stage.
+ *
+ * Only models of the stage's own vendor are offered: the engine refuses a
+ * cross-vendor override after the run has started, and an option that fails
+ * three layers away is worse than no option.
  *
  * The stage list is read-only above and this is not, which looks like a
  * contradiction and is not: the list is compiled TypeScript, and editing it
@@ -324,43 +403,63 @@ function StageModelPicker({
   pending: boolean;
   apply: Apply;
 }) {
+  const effective = effectiveModel(stage, models);
+  const route = stage.vendor ? ENGINE_VENDOR_ROUTE[stage.vendor] : undefined;
   return (
-    <label className="ml-auto flex items-center gap-2">
-      <span className="text-xs opacity-60">Model</span>
-      <Select
-        aria-label={`Model for ${stage.label}`}
-        value={stage.modelId ?? ""}
-        disabled={pending}
-        onChange={(e) => {
-          const next = e.target.value === "" ? null : e.target.value;
-          apply(
-            () => setStageModelAction(agent.slug, stage.id, next),
-            next === null ? `${stage.label} follows the agent default again` : `${stage.label} now runs on ${next}`,
-          );
-        }}
-      >
-        <option value="">Agent default</option>
-        {models.map((m) => (
-          <option key={m.modelId} value={m.modelId} disabled={m.availability !== "available"}>
-            {m.displayName}
-            {m.availability === "not_enabled" ? " — not enabled here" : ""}
-            {m.availability === "retired" ? " — retired" : ""}
+    <div className="ml-auto flex flex-col items-end gap-1">
+      <label className="flex items-center gap-2">
+        <span className="text-xs opacity-60">Model</span>
+        <Select
+          aria-label={`Model for ${stage.label}`}
+          value={stage.modelId ?? ""}
+          disabled={pending}
+          onChange={(e) => {
+            const next = e.target.value === "" ? null : e.target.value;
+            apply(
+              () => setStageModelAction(agent.slug, stage.id, next),
+              next === null
+                ? `${stage.label} runs on its engine default again${stage.defaultModel ? ` (${stage.defaultModel})` : ""}`
+                : `${stage.label} now runs on ${next}`,
+            );
+          }}
+        >
+          <option value="">
+            {stage.defaultModel ? `Engine default · ${stage.defaultModel}` : "Engine default (not extracted from the engine source)"}
           </option>
-        ))}
-      </Select>
-    </label>
+          {modelsForStage(stage, models).map((m) => (
+            <option key={m.modelId} value={m.modelId} disabled={m.availability !== "available"}>
+              {m.displayName}
+              {m.availability === "not_enabled" ? " — not enabled here" : ""}
+              {m.availability === "retired" ? " — retired" : ""}
+            </option>
+          ))}
+        </Select>
+      </label>
+      <span className="max-w-md text-right text-xs opacity-50" title={fallbackFor(stage, effective.row)}>
+        {effective.overridden ? "Override" : "Default"}
+        {effective.engineModelId ? ` · sends ${effective.engineModelId}` : ""}
+        {route ? ` · ${route.label}` : ""}
+        {stage.vendor === "gemini" ? " · no fallback" : stage.vendor === "anthropic" ? " · falls back to the Anthropic API, then Gemini Flash" : ""}
+      </span>
+    </div>
   );
 }
 
 /**
- * The model dropdown, from the normalized catalog.
+ * Every model this agent's stages run on, and every model the catalog knows,
+ * with the fallback chain for each. Read-only on purpose.
  *
- * Models this deployment does not route are listed and DISABLED rather than
- * hidden: a dropdown showing only what works reads as the whole of what Vertex
+ * This replaces an agent-level "Model" picker that wrote a field the engine
+ * never read. Which model a step runs on is decided per stage (the compiled
+ * default above, or a Studio override on that stage), so an agent-wide model
+ * was a setting with no effect, presented as if it had one.
+ *
+ * Models this deployment does not route are listed and marked rather than
+ * hidden: a catalog showing only what works reads as the whole of what Vertex
  * offers, and that is how someone concludes a model is unavailable when it is
- * one config change away.
+ * one config change away. Those rows carry a "Request access" action below.
  */
-function ModelPanel({
+function ModelsPanel({
   agent,
   models,
   pending,
@@ -371,18 +470,15 @@ function ModelPanel({
   pending: boolean;
   apply: Apply;
 }) {
-  const [modelId, setModelId] = useState(
-    agent.model ?? models.find((m) => m.availability === "available")?.modelId ?? "",
-  );
+  const modelStages = agent.stages.filter((s) => s.kind === "agent");
+  const requestable = models.filter((m) => m.availability === "not_enabled");
+  const [requestId, setRequestId] = useState(requestable[0]?.modelId ?? "");
   const [reason, setReason] = useState("");
-
-  const chosen = models.find((m) => m.modelId === modelId);
-  const needsAccess = chosen?.availability === "not_enabled";
 
   if (models.length === 0) {
     return (
       <Card className="p-6">
-        <CardTitle>Model</CardTitle>
+        <CardTitle>Models and fallbacks</CardTitle>
         <p className="mt-2 text-sm opacity-70">
           The model catalog is empty. Seed it with agent-middleware&apos;s scripts/seed_models.py.
         </p>
@@ -392,63 +488,126 @@ function ModelPanel({
 
   return (
     <Card className="p-6">
-      <CardTitle>Model</CardTitle>
+      <CardTitle>Models and fallbacks</CardTitle>
       <p className="mt-1 text-sm opacity-70">
-        A normalized model id, so what this agent runs on is a lookup rather than a spelling.
+        Each model step runs on the model its agent class is compiled with (the engine default), unless a stage above
+        points it at another model of the same vendor. Claude steps go to Vertex AI first and fall back to the same
+        model on Anthropic&apos;s direct API, then to Gemini 2.5 Flash. Gemini steps go to Vertex AI only: there is no
+        second transport, so a failure there fails the step. A stage can never be moved to another vendor from here.
       </p>
 
-      <div className="mt-4 flex flex-wrap items-end gap-3">
-        <div className="min-w-64 flex-1">
-          <Label htmlFor="model-id">Model</Label>
-          <Select id="model-id" value={modelId} onChange={(e) => setModelId(e.target.value)}>
-            {models.map((m) => (
-              <option key={m.modelId} value={m.modelId} disabled={m.availability !== "available"}>
-                {m.displayName}
-                {m.availability === "not_enabled" ? " — not enabled here" : ""}
-                {m.availability === "retired" ? " — retired" : ""}
-              </option>
-            ))}
-          </Select>
+      <h3 className="mt-5 text-sm font-medium">What this agent runs</h3>
+      {modelStages.length === 0 ? (
+        <p className="mt-2 text-sm opacity-70">This workflow has no model steps.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="opacity-60">
+              <tr>
+                <th className="py-1 pr-3 font-normal">Stage</th>
+                <th className="py-1 pr-3 font-normal">Engine default</th>
+                <th className="py-1 pr-3 font-normal">Override</th>
+                <th className="py-1 pr-3 font-normal">Route</th>
+                <th className="py-1 font-normal">Fallback</th>
+              </tr>
+            </thead>
+            <tbody>
+              {modelStages.map((stage) => {
+                const effective = effectiveModel(stage, models);
+                const route = stage.vendor ? ENGINE_VENDOR_ROUTE[stage.vendor] : undefined;
+                return (
+                  <tr key={stage.id} className="border-t border-white/10 align-top">
+                    <td className="py-2 pr-3">
+                      {stage.label}
+                      <br />
+                      <code className="opacity-50">{stage.id}</code>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <code>{stage.defaultModel ?? "not extracted"}</code>
+                    </td>
+                    <td className="py-2 pr-3">
+                      {effective.overridden ? <code>{effective.engineModelId}</code> : <span className="opacity-50">none</span>}
+                    </td>
+                    <td className="py-2 pr-3">{route?.label ?? stage.vendor ?? "unknown"}</td>
+                    <td className="py-2 opacity-80">{fallbackFor(stage, effective.row)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-        <Button
-          disabled={pending || !modelId || needsAccess || modelId === agent.model}
-          onClick={() =>
-            apply(
-              () => setAgentModelAction(agent.slug, modelId),
-              `${agent.name} now runs on ${chosen?.displayName ?? modelId}.`,
-            )
-          }
-        >
-          Save model
-        </Button>
-      </div>
-
-      {chosen && (
-        <p className="mt-3 text-xs opacity-60">
-          {chosen.vendor} · sends <code>{chosen.providerModelName}</code>
-          {chosen.region ? ` · ${chosen.region}` : ""}
-          {chosen.supportsTools ? "" : " · no tool support"}
-          {chosen.notes ? ` — ${chosen.notes}` : ""}
-        </p>
       )}
 
-      {needsAccess && (
+      <h3 className="mt-6 text-sm font-medium">Model catalogue</h3>
+      <p className="mt-1 text-xs opacity-60">
+        Every model agent-engine&apos;s own catalog knows. &ldquo;Sends&rdquo; is the id the engine puts on the wire.
+      </p>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead className="opacity-60">
+            <tr>
+              <th className="py-1 pr-3 font-normal">Model</th>
+              <th className="py-1 pr-3 font-normal">Sends</th>
+              <th className="py-1 pr-3 font-normal">Vendor</th>
+              <th className="py-1 pr-3 font-normal">Status</th>
+              <th className="py-1 font-normal">Fallback and notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {models.map((m) => (
+              <tr key={m.modelId} className="border-t border-white/10 align-top">
+                <td className="py-2 pr-3">
+                  {m.displayName}
+                  {m.description ? <p className="mt-1 opacity-60">{m.description}</p> : null}
+                </td>
+                <td className="py-2 pr-3">
+                  <code>{m.providerModelName}</code>
+                  {m.region ? <p className="opacity-50">{m.region}</p> : null}
+                </td>
+                <td className="py-2 pr-3">{m.vendor}</td>
+                <td className="py-2 pr-3">
+                  <Badge tone={m.availability === "available" ? "success" : m.availability === "retired" ? "neutral" : "warning"}>
+                    {m.availability === "available" ? "routed" : m.availability === "retired" ? "retired" : "not enabled"}
+                  </Badge>
+                  {!m.supportsTools && <p className="mt-1 opacity-60">no tool support</p>}
+                </td>
+                <td className="py-2 opacity-80">
+                  {m.fallback ?? "Fallback not documented for this row."}
+                  {m.notes ? <p className="mt-1 opacity-60">{m.notes}</p> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {requestable.length > 0 && (
         <div className="mt-4 rounded-lg border border-white/10 p-4">
           <p className="text-sm">
-            {chosen?.displayName} is available in Vertex but not routed here. Requesting it records the ask; enabling
-            it is a deployment decision someone makes separately.
+            A model marked &ldquo;not enabled&rdquo; is known to the engine but not routed here. Requesting it records
+            the ask; enabling it is a deployment decision someone makes separately.
           </p>
           <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div className="min-w-56">
+              <Label htmlFor="model-request-id">Model</Label>
+              <Select id="model-request-id" value={requestId} onChange={(e) => setRequestId(e.target.value)}>
+                {requestable.map((m) => (
+                  <option key={m.modelId} value={m.modelId}>
+                    {m.displayName}
+                  </option>
+                ))}
+              </Select>
+            </div>
             <div className="min-w-64 flex-1">
               <Label htmlFor="model-reason">Why this agent needs it</Label>
               <Input id="model-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
             </div>
             <Button
               variant="ghost"
-              disabled={pending}
+              disabled={pending || !requestId}
               onClick={() =>
                 apply(
-                  () => requestModelAccessAction(modelId, { reason, agentId: agent.slug }),
+                  () => requestModelAccessAction(requestId, { reason, agentId: agent.slug }),
                   "Request recorded. Nothing changed yet — someone has to enable it.",
                 )
               }
