@@ -124,7 +124,7 @@ import {
   SPECIAL_CASED_WIRE_KEYS,
 } from "./product-mapping";
 
-/** The agent-engine `productId`s this portal can actually dispatch a run to today (`./product-mapping.ts`'s two resolvers, exhaustively). `campaign-orchestrator` and `intel-report-agent` exist in agent-engine but neither resolver can ever name them. */
+/** The agent-engine `productId`s this portal can actually dispatch a run to from a run dialog (`./product-mapping.ts`'s two resolvers, exhaustively). `intel-report-agent` exists in agent-engine but is dispatched from the research-report surface (`dispatch-research-agents.ts`), never from a run dialog. `campaign-orchestrator` joined 2026-09-07 via the `karos-campaign-orchestrator` key. */
 export const REACHABLE_PRODUCTS = [
   "x-agent",
   "instagram-agent",
@@ -137,6 +137,7 @@ export const REACHABLE_PRODUCTS = [
   "tiktok-agent",
   "reputation-agent",
   "seo-geo-agent",
+  "campaign-orchestrator",
 ] as const;
 export type ReachableProductId = (typeof REACHABLE_PRODUCTS)[number];
 
@@ -249,6 +250,7 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:201-205 (readRichRunInput; rich.customPrompt wins over requestedTopic for the topic claim)" },
       { product: "reputation-agent", evidence: "agents/reputation-agent/src/workflow/create-reputation-pulse-workflow.ts:168,481" },
       { product: "seo-geo-agent", evidence: "agents/seo-geo-agent/src/workflow/create-seo-geo-agent-workflow.ts:148 (+ runDirectionField downstream)" },
+      { product: "campaign-orchestrator", evidence: "agents/campaign-orchestrator/src/workflow/create-campaign-workflow.ts:114 (readRunDirection) and :212 (runDirectionField spread into the campaign plan step)" },
       // NOT listed, deliberately: `intel-report-agent`. It reads `customPrompt`
       // (workflow lines 112/147/276 — the direction narrows the research query
       // before the draft step ever sees it), and since the Phase A cutover this
@@ -277,13 +279,16 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       // write the post to it.
       { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts (09b-analyze-attached-media: analyzeAttachedMedia(..., { assets: runDirection.mediaAssets }))" },
       { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (08b-analyze-attached-media: analyzeAttachedMedia(..., { assets: runDirection.mediaAssets }))" },
+      // 2026-09-06: an attached source video IS the footage, whatever the
+      // standing brandedShortsIntake says.
+      { product: "branded-shorts-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts (firstAsset(runDirection.mediaAssets, \"source\") in 01-load-intake)" },
     ],
-    // branded-shorts: dialog shows both a raw `mediaAssets` field AND
-    // `source_url` (which product-mapping.ts also folds into mediaAssets) —
-    // its own workflow comment says outright "mediaAssets is unread here".
-    // landing-builder: `references` folds into mediaAssets; blog: `sources`
-    // does the same. Neither workflow ever touches `.mediaAssets`.
-    sentButUnread: ["branded-shorts-agent", "landing-builder-agent", "blog-agent"],
+    // landing-builder's `references` and blog's `sources` used to fold into
+    // mediaAssets, which neither workflow reads. Since 2026-09-07
+    // `toEngineRunInput` folds a link list into `customPrompt` for any product
+    // outside `ENGINE_PRODUCTS_READING_MEDIA_ASSETS`, so those two no longer
+    // send this field at all — the client's URLs reach the model as prose.
+    sentButUnread: [],
   },
 
   mediaSource: {
@@ -302,7 +307,7 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     sentButUnread: [],
   },
 
-  // ── requestedTopic: read by 4 of the 6 products whose dialog can send it ──
+  // ── requestedTopic: read by every product whose dialog can send it ──
 
   requestedTopic: {
     readBy: [
@@ -310,6 +315,20 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       { product: "reddit-agent", evidence: "agents/reddit-agent/src/workflow/create-reddit-agent-workflow.ts:125-127 (same pattern)" },
       { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts:71-79,226-227,254 (RUN_SCOPED_KEYS via withRunInput(config, wf.input))" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:203-205 (runInput.requestedTopic, only when customPrompt is absent)" },
+      // The rest read it through the shared primitive, not off `wf.input`
+      // directly: `readRunDirection` promotes `requestedTopic` to
+      // `topicOverride` and renders it as the "Requested topic:" line of
+      // `RunDirection.direction`, which each of these spreads into its
+      // drafting step via `runDirectionField` (pinned per product by
+      // agent-engine's run-direction-coverage.test.ts). The note below on
+      // same-named CONFIG fields still holds — those are a different channel.
+      { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:1821 (runDirectionField spread); requestedTopic reaches it through packages/workflow/src/primitives/run-direction.ts (readRunDirection: topicOverride + the 'Requested topic:' direction line)" },
+      { product: "blog-agent", evidence: "agents/blog-agent/src/workflow/create-blog-agent-workflow.ts:309 (runDirectionField spread); requestedTopic reaches it through packages/workflow/src/primitives/run-direction.ts (readRunDirection: topicOverride + the 'Requested topic:' direction line)" },
+      { product: "newsletter-agent", evidence: "agents/newsletter-agent/src/workflow/create-newsletter-agent-workflow.ts:327 (runDirectionField spread); requestedTopic reaches it through packages/workflow/src/primitives/run-direction.ts (readRunDirection: topicOverride + the 'Requested topic:' direction line)" },
+      { product: "landing-builder-agent", evidence: "agents/landing-builder-agent/src/workflow/create-landing-builder-agent-workflow.ts:180 (runDirectionField spread); requestedTopic reaches it through packages/workflow/src/primitives/run-direction.ts (readRunDirection: topicOverride + the 'Requested topic:' direction line)" },
+      { product: "branded-shorts-agent", evidence: "agents/branded-shorts-agent/src/workflow/create-branded-shorts-agent-workflow.ts:235 (runDirectionField spread); requestedTopic reaches it through packages/workflow/src/primitives/run-direction.ts (readRunDirection: topicOverride + the 'Requested topic:' direction line)" },
+      { product: "reputation-agent", evidence: "agents/reputation-agent/src/workflow/create-reputation-pulse-workflow.ts:481 (runDirectionField spread); requestedTopic reaches it through packages/workflow/src/primitives/run-direction.ts (readRunDirection: topicOverride + the 'Requested topic:' direction line)" },
+      { product: "campaign-orchestrator", evidence: "agents/campaign-orchestrator/src/workflow/create-campaign-workflow.ts:212 (runDirectionField spread); requestedTopic reaches it through packages/workflow/src/primitives/run-direction.ts (readRunDirection: topicOverride + the 'Requested topic:' direction line)" },
     ],
     // instagram-agent and blog-agent/newsletter-agent each have a same-named
     // `requestedTopic`/`requestedSubject` on an intake-config TYPE, which
@@ -334,17 +353,10 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     // first place (product-mapping.ts's `REQUEST_IS_DIRECTION_PRODUCT`
     // routes it into `customPrompt` instead), so it is not "unread" here —
     // it is simply never sent.
-    sentButUnread: [
-      "instagram-agent",
-      "blog-agent",
-      "newsletter-agent",
-      "landing-builder-agent",
-      "branded-shorts-agent",
-      "reputation-agent",
-    ],
+    sentButUnread: [],
   },
 
-  // ── SHARED_SCALAR_FIELDS (audience/tone/cta) — read by NOTHING, anywhere ──
+  // ── SHARED_SCALAR_FIELDS (audience/tone/cta) ──
 
   audience: {
     readBy: [
@@ -354,6 +366,7 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       { product: "landing-builder-agent", evidence: "agents/landing-builder-agent/src/workflow/create-landing-builder-agent-workflow.ts:180 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
       { product: "blog-agent", evidence: "agents/blog-agent/src/workflow/create-blog-agent-workflow.ts:309 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
       { product: "newsletter-agent", evidence: "agents/newsletter-agent/src/workflow/create-newsletter-agent-workflow.ts:327 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "campaign-orchestrator", evidence: "agents/campaign-orchestrator/src/workflow/create-campaign-workflow.ts:212 (runDirectionField spread into the campaign plan step); the generic launch profile collects `audience` for this key" },
     ],
     sentButUnread: [],
   },
@@ -382,6 +395,7 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
       { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:1821 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
       { product: "tiktok-agent", evidence: "agents/tiktok-agent/src/workflow/create-tiktok-agent-workflow.ts:498 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
       { product: "newsletter-agent", evidence: "agents/newsletter-agent/src/workflow/create-newsletter-agent-workflow.ts:327 (runDirectionField spread into this agent's drafting step); the value is parsed and labelled by packages/workflow/src/primitives/run-direction.ts (readRunBrief/renderRunBrief -> RunDirection.direction) and the whole step input is serialized into the model prompt by packages/core/src/agent/base-agent.ts's buildTurnPrompt" },
+      { product: "campaign-orchestrator", evidence: "agents/campaign-orchestrator/src/workflow/create-campaign-workflow.ts:212 (runDirectionField spread into the campaign plan step); the generic launch profile's `success_criteria` folds into mustInclude for this key" },
     ],
     sentButUnread: [],
   },

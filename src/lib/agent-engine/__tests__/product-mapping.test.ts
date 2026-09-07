@@ -64,7 +64,7 @@ describe("resolveAgentEngineProductIdForCustomAgent", () => {
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
       "landing-builder", "branded-shorts", "karos-blog-writer-v2",
       "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
-      "karos-tiktok-agent", "karos-reputation-setup",
+      "karos-tiktok-agent", "karos-reputation-setup", "karos-campaign-orchestrator",
     ]) {
       const productId = resolveAgentEngineProductIdForCustomAgent(key);
       expect(KNOWN.has(productId!), `${key} -> ${productId}`).toBe(true);
@@ -305,6 +305,9 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   { key: "karos-reputation-runner", name: "Reputation Runner", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
   { key: "karos-reputation-setup", name: "Reputation Setup", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
   { key: "seo-geo-agent-v2", name: "SEO GEO Agent", productId: "seo-geo-agent", visibleFields: ["website", "scope", "request", "market", "competitors", "customPrompt"] },
+  // The generic profile: the campaign has no bespoke dialog, and its three
+  // generic answers all reach the plan step through the run direction.
+  { key: "karos-campaign-orchestrator", name: "Campaign", productId: "campaign-orchestrator", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
 ];
 
 /** A plausible answer for one dialog field — typed where the field is typed. */
@@ -486,21 +489,29 @@ describe("toEngineRunInput — the C3 wire shape", () => {
     });
   });
 
-  it("folds link lists into mediaAssets, and the non-link remainder into customPrompt", () => {
+  it("folds link lists into mediaAssets for a product that reads them, and into customPrompt for one that never does (2026-09-07)", () => {
+    // blog-agent never opens `mediaAssets`, so a source URL there was a
+    // question asked and dropped. It now stays with the words around it.
     expect(
       toEngineRunInput(
         { sources: "https://example.com/study\nverify the 40% claim", mediaAssets: '[{"uri":"gs://b/a.png","role":"logo"}]' },
         "blog-agent",
       ),
     ).toEqual({
-      mediaAssets: [
-        { uri: "gs://b/a.png", role: "logo" },
-        { uri: "https://example.com/study", role: "reference" },
-      ],
-      customPrompt: "Required sources or internal links\nverify the 40% claim",
+      mediaAssets: [{ uri: "gs://b/a.png", role: "logo" }],
+      customPrompt: "Required sources or internal links\nhttps://example.com/study\nverify the 40% claim",
     });
+    expect(toEngineRunInput({ references: "https://example.com/inspiration" }, "landing-builder-agent")).toEqual({
+      customPrompt: "Reference URLs\nhttps://example.com/inspiration",
+    });
+    // A product that reads media still gets the link as an asset — for
+    // branded-shorts the source_url IS the footage.
     expect(toEngineRunInput({ source_url: "https://example.com/ep12" }, "branded-shorts-agent")).toEqual({
       mediaAssets: [{ uri: "https://example.com/ep12", role: "source" }],
+    });
+    // The legacy path (no product named) keeps its historical shape.
+    expect(toEngineRunInput({ sources: "https://example.com/study" })).toEqual({
+      mediaAssets: [{ uri: "https://example.com/study", role: "reference" }],
     });
   });
 
@@ -554,7 +565,7 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
       "karos-linkedin-setup-v2", "karos-reddit-setup", "karos-instagram-agent",
       "landing-builder", "branded-shorts", "karos-blog-writer-v2",
       "karos-newsletter-writer-v2", "karos-reputation-runner", "seo-geo-agent-v2",
-      "karos-tiktok-agent", "karos-reputation-setup",
+      "karos-tiktok-agent", "karos-reputation-setup", "karos-campaign-orchestrator",
     ]) {
       expect(swept.has(key), `${key} routes to agent-engine but has no dialog-coverage case`).toBe(true);
     }
