@@ -88,7 +88,12 @@ substitutions:
   # Agent-engine WORKSPACE bucket (src/lib/agent-engine/workspace-writer.ts) —
   # the reconcile cron mirrors client knowledge into it. Empty = sync skipped.
   # Set to production's engine artifacts bucket once its IAM grant exists.
-  _AGENT_ENGINE_WORKSPACE_BUCKET: ""
+  # The bucket agent-engine-prod reads client knowledge from (its own
+  # GCS_WORKSPACE_BUCKET). Empty until 2026-09-07, which switched the portal's
+  # context-doc/brand/profile projection off in production while prep had it
+  # on: every research agent in prod ran without the client's own documents.
+  # karos-cmo-sa@karoscmo holds roles/storage.objectAdmin on it.
+  _AGENT_ENGINE_WORKSPACE_BUCKET: "karoscmo-prod-agent-workspace"
   # Agent-service webhook callback target — a stable Cloud Run URL for this
   # service, independent of _APP_URL/custom domain. Do not derive this from
   # _APP_URL; it must stay exactly what agent-service is configured to call.
