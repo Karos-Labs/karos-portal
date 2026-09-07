@@ -48,6 +48,45 @@ gcloud storage buckets update gs://<BUCKET_NAME> --cors-file=/tmp/gcs-media-cors
 
 ## 3. IAM — the Cloud Run runtime service account needs bucket access
 
+> **This binding is per-service-account, and it has been missed once already.**
+> On 2026-09-02 revision `karos-cmo-00159` moved prod off
+> `firebase-adminsdk-fbsvc@karoscmo` (which holds `objectAdmin` on the bucket)
+> onto the dedicated runtime SA `karos-cmo-sa@karoscmo` — and this command was
+> never run for the new identity. Media upload, clip playback and clip download
+> were all broken in prod for five days.
+>
+> It fails in the most confusing way available, so the signature is worth
+> knowing: **the `sign` step keeps returning 200.** Minting a V4 signed URL
+> needs only `serviceAccountTokenCreator` on self (below) and no bucket
+> permission at all, so the app hands the browser a perfectly well-formed URL
+> signed by a principal that cannot write. GCS then refuses the browser's PUT
+> with `403 AccessDenied` — and because those bytes go browser→GCS directly,
+> **nothing about the refusal reaches Cloud Run's logs.** The only place the
+> reason exists is the browser, which is why `storageRefusalReason`
+> (`src/lib/media-type.ts`) now surfaces it in the dropzone instead of
+> discarding it.
+>
+> So: **whenever `_RUNTIME_SERVICE_ACCOUNT` changes in cloudbuild.yaml or
+> cloudbuild.promote.yaml, re-run this section for the new SA.** Verify with
+> `gcloud storage buckets get-iam-policy gs://<BUCKET_NAME>` and confirm the SA
+> is in the output — the bucket has uniform bucket-level access, so there is no
+> ACL fallback quietly covering for a missing binding.
+
+### The two environments use two different buckets
+
+They are not the same bucket, and each needs its own steps 2 and 3:
+
+| Env | Project | Bucket (`GCS_MEDIA_BUCKET`) | Runtime SA |
+|---|---|---|---|
+| prod | `karoscmo` | `karos-media-assets` | `karos-cmo-sa@karoscmo.iam.gserviceaccount.com` |
+| prep | `karoscmo-prep` | `karoscmo-prep-media-assets` | `karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com` |
+
+`objectViewer` is not enough for either — the dropzone writes and "Import from
+Storage" lists. Grant `objectAdmin` as below. Prep sat on `objectViewer` with
+no CORS config at all until 2026-09-07, so the uploader had never worked there,
+which is also why the prod regression could not have been caught in prep.
+
+
 **Post-SCRUM-373:** `src/lib/gcs-media.ts` builds its Storage client from
 Application Default Credentials ONLY. It no longer reads
 `FIREBASE_SERVICE_ACCOUNT_KEY` or the discrete `FIREBASE_*` vars — granting
