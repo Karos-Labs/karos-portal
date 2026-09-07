@@ -487,17 +487,31 @@ export function composeContextDocsFromAgentReports(input: {
 }): Record<OnboardingDocType, string> {
   const { client, intelReport: ir, seoGeo: sg } = input;
   const swot = rec(ir["swot"]);
-  const seoScore = rec(sg["seoScore"])["score"];
-  const geoScore = rec(sg["geoReadiness"])["score"];
   const visibilityIndex = rec(rec(sg["visibility"])["byN"])["index"];
   const header = (title: string) => `# ${title} — ${client.name}`;
+  // A score with its coverage and measured-basis figure when the engine
+  // reported them (2026-09-07+): "SEO 62 (90% of checks measured; 69 on the
+  // checks that ran)". The bare score counts an unmeasured check as zero, so
+  // on its own it understates a site that passed everything the audit saw.
+  const scoreWithBasis = (label: string, breakdown: Record<string, unknown>): string | undefined => {
+    const score = breakdown["score"];
+    if (typeof score !== "number") return undefined;
+    const coverage = breakdown["dataCoveragePct"];
+    const basis = breakdown["measuredBasisScore"];
+    const detail = [
+      typeof coverage === "number" ? `${Math.round(coverage)}% of checks measured` : undefined,
+      typeof basis === "number" ? `${basis} on the checks that ran` : undefined,
+    ].filter((p): p is string => Boolean(p));
+    return `${label} ${score}${detail.length ? ` (${detail.join("; ")})` : ""}`;
+  };
   const scoreLine = [
-    typeof seoScore === "number" ? `SEO ${seoScore}` : undefined,
-    typeof geoScore === "number" ? `GEO readiness ${geoScore}` : undefined,
+    scoreWithBasis("SEO", rec(sg["seoScore"])),
+    scoreWithBasis("GEO readiness", rec(sg["geoReadiness"])),
     typeof visibilityIndex === "number" ? `AI visibility index ${visibilityIndex}` : undefined,
   ]
     .filter((p): p is string => Boolean(p))
     .join(" · ");
+  const measuredFacts = strArray(sg["measuredFacts"]);
   const overall =
     typeof ir["overallScore"] === "number"
       ? `**Overall intel score: ${ir["overallScore"]}/100${str(ir["overallGrade"]) ? ` (grade ${str(ir["overallGrade"])})` : ""}**`
@@ -549,6 +563,10 @@ export function composeContextDocsFromAgentReports(input: {
       section("SEO & discoverability", str(ir["seoAnalysis"])),
       section("GEO & AI discoverability", str(ir["geoAnalysis"])),
       section("Search and answer-engine visibility", str(sg["narrative"])),
+      // What the engine actually observed on the site — the facts behind the
+      // scores, so an agent reading this document can say "8 of 8 audited
+      // pages carry structured data" instead of only "SEO 62".
+      section("Measured site facts", bullets(measuredFacts)),
       section("Strategic recommendations", joinBlocks(recommendations.map(recommendationBlock))),
     ]),
     "competitor-analysis": document(header("Competitor Analysis"), [
@@ -585,6 +603,7 @@ export function composeContextDocsFromAgentReports(input: {
     "action-plan": document(header("Action Plan"), [
       section("From the intel report", joinBlocks(recommendations.map(recommendationBlock))),
       section("From the SEO/GEO audit", joinBlocks(fired.map(firedBlock))),
+      section("Measured site facts", bullets(measuredFacts)),
       section("Prepared fixes", labelledList(objArray(sg["fixDrafts"]), ["title", "target", "id"])),
     ]),
   };

@@ -449,6 +449,20 @@ describe("the report and bundle products render to something a reviewer can read
     expect(asset.content).toContain("## Recommendations (2)");
     expect(asset.content).toContain("- Add FAQ schema");
     expect(asset.content).toContain("- Fix canonical tags");
+    // An older deliverable carries no measured facts, so no such section appears.
+    expect(asset.content).not.toContain("What the audit measured");
+  });
+
+  it("seo-geo-report (engine 2026-09-07+): each score states its coverage and measured-basis figure, and the measured facts get their own section", () => {
+    const asset = materializeSeoGeoReport({
+      seoScore: { score: 62, dataCoveragePct: 90.4, measuredBasisScore: 69 },
+      geoReadiness: { score: 41, dataCoveragePct: 71, measuredBasisScore: null },
+      narrative: "Summary.",
+      measuredFacts: ["Core Web Vitals (real users, mobile, p75, site-wide): LCP 1.9s, INP 120ms, CLS 0.04.", "No /llms.txt is published.", ""],
+      firedRecommendations: [],
+    });
+    expect(asset.content).toContain("**SEO 62 (90% measured, 69 on measured checks) · GEO readiness 41 (71% measured)**");
+    expect(asset.content).toContain("## What the audit measured\n\n- Core Web Vitals (real users, mobile, p75, site-wide): LCP 1.9s, INP 120ms, CLS 0.04.\n- No /llms.txt is published.");
   });
 
   /**

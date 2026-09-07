@@ -2208,8 +2208,19 @@ export interface SeoGeoInsights {
   /** Headline KPIs (0–100 ints, measured-only per the grade rule). */
   seoScore: number;
   seoDataCoveragePct: number;
+  /**
+   * The SEO points over the MEASURED weight only — how the site did on the
+   * checks that actually ran, next to `seoScore`, which counts an unmeasured
+   * check as zero. `null` when nothing was measured; absent on snapshots from
+   * before the engine reported it (2026-09-07).
+   */
+  seoMeasuredBasisScore?: number | null;
   geoReadiness: number;
   geoReadinessCoveragePct: number;
+  /** Same as `seoMeasuredBasisScore`, for AI readiness. */
+  geoReadinessMeasuredBasisScore?: number | null;
+  /** What the engine's reads actually observed about the site, in plain language — quotable next to the scores. Absent before 2026-09-07. */
+  measuredFacts?: string[];
   geoVisibilityIndex: number;
   geoVisibilityCoveragePct: number;
   /** Append-only series of past geoVisibilityIndex values (oldest→newest), for the
