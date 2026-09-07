@@ -13,6 +13,7 @@ import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import type { CustomAgent } from "@/lib/types";
 import { RUN_ESTIMATE } from "@/lib/run-estimate";
+import { ENGINE_PRODUCTS_READING_MEDIA_ASSETS } from "@/lib/agent-engine/product-mapping";
 
 /**
  * `media` is the run-attachment control (`RunAttachments`): the value is the
@@ -1443,7 +1444,11 @@ export function parseRunAttachmentsJson(raw: string | undefined): Array<{ uri: s
 // post TO it (agent-engine RFC-12). For them the upload is optional — a run
 // without one sources its own picture — but the field has to exist for a
 // client to be able to hand one over at all.
-const MEDIA_DEPENDENT_PRODUCTS = new Set(["instagram-agent", "branded-shorts-agent", "tiktok-agent", "x-agent", "linkedin-agent"]);
+//
+// 2026-09-07: the set itself moved to product-mapping.ts
+// (`ENGINE_PRODUCTS_READING_MEDIA_ASSETS`), because `toEngineRunInput` needs
+// the same answer to decide whether a dialog's link list is an asset or prose.
+const MEDIA_DEPENDENT_PRODUCTS = ENGINE_PRODUCTS_READING_MEDIA_ASSETS;
 
 /**
  * Whether an agent-engine product reads `mediaAssets` at all.

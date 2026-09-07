@@ -290,6 +290,10 @@ const RULES: readonly LeverRule[] = [
  */
 export const NO_LEVER: readonly string[] = [
   "seo-geo-agent-v2",
+  // A BUNDLE OF THE OTHERS (2026-09-07): the campaign fans out into the X,
+  // LinkedIn, Instagram, Reddit and blog agents, each of which already carries
+  // its own row here. A campaign row would count the same five levers twice.
+  "karos-campaign-orchestrator",
   "karos-blog-setup-v2",
   "karos-blog-manager-v2",
   "karos-newsletter-setup-v2",

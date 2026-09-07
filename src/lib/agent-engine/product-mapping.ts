@@ -202,7 +202,40 @@ const ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY: Readonly<Record<string, EngineProductW
   // tempting shortcut while no tiktok-agent existed, would have quietly run a
   // different product for the client.
   "karos-tiktok-agent": "tiktok-agent",
+  // The campaign: one brief, every channel, one review (agent-engine's
+  // campaign-orchestrator fans out into the X, LinkedIn, Instagram, Reddit and
+  // blog workflows and brings the bundle to a single `13-campaign-review`
+  // gate). Routed 2026-09-07 so that every engine product a client can be
+  // given is one the roster can show — until then this was the one drafting
+  // product with a materializer (`campaign-bundle`) and no way to ask for it.
+  "karos-campaign-orchestrator": "campaign-orchestrator",
 };
+
+/**
+ * The engine products whose workflows read `mediaAssets` off the run.
+ *
+ * ONE set, used by two decisions that must agree: whether the run dialog and
+ * the engine card offer an attach control at all
+ * (`agentEngineProductAcceptsMediaAssets` in custom-agent-launch.ts), and
+ * where `toEngineRunInput` sends a dialog's link lists (`sources`,
+ * `references`, `source_url`). For a product in this set a URL is an asset;
+ * for every other product it is a reference the drafting model should READ,
+ * so it folds into `customPrompt` prose instead of into a field the workflow
+ * never opens (landing-builder's `references` and blog's `sources` used to
+ * vanish exactly that way — see engine-field-contract.ts's `mediaAssets` row).
+ *
+ * Verified against agent-engine's workflows: x-agent/linkedin-agent
+ * (analyzeAttachedMedia + resolveSocialMedia), instagram-agent (Tier 0),
+ * tiktok-agent (firstAsset source), branded-shorts-agent (an attached source
+ * video is the footage, 2026-09-06).
+ */
+export const ENGINE_PRODUCTS_READING_MEDIA_ASSETS = new Set<string>([
+  "x-agent",
+  "linkedin-agent",
+  "instagram-agent",
+  "tiktok-agent",
+  "branded-shorts-agent",
+]);
 
 export function resolveAgentEngineProductIdForCustomAgent(agentKey: string): string | undefined {
   return ENGINE_PRODUCT_BY_CUSTOM_AGENT_KEY[agentKey];
@@ -559,12 +592,21 @@ export function toEngineRunInput(
   // engine-side surprise on a run someone is waiting for.
   const mediaAssets = parseMediaAssets(briefValues["mediaAssets"]);
 
+  // A link is an ASSET only for a product whose workflow opens `mediaAssets`;
+  // for every other product it is a reference for the drafting model to read,
+  // so it stays with the words around it in `customPrompt`. Without this
+  // branch landing-builder's "Reference URLs" and blog's "Required sources"
+  // reached the wire under a key those two workflows never read (the
+  // `sentButUnread` finding in engine-field-contract.ts) — a question asked of
+  // a client and dropped. With no product named (the legacy path) the old
+  // behaviour stands.
+  const linksAreAssets = engineProductId === undefined || ENGINE_PRODUCTS_READING_MEDIA_ASSETS.has(engineProductId);
   for (const [dialogKey, role, label] of FOLDED_INTO_MEDIA) {
     const value = at(dialogKey);
     if (!value) continue;
     const leftovers: string[] = [];
     for (const line of splitList(value, false)) {
-      if (line.startsWith("gs://") || line.startsWith("https://")) {
+      if (linksAreAssets && (line.startsWith("gs://") || line.startsWith("https://"))) {
         mediaAssets.push({ uri: line, role });
       } else {
         leftovers.push(line);
