@@ -689,7 +689,13 @@ export default async function ClientAgentDetailPage({
   // docs (which carry credentials).
   const connectedPlatformNames = connections.map((connection) => connection.platform);
   const launchInFlight = umbrella ? isLaunchInFlight(umbrella.launchState) : false;
-  const agentServiceConfigured = isAgentServiceConfigured();
+  // An agent routed to agent-engine never touches agent-service, so the
+  // service's configuration has nothing to say about whether ITS runs are
+  // available. Until 2026-09-07 this read `isAgentServiceConfigured()` alone,
+  // and an environment with AGENT_SERVICE_URL unset (production's promote
+  // config defaults it to "") told every engine-routed client "Agent runs are
+  // paused right now" and disabled Run on a page whose runs would have worked.
+  const agentServiceConfigured = isAgentServiceConfigured() || engineProductId !== undefined;
 
   // CD-H8. The run gate for the legacy shape, evaluated HERE for the same
   // reason every other gate on this surface is: a control may only offer a

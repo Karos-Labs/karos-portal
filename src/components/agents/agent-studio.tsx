@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import {
@@ -44,6 +45,7 @@ export function AgentStudio({
   templates,
   models,
   feedback,
+  unavailable = [],
 }: {
   agent: MiddlewareAgent;
   activePrompt: MiddlewarePrompt | null;
@@ -51,14 +53,31 @@ export function AgentStudio({
   templates: MiddlewareTemplate[];
   models: MiddlewareModel[];
   feedback: MiddlewareFeedback[];
+  /**
+   * Panels whose data the control plane did not return. Named rather than
+   * coerced to empty: an empty prompt editor over a real prompt that merely
+   * failed to load is a trap, and saving into it replaces the live version.
+   */
+  unavailable?: readonly string[];
 }) {
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
 
+  // A server action that THROWS (an employee pressing a control whose action
+  // ends in `requireAdmin()`, a network drop) used to surface as Next's generic
+  // server-action error, not as a notice; and a successful mutation relied on
+  // an incidental revalidation to show its new state. Both are explicit now.
   const apply: Apply = (run, success) => {
     startTransition(async () => {
-      const result = await run();
+      let result: Result;
+      try {
+        result = await run();
+      } catch (error) {
+        result = { ok: false, error: error instanceof Error && /forbidden/i.test(error.message) ? "Only a Karos admin can change this." : "The control plane did not accept the change. Refresh and try again." };
+      }
       setNotice(result.ok ? { ok: true, text: success } : { ok: false, text: result.error });
+      if (result.ok) router.refresh();
     });
   };
 
@@ -101,7 +120,7 @@ export function AgentStudio({
 
       <StagesPanel agent={agent} models={models} pending={pending} apply={apply} />
       <ModelsPanel agent={agent} models={models} pending={pending} apply={apply} />
-      <PromptPanel agent={agent} activePrompt={activePrompt} history={promptHistory} pending={pending} apply={apply} />
+      <PromptPanel agent={agent} activePrompt={activePrompt} history={promptHistory} pending={pending} apply={apply} unavailable={unavailable.includes("active prompt") || unavailable.includes("prompt history")} />
       <TemplatePanel agent={agent} templates={templates} pending={pending} apply={apply} />
       <FeedbackPanel agent={agent} feedback={feedback} pending={pending} apply={apply} />
     </div>
@@ -634,16 +653,31 @@ function PromptPanel({
   history,
   pending,
   apply,
+  unavailable = false,
 }: {
   agent: MiddlewareAgent;
   activePrompt: MiddlewarePrompt | null;
   history: MiddlewarePrompt[];
   pending: boolean;
   apply: Apply;
+  /** The control plane did not answer for this panel; the editor must not pose as "no prompt yet". */
+  unavailable?: boolean;
 }) {
   const [content, setContent] = useState(activePrompt?.content ?? "");
   const [notes, setNotes] = useState("");
   const [activate, setActivate] = useState(true);
+  // After every hook, so the hook order is the same on each render.
+  if (unavailable) {
+    return (
+      <Card className="p-6">
+        <CardTitle>System prompt</CardTitle>
+        <p className="mt-2 text-sm text-red-400">
+          The control plane did not return this agent&apos;s prompt. Refresh before editing; saving now would replace a
+          version that exists but could not be loaded.
+        </p>
+      </Card>
+    );
+  }
 
   const versions = [...history].sort((a, b) => b.version - a.version);
 

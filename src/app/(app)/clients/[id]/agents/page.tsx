@@ -17,7 +17,7 @@ import { ReplanCalendarButton } from "@/components/replan-calendar-button";
 import { LabImportButton } from "@/components/lab-import";
 import { MediaUploadButton } from "@/components/media-upload";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
-import { shouldShowEngineHealthBanner } from "@/lib/agent-engine/health";
+import { clientHasEngineRoutedCustomAgent, shouldShowEngineHealthBanner } from "@/lib/agent-engine/health";
 import { EngineHealthBanner } from "@/components/engine-health-banner";
 import { RunsPausedNotice } from "@/components/runs-paused-notice";
 import {
@@ -94,7 +94,10 @@ export default async function ClientAgentsPage({
   const client = await requireVisibleClient(user, id);
 
   const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
-  const agentServiceConfigured = isAgentServiceConfigured();
+  // See the agent page: a roster whose agents run on agent-engine is not
+  // "paused" because agent-service is unconfigured. Resolved once the roster is
+  // known (below), from the same routing the run dialog uses.
+  const agentServiceOnlyConfigured = isAgentServiceConfigured();
 
   // Client users: explicitly granted agents plus any agent that has already
   // delivered a successful run for this workspace.
@@ -216,6 +219,9 @@ export default async function ClientAgentsPage({
         viewerUid: user.uid,
       });
 
+    // Engine-routed agents keep their run controls whatever agent-service says.
+    const agentServiceConfigured =
+      agentServiceOnlyConfigured || clientHasEngineRoutedCustomAgent(client.agentsRepoSlug, liveEntries.map((e) => e.agentKey));
     return (
       <>
         {runInFlight && <AutoRefresh />}
@@ -415,6 +421,9 @@ export default async function ClientAgentsPage({
     },
   });
 
+  // Same rule as the client branch: engine-routed agents are not paused by agent-service.
+  const agentServiceConfigured =
+    agentServiceOnlyConfigured || clientHasEngineRoutedCustomAgent(client.agentsRepoSlug, enabledAgents.map((a) => a.key));
   return (
     <>
       {/* Sentence case, matching the client branch above and every nav label
