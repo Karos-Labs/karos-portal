@@ -152,11 +152,15 @@ export const MODEL_PRICING_BY_VENDOR: Readonly<
   Record<PricingVendor, Readonly<Record<string, ModelPrice>>>
 > = {
   // Anthropic first-party (Claude). Dated snapshots use a `-` separator.
+  // Rates: platform.claude.com/docs/en/about-claude/pricing, read 2026-09-08.
+  // Until that day Opus 4.8/4.7 stood at $15/$75 (the retired Opus 4.1 rate,
+  // 3x the real one) and Haiku 4.5 at $0.80/$4 (Haiku 3.5's rate). Keep in
+  // step with agent-engine's MODEL_PRICING (packages/core/src/telemetry/pricing.ts).
   anthropic: {
-    "claude-opus-4-8":            { inputPer1M: 15.00, outputPer1M: 75.00 },
-    "claude-opus-4-7":            { inputPer1M: 15.00, outputPer1M: 75.00 },
+    "claude-opus-4-8":            { inputPer1M: 5.00,  outputPer1M: 25.00 },
+    "claude-opus-4-7":            { inputPer1M: 5.00,  outputPer1M: 25.00 },
     "claude-sonnet-4-6":          { inputPer1M: 3.00,  outputPer1M: 15.00 },
-    "claude-haiku-4-5-20251001":  { inputPer1M: 0.80,  outputPer1M: 4.00  },
+    "claude-haiku-4-5-20251001":  { inputPer1M: 1.00,  outputPer1M: 5.00  },
     "claude-3-5-sonnet-20241022": { inputPer1M: 3.00,  outputPer1M: 15.00 },
     "claude-3-opus-20240229":     { inputPer1M: 15.00, outputPer1M: 75.00 },
     "claude-3-haiku-20240307":    { inputPer1M: 0.25,  outputPer1M: 1.25  },
@@ -167,7 +171,7 @@ export const MODEL_PRICING_BY_VENDOR: Readonly<
   // fails rather than falling back.
   vertex: {
     "claude-sonnet-4-6":          { inputPer1M: 3.00,  outputPer1M: 15.00 },
-    "claude-haiku-4-5@20251001":  { inputPer1M: 0.80,  outputPer1M: 4.00  },
+    "claude-haiku-4-5@20251001":  { inputPer1M: 1.00,  outputPer1M: 5.00  },
     // Dateless spelling. Cross-referenced against agent-engine's own
     // MODEL_PRICING (packages/core/src/telemetry/pricing.ts): "the spelling
     // Agent Platform uses verbatim for the 4.6-and-later generation (where a
@@ -176,7 +180,7 @@ export const MODEL_PRICING_BY_VENDOR: Readonly<
     // (`"claude-haiku-4-5"`) given for an admin-typed `stepModels` override in
     // docs/one-pagers/x-agent-v2-integration-contract.md — so it is priced
     // here rather than left to fall through to `pricingUnresolved`.
-    "claude-haiku-4-5":           { inputPer1M: 0.80,  outputPer1M: 4.00  },
+    "claude-haiku-4-5":           { inputPer1M: 1.00,  outputPer1M: 5.00  },
   },
   // OpenAI (SEO/GEO "chatgpt" engine)
   openai: {
