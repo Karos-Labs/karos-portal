@@ -440,8 +440,25 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           key: "request",
           label: "Anything to lean into this run?",
           type: "textarea",
+          // WAS "it wins over everything else this run" — a precedence the
+          // engine does not implement for this product. engine-field-contract
+          // records BOTH fields as read by linkedin-agent, independently:
+          // `requestedMode` through RUN_SCOPED_KEYS into 07b-select-content-mode,
+          // `customPrompt` as the run direction. The only precedence that table
+          // records anywhere is tiktok-agent's ("requestedTopic, only when
+          // customPrompt is absent"). So a client who chose a Kind of post and
+          // then wrote a note got the shape they chose — which is the exact
+          // thing the sentence promised would be overridden, and it is what was
+          // reported from outside (SCRUM-409: "it still chooses one of the three
+          // and chose Hot News even though the text under the note box says
+          // what you type wins").
+          //
+          // The X writer pairs these same two fields and has always said the
+          // honest thing ("The agent works from the stored X agent data either
+          // way"), as does the other LinkedIn profile in this file. This now
+          // matches its own siblings rather than describing an intention.
           helper:
-            "Optional, and it wins over everything else this run. For a standing steer, use \"What should we cover next?\" in your LinkedIn agent data instead.",
+            "Optional, and it steers this run only. Kind of post above still decides the shape. For a standing steer, use \"What should we cover next?\" in your LinkedIn agent data instead.",
           placeholder: "A launch to build up to, a topic to hit.",
         },
       ],
