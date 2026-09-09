@@ -2730,15 +2730,23 @@ export function RunCustomAgentModal({
         // SCRUM-416: hand the run to the shell's dock so it stays visible after
         // this dialog closes. The FIRST job of a batch, not all of them - a
         // batch is N runs of one post each and they finish together, so three
-        // rows would be three copies of one answer. Staff get the /jobs link;
-        // a client gets none, because no client surface shows a deliverable
-        // still in review (see WatchedRun.href).
+        // rows would be three copies of one answer.
+        //
+        // WHERE "See it" GOES. Staff get the run itself. A client gets their
+        // Home, because SCRUM-417 put "Generated today" there and that widget
+        // is the first surface in this product that shows a client a
+        // deliverable still in review - the archive holds APPROVED work only
+        // (F149), so it was the wrong answer and `/jobs` is staff-gated. Before
+        // 417 the honest answer was no link at all, which is why
+        // `WatchedRun.href` is optional.
         if (result.jobId) {
           watchRun({
             jobId: result.jobId,
             agentName: agent.name,
             noun: outputNoun,
-            ...(viewerIsClient ? {} : { href: `/jobs/${result.jobId}` }),
+            href: viewerIsClient
+              ? `/clients/${selectedClientId}`
+              : `/jobs/${result.jobId}`,
           });
         }
         router.refresh();

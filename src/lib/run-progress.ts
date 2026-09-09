@@ -89,11 +89,13 @@ const RUN_OUTCOME_COPY: Record<RunOutcome, { client: string; staff: string }> = 
     staff: "Still working. This updates on its own, and closing it does not stop the run.",
   },
   landed: {
-    // NO DESTINATION IN THIS SENTENCE, and that is deliberate. A client has
-    // nowhere to look at a deliverable in `review`: the archive holds APPROVED
-    // work only (F149), so pointing them there sends them to an empty page -
-    // the same defect as the phantom "review queue" this epic removed. The
-    // dock offers a link only when whoever started the run had a real one.
+    // NO DESTINATION IN THIS SENTENCE, and that is deliberate even though the
+    // dock now has a link for a client. The archive holds APPROVED work only
+    // (F149) and `/jobs` is staff-gated, so for most of this run's life the
+    // only surface that shows it is Home's "Generated today" widget - and a
+    // SENTENCE that named a place would have to name a different one for each
+    // reader and each moment. The link says where; the sentence says what
+    // happens next, which is the same for everybody.
     client: "It landed. Your Karos team reviews it next.",
     staff: "It landed. The deliverables are on the run.",
   },

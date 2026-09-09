@@ -187,10 +187,15 @@ describe("the run dialog's started panel", () => {
     expect(panel).not.toContain("fetch(");
   });
 
-  it("gives a client no link and staff the /jobs one", () => {
-    // Same reasoning as the sentence: staff have a route that shows the run, a
-    // client does not.
-    expect(dialog).toMatch(/viewerIsClient \? \{\} : \{ href: `\/jobs\/\$\{result\.jobId\}` \}/);
+  it("sends each reader to a surface that will actually show them the run", () => {
+    // Staff get the run. A client gets Home, because SCRUM-417's "Generated
+    // today" widget is the first surface that shows them a deliverable still in
+    // review - `/jobs` is staff-gated and the archive holds APPROVED work only
+    // (F149), so both of the obvious answers were the phantom-destination
+    // defect this epic keeps finding.
+    expect(dialog).toMatch(/href: viewerIsClient/);
+    expect(dialog).toMatch(/`\/clients\/\$\{selectedClientId\}`/);
+    expect(dialog).toMatch(/`\/jobs\/\$\{result\.jobId\}`/);
   });
 });
 
