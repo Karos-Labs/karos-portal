@@ -10,7 +10,9 @@ import { AssetCard } from "@/components/asset-card";
 // analytics chart was printing a third, drifted set of them to the same reader
 // (see asset-status-copy.ts).
 import { STAFF_ASSET_STATUS_LABEL } from "@/lib/asset-status-copy";
+import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
 import { deliverableStamp } from "@/lib/asset-visibility";
+import { GENERATED_TODAY_TITLE, generatedToday } from "@/lib/generated-today";
 import { platformLabel } from "@/lib/integrations/platforms";
 // The parser lives beside the function that WRITES `?status=`, so the two
 // cannot drift on what the param may contain - see content-status-links.ts.
@@ -18,6 +20,12 @@ import type { StatusFilter } from "@/lib/content-status-links";
 import type { Asset } from "@/lib/types";
 
 const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "delivered", "published"];
+/**
+ * The type tabs' order, DERIVED from the label register rather than listed
+ * again (SCRUM-423). A sixth AssetType gets a tab the day it is added, and its
+ * label comes from the one place that writes these words down.
+ */
+const TYPE_ORDER = Object.keys(ASSET_TYPE_LABEL) as Asset["type"][];
 const STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info"> = {
   draft: "warning",
   approved: "success",
@@ -36,6 +44,7 @@ export function AssetsView({
   clientNames,
   connectedPlatformsByClient,
   initialStatus = "all",
+  now: nowProp,
 }: {
   assets: Asset[];
   /** Staff-only: show approve/schedule controls on each card. Clients never approve. */
@@ -65,6 +74,12 @@ export function AssetsView({
    * who would change the select and watch it snap back.
    */
   initialStatus?: StatusFilter;
+  /**
+   * The moment "today" is measured from, resolved SERVER-side by the page.
+   * Required rather than defaulted: a default would be the browser's clock, and
+   * this list must agree with Home's widget about which day it is.
+   */
+  now: number;
 }) {
   const [status, setStatus] = useState<StatusFilter>(initialStatus);
   const channels = useMemo(
@@ -72,10 +87,39 @@ export function AssetsView({
     [assets],
   );
   const [channel, setChannel] = useState("all");
-  const groupedAssets = useMemo(() => {
+  /**
+   * SCRUM-423: "instead of the dropdown menu for each type of output, they
+   * should all be in that top bar and you click on them to select only that
+   * type."
+   *
+   * THERE WAS NO TYPE DROPDOWN TO REPLACE, which is the interesting half of
+   * that report: this page had a STATUS select and a CHANNEL select and no way
+   * to filter by what a deliverable IS. A dropdown hides the shape of a
+   * collection; tabs show it, and "jumbled mess" is mostly that shape being
+   * hidden. So the tabs are new rather than moved, and only the types this list
+   * actually holds get one - a tab that always finds nothing is a worse lie
+   * than no tab.
+   */
+  const [type, setType] = useState<Asset["type"] | "all">("all");
+  const typesPresent = useMemo(
+    () => TYPE_ORDER.filter((t) => assets.some((asset) => asset.type === t)),
+    [assets],
+  );
+  /**
+   * THE SERVER'S CLOCK, and it has to be. This is a "use client" component, so
+   * `Date.now()` here is an impure read during render (the lint says so) and,
+   * worse, it would make the browser's timezone decide which day "today" is -
+   * while `runDayKey`, the helper the selector shares with Home's widget, is
+   * documented as a SERVER-local calendar day. Two surfaces answering "today"
+   * from two different clocks is the drift the shared selector exists to stop,
+   * so the page that renders this passes the moment down.
+   */
+  const now = nowProp;
+  const { todayAssets, groupedAssets } = useMemo(() => {
     const matching = assets
       .filter((asset) => status === "all" || asset.status === status)
       .filter((asset) => channel === "all" || asset.channels?.includes(channel))
+      .filter((asset) => type === "all" || asset.type === type)
       // SORTED BY THE STAMP THE CARD PRINTS. It was `updatedAt ?? createdAt`
       // while AssetCard prints `relativeTime(asset.createdAt)`, so a deliverable
       // edited today but generated last month sat at the top reading "1 month
@@ -89,11 +133,30 @@ export function AssetsView({
       // staff stamp IS the generation instant.
       .sort((a, b) => deliverableStamp(b, false) - deliverableStamp(a, false));
 
-    return STATUS_ORDER.flatMap((groupStatus) => {
-      const items = matching.filter((asset) => asset.status === groupStatus);
-      return items.length ? [{ status: groupStatus, items }] : [];
-    });
-  }, [assets, channel, status]);
+    /**
+     * TODAY IS LIFTED OUT, so the page answers "what just happened" before it
+     * answers "what do we have" - the reported order of those two questions.
+     * The same selector Home's widget uses (`generatedToday`), because two
+     * hand-rolled date filters is how one surface says three things were made
+     * today and the other says four.
+     *
+     * LIFTED, NOT COPIED. A card in both places would double every count on
+     * the page. Nothing is hidden by the lift: each row in the Today section
+     * carries its own status badge, so a draft made this morning is still
+     * visibly a draft, it is just promoted above the library.
+     */
+    const todayAssets = generatedToday(matching, now);
+    const lifted = new Set(todayAssets.map((asset) => asset.id));
+    const rest = matching.filter((asset) => !lifted.has(asset.id));
+
+    return {
+      todayAssets,
+      groupedAssets: STATUS_ORDER.flatMap((groupStatus) => {
+        const items = rest.filter((asset) => asset.status === groupStatus);
+        return items.length ? [{ status: groupStatus, items }] : [];
+      }),
+    };
+  }, [assets, channel, status, type, now]);
 
   return assets.length === 0 ? (
     <EmptyState
@@ -103,6 +166,44 @@ export function AssetsView({
     />
   ) : (
     <div className="space-y-6">
+      {/* THE TYPE TABS, in the top bar, one press per type (SCRUM-423).
+          `role="tablist"` is deliberate over a segmented row of plain buttons:
+          these select what the page below shows, which is what a tab list IS,
+          and it gives a keyboard reader the group semantics a row of buttons
+          does not have. Rendered only when there is more than one type to
+          choose between - a single tab beside "All" is a control with no
+          choice in it. */}
+      {typesPresent.length > 1 && (
+        <div
+          role="tablist"
+          aria-label="Filter deliverables by type"
+          className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-surface-2 p-1.5"
+        >
+          {(["all", ...typesPresent] as const).map((option) => {
+            const selected = type === option;
+            return (
+              <button
+                key={option}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => setType(option)}
+                /* Round 6, rule 3: the SELECTED tab carries the fill, the rest
+                   are quiet and hover muted to foreground. The accent ration is
+                   about controls, and exactly one of these is active. */
+                className={`focus-ring rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  selected
+                    ? "bg-surface text-foreground shadow-sm"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                {option === "all" ? "All" : ASSET_TYPE_LABEL[option]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 p-2">
         <span className="px-1 text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">Filter</span>
         <select
@@ -144,10 +245,49 @@ export function AssetsView({
             groups are ordered by their own newest item; these are not, and the
             lifecycle order is the point of them. So the chip says which order it
             is describing instead. */}
-        <span className="ml-auto px-1 text-[11px] text-muted-2">Newest first in each status</span>
+        {/* "Newest first" over a list GROUPED BY STATUS claimed an order the
+            page does not have, and this chip is the honest version of it. It
+            now also has to be true of the Today section above, which is newest
+            first within itself - so the sentence describes the rule both
+            sections follow rather than either one's position. */}
+        <span className="ml-auto px-1 text-[11px] text-muted-2">Newest first in each section</span>
       </div>
 
-      {groupedAssets.length === 0 ? (
+      {/* WHAT JUST HAPPENED, before what do we have. Its own section with a
+          real heading, above the library rather than mixed into it - "clear
+          indication of that upon generating" is the reported ask, and this is
+          the LANDING side of it (the run dock owns the completion signal).
+
+          It respects the filters above, because it is a section of this list
+          and not a second list: filtering to Drafts and finding a Today section
+          full of published posts would be the page disagreeing with its own
+          control. */}
+      {todayAssets.length > 0 && (
+        <section aria-label={GENERATED_TODAY_TITLE}>
+          <div className="mb-3 flex items-center gap-2">
+            <Badge tone="info">{GENERATED_TODAY_TITLE}</Badge>
+            <span className="text-xs text-muted-2">{todayAssets.length}</span>
+          </div>
+          <div className="grid items-start gap-3 lg:grid-cols-2">
+            {todayAssets.map((asset) => (
+              <div key={asset.id}>
+                {clientNames?.[asset.clientId] && (
+                  <div className="mb-1"><Badge tone="neutral">{clientNames[asset.clientId]}</Badge></div>
+                )}
+                <AssetCard
+                  asset={asset}
+                  canApprove={canApprove}
+                  {...(connectedPlatformsByClient?.[asset.clientId]
+                    ? { connectedPlatforms: connectedPlatformsByClient[asset.clientId] }
+                    : {})}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {groupedAssets.length === 0 && todayAssets.length === 0 ? (
         <EmptyState
           icon={<Icon name="SearchX" className="h-7 w-7" />}
           title="No matching assets"

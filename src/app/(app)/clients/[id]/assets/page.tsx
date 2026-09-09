@@ -44,6 +44,14 @@ export default async function ClientAssetsPage({
   const assets = getClientLibraryAssets(await listAssets({ clientId: id }));
 
   const pendingCount = assets.filter((a) => a.status === "draft").length;
+  /* The SERVER's clock, read once here rather than in the client component:
+     AssetsView is "use client", so a Date.now() inside it would let the
+     browser's timezone decide which day "today" is, while runDayKey - the
+     helper its selector shares with Home's widget - is a server-local calendar
+     day. Two surfaces answering "today" from two clocks is the drift the shared
+     selector exists to stop. */
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const now = Date.now();
 
   return (
     <>
@@ -55,7 +63,12 @@ export default async function ClientAssetsPage({
             : `Deliverables for ${client.name}. Approved items appear in the client's library.`
         }
       />
-      <AssetsView assets={assets} canApprove initialStatus={statusFilterFromParam(statusParam)} />
+      <AssetsView
+        assets={assets}
+        canApprove
+        initialStatus={statusFilterFromParam(statusParam)}
+        now={now}
+      />
     </>
   );
 }
