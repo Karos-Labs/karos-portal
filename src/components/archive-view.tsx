@@ -338,8 +338,14 @@ export function ArchiveView({
     );
   }
 
+  // `space-y-6`, was `space-y-8` (SCRUM-425: "try removing blank spaces between
+  // widgets, there is a lot and it's unaesthetic"). 2rem between collapsible
+  // groups reads as a missing section rather than as a boundary, and every group
+  // already announces itself with an identity, a heading and a count. Taken off
+  // the scale rather than with per-section margins so the rhythm stays one
+  // number.
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Same control strip the staff assets list has had all along. */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 p-2">
         <span className="px-1 text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
@@ -411,11 +417,22 @@ export function ArchiveView({
           const hidden = group.assets.length - visible.length;
           return (
             <section key={group.name}>
+              {/* IT ALREADY TOGGLED, AND ALREADY ROTATED ITS CHEVRON, and it
+                  was still reported as hard to find (SCRUM-425: "expand and
+                  collapse button on each widget should be more visible"). The
+                  function was never the problem: a full-width button with no
+                  hover state, no focus ring and a `text-muted-2` glyph does not
+                  read as pressable, so the only reader who discovers it is one
+                  who clicks the heading on a hunch.
+
+                  `group` + `focus-ring` rather than a bespoke treatment, so the
+                  chevron below can respond to the row and keyboard focus lands
+                  the way it does everywhere else in this app. */}
               <button
                 type="button"
                 onClick={() => toggleGroup(group.name)}
                 aria-expanded={!isCollapsed}
-                className="mb-3 flex w-full items-center gap-3 text-left"
+                className="focus-ring group mb-3 -mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
               >
                 <AgentIdentity identity={group.name} size="sm" />
                 <h3 className="min-w-0 shrink-0 truncate text-base font-medium text-foreground">
@@ -447,7 +464,7 @@ export function ArchiveView({
                 <Icon
                   name="ChevronDown"
                   className={cn(
-                    "ml-auto h-4 w-4 shrink-0 text-muted-2 transition-transform",
+                    "ml-auto h-4 w-4 shrink-0 text-muted-2 transition-all group-hover:text-foreground",
                     isCollapsed && "-rotate-90",
                   )}
                 />
