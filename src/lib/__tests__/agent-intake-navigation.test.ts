@@ -256,12 +256,17 @@ describe("#85 — every row the band paints has somewhere to land", () => {
       takes: [
         { id: "t1", clientId: "c1", seatId: "seat-1", take: "Agents are the new SaaS", date: "2026-07-25", createdBy: "u", createdAt: NOW },
       ],
+      directionRequests: [
+        { id: "d1", clientId: "c1", account: "company", request: "Build up to the launch", date: "2026-08-04", status: "open", createdBy: "u", createdAt: NOW },
+      ],
     }).map((row) => row.id),
   }));
 
   it("reads a non-empty row set for each family", () => {
     // Non-vacuity: an empty row list would make the sweep below assert nothing.
-    expect(cases.map((c) => c.rows.length)).toEqual([4, 3, 1]);
+    // LinkedIn is 4 as of v2: company, the seat, the shared news drop, and its
+    // own "what to cover next" steering wheel.
+    expect(cases.map((c) => c.rows.length)).toEqual([4, 4, 1]);
   });
 
   for (const { family, rows } of cases) {
@@ -308,20 +313,24 @@ describe("#85 — every row the band paints has somewhere to land", () => {
       expect(hrefValues(tag)).toEqual(["{intakeRowHref(view.href, row.id)}"]);
     }
 
-    // The hover border that made the old `<li>`s look clickable is on the thing
-    // that IS clickable — the Link on the plain branch, the `<details>` on the
+    // The hover that made the old `<li>`s look clickable is on the thing that IS
+    // clickable — the Link on the plain branch, the `<details>` on the
     // disclosure branch. Asserted as a count over the row block so neither shape
     // can lose it, and so it cannot drift onto some inner span again.
-    const hovers = block.match(/hover:border-neon\/40/g) ?? [];
+    //
+    // round 6: the hand-written `hover:border-neon/40` is the shared `row-lift`
+    // utility now (globals.css) — one fill step plus the accent hairline, the
+    // one hover a bordered interactive row gets portal-wide (rule 3).
+    const hovers = block.match(/row-lift/g) ?? [];
     expect(hovers.length, "each row shape wears the hover affordance").toBe(2);
     const detailsAt = elementOpensAt(block, "details");
     expect(detailsAt, "the answers row is not a disclosure").toBeGreaterThan(-1);
     expect(
       elementAt(block, "details", detailsAt)!.tag,
       "the disclosure is not the thing that looks clickable",
-    ).toContain("hover:border-neon/40");
+    ).toContain("row-lift");
     expect(
-      links.some((tag) => tag.includes("hover:border-neon/40")),
+      links.some((tag) => tag.includes("row-lift")),
       "the plain row's link is not the thing that looks clickable",
     ).toBe(true);
   });
@@ -330,15 +339,81 @@ describe("#85 — every row the band paints has somewhere to land", () => {
 /* ─────────────────────── #90: the archive a reader reaches ──────────────── */
 
 describe("#90 — the archive link resolves for the viewer who is reading it", () => {
-  it("sends a client to their own workspace and staff to this client's", () => {
+  it("sends each reader to the calendar archive their own route reaches", () => {
+    // THE ARCHIVE IS A CALENDAR VIEW (portal feedback round 2, 2026-09):
+    // "Archive does not need to be in settings, it's in the calendar." It was
+    // Account Center's `?tab=archive` before this pass and the Workspace
+    // board's `/tasks?tab=archive` before that — one list, three homes, which
+    // is why every caller asks the helper instead of spelling a URL.
+    //
+    // Two routes to the one view, split the way every other calendar link in
+    // the app splits: the flat route scopes itself to the viewer's own client,
+    // so it is a CLIENT's own calendar and STAFF's cross-client overview —
+    // which has no single archive to show.
+    //
+    // TWO LABELS since the flow audit (2026-09, R7 · GOV.UK "do not use
+    // different link text for the same destination"): `linkLabel` is what a
+    // CONTROL says and is the same three words for every reader, `label` is the
+    // noun for a link inside a sentence, where a control label will not parse.
+    // The client's "your archive" is gone with the other seven spellings this
+    // destination had grown; only the staff/client scoping split survives,
+    // because that is about whose archive it is.
     expect(clientArchiveLink({ clientId: "c1", isStaff: false })).toEqual({
-      href: "/tasks?tab=archive",
-      label: "your archive",
+      href: "/calendar?view=archive",
+      label: "the archive",
+      linkLabel: "Open archive",
     });
     expect(clientArchiveLink({ clientId: "c1", isStaff: true })).toEqual({
-      href: "/clients/c1/tasks?tab=archive",
+      href: "/clients/c1/calendar?view=archive",
       label: "this client's archive",
+      linkLabel: "Open archive",
     });
+  });
+
+  it("gives every control that offers the archive the same three words", () => {
+    // R7's actual claim: one vocabulary per destination. The control label does
+    // NOT move with the reader — a staff member and a client press a button
+    // that says the same thing; only the sentence-noun and the route differ.
+    for (const isStaff of [true, false]) {
+      expect(clientArchiveLink({ clientId: "c1", isStaff }).linkLabel).toBe("Open archive");
+    }
+    // …and the surfaces that carry a control use it rather than composing one.
+    // "Open your archive" on the agent page and "See all activity" on Home were
+    // two of the eight names this one destination answered to.
+    for (const rel of [
+      "src/app/(app)/clients/[id]/agents/[agentId]/page.tsx",
+      "src/components/client-home-overview.tsx",
+    ]) {
+      const code = stripComments(read(rel));
+      expect(code, `${rel} composes its own archive control label`).toContain(
+        "{archive.linkLabel}",
+      );
+      expect(code, `${rel} still says "See all activity"`).not.toContain("See all activity");
+      expect(code, `${rel} still says "Open your archive"`).not.toContain("Open your archive");
+    }
+  });
+
+  it("names the view the calendar actually reads, on a route that exists", () => {
+    // The failure this guards is silent in exactly the way #90 was: a `?view=`
+    // the calendar does not recognise opens the ordinary week with no error at
+    // all. Both ends are asked — the param the helper writes, and the union
+    // calendar-body validates it against.
+    for (const isStaff of [true, false]) {
+      const { href } = clientArchiveLink({ clientId: "c1", isStaff });
+      const url = new URL(href, "https://example.test");
+      expect(url.pathname.endsWith("/calendar"), href).toBe(true);
+      expect(url.searchParams.get("view")).toBe("archive");
+    }
+    // The list lives in a PLAIN module: calendar-body.tsx is a server component,
+    // and importing the array from the "use client" run-calendar.tsx handed it a
+    // client-reference proxy whose `.find` threw on every /calendar render.
+    const modes = stripComments(read("src/lib/calendar-view-modes.ts"));
+    expect(modes).toContain('export const CALENDAR_VIEW_MODES');
+    expect(modes).toMatch(/"day",\s*"week",\s*"month",\s*"archive",/);
+    const body = stripComments(read("src/app/(app)/calendar/calendar-body.tsx"));
+    expect(body).toContain("CALENDAR_VIEW_MODES.find(");
+    expect(body).toMatch(/import \{[^}]*CALENDAR_VIEW_MODES[^}]*\} from "@\/lib\/calendar-view-modes"/);
+    expect(body).not.toMatch(/import \{[^}]*CALENDAR_VIEW_MODES[^}]*\} from "@\/components\/run-calendar"/);
   });
 
   it("moves the label with the destination", () => {
@@ -441,23 +516,32 @@ describe("#82 — the intake page's one control per role", () => {
     // THE HALF THAT SHIPS. Asking the resolver and rendering `{action.label}`
     // says nothing about where the control GOES: with both of those left
     // untouched, putting `/clients/${id}/agents` back on the anchor was green
-    // everywhere, which is a client reading "Back to the agent →" and landing on
+    // everywhere, which is a client reading "Back to the agent" and landing on
     // the one page whose own comment says it has no Run button — #82 with a
-    // resolver bolted on the front. So the href is asserted on the anchor
-    // ELEMENT that renders the label, and asserted as its whole value.
+    // resolver bolted on the front.
+    //
+    // The pages now render the pair through ONE shared component
+    // (IntakePageActionLink), so the invariant is asserted in two halves:
+    // every page hands BOTH resolved fields to the same element, and the
+    // component's one Link puts its href prop on the element rendering its
+    // label prop — so the pair still cannot come apart into a right
+    // destination under a wrong promise.
     for (const family of ["x", "linkedin", "reddit"] as const) {
       const rel = `src/app/(app)/clients/[id]/${family}-agent/page.tsx`;
-      const controls = anchorsRendering(stripComments(read(rel)), "{action.label}");
-      expect(controls.length, `${rel}: nothing renders {action.label}`).toBeGreaterThan(0);
-      for (const control of controls) {
-        expect(control, `${rel}: {action.label} is rendered outside any <a>`).not.toBeNull();
-        // Exactly one href, and it is the resolved one — a second href attribute
-        // or a re-derived URL is a different list.
-        expect(hrefValues(control!.tag), rel).toEqual(["{action.href}"]);
-        // And the anchor carries the resolved label and nothing else, so the
-        // pair cannot come apart into a right destination under a wrong promise.
-        expect(control!.body.trim(), rel).toBe("{action.label}");
-      }
+      const controls =
+        stripComments(read(rel)).match(/<IntakePageActionLink\b[^>]*\/>/g) ?? [];
+      expect(controls.length, `${rel}: nothing renders IntakePageActionLink`).toBe(1);
+      const control = controls[0]!;
+      expect(hrefValues(control), rel).toEqual(["{action.href}"]);
+      expect(control, rel).toContain("label={action.label}");
+      expect(control, rel).toContain("back={action.back}");
     }
+    const component = stripComments(read("src/components/intake-page-action-link.tsx"));
+    const links = [...component.matchAll(/<Link(?=[\s/>])/g)].map((m) => m.index);
+    expect(links.length, "component: exactly one Link").toBe(1);
+    const link = elementAt(component, "Link", links[0]!);
+    expect(link, "component: Link parses").not.toBeNull();
+    expect(hrefValues(link!.tag), "component").toEqual(["{href}"]);
+    expect(link!.body, "component: the Link renders the label prop").toContain("{label}");
   });
 });

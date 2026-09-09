@@ -8,10 +8,19 @@
 #   runner  → minimal production image (~150 MB) from .next/standalone
 #
 # Build (local):
-#   docker build -t karos-cmo:latest .
+#   docker build -t karos-cmo:latest \
+#     --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=... \
+#     --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=... \
+#     --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID=... \
+#     --build-arg NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=... \
+#     --build-arg NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=... \
+#     --build-arg NEXT_PUBLIC_FIREBASE_APP_ID=... \
+#     .
 #
-# NEXT_PUBLIC_FIREBASE_* values are read from .env.production by Next.js at
-# build time — no --build-arg or Secret Manager needed for these public values.
+# NEXT_PUBLIC_FIREBASE_* are public Firebase Web SDK config, but every
+# environment value — public or secret — lives in Secret Manager / cloudbuild
+# substitutions now, never committed to git. cloudbuild.yaml passes these six
+# as --build-arg, read from Secret Manager at build time.
 #
 # Run locally:
 #   docker run -p 3000:3000 \
@@ -40,9 +49,22 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# NEXT_PUBLIC_FIREBASE_* values come from .env.production (committed, public config).
-# Next.js loads it automatically during `next build` (NODE_ENV=production).
+# NEXT_PUBLIC_FIREBASE_* are read by `next build` at build time and inlined
+# into the client bundle — Next.js only picks up ENV, not build-time ARGs
+# directly, so each one is declared as an ARG and re-exposed as ENV.
 # Server-only secrets are injected at Cloud Run deploy time — never baked in.
+ARG NEXT_PUBLIC_FIREBASE_API_KEY
+ARG NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+ARG NEXT_PUBLIC_FIREBASE_PROJECT_ID
+ARG NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+ARG NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+ARG NEXT_PUBLIC_FIREBASE_APP_ID
+ENV NEXT_PUBLIC_FIREBASE_API_KEY=$NEXT_PUBLIC_FIREBASE_API_KEY
+ENV NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+ENV NEXT_PUBLIC_FIREBASE_PROJECT_ID=$NEXT_PUBLIC_FIREBASE_PROJECT_ID
+ENV NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+ENV NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+ENV NEXT_PUBLIC_FIREBASE_APP_ID=$NEXT_PUBLIC_FIREBASE_APP_ID
 
 # Opt out of Next.js telemetry during build.
 ENV NEXT_TELEMETRY_DISABLED=1

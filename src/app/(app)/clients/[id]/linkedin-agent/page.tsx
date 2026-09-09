@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { requireUser, requireVisibleClient } from "@/lib/auth";
+import { isBillableClientActor } from "@/lib/credits";
 import { buildLinkedInAgentIntakeView, requireIntakeAgentAccess } from "@/lib/agent-intake-views";
 import { intakePageAction } from "@/lib/agent-intake-links";
+import { IntakePageActionLink } from "@/components/intake-page-action-link";
 import { PageHeader } from "@/components/ui";
 import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 
@@ -24,8 +26,12 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
 
   const client = await requireVisibleClient(user, id);
 
+  // FLOW AUDIT 2026-09, R3: the metered controls on this page quote a price,
+  // and this is the answer to "whose money" — an unbilled reader still reads
+  // the client's figure, marked as theirs (see CreditPriceNote).
   const view = await buildLinkedInAgentIntakeView(id, {
     isStaff,
+    viewerIsBilled: isBillableClientActor(user),
     ...(client.socialLinks?.linkedin ? { pageUrlSuggestion: client.socialLinks.linkedin } : {}),
   });
   // Resolved for BOTH roles. It used to be skipped for staff "whose destination is
@@ -58,12 +64,7 @@ export default async function LinkedInAgentPage({ params }: { params: Promise<{ 
         title="LinkedIn agent"
         description="What we collect to run LinkedIn for you: the company page, a seat per person, and your ongoing drops. Drafts only. A person always posts."
         action={
-          <a
-            href={action.href}
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-foreground"
-          >
-            {action.label}
-          </a>
+          <IntakePageActionLink href={action.href} label={action.label} back={action.back} />
         }
       />
       <LinkedInAgentIntake {...view} />

@@ -6,6 +6,7 @@ import { Button, Badge, Input, Label } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { Modal } from "@/components/modal";
 import { cn } from "@/lib/utils";
+import { CREDIT_COSTS, DEFAULT_LINKEDIN_SEAT_LIMIT } from "@/lib/credits";
 import {
   saveIntegrationAction,
   deleteIntegrationAction,
@@ -22,6 +23,7 @@ import {
 import { SocialPlatformMark, platformForIntegrationId } from "@/components/agent-identity";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { LinkedInSeatsWorkspace, type SeatView } from "@/components/linkedin-seats-workspace";
+import { ContactUsButton } from "@/components/contact-us-modal";
 import type { Role } from "@/lib/types";
 
 export type { IntegrationView } from "@/lib/integrations/sanitize";
@@ -70,7 +72,9 @@ function GoogleLogo() {
  */
 const CONNECT_STYLE: Record<string, { background: string; ring?: boolean }> = {
   instagram: { background: "linear-gradient(45deg, #F58529 0%, #DD2A7B 55%, #8134AF 100%)" },
-  facebook: { background: "#1877F2" },
+  /* No facebook row — this map is keyed by PLATFORM_REGISTRY id and Facebook
+     left that registry (portal feedback round 2, 2026-09), so the entry could
+     only ever be dead style. */
   linkedin: { background: "#0A66C2" },
   linkedin_community: { background: "#0A66C2" },
   twitter: { background: "#000000", ring: true },
@@ -92,11 +96,13 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
       onClick={onClick}
       disabled={loading}
       className={cn(
-        "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-200",
-        "hover:-translate-y-px hover:brightness-110 hover:shadow-md",
+        // round 6 (rule 2): these keep the platform's own brand fill, but the
+        // hover is a colour change and nothing else - no lift, no shadow step -
+        // and focus is the portal's one `.focus-ring`.
+        "focus-ring relative inline-flex w-full items-center justify-center gap-2.5 rounded-md px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors duration-150",
+        "hover:brightness-110",
         style?.ring && "ring-1 ring-inset ring-white/25",
         "disabled:pointer-events-none disabled:opacity-60",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
       )}
       style={{ background: style?.background ?? "var(--surface-3)" }}
     >
@@ -198,7 +204,26 @@ function ChannelSection({
           {live.map(renderCard)}
           {needsReconnect.map(renderCard)}
           {leadingCards}
-          {opened.map(renderCard)}
+          {/* FLOW AUDIT 2026-09, R17. `expanded` only ever grew: a client who
+              opened "Add a channel" to look at a platform could not put it back,
+              so an exploratory click permanently lengthened their Settings tab
+              for the rest of the session. The card itself is unchanged; the
+              control that undoes the expansion sits under it. Only rows that
+              were EXPANDED get one — a live or reconnect-needed channel is not
+              collapsible and must not look it. */}
+          {opened.map((p) => (
+            <div key={p.id}>
+              {renderCard(p)}
+              <button
+                type="button"
+                onClick={() => setExpanded((prev) => prev.filter((id) => id !== p.id))}
+                className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-2 transition-colors hover:text-foreground"
+              >
+                <Icon name="ChevronUp" className="h-3 w-3" />
+                Hide {p.name}
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -490,11 +515,25 @@ function PlatformCard({
           </button>
         )}
         {comingSoon && (
-          <p className="text-[11px] text-muted-2">
-            {isAdmin
-              ? "OAuth env vars not set for this platform. Add them to enable Connect."
-              : "This channel isn't connectable yet. Ask your Karos team to finish setting it up."}
-          </p>
+          <>
+            <p className="text-[11px] text-muted-2">
+              {isAdmin
+                ? "OAuth env vars not set for this platform. Add them to enable Connect."
+                : "This channel isn't connectable yet. Ask your Karos team to finish setting it up."}
+            </p>
+            {/* R17: the line above told a client to ask their Karos team and
+                gave them nothing to press. An admin reading it has the env-var
+                remedy instead, so the control is the client's alone.
+
+                NO `label`: the support dialog keeps its one name (R7). The
+                sentence directly above already says who the client is asking
+                and what about. */}
+            {!isAdmin && (
+              <div className="-mx-2">
+                <ContactUsButton variant="row" />
+              </div>
+            )}
+          </>
         )}
 
         {/* Three-tier publishing control: on = the cron auto-posts scheduled
@@ -586,7 +625,7 @@ function PlatformCard({
           <Button size="sm" variant="outline" className="w-full" onClick={() => setSeatsOpen(true)}>
             <Icon name="Users" className="h-3.5 w-3.5" />
             Manage employee seats
-            {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? 2})`}
+            {linkedinSeats && linkedinSeats.length > 0 && ` (${linkedinSeats.length}/${seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT})`}
           </Button>
         )}
 
@@ -695,8 +734,8 @@ function PlatformCard({
           <LinkedInSeatsWorkspace
             clientId={clientId}
             seats={linkedinSeats ?? []}
-            seatLimit={seatLimit ?? 2}
-            seatCost={seatCost ?? 100}
+            seatLimit={seatLimit ?? DEFAULT_LINKEDIN_SEAT_LIMIT}
+            seatCost={seatCost ?? CREDIT_COSTS.employeeSeat}
           />
         </Modal>
       )}
@@ -888,10 +927,11 @@ function GoogleUnifiedCard({
             onClick={onOAuthConnect}
             disabled={isConnecting}
             className={cn(
-              "relative inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] shadow-sm transition-all duration-200",
-              "hover:-translate-y-px hover:shadow-md hover:brightness-[0.97]",
+              // round 6 (rule 2): see BrandedConnectButton's note - Google's
+              // own fill, a colour-only hover, and the one `.focus-ring`.
+              "focus-ring relative inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-4 py-2.5 text-sm font-semibold text-[#1f1f1f] shadow-sm transition-colors duration-150",
+              "hover:brightness-[0.97]",
               "disabled:pointer-events-none disabled:opacity-60",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/40",
             )}
           >
             {isConnecting ? (
@@ -995,8 +1035,8 @@ export function IntegrationsTab({
   googleBusinessProfileRequested,
   currentUserRole,
   linkedinSeats = [],
-  seatLimit = 2,
-  seatCost = 100,
+  seatLimit = DEFAULT_LINKEDIN_SEAT_LIMIT,
+  seatCost = CREDIT_COSTS.employeeSeat,
 }: Props) {
   const router = useRouter();
   const isAdmin = currentUserRole === "KAROS_ADMIN";
@@ -1006,6 +1046,26 @@ export function IntegrationsTab({
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
   const [popupError, setPopupError] = useState<string | null>(null);
   const popupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * Which providers' popups have reported back, by provider id.
+   *
+   * A REF, not state: the closed-poll below reads it from inside an interval
+   * that was created in an earlier render and must see the CURRENT value, and
+   * nothing renders off it. It is what separates "the person closed the window
+   * half way through" from "the flow finished and the window closed itself",
+   * which look identical to `popup.closed` (flow audit 2026-09, R17).
+   *
+   * KEYED BY PROVIDER (review wave, 2026-09). It was one boolean for the whole
+   * tab, and `openOAuthPopup` clears it on every press — so a second connection
+   * started while a first was still open wiped the first's answer. Instagram
+   * finishing and closing itself then read as "closed before it finished", and
+   * the card said nothing was connected under a connection that had just
+   * succeeded. Both postMessages already carry `platform` (see
+   * lib/integrations/oauth-popup.ts), so the answer can be filed under the flow
+   * it belongs to instead of shared between flows that have nothing to do with
+   * each other.
+   */
+  const oauthReportedRef = useRef<Record<string, boolean>>({});
 
   // The three read-only Google services render as ONE merged card, so they
   // count as one slot here too - otherwise this stat would disagree with
@@ -1042,15 +1102,24 @@ export function IntegrationsTab({
   useEffect(() => {
     function handleMessage(e: MessageEvent) {
       if (e.origin !== window.location.origin) return;
+      // The provider this window was opened for. Both pages send it; a message
+      // without one can only have come from an older popup still open across a
+      // deploy, and it is treated as the flow currently on screen.
+      const platform: string | null =
+        typeof e.data?.platform === "string" ? e.data.platform : null;
       if (e.data?.type === "karos_oauth_success") {
+        if (platform) oauthReportedRef.current[platform] = true;
         if (popupTimerRef.current) clearInterval(popupTimerRef.current);
-        setConnectingPlatform(null);
+        // Only the flow that reported clears the spinner: with two windows open,
+        // the first to come back used to blank the second's "Connecting…" too.
+        setConnectingPlatform((prev) => (platform && prev !== platform ? prev : null));
         setPopupError(null);
         router.refresh();
       }
       if (e.data?.type === "karos_oauth_error") {
+        if (platform) oauthReportedRef.current[platform] = true;
         if (popupTimerRef.current) clearInterval(popupTimerRef.current);
-        setConnectingPlatform(null);
+        setConnectingPlatform((prev) => (platform && prev !== platform ? prev : null));
         setPopupError(e.data.error ?? "OAuth failed. Please try again.");
       }
     }
@@ -1067,6 +1136,9 @@ export function IntegrationsTab({
   function openOAuthPopup(provider: string) {
     setConnectingPlatform(provider);
     setPopupError(null);
+    // This provider's own slot, so a press here cannot forget what another
+    // provider's window has already reported.
+    oauthReportedRef.current[provider] = false;
 
     const w = 600, h = 720;
     const left = Math.max(0, (screen.width - w) / 2);
@@ -1087,9 +1159,19 @@ export function IntegrationsTab({
     // Fallback: detect if popup closed without completing
     if (popupTimerRef.current) clearInterval(popupTimerRef.current);
     popupTimerRef.current = setInterval(() => {
-      if (popup.closed) {
-        clearInterval(popupTimerRef.current!);
-        setConnectingPlatform((prev) => (prev === provider ? null : prev));
+      if (!popup.closed) return;
+      clearInterval(popupTimerRef.current!);
+      setConnectingPlatform((prev) => (prev === provider ? null : prev));
+      // R17: this branch used to clear the spinner and say NOTHING, so a client
+      // who closed the window (or whose provider closed it on a cancel) watched
+      // the button return to "Connect with …" with no explanation and no way to
+      // tell a failure from a slow success. The window reporting back — either
+      // outcome — clears this flag and this interval, so the only run that
+      // reaches here is a genuine early close.
+      if (!oauthReportedRef.current[provider]) {
+        setPopupError(
+          "The connection window closed before it finished, so nothing was connected. Press Connect to try again.",
+        );
       }
     }, 600);
   }

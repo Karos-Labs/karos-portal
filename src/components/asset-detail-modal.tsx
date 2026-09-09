@@ -5,13 +5,16 @@ import { useRouter } from "next/navigation";
 import { Modal } from "@/components/modal";
 import { Badge, TabButton } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { ContextGroundingNotice } from "@/components/context-grounding-notice";
 import { AudienceSimulation } from "@/components/audience-simulation";
 import { CopyCaptionButton } from "@/components/copy-caption-button";
+import { EmailPreview } from "@/components/email-preview";
 import { parseLiDrafts } from "@/lib/li-drafts";
 import { LiDraftsBatch, type LiMediaFile } from "@/components/li-drafts-review";
-import { parseRedditDrafts } from "@/lib/reddit-drafts";
+import { isRedditV2Envelope, parseRedditDrafts } from "@/lib/reddit-drafts";
 import { RedditDraftsBatch } from "@/components/reddit-drafts-review";
 import { parseXDrafts } from "@/lib/x-drafts";
+import { draftsDisplayTitle, hasGeneratedTitle } from "@/lib/deliverable-titles";
 import { XDraftsBatch } from "@/components/x-drafts-review";
 import {
   PUBLISH_HOLD_HEADING,
@@ -21,7 +24,9 @@ import {
 import { looksLikeMarkdown, renderAssetBody } from "@/lib/doc-render";
 import { normalizeDashes } from "@/lib/text-utils";
 import { MarkPostedRow } from "@/components/mark-posted-row";
-import { publishAssetNowAction } from "@/lib/actions/asset-actions";
+import { PostManagementRow } from "@/components/post-management-row";
+import { ApprovePanel } from "@/components/approve-panel";
+import { approveAssetAction, publishAssetNowAction, unscheduleAssetAction } from "@/lib/actions/asset-actions";
 import { PLATFORM_LABELS, PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { isAssetPublishable } from "@/lib/asset-visibility";
 import {
@@ -161,7 +166,12 @@ export function AssetDetailModal({
   );
   const redditBatch = useMemo(
     () =>
-      !liBatch && content?.includes("# Reddit answer drafts") ? parseRedditDrafts(content) : null,
+      // v2 envelope or v1 markdown — parseRedditDrafts picks between them.
+      !liBatch &&
+      content &&
+      (isRedditV2Envelope(content) || content.includes("# Reddit answer drafts"))
+        ? parseRedditDrafts(content)
+        : null,
     [content, liBatch],
   );
   const xBatch = useMemo(
@@ -221,6 +231,9 @@ export function AssetDetailModal({
 
   const hashtags = (asset.meta?.hashtags as string[] | undefined) ?? [];
   const imageConcept = asset.meta?.imageConcept as string | undefined;
+  // The engine's email-safe render of a newsletter edition (2026-09-05). Only an
+  // email asset carries one; every other type keeps the plain content view.
+  const emailHtml = asset.type === "email" && typeof asset.meta?.html === "string" && asset.meta.html.length > 0 ? asset.meta.html : undefined;
   const slides = (asset.meta?.slides as SlideMeta[] | undefined)?.filter(Boolean) ?? [];
   const channels = asset.channels ?? [];
   const when = asset.scheduledAt ?? asset.recommendedAt;
@@ -242,7 +255,16 @@ export function AssetDetailModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={asset.title}
+      // The SAME name the row that opened this panel shows. Stored titles for
+      // LEGACY agent-service deliveries are just the agent's name ("X Agent"),
+      // so printing `asset.title` meant clicking a row called "X post ·
+      // <subject>" and landing on a panel headed "X Agent". One composer, both
+      // surfaces. New deliveries carry a generated topic title (asset-titles.ts,
+      // meta.titleGenerated) — the archive row already shows any non-generic
+      // stored title, so the panel must prefer it too or the two disagree again.
+      // Falls back to the stored title for everything that is not an X or
+      // LinkedIn drafts deliverable.
+      title={hasGeneratedTitle(asset) ? asset.title : draftsDisplayTitle(content) ?? asset.title}
       className={liBatch || xBatch ? "max-w-3xl" : "max-w-2xl"}
     >
       {/* Tabs */}
@@ -277,6 +299,14 @@ export function AssetDetailModal({
             {asset.type.replace(/_/g, " ")}
           </span>
         </div>
+
+        {/* SCRUM-404: the context-grounding note, ABOVE the content it
+            qualifies rather than footnoted below it. This modal is the only
+            deliverable viewer a client can reach, so it is the one place the
+            note has to land for the marker to be genuinely visible — the same
+            argument that put the draft-batch readers here. Absent on the normal
+            path: a fully-grounded deliverable renders nothing new. */}
+        {asset.contextGrounding && <ContextGroundingNotice grounding={asset.contextGrounding} />}
 
         {/* Metadata grid */}
         <div className="grid gap-3 rounded-md border border-border bg-surface-2 p-3 sm:grid-cols-2">
@@ -354,6 +384,9 @@ export function AssetDetailModal({
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
               assetId={asset.id}
               accounts={redditBatch.accounts}
+                  outcome={redditBatch.outcome}
+                  {...(redditBatch.consideredCount !== undefined ? { consideredCount: redditBatch.consideredCount } : {})}
+                  {...(redditBatch.outcomeNote ? { outcomeNote: redditBatch.outcomeNote } : {})}
             />
           </div>
         ) : xBatch ? (
@@ -364,6 +397,26 @@ export function AssetDetailModal({
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
               assetId={asset.id}
               accounts={xBatch.accounts}
+            />
+          </div>
+        ) : emailHtml ? (
+          <div>
+            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Edition</p>
+            {/* A newsletter's deliverable is the email, not the markdown: the
+                engine renders every approved edition to email-safe HTML in both
+                themes (asset.meta.html / htmlDark) and this shows that render,
+                with the text the reviewer read under its own tab. */}
+            <EmailPreview
+              html={emailHtml}
+              {...(typeof asset.meta?.htmlDark === "string" ? { htmlDark: asset.meta.htmlDark } : {})}
+              textFallback={
+                <div>
+                  <div className="mb-1.5 flex items-center justify-end">
+                    <CopyCaptionButton asset={asset} variant="full" />
+                  </div>
+                  <AssetContentBody content={asset.content} />
+                </div>
+              }
             />
           </div>
         ) : (
@@ -421,6 +474,9 @@ export function AssetDetailModal({
           </div>
         )}
 
+        <ApproveRow asset={asset} canApprove={canPublish} connectedPlatforms={connectedPlatforms ?? []} />
+        <UnscheduleRow asset={asset} canApprove={canPublish} />
+
         {/* Unconditional on eligibility - a viewer with no Publish Now button (a
             client, or staff with no compatible connected platform) is exactly
             who most needs to see WHY a scheduled post never went out; the
@@ -434,6 +490,7 @@ export function AssetDetailModal({
           connectedPlatforms={connectedPlatforms ?? []}
         />
         <MarkPostedRow asset={asset} />
+        <PostManagementRow asset={asset} canManage={canPublish} />
       </div>
       )}
     </Modal>
@@ -501,6 +558,128 @@ function AssetContentBody({ content }: { content: string }) {
       className="break-words [&_code]:break-all [&_table]:min-w-0"
       dangerouslySetInnerHTML={{ __html: renderAssetBody(content) }}
     />
+  );
+}
+
+/**
+ * Approve a draft, from the calendar - the same two-step flow the staff Assets
+ * list offers (asset-card.tsx): a non-schedulable draft (a note) approves
+ * straight through, everything else opens the shared ApprovePanel to pick a
+ * publishing tier and a calendar slot. Before this the calendar could only
+ * ever DISPLAY a draft that had already been approved elsewhere - opening a
+ * draft here offered no way to move it forward at all.
+ *
+ * Staff only, same gate as PublishNowRow: `approveAssetAction` is
+ * `requireStaff()`, so a client-facing button could only ever error.
+ */
+function ApproveRow({
+  asset,
+  canApprove,
+  connectedPlatforms,
+}: {
+  asset: Asset;
+  canApprove: boolean;
+  connectedPlatforms: string[];
+}) {
+  const router = useRouter();
+  const [approving, setApproving] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!canApprove || asset.status !== "draft") return null;
+
+  // Notes have no scheduling dimension - same rule asset-card.tsx applies.
+  const calendarEligible = asset.type !== "note";
+
+  async function handleSimpleApprove() {
+    setBusy(true);
+    setError(null);
+    try {
+      await approveAssetAction(asset.id);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Approval failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      {approving ? (
+        <ApprovePanel
+          asset={asset}
+          connectedPlatforms={connectedPlatforms}
+          onDone={() => setApproving(false)}
+        />
+      ) : (
+        <>
+          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+            Ready to approve?
+          </p>
+          <button
+            type="button"
+            onClick={() => (calendarEligible ? setApproving(true) : handleSimpleApprove())}
+            disabled={busy}
+            className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
+          >
+            <Icon name="Check" className="h-3.5 w-3.5" />
+            {busy ? "Approving…" : "Approve"}
+          </button>
+          <p className="mt-1.5 text-[11px] text-muted-2">
+            {calendarEligible
+              ? "Pick a publishing tier and a slot, then it lands on the content calendar."
+              : "Approves this draft."}
+          </p>
+          {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Revert an approved or scheduled post back to draft, from the calendar - the
+ * same Unschedule the staff Assets list offers (asset-card.tsx). Staff only,
+ * same gate as PublishNowRow.
+ */
+function UnscheduleRow({ asset, canApprove }: { asset: Asset; canApprove: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!canApprove || (asset.status !== "approved" && asset.status !== "scheduled")) return null;
+
+  async function unschedule() {
+    setBusy(true);
+    setError(null);
+    try {
+      await unscheduleAssetAction(asset.id);
+      router.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't unschedule this asset");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border pt-3">
+      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+        Change of plans?
+      </p>
+      <button
+        type="button"
+        onClick={unschedule}
+        disabled={busy}
+        className="inline-flex h-11 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground disabled:opacity-60"
+      >
+        <Icon name="RotateCcw" className="h-3.5 w-3.5" />
+        {busy ? "Working…" : "Unschedule"}
+      </button>
+      <p className="mt-1.5 text-[11px] text-muted-2">Pulls it off the calendar and reverts it to draft.</p>
+      {error && <p className="mt-1.5 text-[11px] text-danger">{error}</p>}
+    </div>
   );
 }
 

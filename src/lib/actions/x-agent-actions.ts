@@ -15,8 +15,7 @@
 
 import { revalidatePath } from "next/cache";
 import { generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
-import { MODELS } from "@/lib/constants";
+import { logger, readWebSearchCount } from "@/services/logger";
 import {
   addXDraftFeedback,
   addXNewsUpdate,
@@ -30,12 +29,14 @@ import {
   listClientSeats,
   upsertAgentIntake,
   upsertAgentProfileScope,
+  upsertClientActionState,
 } from "@/lib/data";
 import { requireClientAccess } from "./_shared";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { withClientModelCharge } from "@/lib/client-model-charge";
 import type { ContextDocTier } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 const MAX_TEXT = 2_000;
 /** originalText is system-captured (pick time), not user-typed — truncate rather than error,
@@ -346,14 +347,29 @@ export async function proposeXRosterAction(input: {
       // that promised a list of accounts; if they did not get one, they did not
       // get the thing they paid for — whether the model threw, returned
       // unparseable text, or returned too few usable handles.
+      const usageMeta = {
+        clientId: input.clientId, agentId: null, agentName: "X agent · account suggestions",
+        ...usageFor("x_agent.research"), operation: "x_agent_roster_suggestions",
+      };
+      let usageLogged = false;
       try {
-        const { text } = await generateText({
-          model: anthropic(MODELS.SONNET),
-          tools: { web_search: anthropic.tools.webSearch_20250305({ maxUses: 4 }) },
+        // Resolved through the shared role resolver, not a hardcoded vendor
+        // call — model AND tools from one resolution, so they cannot diverge
+        // from what usageMeta above (usageFor) already logs. AU70/SCRUM-370.
+        const research = aiFor("x_agent.research", { budgets: { web_search: { maxUses: 4 } } });
+        const { text, usage, providerMetadata } = await generateText({
+          model: research.model,
+          tools: research.tools,
           system:
             "You propose X (Twitter) engagement rosters. Only ever name accounts you are confident exist and are active, such as well-known people and companies. Use web search to confirm anyone you are less than certain about. Output STRICT JSON only: an array of {\"handle\": \"@...\", \"why\": \"one short line\"} with 10 to 15 entries, no other text.",
           prompt: `Propose the engagement roster for ${forWhom}\n\nWhat we know:\n${context}\n\nRules: real, active, relevant accounts on X; no direct competitors of ${client.name}; no politics-first accounts; mix a few very large voices with mid-size ones in the exact niche.`,
         });
+        logger.logUsage({
+          ...usageMeta,
+          inputTokens: usage?.inputTokens ?? 0, outputTokens: usage?.outputTokens ?? 0,
+          webSearchCount: readWebSearchCount(providerMetadata),
+        });
+        usageLogged = true;
         const match = text.match(/\[[\s\S]*\]/);
         if (!match) {
           await refund("Refund · account suggestions came back empty");
@@ -372,7 +388,11 @@ export async function proposeXRosterAction(input: {
           return { error: "Proposal came back too thin. Try again or type accounts manually." };
         }
         return { handles };
-      } catch {
+      } catch (err) {
+        // Only the generateText call itself is an unlogged spend — a parse/
+        // validation failure after it already ran logUsage above and must not
+        // be double-counted as a second (failed) attempt.
+        if (!usageLogged) logger.logGenerationFailure(usageMeta, err);
         // This catch is why the refund is spelled here rather than left to the
         // wrapper: it swallows the throw to keep the client-safe sentence, so
         // the wrapper never sees a failure to pair a refund to.
@@ -552,6 +572,13 @@ export async function addXDraftFeedbackAction(input: {
     createdBy: user.uid,
     createdAt: Date.now(),
   });
+  // Action 14 ("give us your feedback on a post") — event-tracked, no live
+  // signal answers it (lib/action-list.ts). Only the client's own feedback
+  // counts, not a staff member logging it on their behalf.
+  if (user.role === "CLIENT_USER") {
+    const feedbackClientId = input.clientId;
+    await upsertClientActionState(feedbackClientId, "14", "done");
+  }
   revalidatePath(`/clients/${input.clientId}/x-agent`);
   revalidatePath(`/clients/${input.clientId}/agents`);
   return {};

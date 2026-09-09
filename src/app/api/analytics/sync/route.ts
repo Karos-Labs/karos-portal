@@ -47,7 +47,7 @@ type SyncResult = {
   clientId: string;
   platform: string;
   assetId: string;
-  action: "written" | "skipped" | "expired" | "published";
+  action: "written" | "skipped" | "expired" | "published" | "unavailable";
   source?: "live" | "mock";
   detail?: string;
 };
@@ -62,7 +62,13 @@ export async function GET(req: NextRequest) {
 
   const results: SyncResult[] = [];
   let written = 0;
-  let mock = 0;
+  /**
+   * Assets/seats scanned that no live API could answer for. They used to be
+   * counted as `mock` and WRITTEN; now they are counted here and skipped, so
+   * this number is the honest size of the measurement gap rather than the size
+   * of the invented dataset.
+   */
+  let unavailable = 0;
   let live = 0;
   let expired = 0;
   let assetsScanned = 0;
@@ -112,11 +118,14 @@ export async function GET(req: NextRequest) {
 
       // Connected, non-expired social integrations, keyed by platform. Gmail is
       // an operational integration, not a distribution channel — exclude it.
-      // NOTE: a client with none of these connected is NOT skipped below —
-      // fetchPlatformMetrics falls back to deterministic mock data when there's
-      // no access token, so demo/dev clients without live socials still get a
-      // working Self-Improving Loop (AI Insights, Task Map winners) off assets
-      // that reached "published" via auto-scheduling.
+      // NOTE (rewritten 2026-08): a client with none of these connected is
+      // still scanned, but nothing is WRITTEN for them any more.
+      // fetchPlatformMetrics used to answer a missing token with deterministic
+      // mock data "so demo/dev clients still get a working Self-Improving
+      // Loop" — which meant the loop improved itself against invented numbers,
+      // and those rows then reached content generation and the client-facing
+      // strategy swarm as measurement. It returns null now; the asset is
+      // recorded as `unavailable` in the run report and no row is persisted.
       const byPlatform = new Map(
         integrations
           .filter((i) => i.platform !== "google" && integrationIsUsable(i))
@@ -143,7 +152,21 @@ export async function GET(req: NextRequest) {
         assetsScanned++;
 
         try {
-          const { metrics, source } = await fetchPlatformMetrics(platform, integration?.credentials ?? {}, asset);
+          const measured = await fetchPlatformMetrics(platform, integration?.credentials ?? {}, asset);
+          // null = no live API could answer. Write nothing rather than a
+          // stand-in; "not measured" is a state every reader already renders.
+          if (!measured) {
+            unavailable++;
+            results.push({
+              clientId: client.id,
+              platform,
+              assetId: asset.id,
+              action: "unavailable",
+              detail: "no live metrics for this asset — nothing written",
+            });
+            continue;
+          }
+          const { metrics, source } = measured;
           await upsertClientMarketingAnalytics({
             clientId: client.id,
             assetId: asset.id,
@@ -156,8 +179,7 @@ export async function GET(req: NextRequest) {
             capturedAt: now,
           });
           written++;
-          if (source === "mock") mock++;
-          else live++;
+          live++;
           results.push({ clientId: client.id, platform, assetId: asset.id, action: "written", source });
         } catch (e) {
           if (e instanceof TokenExpiredError) {
@@ -198,7 +220,23 @@ export async function GET(req: NextRequest) {
           seatsScanned++;
           const seatAssetId = `seat_${seat.id}`;
           try {
-            const { metrics, source } = await fetchSeatMetrics(seat);
+            const measured = await fetchSeatMetrics(seat);
+            // Seats have no live analytics path at all until the LinkedIn
+            // Marketing API is granted, so this is null every time today. The
+            // call is still made because it validates the token, which is what
+            // pauses a dead seat in the catch below.
+            if (!measured) {
+              unavailable++;
+              results.push({
+                clientId: client.id,
+                platform: "linkedin",
+                assetId: seatAssetId,
+                action: "unavailable",
+                detail: "seat analytics need LinkedIn Marketing API access — nothing written",
+              });
+              continue;
+            }
+            const { metrics, source } = measured;
             await upsertClientMarketingAnalytics({
               clientId: client.id,
               assetId: seatAssetId,
@@ -211,8 +249,7 @@ export async function GET(req: NextRequest) {
               capturedAt: now,
             });
             written++;
-            if (source === "mock") mock++;
-            else live++;
+            live++;
             results.push({ clientId: client.id, platform: "linkedin", assetId: seatAssetId, action: "written", source });
           } catch (e) {
             if (e instanceof TokenExpiredError) {
@@ -247,7 +284,7 @@ export async function GET(req: NextRequest) {
     checked: { clients: clients.length, assetsScanned, seatsScanned },
     publishedReconciled,
     recordsWritten: written,
-    sources: { live, mock },
+    sources: { live, unavailable },
     integrationsExpired: expired,
     results,
   });

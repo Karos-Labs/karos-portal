@@ -30,15 +30,32 @@ import type { JobStatus } from "@/lib/types";
 
 export const JOB_STATUS_META: Record<
   JobStatus,
-  { tone: "neutral" | "neon" | "warning" | "danger" | "info"; label: string }
+  {
+    tone: "neutral" | "neon" | "warning" | "danger" | "info";
+    label: string;
+    /** lucide icon NAME (a string, not a component) — stays importable from server-only callers. */
+    icon: string;
+  }
 > = {
-  queued: { tone: "neutral", label: "Queued" },
-  running: { tone: "info", label: "Running" },
-  review: { tone: "warning", label: "In review" },
-  approved: { tone: "neon", label: "Approved" },
-  delivered: { tone: "neon", label: "Delivered" },
-  failed: { tone: "danger", label: "Failed" },
-  cancelled: { tone: "neutral", label: "Cancelled" },
+  queued: { tone: "neutral", label: "Queued", icon: "Loader" },
+  running: { tone: "info", label: "Running", icon: "Loader" },
+  review: { tone: "warning", label: "In review", icon: "Eye" },
+  approved: { tone: "neon", label: "Approved", icon: "CircleCheck" },
+  delivered: { tone: "neon", label: "Delivered", icon: "CircleCheck" },
+  failed: { tone: "danger", label: "Failed", icon: "TriangleAlert" },
+  cancelled: { tone: "neutral", label: "Cancelled", icon: "CircleX" },
+  /**
+   * NEUTRAL, not danger, and that is the whole point of the state existing —
+   * see `JobStatus`'s own `"held"` note. A held run is a guardrail doing its
+   * job, so it wears the same unalarming tone as `cancelled`: something
+   * stopped this on purpose, nothing is broken, and nobody is being paged.
+   *
+   * "Held" rather than "No output" or "Skipped": the word has to survive being
+   * read next to a REASON that explains it ("engagement lane daily cap
+   * reached"), and it has to be the same word agent-engine uses for the same
+   * outcome, or the portal and the run record describe one run two ways.
+   */
+  held: { tone: "neutral", label: "Held", icon: "CirclePause" },
 };
 
 /**

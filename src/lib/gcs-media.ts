@@ -3,6 +3,7 @@ import "server-only";
 import { Storage } from "@google-cloud/storage";
 
 import { dispositionFilename } from "@/lib/media-type";
+import { ALLOWED_MEDIA_EXTENSIONS } from "@/lib/media-kinds";
 
 /**
  * Signed-URL access to a dedicated GCS bucket for large pre-generated media
@@ -14,12 +15,32 @@ import { dispositionFilename } from "@/lib/media-type";
  * Uses `@google-cloud/storage` directly (unlike storage.ts's REST workaround)
  * because V4 signed URLs need either a service-account private key to sign
  * locally, or — with no key present — the IAM signBlob API, both of which
- * this SDK already handles. Credentials mirror firebase-admin's own
- * precedence (src/lib/firebase/admin.ts) so no separate key is needed: the
- * same FIREBASE_SERVICE_ACCOUNT_KEY / FIREBASE_PROJECT_ID+CLIENT_EMAIL+
- * PRIVATE_KEY already configured for Firestore also authorizes GCS. Falls
- * back to Application Default Credentials (Cloud Run's attached service
- * account) when neither is set.
+ * this SDK already handles.
+ *
+ * SCRUM-373: this client is Application Default Credentials ONLY, deliberately
+ * NOT firebase-admin's precedence chain (FIREBASE_SERVICE_ACCOUNT_KEY / discrete
+ * FIREBASE_* vars / ADC). That chain used to be mirrored here, which meant every
+ * GCS call ran as `firebase-adminsdk-fbsvc@karoscmo` — a shared production
+ * identity present in BOTH environments — instead of the Cloud Run runtime SA,
+ * making every bucket-scoped IAM grant to a runtime SA (SCRUM-369, SCRUM-371)
+ * inert: the code never authenticated as the principal that was granted.
+ *
+ * Signing strategy, decided (see docs/gcs-media-setup.md §3): IAM `signBlob` via
+ * `roles/iam.serviceAccountTokenCreator` granted to the runtime SA on itself,
+ * NOT a dedicated signing key. No key material to create, store, rotate or leak
+ * — the same reasoning firebase/admin.ts already gives for its own ADC
+ * fallback. This is not a guess about SDK behaviour: google-auth-library's
+ * `GoogleAuth.sign()` (node_modules/google-auth-library/build/src/auth/
+ * googleauth.js) only signs locally when the resolved client carries a JWT
+ * private key; a metadata-server / ADC client has none, so it falls through to
+ * `signBlob()`, which POSTs to `iamcredentials.googleapis.com/.../{client_email}
+ * :signBlob` authenticated as that same identity — i.e. self-impersonation,
+ * which is exactly what `serviceAccountTokenCreator`-on-self authorizes and a
+ * bare `storage.objectAdmin` grant does not.
+ *
+ * Firestore's use of the Firebase credential (src/lib/firebase/admin.ts) is
+ * unchanged by this ticket — that chain still exists there, deliberately; see
+ * SCRUM-373's description for why the two are being decided separately.
  */
 
 const UPLOAD_URL_TTL_MS = 15 * 60 * 1000;
@@ -34,29 +55,37 @@ export const READ_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export const PLAYBACK_URL_TTL_MS = 60 * 60 * 1000;
 
-export const ALLOWED_VIDEO_MIME_TYPES = ["video/mp4", "video/quicktime"];
-export const ALLOWED_VIDEO_EXTENSIONS = [".mp4", ".mov"];
-export const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
+/**
+ * The accept lists, the size ceilings and their helpers moved to
+ * `lib/media-kinds.ts` (2026-09) — they are pure, and the client-side dropzone
+ * has to ask the same questions this module answers for the server, which it
+ * cannot do through a `server-only` module. Re-exported here so every existing
+ * server caller keeps importing them from where they have always been.
+ */
+export {
+  ALLOWED_VIDEO_MIME_TYPES,
+  ALLOWED_VIDEO_EXTENSIONS,
+  MAX_VIDEO_BYTES,
+  ALLOWED_IMAGE_MIME_TYPES,
+  ALLOWED_IMAGE_EXTENSIONS,
+  MAX_IMAGE_BYTES,
+  ALLOWED_MEDIA_MIME_TYPES,
+  ALLOWED_MEDIA_EXTENSIONS,
+  mediaKindFor,
+  maxBytesFor,
+  mediaMimeFor,
+  type MediaKind,
+} from "@/lib/media-kinds";
 
 let storage: Storage | undefined;
 
 function getStorageClient(): Storage {
   if (storage) return storage;
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-  if (raw) {
-    const credentials = JSON.parse(raw);
-    storage = new Storage({ credentials, projectId: credentials.project_id });
-    return storage;
-  }
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (projectId && clientEmail && privateKey) {
-    storage = new Storage({ credentials: { client_email: clientEmail, private_key: privateKey }, projectId });
-    return storage;
-  }
-  // Application Default Credentials — Cloud Run's attached service account,
-  // or `gcloud auth application-default login` locally.
+  // Application Default Credentials ONLY — Cloud Run's attached runtime service
+  // account, or `gcloud auth application-default login` locally. Deliberately
+  // does NOT read FIREBASE_SERVICE_ACCOUNT_KEY or the discrete FIREBASE_* vars
+  // (see the module header): that credential is a different, shared identity
+  // and using it here is the SCRUM-373 finding, not a fallback to preserve.
   storage = new Storage();
   return storage;
 }
@@ -97,17 +126,29 @@ export interface MediaObjectInfo {
 }
 
 /**
- * Every video object already sitting under a client's podcast-clips prefix —
- * the read side of "staff uploaded straight into the bucket (gcloud storage
- * cp, Cloud Console, rclone, …), now import it" (see the "Import from
- * Storage" button, bulk-upload-clips.tsx, and the "import-bucket" step on
- * /api/assets/bulk-upload).
+ * Every media object already sitting under a client's prefix — the read side of
+ * "staff uploaded straight into the bucket (gcloud storage cp, Cloud Console,
+ * rclone, …), now import it" (see the "Import from Storage" button,
+ * media-upload.tsx, and the "import-bucket" step on /api/assets/bulk-upload).
+ *
+ * IMAGES ARE LISTED TOO as of 2026-09 (`ALLOWED_MEDIA_EXTENSIONS`, not the
+ * video half alone). Leaving this on videos while the dropzone accepted images
+ * would have made "Import from Storage" quietly blind to half of what the
+ * button beside it had just uploaded — the same object, in the same prefix,
+ * invisible to the importer.
+ *
+ * THE PREFIX STILL SAYS `podcast-clips`, and that is on purpose. It is a stored
+ * path: every object already in production lives under it, `meta.gcsPath` on
+ * every registered asset points into it, and the route's own ownership check
+ * (`gcsPath.startsWith("clients/<id>/podcast-clips/")`) reads it. Renaming it
+ * is an object migration plus a backfill, not a rename, and it would buy a
+ * better-looking string and nothing else.
  */
 export async function listClientMediaObjects(clientId: string): Promise<MediaObjectInfo[]> {
   const bucket = getStorageClient().bucket(getBucketName());
   const [files] = await bucket.getFiles({ prefix: `clients/${clientId}/podcast-clips/` });
   return files
-    .filter((f) => ALLOWED_VIDEO_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext)))
+    .filter((f) => ALLOWED_MEDIA_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext)))
     .map((f) => ({
       gcsPath: f.name,
       filename: filenameFromGcsPath(f.name),
@@ -131,7 +172,7 @@ export async function createUploadSignedUrl(opts: {
   return url;
 }
 
-/** A V4 signed READ URL for playback — stored on the Asset as `videoUrl` (7-day TTL). */
+/** A V4 signed READ URL for playback — stored on the Asset as `videoUrl`/`imageUrl` (7-day TTL). */
 export async function createReadSignedUrl(gcsPath: string, ttlMs = READ_URL_TTL_MS): Promise<string> {
   const bucket = getStorageClient().bucket(getBucketName());
   const [url] = await bucket.file(gcsPath).getSignedUrl({

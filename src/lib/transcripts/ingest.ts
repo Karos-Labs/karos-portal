@@ -1,15 +1,24 @@
 import "server-only";
 
-import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 
-import { createTranscript, findDuplicateTranscript, getClientContextDoc, listClients, listUsers, upsertClientContextDoc } from "@/lib/data";
+import {
+  createTranscript,
+  findDuplicateTranscript,
+  getClientContextDoc,
+  getTranscript,
+  listClients,
+  listUsers,
+  upsertClientContextDoc,
+  TranscriptAlreadyExistsError,
+} from "@/lib/data";
 import { createActionItemDocsForTranscript } from "@/lib/action-items";
 import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 import type { FirefliesTranscript } from "@/lib/transcripts/fireflies";
 import type { AppUser, Client, Transcript } from "@/lib/types";
+import { aiFor } from "@/lib/ai/provider";
 
 const analysisSchema = z.object({
   summary: z.string().describe("A concise 3-5 sentence summary of the meeting."),
@@ -22,11 +31,15 @@ async function analyze(t: FirefliesTranscript, clientId: string | null) {
   const model = process.env.TRANSCRIPT_MODEL || MODELS.SONNET;
   try {
     const { object, usage } = await generateObject({
-      model: anthropic(model),
+      model: aiFor("transcript.ingest", { modelId: model }).model,
       schema: analysisSchema,
       system:
         "You are an analyst for a marketing agency. Summarise client meeting transcripts and extract action items and key topics that the agency should act on.",
-      prompt: `Meeting: ${t.title}\nParticipants: ${t.participants.join(", ")}\n\nTranscript:\n${t.text.slice(0, 18000)}`,
+      // 18k chars (~4.5k tokens) was cutting real meetings short - a longer call with
+      // the whole team routinely runs past that, dropping whatever was discussed (and
+      // whoever it was assigned to) after the cutoff. Sonnet's 200k-token context has
+      // ample room, so give it the whole transcript for anything up to ~2.5 hours of talk.
+      prompt: `Meeting: ${t.title}\nParticipants: ${t.participants.join(", ")}\n\nTranscript:\n${t.text.slice(0, 150_000)}`,
     });
     logger.logUsage({
       clientId, agentId: null, agentName: "Transcript Analysis",
@@ -273,7 +286,22 @@ export async function ingestTranscript(
     createdAt: Date.now(),
   } satisfies Omit<Transcript, "id">;
 
-  const id = await createTranscript(transcriptData);
+  let id: string;
+  try {
+    id = await createTranscript(transcriptData);
+  } catch (e) {
+    // A concurrent ingest (webhook retry, auto-sync racing the manual sync button, etc.)
+    // won the write for this same recording between our check above and this write —
+    // treat it the same as the pre-check finding it (QA: duplicate "Karos All Hands" /
+    // "SOW portal revamp" meetings, 2026-08-11).
+    if (e instanceof TranscriptAlreadyExistsError) {
+      const winner = await getTranscript(e.existingId);
+      if (winner) {
+        return { id: winner.id, clientId: winner.clientId ?? null, matched: !!winner.clientId, duplicate: true };
+      }
+    }
+    throw e;
+  }
 
   // Promote extracted items to managed action-item docs (status / comments / history).
   try {

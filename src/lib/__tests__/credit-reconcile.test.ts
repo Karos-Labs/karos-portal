@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { newestUnrefundedCharge, refundEntryIdFor } from "../credit-reconcile-shared";
+import { CREDIT_PLAN_VERSION, creditMonthKey, creditWeekKey } from "../credits";
 import type { CreditLedgerEntry } from "../types";
 
 function entry(patch: Partial<CreditLedgerEntry> & Pick<CreditLedgerEntry, "id" | "kind" | "delta">): CreditLedgerEntry {
@@ -102,7 +103,13 @@ vi.mock("@/lib/firebase/admin", () => {
   const db = {
     collection: (name: string) => ({
       doc: (id: string) => ({ __col: name, id }),
-      where: (field: string, _op: string, value: string) => ({ __col: name, __field: field, __value: value }),
+      where: (field: string, _op: string, value: string) => {
+        // `.limit()` chains to the same handle — the fake's collections are
+        // tiny, so a cap can never bind here.
+        const q: any = { __col: name, __field: field, __value: value };
+        q.limit = () => q;
+        return q;
+      },
     }),
     // Buffers writes until the callback returns, the way a real transaction
     // does — so a `create` on an id another write in the same transaction just
@@ -162,13 +169,22 @@ const refundRows = () => [...ledgerDocs.values()].filter((d) => d.kind === "refu
 beforeEach(() => {
   ledgerDocs.clear();
   creditDocs.clear();
+  // A doc whose windows are ALREADY CURRENT and whose plan is already the
+  // current one. Both matter since the credits rework (2026-09): a doc with
+  // stale window keys gets its balance topped up to MONTHLY_ALLOWANCE by
+  // `rollCreditWindows`, and one with no `planVersion` has its caps migrated —
+  // neither of which this file is about, and both of which would show up here
+  // as a refund arithmetic failure rather than as what they are.
   creditDocs.set("c1", {
     clientId: "c1",
     balance: 100,
     weekSpent: 20,
     monthSpent: 20,
-    weekStart: 0,
-    monthStart: 0,
+    weekKey: creditWeekKey(Date.now()),
+    monthKey: creditMonthKey(Date.now()),
+    planVersion: CREDIT_PLAN_VERSION,
+    weeklyLimit: null,
+    monthlyLimit: null,
     updatedAt: 0,
   });
 });

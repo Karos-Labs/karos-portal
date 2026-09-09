@@ -7,11 +7,10 @@
 
 import "server-only";
 import { generateObject, generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { after } from "next/server";
-import { MODELS } from "@/lib/constants";
 import { logger } from "@/services/logger";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 export const MAX_PERSONAS = 4;
 
@@ -319,11 +318,26 @@ export async function buildSimulationPersonas(
   artifact: SimulationArtifact,
   ctx: SimulationContext,
 ): Promise<SyntheticPersona[]> {
-  const { object } = await generateObject({
-    model: anthropic(MODELS.HAIKU),
-    schema: personaPlanSchema,
-    prompt: buildPersonaPlannerPrompt(artifact, ctx),
-  });
+  const usageMeta = {
+    clientId: ctx.clientId, agentId: null, agentName: "Simulation: persona planner",
+    ...usageFor("simulation.persona"), operation: "audience_simulation",
+  };
+  let object: z.infer<typeof personaPlanSchema>;
+  try {
+    const result = await generateObject({
+      model: aiFor("simulation.persona").model,
+      schema: personaPlanSchema,
+      prompt: buildPersonaPlannerPrompt(artifact, ctx),
+    });
+    object = result.object;
+    logger.logUsage({
+      ...usageMeta,
+      inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0,
+    });
+  } catch (err) {
+    logger.logGenerationFailure(usageMeta, err);
+    throw err;
+  }
   return object.personas.map((p, i) => ({
     id: normalizePersonaId(p.id, p.name, i),
     name: p.name.trim(),
@@ -344,13 +358,13 @@ export async function simulatePersona(
   const prompt = buildUserPrompt(artifact, ctx);
   const simUsageMeta = {
     clientId: ctx.clientId, agentId: null, agentName: `Simulation: ${persona.name}`,
-    modelName: MODELS.HAIKU, operation: "audience_simulation",
+    ...usageFor("simulation.persona"), operation: "audience_simulation",
   };
   let verdict: PersonaVerdict;
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     const first = await generateObject({
-      model: anthropic(MODELS.HAIKU),
+      model: aiFor("simulation.persona").model,
       schema: personaResultSchema,
       system,
       prompt,
@@ -364,7 +378,7 @@ export async function simulatePersona(
     logger.logGenerationFailure(simUsageMeta, firstError);
     try {
       const second = await generateObject({
-        model: anthropic(MODELS.HAIKU),
+        model: aiFor("simulation.persona").model,
         schema: personaResultFallbackSchema,
         system,
         prompt,
@@ -375,7 +389,7 @@ export async function simulatePersona(
       logger.logGenerationFailure(simUsageMeta, secondError);
       try {
         const third = await generateText({
-          model: anthropic(MODELS.HAIKU),
+          model: aiFor("simulation.persona").model,
           system,
           prompt: `${prompt}
 

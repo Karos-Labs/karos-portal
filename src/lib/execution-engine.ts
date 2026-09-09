@@ -1,22 +1,21 @@
 /**
  * Karos Task Execution Engine — server-side only.
  * Contains the actual AI generation logic without auth guards.
- * Called by execution-actions.ts (with auth) and settings-actions.ts (via after()).
+ * Called by execution-actions.ts (with auth).
  */
 import "server-only";
 
 import { revalidatePath } from "next/cache";
 import { generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { MODELS } from "@/lib/constants";
 import {
   getClientTask,
   getClient,
   getCustomAgent,
   updateClientTask,
-  listClientTasks,
   listEmployeeSeats,
   getClientPerformanceBenchmarks,
+  stampChargeSettlesJob,
 } from "@/lib/data";
 import { sendEmail } from "@/lib/email";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
@@ -24,25 +23,24 @@ import { MANAGED_PRODUCTS, type ManagedProduct } from "@/lib/agent-service/produ
 import { CREDIT_COSTS, taskExecutionCost } from "@/lib/credits";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { resolveTaskCustomAgentId } from "@/lib/task-agent-link";
-import { taskIsDisabled } from "@/lib/task-disable-copy";
 import { submitManagedJob } from "@/lib/jobs/submit-managed";
 import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
 import { buildArtifactGenerationPrompt, type EmployeeAdvocacyProfile } from "@/lib/ai/prompts/proactive-assistant";
-import type { AppUser, ClientTask, CustomAgent, ManagedTaskType, TaskOwner } from "@/lib/types";
+import type { AppUser, ClientTask, CustomAgent, ManagedTaskType } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
 import { logger } from "@/services/logger";
 import type { ModelId } from "@/lib/constants";
+import { aiFor } from "@/lib/ai/provider";
 
 /* ── Constants ───────────────────────────────────────────────────── */
 
-const SONNET = anthropic(MODELS.SONNET);
-const HAIKU = anthropic(MODELS.HAIKU);
+const SONNET = aiFor("execution.sonnet").model;
+const HAIKU = aiFor("execution.haiku").model;
 
 /* ── Internal helpers ────────────────────────────────────────────── */
 
-export function inferOwnerEngine(task: ClientTask): TaskOwner {
-  return task.owner ?? (task.source === "manual" ? "client_managed" : "karos_managed");
-}
+/** Owner inference — shared with task-dedup.ts via task-owner.ts, not a copy. */
+export { inferTaskOwner as inferOwnerEngine } from "@/lib/task-owner";
 
 export function resolveTaskType(task: ClientTask): "content_generation" | "integration_action" {
   const explicit = task.metadata?.type as string | undefined;
@@ -85,8 +83,6 @@ const TASK_ENGINE_ACTOR: AppUser = {
 
 /** Keyword heuristics for tasks created before productType linking existed. */
 const PRODUCT_KEYWORDS: Array<{ taskType: ManagedTaskType; pattern: RegExp }> = [
-  { taskType: "newsletter_issue", pattern: /newsletter/i },
-  { taskType: "blog_article", pattern: /\bblog\b|\barticle\b|\bseo\b/i },
   { taskType: "landing_page", pattern: /landing\s*page/i },
   { taskType: "social_post", pattern: /instagram|tiktok|social\s*(media\s*)?post|\bcarousel\b|\breel\b/i },
 ];
@@ -176,10 +172,6 @@ function buildTaskBrief(
         topic: `${topic}${revision}`,
       };
     }
-    case "newsletter_issue":
-      return { issue_theme: `${task.title}${revision}`, must_include: task.description ?? "" };
-    case "blog_article":
-      return { topic: `${topic}${revision}` };
     case "landing_page":
       return { page_goal: `${task.title}${revision}`, offer: task.description ?? "" };
     default:
@@ -261,7 +253,6 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
           taskId,
           `Auto-refund · agent unavailable · ${task.title.slice(0, 80)}`,
         ).catch((e) => console.error(`[engine] custom-agent refund failed for ${taskId}:`, e));
-        revalidatePath("/tasks");
         revalidatePath(`/clients/${clientId}`);
         return;
       }
@@ -273,6 +264,14 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
       }).catch((e) => ({ jobId: undefined, error: e instanceof Error ? e.message : "submit failed" }));
 
       if (result.jobId && !result.error) {
+        // The hold for this run was taken under the TASK id, before this job
+        // existed — so this is the first moment anything knows which run it is
+        // paying for. Stamping it here is what lets a settlement pick the right
+        // hold when the same task has two runs in flight; see
+        // `CreditLedgerEntry.settlesJobId`. Best-effort and un-awaited-for-
+        // correctness: an unstamped hold still settles by the newest-unpaired
+        // rule, which is exactly the pre-rework behaviour.
+        await stampChargeSettlesJob(taskId, result.jobId);
         await updateClientTask(taskId, {
           metadata: {
             ...(task.metadata ?? {}),
@@ -301,7 +300,6 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
           `Auto-refund · agent dispatch failed · ${task.title.slice(0, 80)}`,
         ).catch((e) => console.error(`[engine] custom-agent dispatch refund failed for ${taskId}:`, e));
       }
-      revalidatePath("/tasks");
       revalidatePath(`/clients/${clientId}`);
       return;
     }
@@ -324,6 +322,8 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
       }).catch((e) => ({ jobId: undefined, error: e instanceof Error ? e.message : "submit failed" }));
 
       if (result.jobId && !result.error) {
+        // Same stamp as the custom-agent branch above, for the same reason.
+        await stampChargeSettlesJob(taskId, result.jobId);
         await updateClientTask(taskId, {
           metadata: {
             ...(task.metadata ?? {}),
@@ -352,7 +352,6 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
           `Auto-refund · agent dispatch failed · ${task.title.slice(0, 80)}`,
         ).catch((e) => console.error(`[engine] dispatch-failure refund failed for ${taskId}:`, e));
       }
-      revalidatePath("/tasks");
       revalidatePath(`/clients/${clientId}`);
       return;
     }
@@ -380,11 +379,25 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
     // from the analytics collection and inject them as "successful past content
     // examples" so new content emulates proven patterns. Non-fatal: no analytics
     // (or a read failure) simply omits the block.
+    //
+    // `source === "live"` IS THE WHOLE GUARD (2026-08). Every row in
+    // `clientMarketingAnalytics` carries `source: "mock" | "live"` — a mock row
+    // comes from `mockRawMetrics`, a seeded PRNG that invents impressions
+    // between 500 and 50,000 — and this block used to take the top three
+    // without asking, then hand the model figures the prompt labels as proven
+    // results. Two things went wrong at once: new content emulated patterns
+    // that never performed, and invented percentages were free to be quoted
+    // into copy the client reads. The comment above already claimed "measured";
+    // this line is what makes the claim true. Same fence the copilot chat route
+    // applies (api/clients/[id]/chat/route.ts), and applied unconditionally
+    // rather than for client viewers only — a staff-triggered run still
+    // produces the client's deliverable.
     let topPerformerExamples: string | undefined;
     try {
       const benchmarks = await getClientPerformanceBenchmarks(clientId, 3);
-      if (benchmarks.top.length > 0) {
-        topPerformerExamples = benchmarks.top
+      const measuredTop = benchmarks.top.filter((r) => r.source === "live");
+      if (measuredTop.length > 0) {
+        topPerformerExamples = measuredTop
           .map(
             (r) =>
               `- [engagement ${r.engagementScore.toFixed(1)}/100 · ${r.platform}${r.assetType ? ` · ${r.assetType}` : ""}] "${r.assetLabel ?? r.assetId}" (${(r.metrics.engagementRate * 100).toFixed(1)}% engagement, ${r.metrics.impressions.toLocaleString()} impressions)`,
@@ -458,53 +471,7 @@ export async function runTaskExecution(clientId: string, taskId: string): Promis
     ).catch((e) => console.error(`[engine] failure refund failed for ${taskId}:`, e));
   }
 
-  revalidatePath("/tasks");
   revalidatePath(`/clients/${clientId}`);
-}
-
-/* ── Autopilot batch runner ──────────────────────────────────────── */
-
-/**
- * Picks up all pending karos_managed tasks for a client and executes them
- * sequentially. Capped at 5 tasks per invocation to respect after() time budget.
- */
-export async function runAutopilotBatch(clientId: string): Promise<void> {
-  const allTasks = await listClientTasks({ clientId, status: "pending", limit: 10 });
-  const pendingKaros = allTasks
-    .filter((t) => inferOwnerEngine(t) === "karos_managed")
-    .filter((t) => !taskIsDisabled(t))
-    .slice(0, 5);
-
-  if (pendingKaros.length === 0) return;
-
-  const now = Date.now();
-  await Promise.all(
-    pendingKaros.map((t) =>
-      updateClientTask(t.id, {
-        status: "in_progress",
-        metadata: { ...(t.metadata ?? {}), executing: true, executionError: null },
-        updatedAt: now,
-      }),
-    ),
-  );
-
-  revalidatePath("/tasks");
-
-  for (const t of pendingKaros) {
-    await runTaskExecution(clientId, t.id).catch(console.error);
-  }
-}
-
-/**
- * Execute an explicit set of already-claimed tasks (status flipped to
- * in_progress + executing by claimTaskForExecution). Used by the credit-charged
- * client autopilot path so the executed batch is exactly the charged batch.
- */
-export async function runClaimedTasks(clientId: string, taskIds: string[]): Promise<void> {
-  revalidatePath("/tasks");
-  for (const id of taskIds) {
-    await runTaskExecution(clientId, id).catch(console.error);
-  }
 }
 
 /* ── Integration publish helper ──────────────────────────────────── */

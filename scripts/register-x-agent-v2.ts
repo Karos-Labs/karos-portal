@@ -72,20 +72,36 @@ including its own run-folder naming convention (NOT the generic
 "<date>-job-<id>" folder name this platform's own preamble otherwise suggests;
 the skill's own protocol takes precedence for this agent).
 
-A run belongs to ONE identity (the company page, or a single seat) and
-produces N drafts, N supplied by the run request (5, 10, or 21 — read it from
-the client's request text; default to 10 if not stated). The client's request
-also states which identity to run for ("company page" / a seat's name) —
-if it names one, produce only for that one; if it says "every seat" or names
-none, run once per identity in scope and produce N drafts for each.
+One run produces exactly one post. This is the product ruling of 2026-08-11 and it
+supersedes the skill's own batch framing wherever the two disagree: SKILL.md
+and its references still describe a batch of N drafts (5/10/21) — that text
+is stale, and there is no batch. A run belongs to ONE identity (the company
+page, or a single seat), read from the client's request text; if the request
+names no identity, draft for the company page. Choose ONE avenue by the
+skill's own precedence — the client's request first, the identity's stated
+lane preference next, otherwise the identity's top-weighted lane — and run
+the skill's per-post steps once for that single subject: choose it, angle
+it, draft it, gate it. Deliver exactly one post (a thread is that one post).
+If the request asks for several posts or "a batch", still deliver one — the
+strongest single post the request supports — and note the narrowed scope in
+internal/RUN.md. The lane-spanning batch rules in the skill's references do
+not apply to a one-post run; every other gate does.
+
+Deliverable structure: write client/DRAFTS.md — the portal parses it. Keep
+exactly this shape, with one account section and one avenue block:
+"# Account 1 · <name>" (the company section's name must contain "Company
+page"; a seat section carries the person's name), one "## Avenue 1 · <lane>"
+block, the post text as a "> " blockquote (a thread: one blockquote per part
+with **1/3**-style markers between), a "NNN chars" line after the post, and
+"- **" bullets for sources.
 
 Read first, in this order:
 1. client_context/brief.md and every file in client_context/files/. The files
    x-portal-intake.md, whats-new.json, and takes--*.json are the portal's LIVE
    client data and OVERRIDE any older copies inside the repo on any
    disagreement. Files named prior-batch-*.md are this client's previous
-   portal batches — treat every subject, source, quoted post, and phrasing in
-   them as ALREADY USED, in addition to the repo's own shared ledger
+   portal deliveries — treat every subject, source, quoted post, and phrasing
+   in them as ALREADY USED, in addition to the repo's own shared ledger
    (clients/<slug>/skills/x-agent/x-ledger.json).
 2. The client's onboarding profile (clients/<slug>/profile/) and voice
    profiles (clients/<slug>/skills/x-agent/voice/, or profile/executives/
@@ -114,8 +130,8 @@ async function main() {
     key: KEY,
     name: "X Agent v2 (unreviewed)",
     description:
-      "On-demand rebuild of the X drafting engine: any identity (company page or one seat) can run at any time for a batch of 5, 10, or 21 drafts. Resumable, and the paid research pull is shared across the whole batch instead of per-format. Separate from and does not replace the production X Agent. karos-agents manifest status: unreviewed — has not produced a batch yet.",
-    clientBlurb: "Drafts a batch of X posts on demand, any time, spanning your build-in-public, knowledge, POV, news-reaction and quote lanes.",
+      "On-demand rebuild of the X drafting engine: one run drafts one post for one identity (the company page or a single seat). Resumable, draft-only. Separate from and does not replace the production X Agent. karos-agents manifest status: unreviewed.",
+    clientBlurb: "Drafts one X post on demand, any time: build-in-public, knowledge, POV, news-reaction, or quote, grounded in your X agent data.",
     icon: "Zap",
     color: "#FDE047",
     entrySkillDir: "products/building/x-agent-v2",

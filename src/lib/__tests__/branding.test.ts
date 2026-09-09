@@ -11,13 +11,19 @@ vi.mock("@/lib/data", () => ({
   upsertClientContextDoc: vi.fn(),
 }));
 
-import type { BrandingGuidelines } from "@/lib/types";
+import type { BrandColor, BrandingGuidelines } from "@/lib/types";
 import { stripDocPreamble } from "@/lib/doc-render";
 import {
   normalizeHex,
   brandingToContextDocContent,
   buildBrandVoiceSection,
   injectBrandVoiceSection,
+  classifyColorRole,
+  resolveDominantColorsByRole,
+  effectivePrimaryAccent,
+  effectiveSecondaryAccent,
+  effectiveNeutralDark,
+  effectiveNeutralLight,
 } from "../branding";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,5 +277,210 @@ describe("injectBrandVoiceSection", () => {
     const result = injectBrandVoiceSection(plain, newSection);
     const occurrences = (result.match(/existing content/g) ?? []).length;
     expect(occurrences).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyColorRole / resolveDominantColorsByRole (SCRUM-394 / IGSTYLE-9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("classifyColorRole", () => {
+  it("classifies neutral role text", () => {
+    expect(classifyColorRole("Page ground across the storefront")).toBe("neutral");
+    expect(classifyColorRole("Warm cream page surface")).toBe("neutral");
+    expect(classifyColorRole("Brand base — logo mark, headings, dark panels")).toBe("neutral");
+    expect(classifyColorRole("Ink — all body copy and headings")).toBe("neutral");
+    expect(classifyColorRole("Wordmark")).toBe("neutral");
+    expect(classifyColorRole("Canvas background")).toBe("neutral");
+  });
+
+  it("classifies accent role text", () => {
+    expect(classifyColorRole("Sale callouts, badges, CTA highlights")).toBe("accent");
+    expect(classifyColorRole("Primary CTA and interactive accent")).toBe("accent");
+    expect(classifyColorRole("Acai purple brand signature")).toBe("accent");
+  });
+
+  it("returns unclassified for absent or unrecognized role text", () => {
+    expect(classifyColorRole(undefined)).toBe("unclassified");
+    expect(classifyColorRole("")).toBe("unclassified");
+    expect(classifyColorRole("Some other thing entirely")).toBe("unclassified");
+  });
+
+  it("is case-insensitive", () => {
+    expect(classifyColorRole("PAGE GROUND")).toBe("neutral");
+    expect(classifyColorRole("primary CTA")).toBe("accent");
+  });
+});
+
+describe("resolveDominantColorsByRole — the four real clients from the IGSTYLE-9 sweep", () => {
+  it("hankypanky: the most-dominant color is ground (neutral), the real accent is ranked lower", () => {
+    const colors: BrandColor[] = [
+      { hex: "#fefaf9", dominanceRank: 1, role: "Page ground across the storefront" },
+      { hex: "#f15151", dominanceRank: 2, role: "Sale callouts, badges, CTA highlights" },
+    ];
+    const resolved = resolveDominantColorsByRole(colors);
+    // Only one neutral-classified color, and it's a near-white cream — high
+    // luminance, so it fills the LIGHT slot, never the dark one a "first
+    // neutral found" heuristic might have guessed.
+    expect(resolved).toMatchObject({ resolvedByRole: true, primaryAccent: "#f15151", brandNeutralLight: "#fefaf9" });
+    expect(resolved.brandNeutralDark).toBeUndefined();
+  });
+
+  it("xodigital: the most-dominant color is brand base/headings (neutral), the real accent is the CTA color", () => {
+    const colors: BrandColor[] = [
+      { hex: "#0b2644", dominanceRank: 1, role: "Brand base — logo mark, headings, dark panels" },
+      { hex: "#e6a47c", dominanceRank: 2, role: "Primary CTA and interactive accent" },
+    ];
+    const resolved = resolveDominantColorsByRole(colors);
+    expect(resolved).toMatchObject({ resolvedByRole: true, primaryAccent: "#e6a47c", brandNeutralDark: "#0b2644" });
+  });
+
+  it("thepitchbydeel: the most-dominant color is a cream surface (neutral), the real accent is the purple signature", () => {
+    const colors: BrandColor[] = [
+      { hex: "#faf4ee", dominanceRank: 1, role: "Warm cream page surface" },
+      { hex: "#5938b7", dominanceRank: 2, role: "Acai purple brand signature" },
+    ];
+    const resolved = resolveDominantColorsByRole(colors);
+    expect(resolved).toMatchObject({ resolvedByRole: true, primaryAccent: "#5938b7" });
+    // Only one neutral-classified color — luminance decides which field it
+    // fills; a near-white cream is well above the midpoint, so it's the
+    // light neutral, not the dark one a positional read would have produced.
+    expect(resolved.brandNeutralLight).toBe("#faf4ee");
+    expect(resolved.brandNeutralDark).toBeUndefined();
+  });
+
+  it("karoslabs: the most-dominant near-black is the neutral ground, the orange is the real accent", () => {
+    const colors: BrandColor[] = [
+      { hex: "#242429", dominanceRank: 1, role: "Ink — dark background and body copy" },
+      { hex: "#ff6b2c", dominanceRank: 2, role: "Primary accent — buttons and highlights" },
+    ];
+    const resolved = resolveDominantColorsByRole(colors);
+    expect(resolved).toMatchObject({ resolvedByRole: true, primaryAccent: "#ff6b2c", brandNeutralDark: "#242429" });
+  });
+
+  it("disambiguates two neutral-classified colors by measured luminance, not role text or position — even when a brand names both 'surface'", () => {
+    const colors: BrandColor[] = [
+      { hex: "#111111", dominanceRank: 1, role: "Dark surface" },
+      { hex: "#f5f5f5", dominanceRank: 2, role: "Light surface" },
+    ];
+    const resolved = resolveDominantColorsByRole(colors);
+    expect(resolved.brandNeutralDark).toBe("#111111");
+    expect(resolved.brandNeutralLight).toBe("#f5f5f5");
+  });
+
+  it("disambiguates two neutrals by luminance even when the LIGHTER one is listed FIRST in dominance order", () => {
+    const colors: BrandColor[] = [
+      { hex: "#f5f5f5", dominanceRank: 1, role: "Surface" },
+      { hex: "#111111", dominanceRank: 2, role: "Surface" },
+    ];
+    const resolved = resolveDominantColorsByRole(colors);
+    expect(resolved.brandNeutralDark).toBe("#111111");
+    expect(resolved.brandNeutralLight).toBe("#f5f5f5");
+  });
+
+  it("a record whose roles ALL classify as neutral yields NO accent — refuse to guess, never invent one", () => {
+    const colors: BrandColor[] = [
+      { hex: "#111111", dominanceRank: 1, role: "Ground" },
+      { hex: "#eeeeee", dominanceRank: 2, role: "Surface" },
+    ];
+    const resolved = resolveDominantColorsByRole(colors);
+    expect(resolved.resolvedByRole).toBe(true);
+    expect(resolved.primaryAccent).toBeUndefined();
+    expect(resolved.secondaryAccent).toBeUndefined();
+  });
+
+  it("keeps multiple accent-classified colors in their existing dominance order for primary/secondary", () => {
+    const colors: BrandColor[] = [
+      { hex: "#111111", dominanceRank: 1, role: "Ground" },
+      { hex: "#aa0000", dominanceRank: 2, role: "Primary accent" },
+      { hex: "#00aa00", dominanceRank: 3, role: "Secondary accent highlight" },
+    ];
+    const resolved = resolveDominantColorsByRole(colors);
+    expect(resolved.primaryAccent).toBe("#aa0000");
+    expect(resolved.secondaryAccent).toBe("#00aa00");
+  });
+
+  it("resolvedByRole is false when NO color's role text classifies — the caller must use the positional fallback", () => {
+    const noRoles: BrandColor[] = [
+      { hex: "#111111", dominanceRank: 1 },
+      { hex: "#eeeeee", dominanceRank: 2 },
+    ];
+    expect(resolveDominantColorsByRole(noRoles)).toEqual({ resolvedByRole: false });
+
+    const unrecognizedRoles: BrandColor[] = [
+      { hex: "#111111", dominanceRank: 1, role: "Something unrelated" },
+    ];
+    expect(resolveDominantColorsByRole(unrecognizedRoles)).toEqual({ resolvedByRole: false });
+  });
+
+  it("never re-sorts the input array — a caller reading `colors` itself afterward still sees dominance order", () => {
+    const colors: BrandColor[] = [
+      { hex: "#f5f5f5", dominanceRank: 1, role: "Surface" },
+      { hex: "#111111", dominanceRank: 2, role: "Surface" },
+    ];
+    const before = colors.map((c) => c.hex);
+    resolveDominantColorsByRole(colors);
+    expect(colors.map((c) => c.hex)).toEqual(before);
+  });
+});
+
+describe("effective* accessors — role-based first, positional/legacy fallback second (SCRUM-394)", () => {
+  it("effectivePrimaryAccent/effectiveSecondaryAccent prefer role classification over array position", () => {
+    const g: BrandingGuidelines = {
+      dominantColors: [
+        { hex: "#fefaf9", dominanceRank: 1, role: "Page ground across the storefront" },
+        { hex: "#f15151", dominanceRank: 2, role: "Sale callouts, badges, CTA highlights" },
+      ],
+      updatedAt: 0,
+    };
+    // A positional read would have said primaryAccent = "#fefaf9" (rank 1) —
+    // the whole bug this ticket fixes.
+    expect(effectivePrimaryAccent(g)).toBe("#f15151");
+    expect(effectiveSecondaryAccent(g)).toBeUndefined();
+  });
+
+  it("effectiveNeutralDark/effectiveNeutralLight prefer role classification (by luminance) over array position", () => {
+    const g: BrandingGuidelines = {
+      dominantColors: [
+        { hex: "#faf4ee", dominanceRank: 1, role: "Warm cream page surface" },
+        { hex: "#5938b7", dominanceRank: 2, role: "Acai purple brand signature" },
+      ],
+      updatedAt: 0,
+    };
+    // A positional read would never populate brandNeutralDark/Light at all
+    // here (only two colors, ranks 0/1 map to accent slots) — role-based
+    // resolution correctly finds the one real neutral.
+    expect(effectiveNeutralLight(g)).toBe("#faf4ee");
+    expect(effectiveNeutralDark(g)).toBeUndefined();
+  });
+
+  it("falls back to exactly today's positional/legacy behavior when dominantColors carries no classifiable role text", () => {
+    const g: BrandingGuidelines = {
+      dominantColors: [
+        { hex: "#111111", dominanceRank: 1 },
+        { hex: "#222222", dominanceRank: 2 },
+        { hex: "#333333", dominanceRank: 3 },
+        { hex: "#444444", dominanceRank: 4 },
+      ],
+      updatedAt: 0,
+    };
+    expect(effectivePrimaryAccent(g)).toBe("#111111");
+    expect(effectiveSecondaryAccent(g)).toBe("#222222");
+    expect(effectiveNeutralDark(g)).toBe("#333333");
+    expect(effectiveNeutralLight(g)).toBe("#444444");
+  });
+
+  it("falls back to legacy scalar fields when dominantColors is entirely absent — unchanged from before this ticket", () => {
+    const g: BrandingGuidelines = {
+      primaryAccent: "#ff0000",
+      secondaryAccent: "#0000ff",
+      brandNeutralDark: "#09090b",
+      brandNeutralLight: "#fafafa",
+      updatedAt: 0,
+    };
+    expect(effectivePrimaryAccent(g)).toBe("#ff0000");
+    expect(effectiveSecondaryAccent(g)).toBe("#0000ff");
+    expect(effectiveNeutralDark(g)).toBe("#09090b");
+    expect(effectiveNeutralLight(g)).toBe("#fafafa");
   });
 });

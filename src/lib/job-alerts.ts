@@ -25,7 +25,7 @@ export function alertRecipients(): string[] {
 }
 
 function appUrl(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+  return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
 }
 
 function alertShell(opts: { heading: string; rows: Array<[string, string]>; link: string; linkLabel: string }): string {

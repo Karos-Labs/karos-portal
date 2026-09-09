@@ -223,6 +223,137 @@ describe("findDuplicateReason — three tiers", () => {
   });
 });
 
+describe("findDuplicateReason — tier 3 is date-aware (T-B11)", () => {
+  it("a dated candidate is NOT blocked by a same-week task created on a different day", () => {
+    // The bug: an Instagram task already exists this week (createdAt = Mon
+    // this ISO week), and the candidate is "another Instagram post, for the
+    // 14th" — a different day in the same week. Without targetDate this used
+    // to reject on the week match alone.
+    const mon = Date.UTC(2026, 6, 6); // Mon 2026-07-06, same ISO week as NOW
+    const the14th = Date.UTC(2026, 6, 14, 9, 0, 0);
+    const existing = [
+      task({
+        title: "Fill the Instagram gap with fresh content",
+        status: "pending",
+        metadata: { productType: "social_post", platform: "instagram" },
+        createdAt: mon,
+      }),
+    ];
+    expect(
+      findDuplicateReason(
+        {
+          title: "Produce new IG carousels",
+          productType: "social_post",
+          platform: "instagram",
+          targetDate: the14th,
+        },
+        existing,
+        NOW,
+      ),
+    ).toBeNull();
+  });
+
+  it("a dated candidate IS blocked by an existing task explicitly targeting the same day", () => {
+    const the14th = Date.UTC(2026, 6, 14, 9, 0, 0);
+    const the14thLater = Date.UTC(2026, 6, 14, 18, 0, 0);
+    const existing = [
+      task({
+        title: "Fill the Instagram gap with fresh content",
+        status: "pending",
+        metadata: {
+          productType: "social_post",
+          platform: "instagram",
+          suggestedDate: the14th,
+        },
+        createdAt: Date.UTC(2026, 6, 6), // created Monday, but targets the 14th
+      }),
+    ];
+    expect(
+      findDuplicateReason(
+        {
+          title: "Produce new IG carousels",
+          productType: "social_post",
+          platform: "instagram",
+          targetDate: the14thLater,
+        },
+        existing,
+        NOW,
+      ),
+    ).toMatch(/already targets 2026-07-14/);
+  });
+
+  it("a dated candidate IS blocked by an undated task created on that same day", () => {
+    // No explicit suggestedDate on the existing task — createdAt is the only
+    // day anyone has named, so a candidate dated to that same day still
+    // collides with it.
+    const the6th = Date.UTC(2026, 6, 6, 8, 0, 0);
+    const existing = [
+      task({
+        title: "Fill the Instagram gap with fresh content",
+        status: "pending",
+        metadata: { productType: "social_post", platform: "instagram" },
+        createdAt: Date.UTC(2026, 6, 6, 10, 0, 0),
+      }),
+    ];
+    expect(
+      findDuplicateReason(
+        {
+          title: "Produce new IG carousels",
+          productType: "social_post",
+          platform: "instagram",
+          targetDate: the6th,
+        },
+        existing,
+        NOW,
+      ),
+    ).toMatch(/already targets 2026-07-06/);
+  });
+
+  it("an undated candidate keeps the original week-wide scope (no regression)", () => {
+    const existing = [
+      task({
+        title: "Fill the Instagram gap with fresh content",
+        status: "pending",
+        metadata: { productType: "social_post", platform: "instagram" },
+        createdAt: NOW,
+      }),
+    ];
+    expect(
+      findDuplicateReason(
+        { title: "Produce new IG carousels", productType: "social_post", platform: "instagram" },
+        existing,
+        NOW,
+      ),
+    ).toMatch(/already exists this week/);
+  });
+
+  it("dated candidates for different platforms or executors never clash", () => {
+    const the14th = Date.UTC(2026, 6, 14);
+    const existing = [
+      task({
+        title: "Fill the Instagram gap with fresh content",
+        status: "pending",
+        metadata: { productType: "social_post", platform: "instagram", suggestedDate: the14th },
+        createdAt: NOW,
+      }),
+    ];
+    expect(
+      findDuplicateReason(
+        { title: "New TikTok clip", productType: "social_post", platform: "tiktok", targetDate: the14th },
+        existing,
+        NOW,
+      ),
+    ).toBeNull();
+    expect(
+      findDuplicateReason(
+        { title: "New LinkedIn post", customAgentId: "agent-x", platform: "instagram", targetDate: the14th },
+        existing,
+        NOW,
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("taskWeekKey", () => {
   it("is stable within a week and rolls over across weeks", () => {
     const mon = Date.UTC(2026, 6, 6); // Mon 2026-07-06

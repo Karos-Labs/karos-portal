@@ -60,6 +60,8 @@ const ASSIGNED_ON_USER = {
 const UNASSIGNED = { uid: "u-emp-2", role: "KAROS_EMPLOYEE", clientId: null, createdAt: 0 };
 /** The client whose workspace this is — must keep working on the routes they use. */
 const OWN_CLIENT_USER = { uid: "u-client", role: "CLIENT_USER", clientId: "c1", createdAt: 0 };
+/** A client logged into a DIFFERENT workspace — must never reach c1's data. */
+const OTHER_CLIENT_USER = { uid: "u-client-2", role: "CLIENT_USER", clientId: "c2", createdAt: 0 };
 
 const LEGITIMATE_STAFF = [
   ["an admin", ADMIN],
@@ -107,6 +109,16 @@ vi.mock("@ai-sdk/anthropic", () => ({
   anthropic: Object.assign((id: string) => ({ id }), {
     tools: { webSearch_20250305: () => ({}) },
   }),
+}));
+// T-B3/SCRUM-246: chat.client's cost-based default now resolves to vendor
+// "google" (Gemini), so aiFor() reaches this constructor on the SAME plain
+// chat turns this file already drives through the real route. Real
+// `googleVertex()` validates GOOGLE_VERTEX_LOCATION synchronously — this repo
+// has no test env carrying Vertex settings (nor does it mock the real Vertex
+// SDK anywhere else), so it is stubbed the same way `@ai-sdk/anthropic` above
+// already is, not exercised against real Google Cloud config.
+vi.mock("@ai-sdk/google-vertex", () => ({
+  googleVertex: Object.assign((id: string) => ({ id }), { tools: {} }),
 }));
 vi.mock("@/services/logger", () => ({
   logger: { logUsage: vi.fn(), logGenerationFailure: vi.fn() },
@@ -279,6 +291,29 @@ describe("POST /api/clients/[id]/logo", () => {
       expect.objectContaining({ logoUrl: "https://cdn.test/new.png" }),
     );
   });
+
+  // Portal revamp, Account Center Profile tab: a client manages their own
+  // "company picture" now — admitted through the same canViewClient fence
+  // staff use, not a role carve-out, so a client from another workspace still
+  // 404s exactly like the unassigned employee above.
+  it("lets the client whose workspace it is replace their own logo", async () => {
+    as(OWN_CLIENT_USER);
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(data.updateClient).toHaveBeenCalledWith(
+      "c1",
+      expect.objectContaining({ logoUrl: "https://cdn.test/new.png" }),
+    );
+  });
+
+  it("404s a client logged into a different workspace, and touches neither Storage nor the client", async () => {
+    as(OTHER_CLIENT_USER);
+    const res = await call();
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "Client not found" });
+    expect(uploadBytes).not.toHaveBeenCalled();
+    expect(data.updateClient).not.toHaveBeenCalled();
+  });
 });
 
 describe("DELETE /api/clients/[id]/logo", () => {
@@ -301,6 +336,21 @@ describe("DELETE /api/clients/[id]/logo", () => {
     expect(res.status).toBe(200);
     expect(deleteObject).toHaveBeenCalledWith("clients/c1/logos/old.png");
     expect(data.updateClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the client whose workspace it is clear their own logo", async () => {
+    as(OWN_CLIENT_USER);
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(deleteObject).toHaveBeenCalledWith("clients/c1/logos/old.png");
+  });
+
+  it("404s a client logged into a different workspace, and deletes nothing", async () => {
+    as(OTHER_CLIENT_USER);
+    const res = await call();
+    expect(res.status).toBe(404);
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(data.updateClient).not.toHaveBeenCalled();
   });
 });
 
@@ -359,11 +409,13 @@ describe("GET /api/clients/[id]/report", () => {
 
 /* ─────────────────────────────── insights ─────────────────────────────── */
 
-describe("GET /api/clients/[id]/insights", () => {
-  /** `?force=1` is the path that charges — see the route's own note. */
+describe("POST /api/clients/[id]/insights", () => {
+  /** `?force=1` is the path that charges — see the route's own note.
+   *  POST, not GET (2026-08): a GET here was a forgeable cross-site trigger
+   *  for a charging request — see the route's own note. */
   const call = async (force = true) => {
-    const { GET } = await import("@/app/api/clients/[id]/insights/route");
-    return GET(new Request(`http://t/x${force ? "?force=1" : ""}`), params);
+    const { POST } = await import("@/app/api/clients/[id]/insights/route");
+    return POST(new Request(`http://t/x${force ? "?force=1" : ""}`, { method: "POST" }), params);
   };
 
   beforeEach(() => {
@@ -599,9 +651,18 @@ describe("every API route that takes a client id asks the fence", () => {
   const API_ROOT = join(process.cwd(), "src/app/api");
 
   const CLASSIFIED: Record<string, "fenced" | "cron" | "signed" | "self"> = {
+    "agent-engine/reconcile": "cron",
+    // Signs a PUT into `clients/<id>/run-attachments/`, so the id arrives
+    // asserted by the caller and the fence is the only thing between a guessed
+    // id and a write handle into that client's media prefix.
+    "agent-engine/run-media": "fenced",
     "agent-service/reconcile": "cron",
     "agent-service/webhook": "signed",
     "analytics/sync": "cron",
+    // One asset, for the copilot dock — the only deliverable surface that holds
+    // an id and not the object (flow audit 2026-09, R12). Delegates to
+    // `authorizeAssetMedia`, the same gate the two media routes below use.
+    "assets/[id]": "fenced",
     "assets/[id]/download": "fenced",
     "assets/[id]/media": "fenced",
     "assets/bulk-upload": "fenced",
@@ -612,6 +673,7 @@ describe("every API route that takes a client id asks the fence", () => {
     "clients/[id]/agents/mentionable": "fenced",
     "clients/[id]/chat": "fenced",
     "clients/[id]/context": "fenced",
+    "clients/[id]/downloads": "fenced",
     "clients/[id]/insights": "fenced",
     "clients/[id]/logo": "fenced",
     "clients/[id]/report": "fenced",
@@ -629,12 +691,19 @@ describe("every API route that takes a client id asks the fence", () => {
     "integrations/linkedin/employee/auth": "fenced",
     "integrations/linkedin/employee/callback": "signed",
     "intel-report-schedule": "cron",
+    // Reads a JOB id from the request, never a client id — the narrow status
+    // poll behind /jobs/[id]'s own AutoRefresh (SCRUM-265 item 1). Staff-only
+    // via requireUser, same as the page it serves; no clientId ever crosses
+    // this boundary for the mechanical check below to catch.
+    "jobs/[id]/status": "self",
     mcp: "signed",
     publish: "cron",
     "run-scheduled": "cron",
     runway: "cron",
     scheduler: "cron",
+    "tasks/auto-generate": "cron",
     "tasks/generate-swarm": "fenced",
+    "telemetry/track": "self",
     "users/avatar": "self",
     "users/resume": "self",
   };

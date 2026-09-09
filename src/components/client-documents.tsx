@@ -2,9 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
+import { HereFor } from "@/components/here-for";
+import { ContactUsButton } from "@/components/contact-us-modal";
+import { SETUP_LANDING_COPY, SETUP_LANDING_KEYS } from "@/lib/setup-ladder";
+import { dropLandingParams, landedFromLadder } from "@/lib/setup-landing-params";
 import {
   GENERATED_BLOCK_LINE_RE,
   isSafeHref,
@@ -16,22 +20,10 @@ import {
   stripHeadingNumber,
   stripPipelineMarkers,
 } from "@/lib/doc-render";
-import {
-  generateDocSummaryAction,
-  generateIntelReportAction,
-  updateIntelScheduleAction,
-} from "@/lib/actions";
+import { generateDocSummaryAction, generateIntelReportAction, markActionDoneAction } from "@/lib/actions";
 import { CorrectInfoModal } from "@/components/correct-info-modal";
 import { docListEmptyLine, docsPipelineState, unavailableDocCopy } from "@/lib/doc-rail-copy";
-import {
-  computeFirstIntelScheduleRun,
-  describeIntelSchedule,
-  MIN_INTERVAL_MONTHS,
-  MAX_INTERVAL_MONTHS,
-  MIN_DAY_OF_MONTH,
-  MAX_DAY_OF_MONTH,
-  type IntelScheduleInfo,
-} from "@/lib/intel-schedule";
+import type { IntelScheduleInfo } from "@/lib/intel-schedule";
 import type { ClientContextDoc, ContextDocType } from "@/lib/types";
 
 /** Documents surfaced to the client, in display order. Shown only when generated. */
@@ -410,7 +402,19 @@ function ExportMenu({
   );
 }
 
-/* ── Full-document slide-over (50% width) ─────────────────────────────── */
+/* ── Full-document reader — an EXPANDED PANEL on the Documents tab ──────
+   (flow audit 2026-09, R13.)
+
+   It was a 50%-width slide-over rendered through a portal, with the
+   "Correct Info" dialog stacked on top of it: page → tab → slide-over →
+   modal, four levels of disclosure for one document. And the reader failed
+   three of the four "use a page, not an overlay" tests outright — it has its
+   own scrolling, its own table of contents and its own export menu, which is
+   a second navigation system inside an overlay.
+
+   So it renders in place of the list now, on the tab it belongs to, with a
+   "All documents" control back. Nothing about the route changes; "Correct
+   Info" stays a modal, and is now the ONLY one. ── */
 
 /** Any body text sitting before the first `##` heading - parseDocSections drops it. */
 function leadIn(content: string): string {
@@ -425,13 +429,18 @@ function sectionId(heading: string, i: number): string {
   return `doc-section-${i}-${slug || "untitled"}`;
 }
 
-function DocOverlay({
+function DocPanel({
   doc,
   label,
   clientId,
   correctionPricing,
   onClose,
   onDocUpdated,
+  landed = false,
+  onLandingDone,
+  confirmed = false,
+  canConfirm = false,
+  onConfirm,
 }: {
   doc: ClientContextDoc;
   label: string;
@@ -439,10 +448,33 @@ function DocOverlay({
   correctionPricing?: { cost: number; blockReason?: string };
   onClose: () => void;
   onDocUpdated?: () => void;
+  /** The setup ladder sent the client straight to this document (`?doc=&for=`). */
+  landed?: boolean;
+  /** Clears the landing band and its query params. */
+  onLandingDone?: () => void;
+  /** This document's action-list row already says "confirmed" (21 / 22 / 23). */
+  confirmed?: boolean;
+  /** This viewer may answer the confirmation — see `ClientDocuments`. */
+  canConfirm?: boolean;
+  /**
+   * "Looks right" — omitted when this document has no checklist row to write,
+   * and the foot then carries the Support half alone. See `DocConfirmFoot`.
+   */
+  onConfirm?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [correcting, setCorrecting] = useState(false);
   const [summary, setSummary] = useState<string[] | null>(null);
+  /**
+   * The correction this reader just paid for, kept on screen (flow audit
+   * 2026-09, R13). "Apply Correction" used to close the modal AND the
+   * document, dropping the client back on the list with no diff and no
+   * acknowledgement of a billable AI rewrite. The action returns no diff to
+   * render, so this shows the two things that are actually known: what they
+   * asked for, verbatim, and that the document moved a version.
+   */
+  const [applied, setApplied] = useState<{ text: string; fromVersion: number } | null>(null);
   // renderFullDoc("") returns "" - with no branch here the panel used to open
   // onto a completely blank body with no message and no explanation.
   const body = renderFullDoc(doc.content);
@@ -453,22 +485,28 @@ function DocOverlay({
   const sections = parseDocSections(doc.content);
   const indexed = sections.length >= 2;
   const lead = leadIn(doc.content);
+  const landingCopy = SETUP_LANDING_COPY[doc.docType];
 
+  // No body-scroll lock any more: this is a panel on the page, not an overlay
+  // over it, and freezing the page behind a panel that IS the page is what made
+  // the old reader feel like a fourth level. Escape still returns to the list —
+  // the habit is cheap to keep and costs nothing here.
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && !correcting) onClose();
     }
     document.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("keydown", onKey);
   }, [onClose, correcting]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    // …and take focus with it. The panel REPLACES the list rather than opening
+    // over it, so the button that was pressed is gone from the DOM and focus
+    // would otherwise fall back to <body>: a screen reader announces nothing
+    // and the next Tab restarts from the top of the page. `preventScroll`
+    // because the line above has just decided where this panel starts.
+    headingRef.current?.focus({ preventScroll: true });
   }, [doc.id]);
 
   // Executive summary: already built on the server, with caching keyed on the
@@ -490,19 +528,45 @@ function DocOverlay({
     };
   }, [clientId, doc.docType, doc.tier, doc.version]);
 
-  return createPortal(
+  return (
     <>
-      <div
-        className="fixed inset-0 z-[10000] flex justify-end"
-        style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(3px)" }}
-        onClick={(e) => {
-          if (e.target === e.currentTarget) onClose();
-        }}
-      >
-        <div className="flex h-full w-full max-w-[92%] flex-col border-l border-border bg-surface shadow-2xl animate-slide-in-right md:max-w-[50%]">
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-6 py-3.5">
+      <div className="rounded-[var(--radius)] border border-border bg-surface">
+        {/* `relative` is here for the absolutely-positioned bits inside this
+            box, NOT for the sticky header below it (review wave, 2026-09):
+            `position: sticky` is resolved against the nearest scrolling
+            ancestor, which is the page, and no containing block changes that. */}
+        <div className="relative flex flex-col">
+          {/* STICKY INSIDE THE SCROLLER (flow audit 2026-09, R13 follow-up).
+              The slide-over pinned its header above a flex-1 body; a panel in
+              the page flow has no such column, so on a phone — where the panel
+              is the whole screen and the reader scrolls a long document — the
+              header, the way back and "Correct Info" all scrolled away. Sticky
+              keeps every one of them one thumb away at any scroll depth, and
+              `bg-surface` keeps the document from showing through it. */}
+          <div className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-6 py-3.5">
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-foreground">{label}</p>
+              {/* The way back, named. The slide-over's only exit was a bare X
+                  (and the backdrop), which says "put this away" and not "return
+                  to the list" — flow audit 2026-09, R13. */}
+              <button
+                onClick={onClose}
+                className="focus-ring mb-1 inline-flex items-center gap-1.5 rounded-md text-[11px] font-medium text-muted transition-colors hover:text-foreground"
+              >
+                <Icon name="ChevronLeft" className="h-3.5 w-3.5" />
+                All documents
+              </button>
+              {/* The focus target for the list -> panel swap below, and a real
+                  heading rather than a styled paragraph: the panel replaces the
+                  list in place, so without this a screen reader is left where
+                  the pressed row used to be and a keyboard reader's next Tab
+                  starts from the top of the page. */}
+              <h2
+                ref={headingRef}
+                tabIndex={-1}
+                className="truncate text-sm font-semibold text-foreground focus:outline-none"
+              >
+                {label}
+              </h2>
               {/* "Is this current?" is the first question a document with a
                   recurring regeneration schedule has to answer. */}
               {/* Carries a date and a version number, so it takes the readable
@@ -521,17 +585,44 @@ function DocOverlay({
                 <Icon name="PenLine" className="h-3.5 w-3.5" />
                 Correct Info
               </button>
-              <button
-                onClick={onClose}
-                className="flex h-8 w-8 items-center justify-center rounded-[8px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-                aria-label="Close document"
-              >
-                <Icon name="X" className="h-4 w-4" />
-              </button>
             </div>
           </div>
 
-          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
+          {/* The ladder's landing band (round 6, §2.8): the client pressed
+              "Read your Target Audience" on Home and this says so, at the top
+              of the document they were sent to. */}
+          {landed && landingCopy && (
+            <div className="border-b border-border px-6 py-3">
+              <HereFor
+                action={landingCopy.action}
+                reason={landingCopy.reason}
+                onDismiss={() => onLandingDone?.()}
+              />
+            </div>
+          )}
+
+          {/* What the correction actually did (flow audit 2026-09, R13).
+              `role="status"` because this appears without the reader moving:
+              the modal above it closes and this arrives in its place, which is
+              a change nobody is looking at unless it is announced. */}
+          {applied && (
+            <div role="status" className="border-b border-neon/20 bg-neon-soft/30 px-6 py-3">
+              <p className="text-xs font-medium text-neon">
+                {doc.version > applied.fromVersion
+                  ? `Correction applied. This document is now v${doc.version}.`
+                  : "Correction applied."}
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                You asked us to correct: “{applied.text}”. Only the facts you named changed;
+                everything else is identical.
+              </p>
+            </div>
+          )}
+
+          {/* A capped height rather than the viewport: the document keeps its
+              own scroll (it is long, and it has a table of contents pinned
+              beside it) without swallowing the tab it sits on. */}
+          <div ref={scrollRef} className="max-h-[70vh] min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-8">
             {body && summary && (
               <div className="mx-auto mb-6 w-full max-w-3xl rounded-[10px] border border-border bg-surface-2 px-4 py-3">
                 <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
@@ -616,24 +707,132 @@ function DocOverlay({
                 dangerouslySetInnerHTML={{ __html: body }}
               />
             )}
+            {body && (
+              <DocConfirmFoot
+                docLabel={label}
+                confirmed={confirmed}
+                canConfirm={canConfirm}
+                onConfirm={onConfirm}
+              />
+            )}
           </div>
         </div>
       </div>
 
+      {/* The one modal a CLIENT meets in this flow now (flow audit 2026-09,
+          R13): a short, user-initiated, billable decision — the case a dialog
+          is actually for — over a document that is no longer itself an
+          overlay. It is not the only dialog this component mounts:
+          RegenerateModal is still here, on the list behind an `isAdmin &&
+          clientId` gate, and staff keep it. What went is the STACK — page ->
+          tab -> slide-over -> modal is now page -> tab -> panel -> modal
+          minus a level, and no dialog opens over another. */}
       <CorrectInfoModal
         documentId={doc.id}
         docLabel={label}
         correctionPricing={correctionPricing}
         open={correcting}
         onClose={() => setCorrecting(false)}
-        onSuccess={() => {
+        onSuccess={(correction) => {
+          // The document STAYS OPEN. It used to close both layers and land the
+          // client on the list with nothing to show for a paid rewrite.
           setCorrecting(false);
-          onClose();
+          setApplied({ text: correction, fromVersion: doc.version });
           onDocUpdated?.();
         }}
       />
-    </>,
-    document.body,
+    </>
+  );
+}
+
+/* ── "Looks right" / "Something is off" ───────────────────────────────── */
+
+/**
+ * THE CONFIRMATION THE SETUP LADDER WAS MISSING (round 6, decision 3 · §2.4).
+ *
+ * Step 2 used to tick the moment a client OPENED one of these documents — the
+ * row was written by the list's own button, so "Confirm your brand voice and
+ * audience" completed without anybody confirming anything, and "opened it once"
+ * is the weakest activity signal there is. This is the gesture instead: a quiet
+ * pair at the foot of the document a person has just read.
+ *
+ * TWO CONTROLS, AND NEITHER IS THE BILLABLE ONE. "Looks right" writes the
+ * checklist row (21 / 22 / 23) and nothing else. "Something is off" opens
+ * Support with the document named, which is the answer Albert's open question
+ * about brand-voice editability does NOT depend on: no field here becomes
+ * editable, and "Correct Info" — which spends credits on a rewrite — stays
+ * where it is, in the header, untouched and unpromoted.
+ *
+ * Support is the one word for every help trigger (R7), so the trigger keeps its
+ * own label and the sentence beside it carries "Something is off" and the
+ * document's name. That way one dialog still has one name.
+ *
+ * NEITHER CONTROL IS STAFF'S TO PRESS (round 6 review, D1). `canConfirm` is
+ * false for every staff reader, client context included: both halves are the
+ * client's answer about their own document, so with it false this foot renders
+ * the read-only "Confirmed" line if the client has already answered, and
+ * nothing at all if they have not — no button, no Support trigger, no question
+ * addressed to somebody who cannot answer it.
+ */
+function DocConfirmFoot({
+  docLabel,
+  confirmed,
+  canConfirm,
+  onConfirm,
+}: {
+  docLabel: string;
+  confirmed: boolean;
+  /** This viewer may answer. False = read-only, see the note above. */
+  canConfirm: boolean;
+  /** Absent for a document with no checklist row: the Support half stands alone. */
+  onConfirm?: () => void;
+}) {
+  const [justConfirmed, setJustConfirmed] = useState(false);
+  const done = confirmed || justConfirmed;
+  // A read-only viewer with nothing to read: no foot. The alternative is a
+  // hairline and a question nobody on this screen is allowed to answer.
+  if (!canConfirm && !done) return null;
+  return (
+    <div className="mx-auto mt-8 w-full max-w-3xl border-t border-border pt-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <p className="min-w-0 flex-1 text-xs text-muted">
+          {done
+            ? `You told us your ${docLabel} looks right. Every draft is checked against it.`
+            : `Does your ${docLabel} describe you?`}
+        </p>
+        {canConfirm && onConfirm && !done && (
+          <button
+            type="button"
+            onClick={() => {
+              setJustConfirmed(true);
+              onConfirm();
+            }}
+            className="focus-ring shrink-0 rounded-md text-xs font-medium text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
+          >
+            Looks right
+          </button>
+        )}
+        {done && (
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-success">
+            <Icon name="Check" className="h-3.5 w-3.5" />
+            Confirmed
+          </span>
+        )}
+      </div>
+      {/* The other half. `w-fit` because the row variant is `w-full` by design
+          (it is an account-menu row elsewhere), and here it is one quiet
+          control at the end of a sentence. Gated with the first half (round 6
+          review, D1): it opens Support about the CLIENT's document, and the
+          sentence says "your", which is not true for a staff reader. */}
+      {canConfirm && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p className="text-xs text-muted-2">Something is off in your {docLabel}?</p>
+          <div className="-mx-3 w-fit">
+            <ContactUsButton variant="row" />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -750,7 +949,7 @@ export function RegenerateModal({
               disabled={running}
               rows={5}
               placeholder={`e.g. "Lean heavily into social media assets and downplay SEO. Focus the competitor analysis on emerging brands, not industry giants."`}
-              className="w-full resize-none rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 text-sm text-foreground placeholder:text-muted-2 focus:border-neon focus:outline-none disabled:opacity-50"
+              className="focus-ring w-full resize-none rounded-[10px] border border-border bg-surface-2 px-3 py-2.5 text-sm text-foreground placeholder:text-muted-2 focus:border-border-strong disabled:opacity-50"
             />
           </div>
           {error && (
@@ -772,7 +971,7 @@ export function RegenerateModal({
           <button
             onClick={handleConfirm}
             disabled={running}
-            className="flex items-center gap-2 rounded-[10px] bg-neon px-4 py-2 text-sm font-semibold text-[#03110b] transition-opacity hover:opacity-90 disabled:opacity-60"
+            className="flex items-center gap-2 rounded-[10px] bg-neon px-4 py-2 text-sm font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             <Icon
               name="RefreshCw"
@@ -787,234 +986,27 @@ export function RegenerateModal({
   );
 }
 
-/* ── Schedule modal ───────────────────────────────────────────────────── */
-
 function formatDate(ms: number | null): string {
   if (!ms) return "Never";
   return new Date(ms).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 
-function ScheduleModal({
-  clientId,
-  schedule,
-  open,
-  onClose,
-  onSuccess,
-}: {
-  clientId: string;
-  schedule: IntelScheduleInfo;
-  open: boolean;
-  onClose: () => void;
-  onSuccess: () => void;
-}) {
-  const [enabled, setEnabled] = useState(schedule.enabled);
-  const [intervalMonths, setIntervalMonths] = useState(schedule.intervalMonths);
-  const [dayOfMonth, setDayOfMonth] = useState(schedule.dayOfMonth);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setEnabled(schedule.enabled);
-      setIntervalMonths(schedule.intervalMonths);
-      setDayOfMonth(schedule.dayOfMonth);
-      setError(null);
-      setRunning(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && !running) onClose();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, running, onClose]);
-
-  async function handleSave() {
-    setRunning(true);
-    setError(null);
-    try {
-      const result = await updateIntelScheduleAction(clientId, { enabled, intervalMonths, dayOfMonth });
-      if ("error" in result && result.error) {
-        setError(result.error);
-        return;
-      }
-      onSuccess();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save the schedule. Please try again.");
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  if (!open) return null;
-
-  // The saved next run and the preview only agree at a one-month interval: the
-  // cron advances by adding the interval to the slot that just fired, while the
-  // preview is the next calendar occurrence of dayOfMonth. So show the SAVED
-  // date until something is edited, and relabel it once it is - the modal is the
-  // only place a schedule can be inspected, and "Next run" was the one number an
-  // admin opens it to check.
-  const edited =
-    enabled !== schedule.enabled ||
-    intervalMonths !== schedule.intervalMonths ||
-    dayOfMonth !== schedule.dayOfMonth;
-  // A schedule saved with no stored next run has nothing to report but the
-  // preview, so it gets the preview's label too rather than a bare date.
-  const previewing = edited || schedule.nextRunAt === null;
-  const nextRunLabel = previewing ? "Next run after saving" : "Next run";
-  const nextRunAt = enabled
-    ? previewing
-      ? computeFirstIntelScheduleRun(dayOfMonth)
-      : schedule.nextRunAt
-    : null;
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.72)", backdropFilter: "blur(4px)" }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !running) onClose();
-      }}
-    >
-      <div className="w-full max-w-md overflow-hidden rounded-[16px] border border-border bg-surface shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-[8px] bg-neon-soft neon-glow">
-              <Icon name="CalendarClock" className="h-3.5 w-3.5 text-neon" />
-            </div>
-            <p className="font-semibold text-foreground">Regeneration Schedule</p>
-          </div>
-          <button
-            onClick={onClose}
-            disabled={running}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:opacity-40"
-          >
-            <Icon name="X" className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="space-y-4 px-5 py-4">
-          <p className="text-sm text-muted">
-            Automatically re-run the Intel Report + SEO/GEO pipeline on a recurring cadence.
-            This is the only automatic re-trigger besides creating the client. Otherwise it
-            only runs when an admin clicks Regenerate.
-          </p>
-
-          <label className="flex items-center justify-between gap-3 rounded-[10px] border border-border bg-surface-2 px-3 py-2.5">
-            <span className="text-sm font-medium text-foreground">Enable recurring regeneration</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              onClick={() => setEnabled((v) => !v)}
-              disabled={running}
-              className={cn(
-                "relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50",
-                enabled ? "bg-neon" : "bg-surface",
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform",
-                  enabled && "translate-x-4",
-                )}
-              />
-            </button>
-          </label>
-
-          <div className={cn("grid grid-cols-2 gap-3", !enabled && "pointer-events-none opacity-40")}>
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-                Repeat every
-              </p>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={MIN_INTERVAL_MONTHS}
-                  max={MAX_INTERVAL_MONTHS}
-                  value={intervalMonths}
-                  onChange={(e) => setIntervalMonths(Number(e.target.value) || MIN_INTERVAL_MONTHS)}
-                  disabled={running || !enabled}
-                  className="w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground focus:border-neon focus:outline-none disabled:opacity-50"
-                />
-                <span className="shrink-0 text-sm text-muted">
-                  {intervalMonths === 1 ? "month" : "months"}
-                </span>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-                On day of month
-              </p>
-              <input
-                type="number"
-                min={MIN_DAY_OF_MONTH}
-                max={MAX_DAY_OF_MONTH}
-                value={dayOfMonth}
-                onChange={(e) => setDayOfMonth(Number(e.target.value) || MIN_DAY_OF_MONTH)}
-                disabled={running || !enabled}
-                className="w-full rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground focus:border-neon focus:outline-none disabled:opacity-50"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1 rounded-[10px] border border-border px-3 py-2.5 text-xs">
-            <p className="text-muted">
-              <span className="text-muted-2">Cadence: </span>
-              {enabled ? describeIntelSchedule({ intervalMonths, dayOfMonth }) : "Off"}
-            </p>
-            {enabled && nextRunAt && (
-              <p className="text-muted">
-                <span className="text-muted-2">{nextRunLabel}: </span>
-                {formatDate(nextRunAt)}
-              </p>
-            )}
-            <p className="text-muted">
-              <span className="text-muted-2">Last generated: </span>
-              {formatDate(schedule.lastIntelReportAt)}
-            </p>
-          </div>
-
-          {error && (
-            <p className="rounded-[8px] border border-danger/20 bg-danger/10 px-3 py-2 text-xs text-danger">
-              {error}
-            </p>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2.5 border-t border-border px-5 py-4">
-          <button
-            onClick={onClose}
-            disabled={running}
-            className="rounded-[8px] px-4 py-2 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={running}
-            className="flex items-center gap-2 rounded-[10px] bg-neon px-4 py-2 text-sm font-semibold text-[#03110b] transition-opacity hover:opacity-90 disabled:opacity-60"
-          >
-            <Icon name="CalendarClock" className={cn("h-3.5 w-3.5", running && "animate-pulse")} />
-            {running ? "Saving…" : "Save Schedule"}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 /* ── Documents list ───────────────────────────────────────────────────── */
 
+
+/**
+ * Maps a document onto the action-list id it counts toward, when any.
+ *
+ * WRITTEN BY "LOOKS RIGHT" NOW, NOT BY OPENING THE ROW (round 6, decision 3).
+ * The ids and their storage are unchanged, so nobody's stored progress resets;
+ * what changed is the event they record — from "the client opened this once" to
+ * "the client told us it describes them".
+ */
+const ACTION_ID_BY_DOC_TYPE: Partial<Record<ContextDocType, string>> = {
+  "brand-voice": "21",
+  "target-audience": "22",
+  "competitor-analysis": "23",
+};
 
 export function ClientDocuments({
   contextDocs,
@@ -1022,9 +1014,13 @@ export function ClientDocuments({
   clientId,
   isAiProcessing,
   aiProcessingFailed,
-  intelSchedule,
+  // Kept on the signature for callers (client-rail.tsx); the sidebar's schedule
+  // button/modal that read this was removed.
+  intelSchedule: _intelSchedule,
   allowInternalFallback = false,
   correctionPricing,
+  confirmedDocTypes,
+  canConfirm = false,
 }: {
   contextDocs: ClientContextDoc[];
   isAdmin?: boolean;
@@ -1051,22 +1047,125 @@ export function ClientDocuments({
    * whose corrections are agency overhead and cost the client nothing.
    */
   correctionPricing?: { cost: number; blockReason?: string };
+  /**
+   * Which documents this client has already told us look right (action ids
+   * 21 / 22 / 23). OPTIONAL: absent means the foot asks again, and a second
+   * press writes the same row — the store is an upsert, so re-confirming is
+   * harmless. handoffs/C.md asks the settings page to pass it, which is where
+   * the client's action states are already read.
+   */
+  confirmedDocTypes?: readonly ContextDocType[];
+  /**
+   * Whether THIS viewer may answer the confirmation (round 6 review, D1).
+   *
+   * FALSE FOR STAFF, INCLUDING "View as Client". "Looks right" writes a
+   * `ClientActionState` row against the client's own account and ticks the
+   * client's setup ladder — an operator reading the document for their own
+   * reasons must not be able to answer for them, and "Something is off" opens
+   * Support on the client's behalf, which is the same problem in the other
+   * direction. Same shape as `GetSetUpWidget`'s `canHide`: the controls are not
+   * RENDERED rather than gated inside the handler, because a control you can
+   * see and must not press is worse than one that is not there. Staff still
+   * read the document, and still see the read-only "Confirmed" line when the
+   * client has already answered — the layout is the client's, with one control
+   * withheld.
+   */
+  canConfirm?: boolean;
 }) {
   const router = useRouter();
-  const [openDoc, setOpenDoc] = useState<{ doc: ClientContextDoc; label: string } | null>(null);
+  /**
+   * The doc TYPE being read, not a snapshot of the document (flow audit
+   * 2026-09, R13). The reader stays open across a correction now, and a
+   * correction rewrites the document — so holding the object here would leave
+   * the panel rendering the pre-correction copy after `router.refresh()`
+   * delivered the new one. The type is stable; the document is re-picked from
+   * the fresh props below.
+   */
+  // Typed as the union it actually holds (review wave, 2026-09): every value
+  // put in it comes from DOC_TABS, and `string` let a typo compile into a
+  // reader that silently opens nothing.
+  /**
+   * OPENED FROM THE URL WHEN THE LADDER SENT THEM (round 6, §2.4).
+   *
+   * `?doc=target-audience&for=voice#documents` — the query, not the fragment:
+   * the anchor scrolls the section into view and these two params say WHICH
+   * document to open, which a fragment-only link could not (nothing can read
+   * search params out of a hash). Validated against `DOC_TABS`, so a stale link
+   * opens the list rather than nothing.
+   */
+  const params = useSearchParams();
+  const landedDocType =
+    DOC_TABS.map((t) => t.docType).find((t) => t === params.get(SETUP_LANDING_KEYS.doc)) ?? null;
+  // round 6 review (E14): shared with the profile panel — see
+  // `setup-landing-params.ts`.
+  const landed = landedFromLadder(params);
+  const [openDocType, setOpenDocType] = useState<ContextDocType | null>(landedDocType);
+  const [landingCleared, setLandingCleared] = useState(false);
   const [regenModalOpen, setRegenModalOpen] = useState(false);
-  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+
+  /** Clears the landing band and drops `doc=` / `for=` without a navigation.
+   *  round 6 review (E14): the URL surgery is shared — `setup-landing-params.ts`
+   *  keeps the hash (this landing arrives at `#documents`). */
+  function landingDone() {
+    setLandingCleared(true);
+    dropLandingParams([SETUP_LANDING_KEYS.doc, SETUP_LANDING_KEYS.for]);
+  }
 
   const available = DOC_TABS.map((t) => ({
     ...t,
     pick: pickDoc(contextDocs, t.docType, allowInternalFallback),
   })).filter((i) => i.pick.kind !== "none");
 
+  const openItem = openDocType ? available.find((i) => i.docType === openDocType) : undefined;
+  const openDoc =
+    openItem && openItem.pick.kind === "doc"
+      ? { doc: (openItem.pick as { kind: "doc"; doc: ClientContextDoc }).doc, label: openItem.label }
+      : null;
+
   // Asked ONCE, here, and read by both the empty state and every unavailable
   // row — so the list and the rows in it cannot disagree about whether anything
   // is happening.
   const pipeline = docsPipelineState({ isAiProcessing, aiProcessingFailed });
   const unavailable = unavailableDocCopy(pipeline);
+
+  // THE READER REPLACES THE LIST rather than floating over it (flow audit
+  // 2026-09, R13) — one thing on the tab at a time, and "All documents" inside
+  // the panel is the way back.
+  if (openDoc) {
+    const actionId = ACTION_ID_BY_DOC_TYPE[openDoc.doc.docType];
+    return (
+      <div>
+        <DocPanel
+          doc={openDoc.doc}
+          label={openDoc.label}
+          clientId={clientId}
+          correctionPricing={correctionPricing}
+          onClose={() => {
+            setOpenDocType(null);
+            // Leaving the document leaves the landing behind with it: the band
+            // belongs to the document the client was sent to, not to the list.
+            if (!landingCleared && landed) landingDone();
+          }}
+          onDocUpdated={() => router.refresh()}
+          landed={landed && !landingCleared && openDocType === landedDocType}
+          onLandingDone={landingDone}
+          confirmed={(confirmedDocTypes ?? []).includes(openDoc.doc.docType)}
+          canConfirm={canConfirm}
+          onConfirm={
+            // round 6 review (D1): `canConfirm` first — without it the write is
+            // one prop-drill away from firing for a staff reader.
+            canConfirm && clientId && actionId
+              ? () => {
+                  void markActionDoneAction(clientId, actionId);
+                  // The band's job is done the moment the client answers it.
+                  if (!landingCleared && landed) landingDone();
+                }
+              : undefined
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -1076,14 +1175,6 @@ export function ClientDocuments({
         </p>
         {isAdmin && clientId && (
           <div className="flex items-center gap-0.5">
-            <button
-              onClick={() => setScheduleModalOpen(true)}
-              title="Configure recurring Intel Report + SEO/GEO regeneration"
-              className="flex items-center gap-1 rounded-[5px] px-1.5 py-0.5 text-[10px] font-medium text-muted-2 transition-colors hover:bg-surface-2 hover:text-foreground"
-            >
-              <Icon name="CalendarClock" className="h-3 w-3" />
-              Schedule
-            </button>
             <button
               onClick={() => setRegenModalOpen(true)}
               disabled={isAiProcessing}
@@ -1114,15 +1205,15 @@ export function ClientDocuments({
             item.pick.kind === "doc" ? (
               <li key={item.docType}>
                 <button
-                  onClick={() =>
-                    setOpenDoc({
-                      doc: (item.pick as { kind: "doc"; doc: ClientContextDoc }).doc,
-                      label: item.label,
-                    })
-                  }
+                  // NO WRITE HERE ANY MORE (round 6, decision 3). Opening a
+                  // document used to mark ids 21/22/23 done, so the setup
+                  // ladder's "Confirm your brand voice and audience" completed
+                  // without anybody confirming anything. The row opens the
+                  // document; the document's own foot carries the confirmation.
+                  onClick={() => setOpenDocType(item.docType)}
                   /* Compact rows: the rail is a no-scroll fixed layout (CD-E3),
                      and seven of these were its single tallest block. */
-                  className="group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
+                  className="focus-ring group flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
                 >
                   <Icon name="FileText" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
                   <span className="flex-1 truncate text-[13px] leading-5 text-muted group-hover:text-foreground">
@@ -1165,19 +1256,6 @@ export function ClientDocuments({
           (buildAgentSetup in clients/[id]/agents/page.tsx), which is also the
           only place that knows whether the client HAS that agent (CD-E1). */}
 
-      {openDoc && (
-        <DocOverlay
-          doc={openDoc.doc}
-          label={openDoc.label}
-          clientId={clientId}
-          correctionPricing={correctionPricing}
-          onClose={() => setOpenDoc(null)}
-          onDocUpdated={() => {
-            setOpenDoc(null);
-            router.refresh();
-          }}
-        />
-      )}
 
       {clientId && (
         <RegenerateModal
@@ -1186,27 +1264,6 @@ export function ClientDocuments({
           onClose={() => setRegenModalOpen(false)}
           onSuccess={() => {
             setRegenModalOpen(false);
-            router.refresh();
-          }}
-        />
-      )}
-
-      {clientId && (
-        <ScheduleModal
-          clientId={clientId}
-          schedule={
-            intelSchedule ?? {
-              enabled: false,
-              intervalMonths: MIN_INTERVAL_MONTHS,
-              dayOfMonth: MIN_DAY_OF_MONTH,
-              nextRunAt: null,
-              lastIntelReportAt: null,
-            }
-          }
-          open={scheduleModalOpen}
-          onClose={() => setScheduleModalOpen(false)}
-          onSuccess={() => {
-            setScheduleModalOpen(false);
             router.refresh();
           }}
         />

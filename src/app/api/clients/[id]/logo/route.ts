@@ -11,20 +11,26 @@ const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/sv
 const MAX_BYTES = 4 * 1024 * 1024;
 
 /**
- * STAFF SCOPE, on BOTH handlers. `requireStaff`-equivalent role tests only ever
- * asked "not a client user", so an employee 404'd on /clients/[id] could replace
- * or delete any client's logo — and DELETE also unlinks the previous file from
- * Storage, so the damage outlived the request. Both now ask the predicate the
- * pages ask, unconditionally, and refuse with the "Client not found" shape both
- * already return for a missing client. Repeated per handler rather than lifted
- * into a local helper — see the note in ../context/route.ts for why the tripwire
- * needs it that way.
+ * SCOPED TO WHOEVER MAY VIEW THE CLIENT, on BOTH handlers. `requireStaff`-
+ * equivalent role tests only ever asked "not a client user", so an employee
+ * 404'd on /clients/[id] could replace or delete any client's logo — and
+ * DELETE also unlinks the previous file from Storage, so the damage outlived
+ * the request. Both now ask the predicate the pages ask, unconditionally, and
+ * refuse with the "Client not found" shape both already return for a missing
+ * client. Repeated per handler rather than lifted into a local helper — see
+ * the note in ../context/route.ts for why the tripwire needs it that way.
+ *
+ * CLIENT_USER is admitted too (portal revamp, Account Center Profile tab —
+ * "company picture"): `canViewClient`'s CLIENT_USER branch only ever returns
+ * true for `user.clientId === client.id`, so this is a client managing their
+ * own logo, not the cross-client escalation the comment above describes — that
+ * incident was staff reaching an unassigned client, which this fence still
+ * refuses exactly as before.
  */
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user || user.disabled) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role === "CLIENT_USER") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id: clientId } = await params;
   const client = await getClient(clientId);
@@ -62,7 +68,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user || user.disabled) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role === "CLIENT_USER") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { id: clientId } = await params;
   const client = await getClient(clientId);

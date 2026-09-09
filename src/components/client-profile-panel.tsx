@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/icon";
 import {
   CLIENT_CATEGORY_MAX_LENGTH,
@@ -10,10 +10,46 @@ import {
   cn,
 } from "@/lib/utils";
 import { BrandFavicon } from "@/components/brand-favicon";
+import { HereFor } from "@/components/here-for";
 import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { socialAccount, socialHandleValue } from "@/lib/social-handles";
 import { clientOwnerEmailAction, updateClientProfileAction } from "@/lib/actions";
+import {
+  SETUP_LANDING_COPY,
+  SETUP_LANDING_FIELDS,
+  SETUP_LANDING_KEYS,
+  type SetupLandingField,
+} from "@/lib/setup-ladder";
+import { dropLandingParams, landedFromLadder } from "@/lib/setup-landing-params";
 import type { Client, SocialLinks } from "@/lib/types";
+
+/**
+ * THE FIELD THE LADDER SENT THEM TO OPEN (portal feedback round 6, §2.3/§2.8).
+ *
+ * `?edit=description|category|website&for=<stepId>` — read here rather than
+ * threaded from the settings page, because that page is a server component
+ * owned by another surface and this is where the two editors actually live: the
+ * About and Website fields are inside the Brand Profile sheet, the category is
+ * the inline form. Both were behind icon-only buttons, so `?tab=profile` landed
+ * a client BESIDE the field they were told to fill in.
+ *
+ * `outline: 2px solid var(--focus)` rather than a Tailwind ring: `--focus` is
+ * the one focus token (globals.css) and an outline is what stays visible over a
+ * card's own shadow, which is the same argument `.focus-ring` is built on.
+ */
+const LANDING_OUTLINE = { outline: "2px solid var(--focus)", outlineOffset: "2px" } as const;
+
+function readLandingField(raw: string | null): SetupLandingField | null {
+  return SETUP_LANDING_FIELDS.find((field) => field === raw) ?? null;
+}
+
+/** Drops `edit=` / `for=` from the URL without a navigation, so the band and the
+ *  outline do not come back on the next render or a Back press.
+ *  round 6 review (E14): the URL surgery itself lives in
+ *  `setup-landing-params.ts` now — this file only names the keys it owns. */
+function clearLandingParams(): void {
+  dropLandingParams([SETUP_LANDING_KEYS.edit, SETUP_LANDING_KEYS.for]);
+}
 
 /**
  * The Client fields this panel renders or edits — its whole contract, stated
@@ -70,17 +106,26 @@ const SOCIALS: { key: keyof SocialLinks & SocialPlatform; placeholder: string }[
   { key: "linkedin", placeholder: "linkedin handle" },
 ];
 
-/** Anything already stored for the other platforms still renders. */
+/**
+ * Anything already stored for the other platforms still renders.
+ *
+ * NO FACEBOOK (portal feedback round 2, 2026-09: "throughout it all we can
+ * remove Facebook, we don't work with Facebook"). Dropped from what a client is
+ * SHOWN, not from what the app can read: `SocialLinks.facebook`, the
+ * `SocialPlatform` union, the handle parser and the agent-identity matcher all
+ * keep their Facebook arms, because those classify data that already exists.
+ * `PLATFORM_NAME` below keeps its entry too — the Record type requires every
+ * key of the union, and a label is not a list.
+ */
 const DISPLAY_SOCIALS: (keyof SocialLinks & SocialPlatform)[] = [
   "instagram",
   "x",
   "tiktok",
   "linkedin",
   "youtube",
-  "facebook",
 ];
 
-/** For the row's tooltip and its accessible name — the mark itself is decorative. */
+/** For the button's tooltip and its accessible name — the mark itself is decorative. */
 const PLATFORM_NAME: Record<keyof SocialLinks & SocialPlatform, string> = {
   instagram: "Instagram",
   x: "X",
@@ -91,18 +136,40 @@ const PLATFORM_NAME: Record<keyof SocialLinks & SocialPlatform, string> = {
 };
 
 /**
- * ONE chip geometry for the whole meta + socials row.
+ * ONE chip geometry for the meta row.
  *
  * The row used to size each chip on its own and let flex stretch them to the
  * tallest, so a long category turned every handle beside it into a three-line
  * box. The Competitor Track rows a few sections down are the density this rail
  * is built at — px-2, a 14px mark, one text line — so the chips are drawn to
- * the same measurements, and the tag, the plus and the six platform logos all
- * finally draw at one size.
+ * the same measurements, and the tag, the team size and the plus all draw at
+ * one size.
  */
 const CHIP =
   "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-muted";
 const CHIP_ICON = "h-3.5 w-3.5 shrink-0 text-muted-2";
+
+/**
+ * THE SOCIAL ACCOUNTS ARE LOGOS NOW, ON THEIR OWN LINE (portal feedback round
+ * 2, 2026-09: "each logo of each social platform should be just the logo, all
+ * on the same line without the username, and if you click on it it brings you
+ * to their profile. We have the category and below all the social platform
+ * buttons").
+ *
+ * They used to be chips in the same wrapping row as the category — logo plus
+ * @handle each — so five accounts and a category spread over three lines of a
+ * rail that has a no-scroll contract (CD-E3), and the handles were text nobody
+ * reads on their own profile. A square per account fits all of them on one
+ * line at every width this panel mounts at, and the handle survives as the
+ * button's accessible name rather than as pixels.
+ *
+ * Deliberately NOT `cn(CHIP, …)`: CHIP's `px-2` cannot be overridden by a
+ * later class in the same string — Tailwind decides by stylesheet order, not
+ * string order — so a square built that way would silently keep the chip's
+ * padding. Same border, same radius, same ink; its own box.
+ */
+const SOCIAL_SQUARE =
+  "inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-border bg-surface text-muted-2";
 
 /* ── Pill-shaped input ────────────────────────────────────────────────── */
 
@@ -121,7 +188,9 @@ function Pill({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 focus-within:border-neon/50",
+        // `focus-within:border-border-strong`, not the orange it used to tint:
+        // focus is ink everywhere now, and the field inside carries the ring.
+        "flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 focus-within:border-border-strong",
         className,
       )}
     >
@@ -156,18 +225,88 @@ function Pill({
 function BrandProfileModal({
   client,
   onClose,
+  landing = null,
+  onLandingDone,
 }: {
   client: ClientProfileFields;
   onClose: () => void;
+  /**
+   * The field the setup ladder sent this client here to fill in, when it did.
+   * Only the two fields this sheet holds; `category` lands on the inline form.
+   */
+  landing?: Exclude<SetupLandingField, "category"> | null;
+  /** Clears the band, the outline and the query params — on save or on "Got it". */
+  onLandingDone?: () => void;
 }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  /**
+   * Two-step inline confirm on the logo "Remove" (flow audit 2026-09, R4).
+   *
+   * The DELETE is immediate and unversioned — it does not wait for this
+   * dialog's Save, so the modal's own Cancel cannot take it back, which is
+   * precisely why one press was never enough. Same block shape as
+   * `client-key-inline.tsx`; not the undo window Home's task lists took,
+   * because there is no stored previous file to restore.
+   */
+  const [confirmingLogo, setConfirmingLogo] = useState(false);
   const [form, setForm] = useState({
     contactEmail: client.contactEmail ?? "",
     website: client.website ?? "",
-    description: client.description ?? "",
+    /**
+     * THE BRIEF PRE-FILLS ABOUT (round 6, §2.3).
+     *
+     * The panel below has always DISPLAYED `description || brief`, so a client
+     * with an AI brief and no description read an About paragraph on their own
+     * profile while the ladder said the profile was incomplete — Albert's
+     * "maybe it is already set up". The honest fix is not to count the brief as
+     * a description (nobody wrote it) but to put it in the field, so the client
+     * confirms a sentence instead of writing one from nothing. Save stores it
+     * explicitly, exactly like the contact-email default below.
+     */
+    description: client.description ?? client.brief ?? "",
   });
+
+  async function uploadLogo(file: File) {
+    setLogoError(null);
+    setLogoBusy(true);
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      const res = await fetch(`/api/clients/${client.id}/logo`, { method: "POST", body });
+      if (!res.ok) {
+        const { error: msg } = await res.json().catch(() => ({ error: "Upload failed" }));
+        setLogoError(msg ?? "Upload failed");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setLogoError("Upload failed");
+    } finally {
+      setLogoBusy(false);
+    }
+  }
+
+  async function removeLogo() {
+    setLogoError(null);
+    setLogoBusy(true);
+    try {
+      const res = await fetch(`/api/clients/${client.id}/logo`, { method: "DELETE" });
+      if (!res.ok) {
+        setLogoError("Could not remove logo");
+        return;
+      }
+      setConfirmingLogo(false);
+      router.refresh();
+    } catch {
+      setLogoError("Could not remove logo");
+    } finally {
+      setLogoBusy(false);
+    }
+  }
 
   useEffect(() => {
     const prev = document.body.style.overflow;
@@ -211,6 +350,10 @@ function BrandProfileModal({
     try {
       const res = await updateClientProfileAction(client.id, form);
       if (!res.ok) { setError(res.error); return; }
+      // The band and the outline clear on the FIRST successful save (§2.8):
+      // nothing about the landing is stored, and the ladder row itself is what
+      // remembers whether the step is done.
+      onLandingDone?.();
       onClose();
       router.refresh();
     } catch (e) {
@@ -220,8 +363,9 @@ function BrandProfileModal({
     }
   }
 
-  const inputCls = "w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 transition-colors";
+  const inputCls = "focus-ring w-full rounded-[8px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 transition-colors";
   const labelCls = "mb-1.5 block text-xs font-medium text-muted";
+  const landingCopy = landing ? SETUP_LANDING_COPY[landing] : undefined;
 
   return createPortal(
     <div
@@ -247,6 +391,89 @@ function BrandProfileModal({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          {/* The landing band sits INSIDE the sheet, because the sheet is what
+              covers the section the client landed on: a band behind it would be
+              telling them something they cannot see. */}
+          {landing && landingCopy && (
+            <HereFor
+              action={landingCopy.action}
+              reason={landingCopy.reason}
+              onDismiss={() => onLandingDone?.()}
+            />
+          )}
+          {/* Company picture (Account Center Profile tab, portal revamp). Same
+              upload the logo route always offered staff — a client managing
+              their own logo is admitted through the same canViewClient fence,
+              not a separate control. */}
+          <div>
+            <label className={labelCls}>Company picture</label>
+            <div className="flex items-center gap-3">
+              <BrandFavicon
+                src={client.logoUrl || client.brandingGuidelines?.logoUrl}
+                website={client.website}
+                name={client.name}
+                accentColor={client.accentColor ?? "#ff6b2c"}
+                faviconSize={64}
+                className="h-12 w-12 rounded-md text-sm"
+                imgClassName="border border-border bg-surface-2 object-contain"
+              />
+              <div className="flex flex-col gap-1.5">
+                <label className="inline-flex w-fit cursor-pointer items-center gap-1.5 rounded-[8px] border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-border-strong">
+                  <Icon name={logoBusy ? "Loader" : "Upload"} className={cn("h-3.5 w-3.5", logoBusy && "animate-spin")} />
+                  {client.logoUrl ? "Replace" : "Upload"}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml"
+                    className="sr-only"
+                    disabled={logoBusy}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file) void uploadLogo(file);
+                    }}
+                  />
+                </label>
+                {client.logoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingLogo(true)}
+                    disabled={logoBusy || confirmingLogo}
+                    className="w-fit text-xs text-muted transition-colors hover:text-danger disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+            {/* R4 — the two-step block, borrowed from client-key-inline.tsx. */}
+            {confirmingLogo && (
+              <div className="mt-2 rounded-[8px] border border-warning/30 bg-warning/10 px-2.5 py-2">
+                <p className="text-[11px] leading-relaxed text-foreground">
+                  Remove your company picture? It disappears everywhere it is shown, and you
+                  would need the original file to put it back.
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={removeLogo}
+                    disabled={logoBusy}
+                    className="rounded-[6px] border border-warning/40 bg-warning/15 px-2.5 py-1 text-[11px] font-medium text-warning disabled:opacity-50"
+                  >
+                    Remove picture
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingLogo(false)}
+                    className="rounded-[6px] border border-border px-2.5 py-1 text-[11px] font-medium text-muted hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {logoError && <p className="mt-1.5 text-xs text-danger">{logoError}</p>}
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className={labelCls}>Contact Email</label>
@@ -254,7 +481,15 @@ function BrandProfileModal({
             </div>
             <div>
               <label className={labelCls}>Website</label>
-              <input type="url" value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://…" className={inputCls} />
+              <input
+                type="url"
+                value={form.website}
+                onChange={(e) => set("website", e.target.value)}
+                placeholder="https://…"
+                className={inputCls}
+                autoFocus={landing === "website"}
+                {...(landing === "website" ? { style: LANDING_OUTLINE } : {})}
+              />
             </div>
           </div>
 
@@ -266,6 +501,8 @@ function BrandProfileModal({
               placeholder="Short company description…"
               rows={3}
               className={cn(inputCls, "resize-none")}
+              autoFocus={landing === "description"}
+              {...(landing === "description" ? { style: LANDING_OUTLINE } : {})}
             />
           </div>
 
@@ -277,7 +514,7 @@ function BrandProfileModal({
           <button
             onClick={save}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 rounded-[8px] bg-neon px-4 py-2 text-sm font-semibold text-[#03110b] transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-[8px] bg-neon px-4 py-2 text-sm font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             <Icon name={saving ? "Loader" : "Check"} className={cn("h-3.5 w-3.5", saving && "animate-spin")} />
             {saving ? "Saving…" : "Save"}
@@ -309,8 +546,10 @@ function BrandProfileModal({
  * which is the wall of text the product owner hit in the client lens on the
  * 30 July call.
  *
- * It is also the ONLY prop left, which is the other half of this note now:
- * NO `headerAction`, AND THAT IS THE RULING (CD-L P5).
+ * `headerAction` specifically stays gone — the other half of this note
+ * (CD-L P5) — even though `hideDescription` below is a second prop; that one
+ * only ever toggles a paragraph off, never adds a divergent staff-only
+ * control back to the header.
  *
  * This prop existed for one caller: the staff client-context rail passed a ↗
  * that opened the client's own website, "the extra button that is the whole
@@ -328,19 +567,68 @@ function BrandProfileModal({
 export function ClientProfilePanel({
   client,
   compact = false,
+  hideDescription = false,
 }: {
   client: ClientProfileFields;
   compact?: boolean;
+  /**
+   * Sidebar-brand pass (2026-08, client-zero feedback): the sidebar's own
+   * brand card drops the inline "about" text — it lives in the Brand Profile
+   * popup this panel already opens (the Contact-icon button), not repeated in
+   * the compact card too. `compact` alone can't gate this: the mobile Company
+   * sheet and Account Center's Profile tab BOTH mount at `compact=false`, and
+   * only the sheet (a sidebar surface) should hide it — Account Center is the
+   * one place the full "about" still belongs inline.
+   */
+  hideDescription?: boolean;
 }) {
   const router = useRouter();
-  const [editing, setEditing] = useState(false);
+  const params = useSearchParams();
+  /**
+   * THE LADDER'S LANDING, RESOLVED AT MOUNT (round 6, §2.3).
+   *
+   * `for=` has to name a real step and `edit=` a real field, or nothing opens:
+   * a stale or hand-typed link lands on the ordinary Profile tab rather than on
+   * a form nobody asked for. Same "fail open" rule the calendar's own params
+   * follow. Read once into the initial state below — the params are dropped
+   * with `replaceState` on the first save, so re-reading them per render would
+   * fight the very cleanup that clears the band.
+   */
+  const landingField = readLandingField(params.get(SETUP_LANDING_KEYS.edit));
+  // round 6 review (E14): one shared predicate, so this panel and the documents
+  // list cannot disagree about what "the ladder sent me" means.
+  const landed = landedFromLadder(params);
+  /**
+   * ONLY THE ACCOUNT CENTER MOUNT ANSWERS A LANDING.
+   *
+   * This panel is mounted three times on the very page the ladder lands on: the
+   * client rail, the staff sidebar's client-context block and the Profile tab.
+   * The first two pass `hideDescription` (their "about" lives in the sheet this
+   * panel opens), and only the Profile tab passes neither prop — which is the
+   * same distinction those props were introduced for ("Account Center is the
+   * one place the full about still belongs inline"). Without this gate, one
+   * `?edit=` would open the sheet in every mount at once.
+   */
+  const landing = landed && !compact && !hideDescription ? landingField : null;
+  const [landingCleared, setLandingCleared] = useState(false);
+  const activeLanding = landingCleared ? null : landing;
+
+  const [editing, setEditing] = useState(landing === "category");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   const [category, setCategory] = useState(client.category ?? "");
   const [teamSize, setTeamSize] = useState(client.teamSize ?? "");
   const [links, setLinks] = useState<SocialLinks>(client.socialLinks ?? {});
-  const [brandProfileOpen, setBrandProfileOpen] = useState(false);
+  const [brandProfileOpen, setBrandProfileOpen] = useState(
+    landing === "description" || landing === "website",
+  );
+
+  /** Clears the band, the outline and the query params. Save calls it too. */
+  function landingDone() {
+    setLandingCleared(true);
+    clearLandingParams();
+  }
 
   function setLink(key: keyof SocialLinks, value: string) {
     setLinks((prev) => ({ ...prev, [key]: value }));
@@ -360,6 +648,7 @@ export function ClientProfilePanel({
     startTransition(async () => {
       const res = await updateClientProfileAction(client.id, { category, teamSize, socialLinks: normalized });
       if (res.ok) {
+        landingDone();
         setEditing(false);
         router.refresh();
       } else {
@@ -378,11 +667,27 @@ export function ClientProfilePanel({
     row.account !== null,
   );
   const hasMeta = Boolean(client.category || client.teamSize);
+  // `focus-ring` rather than the bare `outline-none` this used to carry: an
+  // input that removes the browser's focus outline and puts nothing back is
+  // the WCAG 2.4.13 failure the one focus token exists to end (round 6).
   const inputCls =
-    "min-w-0 flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2 outline-none";
+    "focus-ring min-w-0 flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-2";
+
+  const categoryLandingCopy = activeLanding === "category" ? SETUP_LANDING_COPY.category : undefined;
 
   return (
     <div className="px-1">
+      {/* The landing band, at the top of the section the ladder sent them to
+          (§2.8). Only for the field this panel edits inline; the sheet carries
+          its own, because the sheet covers this. */}
+      {categoryLandingCopy && (
+        <HereFor
+          action={categoryLandingCopy.action}
+          reason={categoryLandingCopy.reason}
+          onDismiss={landingDone}
+          className="mb-3"
+        />
+      )}
       {/* Company header */}
       <div className={cn("flex items-center gap-2.5", compact ? "mb-2 py-0.5" : "mb-2.5")}>
         <BrandFavicon
@@ -428,7 +733,10 @@ export function ClientProfilePanel({
 
       {!editing ? (
         <>
-          {/* Meta + social chips — ONE wrapping row of equal-height chips.
+          {/* Meta chips — ONE wrapping row of equal-height chips, and NOW IT
+              CARRIES ONLY THE META (portal feedback round 2, 2026-09): the
+              category and the team size, with the social accounts moved to
+              their own line below. See `SOCIAL_SQUARE`.
               It was `flex-nowrap` at the rail's compact mount, on default
               align-items: stretch, and both halves of that hurt. Nothing
               shortened the category, so "Global Startup Pitch Competition"
@@ -439,17 +747,20 @@ export function ClientProfilePanel({
               Nowrap was there to stop a second row growing into the no-scroll
               contract (CD-E3) — but it was buying that with a row three lines
               tall, which costs the contract more than wrapping ever did.
-              The chips are bounded at the SOURCE now (CD-L P3/P4): a category
-              is capped where it is typed, and an account addressed by an id
-              renders as its logo alone. Each chip is `shrink-0`, so a chip
-              that does not fit the line moves to the next one WHOLE rather
-              than being squeezed, and the ordinary case is a single 22px
-              row. */}
+              The chips are bounded at the SOURCE now (CD-L P3): a category is
+              capped where it is typed. Each chip is `shrink-0`, so a chip that
+              does not fit the line moves to the next one WHOLE rather than
+              being squeezed, and with the handles gone the ordinary case is a
+              single 22px row that never wraps at all. `max-w-full` is on BOTH
+              chips rather than only the category: it is the valve for a stored
+              value wider than its own character count suggests, and either of
+              them clipping at the rail's edge beats either of them dragging in
+              a scrollbar. */}
           <div className={cn("flex flex-wrap items-center gap-1", compact ? "mb-1" : "mb-2")}>
             {hasMeta ? (
               <>
                 {client.teamSize && (
-                  <span className={CHIP}>
+                  <span className={cn(CHIP, "max-w-full")}>
                     <Icon name="Users" className={CHIP_ICON} />
                     {client.teamSize}
                   </span>
@@ -485,63 +796,74 @@ export function ClientProfilePanel({
                 Add team size &amp; category
               </button>
             )}
-            {/* THE PLATFORM'S LOGO + @username, and the row opens the profile
-                (AF-4). Same affordance as the brand-colour swatches beneath:
-                a real control, keyboard-reachable, that does the obvious thing
-                with the value it is showing.
-                The mark is the one the agent surfaces and the marketing site
-                use (SocialPlatformMark) — a client's Instagram row and their
-                Instagram agent carry the same logo. An account whose stored
-                text yields no URL still renders, as a plain chip: the handle is
-                the client's own and a panel is not the place to correct it. */}
-            {activeLinks.map(({ key, account }) =>
-              account.url ? (
-                <a
-                  key={key}
-                  href={account.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  /* An id has no name to read out, so the LOGO carries the
-                     platform on its own (CD-L P4) — and then the accessible
-                     name has to say what the row is, since the mark is
-                     decorative and there is no text beside it. */
-                  title={
-                    account.logoOnly
-                      ? PLATFORM_NAME[key]
-                      : `Open ${account.handle} on ${PLATFORM_NAME[key]}`
-                  }
-                  aria-label={
-                    account.logoOnly
-                      ? `Open ${PLATFORM_NAME[key]} in a new tab`
-                      : `Open ${account.handle} on ${PLATFORM_NAME[key]} in a new tab`
-                  }
-                  className={cn(
-                    CHIP,
-                    "max-w-full transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon",
-                  )}
-                >
-                  <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
-                  {!account.logoOnly && <span className="truncate">{account.handle}</span>}
-                </a>
-              ) : (
-                <span
-                  key={key}
-                  title={account.logoOnly ? PLATFORM_NAME[key] : undefined}
-                  /* `role="img"` or the label is not announced at all: the mark
-                     inside is aria-hidden (it is decorative everywhere else it
-                     is used), and an aria-label on a bare span has no element
-                     to name. The chip with text beside it needs neither. */
-                  {...(account.logoOnly
-                    ? { role: "img" as const, "aria-label": PLATFORM_NAME[key] }
-                    : {})}
-                  className={cn(CHIP, "max-w-full")}
-                >
-                  <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
-                  {!account.logoOnly && <span className="truncate">{account.handle}</span>}
-                </span>
-              ),
-            )}
           </div>
+
+          {/* THE SOCIAL ROW — one square per account, logo only, click opens
+              the profile. Same affordance as the brand-colour swatches
+              beneath: a real control, keyboard-reachable, that does the
+              obvious thing with the value it is showing.
+              The mark is the one the agent surfaces and the marketing site use
+              (SocialPlatformMark) — a client's Instagram button and their
+              Instagram agent carry the same logo. The @handle it used to print
+              beside the logo now lives in the accessible name, which is where
+              it was actually useful: the logo already says which platform, and
+              a person reading their own profile does not need to be told their
+              own username five times.
+              An account whose stored text yields no URL still renders, as the
+              same square, unclickable: the handle is the client's own and a
+              panel is not the place to correct it. */}
+          {activeLinks.length > 0 && (
+            <div className={cn("flex flex-wrap items-center gap-1", compact ? "mb-1.5" : "mb-2")}>
+              {activeLinks.map(({ key, account }) =>
+                account.url ? (
+                  <a
+                    key={key}
+                    href={account.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    /* The mark is decorative (aria-hidden wherever it is used),
+                       and there is no text beside it any more, so the
+                       accessible name is the ONLY thing that says what this
+                       square is. An id-shaped value stays out of it — a screen
+                       reader spelling "UC7x9..." helps nobody (CD-L P4). */
+                    title={
+                      account.logoOnly
+                        ? `Open ${PLATFORM_NAME[key]}`
+                        : `Open ${account.handle} on ${PLATFORM_NAME[key]}`
+                    }
+                    aria-label={
+                      account.logoOnly
+                        ? `Open ${PLATFORM_NAME[key]} in a new tab`
+                        : `Open ${account.handle} on ${PLATFORM_NAME[key]} in a new tab`
+                    }
+                    className={cn(
+                      SOCIAL_SQUARE,
+                      "focus-ring transition-colors hover:border-border-strong hover:text-foreground",
+                    )}
+                  >
+                    <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
+                  </a>
+                ) : (
+                  <span
+                    key={key}
+                    role="img"
+                    /* `role="img"` or the label is not announced at all: the
+                       mark inside is aria-hidden and an aria-label on a bare
+                       span has no element to name. */
+                    aria-label={
+                      account.logoOnly
+                        ? PLATFORM_NAME[key]
+                        : `${account.handle} on ${PLATFORM_NAME[key]}`
+                    }
+                    title={account.logoOnly ? PLATFORM_NAME[key] : account.handle}
+                    className={cn(SOCIAL_SQUARE, "opacity-60")}
+                  >
+                    <SocialPlatformMark platform={key} className="h-3.5 w-3.5 shrink-0" />
+                  </span>
+                ),
+              )}
+            </div>
+          )}
 
           {/* Free text of unbounded length, in a rail that must keep a
               DETERMINISTIC height (the no-scroll contract, CD-E3). Two lines
@@ -549,7 +871,7 @@ export function ClientProfilePanel({
               profile says, and a long "about" cannot push Competitor Track and
               Brand Colors off the viewport. The mobile Company sheet scrolls,
               so it keeps the full text. */}
-          {(client.description || client.brief) && (
+          {!hideDescription && (client.description || client.brief) && (
             <p
               className={cn(
                 "text-xs leading-relaxed text-muted-2",
@@ -573,7 +895,7 @@ export function ClientProfilePanel({
               <select
                 value={teamSize}
                 onChange={(e) => setTeamSize(e.target.value)}
-                className="bg-transparent text-xs text-foreground outline-none [&>option]:bg-surface"
+                className="focus-ring bg-transparent text-xs text-foreground [&>option]:bg-surface"
               >
                 <option value="">Team</option>
                 {TEAM_SIZES.map((t) => (
@@ -595,6 +917,8 @@ export function ClientProfilePanel({
                 maxLength={CLIENT_CATEGORY_MAX_LENGTH}
                 aria-describedby="client-category-hint"
                 className={inputCls}
+                autoFocus={activeLanding === "category"}
+                {...(activeLanding === "category" ? { style: LANDING_OUTLINE } : {})}
               />
             </Pill>
           </div>
@@ -628,7 +952,7 @@ export function ClientProfilePanel({
             <button
               onClick={save}
               disabled={pending}
-              className="inline-flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-[#03110b] transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-md bg-neon px-3 py-1.5 text-xs font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               <Icon name={pending ? "Loader" : "Check"} className={cn("h-3.5 w-3.5", pending && "animate-spin")} />
               {pending ? "Saving…" : "Save"}
@@ -651,7 +975,12 @@ export function ClientProfilePanel({
       )}
 
       {brandProfileOpen && (
-        <BrandProfileModal client={client} onClose={() => setBrandProfileOpen(false)} />
+        <BrandProfileModal
+          client={client}
+          onClose={() => setBrandProfileOpen(false)}
+          landing={activeLanding === "description" || activeLanding === "website" ? activeLanding : null}
+          onLandingDone={landingDone}
+        />
       )}
     </div>
   );

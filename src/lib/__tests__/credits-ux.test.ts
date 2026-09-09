@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { ALL_RUN_STATES, pastRunStatuses } from "@/lib/calendar-past-runs";
 import {
   CREDIT_DENIAL_PREFIX,
   CREDIT_BLOCK_REASON,
@@ -27,7 +26,6 @@ const REPO = path.resolve(__dirname, "../..", "..");
 const source = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 
 const MODAL = "src/components/task-ticket-modal.tsx";
-const TASKS_BODY = "src/app/(app)/tasks/tasks-body.tsx";
 
 /** The body of a named top-level function in a source file. */
 function functionBody(src: string, declaration: string): string {
@@ -67,52 +65,13 @@ describe("Generate Plan surfaces the refusal it is handed", () => {
   });
 });
 
-describe("the tasks timeline withholds run states from clients by the calendar's table", () => {
-  const body = source(TASKS_BODY);
-  const timelineJobs = body.slice(
-    body.indexOf("const timelineStatuses = pastRunStatuses("),
-    body.indexOf(".map((job) => ({"),
-  );
-
-  it("withholds a failed and a cancelled run from a client, and withholds nothing from staff", () => {
-    // The decision itself, called rather than grepped. Both surfaces read this
-    // one table now (F80), so this is the calendar's answer and the timeline's
-    // in one assertion — and it names both withheld states, which is what the
-    // old version of this block checked only half of.
-    const client = pastRunStatuses({ isClient: true });
-    expect(client.has("failed")).toBe(false);
-    expect(client.has("cancelled")).toBe(false);
-
-    const staff = pastRunStatuses({ isClient: false });
-    expect(ALL_RUN_STATES.filter((s) => !staff.has(s))).toEqual([]);
-  });
-
-  it("has exactly one status rule in the projection, and it is that table", () => {
-    // What the old inline `isClientViewer &&` spelling gave for free: an
-    // UNCONDITIONAL status filter here would take failures off the staff
-    // timeline too. The viewer split lives in pastRunStatuses now, so what is
-    // left to check is that this projection has not grown a second status rule
-    // beside it. Behaviour only, whitespace-normalised, no assertion on comments.
-    // Counts EVERY filter leg rather than matching a status-rule shape. The
-    // first version of this test matched /\.filter\(\(job\) => ...status...\)\)/,
-    // which needs a trailing `))` — so `job.status !== "cancelled"` added right
-    // beneath the table filter ends in a single paren, was never counted, and
-    // the suite stayed green while an unconditional status rule took cancelled
-    // runs off the STAFF timeline. That is the one thing this test exists for.
-    const flat = (s: string) => s.replace(/\s+/g, " ");
-    const legs = flat(timelineJobs).match(/\.filter\(/g) ?? [];
-    expect(legs, "a third filter leg is a second rule — put it in pastRunStatuses").toHaveLength(2);
-    expect(flat(timelineJobs)).toContain("timelineStatuses.has(job.status)");
-    expect(flat(timelineJobs)).toContain("pastRunStatuses({ isClient: isClientViewer })");
-  });
-
-  it("is applied at the server boundary, not at render", () => {
-    // tasks-body is the RSC that assembles the payload; a withheld run must not
-    // cross into it at all. If this file ever becomes a client component the
-    // filter has moved to the wrong side of the boundary.
-    expect(body).not.toContain('"use client"');
-  });
-});
+// "the tasks timeline withholds run states from clients by the calendar's
+// table" used to pin this here directly against tasks-body.tsx, the Workspace
+// board's own RSC that assembled the client-visible run projection. That file
+// was deleted 2026-08 with the board's routes, so there is no remaining
+// timeline projection here to pin. `pastRunStatuses` itself (the table this
+// block asked of that one caller) is unchanged and still asked of its own
+// remaining caller, the calendar, wherever that surface's own tests cover it.
 
 describe("the denial prefixes and isCreditDenialMessage agree", () => {
   const NOW = Date.UTC(2026, 6, 31);

@@ -26,9 +26,12 @@ import type { JobStatus } from "@/lib/types";
  *   1. A run whose every client-visible deliverable is still locked gets no
  *      client card at all — a client's calendar speaks in posts and slots, and a
  *      run that has given them nothing yet is not an event in their world.
- *   2. A client card can never badge "In review" with nowhere to review. That is
- *      the churn/lying-state guarantee, so it is pinned as an invariant over the
- *      whole input space below, not as a handful of cases.
+ *   2. A client card can never badge "In review" at all (REVERSED 2026-08 —
+ *      portal revamp SOW, locked: "In review is removed. We are not reviewing
+ *      anything"). Before this it was the weaker "never with nowhere to
+ *      review"; that guarantee is pinned below for STAFF now, who still see
+ *      the state in full — a client's exclusion is pinned as its own
+ *      invariant over the whole input space, not as a handful of cases.
  *   3. A staff-cancelled run is not a client event, whatever it produced.
  *
  * Staff keep every run in every state — the calendar is their operational
@@ -164,8 +167,13 @@ describe("which past runs reach a client's calendar", () => {
     expect(
       projectPastRuns([mine], noAssets(), { ...forClient, viewerUid: "uid-client" }),
     ).toEqual([]);
-    // "review" likewise, which is what keeps "In review" and "nothing to review"
-    // mutually exclusive on a client's card.
+    // "review" too — REVERSED 2026-08 (portal revamp SOW, locked: "In review is
+    // removed. We are not reviewing anything."). This used to be dropped for the
+    // SAME reason as "delivered" above (empty deliverables), which is what kept
+    // "In review" and "nothing to review" mutually exclusive on a client's card.
+    // Now it is dropped by STATE ALONE regardless of deliverables — see the
+    // stronger version of this assertion in the "never carries..." test below,
+    // which proves it even WITH an unlocked deliverable present.
     expect(
       projectPastRuns([job("review", "job-rev", "uid-client")], noAssets(), {
         ...forClient,
@@ -193,27 +201,29 @@ describe("which past runs reach a client's calendar", () => {
     ).toHaveLength(4);
   });
 
-  it("never carries a cancelled or failed run to a client, even when that run delivered something", () => {
+  it("never carries a cancelled, failed or review run to a client, even when that run delivered something", () => {
     const clientStates = pastRunStatuses({ isClient: true });
     // The closed question: exactly which states can reach a client's calendar.
+    // "review" left this list 2026-08 (portal revamp SOW, locked: "In review is
+    // removed. We are not reviewing anything.") — staff still get it below.
     expect([...clientStates].sort()).toEqual([
       "approved",
       "delivered",
       "queued",
-      "review",
       "running",
     ]);
 
     const staffStates = pastRunStatuses({ isClient: false });
     expect(staffStates.has("cancelled")).toBe(true);
     expect(staffStates.has("failed")).toBe(true);
+    expect(staffStates.has("review")).toBe(true);
     // A client can never be shown a state staff are not.
     expect([...clientStates].filter((s) => !staffStates.has(s))).toEqual([]);
 
     // Asked through the projection with an UNLOCKED deliverable present, so the
     // "nothing delivered" rule cannot be what is doing the work: the state alone
-    // has to keep these two off a client's calendar.
-    for (const status of ["cancelled", "failed"] as const) {
+    // has to keep these three off a client's calendar.
+    for (const status of ["cancelled", "failed", "review"] as const) {
       const j = job(status);
       const delivered = byJob(j.id, [asset("a1")]);
       expect(projectPastRuns([j], delivered, forClient)).toEqual([]);
@@ -231,14 +241,13 @@ describe("which past runs reach a client's calendar", () => {
 
 /**
  * The invariant, over the whole input space rather than a chosen case: for every
- * run state and every mix of locked/unlocked deliverables, a client entry that
+ * run state and every mix of locked/unlocked deliverables, a STAFF entry that
  * badges "In review" has somewhere to send them.
  *
- * Quantified over BOTH values of canOpenJob on purpose. A client viewer gets
- * canOpenJob = false (their calendar is built with canSchedule off, and
- * /jobs/[id] is staff-guarded), and the false leg is the one that used to fail —
- * but the invariant holds either way once a client entry always carries a
- * deliverable, so the test does not have to take that prop on trust.
+ * Quantified over BOTH values of canOpenJob on purpose. Staff always get
+ * canOpenJob = true in practice (/jobs/[id] is staff-guarded, never absent for
+ * them) — the false leg is tested anyway so the invariant does not rest on
+ * that prop being trusted rather than checked.
  */
 const DELIVERABLE_MIXES: { label: string; assets: TestAsset[] }[] = [
   { label: "no assets at all", assets: [] },
@@ -249,19 +258,47 @@ const DELIVERABLE_MIXES: { label: string; assets: TestAsset[] }[] = [
   { label: "all unlocked", assets: [asset("a1"), asset("a2")] },
 ];
 
-describe("a client's past-run card cannot name a review it does not offer", () => {
-  it("holds for every run state × deliverable mix, and the space really contains review cards", () => {
+describe("a client's calendar never names a review at all; staff's cannot name one it does not offer", () => {
+  it("REVERSED 2026-08: a client entry never badges review, over every state × deliverable mix", () => {
+    // Portal revamp SOW, locked calendar decision: "In review is removed. We
+    // are not reviewing anything." Before this, a client COULD receive a
+    // review-status entry (this exact test used to assert the opposite — that
+    // the matrix produced client cards badging "In review", and required at
+    // least one to prove the case wasn't vacuous). Now `projectPastRuns` drops
+    // "review" for a client by state alone (see the state-exclusion test
+    // above), so this loop should never find one to badge, for any deliverable
+    // mix at all — the mix used to matter for THIS state and no longer does.
     const namesAReview: string[] = [];
-    const violations: string[] = [];
-    const emptyClientCards: string[] = [];
+    for (const mix of DELIVERABLE_MIXES) {
+      const j = job("review");
+      const entries = projectPastRuns([j], byJob(j.id, mix.assets), forClient);
+      expect(entries, mix.label).toEqual([]);
+      for (const entry of entries) {
+        const card = { jobStatus: entry.job.status, assets: entry.deliveredAssets };
+        if (pastRunBadgesReview(card)) namesAReview.push(mix.label);
+      }
+    }
+    expect(namesAReview).toEqual([]);
+  });
+
+  it("holds for staff, over every run state × deliverable mix, and the space really contains review cards", () => {
+    // Unlike the client's own invariant (dropped above), staff entries are
+    // NEVER excluded for having nothing to show — "staff keep every run in
+    // every state, including the ones that produced nothing." So `canOpenJob:
+    // false` with zero assets is a real reachable case for staff, and the
+    // review CONTROL correctly goes dark there (nowhere to send them) even
+    // though the BADGE still names the state. What actually holds
+    // unconditionally is the conjunction itself, not "always true" — that
+    // stronger claim only held for clients, whose own exclusion rule
+    // guarantees a deliverable is always present when badged.
+    const namesAReview: string[] = [];
 
     for (const status of ALL_RUN_STATES) {
       for (const mix of DELIVERABLE_MIXES) {
         const j = job(status);
-        const entries = projectPastRuns([j], byJob(j.id, mix.assets), forClient);
+        const entries = projectPastRuns([j], byJob(j.id, mix.assets), forStaff);
         for (const entry of entries) {
           const where = `${status} / ${mix.label}`;
-          if (entry.deliveredAssets.length === 0) emptyClientCards.push(where);
           // The card the component receives. `assets` is the projection's own
           // array, not a re-map of it — calendar-body passes its RunAssetView
           // builder as `project` and ships the result straight through, so what
@@ -270,20 +307,18 @@ describe("a client's past-run card cannot name a review it does not offer", () =
           for (const canOpenJob of [false, true]) {
             if (!pastRunBadgesReview(card)) continue;
             namesAReview.push(`${where} / canOpenJob=${canOpenJob}`);
-            if (!pastRunHasReviewTarget(card, { canOpenJob })) violations.push(where);
             // The control the card actually renders is the conjunction, so the
-            // badge and the control move together.
-            expect(showsPastRunReviewControl(card, { canOpenJob })).toBe(true);
+            // badge and the control move together — never the control alone.
+            expect(showsPastRunReviewControl(card, { canOpenJob })).toBe(
+              pastRunHasReviewTarget(card, { canOpenJob }),
+            );
           }
         }
       }
     }
 
-    expect(violations).toEqual([]);
-    // Not vacuous: the matrix produced client cards badging "In review", and
-    // none of them was empty.
+    // Not vacuous: the matrix produced staff cards badging "In review".
     expect(namesAReview.length).toBeGreaterThan(0);
-    expect(emptyClientCards).toEqual([]);
   });
 
   it("staff keep the review control on a run with nothing to show, because their target is the run itself", () => {

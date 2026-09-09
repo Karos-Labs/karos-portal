@@ -82,7 +82,7 @@ export function ClientAgentLaunchCard({
       <div className="flex items-start gap-3">
         <AgentIdentity identity={agent.identity} icon={agent.icon} />
         <div className="min-w-0 flex-1">
-          <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.16em] text-muted-2">
+          <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
             AI agent
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -165,10 +165,10 @@ export function ClientAgentLaunchCard({
               {agent.gate.code === "intake_required" && agent.setupHref && (
                 <Link
                   href={agent.setupHref}
-                  className="inline-flex items-center gap-1 text-[11px] text-neon hover:underline"
+                  className="focus-ring inline-flex items-center text-[11px] text-muted hover:text-foreground hover:underline"
                 >
+                  {/* No glyph after the label (round 6 rule 3). */}
                   {agent.setupLabel ?? "The setup page"}
-                  <Icon name="ArrowRight" className="h-3 w-3" />
                 </Link>
               )}
               {agent.gate.code === "credits_short" && viewer && (

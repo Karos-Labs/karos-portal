@@ -428,10 +428,14 @@ describe("the daily-digest cron", () => {
     expect(body.results[0].detail).toContain("dana@acme.test");
   });
 
-  it("DRIVEN BY THE CALENDAR: the rows are the calendar's own projection", async () => {
-    // The claim AF-19 rests on. A draft (never on a client's calendar) and a
-    // launch deliverable (never a deliverable) are in this client's assets and
-    // must be in neither the calendar nor the mail; the real post is in both.
+  it("DRIVEN BY THE CALENDAR, WITH ONE NAMED EXCEPTION: the mail excludes drafts even though the calendar no longer does", async () => {
+    // The claim AF-19 rests on, updated for the reversal: a launch deliverable
+    // (never a deliverable) is excluded from both the calendar and the mail. A
+    // draft is now ON the calendar (a client's calendar shows the same pending
+    // work staff see — see `isClientCalendarStatus`'s docstring), but the digest
+    // cron opts OUT of that for drafts specifically (`excludeDrafts: true` in
+    // route.ts), because this mail is an unprompted push and the reversal never
+    // extended to proactively emailing a client about unapproved work.
     const day = todayItem({ id: "p-1", title: "The playbook" });
     const draft = todayItem({ id: "d-1", title: "Internal draft", status: "draft" });
     const launch = todayItem({ id: "l-1", title: "Setup research", meta: { launchDeliverable: true } });
@@ -441,8 +445,18 @@ describe("the daily-digest cron", () => {
     await runDigest();
     const html = String(sentMail[0].html);
 
+    // The calendar itself: the draft IS there now, the launch deliverable never is.
     const onCalendar = clientCalendarEntries([day, draft, launch], { isClient: true, now: NOW });
-    expect(onCalendar.map((e) => e.asset.id)).toEqual(["p-1"]);
+    expect(onCalendar.map((e) => e.asset.id).sort()).toEqual(["d-1", "p-1"]);
+
+    // The mail: same set, minus the draft, via the cron's own excludeDrafts opt-in.
+    const inMail = clientCalendarEntries([day, draft, launch], {
+      isClient: true,
+      now: NOW,
+      excludeDrafts: true,
+    });
+    expect(inMail.map((e) => e.asset.id)).toEqual(["p-1"]);
+
     expect(html).toContain("The playbook");
     expect(html).not.toContain("Internal draft");
     expect(html).not.toContain("Setup research");

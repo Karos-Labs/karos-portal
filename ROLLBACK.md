@@ -204,3 +204,117 @@ and the 7 client docs whose `customAgentIds` referenced v1) —
 | P-D2 | `enabled: true` + display copy (name "X Agent", description/clientBlurb dropped "unreviewed"/"separate" framing) on v2 doc | production `customAgents/Ji7p4nLTzDcbcKgDhtee`; prep `customAgents/uPlQt5A02Hp3eGaJf7N0` (newly created — prep never had a v2 doc) | production: restore fields from snapshot's `(default).v2`; prep: delete the doc entirely (it did not exist before) |
 | P-D3 | Swapped v1's id for v2's id inside `customAgentIds` on the 7 clients that had v1 (Hanky Panky, XO Digital, Geektime, Sitti, Karos Labs, Pitch by Deel, Kindly Yours) — a judgment call: removing v1 without granting v2 would have silently taken the X agent away from every client that had it, which the "this is the official version" framing did not ask for | both databases, `clients/{CRqzRpcpuDRiMjjDoYCJ, E19TT5yiWxpvbetkhxGt, QwQFkfsCXQdwJIKjfeg9, T6VFmudahXAAaKUHx579, iZLc0mtwSFXNKE2KkC2d, jzgdl738dq7DclAdqky1, vj8pJxRGLtiN2YbBuPwR}` | restore each doc's `customAgentIds` array from the snapshot's `<db>.clients[]` |
 | R22 | `SCRAPECREATORS_API_KEY` secret + runner wiring, if Daniel provisions it | remove the secret reference from `cloudbuild.yaml` and the two config lines; the domain is already allowlisted |
+
+---
+
+## LinkedIn agent v2 hookup (2026-08-05, branch `feat/linkedin-agent-v2`)
+
+Base `04d0809` (= origin/main at branch time). Replaces the e10 LinkedIn agent
+with the lab's three-skill v2 product (`products/building/linkedin-agent-v2/`:
+setup, writer, manager). Read `docs/linkedin-agent-portal.md` before undoing any
+of it — three of these changes are portal-imposed decisions with reasons, not
+mechanical adaptations.
+
+**SUPERSEDED 2026-08-05: the e10 doc is now DELETED.** It was kept disabled "as
+the fallback" while this section was written; the rule changed (Ben) and both
+replaced agents were removed from `customAgents` in BOTH databases by
+`scripts/cleanup-legacy-agents.ts` — see L-D6 at the end of this section. Any
+sentence below promising an e10 fallback describes the earlier plan, not the
+current state: there is no doc left to re-enable, only the JSON snapshot.
+
+Pre-mutation snapshots of every doc this touches, taken before any change:
+`_backup/2026-08-04/` — the e10 customAgents doc, the 4 `agentIntake` rows
+(Karos Labs company page + 3 seats), the 3 `clientSeats`, the 3 `xNewsUpdates`.
+`liDraftFeedback` and `seatVoiceProfiles` were verified EMPTY at snapshot time.
+
+### Code changes (all on this branch; undo for any one item = revert its hunk, undo for everything = delete the branch)
+
+| # | What | Where | Undo |
+|---|---|---|---|
+| L1 | This rollback section | `ROLLBACK.md` | delete the section |
+| L2 | `LiDirectionRequest` + `LiAgentState` types | `src/lib/types.ts` (appended before the client-agents section) | delete the two interfaces |
+| L3 | 2 new Firestore collection handles + CRUD (`liDirectionRequests`, `liAgentState`), both added to the delete-cascade list and its mirror | `src/lib/data.ts`, `scripts/purge-orphaned-client-docs.ts` | remove the 2 `col` entries, the 2 type imports, the appended CRUD sections, and the 2 names from both cascade lists. New collections hold only data these surfaces wrote; docs can be deleted wholesale |
+| L4 | Run-time injection rewritten: the three v2 keys, the ONE combined identity file (company + every seat, with each identity's voice card and learning log inline), the live section with Section A0 direction requests, the durable-state attachments, per-skill file sets, identity scoping | `src/lib/agent-service/linkedin-agent-context.ts` | `git checkout main -- src/lib/agent-service/linkedin-agent-context.ts`. The file's exports are consumed by both submit cores, the webhook and `agent-intake-views.ts`, so reverting it alone will not typecheck — revert L5–L8 with it |
+| L5 | Both submit cores: the v2 keys, two new refusal rungs (not set up; a seat with no voice), the injection call's new object signature, and `briefValues` on the input | `src/lib/jobs/submit-custom.ts`, `src/lib/agent-service/run-custom-agent.ts` | restore each `if (isLinkedInAgent(...))` block and drop `briefValues` from `SubmitCustomAgentInput` |
+| L6 | `isLinkedInAgentIdentity` widened to the v2 keys; `LINKEDIN_IDENTITY_FIELD_KEY`; `linkedInSeatIdentityToken`; `withLinkedInIdentityOptions`; three new exact-key launch profiles (writer / setup / manager) placed above the loose `/linkedin/` matcher | `src/lib/custom-agent-launch.ts` | remove the three profile blocks and the four new exports, and restore the two-branch predicate. The e10 profile block is untouched |
+| L7 | State capture: which artifacts are durable state, their dates, and the `12-commit.json` direction-request receipt | `src/lib/agent-service/linkedin-state-capture.ts` (new file) | delete the file + its import in the webhook |
+| L8 | Delivery handler: resolves whether the producing agent is LinkedIn v2 before the artifact loop; fetches internal state artifacts for their TEXT only (never re-hosted, never on an asset); upserts `liAgentState`; closes reported direction requests; widened the per-seat voice-profile capture gate to the v2 SETUP agent | `src/app/api/agent-service/webhook/route.ts` | remove the `isLinkedInStateJob`/`isLinkedInSetupJob` resolution, the `liStateArtifacts`/`liCommitJson` branch inside the artifact loop, the two post-claim blocks, and restore `isLaunchRun &&` on the voice-profile gate |
+| L9 | `outputRoots` widened to `clients/<slug>/internal` and `clients/<slug>/linkedin-agent` — without it `AGENT-MEMORY.md` and the posting calendar are collected from nowhere. Everything under `internal/` is already `client_facing: false`, so this widens the WALK and not what a client can see | `agent-service/runner/src/artifacts.ts` | remove the two entries. **Needs an agent-service deploy to take effect** (the runner is baked into the image) |
+| L10 | Direction-request actions (add / delete) and `runLinkedInSetupAction` (the company-page setup run AND the per-seat one) | `src/lib/actions/linkedin-agent-actions.ts` (appended) | delete the appended sections + the 6 added imports |
+| L11 | Intake surface: the setup band, the "What should we cover next?" box, per-seat "Build their voice", `voiceReady` on the seat view, the `directionRequests`/`isSetUp` props | `src/components/linkedin-agent-intake.tsx` | delete the three new components, their mounts, and the two props (both optional, so callers still compile) |
+| L12 | Intake view builder reads direction requests, seat voice-readiness and setup state | `src/lib/agent-intake-views.ts` (`buildLinkedInAgentIntakeView`) | restore the 6-item `Promise.all` and drop the 3 new returned fields |
+| L13 | The inputs band gained a LinkedIn-only `direction` row (X keeps `takes`, Reddit keeps neither) | `src/lib/agent-detail-sections.ts` | remove the `agent === "linkedin"` block, the `directionRequests` arg and its read |
+| L14 | Run dialog: specializes the profile with this client's identity options, and passes `briefValues` | `src/components/custom-agents.tsx` | restore `const profile = launchProfileFor(agent)` and drop `briefValues` |
+| L15 | Parser + reader: `suggestedDate`, and copy that no longer implies we produce a visual | `src/lib/li-drafts.ts`, `src/components/li-drafts-review.tsx` | remove the field, its match and the copy branch |
+| L16 | Canonical portal doc rewritten for v2, carrying the three agents' instruction blocks | `docs/linkedin-agent-portal.md` | `git checkout main -- docs/linkedin-agent-portal.md` (the e10 version) |
+| L17 | 24 new tests for the v2 contract (keys, binding, briefs, identity options, state capture, receipt parsing, the parser, the doc's load-bearing lines) | `src/lib/__tests__/linkedin-agent-v2.test.ts` (new file) | delete the file |
+| L18 | Existing tests repointed at the new contract, none deleted: the LinkedIn row set now includes `direction` (+2 new cases pinning that X does NOT get it and that a covered row is not "filled"); the intake-gate sweep accepts MORE than one refusal per kind while newly asserting every one of them opens with its prefix, ends "Nothing has run.", and that the scheduled core's set is a subset of the interactive core's; 3 data mocks added; 2 new persisted enum fields classified | `agent-detail-sections.test.ts`, `agent-intake-gate.test.ts`, `agent-intake-navigation.test.ts`, `agent-intake-feedback-rows.test.ts`, `seat-remove-run-warning.test.ts`, `client-copy-boundary.test.ts` | revert each file |
+
+| L19 | `isUnlistedAgentIdentity` / `listableAgentKeys`: v2's setup and manager (another agent's machinery) AND the whole e10 generation (`karos-linkedin-agent`, `karos-linkedin-company-*`, superseded by v2 — a disabled-but-granted agent renders as "Coming soon", which left a client looking at two LinkedIn cards) are filtered off EVERY roster — the client roster and its paused list, the staff roster and its paused list, the dashboard tiles, the copilot's @-mention list, and the intake page's family resolution. They stay ENABLED and GRANTED, because a client-fired run is refused unless granted; the listing and the grant are different questions | `src/lib/custom-agent-launch.ts`, `src/app/(app)/clients/[id]/agents/page.tsx` (4 filters), `src/app/(app)/dashboard/page.tsx`, `src/app/api/clients/[id]/agents/mentionable/route.ts`, `src/lib/agent-intake-views.ts` | remove the predicate and the six call sites. Reverting brings back three LinkedIn cards, which is the state this fixed |
+| L20 | `standUpDone`: the run dialog opens on the agent's DATA when its one-time stand-up run has not happened, so pressing Run the first time lands on the step that unblocks it instead of showing a brief, taking the press and refusing. Also applied to the schedule gate and the schedule dialog's setup notice. TRUE for X and Reddit, which have no such run | `src/components/custom-agents.tsx` | remove the helper and the three uses; the server gate is unaffected |
+| L22 | `IdentityPicker`: the company form stays above, then a name strip picks one person, plus "Add someone". Replaces the stack of a company form and one card per seat, which read as several things to set up rather than one agent with a roster. Every seat keeps its `#intake-seat-<id>` anchor (in an `sr-only` block when the strip is not showing it) so #85's per-row links still land | `src/components/linkedin-agent-intake.tsx` | delete the component, restore the flat `seats.map(...)` + `AddSeatForm` |
+| L23 | The unlisted filter sits on the intake DESTINATION, not the intake GATE. On the gate it 404'd the client whose only LinkedIn agent is the superseded e10 instance — that rung is deliberately coarser because being coarse cannot refuse anyone. Caught by `client-run-offer-destinations.test.ts` #114 | `src/lib/agent-intake-views.ts` (`requireIntakeAgentAccess`) | move the predicate back into the family filter |
+| L24 | Setup-first copy ("We need to set this up first") and no identity choice until the stand-up run has happened | `src/components/linkedin-agent-intake.tsx` | restore "Set up LinkedIn" and render the picker unconditionally |
+| L21 | "Add a seat" fires that seat's setup on success, through the intake funnel, with its outcome deliberately unsurfaced (the seat saved; their card carries "Build their voice" as the retry) | `src/components/linkedin-agent-intake.tsx` (`AddSeatForm`) | remove the `runLinkedInSetupAction` call |
+
+| L25 | `CustomAgent.parentKey?: string \| null` — the agent a step belongs to, by KEY (the stable identity; a doc can be re-imported with a new id and the same key) | `src/lib/types.ts` | delete the field; the predicates below fall back to their legacy behaviour only if L26 is also reverted |
+| L26 | Replaced the hardcoded key list with three predicates: `isSubAgent(agent)` reads `parentKey` STRUCTURALLY, `isSupersededAgentKey(key)` keeps the e10 generation out (null-safe — the copilot roster can hand it a row with no key), `isUnlistedAgent(agent)` is the OR every roster calls. Plus `listableAgents` and `groupAgentsByParent` (which returns orphans rather than swallowing a typo'd parentKey) | `src/lib/custom-agent-launch.ts` | restore `isUnlistedAgentIdentity(key)` with its four literals and repoint the call sites |
+| L27 | The "+ Add / Set up an agent for this client" dropdown filters STRUCTURALLY only (`isSubAgent`, not `isUnlistedAgent`). Bindability and listing are different questions: a superseded agent must not advertise itself on a roster, but binding one is a staff act on an agent that still exists — using the wider predicate broke the rule that dropdown is actually for, keeping a client's OWN per-client instance available (`client-agent-projection-bind-offer.test.ts`) | `src/lib/client-agent-rows.ts` (`bindableAgents`) | remove the clause |
+| L28 | `/agents` library NESTS steps under the parent card instead of hiding them: a `SubAgentRow` with the live toggle, Edit and Run, no price lines and no platform badges. An orphan renders as a top-level card with a "Step with no parent" badge | `src/components/custom-agents.tsx` | delete `SubAgentRow`, the children block and `libraryEntries`; restore `agents.map(...)` |
+
+Verified: `npx tsc --noEmit` clean, `npm run build` clean, full vitest **3,700
+passed / 11 failed**. Those 11 are **all `Test timed out`**, all inside two AST-sweep
+files (`client-copy-boundary.test.ts`, `client-model-charge-boundary.test.ts`)
+that walk every file in `src`. Both pass in isolation. Measured against a
+`git worktree` of clean `origin/main` on the same machine at the same time: **main
+fails the same 11 tests in the same 2 files** — 3,666 passed / 11 failed there
+versus 3,700 passed / 11 failed here. Pre-existing fragility under parallel load:
+the suite runs in 44s idle and ~145s loaded, and these sweeps carry 5s and 20s
+per-test budgets. Not caused by this work, not fixed by it, and worth raising on
+its own — those budgets will flake on any busy CI box.
+
+### Data changes (production `karoscmo`, applied 2026-08-05)
+
+All three docs were CREATED, not modified, so no pre-state exists to restore —
+the undo for each is a delete. `scripts/register-linkedin-agent-v2.ts` performed
+them and is idempotent (re-running refreshes instructions from the doc, snapshotting
+the previous text first).
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| L-D1 | Created `customAgents` doc `karos-linkedin-setup-v2` → `products/building/linkedin-agent-v2/setup`, **`enabled: false`**, `source.status: "blocked"`, instructions (2,393 chars) from `docs/linkedin-agent-portal.md` | `customAgents/n9dB3L5ryKsUiYEHIFtr` | delete the doc |
+| L-D2 | Created `karos-linkedin-writer-v2` → `products/building/linkedin-agent-v2`, **`enabled: false`**, instructions (5,972 chars) | `customAgents/w2SnN4Pn0T2xjkdU2ZQ9` | delete the doc |
+| L-D3 | Created `karos-linkedin-manager-v2` → `products/building/linkedin-agent-v2/manager`, **`enabled: false`**, instructions (1,773 chars) | `customAgents/tZuMasTzAuX2PxHPGLv6` | delete the doc |
+| L-D4 | e10 doc untouched: still `enabled: false`, still granted, still the fallback | `customAgents/JOhXFFV2rHZ9IyQNFLvA` | n/a — unchanged |
+
+**All three land DISABLED and UNGRANTED, on purpose.** Upstream marks every v2
+skill `status: "blocked"` ("in build, no pilot run yet"), and the import rule is
+that a blocked skill lands disabled so nobody fires it by accident — the script
+reproduces that rather than overriding it. Enabling or granting them before the
+portal code on this branch is deployed would let a client press Run and get a run
+with none of its data attached, since main has no v2 injection. So no client's
+surface changes until three things happen in order: this branch merges (which IS
+the portal deploy), the agent service is redeployed (L9 lives in the runner
+image), and then an admin enables and grants them.
+
+### Data changes for the sub-agent grouping (both databases, 2026-08-05)
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| L-D5 | `parentKey: "karos-linkedin-writer-v2"` written onto the setup and manager docs in BOTH `(default)` and `prep`, by `scripts/set-agent-parent-keys.ts` (idempotent; refuses to name a parent absent from the same database, since a typo there is how an orphaned step gets created) | `customAgents` where key is `karos-linkedin-setup-v2` / `karos-linkedin-manager-v2` | set `parentKey` to `null` on the four docs. The field was previously absent, so there is no prior value to restore |
+
+### Superseded-agent deletion (both databases, 2026-08-05)
+
+| # | What | Doc(s) | Undo |
+|---|---|---|---|
+| L-D6 | DELETED the two agents a newer generation replaced, from `(default)` AND `prep`: `karos-linkedin-company-karoslabs` (`JOhXFFV2rHZ9IyQNFLvA`) and `karos-reddit-agent` (`pwUIj4jayaJ3S8yuUaQ7`). Also dropped the now-dangling ids from all 7 clients' `customAgentIds` in each database | `customAgents/*`, `clients/*.customAgentIds` | re-create each doc from `_backup/2026-08-05/customAgents-<id>-prod-deleted.json` (the id is in the file name) and re-add the ids to the grant arrays. **Firestore has no undelete** |
+| L-D7 | Registered the Reddit v2 pair in both databases: `karos-reddit-runner` and `karos-reddit-setup` (with `parentKey: "karos-reddit-runner"`, so no roster offers it). Both `enabled: false`, matching the import rule for an upstream-blocked skill | `customAgents/*` | delete the two docs |
+| L-D8 | Backfilled `source.blocked_reason` onto 5 docs in each database from the lab manifest, so the library badge says WHY a skill is blocked | `customAgents/*` | remove the field; it is additive and nothing else reads it |
+
+**One snapshot was lost and it is worth recording.** The first run of
+`cleanup-legacy-agents.ts` named its backups by document id alone — and prep and
+production hold the SAME ids, because prep was seeded from a production export —
+so the production write clobbered the prep one. Only the production copies
+survive (`-prod-deleted.json`). The two were near-identical and prep is a test
+database, so nothing irreplaceable went, but the script now puts the database in
+the filename: a backup one run can overwrite is not a backup.

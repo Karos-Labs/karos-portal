@@ -11,9 +11,16 @@
  * prefill incl. newlines/emoji/links up to LinkedIn's 3,000-char cap; the
  * auth wall carries the link through login). The deep link is undocumented,
  * so the clipboard copy is always made first - if LinkedIn ever drops the
- * prefill, the text is already on the clipboard. Files (carousel PDFs,
- * slides) cannot ride a URL: the card lists them for download + manual
- * attach. Draft-only stays true - the human presses Post on LinkedIn.
+ * prefill, the text is already on the clipboard. Files cannot ride a URL: the
+ * card lists them for download + manual attach. Draft-only stays true - the
+ * human presses Post on LinkedIn.
+ *
+ * v2 ships TEXT posts: no image, no document, no video is sourced for a post
+ * (lab decision, 2026-08-03 - the reasoning and the route back are in the lab's
+ * references/lanes.md sec 3). The file list is therefore usually empty, and the
+ * one case that fills it is an asset the CLIENT supplied through their own drop
+ * box, which does ship with its post. That is why the attach affordance stays
+ * rather than being removed: we never source a visual, we do use theirs.
  *
  * Chrome-less by design: it embeds wherever outputs live (the asset card in
  * the archive and on the job page).
@@ -26,6 +33,7 @@ import { Icon, LinkedInLogo } from "@/components/icon";
 import { addLiDraftFeedbackAction } from "@/lib/actions/linkedin-agent-actions";
 import { laneLabel } from "@/lib/draft-lane-label";
 import { stripInlineMarkdown } from "@/lib/doc-render";
+import { normalizeDashes } from "@/lib/text-utils";
 import type { LiParsedAccount, LiParsedDraft } from "@/lib/li-drafts";
 import { splitMetaLinks } from "@/lib/draft-meta";
 
@@ -173,7 +181,9 @@ function DraftCard({
         </div>
       </div>
       {draft.laneNote ? (
-        <p className="mt-1 text-xs text-muted">{stripInlineMarkdown(draft.laneNote)}</p>
+        <p className="mt-1 text-xs text-muted">
+          {normalizeDashes(stripInlineMarkdown(draft.laneNote))}
+        </p>
       ) : null}
 
       <div className="mt-3 rounded-md border border-border bg-background p-4">
@@ -224,7 +234,7 @@ function DraftCard({
                     {seg.text}
                   </a>
                 ) : (
-                  <span key={j}>{stripInlineMarkdown(seg.text)}</span>
+                  <span key={j}>{normalizeDashes(stripInlineMarkdown(seg.text))}</span>
                 ),
               )}
             </li>
@@ -243,7 +253,7 @@ function DraftCard({
                 placeholder="Your final version."
               />
               {finalText.trim().length > LINKEDIN_POST_CAP ? (
-                <p className="text-xs text-red-400">
+                <p className="text-xs text-danger">
                   {finalText.trim().length.toLocaleString()} characters. LinkedIn posts cap at
                   3,000. Trim it before posting.
                 </p>
@@ -332,11 +342,19 @@ function DraftCard({
                 Picking copies the text and opens LinkedIn with the post ready
                 {media.length > 0 ? "; download the files above and attach them in the composer" : ""}
                 . You press Post.
-                {draft.postWindow ? ` Best window: ${draft.postWindow}.` : ""}
+                {/* A suggestion, in the client's words as a suggestion: the agent
+                    writes one post a day starting tomorrow, and the client owns
+                    the actual date. Preferred over the older window line when
+                    both are present — a day is more use than a time of day. */}
+                {draft.suggestedDate
+                  ? ` Suggested for ${draft.suggestedDate}, but post it whenever suits you.`
+                  : draft.postWindow
+                    ? ` Best window: ${normalizeDashes(stripInlineMarkdown(draft.postWindow))}.`
+                    : ""}
               </p>
             </>
           )}
-          {error ? <p className="text-xs text-red-400">{error}</p> : null}
+          {error ? <p className="text-xs text-danger">{error}</p> : null}
         </div>
       ) : sent === "posted" || sent === "posted_with_edits" ? (
         <div className="mt-3 flex items-center gap-3">
@@ -394,10 +412,16 @@ export function LiDraftsBatch({
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background">
                 <LinkedInLogo className="h-4 w-4 text-foreground" />
               </span>
-              <p className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">{acc.title}</p>
+              <p className="min-w-0 flex-1 truncate text-[15px] font-semibold text-foreground">
+                {normalizeDashes(acc.title)}
+              </p>
               <Badge tone={isCompany ? "info" : "neon"}>{isCompany ? "Company page" : "Personal seat"}</Badge>
             </header>
-            {acc.note ? <p className="px-4 pt-3 text-xs text-muted">{stripInlineMarkdown(acc.note)}</p> : null}
+            {acc.note ? (
+              <p className="px-4 pt-3 text-xs text-muted">
+                {normalizeDashes(stripInlineMarkdown(acc.note))}
+              </p>
+            ) : null}
             <div className="space-y-3 p-4">
               {acc.drafts.map((draft) => (
                 <DraftCard

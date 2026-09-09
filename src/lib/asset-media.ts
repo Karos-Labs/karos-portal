@@ -12,6 +12,7 @@ import {
   createReadSignedUrl,
 } from "@/lib/gcs-media";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
+import type { AppUser } from "@/lib/types";
 import type { Asset } from "@/lib/types";
 
 /**
@@ -19,7 +20,18 @@ import type { Asset } from "@/lib/types";
  * browser: `/api/assets/[id]/download` and `/api/assets/[id]/media`.
  */
 
-export type AssetMediaAccess = { ok: true; asset: Asset } | { ok: false; response: NextResponse };
+export type AssetMediaAccess =
+  /**
+   * `user` rides along because every caller needs it immediately afterwards to
+   * decide WHICH REGISTER to answer in, and this function has already resolved
+   * the session cookie to get it. Handing it back turns a second
+   * `getCurrentUser()` — a redundant auth round-trip on the hot path of a
+   * media route — into a field read, and removes the `user?` optionality the
+   * callers were carrying for a value this branch has already proved is
+   * present.
+   */
+  | { ok: true; asset: Asset; user: AppUser }
+  | { ok: false; response: NextResponse };
 
 /**
  * One definition of "may this caller have this asset's media": a client reaches
@@ -68,7 +80,7 @@ export async function authorizeAssetMedia(id: string): Promise<AssetMediaAccess>
     };
   }
 
-  return { ok: true, asset };
+  return { ok: true, asset, user };
 }
 
 /**

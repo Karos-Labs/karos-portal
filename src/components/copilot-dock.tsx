@@ -15,10 +15,12 @@ import type { ClientReport } from "@/lib/types";
 const DOCK_STATE_KEY = "karos.copilot.dock";
 
 /**
- * Which app shell hosts the dock. The two differ only in the width of their
- * left nav column - ClientRail is `w-72`, the staff Sidebar is `w-64` - but the
- * strip has to start exactly at that column's right edge, and both numbers used
- * to be hardcoded to the client portal's geometry (CD-G8).
+ * Which app shell hosts the dock. They used to differ in the width of their
+ * left nav column (ClientRail `w-72`, staff Sidebar `w-64`), and the strip has
+ * to start exactly at that column's right edge (CD-G8). Since the parity pass
+ * (2026-09) the staff rail is `w-72` whenever this dock is mounted, so the two
+ * anchors are the same string - the key survives because each layout still
+ * declares which shell it is.
  */
 export type CopilotShell = "client" | "staff";
 
@@ -31,10 +33,24 @@ export type CopilotShell = "client" | "staff";
  * that nav is a left column instead. `right-0` is unconditional - running to
  * the viewport's right edge is the whole point of the contract.
  */
-const SHELL_ANCHOR: Record<CopilotShell, string> = {
-  client: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-72`,
-  staff: `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-64`,
-};
+/**
+ * ONE ANCHOR, BOTH SHELLS (parity pass 2026-09, ruling D22; collapsed to a
+ * single constant in the review wave, 2026-09).
+ *
+ * The two entries of the old `Record<CopilotShell, string>` were the same
+ * string, character for character, with a comment on the second explaining that
+ * this was deliberate — which is a lot of machinery for a value that does not
+ * vary. The staff dock is mounted by StaffCopilotDock, which returns null unless
+ * a client context is active, so the only staff shell it ever anchors to is the
+ * client-context one, whose rail is `w-72` like the client's. `md:left-64` was
+ * the AGENCY rail's width, i.e. the width of a shell this dock is never painted
+ * in, and it left a 32px strip of page showing under the rail's right edge.
+ *
+ * `CopilotShell` and the `shell` prop STAY: each layout still declares which
+ * shell it is, and the day the two rails differ again this is where the fork
+ * goes back.
+ */
+const DOCK_ANCHOR = `left-0 right-0 ${MOBILE_TAB_BAR_OFFSET_CLASS} md:bottom-0 md:left-72`;
 
 /**
  * Whether an element is actually painted. The shell swaps its two dock surfaces
@@ -67,16 +83,32 @@ interface Props {
  * it, so nothing jumps or resizes. The chat stays mounted (state preserved) and
  * is simply clipped when collapsed. Desktop (lg+) only.
  */
-export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, report, shell = "client" }: Props) {
-  const [collapsed, setCollapsed] = useState(false);
+export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoogleIntegration, report }: Props) {
+  // Closed by default (client-zero feedback, ship-Sunday ask): a first-time
+  // viewer gets the collapsed w-12 strip, not the full 380px panel claiming
+  // screen real estate before they've asked for it. The localStorage restore
+  // below still wins for a returning viewer who chose to keep it open — this
+  // default only governs the very first render, before that effect runs.
+  const [collapsed, setCollapsed] = useState(true);
   const [sheetOpen, setSheetOpen] = useState(false);
-  /** Blocks the write-back below until the restore pass has run. */
-  const hydratedRef = useRef(false);
+  /**
+   * Blocks the write-back below until the restore pass has run — and it has to
+   * be STATE, not a ref (review wave, 2026-09).
+   *
+   * A ref gate here was inert. Effects run in mount order, so the restore
+   * effect below had already set `hydratedRef.current = true` before the
+   * persist effect ran for the first time; the guard was never false when it
+   * was read, and the "don't write back what we just read" it claimed to do was
+   * not happening. Harmless in practice — the value written equals the value
+   * restored — but a guard that cannot fire is a guard the next reader trusts
+   * for a case it does not cover. A state flag re-runs the persist effect on
+   * the transition instead of silently passing on the first pass.
+   */
+  const [hydrated, setHydrated] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
-  const anchor = SHELL_ANCHOR[shell];
+  const anchor = DOCK_ANCHOR;
 
   useEffect(() => {
-    hydratedRef.current = false;
     try {
       const raw = localStorage.getItem(DOCK_STATE_KEY);
       const saved: unknown = raw ? JSON.parse(raw) : null;
@@ -89,17 +121,17 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
     } catch {
       /* unreadable / disabled storage - keep the defaults */
     }
-    hydratedRef.current = true;
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!hydratedRef.current) return;
+    if (!hydrated) return;
     try {
       localStorage.setItem(DOCK_STATE_KEY, JSON.stringify({ collapsed, sheetOpen }));
     } catch {
       /* quota or private mode - state stays in memory */
     }
-  }, [collapsed, sheetOpen]);
+  }, [hydrated, collapsed, sheetOpen]);
 
   /**
    * Dismiss the sheet on any click outside it (CD-G9b): it stays open only
@@ -180,7 +212,18 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
             !sheetOpen && "hidden",
           )}
         >
-          <ChatbotWidget docked defaultOpen onCollapse={() => setSheetOpen(false)} {...widgetProps} />
+          {/* `active`: the sheet is hidden with `display:none` rather than
+              unmounted, so the widget's mount-time focus pass fires once and
+              never again. This is the surface's real open/closed state, and the
+              widget focuses its input on its RISING edge — see the widget's own
+              note (review wave, 2026-09). */}
+          <ChatbotWidget
+            docked
+            defaultOpen
+            active={sheetOpen}
+            onCollapse={() => setSheetOpen(false)}
+            {...widgetProps}
+          />
         </div>
 
         <button
@@ -220,31 +263,74 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
           onClick={() => setCollapsed((c) => !c)}
           className="absolute left-0 top-4 z-40 flex h-7 w-7 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-muted-2 shadow-md transition-colors hover:text-foreground"
           aria-label={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
+          aria-expanded={!collapsed}
           title={collapsed ? "Expand AI Copilot" : "Collapse AI Copilot"}
         >
           <Icon name={collapsed ? "ChevronLeft" : "ChevronRight"} className="h-4 w-4" />
         </button>
 
         {/* Clip lives on this inner frame - not the sticky one - so the
-            handle can hang past the border without being cut off. */}
-        <div className="relative h-full overflow-hidden">
-          {/* Fixed-width chat - clipped by the parent as the rail narrows (no reflow) */}
-          <div className="h-full w-[380px]">
-            <ChatbotWidget docked defaultOpen {...widgetProps} />
+            handle can hang past the border without being cut off.
+
+            `overflow-clip`, NOT `overflow-hidden` (QA 2026-09, "collapsed
+            rail shows a slice of the chat"). `hidden` still makes this frame
+            a SCROLL CONTAINER - one with no scrollbar, but one the browser
+            will happily scroll programmatically. The chat inside is 380px
+            wide in a 48px frame, and it calls `scrollIntoView()` on its
+            last message and `focus()` on its input (chatbot-widget.tsx), both
+            of which scroll every scrollable ancestor sideways to reveal the
+            target. That dragged this frame ~330px to the left, and because
+            the collapsed overlay below is `absolute inset-0` it rode along
+            with the content - so the strip showed the RIGHT edge of the chat
+            ("opilot", "BY DEE", the greeting) with the overlay parked
+            off-screen. `clip` is a pure paint clip: not a scroll container,
+            so nothing can move it, and the overlay stays where it is drawn. */}
+        <div className="relative h-full overflow-clip">
+          {/* Fixed-width chat - clipped by the parent as the rail narrows (no
+              reflow). `inert` while collapsed: the widget focuses its input on
+              mount and after every send, and a focused control inside a
+              48px strip is both invisible and a keyboard trap. Inert also
+              takes the whole chat out of the tab order and out of the
+              accessibility tree, which is what "collapsed" should mean. */}
+          <div className="h-full w-[380px]" inert={collapsed}>
+            {/* `active` is the mirror of `inert` above: expanding the rail is
+                the moment this chat becomes reachable, and the widget takes
+                focus then rather than only on mount. */}
+            <ChatbotWidget docked defaultOpen active={!collapsed} {...widgetProps} />
           </div>
 
-          {/* Collapsed strip overlay */}
-          <div
-            className={cn(
-              "absolute inset-0 flex flex-col items-center gap-3 bg-background pt-16 transition-opacity duration-200",
-              collapsed ? "opacity-100" : "pointer-events-none opacity-0",
-            )}
-          >
-            <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-2 [writing-mode:vertical-rl]">
-              AI Copilot
-            </span>
-          </div>
+          {/* Collapsed strip. The WHOLE strip is the expand control (product
+              owner, 2026-09: "when we click on the button, or actually
+              anywhere on this sidebar, it should pop out") - the round handle
+              above stays as the visible affordance and still toggles both
+              ways. Rendered only while collapsed so it can never intercept a
+              click meant for the open chat; the width transition on the
+              aside still animates the rail itself. */}
+          {collapsed && (
+            <button
+              type="button"
+              onClick={() => setCollapsed(false)}
+              // Anchored to the LEFT at the strip's own width, not `inset-0`:
+              // the aside animates 380px -> 48px, and a full-width overlay
+              // would centre the icon in the still-wide box and slide it
+              // across. Pinned at w-12 it stands still while the chat is
+              // clipped away behind it - the rail closes over the chat.
+              className="absolute inset-y-0 left-0 flex w-12 flex-col items-center gap-3 bg-background pt-16 text-muted-2 transition-colors hover:bg-surface hover:text-foreground"
+              // A pointer convenience over the same action as the handle;
+              // the handle is the one control assistive tech should hear.
+              aria-hidden="true"
+              tabIndex={-1}
+              title="Expand AI Copilot"
+            >
+              <Icon name="MessageCircle" className="h-4 w-4 text-muted" />
+              {/* .eyebrow's tracking (0.14em), not a one-off 0.18em: DM Mono
+                  is wider than the face this figure was set for, and this was
+                  the last surface in the app still carrying the old value. */}
+              <span className="font-mono text-[10px] uppercase tracking-[0.14em] [writing-mode:vertical-rl]">
+                AI Copilot
+              </span>
+            </button>
+          )}
         </div>
       </div>
       </aside>

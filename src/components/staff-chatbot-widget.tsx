@@ -18,8 +18,12 @@ export function StaffCopilotDock({ userName, viewerUid }: { userName?: string; v
   return (
     <CopilotDock
       key={client.id}
-      /* The staff sidebar is w-64, the client rail w-72 - the pinned strip has
-         to start at the right edge of whichever one is on screen (CD-G8). */
+      /* The strip starts at the right edge of the nav column it sits beside
+         (CD-G8). This component returns null above unless a client context is
+         active, so the only staff shell it is ever painted in is the
+         client-context one - whose rail is w-72, like the client's (parity
+         pass 2026-09, ruling D22). The prop stays because the two layouts
+         still declare which shell they are. */
       shell="staff"
       clientId={client.id}
       viewerUid={viewerUid}

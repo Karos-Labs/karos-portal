@@ -10,11 +10,19 @@ import { ArchiveButton } from "@/components/archive-button";
 import { formatDateTime } from "@/lib/utils";
 import { deriveActionItemOwners } from "@/lib/transcripts/ingest";
 import { normalizeDashes } from "@/lib/text-utils";
+import { isSafeInternalPath } from "@/lib/safe-internal-path";
 import type { AppUser } from "@/lib/types";
 
-export default async function TranscriptDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TranscriptDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string }>;
+}) {
   const user = await requireUser();
   const { id } = await params;
+  const { from } = await searchParams;
   const t = await getTranscript(id);
   if (!t) notFound();
   // Client guard: hidden meetings and meetings belonging to other clients are invisible
@@ -23,6 +31,28 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
   }
   const isStaff = user.role !== "CLIENT_USER";
   const isAdmin = user.role === "KAROS_ADMIN";
+
+  // Where "back" goes: the page that linked here, when it told us (`from`); a
+  // client's only route to this page is the Meetings section of their own
+  // settings, so a client with no `from` falls back there rather than to
+  // /transcripts, which isn't in their nav at all.
+  //
+  // `?tab=settings#meetings` since portal feedback round 2 (2026-09): Meetings
+  // stopped being a tab of its own and became the last sub-section of the
+  // Settings tab ("Meetings can be a sub-section in, like, account settings").
+  //
+  // `isSafeInternalPath`, not `startsWith("/")` (review wave, 2026-09): this
+  // value comes off the query string, so it is an attacker's string as much as
+  // ours, and a bare leading slash also opens `//evil.com` and `/\evil.com` —
+  // both of which navigate a signed-in reader off the portal from a link that
+  // says "Back". See that helper for the whole rule.
+  const backHref =
+    isSafeInternalPath(from)
+      ? from
+      : !isStaff && user.clientId
+        ? `/clients/${user.clientId}/settings?tab=settings#meetings`
+        : "/transcripts";
+  const backLabel = backHref === "/transcripts" ? "All meetings" : "Back";
 
   const [clients, allUsers] = await Promise.all([
     isStaff ? listClients() : Promise.resolve([]),
@@ -55,8 +85,8 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
 
   return (
     <>
-      <Link href="/transcripts" className="mb-4 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground">
-        <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> All meetings
+      <Link href={backHref} className="mb-4 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground">
+        <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> {backLabel}
       </Link>
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">

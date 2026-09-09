@@ -121,7 +121,10 @@ export function StrategyWarRoom({
   const stream = useCallback(
     async (controller: AbortController) => {
       try {
-        const res = await fetch(`/api/tasks/generate-swarm?clientId=${encodeURIComponent(clientId)}`, {
+        const res = await fetch(`/api/tasks/generate-swarm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientId }),
           signal: controller.signal,
         });
         if (!res.ok || !res.body) {
@@ -213,7 +216,9 @@ export function StrategyWarRoom({
               )}
             />
           </span>
-          <h2 className="font-mono text-sm font-semibold uppercase tracking-[0.14em] text-foreground">
+          {/* Mono stays — this is a label, which is the face's job — but at 500,
+              the heaviest weight DM Mono actually ships. */}
+          <h2 className="font-mono text-sm font-medium uppercase tracking-[0.14em] text-foreground">
             The Strategy War Room
           </h2>
           {status === "running" && progress && (
@@ -296,7 +301,7 @@ export function StrategyWarRoom({
               Consensus reached · {created} task{created === 1 ? "" : "s"} locked into your map.
             </p>
             <Link
-              href="/tasks"
+              href={`/clients/${clientId}`}
               onClick={onClose}
               className="shrink-0 font-semibold underline underline-offset-2 hover:opacity-80"
             >
@@ -313,7 +318,7 @@ export function StrategyWarRoom({
             <p className="text-xs opacity-90">{zeroOutcomeExplanation(outcome)}</p>
             <div className="flex flex-wrap items-center gap-3 pt-0.5">
               <Link
-                href="/tasks"
+                href={`/clients/${clientId}`}
                 onClick={onClose}
                 className="text-xs font-semibold underline underline-offset-2 hover:opacity-80"
               >

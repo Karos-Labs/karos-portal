@@ -1,0 +1,15 @@
+{
+  "_collection": "agentIntake",
+  "_id": "M9kQu2PyO9mN279BlsCN",
+  "clientId": "iZLc0mtwSFXNKE2KkC2d",
+  "agent": "linkedin",
+  "seatId": "wnk3rbc1EK8dI8XNabgF",
+  "handle": "https://www.linkedin.com/in/albert-kattan",
+  "role": "Founder of Karos. Leads operations and is hands-on across product development, marketing, and fundraising.",
+  "focus": "Strong tech background at a young age, now building a startup. Marketing: bringing things to market, leading a team, signing clients, finding the best people. Some operations and the struggles of running a startup.",
+  "offLimits": "Client names and client financials. The XO topic stays untouched (default). Entity names are exactly \"Deel Ventures\" and \"The Pitch\".",
+  "roster": [],
+  "createdBy": "seed:e10-hookup",
+  "createdAt": 1785018516172,
+  "updatedAt": 1785018516172
+}

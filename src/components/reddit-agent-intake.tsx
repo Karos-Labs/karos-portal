@@ -24,6 +24,7 @@ import { SavedFormCard } from "@/components/saved-form-card";
 import { JobStatusBadge } from "@/components/job-status";
 import { formatDate, relativeTime } from "@/lib/utils";
 import type { JobStatus } from "@/lib/types";
+import { IntakeNoRuns } from "@/components/intake-no-runs";
 import { clientArchiveLink, intakeAnchorId } from "@/lib/agent-intake-links";
 import { intakeSave } from "@/lib/intake-save";
 import {
@@ -67,7 +68,7 @@ export interface RedditRunRowView {
 }
 
 function fieldError(error: string | null) {
-  return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
+  return error ? <p className="mt-2 text-xs text-danger">{error}</p> : null;
 }
 
 const MODE_SUMMARY: Record<string, string> = {
@@ -131,7 +132,11 @@ function AccountForm({ clientId, intake }: { clientId: string; intake: RedditInt
   return (
     <SavedFormCard
       title="Your Reddit account"
-      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not set up</Badge>}
+      /* R7 (flow audit 2026-09): "Not set up" is the roster's phrase for an
+         agent whose stand-up run has not happened. This badge answers a
+         different question — is the form saved — and its five sibling intakes
+         now all say so in these words. */
+      badge={intake ? <Badge tone="success">On file</Badge> : <Badge tone="warning">Not saved yet</Badge>}
       summary={[
         { label: "Account we draft as", value: intake?.handle ?? "" },
         { label: "Account history", value: accountHistory },
@@ -335,32 +340,37 @@ function FeedbackBox({
            properly. */
         <ul className="mt-3 space-y-1.5">
           {runs.slice(0, 4).map((r) => {
-            /* A3/A4, the pass-2 stamp treatment. `Run <date>` is the generation
-               instant, and one fire produces a week of drafts - so four rows
-               printed the same date and said outright that the week came out of
-               one minute. A client's rows are already collapsed to one per day
-               server-side (toRunRowViews); here they lose the machinery noun and
-               the exact instant for the relative language every other
-               client-facing stamp uses. Staff keep the date and the /jobs link:
-               that instant is what they debug with. */
-            const label = isStaff
-              ? `Run ${formatDate(r.createdAt)}`
-              : `Worked on your content · ${relativeTime(r.createdAt)}`;
+            /* C2 (parity pass 2026-09). The CLIENT'S sentence is the primary
+               text for BOTH roles. Staff used to read `Run <date>` in its
+               place, so one row said two different things and a staff preview
+               of this page could not be compared with what the client gets.
+               They lose nothing: the exact generation instant they debug with
+               is appended as a muted secondary suffix, and the /jobs link -
+               staff-only, staff-guarded, and outside the client workspace -
+               rides on that suffix behind an Internal marker. The per-day
+               collapse for clients still happens server-side (toRunRowViews). */
+            const label = `Worked on your content · ${relativeTime(r.createdAt)}`;
+            const stamp = `Run ${formatDate(r.createdAt)}`;
             return (
-              <li key={r.id} className="flex items-center gap-2 text-xs text-muted">
-                {r.href ? (
-                  <a href={r.href} className="underline hover:text-foreground">
-                    {label}
-                  </a>
-                ) : (
-                  <span>{label}</span>
-                )}
+              <li key={r.id} className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                <span>{label}</span>
+                {isStaff &&
+                  (r.href ? (
+                    <a href={r.href} className="text-muted-2 underline hover:text-foreground">
+                      {stamp}
+                    </a>
+                  ) : (
+                    <span className="text-muted-2">{stamp}</span>
+                  ))}
+                {isStaff && r.href && <Badge tone="neutral">Internal</Badge>}
                 <JobStatusBadge status={r.status} />
               </li>
             );
           })}
         </ul>
-      ) : null}
+      ) : (
+        <IntakeNoRuns clientId={clientId} noun="replies" />
+      )}
       <div className="mt-4 space-y-3">
         <Textarea
           rows={5}

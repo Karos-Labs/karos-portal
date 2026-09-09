@@ -1,13 +1,23 @@
 import "server-only";
 import { jobTitleForClient } from "@/lib/job-title";
+import { dispatchAgentEngineRun } from "@/lib/agent-engine/dispatch";
+import { resolveDispatchedAgentEngineProductId } from "@/lib/agent-engine/health";
+import {
+  resolveAgentEngineRunKind,
+  toEngineRunInput,
+} from "@/lib/agent-engine/product-mapping";
+import { normalizeDashes } from "@/lib/text-utils";
 
 import {
   chargeClientCredits,
   createJob,
+  getAgentIntake,
   deleteJob,
   getClient,
   getContextItem,
   getCustomAgent,
+  getDynamicAgentSpec,
+  listClientSeats,
   listJobs,
   updateJob,
 } from "@/lib/data";
@@ -19,31 +29,80 @@ import {
 import type { AgentServiceContextFile } from "@/lib/agent-service/types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "@/lib/agent-service/x-agent-context";
 import {
+  LI_COMPANY_IDENTITY,
+  LI_IDENTITY_FIELD_KEY,
   buildLinkedInAgentContextFiles,
   hasLinkedInAgentIntake,
+  hasLinkedInV2Setup,
   isLinkedInAgent,
+  isLinkedInSetupV2,
+  isLinkedInV2Agent,
+  listLinkedInReadySeatIds,
+  resolveLiRunIdentity,
 } from "@/lib/agent-service/linkedin-agent-context";
 import {
   buildRedditAgentContextFiles,
   hasRedditAgentIntake,
   isRedditAgent,
 } from "@/lib/agent-service/reddit-agent-context";
+import {
+  buildNewsletterAgentContextFiles,
+  hasNewsletterAgentIntake,
+  hasNewsletterV2Setup,
+  isNewsletterAgent,
+  isNewsletterSetupV2,
+} from "@/lib/agent-service/newsletter-agent-context";
+import {
+  buildBlogAgentContextFiles,
+  hasBlogAgentIntake,
+  hasBlogV2Setup,
+  isBlogAgent,
+  isBlogSetupV2,
+} from "@/lib/agent-service/blog-agent-context";
+import {
+  buildReputationAgentContextFiles,
+  hasReputationAgentIntake,
+  hasReputationV2Setup,
+  isReputationAgent,
+  isReputationSetupV2,
+  toReputationEngineRunInput,
+} from "@/lib/agent-service/reputation-agent-context";
 import { buildClientAgentFeedbackFiles } from "@/lib/agent-service/client-agent-feedback-context";
+import { buildDynamicAgentClientContextFiles } from "@/lib/agent-service/dynamic-agent-context";
+import { buildDynamicAgentHistory } from "@/lib/agent-service/dynamic-agent-history";
+import { hasForbiddenTopics } from "@/lib/dynamic-agent-guardrails";
 import { getClientAgentByKey } from "@/lib/data-client-agents";
 import {
   LINKEDIN_SETUP_REQUIRED_PREFIX,
+  BLOG_RUN_CREDITS,
+  BLOG_SETUP_REQUIRED_PREFIX,
+  NEWSLETTER_RUN_CREDITS,
+  NEWSLETTER_SETUP_REQUIRED_PREFIX,
+  REPUTATION_RUN_CREDITS,
+  REPUTATION_SETUP_REQUIRED_PREFIX,
   REDDIT_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
+  BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
   perClientAgentSlug,
 } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { estimateAgentRunCredits } from "@/lib/credit-estimate";
 import { CREDIT_COSTS, CreditError, isBillableClientActor } from "@/lib/credits";
-import { scheduleLimitsFor } from "@/lib/scheduled-runs";
+import { maxPostsPerSubmission, scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { logActivity } from "@/lib/actions/_shared";
 import { customRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
-import type { AppUser, Client, CreditOperation, CustomAgent, JobRunType } from "@/lib/types";
+import type {
+  AppUser,
+  Client,
+  CreditOperation,
+  CustomAgent,
+  DynamicAgentInputDef,
+  DynamicAgentInputValue,
+  DynamicAgentJobPayload,
+  JobRunType,
+} from "@/lib/types";
 
 /**
  * Shared core for firing a repo-imported custom agent. Called by BOTH the web
@@ -59,6 +118,12 @@ import type { AppUser, Client, CreditOperation, CustomAgent, JobRunType } from "
 
 const MAX_INSTRUCTIONS_CHARS = 12_000;
 const MAX_PROMPT_CHARS = 4_000;
+// A dynamic agent's per-run price is fixed at spec-authoring time
+// (CREDIT_COSTS / spec.creditsCost) — an oversized text/textarea answer
+// spliced into an AI step's prompt would let a client inflate real LLM spend
+// past what was billed, so client-answer text is capped independently of the
+// admin-authored schema's own label/help/placeholder caps.
+const MAX_INPUT_VALUE_CHARS = 10_000;
 const MAX_KEY_CHARS = 120;
 const MAX_NAME_CHARS = 200;
 
@@ -98,6 +163,23 @@ export interface SubmitCustomAgentInput {
    */
   chargeMultiplier?: number;
   /**
+   * The run dialog's brief-field values, verbatim, for the few fields the SERVER
+   * needs as data rather than as prose.
+   *
+   * The prompt is already built from these fields, but it is built for the
+   * agent to read: `buildCustomAgentPrompt` joins labels and answers into
+   * sentences, so recovering "which identity" from it means parsing our own
+   * copy — which changes whenever someone edits a label. `chargeMultiplier` is
+   * the same need solved once already (`batchSizeFrom` lifts the batch-size
+   * field out of these values before the prompt is composed); this generalizes
+   * it rather than adding a second one-off.
+   *
+   * BROWSER-SUPPLIED AND UNTRUSTED. Every reader validates against the client's
+   * own records — see `resolveLiRunIdentity`, which falls back to the company
+   * page rather than trusting a seat id it cannot find on this client.
+   */
+  briefValues?: Record<string, string>;
+  /**
    * EXPLICIT billing decision, overriding the actor test below.
    *
    * Only for callers that hold a STORED billing intent the acting user cannot
@@ -131,6 +213,13 @@ export interface SubmitCustomAgentInput {
    */
   extraMetadata?: Record<string, string>;
   /**
+   * T-B9: a target publish date for the deliverable this run produces, stamped
+   * on the job doc so the completion webhook can schedule the asset directly
+   * instead of landing it as an undated draft. Staff-only — enforced in
+   * `runCustomAgentAction`, not here; this layer only carries the value.
+   */
+  requestedScheduledAt?: number;
+  /**
    * Overrides the per-run price and ledger operation for runs that are not
    * priced per output — today only the client-billed LAUNCH, which costs
    * `CustomAgent.launchCreditCost` and lands as `agent_launch`. Charged with
@@ -138,6 +227,14 @@ export interface SubmitCustomAgentInput {
    * and the reconcile sweeps hand it back with no extra code.
    */
   charge?: { amount: number; operation: CreditOperation; reason: string };
+  /**
+   * INTERNAL — set only by this module's own fan-out. Which post of a
+   * multi-post request this job is (1-based) and how many there are, so the
+   * job's title and stored input say "post 2 of 3" and a caller reading the
+   * jobs list can tell the three apart. A caller passing this from outside
+   * gets a label and nothing else: it never changes what is charged or run.
+   */
+  batchPosition?: { index: number; total: number };
 }
 
 /**
@@ -166,14 +263,30 @@ export async function isCustomAgentGrantedToClient(
   );
 }
 
+/**
+ * The batch-size value every fanned-out child carries, so the recursion bottoms
+ * out at one post per run. A named constant rather than an inline literal: the
+ * client-copy boundary scan follows `input` from the persisting writers back to
+ * this module's own recursive call, and a bare string there reads as copy.
+ */
+const SINGLE_POST = String(1);
+
+export interface SubmitCustomAgentResult {
+  /** The first (or only) job started. Callers that navigate to "the job" use this. */
+  jobId?: string;
+  /**
+   * Every job this submission started, in order. Only longer than one when an
+   * agent-engine run was asked for N posts and fanned out into N runs. Absent
+   * on the legacy agent-service path, which is still one job per submission.
+   */
+  jobIds?: string[];
+  error?: string;
+}
+
 export async function submitCustomAgentJob(
   user: AppUser,
   input: SubmitCustomAgentInput,
-): Promise<{ jobId?: string; error?: string }> {
-  if (!isAgentServiceConfigured()) {
-    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
-  }
-
+): Promise<SubmitCustomAgentResult> {
   const agent = await getCustomAgent(input.agentId);
   if (!agent || !agent.enabled) return { error: "Agent not found." };
   const client = await getClient(input.clientId);
@@ -193,6 +306,73 @@ export async function submitCustomAgentJob(
       error: `${agent.name} runs only for the client whose lab repo slug is "${perClientAgentSlug(agent.key)}", and ${client.name}'s slug is ${client.agentsRepoSlug ? `"${client.agentsRepoSlug}"` : "not set"}. Nothing has run — use this client's own agent.`,
     };
   }
+
+  // Which executor runs this agent. Part of the staged cutover: the custom
+  // agents with real agent-engine workflows go there, everything else stays on
+  // agent-service. Decided up here, before anything is composed or written, so
+  // the fan-out below and the job doc both record the truth from the start — a
+  // job that says "agent-service" and was handed to the engine is
+  // unreconcilable by every surface that reads agentId.
+  const engineProductId = resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug);
+
+  /**
+   * N POSTS = N RUNS on the agent-engine path.
+   *
+   * An engine run always delivers exactly ONE post (`materializeAgentEngineDeliverable`
+   * mints one asset per run, deterministically keyed on the run id), and no
+   * engine workflow has ever read a post count. So "Create exactly N distinct
+   * outputs" — the legacy agent-service instruction the multiplier below still
+   * composes — reached the engine as nothing, while the charge was N× the
+   * per-run price: a client asked for three posts, paid for three, and got one.
+   *
+   * Honoured instead as N separate submissions of this same brief, each billed
+   * at the single-run price, each its own job with its own run, deliverable
+   * and asset. The batch field is pinned to "1" on every child so the recursion
+   * bottoms out, and `chargeMultiplier` is dropped for the same reason. A
+   * child that fails to start (credits ran out, dispatch refused) stops the
+   * loop — what already started stays started, and the caller is told how far
+   * it got rather than shown a clean success.
+   *
+   * Reddit never fans out (`maxPostsPerSubmission` is 1 there): one run drafts
+   * ONE reply, as a hard product rule.
+   */
+  const requestedPosts = Math.max(1, Math.round(input.chargeMultiplier ?? 1));
+  if (engineProductId && requestedPosts > 1 && !input.batchPosition) {
+    const total = Math.min(requestedPosts, maxPostsPerSubmission(agent.key));
+    if (total > 1) {
+      const jobIds: string[] = [];
+      for (let index = 1; index <= total; index++) {
+        const child = await submitCustomAgentJob(user, {
+          ...input,
+          chargeMultiplier: 1,
+          briefValues: { ...input.briefValues, [BATCH_SIZE_FIELD_KEY]: SINGLE_POST },
+          batchPosition: { index, total },
+        });
+        if (child.error || !child.jobId) {
+          const started = jobIds.length;
+          return {
+            ...(started > 0 ? { jobId: jobIds[0], jobIds } : {}),
+            error:
+              started > 0
+                ? `Started ${started} of ${total} posts; post ${index} did not start: ${child.error ?? "unknown error"}`
+                : (child.error ?? "The run did not start."),
+          };
+        }
+        jobIds.push(child.jobId);
+      }
+      return { jobId: jobIds[0], jobIds };
+    }
+  }
+
+  // The brief as the ENGINE will see it. Starts as what the caller sent and is
+  // widened below where a field needs a lookup only this layer can do (the
+  // LinkedIn seat's name); the legacy agent-service path never reads it.
+  let engineBriefValues = input.briefValues;
+  // Run inputs the engine reads that are NOT dialog fields — a family's saved
+  // intake handed to a pre-flight that runs setup for itself (reputation, via
+  // `toReputationEngineRunInput`). Merged AFTER `toEngineRunInput` at dispatch,
+  // so a dialog key can never be shadowed by an intake key with the same name.
+  let engineExtraInputs: Record<string, unknown> = {};
 
   /**
    * HOW MANY OUTPUTS THIS FIRE ASKS FOR — clamped once, and the same number is
@@ -228,9 +408,9 @@ export async function submitCustomAgentJob(
     return { error: "This run's price is not set up correctly — your Karos team can fix it." };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
   if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
   }
   const origin = appUrl.replace(/\/$/, "");
 
@@ -290,8 +470,47 @@ export async function submitCustomAgentJob(
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
+    // v2 adds two rungs above the injection, and both exist to refuse a run the
+    // AGENT would refuse anyway — one press earlier and without spending it.
+    //
+    // The lab is explicit that a writer run with no stood-up state reports
+    // `blocked_intake`, and that a seat with no voice card is blocked rather than
+    // drafted in a borrowed voice. Letting either through means a client presses
+    // Run, waits, pays, and reads an honest refusal — so the portal asks the same
+    // two questions first, in the words of the thing they can actually do.
+    const v2Identity = isLinkedInV2Agent(agent.key)
+      ? await resolveLiRunIdentity(input.clientId, input.briefValues?.[LI_IDENTITY_FIELD_KEY])
+      : LI_COMPANY_IDENTITY;
+    // The engine matches executives by NAME (`selectExecutive`, case-
+    // insensitive), never by this portal's seat id — so the seat the client
+    // picked is resolved to its display name here and handed to
+    // `toEngineRunInput` under the engine's own key. Without this every
+    // LinkedIn engine run posted as the company page whatever was chosen.
+    if (v2Identity.kind === "seat") {
+      const seat = (await listClientSeats(input.clientId)).find((s) => s.id === v2Identity.seatId);
+      if (seat) engineBriefValues = { ...engineBriefValues, requestedExecutiveName: seat.name };
+    }
+    if (!isLinkedInSetupV2(agent.key) && isLinkedInV2Agent(agent.key)) {
+      if (!(await hasLinkedInV2Setup(input.clientId))) {
+        return {
+          error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the LinkedIn agent card, which stands up the lanes, the voice and the first topics. Nothing has run.`,
+        };
+      }
+      if (v2Identity.kind === "seat" && !(await listLinkedInReadySeatIds(input.clientId)).includes(v2Identity.seatId)) {
+        return {
+          error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} for this person first. Their seat has no voice profile yet, and we never draft on someone's personal profile in a borrowed voice. Use "Build their voice" on their card in the LinkedIn agent data. Nothing has run.`,
+        };
+      }
+    }
     try {
-      contextFiles.push(...(await buildLinkedInAgentContextFiles(input.clientId, agent.name)));
+      contextFiles.push(
+        ...(await buildLinkedInAgentContextFiles({
+          clientId: input.clientId,
+          agentKey: agent.key,
+          agentName: agent.name,
+          identity: v2Identity,
+        })),
+      );
     } catch (e) {
       return {
         error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
@@ -318,6 +537,97 @@ export async function submitCustomAgentJob(
     }
   }
 
+  // Newsletter agents (v2): the same contract — the client's stored intake plus
+  // the five data files the writer and manager read (see
+  // newsletter-agent-context.ts). Hard-gated the same way.
+  //
+  // TWO RUNGS, and the second is not the same question as the first. The intake
+  // gate asks "has the client filled the form"; the setup gate asks "does this
+  // client have an issue index", which is what the writer CLAIMS a number in at
+  // its very first step. A client with a saved form and no index would be charged
+  // for a run that dies immediately, and the setup skill is exempt because it is
+  // the job that creates the index.
+  if (isNewsletterAgent(agent.key)) {
+    if (!(await hasNewsletterAgentIntake(input.clientId))) {
+      return {
+        error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your send day and your compliance limits before it can write an issue. Nothing has run.`,
+      };
+    }
+    if (!isNewsletterSetupV2(agent.key) && !(await hasNewsletterV2Setup(input.clientId))) {
+      return {
+        error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the newsletter agent card, which builds the voice, the topic list and the issue numbering. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildNewsletterAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's newsletter data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  if (isBlogAgent(agent.key)) {
+    if (!(await hasBlogAgentIntake(input.clientId))) {
+      return {
+        error: `${BLOG_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your own domains and your off-limits subjects before it can write. Nothing has run.`,
+      };
+    }
+    if (!isBlogSetupV2(agent.key) && !(await hasBlogV2Setup(input.clientId))) {
+      return {
+        error: `${BLOG_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the blog agent card, which builds the voice, the cluster map and the post numbering. Nothing has run.`,
+      };
+    }
+    try {
+      contextFiles.push(...(await buildBlogAgentContextFiles(input.clientId, agent.name)));
+    } catch (e) {
+      return {
+        error: `Could not attach the client's blog data: ${e instanceof Error ? e.message : "unknown error"}`,
+      };
+    }
+  }
+
+  if (isReputationAgent(agent.key)) {
+    if (!(await hasReputationAgentIntake(input.clientId))) {
+      return {
+        error: `${REPUTATION_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs to know who hears about an urgent review before it reads anything. Nothing has run.`,
+      };
+    }
+    if (engineProductId) {
+      // On the engine, setup is the run's own first step: `reputation-agent`'s
+      // `00-roster-setup` resolves the client's listings from the intake the
+      // run carries and records them in client config, then pulses. So the
+      // stand-up rung below does not apply — there is no roster row for it to
+      // find and none is needed — and the context files do not travel (the
+      // engine reads its own workspace; see the dispatch note further down).
+      // What DOES travel is the intake itself, as run input, because that is
+      // what the pre-flight resolves from. Nothing here tells the client that
+      // "setup" happened; their first run works or names what did not resolve.
+      engineExtraInputs = {
+        ...engineExtraInputs,
+        ...toReputationEngineRunInput(await getAgentIntake(input.clientId, "reputation", null)),
+      };
+    } else {
+      if (!isReputationSetupV2(agent.key) && !(await hasReputationV2Setup(input.clientId))) {
+        return {
+          error: `${REPUTATION_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the reputation agent card, which finds their real listings and sets what counts as urgent. Nothing has run.`,
+        };
+      }
+      try {
+        contextFiles.push(...(await buildReputationAgentContextFiles(input.clientId, agent.name)));
+      } catch (e) {
+        return {
+          error: `Could not attach the client's reputation data: ${e instanceof Error ? e.message : "unknown error"}`,
+        };
+      }
+    }
+  }
+
+  // The karos-carousel-runner/-setup/-manager gating block used to live here.
+  // The whole family was retired in full 2026-08-29 (SCRUM-377/T-B25a) — no
+  // engine equivalent was ever planned. Removed from code and the db, do not
+  // reintroduce.
+
   // Client-agent feedback (§5): every run of a LIVE umbrella carries the
   // client's standing direction — global first, then per-template. Launch runs
   // are excluded by construction: a setup run is what CREATES the templates, so
@@ -339,20 +649,69 @@ export async function submitCustomAgentJob(
     }
   }
 
+  // What this run was ASKED to do, as a title-sized label (Job.runLabel —
+  // staff-facing raw text, see the type's F132 note). From briefValues rather
+  // than the composed prompt — the prompt is built for the agent to read, and
+  // parsing a field back out of our own copy breaks the next time someone
+  // edits a label. "request" is the primary brief field on every launch
+  // profile that has one (generic, X, LinkedIn, Reddit). First line only,
+  // dashes normalized, capped title-short — truncated on CODE POINTS, because
+  // a .slice() cut can split an emoji's surrogate pair and ship a mangled
+  // character into a stored title.
+  const requestText = normalizeDashes(input.briefValues?.["request"] ?? "").trim();
+  const requestChars = [...(requestText.split("\n")[0]?.trim() ?? "")];
+  const runLabel =
+    requestChars.length > 64
+      ? `${requestChars.slice(0, 63).join("").trimEnd()}…`
+      : requestChars.join("");
+
+  // `engineProductId` was resolved at the top of this function (it decides the
+  // N-posts fan-out before anything is composed), and is what the job doc
+  // below records as its executor.
+
+  // Checked here rather than at the top of the function, which is where it
+  // used to live: an agent routed to agent-engine has no use for
+  // AGENT_SERVICE_URL, and requiring it would tie the new path to the very
+  // service this cutover exists to drain. Still ahead of the job doc and the
+  // credit charge, so a misconfigured legacy deployment fails with nothing
+  // written and nothing billed, exactly as before.
+  if (!engineProductId && !isAgentServiceConfigured()) {
+    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
+  }
+
+  // "post 2 of 3" on a fanned-out child, so the jobs list and the Job page can
+  // tell three otherwise identical runs apart.
+  const jobTitle = input.batchPosition
+    ? `${jobTitleForClient(agent.name, client.name)} · post ${input.batchPosition.index} of ${input.batchPosition.total}`
+    : jobTitleForClient(agent.name, client.name);
+
   const now = Date.now();
   const jobId = await createJob({
     clientId: input.clientId,
-    agentId: "agent-service",
+    agentId: engineProductId ? "agent-engine" : "agent-service",
     customAgentId: agent.id,
     ...(input.runType ? { runType: input.runType } : {}),
     ...(input.clientAgentId ? { clientAgentId: input.clientAgentId } : {}),
     ...(input.templateKey ? { templateKey: input.templateKey } : {}),
+    ...(runLabel ? { runLabel } : {}),
+    ...(input.requestedScheduledAt ? { requestedScheduledAt: input.requestedScheduledAt } : {}),
     agentName: agent.name,
-    title: jobTitleForClient(agent.name, client.name),
+    title: jobTitle,
     status: "queued",
-    input: { agent: agent.name, prompt },
+    input: {
+      agent: agent.name,
+      prompt,
+      // Strings, like every other `Job.input` value (it is a Record<string, string>).
+      ...(input.batchPosition ? { batchIndex: String(input.batchPosition.index), batchTotal: String(input.batchPosition.total) } : {}),
+    },
     assetIds: [],
-    events: [{ at: now, level: "info", message: "Submitted to agent service" }],
+    events: [
+      {
+        at: now,
+        level: "info",
+        message: engineProductId ? "Submitted to agent-engine" : "Submitted to agent service",
+      },
+    ],
     createdBy: user.uid,
     createdAt: now,
     updatedAt: now,
@@ -376,10 +735,66 @@ export async function submitCustomAgentJob(
   // cap un-clamped on disk, nothing re-validates a row on read, and the cron
   // bills chargeMultiplier = outputsPerRun on every fire. A flat ceiling of 5
   // would wave those through at five times the product.
+  // The newsletter's price is CARRIED, not re-derived. It was 10 credits as a
+  // managed product and the work per issue did not change when the product moved
+  // to the custom-agent path, so a client's bill must not move either. Without
+  // this it would silently fall back to the generic custom-agent rate the moment
+  // the managed task type is removed.
+  //
+  // Still overridable by an admin: an explicit `agent.creditCost` on the doc wins,
+  // so pricing stays where pricing is set. This only replaces the NULL default.
+  const carriedDefault = isNewsletterAgent(agent.key)
+    ? NEWSLETTER_RUN_CREDITS
+    : isBlogAgent(agent.key)
+      ? BLOG_RUN_CREDITS
+      : isReputationAgent(agent.key)
+        ? REPUTATION_RUN_CREDITS
+        : null;
+  //
+  // THE FALLBACK IS NOW A FALLBACK, not the price (credits rework, 2026-09).
+  // The ladder above resolves what to quote when nothing has been MEASURED yet;
+  // `estimateAgentRunCredits` prefers the median of this agent's recent real
+  // costs for this client. Either way the number here is a HOLD — an estimate
+  // reserved at dispatch — and the webhook settles it to `ceil(actualUsd × 20)`
+  // when the run reports what it cost us.
+  //
+  // `input.charge` (the one-time setup charge) skips the estimate entirely: it
+  // is an admin-set price calibrated from a measured cross-client ratio, and
+  // `UNSETTLED_OPERATIONS` keeps it out of settlement too, so quoting a
+  // per-run median for it would replace one deliberate number with another
+  // product's average.
+  const fallbackCredits = agent.creditCost ?? carriedDefault ?? CREDIT_COSTS.customAgentRun;
+  const billing = input.bill ?? isBillableClientActor(user);
+  const estimate = input.charge
+    ? null
+    : billing
+      ? await estimateAgentRunCredits({
+          clientId: input.clientId,
+          customAgentId: agent.id,
+          fallbackCredits,
+        })
+      : null;
+  //
+  // THE MULTIPLIER APPLIES TO THE CONSTANT, NEVER TO A MEASUREMENT. The
+  // fallback prices ONE output, so a three-post batch is 3× it. A measured
+  // median does not: it is `ceil(actualUsd × 20)` over real runs of this agent,
+  // and those runs already produced whatever batch size they were asked for, so
+  // multiplying it again bills a three-post batch at nine posts. The two
+  // branches are different KINDS of number and only one of them is per-output.
+  //
+  // The residual, stated rather than smoothed over: a client who usually runs
+  // batches of 1 and today asks for 3 is quoted a single-run median for a
+  // triple-size run. That under-holds, and settlement corrects it at the 2×
+  // cap; over ten runs the median moves onto the mix they actually use. The
+  // alternative — dividing the sample by each run's own batch size — needs a
+  // per-job output count the jobs do not carry, so it would be a guess wearing
+  // a measurement's clothes.
   const runCost = input.charge
     ? input.charge.amount
-    : (agent.creditCost ?? CREDIT_COSTS.customAgentRun) * multiplier;
-  if (input.bill ?? isBillableClientActor(user)) {
+    : estimate && !estimate.fallback
+      ? estimate.credits
+      : fallbackCredits * multiplier;
+  if (billing) {
     try {
       await chargeClientCredits({
         clientId: input.clientId,
@@ -401,6 +816,49 @@ export async function submitCustomAgentJob(
     }
   }
 
+  // --- agent-engine path, for the custom agents that have a workflow there ---
+  //
+  // Placed after the credit charge, not before it: the charge is what makes a
+  // failed dispatch refundable, and dispatchAgentEngineRun marks this job
+  // failed rather than deleting it, so the existing refund path still applies.
+  //
+  // No agent-service job token is minted here. That credential exists so the
+  // legacy runner can call back into /api/mcp mid-run; agent-engine reads the
+  // client's context straight from its own workspace store and has no use for
+  // it, and minting one anyway would hand out a callback credential nothing
+  // is going to use.
+  if (engineProductId) {
+    const dispatched = await dispatchAgentEngineRun({
+      existingJobId: jobId,
+      clientId: input.clientId,
+      clientSlug: client.agentsRepoSlug!,
+      productId: engineProductId,
+      runKind: resolveAgentEngineRunKind(engineProductId),
+      agentName: agent.name,
+      title: jobTitle,
+      // What the person actually asked for, allow-listed down to the keys the
+      // engine understands as a per-run request.
+      //
+      // `engineProductId` is passed, not omitted: it is the SAME id the run
+      // dialog resolved when it decided which engine fields to show
+      // (`withEngineRunFields`, custom-agents.tsx), and C3's second mandatory
+      // fix is that the page and the server must agree on it — otherwise the
+      // dialog paints a field the server builds its input without. Pinned by
+      // the page/server consistency sweep in product-mapping.test.ts.
+      inputs: { ...toEngineRunInput(engineBriefValues, engineProductId), ...engineExtraInputs },
+      createdBy: user.uid,
+    });
+    if ("error" in dispatched) {
+      // The job doc already exists and dispatchAgentEngineRun has marked it
+      // failed, so the caller gets the id and can show the failure rather than
+      // losing the run entirely.
+      return "jobId" in dispatched ? { jobId: dispatched.jobId, error: dispatched.error } : { error: dispatched.error };
+    }
+    return { jobId };
+  }
+
+  // --- legacy agent-service path (unchanged) ---
+  //
   // Job-scoped credential so the runner can call back into the MCP server
   // (`/api/mcp`) for this client's data / to upload artifacts mid-run. Null when
   // signing isn't configured — the run just proceeds without callback access.
@@ -502,6 +960,367 @@ export async function submitCustomAgentJob(
     actor: user.name,
     actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
     metadata: { jobId, taskType: "custom", agentKey: agent.key },
+  });
+  return { jobId };
+}
+
+/* ─────────────────── Dynamic Agent Studio submission (Phase 6) ───────────────────
+ *
+ * A SEPARATE, smaller submission core from submitCustomAgentJob above —
+ * deliberately not folded into it. A dynamic agent has no repo skill, no
+ * X/LinkedIn/Reddit intake wiring, and no launch-vs-run split; forcing it
+ * through the same function would mean threading a `specSnapshot` branch
+ * through every one of those unrelated concerns. Both cores still end at the
+ * SAME `submitAgentServiceJob` call and the SAME `custom` task type — see
+ * agent-service/runner/src/main.ts's specSnapshot branch, which is the one
+ * place execution actually forks.
+ */
+
+export interface SubmitDynamicAgentInput {
+  specId: string;
+  clientId: string;
+  inputs: Record<string, DynamicAgentInputValue>;
+  runType?: JobRunType;
+}
+
+interface UploadedFileRef {
+  id: string;
+  url: string;
+  name: string;
+}
+
+function isUploadedFileRef(value: unknown): value is UploadedFileRef {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as UploadedFileRef).id === "string" &&
+    typeof (value as UploadedFileRef).url === "string" &&
+    typeof (value as UploadedFileRef).name === "string"
+  );
+}
+
+/**
+ * Every key the client submitted must be declared on the snapshot's
+ * inputSchema, every required field on the schema must have a non-empty
+ * answer, and every value's shape must match its field's `type` — Phase 6's
+ * Portal-side guard, checked against the FROZEN snapshot that is about to
+ * ship, not the live spec (which may have changed since the client loaded
+ * the form).
+ *
+ * Shape-checking matters beyond UX: `step-runner.ts` splices text/textarea
+ * answers verbatim into AI-step prompts and a `select` answer is trusted to
+ * be one of the admin-authored `options` — an unchecked value reaching
+ * either is a prompt-injection / spec-integrity gap, not just a bad-input
+ * one. file/image identity (does `id` actually belong to this client) is
+ * verified separately in `resolveDynamicFileInputs`, since that needs a
+ * Firestore read this synchronous shape check can't do.
+ */
+function validateDynamicInputs(inputSchema: DynamicAgentInputDef[], inputs: Record<string, DynamicAgentInputValue>): string | null {
+  const schemaKeys = new Set(inputSchema.map((f) => f.key));
+  for (const key of Object.keys(inputs)) {
+    if (!schemaKeys.has(key)) return `"${key}" is not a field on this agent.`;
+  }
+  for (const field of inputSchema) {
+    const value = inputs[field.key];
+    const isEmpty = value == null || value === "" || (Array.isArray(value) && value.length === 0);
+    if (field.required && isEmpty) return `"${field.label}" is required.`;
+    if (isEmpty) continue;
+
+    switch (field.type) {
+      case "text":
+      case "textarea":
+        if (typeof value !== "string") return `"${field.label}" must be text.`;
+        if (value.length > MAX_INPUT_VALUE_CHARS) {
+          return `"${field.label}" is too long (max ${MAX_INPUT_VALUE_CHARS.toLocaleString()} characters).`;
+        }
+        break;
+      case "select":
+        if (typeof value !== "string") return `"${field.label}" must be one of the offered options.`;
+        if (!(field.options ?? []).includes(value)) return `"${field.label}" must be one of the offered options.`;
+        break;
+      case "file": {
+        const refs = Array.isArray(value) ? value : [value];
+        if (!refs.every(isUploadedFileRef)) return `"${field.label}" has an invalid uploaded file reference.`;
+        break;
+      }
+      case "image": {
+        if (Array.isArray(value)) return `"${field.label}" accepts a single image.`;
+        if (!isUploadedFileRef(value)) return `"${field.label}" has an invalid uploaded file reference.`;
+        break;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * file/image values carry a client-supplied `url`/`name` alongside the `id` —
+ * fine for a legitimate upload (the intake form fills them in from the
+ * upload response), but a server action's payload is just JSON off the wire,
+ * so nothing stops a forged `{id: <a real id>, url: "http://attacker/..."}`
+ * from reaching here. Mirrors the existing `contextItemIds` ownership check
+ * a few functions away: re-fetch each referenced context item, confirm it
+ * belongs to THIS client, and rebuild the value from the server's own
+ * `url`/`name` rather than trusting the client's claim — the same
+ * SSRF-shaped gap `contextItemIds` was already closed for.
+ */
+async function resolveDynamicFileInputs(
+  inputSchema: DynamicAgentInputDef[],
+  inputs: Record<string, DynamicAgentInputValue>,
+  clientId: string,
+): Promise<{ inputs: Record<string, DynamicAgentInputValue>; error?: string }> {
+  const resolved: Record<string, DynamicAgentInputValue> = { ...inputs };
+  for (const field of inputSchema) {
+    if (field.type !== "file" && field.type !== "image") continue;
+    const value = inputs[field.key];
+    if (value == null || value === "") continue;
+    const refs = Array.isArray(value) ? value : [value];
+
+    const rebuilt: UploadedFileRef[] = [];
+    for (const ref of refs) {
+      if (!isUploadedFileRef(ref)) continue; // already rejected by validateDynamicInputs
+      const item = await getContextItem(ref.id);
+      if (!item || item.clientId !== clientId) {
+        return { inputs, error: `"${field.label}" references a file that no longer belongs to this client.` };
+      }
+      rebuilt.push({ id: item.id, url: item.url, name: item.name });
+    }
+    resolved[field.key] = field.type === "image" ? (rebuilt[0] ?? null) : rebuilt;
+  }
+  return { inputs: resolved };
+}
+
+export async function submitDynamicAgentJob(
+  user: AppUser,
+  input: SubmitDynamicAgentInput,
+): Promise<{ jobId?: string; error?: string }> {
+  if (!isAgentServiceConfigured()) {
+    return { error: "Agent service is not configured (AGENT_SERVICE_URL / AGENT_SERVICE_TOKEN)." };
+  }
+
+  const spec = await getDynamicAgentSpec(input.specId);
+  if (!spec || !spec.active) return { error: "Agent not found." };
+  const client = await getClient(input.clientId);
+  if (!client) return { error: "Client not found." };
+
+  // DECISION: per-agent client access control is `allowedClientIds`, enforced
+  // HERE in the job-creation path. Empty/undefined = every client may run it.
+  // Enforced here (job creation), not only in whatever surface links to this
+  // agent — the same "check it where the write happens" rule
+  // isCustomAgentGrantedToClient exists for above.
+  const allowed = spec.allowedClientIds ?? [];
+  if (user.role === "CLIENT_USER" && allowed.length > 0 && !allowed.includes(input.clientId)) {
+    return { error: "Agent not found." };
+  }
+
+  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) {
+    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+  }
+  const origin = appUrl.replace(/\/$/, "");
+
+  // DECISION: specSnapshot is a deep clone taken right here, at job-creation
+  // time — never the live spec at execution time. structuredClone (Node 18+)
+  // is a real deep clone, not a shallow spread, so a later admin edit to
+  // `spec` in Firestore cannot reach back into a job already in flight.
+  const specSnapshot = structuredClone(spec);
+  const specVersion = specSnapshot.version;
+
+  const inputError = validateDynamicInputs(specSnapshot.inputSchema, input.inputs);
+  if (inputError) return { error: inputError };
+
+  const resolvedInputs = await resolveDynamicFileInputs(specSnapshot.inputSchema, input.inputs, input.clientId);
+  if (resolvedInputs.error) return { error: resolvedInputs.error };
+
+  // Per-step model routing, expressed in the brief's existing `step_models`
+  // shape (stepId → alias). Built from the SNAPSHOT, so it is frozen with
+  // everything else. Aliases only — a raw model id never leaves the Portal.
+  const dynamicStepModels: Record<string, string> = {};
+  for (const step of specSnapshot.steps) {
+    if (step.type === "ai") dynamicStepModels[step.id] = step.model;
+  }
+
+  // Per-AI-step capability grants (network / client-data access). Computed
+  // from the FROZEN snapshot, not the live spec, so the capability set is
+  // frozen with everything else the run was created from — an admin editing
+  // the spec mid-run can never widen or narrow what an in-flight job may do.
+  const needsClientData = specSnapshot.steps.some((s) => s.type === "ai" && s.allowClientData === true);
+  const needsNetwork = specSnapshot.steps.some((s) => s.type === "ai" && s.allowNetwork === true);
+  const dynamicContextFiles = needsClientData ? await buildDynamicAgentClientContextFiles(input.clientId) : [];
+
+  // Topic guardrails and output de-duplication (docs/dynamic-agent-guardrails.md).
+  // Both are resolved HERE, at job creation, and travel on the frozen brief —
+  // so a mid-flight edit to the client's topic list or to the agent's opt-in
+  // can no more reach a running job than a mid-flight edit to the spec can.
+  //
+  // Both are also inert by construction: a client with no forbidden topics
+  // produces no `guardrails` field, and an agent without the opt-in never even
+  // reads its history. Neither costs an unconfigured run anything.
+  const forbiddenTopics = hasForbiddenTopics(client.forbiddenTopics) ? client.forbiddenTopics! : [];
+  const wantsDedupe = specSnapshot.dedupeAgainstHistory === true;
+  const outputHistory = wantsDedupe ? await buildDynamicAgentHistory(spec.id, input.clientId) : [];
+
+  const now = Date.now();
+  const jobId = await createJob({
+    clientId: input.clientId,
+    // Recorded so an operator can answer "did this run see client data" or
+    // "could this run reach the network" without reading every step of the
+    // snapshot. Present on every dynamic-agent job going forward; absent on
+    // jobs created before this field existed and on every non-dynamic job.
+    dynamicCapabilities: { anyNetwork: needsNetwork, anyClientData: needsClientData },
+    agentId: "agent-service",
+    dynamicAgentSpecId: spec.id,
+    ...(input.runType ? { runType: input.runType } : {}),
+    agentName: spec.name,
+    title: jobTitleForClient(spec.name, client.name),
+    status: "queued",
+    // `inputs` (JSON-safe: strings/arrays/file refs, never raw bytes) is
+    // persisted so a from-scratch resume fallback (resumeFailedJobAction,
+    // when agent-service has nothing left to resume from) can reconstruct
+    // this run's original client answers — mirrors the hardcoded path's own
+    // input.prompt for the same reason.
+    input: { agent: spec.name, inputs: JSON.stringify(resolvedInputs.inputs) },
+    assetIds: [],
+    events: [{ at: now, level: "info", message: "Submitted to agent service" }],
+    createdBy: user.uid,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // DECISION: fixed credit price, taken from the SNAPSHOT and charged ONCE at
+  // job creation. Token-based variable pricing is out of scope. A worker-side
+  // retry re-runs the runner without re-entering this path, so a retried run
+  // never re-charges - the same "already paid for" shape resumeCampaignAction
+  // relies on in campaign-run-actions.ts.
+  // Never re-charged on retry/resume — a resumed dynamic-agent run reuses this
+  // same jobId, and chargeClientCredits/refundJobCharge below are keyed off
+  // jobId exactly like submitCustomAgentJob's charge above, so the same
+  // resumable-campaign behavior (resumeCampaignAction never re-dispatches an
+  // already-charged step) applies here with no extra code.
+  if (isBillableClientActor(user)) {
+    try {
+      await chargeClientCredits({
+        clientId: input.clientId,
+        amount: specSnapshot.creditsCost,
+        operation: "custom_agent_run" satisfies CreditOperation,
+        reason: `Agent run · ${spec.name}`.slice(0, 120),
+        agentId: spec.id,
+        jobId,
+        actorUid: user.uid,
+        actorName: user.name,
+      });
+    } catch (e) {
+      await deleteJob(jobId);
+      if (e instanceof CreditError) return { error: e.message };
+      throw e;
+    }
+  }
+
+  const jobToken = mintJobToken({ clientId: input.clientId, jobId });
+
+  const dynamicPayload: DynamicAgentJobPayload = {
+    specId: spec.id,
+    specVersion,
+    specSnapshot,
+    clientId: input.clientId,
+    inputs: resolvedInputs.inputs,
+    ...(input.runType ? { runType: input.runType } : {}),
+    ...(forbiddenTopics.length > 0 ? { guardrails: { forbiddenTopics } } : {}),
+    ...(wantsDedupe ? { outputHistory: { items: outputHistory } } : {}),
+  };
+
+  let submittedServiceJobId: string | undefined;
+  try {
+    const submitted = await submitAgentServiceJob({
+      task_type: "custom",
+      client_id: input.clientId,
+      ...(client.agentsRepoSlug ? { client_slug: client.agentsRepoSlug } : {}),
+      brief: {
+        agent_key: `dynamic:${spec.id}`,
+        label: spec.name,
+        // The generic execution engine's whole routing signal — see
+        // isDynamicAgentBrief() in agent-service/src/dynamic-types.ts and the
+        // early branch in runner/src/main.ts. Every other "custom" brief field
+        // (entry_skill_dir, instructions, prompt) is absent on this path.
+        specSnapshot: dynamicPayload.specSnapshot,
+        spec_version: dynamicPayload.specVersion,
+        inputs: dynamicPayload.inputs,
+        // Per-step model routing rides the brief's EXISTING step_models field
+        // (the same one the hardcoded custom-agent path above populates from
+        // CustomAgent.stepModels) rather than a second parallel mechanism —
+        // keyed here by step id, carrying the ALIAS only. The runner resolves
+        // it through AGENT_MODEL_ALIASES and prefers it over the snapshot's own
+        // step.model; see resolveStepModel() in the dynamic step runner.
+        ...(Object.keys(dynamicStepModels).length > 0 ? { step_models: dynamicStepModels } : {}),
+        // snake_case on the wire, matching the brief's existing spec_version /
+        // step_models convention. custom.json declares both explicitly, since
+        // that schema is additionalProperties: false. Omitted entirely when
+        // inactive, so an unconfigured run's brief is byte-identical to before.
+        ...(forbiddenTopics.length > 0 ? { guardrails: { forbidden_topics: forbiddenTopics } } : {}),
+        ...(wantsDedupe
+          ? {
+              output_history: {
+                items: outputHistory.map((item) => ({
+                  job_id: item.jobId,
+                  created_at: item.createdAt,
+                  excerpt: item.excerpt,
+                })),
+              },
+            }
+          : {}),
+      },
+      callback_url: `${origin}/api/agent-service/webhook`,
+      // Sent ONLY when at least one step has allowClientData — an agent whose
+      // steps never ask for client data must never receive it, and the
+      // runner scopes delivery further per step (see step-runner.ts).
+      ...(dynamicContextFiles.length > 0 ? { context_files: dynamicContextFiles } : {}),
+      metadata: {
+        platform_job_id: jobId,
+        karos_agent_key: `dynamic:${spec.id}`.slice(0, 120),
+        ...(jobToken ? { karos_job_token: jobToken, karos_mcp_url: `${origin}/api/mcp` } : {}),
+        ...(input.runType ? { karos_run_type: input.runType } : {}),
+      },
+    });
+    submittedServiceJobId = submitted.job_id;
+    await updateJob(jobId, {
+      external: { serviceJobId: submitted.job_id, taskType: "custom" },
+      updatedAt: Date.now(),
+    });
+  } catch (e) {
+    if (submittedServiceJobId) {
+      try {
+        await cancelAgentServiceJob(submittedServiceJobId);
+      } catch {
+        // best effort — the webhook receiver's metadata fallback still matches
+      }
+    }
+    const message = e instanceof Error ? e.message : "Agent service submission failed";
+    try {
+      await refundJobCharge(jobId, `Auto-refund · submission failed · ${spec.name}`.slice(0, 120));
+    } catch {
+      return { jobId, error: message };
+    }
+    await updateJob(jobId, {
+      status: "failed",
+      error: message,
+      events: [
+        { at: now, level: "info", message: "Submitted to agent service" },
+        { at: Date.now(), level: "error", message },
+      ],
+      updatedAt: Date.now(),
+    });
+    return { jobId, error: message };
+  }
+
+  void logActivity({
+    clientId: input.clientId,
+    timestamp: Date.now(),
+    type: "CAMPAIGN_CREATED",
+    title: customRunStartedTitle(spec.name),
+    actor: user.name,
+    actorRole: user.role === "CLIENT_USER" ? "client" : "staff",
+    metadata: { jobId, taskType: "custom", agentKey: `dynamic:${spec.id}` },
   });
   return { jobId };
 }

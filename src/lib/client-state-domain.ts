@@ -2,27 +2,26 @@
  * WHICH STATES A CLIENT'S OWN SURFACES MAY OFFER THEM — derived from the
  * projections those surfaces render from, never from a list anyone types.
  *
- * THE DEFECT, in three places at once. A filter, a legend or a chart that offers
- * a state the viewer's data cannot be in is at best a control that can only ever
- * empty the list, and at worst a disclosure: it tells the client that state
- * exists somewhere in their account.
+ * HISTORY, kept because the mechanism this module builds still depends on it.
+ * A filter, a legend or a chart that offers a state the viewer's data cannot be
+ * in is at best a control that can only ever empty the list, and at worst a
+ * disclosure: it told the client that state existed somewhere in their account.
+ * Three surfaces once had exactly that defect:
  *
  *  • The Workspace archive's status filter offered "Draft". `isInClientArchive`
  *    rejects a draft outright, so selecting it could only ever produce "No
- *    matching deliverables".
- *  • The calendar legend offered a client a "Draft" chip. Same dead control —
- *    and pointing the wrong way on directive A3, because a Draft entry in a
- *    forward-looking legend says drafted content is somewhere on this calendar.
- *    THAT ONE WAS ALREADY CLOSED before this module existed, and is not
- *    re-implemented here: `calendar-kind.ts` withholds the chip and
- *    calendar-kind.test.ts derives the withholding by probing `postKind` over
- *    every shape it reads. What this module's test adds is the cross-surface
- *    question — a legend key that IS an asset status must agree with the
- *    calendar's own status projection — so the three surfaces answer alike.
- *  • The Performance tab's "Content by status" chart drew a Draft ROW WITH A
- *    COUNT, and the "Deliverables" tile counted the same set — so a client could
- *    read off exactly how many unapproved drafts their team was holding, on the
- *    two surfaces every list view deliberately hides. Directive A4.
+ *    matching deliverables". STILL TRUE TODAY — the archive is unaffected by the
+ *    reversal below and still withholds "Draft" from a client.
+ *  • The calendar legend offered a client a "Draft" chip (directive A3) and the
+ *    Performance tab's "Content by status" chart drew a Draft ROW WITH A COUNT,
+ *    with the "Deliverables" tile counting the same set (directive A4) — so a
+ *    client could read off exactly how many unapproved drafts their team was
+ *    holding. BOTH DIRECTIVES WERE DELIBERATELY REVERSED: a client's calendar and
+ *    dashboard now show the same pending work staff see, drafts included —
+ *    `isClientCalendarStatus` (calendar-kind.ts) always returns `true`, and its
+ *    docstring records the decision. What used to be "the fix" for A3/A4 is now
+ *    the thing this module's tests pin as the CURRENT, intended behaviour for
+ *    those two surfaces; only the archive keeps the old rule.
  *
  * PROBED, NOT DECLARED, and that is the whole design. The answer for each
  * surface is computed by running that surface's own membership rule over every
@@ -39,12 +38,13 @@
  * unmatchable-key derivation makes about ignoring the RSC redaction.
  *
  * WHAT THIS MODULE DOES NOT OWN. It does not decide membership — `asset-
- * visibility` and `calendar-kind` do, and they are asked rather than restated,
- * so the rule that a client never sees a draft is not spelled again here. It
- * does not name a status either: that is `asset-status-copy`'s two registers,
- * and this module only reads their KEYS (a `Record<Asset["status"], string>` tsc
- * keeps total, so reading the keys IS the union — the same device
- * status-render-sweep uses).
+ * visibility` and `calendar-kind` do, and they are asked rather than restated, so
+ * the rule for what a client may see (the archive still excludes drafts; the
+ * calendar and dashboard no longer do) is not spelled again here. It does not
+ * name a status either: that is `asset-status-copy`'s two registers, and this
+ * module only reads their KEYS (a `Record<Asset["status"], string>` tsc keeps
+ * total, so reading the keys IS the union — the same device status-render-sweep
+ * uses).
  */
 
 import { CLIENT_ASSET_STATUS_LABEL } from "@/lib/asset-status-copy";
@@ -107,21 +107,14 @@ const ADMITS: Record<ClientStateSurface, (status: Asset["status"]) => boolean> =
    * calendar's own status filter for the forward-looking half (an approved post
    * dated next month is theirs, and is not in the archive yet).
    *
-   * NOT the projection the page happens to hand it. `clients/[id]/page.tsx`
-   * feeds this component `getClientLibraryAssets(…, { forClient: true })`, which
-   * keeps drafts on purpose — "pending work is reviewable" is the library's rule
-   * — and /assets redirects a client away, so that set describes a surface no
-   * client reaches. Deriving the chart's domain from it would have preserved the
-   * defect with a mechanism wrapped round it.
-   *
-   * IT AGREES WITH `archive` TODAY, and saying so is the point rather than a
-   * confession: the calendar disjunct adds no STATUS the archive probe does not
-   * already admit (it adds future-dated ASSETS, which is a different question,
-   * and the probe is undated by construction). It is still asked, because the
-   * two are different questions with different owners — a change to the
-   * archive's window that dropped a status would be wrong to apply to a chart
-   * that also summarises the calendar. The test derives both sides
-   * independently, so the day they stop agreeing is a diff, not a surprise.
+   * NO LONGER A PROPER SUBSET OF `ALL_ASSET_STATUSES`, by the same product
+   * decision recorded on `isClientCalendarStatus`: a client's calendar and
+   * dashboard now show the same pending work staff see, drafts included. That
+   * function always returns `true` now, so this union is unconditionally `true`
+   * regardless of `archive` — kept as an explicit disjunct rather than collapsed
+   * to a bare `true`, because the archive half is still real (it is what backs
+   * `isClientStateFor("archive", …)`, which stays a proper subset) and because a
+   * future narrowing of the calendar half should not have to be reinvented here.
    */
   performance: (status) =>
     isInClientArchive(probe(status), PROBE_AT) || isClientCalendarStatus(status),

@@ -36,14 +36,44 @@ export async function bulkScheduleClipsAction(
     .filter((a) => a.scheduledAt != null && chainFamilyFor(a.type) === "social")
     .map((a) => ({ lane: paceLaneFor(a), dayStartMs: startOfDayMs(a.scheduledAt as number) }));
 
-  const platform = "tiktok";
+  /**
+   * EACH ASSET BOOKS ITS OWN CHANNEL (2026-09).
+   *
+   * This was a single `const platform = "tiktok"` for the whole batch, and it
+   * was right while the uploader took video only. It accepts images now, which
+   * register against `instagram` (see DEFAULT_CHANNEL in the bulk-upload
+   * route), so a flat "tiktok" would have scheduled a client's still photos to
+   * TikTok — a wrong-platform booking made silently, by a helper button.
+   *
+   * Read off `channels[0]`, which is what registration writes and what a staff
+   * member editing the asset afterwards changes. The `?? "tiktok"` keeps the
+   * historical answer for a row with no channel at all rather than passing
+   * `undefined` into `scheduleAssetAction`.
+   */
+  const platformFor = (assetId: string): string =>
+    pending.find((a) => a.id === assetId)?.channels?.[0] ?? "tiktok";
+  const platformById = Object.fromEntries(pending.map((a) => [a.id, platformFor(a.id)]));
+
   const assignments = planBulkSchedule(
     pending.map((a) => a.id),
-    { startDayMs: startAtMs, platform, pace: resolveDailyPace(client?.dailyPace), occupied },
+    {
+      startDayMs: startAtMs,
+      // Still passed: it is the fallback for an id `platformById` does not name,
+      // and the planner's own signature keeps it optional for uniform batches.
+      platform: "tiktok",
+      platformById,
+      pace: resolveDailyPace(client?.dailyPace),
+      occupied,
+    },
   );
 
   for (const assignment of assignments) {
-    await scheduleAssetAction(assignment.id, assignment.scheduledAt, platform, "manual");
+    await scheduleAssetAction(
+      assignment.id,
+      assignment.scheduledAt,
+      platformFor(assignment.id),
+      "manual",
+    );
   }
 
   revalidatePath("/assets");

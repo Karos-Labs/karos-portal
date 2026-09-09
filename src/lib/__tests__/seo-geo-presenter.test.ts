@@ -503,11 +503,14 @@ describe("executing-product line (QA F7)", () => {
       ],
       "client-9",
     );
+    // Only SEO-02 still names a product. The three content ids lost their clause
+    // when the blog became a per-client custom agent — see the unmapped-content
+    // test below — and keep the route sentence on its own.
     expect(views.map((v) => v.fixRoute)).toEqual([
-      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
-      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
+      "Karos drafts this fix for your approval.",
+      "Karos drafts this fix for your approval.",
       "Karos drafts this fix for your approval. Produced by the Landing page managed product.",
-      "Karos drafts this fix for your approval. Produced by the Blog article managed product.",
+      "Karos drafts this fix for your approval.",
     ]);
   });
 
@@ -586,11 +589,14 @@ describe("executing-product line (QA F7)", () => {
   });
 
   it("keeps the route sentence alongside the product instead of replacing it", () => {
-    const [view] = buildGapViews([gap({ id: "GEO-20", delivery: "agent-direct" })], "c");
+    // Asked of SEO-02, one of the two ids still mapped to a managed product.
+    // GEO-20 used to serve here; it lost its product clause with the blog, so it
+    // can no longer prove the two halves coexist.
+    const [view] = buildGapViews([gap({ id: "SEO-02", delivery: "agent-direct" })], "c");
     // QA F4: no apply path exists (both producers hardcode artifactRef: null), so
     // this route promises a draft-for-approval, never an automatic fix.
     expect(view.fixRoute).toContain("Karos drafts this fix for your approval.");
-    expect(view.fixRoute).toContain("Blog article managed product");
+    expect(view.fixRoute).toContain("Landing page managed product");
   });
 
   it("never promises an automatic fix on any delivery route (QA F4)", () => {
@@ -630,39 +636,65 @@ describe("executing-product line (QA F7)", () => {
 
   it("falls back to the rec-id map when the productRef id is unknown", () => {
     const g = gap({
-      id: "GEO-20",
+      id: "SEO-06",
       delivery: "existing-product",
       productRef: { id: "mystery_product", folder: "x", status: "live" },
     });
-    expect(productLabelFor(g)).toBe("Blog article");
+    expect(productLabelFor(g)).toBe("Landing page");
+  });
+
+  it("names NO product on the content checks the blog used to own", () => {
+    // GEO-02/03/09/20/22 and BOTH-13/16 pointed at `blog_article` until the blog
+    // became a per-client custom agent. They are deliberately unmapped rather
+    // than re-pointed: this panel never receives the client's grants, so naming
+    // that agent here would promise a client an agent they may not have — the F7
+    // defect the rest of this map was cleaned up to remove.
+    for (const id of ["GEO-02", "GEO-03", "GEO-09", "GEO-20", "GEO-22", "BOTH-13", "BOTH-16"]) {
+      expect(productLabelFor(gap({ id, delivery: "existing-product" })), id).toBeNull();
+      expect(PRODUCT_MAPPED_IDS, id).not.toContain(id);
+    }
+    // Non-vacuity: the map still works for what is still managed.
+    expect(productLabelFor(gap({ id: "SEO-02", delivery: "existing-product" }))).toBe("Landing page");
   });
 
   it("strips engine suffixes from rec ids before the lookup", () => {
-    expect(productLabelFor(gap({ id: "GEO-20:chatgpt" }))).toBe("Blog article");
+    expect(productLabelFor(gap({ id: "SEO-02:chatgpt" }))).toBe("Landing page");
   });
 });
 
 describe("engine views (SCRUM-52 fixes 2 + 4)", () => {
   it("always yields every tracked engine in fixed order, synthesizing missing rows", () => {
     const views = buildEngineViews(insights({ perEngine: [] }));
-    // CD-B2: Perplexity and Copilot are no longer tracked engines.
-    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "gemini", "claude"]);
-    expect(views.map((v) => v.status)).toEqual(["no-data", "no-data", "no-data"]);
+    // T-B16/SCRUM-271: CD-B2's three-engine narrowing is reversed now that
+    // agent-engine (T-A3) genuinely captures all five — see EngineId's own
+    // doc comment in @/lib/seo-geo for the full migration story.
+    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "perplexity", "gemini", "claude", "copilot"]);
+    expect(views.map((v) => v.status)).toEqual(["no-data", "no-data", "no-data", "no-data", "no-data"]);
   });
 
-  it("drops Perplexity and Copilot even when a legacy snapshot still carries them", () => {
-    const legacy = insights({
-      perEngine: [
-        engineRow(),
-        { ...engineRow(), engine: "perplexity" as never },
-        { ...engineRow(), engine: "copilot" as never },
-      ],
+  it("renders Perplexity and Copilot rows once a snapshot actually carries them (T-B16/SCRUM-271 reverses the old CD-B2 drop)", () => {
+    const withFive = insights({
+      perEngine: [engineRow(), { ...engineRow(), engine: "perplexity" }, { ...engineRow(), engine: "copilot" }],
     });
-    const views = buildEngineViews(legacy);
-    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "gemini", "claude"]);
+    const views = buildEngineViews(withFive);
+    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "perplexity", "gemini", "claude", "copilot"]);
+    expect(views.filter((v) => v.status === "measured").map((v) => v.engine)).toEqual([
+      "chatgpt",
+      "perplexity",
+      "copilot",
+    ]);
     const rendered = JSON.stringify(views);
-    expect(rendered).not.toContain("Perplexity");
-    expect(rendered).not.toContain("Copilot");
+    expect(rendered).toContain("Perplexity");
+    expect(rendered).toContain("Copilot");
+  });
+
+  it("MIGRATION: a legacy (pre-T-B16) snapshot with only a chatgpt row still renders unchanged, with perplexity/copilot honestly no-data rather than erroring or vanishing", () => {
+    const legacy = insights({ perEngine: [engineRow()] }); // the fixture default: chatgpt only, exactly a pre-widening record
+    const views = buildEngineViews(legacy);
+    expect(views.map((v) => v.engine)).toEqual(["chatgpt", "perplexity", "gemini", "claude", "copilot"]);
+    expect(views.find((v) => v.engine === "chatgpt")?.status).toBe("measured");
+    expect(views.find((v) => v.engine === "perplexity")?.status).toBe("no-data");
+    expect(views.find((v) => v.engine === "copilot")?.status).toBe("no-data");
   });
 
   it("synthesizes a missing engine row from a partial capture and traces the cause", () => {
@@ -939,8 +971,11 @@ describe("presence + prompts", () => {
         intentPrompts: [
           { prompt: "best fintech tool for startups", intent: "discovery" },
           { prompt: "Is Acme legit?", intent: "brand" },
-          // Classifier returns "comparison" before it checks the brand name, so this
-          // IS in the like-for-like comparison — it used to wear the opposite chip.
+          // A stored row from before the classifier's brand-before-comparison fix
+          // (lib/seo-geo.ts's classifyIntent now tags a fresh "Acme alternatives"
+          // capture "brand", not "comparison" — the asker already named Acme). The
+          // presenter renders whatever intent is stored, so a legacy "comparison"
+          // row still reads as in the like-for-like comparison, no chip.
           { prompt: "Acme alternatives", intent: "comparison" },
           // Bare domain: the pipeline counts it as naming you; the old name match missed it.
           { prompt: "acme.com", intent: "navigational" },

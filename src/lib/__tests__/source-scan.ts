@@ -25,6 +25,24 @@
  * either file named above instead; that is a claim a reader can check.
  */
 
+import { readFileSync } from "node:fs";
+
+/**
+ * Read a source file for a sweep, normalizing CRLF to LF first.
+ *
+ * `.gitattributes` now pins `eol=lf` for `*.ts`/`*.tsx`, so a fresh checkout
+ * should never hand a sweep a CRLF file — but `core.autocrlf=true` checkouts
+ * that existed before that pin, or any tool that rewrites a file with `\r\n`
+ * afterward, still can. A sweep that regex-matches on a literal `\n` (a
+ * `;\n`-anchored capture, a planted-string byte-offset comparison) silently
+ * stops matching on such a file — not a parse error, just a quietly wrong
+ * answer. Every source-sweeping test should read through this rather than a
+ * bare `readFileSync(path, "utf8")`.
+ */
+export function readSource(path: string): string {
+  return readFileSync(path, "utf8").replace(/\r\n/g, "\n");
+}
+
 /** The three delimiters a JS/TS string literal can open with. */
 export function isStringDelimiter(ch: string | undefined): boolean {
   return ch === '"' || ch === "'" || ch === "`";

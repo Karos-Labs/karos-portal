@@ -14,10 +14,9 @@
 
 import "server-only";
 import { generateObject } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { after } from "next/server";
-import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 import {
   getClient,
@@ -26,18 +25,39 @@ import {
   getClientPerformanceBenchmarks,
   getTaskBoardCapacity,
   createClientTask,
+  listJobs,
+  listPlannedScheduledRuns,
 } from "@/lib/data";
 import { findDuplicateReason, normalizeTitleForDedup, queueCapacitySkipNote } from "@/lib/task-dedup";
+import { computePlatformGaps } from "@/lib/calendar-gaps";
+import { computeAgentStaleness, agentStalenessSummary, reviewBacklogSummary } from "@/lib/agent-staleness";
 import { getClientCustomAgents, type ClientCustomAgentSummary } from "@/lib/agent-roster";
 import { generateCampaignBundle, type CampaignTrend } from "@/lib/campaign-engine";
 import { integrationIsUsable } from "@/lib/integration-status";
-import type { TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
+import type { TaskPriority, TaskSource, TaskOwner, ManagedTaskType } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
+import { aiFor, usageFor } from "@/lib/ai/provider";
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 
 /* ── Constants ───────────────────────────────────────────────────────── */
 
 const PLATFORMS = ["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"] as const;
-const PRODUCT_TYPES = ["social_post", "newsletter_issue", "blog_article", "landing_page"] as const;
+// The MANAGED products a swarm task may name — DERIVED from MANAGED_PRODUCTS
+// (agent-service/products.ts), the same catalog agent-roster.ts's
+// managedCatalogEntries() builds the copilot's own agent list from. Never
+// hand-type this list a second time: SCRUM-262 (T-B22) replaced a literal
+// tuple that had already drifted once (the newsletter left this list
+// 2026-08-06 with the managed product itself — it is now a custom agent, so
+// the model assigns it the way it assigns any other custom agent, by id, from
+// the AVAILABLE CUSTOM AGENTS list). A hand-written second copy of the
+// catalog is exactly the divergence C4 (SCRUM-212)'s ownership principle
+// warns about: "what is auto-derived does not go stale; what is hand-written
+// in the portal does." Falls back to a single dummy value only if the
+// catalog is ever emptied, so z.enum (which requires a non-empty tuple) can
+// never throw at import time.
+const PRODUCT_TYPES = (
+  MANAGED_PRODUCTS.length > 0 ? MANAGED_PRODUCTS.map((p) => p.taskType) : ["social_post"]
+) as [string, ...string[]];
 
 /** Structural debate rounds (each round = one turn per persona). */
 export const DEFAULT_ROUNDS = 2;
@@ -86,10 +106,11 @@ export interface SwarmPersona {
 const TURN_DISCIPLINE = `
 You are one voice in a three-agent strategy debate producing a marketing Task Map. On your turn you receive the current DRAFT task array and must return the FULL revised array plus a short, punchy console-style MESSAGE (first person) describing what you changed and why — as if speaking in a war-room terminal.
 Rules:
-- Every task is karos_managed content the Karos AI agents execute. A content task normally carries a productType from: social_post, newsletter_issue, blog_article, landing_page.
+- Every task is karos_managed content the Karos AI agents execute. A content task normally carries a productType from: ${PRODUCT_TYPES.join(", ")}.
 - When an AVAILABLE CUSTOM AGENTS list is provided and one fits the task better, assign it by setting customAgentId to that agent's exact id INSTEAD of a productType — never set both on the same task. Only use ids from that list; never invent one.
 - Set platform to the target channel when relevant. Set weight (0-100) by how critical the underlying gap is (90+ = urgent, 75-89 = high, 50-74 = standard, <50 = optional); priority must agree (>=75 high, 40-74 medium, <40 low).
 - Keep tasks hyper-specific to THIS client. No generic filler. Never exceed 20 tasks in the array; the panel will trim to the best ${MAX_CONSENSUS_TASKS}.
+- When AGENT STALENESS flags an agent as never_run/overdue_schedule/stale_no_cadence, strongly prefer a task that assigns THAT agent's customAgentId over a generic platform-gap task, and name the staleness reason in the task's description. When REVIEW BACKLOG is non-trivial, weigh whether the client is better served by a task that clears the backlog (nudging a review) than by proposing more new volume.
 - Return the COMPLETE array every turn (keep what works, revise what doesn't) — do not return only your deltas.
 - MESSAGE must be under 60 words, specific, and reference concrete tasks/trends. This is the debate line the client watches live.`;
 
@@ -138,6 +159,14 @@ export interface SwarmContext {
   brandingSummary: string;
   /** Top/bottom historical performers for the Data Analyst. */
   benchmarkSummary: string;
+  /**
+   * Which granted agents haven't run recently or have an overdue schedule —
+   * the signal that lets a persona recommend a NAMED agent instead of only a
+   * platform gap (lib/agent-staleness.ts).
+   */
+  stalenessSummary: string;
+  /** How many drafts have sat unreviewed, and for how long — weighed against proposing more new volume. */
+  reviewBacklogSummary: string;
   /** Custom agents assigned to this client — assignable via a task's customAgentId. */
   customAgents: ClientCustomAgentSummary[];
   /**
@@ -229,6 +258,12 @@ ${ctx.brandingSummary}
 HISTORICAL PERFORMANCE BENCHMARKS:
 ${ctx.benchmarkSummary}
 
+AGENT STALENESS:
+${ctx.stalenessSummary}
+
+REVIEW BACKLOG:
+${ctx.reviewBacklogSummary}
+
 AVAILABLE CUSTOM AGENTS (assign a task to one via customAgentId):
 ${customAgentsBlock}
 
@@ -246,7 +281,7 @@ async function runTurn(
   totalRounds: number,
 ): Promise<z.infer<typeof swarmTurnSchema>> {
   const { object, usage } = await generateObject({
-    model: anthropic(MODELS.HAIKU),
+    model: aiFor("agent_swarm.step").model,
     schema: swarmTurnSchema,
     system: persona.systemPrompt,
     prompt: buildTurnPrompt(persona, tasks, input.context, round, totalRounds),
@@ -258,7 +293,7 @@ async function runTurn(
       clientId: input.clientId,
       agentId: null,
       agentName: `Swarm: ${persona.name}`,
-      modelName: MODELS.HAIKU,
+      ...usageFor("agent_swarm.step"),
       operation: "task_swarm",
       inputTokens: usage.inputTokens ?? 0,
       outputTokens: usage.outputTokens ?? 0,
@@ -301,7 +336,7 @@ export async function* runSwarm(input: SwarmInput): AsyncGenerator<SwarmEvent, v
         };
       } catch (e) {
         logger.logGenerationFailure(
-          { clientId: input.clientId, agentId: null, agentName: `Swarm: ${persona.name}`, modelName: MODELS.HAIKU, operation: "task_swarm" },
+          { clientId: input.clientId, agentId: null, agentName: `Swarm: ${persona.name}`, ...usageFor("agent_swarm.step"), operation: "task_swarm" },
           e,
         );
         yield {
@@ -438,8 +473,13 @@ export async function persistSwarmTasks(
   let capSkipped = 0;
 
   for (const t of drafts) {
+    // Only an id the client actually has is a real executor link — same rule
+    // the persist pass below applies, and it has to run here too: an
+    // unvalidated (possibly hallucinated) id must not scope the dedup either.
+    const validCustomAgentId =
+      t.customAgentId && customById.has(t.customAgentId) ? t.customAgentId : undefined;
     const reason = findDuplicateReason(
-      { title: t.title, productType: t.productType, platform: t.platform },
+      { title: t.title, productType: t.productType, customAgentId: validCustomAgentId, platform: t.platform },
       pool,
     );
     if (reason) {
@@ -460,7 +500,14 @@ export async function persistSwarmTasks(
       priority: t.priority as TaskPriority,
       source: "copilot" as TaskSource,
       owner: "karos_managed" as TaskOwner,
-      metadata: { productType: t.productType, platform: t.platform },
+      // `t.productType` is zod's `z.enum(PRODUCT_TYPES)` output, which
+      // PRODUCT_TYPES's own `[string, ...string[]]` widening cast (above,
+      // for zod's tuple requirement) leaves typed as plain `string`, though
+      // every value the schema can actually produce is a real
+      // `ManagedTaskType` — this pool entry is dedup-scratch only, never
+      // persisted, and this metadata shape now carries the same
+      // `ClientTaskMetadata` contract as a real task's.
+      metadata: { productType: t.productType as ManagedTaskType | undefined, customAgentId: validCustomAgentId, platform: t.platform },
       createdBy,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -477,7 +524,12 @@ export async function persistSwarmTasks(
         // in-process productTypes — record the intended executor for display and
         // for staff to run it; no product_run trigger (that flow is separate).
         metadata.customAgentId = customAgent.id;
-        metadata.customAgentName = customAgent.name;
+        // The one field name for "the linked agent's display name" —
+        // execution-engine.ts and task-ticket-modal.tsx both read
+        // `metadata.agentName` (see ClientTask.metadata's doc comment in
+        // types.ts); this used to write `customAgentName`, a second name for
+        // the same link that neither reader recognized (SCRUM-255).
+        metadata.agentName = customAgent.name;
       } else if (t.productType) {
         metadata.productType = t.productType;
         metadata.completionTrigger = `product_run:${t.productType}`;
@@ -526,30 +578,27 @@ export async function buildSwarmContext(
   clientId: string,
   trendOverride?: string | null,
 ): Promise<{ clientName: string } & SwarmContext> {
-  const [client, assets, integrations, benchmarks, customAgents] = await Promise.all([
+  const [client, assets, integrations, benchmarks, customAgents, jobs, scheduledRuns] = await Promise.all([
     getClient(clientId),
     listAssets({ clientId }),
     listClientIntegrations(clientId),
     getClientPerformanceBenchmarks(clientId),
     getClientCustomAgents(clientId),
+    listJobs({ clientId }),
+    listPlannedScheduledRuns({ clientId }),
   ]);
   if (!client) throw new Error("Client not found");
 
   // Content-gap detection: connected platforms vs the next-14-day calendar.
+  // Shared with the calendar's own sparse-calendar banner (lib/calendar-gaps.ts)
+  // so the two can never disagree about what a "gap" is.
   const nowMs = Date.now();
-  const horizonMs = nowMs + 14 * 24 * 60 * 60 * 1000;
-  const scheduledByPlatform: Record<string, number> = {};
-  for (const a of assets) {
-    if (a.scheduledAt == null || a.scheduledAt < nowMs || a.scheduledAt > horizonMs) continue;
-    if (a.status !== "scheduled" && a.status !== "approved") continue;
-    const key = a.scheduledPlatform ?? "unassigned";
-    scheduledByPlatform[key] = (scheduledByPlatform[key] ?? 0) + 1;
-  }
   const active = integrations.filter((i) => i.platform !== "google" && integrationIsUsable(i));
-  const gapLines = active.map((i) => {
-    const count = scheduledByPlatform[i.platform] ?? 0;
-    return `- ${i.platform}: ${count === 0 ? "NO content scheduled in the next 14 days — GAP" : `${count} scheduled`}`;
-  });
+  const gaps = computePlatformGaps(assets, active.map((i) => i.platform), nowMs);
+  const gapLines = gaps.map(
+    (g) =>
+      `- ${g.platform}: ${g.scheduledCount === 0 ? "NO content scheduled in the next 14 days — GAP" : `${g.scheduledCount} scheduled`}`,
+  );
   const gapSummary = gapLines.length > 0 ? gapLines.join("\n") : "No social platforms connected yet.";
 
   // Brand guidance for the Creative Director.
@@ -565,21 +614,45 @@ export async function buildSwarmContext(
     : "No brand guidelines documented yet.";
 
   // Historical benchmarks for the Data Analyst.
+  //
+  // MEASURED ROWS ONLY (2026-08). Every analytics row carries
+  // `source: "mock" | "live"`, and a mock row's engagement score comes from
+  // `mockRawMetrics` — a seeded PRNG inventing 500–50,000 impressions. This
+  // block used to pass the raw top/bottom lists into the prompt, and the Data
+  // Analyst persona is instructed to raise the weight of what has "measurably
+  // won" — so it narrated invented scores as measurement, live, in the War Room
+  // console the client is watching and is charged for.
+  //
+  // `sampleSize > 0` did not catch it: a set of purely mock rows has a non-zero
+  // sample size, so the honest "No performance analytics captured yet" fallback
+  // never fired. The count is recomputed from the rows that SURVIVE the filter,
+  // which re-arms that fallback for the all-mock case — today's case for every
+  // client. Same fence api/clients/[id]/chat/route.ts already applies.
+  const measured = {
+    top: benchmarks.top.filter((r) => r.source === "live"),
+    bottom: benchmarks.bottom.filter((r) => r.source === "live"),
+  };
+  const measuredSampleSize = new Set([...measured.top, ...measured.bottom].map((r) => r.id)).size;
   const fmt = (r: (typeof benchmarks.top)[number]) =>
     `- [${r.engagementScore.toFixed(1)}] ${r.platform} · ${r.assetType ?? "?"} — "${r.assetLabel ?? r.assetId}"`;
   const benchmarkSummary =
-    benchmarks.sampleSize > 0
-      ? `TOP PERFORMERS:\n${benchmarks.top.map(fmt).join("\n") || "- none"}\n\nLOWEST PERFORMERS:\n${benchmarks.bottom.map(fmt).join("\n") || "- none"}`
+    measuredSampleSize > 0
+      ? `TOP PERFORMERS:\n${measured.top.map(fmt).join("\n") || "- none"}\n\nLOWEST PERFORMERS:\n${measured.bottom.map(fmt).join("\n") || "- none"}`
       : "No performance analytics captured yet — weight by strategic judgment.";
 
   // Campaign trend detection: an explicit override wins; otherwise a
   // measurably dominant top performer (score ≥ threshold) is treated as the
   // high-weight trend worth building a full campaign around.
+  //
+  // Reads `measured.top`, not `benchmarks.top` — the rationale string this
+  // builds quotes the score as the justification for a whole campaign bundle
+  // the client pays for, and a mock score clears the threshold as easily as a
+  // real one. "Measurably dominant" has to mean measured.
   let campaignTrend: CampaignTrend | null = null;
   if (trendOverride && trendOverride.trim()) {
     campaignTrend = { theme: trendOverride.trim(), weight: 90, rationale: "Operator-specified trend/event." };
   } else {
-    const top = benchmarks.top[0];
+    const top = measured.top[0];
     if (top && top.engagementScore >= CAMPAIGN_TREND_MIN_WEIGHT) {
       campaignTrend = {
         theme: top.assetLabel ?? top.assetType ?? "top-performing theme",
@@ -589,12 +662,27 @@ export async function buildSwarmContext(
     }
   }
 
+  // Which granted agents are stale, and how large the review backlog is —
+  // the two signals every prior version of this context lacked, both feeding
+  // TURN_DISCIPLINE's rule that lets a persona name a specific agent instead
+  // of only reasoning about platform volume (lib/agent-staleness.ts).
+  const staleness = computeAgentStaleness(
+    customAgents.map((a) => ({ id: a.id, name: a.name })),
+    jobs,
+    scheduledRuns,
+    nowMs,
+  );
+  const stalenessSummary = agentStalenessSummary(staleness);
+  const backlogSummary = reviewBacklogSummary(assets, nowMs);
+
   return {
     clientName: client.name,
     category: clientCategoryValue(client),
     gapSummary,
     brandingSummary,
     benchmarkSummary,
+    stalenessSummary,
+    reviewBacklogSummary: backlogSummary,
     customAgents,
     campaignTrend,
   };

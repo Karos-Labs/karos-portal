@@ -126,15 +126,51 @@ describe("the @mention roster combines the two lists without doubling anything",
   it("reads the agent KEY, which a renamed agent's name can no longer give", async () => {
     // The precise rung. Nothing in "Acme voice" says LinkedIn; the key does,
     // and the key never leaves the route — only the token it resolved to.
+    //
+    // The key is the v2 WRITER rather than the e10 master it used to be, for a
+    // reason that is the point of the test next to this one: the e10 keys are
+    // unlisted now, so this roster drops them and there would be no row left to
+    // assert on. The property under test is unchanged — an uninformative name, a
+    // key that answers, and no key on the wire.
     vi.mocked(getClientCustomAgents).mockResolvedValue([{ id: "agent-li", name: "Acme voice" }] as any);
     vi.mocked(data.listCustomAgents).mockResolvedValue([
-      { id: "agent-li", icon: "Bot", key: "karos-linkedin-agent" },
+      { id: "agent-li", icon: "Bot", key: "karos-linkedin-writer-v2" },
     ] as any);
 
     const { agents } = await mentionable();
 
     expect(agents[0].platform).toBe("linkedin");
     expect(agents[0]).not.toHaveProperty("key");
+  });
+
+  it("drops a STEP of another agent, and a superseded one", async () => {
+    // The copilot can ACT on a tag, so a taggable name has to be something a
+    // person would ask for. "@LinkedIn Notes, draft me a post" would dispatch a
+    // run that never drafts, and "@LinkedIn Company Page" a run of an agent v2
+    // replaced — the same reason a disabled agent is already kept off this list.
+    // The fixture step below is a synthetic key chosen only to prove the
+    // structural rule (parentKey, not the key string, decides step-hood) — it is
+    // deliberately not `karos-linkedin-manager-v2`, the standalone manager card
+    // retired in full 2026-08-29 (SCRUM-377/T-B25a).
+    vi.mocked(getClientCustomAgents).mockResolvedValue([
+      { id: "agent-setup", name: "LinkedIn Setup" },
+      { id: "agent-notes", name: "LinkedIn Notes" },
+      { id: "agent-e10", name: "LinkedIn Company Page" },
+      { id: "agent-li", name: "LinkedIn Agent" },
+    ] as any);
+    // parentKey is what makes the first two steps rather than products — the test
+    // is STRUCTURAL now, so a fixture carrying only the keys would (correctly) not
+    // be hidden. The e10 row has no parent and is dropped for the other reason.
+    vi.mocked(data.listCustomAgents).mockResolvedValue([
+      { id: "agent-setup", icon: "Bot", key: "karos-linkedin-setup-v2", parentKey: "karos-linkedin-writer-v2" },
+      { id: "agent-notes", icon: "Bot", key: "karos-linkedin-notes-v2", parentKey: "karos-linkedin-writer-v2" },
+      { id: "agent-e10", icon: "Bot", key: "karos-linkedin-company-acme" },
+      { id: "agent-li", icon: "Bot", key: "karos-linkedin-writer-v2" },
+    ] as any);
+
+    const { agents } = await mentionable();
+
+    expect(agents.map((a: { displayName: string }) => a.displayName)).toEqual(["LinkedIn Agent"]);
   });
 
   it("sends null for an agent that targets no platform, rather than a nearest guess", async () => {

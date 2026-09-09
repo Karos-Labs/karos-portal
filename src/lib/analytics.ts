@@ -196,7 +196,7 @@ export function normalizePlatformMetrics(
  * always mocks to the same metrics — stable across cron runs and unit tests,
  * and it never touches `Math.random`.
  */
-function hashSeed(key: string): number {
+export function hashSeed(key: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < key.length; i++) {
     h ^= key.charCodeAt(i);
@@ -205,8 +205,12 @@ function hashSeed(key: string): number {
   return h >>> 0;
 }
 
-/** Mulberry32 PRNG — tiny, deterministic, seeded. Returns a [0,1) generator. */
-function mulberry32(seed: number): () => number {
+/**
+ * Mulberry32 PRNG — tiny, deterministic, seeded. Returns a [0,1) generator.
+ * Exported alongside `hashSeed` so other mock generators (follower-tracking.ts)
+ * share the one no-Math.random primitive rather than each rolling their own.
+ */
+export function mulberry32(seed: number): () => number {
   let a = seed;
   return () => {
     a |= 0;
@@ -218,78 +222,24 @@ function mulberry32(seed: number): () => number {
 }
 
 /**
- * Produce a realistic, platform-native raw metrics payload for testing and for
- * the sync cron's fallback path — deterministic per `seedKey` (use the asset id).
- * The shapes intentionally mirror each network's real API field names so the
- * `normalizePlatformMetrics` mapping is exercised end-to-end by the mock.
+ * `mockRawMetrics` LIVED HERE AND WAS DELETED (2026-08).
+ *
+ * It seeded a PRNG from `platform + assetId` and invented a full native metrics
+ * payload — 500–50,000 impressions, engagement at 1–8% of those — and the sync
+ * cron persisted the result into `clientMarketingAnalytics` whenever a live API
+ * could not answer, which for a client with no connected channel was every
+ * asset. Those rows carried `source: "mock"`, but three of the four consumers
+ * never read the flag: content generation quoted them as proven winners, the
+ * strategy swarm narrated them to the client as measurement, and a fabricated
+ * score was enough to open a paid campaign.
+ *
+ * The fixture itself now lives in `__tests__/analytics.test.ts`, which is the
+ * only thing that ever legitimately needed it — it exercises
+ * `normalizePlatformMetrics` against each network's real field names. Keeping it
+ * out of `src/lib` is deliberate: there is no longer an import path a future
+ * caller can reach for, which is the only durable way to stop this coming back.
+ *
+ * `hashSeed` and `mulberry32` below stay exported — they are general-purpose and
+ * the test fixture builds on them — but nothing in production may use them to
+ * manufacture a value a person will read as a measurement.
  */
-export function mockRawMetrics(platform: string, seedKey: string): RawPlatformMetrics {
-  const rnd = mulberry32(hashSeed(`${platform}:${seedKey}`));
-  const between = (lo: number, hi: number) => Math.floor(lo + rnd() * (hi - lo));
-
-  const impressions = between(500, 50_000);
-  // Engagement runs ~1–8% of impressions; clicks a fraction of that.
-  const engaged = Math.floor(impressions * (0.01 + rnd() * 0.07));
-  const clicks = Math.floor(engaged * (0.1 + rnd() * 0.4));
-
-  switch (platform) {
-    case "linkedin":
-      return {
-        impressionCount: impressions,
-        clickCount: clicks,
-        likeCount: Math.floor(engaged * 0.7),
-        commentCount: Math.floor(engaged * 0.15),
-        shareCount: Math.floor(engaged * 0.15),
-      };
-    case "tiktok":
-      return {
-        video_views: impressions,
-        profile_views: clicks,
-        likes: Math.floor(engaged * 0.8),
-        comments: Math.floor(engaged * 0.1),
-        shares: Math.floor(engaged * 0.1),
-        total_time_watched: between(1_000, 60_000),
-      };
-    case "instagram":
-      return {
-        impressions,
-        website_clicks: Math.floor(clicks * 0.5),
-        profile_visits: Math.ceil(clicks * 0.5),
-        likes: Math.floor(engaged * 0.7),
-        comments: Math.floor(engaged * 0.1),
-        saves: Math.floor(engaged * 0.1),
-        shares: Math.floor(engaged * 0.1),
-      };
-    case "facebook":
-      return {
-        post_impressions: impressions,
-        post_clicks: clicks,
-        reactions: Math.floor(engaged * 0.75),
-        comments: Math.floor(engaged * 0.15),
-        shares: Math.floor(engaged * 0.1),
-      };
-    case "twitter":
-      return {
-        impression_count: impressions,
-        url_link_clicks: clicks,
-        like_count: Math.floor(engaged * 0.7),
-        retweet_count: Math.floor(engaged * 0.2),
-        reply_count: Math.floor(engaged * 0.1),
-      };
-    case "youtube":
-      return {
-        views: impressions,
-        clicks,
-        likes: Math.floor(engaged * 0.85),
-        comments: Math.floor(engaged * 0.15),
-        estimatedMinutesWatched: between(200, 20_000),
-      };
-    default:
-      return {
-        impressions,
-        clicks,
-        likes: Math.floor(engaged * 0.8),
-        comments: Math.floor(engaged * 0.2),
-      };
-  }
-}

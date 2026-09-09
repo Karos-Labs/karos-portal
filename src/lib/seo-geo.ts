@@ -21,37 +21,93 @@
 /* ── Engines & provenance ─────────────────────────────────────────── */
 
 /**
- * The tracked answer engines. Call directive B2 (2026-07-27) removed Perplexity and
- * Copilot from the set entirely: neither has a wired provider, so they contributed
- * nothing but permanent "not yet measured" chips, a "0 of 5 engines measured"
- * coverage figure that could never reach 5, and a standing flag-us-to-add-them
- * banner for connectors nobody is building. Removing them from the TYPE is
- * deliberate — every roster, order and label map is keyed by EngineId, so the
- * compiler now enforces the removal rather than five separate lists agreeing.
+ * The tracked answer engines.
  *
- * Snapshots captured before this still carry perplexity/copilot rows; they are
- * simply not rendered (ENGINE_ORDER drives the UI) and their stored
- * geoVisibilityEnginesTotal of 5 stands as a historical fact.
+ * WIDENED BACK TO FIVE (T-B16/SCRUM-271, 2026-09). Call directive B2
+ * (2026-07-27) had narrowed this to three because neither Perplexity nor
+ * Copilot had a wired provider on THIS side — they contributed nothing but
+ * permanent "not yet measured" chips. That constraint is gone: T-A3
+ * (SCRUM-237, agent-engine, merged at `56eae44`) now captures real answers
+ * for all five of `packages/tools/karos-research/src/capture-visibility.ts`'s
+ * `VISIBILITY_ENGINES` — `chatgpt`, `perplexity`, `gemini`, `claude`,
+ * `copilot` — Perplexity/Claude/Gemini through dedicated first-party
+ * providers and the `chatgpt`/`copilot` pair through a shared ScrappyCoco CLI
+ * route. Those five literal strings are EXACTLY this union's five members —
+ * verified against agent-engine's `SEO_GEO_VISIBILITY_ENGINES` const too
+ * (`packages/tools/karos-seo-geo/src/types.ts`) — so a `SeoGeoCaptureCell.engine`
+ * value crossing the service boundary needs no translation table, only a
+ * `EngineId` cast validated the same way `toRoutableRecommendation` validates
+ * everything else that crosses that boundary (see
+ * `agent-engine/seo-geo-insights-mapping.ts`'s `isEngineId`).
+ *
+ * MIGRATION STORY FOR OLD RECORDS. This union WIDENS a strict subset
+ * (`"chatgpt" | "gemini" | "claude"` ⊂ the five above) — it does not rename or
+ * remove a member, so every `EngineId` value ever persisted under the old
+ * three-value enum is still a valid value of this one. No data migration or
+ * backfill runs against `clientSeoGeo` for this change: an old snapshot's
+ * `perEngine`/`answerGrid` simply has no `perplexity`/`copilot` rows (exactly
+ * as it had none before this ticket), and every reader that walks
+ * `insights.perEngine`/`ENGINE_ORDER` and skips an engine with no matching row
+ * already treats a short array as "not captured this run" rather than an
+ * error — the same tolerance that let the B2 narrowing itself land without a
+ * migration. Pinned by `seo-geo-engine-widening.test.ts`: a 3-engine snapshot
+ * fixture, unioned into the mapper's own 5-engine output, keeps rendering the
+ * three original engines unchanged.
+ *
+ * Snapshots captured before B2 still carry perplexity/copilot rows from a
+ * different (pre-B2) pipeline; those now render again too, on the same terms
+ * as any other engine — nothing about them needs re-interpreting.
  */
-export type EngineId = "chatgpt" | "gemini" | "claude";
+export type EngineId = "chatgpt" | "perplexity" | "gemini" | "claude" | "copilot";
 
-/** Which model provider actually produced a data point (multi-model provenance). */
-export type ProviderSource = "OpenAI" | "Gemini" | "Anthropic";
+/** The five members of {@link EngineId}, for validating a value that crossed a service boundary. */
+export const KNOWN_ENGINE_IDS: readonly EngineId[] = ["chatgpt", "perplexity", "gemini", "claude", "copilot"];
+
+export function isEngineId(value: unknown): value is EngineId {
+  return typeof value === "string" && (KNOWN_ENGINE_IDS as readonly string[]).includes(value);
+}
+
+/**
+ * Which model provider actually produced a data point (multi-model provenance).
+ *
+ * `"Perplexity"` and `"Microsoft"` (T-B16/SCRUM-271) cover the two engines the
+ * EngineId widening above added: Perplexity answers through its own Sonar API
+ * (agent-engine's dedicated adapter), and Copilot's answers are Microsoft's
+ * product even though agent-engine reaches it through the same shared
+ * ScrappyCoco CLI route as `chatgpt` (whose own provenance stays `"OpenAI"` —
+ * the delivery mechanism changed, not which company's model answered).
+ */
+export type ProviderSource = "OpenAI" | "Gemini" | "Anthropic" | "Perplexity" | "Microsoft";
 
 /** Capture tier per the a3 grade-data-only rule. Set at capture time, never upgraded. */
 export type CaptureTier = "MEASURED" | "MEASURED_grounded" | "ESTIMATED" | "UNAVAILABLE";
 
 export const ENGINE_LABELS: Record<EngineId, string> = {
   chatgpt: "ChatGPT",
+  perplexity: "Perplexity",
   gemini: "Gemini",
   claude: "Claude",
+  copilot: "Copilot",
 };
 
-/** Engine → provider that answers for it in this platform (null = no connector wired yet). */
+/**
+ * Engine → provider that answers for it THROUGH THIS PORTAL'S OWN direct
+ * connectors (`src/lib/intel/seo-geo-providers.ts`'s `CONNECTORS`) — null
+ * means no connector wired on this side. `perplexity`/`copilot` are null here
+ * on purpose even after the widening above: this portal has never called
+ * either API directly, and their real answers now reach `clientSeoGeo` only
+ * through agent-engine's capture (T-A3, routed through a shared ScrappyCoco
+ * CLI for the chatgpt/copilot pair) and this ticket's mapping layer, never
+ * through a portal-side `fetch`. A `PerEngineVisibility.source` for either
+ * engine on an engine-sourced snapshot carries whatever provenance the
+ * capture cell itself reported, not this table.
+ */
 export const ENGINE_PROVIDERS: Record<EngineId, ProviderSource | null> = {
   chatgpt: "OpenAI",
+  perplexity: null,
   gemini: "Gemini",
   claude: "Anthropic",
+  copilot: null,
 };
 
 /* ── Probe & answer shapes ────────────────────────────────────────── */
@@ -84,6 +140,23 @@ export interface GeoProbe {
   brandSentiment: number;
   /** Registrable domains this engine cited in the answer (for the citation leaderboard). */
   citations: string[];
+  /**
+   * GEMINI-ONLY (T-A3/SCRUM-237, T-B16/SCRUM-271): true when Google's AI
+   * Overview genuinely did not render for this prompt at all — no grounding
+   * chunks came back — as DISTINCT from `brandMentioned: false`, which means
+   * an answer (grounded or not) came back and simply never named the brand.
+   * Sourced verbatim from agent-engine's own capture cell
+   * (`packages/tools/karos-research/src/capture-visibility.ts`'s
+   * `CaptureCell.aioAbsent`, and `karos-seo-geo/src/types.ts`'s
+   * `SeoGeoCaptureCell.aioAbsent`) — this field exists on `GeoProbe` ONLY so
+   * that shape can survive the trip from an engine capture cell into the
+   * portal's own probe/grid pipeline without being flattened into a plain
+   * "absent" cell. Always `undefined` for a probe built from this portal's
+   * own direct-provider capture (`analyzeAnswer` below never sets it — the
+   * portal's own Gemini connector has no grounding-chunk signal to read) and
+   * for every engine except Gemini.
+   */
+  aioAbsent?: boolean;
 }
 
 /* ── Gazetteer (deterministic mention matching) ───────────────────── */
@@ -1248,13 +1321,18 @@ export const REC_COPY: Record<string, { title: string; description: string }> = 
   "GEO-09": { title: "Put a real author and real numbers on your pages", description: "Pages that say who wrote them, show where their facts came from, and include at least one figure of your own get trusted and credited. Anonymous pages get passed over." },
   "BOTH-16": { title: "Break your pages into short, scannable sections", description: "Long unbroken text gives engines nothing clean to pull out. Shorter sections, each opening with a one-line explanation, are what they lift answers from." },
   "GEO-22": { title: "Use your buyers' questions as your headings", description: "Phrase key headings as the questions people actually ask, each followed by a short direct answer. That's how an AI matches your page to what someone asked it." },
-  "GEO-25": { title: "Establish a clear public record of who you are", description: "Create a Wikidata entry (and a Wikipedia article once you qualify) so every engine knows which company you are and stops confusing you with similarly-named ones." },
-  "GEO-04": { title: "Get talked about on sites engines trust", description: "Get named on independent, reputable sites. Engines repeat what trusted third parties say about you far more readily than what you say about yourself." },
+  "GEO-25": { title: "Establish a clear public record of who you are", description: "Create and verify a public reference entry for your company, listing your real name, website and basics. It is the record other sites and engines look your company up in." },
+  "GEO-04": { title: "Get talked about on sites you don't own", description: "Get named on independent, reputable sites. What other people publish about you is the part of your reputation your own website cannot supply." },
   "GEO-14": { title: "Build a review presence you don't own", description: "Get reviews across several independent platforms, so \"are they any good?\" is answered by more than your own website." },
   "BOTH-01": { title: "Make sure your pages can be listed at all", description: "Some pages are either failing to load for engines or carrying an instruction telling them not to list the page. Until that's cleared, no other work can make those pages appear." },
-  "GEO-27": { title: "Close the gap with the competitor engines name most", description: "A competitor you track is named far more often than you on the questions buyers actually ask. Earning mentions in the sources those answers draw from is what closes it." },
-  "GEO-35": { title: "Get named when buyers ask about your category", description: "Buyers asking about your category — without naming you — rarely hear about you. Comparison pages of your own, plus getting mentioned on other people's sites, is what changes that." },
-  "GEO-11": { title: "Get the engines quoting your site", description: "The engines don't yet use your site as a source when they answer questions about your category. Pages with clear facts and clear sourcing are the ones they quote." },
+  // SHARE OF VOICE, SAID AS SHARE OF VOICE (review wave, 2026-09) — the same
+  // correction the client-facing copy for this id already carries, applied to
+  // the catalogue entry that feeds every other surface. GEO-27 fires on
+  // `shareOfVoice`, so "named more often than you" reported a mention count the
+  // check never measured.
+  "GEO-27": { title: "Close the share of voice gap with the competitor leading these answers", description: "A competitor you track took a bigger share of the brand mentions than you did on the questions buyers actually ask. Earning mentions in the places those answers draw on is how that gap closes." },
+  "GEO-35": { title: "Get named when buyers ask about your category", description: "Buyers asking about your category without naming you rarely heard about you in the answers we measured. Comparison pages of your own, plus mentions on other people's sites, is what changes that." },
+  "GEO-11": { title: "Get the engines quoting your site", description: "The engines did not use your site as a source when they answered questions about your category. Being quoted starts with pages that state their facts and name where those facts came from." },
   // ── QA F9: the 22 registry ids that used to fall through to their engineering label ──
   "BOTH-01b": { title: "Clear the hidden 'do not list' flags", description: "Some pages carry an instruction telling engines not to list or quote them. Remove it from the pages you want buyers to find." },
   "BOTH-02": { title: "Serve your main content as plain HTML", description: "Content that only appears after a login, behind a paywall, or once scripts run is invisible to engines. They read the raw page, so anything they can't see doesn't count." },
@@ -1269,7 +1347,7 @@ export const REC_COPY: Record<string, { title: string; description: string }> = 
   "SEO-04b": { title: "Make your pages respond faster to taps", description: "When someone taps or clicks, the page should react almost immediately. Lag here frustrates visitors and counts against you in search." },
   "SEO-04c": { title: "Stop your pages jumping while they load", description: "Content that shifts as images and banners arrive makes people mis-tap. Reserve the space they'll occupy so the page settles as it loads." },
   "GEO-01": { title: "Let search engines and AI assistants read your site", description: "One settings file on your site decides who is allowed to read it. If the search engines and AI assistants are turned away there, nothing else you do can make you appear." },
-  "GEO-07": { title: "Point your public record at your own website", description: "Your Wikidata entry should list your real website as the official one. While it doesn't, engines credit your work to whichever site is listed instead." },
+  "GEO-07": { title: "Point your public record at your own website", description: "Your public company entry should list your real website as the official one. While it lists a different address, that is where anyone reading the entry is sent." },
   "GEO-08": { title: "Get listed where ChatGPT looks", description: "ChatGPT finds pages through Bing and through its own reader. Missing from either means it can't surface you even when you're the right answer." },
   "GEO-10": { title: "Let AI assistants read your about pages", description: "Your about and company pages are where engines learn who you are. Blocking them leaves the assistants guessing at your identity." },
   "GEO-18": { title: "Name the things you're actually talking about", description: "Use the real names of your products, places, people, and partners instead of vague wording, so engines can connect your pages to what buyers ask about. Naturally — not stuffed in." },
@@ -1348,6 +1426,22 @@ function ownerFor(actionKind: ActionKind): string {
  * Derive the client-safe action plan from the internal gaps. Deduped, ordered by score
  * lift (highest impact first). The internal gap fields never cross into the returned
  * objects — only the §3b render contract does; titles/descriptions are plain-English.
+ *
+ * NOT RENDERED ON THE CLIENT REPORT ANY MORE (portal feedback round 4, 2026-09).
+ * The product owner's ruling on "What we're fixing" was that the list is not true:
+ * every failing check became a row promising Karos would fix it, on a page with an
+ * Approve button, whatever the confidence behind the measurement and whether or not
+ * anything in this product can act on it. The Reporting tab now renders
+ * `buildClientSuggestions` instead — the small, confirmed subset whose fix is the
+ * CLIENT's to make, with no owner line and no Approve control.
+ *
+ * This function stays, and is still called by the capture path
+ * (`src/lib/agent-engine/seo-geo-insights-mapping.ts`), because the persisted
+ * `recommendations[]` is a cross-repo contract: `docs/routable-recommendation-contract.md`
+ * consumes it engine-side. What changed is who reads it, not whether it is produced.
+ * Its render surfaces (`SeoGeoPlan`, `seo-geo-action-plan.tsx`,
+ * `lib/actions/seo-geo-task-actions.ts`) are likewise kept and unmounted rather than
+ * deleted, so re-enabling them is a decision someone takes on purpose.
  */
 /** Display order for the plan's impact badges (QA F22). */
 const SEVERITY_ORDER: Record<GapSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
@@ -1391,6 +1485,242 @@ export function buildRecommendations(gaps: VisibilityGap[], limit = 10): Recomme
   return out;
 }
 
+/* ── "Things only you can do" (portal feedback round 4, 2026-09) ─── */
+
+/** The confidence ladder on a check, strongest first. */
+const CONFIDENCE_RANK: Record<SeoGeoCheck["confidence"], number> = {
+  CONFIRMED: 2,
+  LIKELY: 1,
+  HYPOTHESIS: 0,
+};
+
+/**
+ * A suggestion the CLIENT acts on. Deliberately smaller than {@link Recommendation}:
+ * no owner line, no action kind, no impact badge, nothing that implies a Karos
+ * workflow, because nothing here starts one.
+ */
+export interface ClientSuggestion {
+  /** Stable rec id. Used as a React key and to prefill support; never rendered as prose. */
+  id: string;
+  /** Short, verb-first. */
+  title: string;
+  /** ONE sentence: why it is worth doing, and why it has to be them. */
+  why: string;
+  /** What the audit actually observed on this snapshot. Rendered as muted evidence. */
+  evidence: string;
+}
+
+/**
+ * WHY the list is empty, when it is (review wave, 2026-09).
+ *
+ * The section's empty state used to say one thing — "everything this snapshot
+ * found is work your Karos team owns" — for three different situations, and it
+ * was only true in one of them. A snapshot whose client-owned findings were all
+ * dropped for confidence has NOT been checked and cleared; saying it was is the
+ * same class of untrue statement the whole section was rewritten to remove.
+ *
+ *  · `none`          — the snapshot produced no gaps at all.
+ *  · `karosOwned`    — there were findings, and every one of them is ours to fix.
+ *  · `lowConfidence` — there were client-owned findings, and none of them cleared
+ *                      the confirmed/measured bar this list requires before it
+ *                      asks a client for work. (The same value covers a finding
+ *                      we have no copy for: in both cases we saw something and
+ *                      cannot responsibly hand it over.)
+ */
+export type ClientSuggestionsEmptyReason = "none" | "karosOwned" | "lowConfidence";
+
+export interface ClientSuggestionsResult {
+  suggestions: ClientSuggestion[];
+  /** Null whenever there is at least one suggestion. */
+  emptyReason: ClientSuggestionsEmptyReason | null;
+}
+
+/**
+ * The ids whose fix is the client's to make. AN EXPLICIT SET, and that is the
+ * whole of the round-6 ruling (2026-09).
+ *
+ * It used to be derived: `deliveryForBucket` marks the off-site entity bucket
+ * "advisory", `computeVisibilityGaps` hardcodes the same delivery on every
+ * competitor-visibility gap, and `actionKindFor` turned exactly those into
+ * "guided_manual". So ownership was read off WHERE A CHECK SITS IN A SCORING
+ * TABLE rather than off who can act on it — and that is how three OUTCOMES
+ * (share of voice GEO-27, named-mention rate GEO-35, never cited GEO-11) plus
+ * one coverage count (GEO-04) came to be printed as client homework. Albert's
+ * ruling: "only structural things the client is doing wrong AND our agents
+ * cannot fix (accounts, records, relationships they own)". A bucket cannot
+ * express "accounts and records"; a named set can.
+ *
+ * The three that survive, and why each is genuinely theirs:
+ *  · GEO-25 — the public company record, created and confirmed in the
+ *    business's name.
+ *  · GEO-07 — the official-website field on that record; changing it needs the
+ *    account that owns the record.
+ *  · GEO-14 — listings on independent review platforms, opened in the
+ *    business's name (the Reputation agent drafts replies, it cannot open an
+ *    account and it cannot ask a customer).
+ *
+ * The four that left are the levers our agents exist to move, and they now
+ * appear on Reporting under "What we are doing to improve your SEO and GEO"
+ * (`lib/visibility-levers.ts`) instead of as a task for the reader. They keep
+ * their REC_COPY entries: the plan catalogue is the cross-repo contract
+ * (`docs/routable-recommendation-contract.md`) and is a different audience.
+ *
+ * Keyed on the id before the `:` so a per-engine instance (`GEO-27:chatgpt`)
+ * is judged as its check, the same split every other reader here uses.
+ */
+const CLIENT_OWNED_IDS: ReadonlySet<string> = new Set(["GEO-25", "GEO-07", "GEO-14"]);
+
+/** Is this gap's fix the client's to make? The set above is the only way in. */
+function isClientOwnedGap(gap: VisibilityGap): boolean {
+  return CLIENT_OWNED_IDS.has(gap.id.split(":")[0]);
+}
+
+/**
+ * Short client-owned copy, audited line by line against what the check can
+ * actually support (the ruling: "all these items are not true").
+ *
+ * The catalog entry in REC_COPY was written for a row with an Approve button and
+ * a Karos owner, so it describes the FIX; these describe the ASK, in one sentence,
+ * and say why it has to come from the client. Every `why` here is either a
+ * statement of ownership (only your team holds that account or that record) or a
+ * fact this report itself measured. None of them assert how an engine will
+ * react, which is what most of the catalog's second sentences did.
+ *
+ * NO FALLBACK ANY MORE (round 6, 2026-09). An id with no entry here is dropped,
+ * full stop: rule 6 below always claimed that, and the code then named the id
+ * with REC_COPY's plan copy first, so a future advisory check would have leaked
+ * in wearing the voice of a row Karos owns. The keys here are exactly
+ * `CLIENT_OWNED_IDS`, and a test pins that they stay in step.
+ */
+const CLIENT_SUGGESTION_COPY: Record<string, { title: string; why: string }> = {
+  "GEO-25": {
+    title: "Claim your public company record",
+    why: "It is the entry the engines look your company up in, and it has to be created and confirmed in your business's name.",
+  },
+  "GEO-07": {
+    title: "Point your public record at your own website",
+    why: "The official website on that entry is missing or points elsewhere, and changing it needs the account that owns the entry, which is yours.",
+  },
+  "GEO-14": {
+    title: "Open your listings on the review platforms",
+    why: "Reviews on independent sites are one of the off-site checks in your AI readiness score; the listings have to be opened in your business's name, and the asking has to come from you.",
+  },
+};
+
+/**
+ * The client-facing "Things only you can do" list.
+ *
+ * PURE, and the rules are the whole point (portal feedback round 4, 2026-09):
+ *
+ *  1. CLIENT-OWNED ONLY — see `isClientOwnedGap`. A row Karos executes has no
+ *     business under this heading.
+ *  2. MEASURED ONLY. Both producers already emit measured gaps exclusively
+ *     (`computeCheckGaps` filters `tier === "MEASURED"`; `computeVisibilityGaps`
+ *     skips an UNAVAILABLE capture), but a snapshot persisted by an older
+ *     pipeline is not covered by that, so pass `opts.checks` and any gap whose
+ *     check is not MEASURED is dropped here too.
+ *  3. CONFIRMED CONFIDENCE by default. The old plan rendered a HYPOTHESIS gap
+ *     with the same Approve button as a confirmed one, softened only by a
+ *     footnote. Here there is no Karos verification step between the row and the
+ *     client acting on it, so anything we have not confirmed does not get to ask
+ *     them for work. `minConfidence` exists so a staff surface can widen it
+ *     knowingly, not so a caller can drift.
+ *  4. DEDUPED BY COPY. The competitor-visibility gaps are per engine, so five
+ *     engines produce five rows of one sentence; the survivor is the strongest
+ *     measured instance, and its evidence names the engine it was measured on.
+ *  5. CAPPED AT 5, ordered by `scoreLift`. "Reduce it" was half the ruling.
+ *  6. AN ID WE CANNOT NAME IS DROPPED — and since round 6 that is true rather
+ *     than aspirational. `resolveRecCopy`'s fallback ("a technical finding your
+ *     team is reviewing") is an honest thing to say about a row Karos owns and a
+ *     useless thing to hand a client as a task; REC_COPY's own title and first
+ *     sentence are no better, because they were written for a row with an
+ *     Approve button behind it. Only `CLIENT_SUGGESTION_COPY` gets a row in.
+ */
+export function buildClientSuggestions(
+  gaps: VisibilityGap[],
+  opts: {
+    limit?: number;
+    minConfidence?: SeoGeoCheck["confidence"];
+    /** The snapshot's raw checks, when the caller has them: re-asserts rule 2. */
+    checks?: SeoGeoCheck[];
+  } = {},
+): ClientSuggestionsResult {
+  const limit = opts.limit ?? 5;
+  const floor = CONFIDENCE_RANK[opts.minConfidence ?? "CONFIRMED"];
+  const tierById = new Map((opts.checks ?? []).map((c) => [c.id, c.tier] as const));
+
+  const deduped = [...dedupeGapsByRecId(gaps)];
+  // Kept so an empty list can say WHICH kind of empty it is (review wave,
+  // 2026-09): a snapshot that found client-owned work we have not confirmed is
+  // not the same as one where every finding belongs to Karos, and the old copy
+  // claimed the second whatever the truth was.
+  const clientOwned = deduped.filter(isClientOwnedGap);
+
+  const seen = new Set<string>();
+  const out: ClientSuggestion[] = [];
+  const ordered = clientOwned
+    .filter((gap) => {
+      const tier = tierById.get(gap.id.split(":")[0]);
+      if (tier !== undefined && tier !== "MEASURED") return false;
+      return (CONFIDENCE_RANK[gap.confidence] ?? -1) >= floor;
+    })
+    .sort((a, b) => b.scoreLift - a.scoreLift);
+
+  for (const gap of ordered) {
+    const recId = gap.id.split(":")[0];
+    const known = CLIENT_SUGGESTION_COPY[recId];
+    // Rule 6: only copy we actually wrote FOR THIS SECTION. No REC_COPY
+    // fallback (round 6): the plan catalogue's voice belongs to a row with an
+    // Approve button and a Karos owner, so borrowing it here would hand a
+    // client a task described as work we are about to do.
+    if (!known) continue;
+    const key = known.title.toLowerCase().trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      id: gap.id,
+      title: known.title,
+      why: known.why,
+      evidence: evidenceNamingEngine(gap),
+    });
+    if (out.length >= limit) break;
+  }
+  return {
+    suggestions: out,
+    emptyReason:
+      out.length > 0
+        ? null
+        : clientOwned.length > 0
+          ? "lowConfidence"
+          : deduped.length > 0
+            ? "karosOwned"
+            : "none",
+  };
+}
+
+/**
+ * Rule 4's second half, made true (review wave, 2026-09).
+ *
+ * The evidence line is the producer's own words for what was FOUND — never the
+ * benchmark and never the registry label — and for a per-engine gap it also has
+ * to say WHICH engine, because the survivor of the dedupe is one engine's
+ * instance standing for a finding measured on several.
+ *
+ * Two of the three per-engine producers already name the engine inside
+ * `measured` ("Named in 2 of 12 ChatGPT category answers"). GEO-27's does not:
+ * it reads "8% share of voice (vs Rival at 41%)", which is a number with no
+ * measurement attached. Rather than reach for `evidence` — which for GEO-27 is
+ * about how many questions were asked, not what was found — the engine is
+ * appended to the found line, so every row keeps the same shape.
+ */
+function evidenceNamingEngine(gap: VisibilityGap): string {
+  const base = (gap.measured || gap.evidence || "").trim();
+  const suffix = gap.id.split(":")[1];
+  const label = suffix && isEngineId(suffix) ? ENGINE_LABELS[suffix] : null;
+  if (!base || !label || base.includes(label)) return base;
+  return `${base}, measured on ${label}`;
+}
+
 /* ── Answer grid + citation leaderboard (PDF/report contract) ─────── */
 
 /** Buyer-intent taxonomy from the a3 report (the DISC/COMP/PROB/BRAND/NAV tags). */
@@ -1413,9 +1743,13 @@ export interface IntentPrompt {
 /**
  * Deterministically classify a buyer-intent prompt into the a3 taxonomy. Order is
  * significant, mirroring the PDF:
- *   navigational (points at the site) → comparison ("X alternative"/"best app",
- *   which stays COMP even when it names the brand, e.g. "Workfrom alternative") →
- *   brand (names the client, no comparison signal) → problem ("how/near me/right
+ *   navigational (points at the site) → brand (names the client — a prompt that
+ *   names the brand is a brand prompt EVEN when it also carries comparison
+ *   wording, e.g. "Acme Fintech alternative": the asker already named Acme, so
+ *   any mention there is a guaranteed one, not earned visibility, and must not
+ *   count toward the unprompted AI Share of Voice the way a true category
+ *   comparison like "best app to find work-friendly cafes" does) → comparison
+ *   ("X alternative"/"best app", no brand named) → problem ("how/near me/right
  *   now") → discovery (the default "best X"). A bare "?" is NOT treated as problem —
  *   most discovery/comparison queries are also questions.
  */
@@ -1424,8 +1758,8 @@ export function classifyIntent(prompt: string, gazetteer: Gazetteer): PromptInte
   if ((gazetteer.clientDomain && p.includes(gazetteer.clientDomain)) || /\bofficial (site|website)\b/.test(p)) {
     return "navigational";
   }
-  if (/\b(vs\.?|alternative|compare|comparison|best app|app to|apps? (for|to)|which app)\b/.test(p)) return "comparison";
   if (gazetteer.client.some((a) => findMention(prompt, a) >= 0)) return "brand";
+  if (/\b(vs\.?|alternative|compare|comparison|best app|app to|apps? (for|to)|which app)\b/.test(p)) return "comparison";
   if (/\b(how (do|can|to)|near me|right now|can i find|where can i)\b/.test(p)) return "problem";
   return "discovery";
 }
@@ -1650,8 +1984,16 @@ export function buildQuestionSet(
   return out;
 }
 
-/** One (question × engine) cell state, matching the PDF grid's dot legend. */
-export type CellState = "named_first" | "named" | "cited_not_named" | "absent" | "unavailable";
+/**
+ * One (question × engine) cell state, matching the PDF grid's dot legend.
+ *
+ * `"aio_absent"` (T-B16/SCRUM-271) is Gemini-only: Google's AI Overview did
+ * not render for this prompt at all, which is a DIFFERENT fact from
+ * `"absent"` (an answer came back and simply never named the brand). See
+ * `GeoProbe.aioAbsent`'s doc for why collapsing the two would throw away the
+ * one thing T-A3 was built to distinguish.
+ */
+export type CellState = "named_first" | "named" | "cited_not_named" | "absent" | "aio_absent" | "unavailable";
 
 export interface AnswerCell {
   engine: EngineId;
@@ -1672,6 +2014,10 @@ function cellState(probe: GeoProbe | undefined): CellState {
   if (probe.brandFirst) return "named_first";
   if (probe.brandMentioned) return "named";
   if (probe.brandCited) return "cited_not_named"; // ghost citation
+  // T-B16/SCRUM-271: a real capture that came back with no AI Overview at all
+  // is not the same fact as a rendered AIO that never named the brand — checked
+  // BEFORE the plain "absent" fallback so the distinction survives into the grid.
+  if (probe.aioAbsent) return "aio_absent";
   return "absent";
 }
 
@@ -1862,8 +2208,19 @@ export interface SeoGeoInsights {
   /** Headline KPIs (0–100 ints, measured-only per the grade rule). */
   seoScore: number;
   seoDataCoveragePct: number;
+  /**
+   * The SEO points over the MEASURED weight only — how the site did on the
+   * checks that actually ran, next to `seoScore`, which counts an unmeasured
+   * check as zero. `null` when nothing was measured; absent on snapshots from
+   * before the engine reported it (2026-09-07).
+   */
+  seoMeasuredBasisScore?: number | null;
   geoReadiness: number;
   geoReadinessCoveragePct: number;
+  /** Same as `seoMeasuredBasisScore`, for AI readiness. */
+  geoReadinessMeasuredBasisScore?: number | null;
+  /** What the engine's reads actually observed about the site, in plain language — quotable next to the scores. Absent before 2026-09-07. */
+  measuredFacts?: string[];
   geoVisibilityIndex: number;
   geoVisibilityCoveragePct: number;
   /** Append-only series of past geoVisibilityIndex values (oldest→newest), for the
@@ -1895,6 +2252,20 @@ export interface SeoGeoInsights {
   gaps: VisibilityGap[];
   /** Client-facing action plan derived from `gaps` (dev-handoff §3b). Safe to render to clients. */
   recommendations: Recommendation[];
+  /**
+   * The engine's fired recommendations in routable form (recId, lever, check,
+   * routing) — what `createTasksFromSeoGeoReportAction` and
+   * `approveSeoGeoRecommendationAction` act on. Lives here because the
+   * seo-geo-agent no longer creates a portal asset (its output is internal
+   * data), so this record is the report's home. Written by
+   * `mapAgentEngineSeoGeoToInsights`; absent on records from before 2026-09-05.
+   *
+   * Typed as opaque JSON on purpose: this module is pure, client-safe maths with
+   * no imports, and readers re-validate each row through
+   * `toRoutableRecommendation` (agent-engine/routable-recommendation.ts) on the
+   * way out — the same discipline the asset-era reader used.
+   */
+  routableRecommendations?: readonly unknown[];
   /** recIds the client/staff has approved for the team to execute (QA Fix 6). Mutated by
    *  approveSeoGeoRecommendation, not the capture run. */
   approvedRecIds?: string[];

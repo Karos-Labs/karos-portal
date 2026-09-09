@@ -46,10 +46,20 @@
 #   echo -n "..." | gcloud secrets create FIREFLIES_WEBHOOK_SECRET --data-file=-
 #   cat serviceAccount.json | gcloud secrets create FIREBASE_SERVICE_ACCOUNT_KEY --data-file=-
 #
-#   # Note: NEXT_PUBLIC_FIREBASE_* are public Firebase Web SDK config. They live
-#   # in .env.production (committed to git, shared by every environment since
-#   # they all point at the same Firebase project) and are picked up by
-#   # Next.js at build time automatically — no Secret Manager secrets needed.
+#   # Note: NEXT_PUBLIC_FIREBASE_* are public Firebase Web SDK config — public
+#   # in the sense that they're safe to ship in the browser bundle, not in the
+#   # sense that they're exempt from this repo's "no committed env values"
+#   # rule. They live in Secret Manager like everything else (shared by every
+#   # environment, since prep and production point at the same Firebase
+#   # project) and the docker-build step below reads them at build time via
+#   # --build-arg, since Next.js only inlines NEXT_PUBLIC_* into the client
+#   # bundle from build-time ENV, not from a runtime Cloud Run env var.
+#   echo -n "AIza..." | gcloud secrets create NEXT_PUBLIC_FIREBASE_API_KEY --data-file=-
+#   echo -n "project.firebaseapp.com" | gcloud secrets create NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN --data-file=-
+#   echo -n "project-id" | gcloud secrets create NEXT_PUBLIC_FIREBASE_PROJECT_ID --data-file=-
+#   echo -n "project.firebasestorage.app" | gcloud secrets create NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET --data-file=-
+#   echo -n "123456789" | gcloud secrets create NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID --data-file=-
+#   echo -n "1:123456789:web:abc" | gcloud secrets create NEXT_PUBLIC_FIREBASE_APP_ID --data-file=-
 #
 #   # 6. No GCP-side Cloud Build trigger is created — GitHub Actions is the
 #   #    automatic path (deploy-prep.yml on push to main; promote-production.yml
@@ -77,6 +87,26 @@ substitutions:
   _REGION: us-central1
   _REPO: karos-cmo
   _SERVICE: karos-cmo
+  # The runtime identity this service runs AS (AU58 / SCRUM-357).
+  #
+  # Empty is exactly today's behaviour: Cloud Run falls back to the project's
+  # DEFAULT COMPUTE service account — which is also what Cloud Build, every GCE
+  # VM and every Cloud Function in the project run as. That shared identity
+  # currently holds roles/run.admin and project-wide
+  # roles/secretmanager.secretAccessor, so the portal's identity can today
+  # delete any Cloud Run service in the project, agent-engine included.
+  #
+  # It also makes agent-engine's AUTH_ALLOWED_SERVICE_ACCOUNTS meaningless in
+  # prep: the portal's outbound ID token is minted from the metadata server
+  # (src/lib/agent-engine/client.ts) and therefore carries the RUNTIME service
+  # account's identity, so allowlisting it would authorise the whole project
+  # rather than the portal.
+  #
+  # Set to karos-cmo-prep@karoscmo-prep.iam.gserviceaccount.com for prep now
+  # that its grants are in place. Leave empty anywhere the dedicated SA does
+  # not exist yet — an empty value adds no flag at all, so a deploy cannot
+  # break on it.
+  _RUNTIME_SERVICE_ACCOUNT: ""
   # Set after the agent service is deployed. Empty ⇒ the three submit cores
   # (submit-managed.ts, submit-custom.ts, run-custom-agent.ts) refuse before a job
   # row exists or credits are charged, and the run control renders disabled:
@@ -97,6 +127,18 @@ substitutions:
   # _RUNWAY_AUTOGEN_ENABLED was flipped to "1".
   # Keep in step with RUNWAY_HORIZON_DAYS; runway.test.ts pins the two together.
   _RUNWAY_MAX_JOBS_PER_CLIENT: "14"
+  # Task Map autopilot (src/app/api/tasks/auto-generate) — off by default, same
+  # convention as runway above. Flip to "1" once a dryRun=1 sweep looks right.
+  _TASKMAP_AUTOGEN_ENABLED: ""
+  # Credits plan v2 / settle-to-actual (src/lib/credits.ts) — off by default,
+  # same convention. Flip to "1" per environment once the shadow numbers look
+  # right: it turns on the 2600/month allowance, the monthly top-up, the lazy
+  # cap migration and settlement writes, none of which a deploy can undo.
+  _CREDITS_PLAN_V2_ENABLED: ""
+  # How many clients one sweep may actually run the (expensive, ~120s) swarm
+  # debate for. A client not reached this round is eligible again next run —
+  # this bounds the ROUTE's own maxDuration, not overall coverage.
+  _TASKMAP_AUTOGEN_SWEEP_CAP: "3"
   # Per-environment sender identity — override for prep so test sends never
   # look like production mail (see DEPLOY_ENVIRONMENTS.md).
   _EMAIL_FROM: "Karos Labs <donotreply@karoslabs.com>"
@@ -117,7 +159,14 @@ substitutions:
   _FIRESTORE_DATABASE_ID: "(default)"
   # Dedicated GCS bucket for large pre-generated media (src/lib/gcs-media.ts)
   # — own bucket per environment so prep media never lands in production's.
+  # SCRUM-376/AU74: deliberately NOT kept equal to agent-engine's variable of
+  # the same name; see cloudbuild.promote.yaml's comment on this substitution
+  # for why unifying them is a production outage, not a cleanup.
   _GCS_MEDIA_BUCKET: "karos-media-assets"
+  # Agent-engine WORKSPACE bucket (src/lib/agent-engine/workspace-writer.ts) —
+  # the reconcile cron mirrors client knowledge into it. Empty = sync skipped;
+  # prep overrides via deploy-prep.yml (karoscmo-prep-agent-artifacts).
+  _AGENT_ENGINE_WORKSPACE_BUCKET: ""
   # Live external analytics ingestion (src/lib/analytics — pulls real
   # connected-account data for whichever clients exist in this environment's
   # own Firestore database).
@@ -126,10 +175,60 @@ substitutions:
   # service (independent of _APP_URL/any custom domain). Set once this
   # environment's own agent-service is deployed.
   _AGENT_SERVICE_CALLBACK_URL: ""
+  # agent-engine dispatch (src/lib/agent-engine/dispatch.ts). Production has
+  # been running with this on since 2026-08; it lived only on the running
+  # revision, so the next promote would have silently switched it back off —
+  # --set-env-vars replaces the whole set. It belongs here for that reason.
+  _AGENT_ENGINE_DISPATCH_ENABLED: "true"
+  # Route dispatch through the agent-middleware control plane instead of
+  # publishing straight to Pub/Sub. Deliberately EMPTY here (= off), because
+  # cloudbuild.yaml's defaults are production's and agent-middleware is not
+  # provisioned in karoscmo yet. deploy-prep.yml overrides all three for prep.
+  #
+  # These are per-environment and must never be crossed: the middleware
+  # resolves prompt and template versions out of its own environment's
+  # Firestore, so a production job pointed at prep's control plane would run
+  # against prep's unreviewed prompts. When prod is provisioned, set these to
+  # prod's own service URL, not prep's.
+  _AGENT_MIDDLEWARE_DISPATCH_ENABLED: ""
+  _AGENT_MIDDLEWARE_URL: ""
+  # The OIDC audience the caller mints its token for. Must equal the receiving
+  # service's AUTH_AUDIENCE exactly — Cloud Run publishes a service on two URL
+  # forms and the middleware only accepts the one it was configured with.
+  _AGENT_MIDDLEWARE_AUDIENCE: ""
+  # agent-engine direct dispatch. PUBSUB_TOPIC is what
+  # isAgentEnginePubSubConfigured() checks, and it is the fallback transport
+  # when the control plane cannot service a dispatch -- without it a
+  # middleware outage fails every job instead of degrading to a direct
+  # publish. It was missing from BOTH deploy configs and from the prep
+  # service entirely, so prep's fallback has been inert; production had it
+  # only as a hand-set variable, which the 2026-08-22 promote then deleted.
+  _AGENT_ENGINE_PUBSUB_TOPIC: ""
+  _AGENT_ENGINE_URL: ""
+  _AGENT_ENGINE_AUDIENCE: ""
   # Full production/prep parity — the rest of these were previously only in
   # cloudbuild.promote.yaml (production). Same secret NAMES everywhere, own
   # VALUES per project's Secret Manager (see DEPLOY_ENVIRONMENTS.md).
   # Override at submit time: --substitutions _REGION=europe-west1,...
+
+# Build-time-only secrets — the docker-build step's own secretEnv pulls these
+# in so NEXT_PUBLIC_FIREBASE_* can be inlined into the client bundle at
+# `next build`. Every other secret above is a Cloud Run RUNTIME secret
+# (--set-secrets on the deploy step) and has no reason to be listed here.
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_API_KEY/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_API_KEY
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_PROJECT_ID/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    - versionName: projects/$PROJECT_ID/secrets/NEXT_PUBLIC_FIREBASE_APP_ID/versions/latest
+      env: NEXT_PUBLIC_FIREBASE_APP_ID
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -137,18 +236,60 @@ options:
 
 steps:
   # ── 1. Build the Docker image ───────────────────────────────────────────────
-  # NEXT_PUBLIC_FIREBASE_* come from .env.production (in the repo) — no --build-arg needed.
-  # Next.js reads .env.production automatically during `next build`.
-  - id: docker-build
+  # NEXT_PUBLIC_FIREBASE_* are public Firebase Web SDK config, but read from
+  # Secret Manager like every other env value (never committed) via this
+  # step's own secretEnv, and passed through as --build-arg — Next.js only
+  # inlines NEXT_PUBLIC_* from build-time ENV, so these can't be deferred to
+  # the Cloud Run --set-secrets deploy step below.
+  # Pull the previous image so `--cache-from` below has something to match
+  # against. Cloud Build starts each build with an EMPTY local docker daemon, so
+  # `--cache-from` naming a remote tag is a silent no-op on its own — the flag
+  # was already here and the last successful build logged ZERO cache hits.
+  # `|| true` keeps the very first build (and any build after a repo wipe) from
+  # failing on a tag that does not exist yet.
+  - id: docker-pull-cache
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
     args:
       - -c
       - |
+        # Two cache sources, because they cache different things:
+        #   :deps-cache  is the `deps` STAGE, and carries the npm ci layer.
+        #   :latest      is the final `runner` stage only.
+        # A multi-stage build keeps intermediate layers OUT of the final image,
+        # so pulling :latest alone leaves `npm ci` re-running on every build.
+        # Measured with :latest only: 7 layers cached, docker-build still 158s.
+        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:deps-cache || echo "no :deps-cache yet"
+        docker build --target deps \
+          --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:deps-cache \
+          --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:deps-cache .
+        docker pull ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest ||           echo "no :latest yet — first build, or cache image pruned; continuing uncached"
+
+  - id: docker-build
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    waitFor: [docker-pull-cache]
+    secretEnv:
+      - NEXT_PUBLIC_FIREBASE_API_KEY
+      - NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+      - NEXT_PUBLIC_FIREBASE_PROJECT_ID
+      - NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+      - NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+      - NEXT_PUBLIC_FIREBASE_APP_ID
+    args:
+      - -c
+      - |
         docker build \
+          --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:deps-cache \
           --cache-from ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
           --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
           --tag ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest \
+          --build-arg NEXT_PUBLIC_FIREBASE_API_KEY="$$NEXT_PUBLIC_FIREBASE_API_KEY" \
+          --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="$$NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN" \
+          --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID="$$NEXT_PUBLIC_FIREBASE_PROJECT_ID" \
+          --build-arg NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET="$$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET" \
+          --build-arg NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID="$$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID" \
+          --build-arg NEXT_PUBLIC_FIREBASE_APP_ID="$$NEXT_PUBLIC_FIREBASE_APP_ID" \
           .
 
   # ── 2. Push both tags to Artifact Registry ──────────────────────────────────
@@ -171,7 +312,35 @@ steps:
         if [ "${_ALLOW_UNAUTHENTICATED}" != "true" ]; then
           AUTH_FLAG="--no-allow-unauthenticated"
         fi
+        # AU58: only pass --service-account when one is configured. An empty
+        # substitution must add no flag at all, not an invalid
+        # `--service-account=`, so an unset value is a no-op rather than a
+        # broken deploy.
+        SA_FLAG=""
+        if [ -n "${_RUNTIME_SERVICE_ACCOUNT}" ]; then
+          SA_FLAG="--service-account=${_RUNTIME_SERVICE_ACCOUNT}"
+        fi
+        # GOOGLE_VERTEX_PROJECT / GOOGLE_VERTEX_LOCATION (T-B3 / SCRUM-246), on
+        # the --set-env-vars line below.
+        #
+        # @ai-sdk/google-vertex reads BOTH through loadSetting, which THROWS when
+        # the value is absent — there is no fallback to GOOGLE_CLOUD_PROJECT
+        # (checked against the installed 5.0.66 in node_modules, not assumed).
+        # googleVertex() resolves them synchronously at construction, unlike
+        # vertexAnthropic() which defers, so a missing value fails the request
+        # outright rather than degrading.
+        #
+        # They live here, not on the service, because --set-env-vars REPLACES the
+        # whole set on every deploy — the same hazard as the 2026-07-31 incident
+        # this file already documents. A value applied by hand with 'gcloud run
+        # services update' would survive until exactly the next deploy.
+        #
+        # Both resolve from values already on that line: $PROJECT_ID and
+        # ${_REGION} — karoscmo-prep / us-central1 for prep. Verified with a real
+        # generateContent call against gemini-2.5-flash before being written here
+        # (HTTP 200). cloudbuild.promote.yaml carries the prod pair.
         gcloud run deploy ${_SERVICE} \
+          $$SA_FLAG \
           --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$COMMIT_SHA \
           --region=${_REGION} \
           --platform=managed \
@@ -183,8 +352,8 @@ steps:
           --cpu=1 \
           --timeout=300 \
           --concurrency=80 \
-          --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,SEGMIND_API_KEY=SEGMIND_API_KEY:latest,NEXT_PUBLIC_FIREBASE_API_KEY=NEXT_PUBLIC_FIREBASE_API_KEY:latest,NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:latest,NEXT_PUBLIC_FIREBASE_PROJECT_ID=NEXT_PUBLIC_FIREBASE_PROJECT_ID:latest,NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:latest,NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:latest,NEXT_PUBLIC_FIREBASE_APP_ID=NEXT_PUBLIC_FIREBASE_APP_ID:latest,AGENTS_REPO_GITHUB_TOKEN=github-token:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,OAUTH_STATE_SECRET=OAUTH_STATE_SECRET:latest,LINKEDIN_CLIENT_ID=LINKEDIN_CLIENT_ID:latest,LINKEDIN_CLIENT_SECRET=LINKEDIN_CLIENT_SECRET:latest,TWITTER_CLIENT_ID=TWITTER_CLIENT_ID:latest,TWITTER_CLIENT_SECRET=TWITTER_CLIENT_SECRET:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,LINKEDIN_COMMUNITY_CLIENT_SECRET=LINKEDIN_COMMUNITY_CLIENT_SECRET:latest,LINKEDIN_COMMUNITY_CLIENT_ID=LINKEDIN_COMMUNITY_CLIENT_ID:latest \
-          --set-env-vars="EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},ADMIN_EMAILS=${_ADMIN_EMAILS},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},AGENT_SERVICE_CALLBACK_URL=${_AGENT_SERVICE_CALLBACK_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},ANALYTICS_LIVE_INGEST=${_ANALYTICS_LIVE_INGEST}"
+          --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,NEXT_PUBLIC_FIREBASE_API_KEY=NEXT_PUBLIC_FIREBASE_API_KEY:latest,NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:latest,NEXT_PUBLIC_FIREBASE_PROJECT_ID=NEXT_PUBLIC_FIREBASE_PROJECT_ID:latest,NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:latest,NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:latest,NEXT_PUBLIC_FIREBASE_APP_ID=NEXT_PUBLIC_FIREBASE_APP_ID:latest,AGENTS_REPO_GITHUB_TOKEN=github-token:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,OAUTH_STATE_SECRET=OAUTH_STATE_SECRET:latest,LINKEDIN_CLIENT_ID=LINKEDIN_CLIENT_ID:latest,LINKEDIN_CLIENT_SECRET=LINKEDIN_CLIENT_SECRET:latest,TWITTER_CLIENT_ID=TWITTER_CLIENT_ID:latest,TWITTER_CLIENT_SECRET=TWITTER_CLIENT_SECRET:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,LINKEDIN_COMMUNITY_CLIENT_SECRET=LINKEDIN_COMMUNITY_CLIENT_SECRET:latest,LINKEDIN_COMMUNITY_CLIENT_ID=LINKEDIN_COMMUNITY_CLIENT_ID:latest \
+          --set-env-vars="EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},ADMIN_EMAILS=${_ADMIN_EMAILS},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},AGENT_SERVICE_CALLBACK_URL=${_AGENT_SERVICE_CALLBACK_URL},APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT},TASKMAP_AUTOGEN_ENABLED=${_TASKMAP_AUTOGEN_ENABLED},TASKMAP_AUTOGEN_SWEEP_CAP=${_TASKMAP_AUTOGEN_SWEEP_CAP},CREDITS_PLAN_V2_ENABLED=${_CREDITS_PLAN_V2_ENABLED},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},ANALYTICS_LIVE_INGEST=${_ANALYTICS_LIVE_INGEST},GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_VERTEX_PROJECT=$PROJECT_ID,GOOGLE_VERTEX_LOCATION=${_REGION},AGENT_ENGINE_DISPATCH_ENABLED=${_AGENT_ENGINE_DISPATCH_ENABLED},AGENT_MIDDLEWARE_DISPATCH_ENABLED=${_AGENT_MIDDLEWARE_DISPATCH_ENABLED},AGENT_MIDDLEWARE_URL=${_AGENT_MIDDLEWARE_URL},AGENT_MIDDLEWARE_AUDIENCE=${_AGENT_MIDDLEWARE_AUDIENCE},AGENT_ENGINE_PUBSUB_TOPIC=${_AGENT_ENGINE_PUBSUB_TOPIC},AGENT_ENGINE_URL=${_AGENT_ENGINE_URL},AGENT_ENGINE_AUDIENCE=${_AGENT_ENGINE_AUDIENCE},AGENT_ENGINE_WORKSPACE_BUCKET=${_AGENT_ENGINE_WORKSPACE_BUCKET}"
     waitFor: [docker-push]
 
 images:

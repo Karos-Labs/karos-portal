@@ -1,12 +1,17 @@
 import "server-only";
 
 import { streamText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import type { Client, ContextDocType } from "@/lib/types";
 import { CONDENSATION_RULES } from "./brain";
-import { MODELS, CONDENSE_MAX_TOKENS } from "@/lib/constants";
+import { CONDENSE_MAX_TOKENS } from "@/lib/constants";
 import { stripPreamble, stripTrailingMetaCommentary } from "@/lib/text-utils";
 import { logger } from "@/services/logger";
+import { logStructured } from "@/lib/telemetry/structured-log";
+import type { ResolvedAi } from "@/lib/ai/provider";
+import {
+  routeContextDocCondensation,
+  type CondensationModelAttempt,
+} from "./context-doc-routing";
 
 export interface CondensedDoc {
   docType: ContextDocType;
@@ -34,7 +39,44 @@ export async function condenseDocs(
   return results;
 }
 
+/**
+ * Condenses one document, or returns it EMPTY when every model attempt failed.
+ *
+ * Empty is the contract's own "no client-tier row" signal: `runOnboardPipeline`
+ * dropped an empty condensation rather than store a blank panel, and
+ * `writeContextDocsFromResearch` still does, so a document whose condensation
+ * could not be produced simply has no client-tier copy this run — its
+ * internal-tier version is written regardless, which is the version every
+ * downstream agent reads. Before this, one failed condensation threw out of
+ * `Promise.all`, `runIntelReportPipeline` marked the whole Regenerate failed,
+ * and a client whose Intel Report and SEO/GEO report had both completed was
+ * shown `aiProcessingError` for a ~50%-shorter copy of a document it already
+ * had. Logged at ERROR so the miss is visible, never silent.
+ */
 async function condenseOne(
+  client: Client,
+  docType: ContextDocType,
+  internalContent: string,
+  rules: string,
+): Promise<CondensedDoc> {
+  try {
+    return await condenseOneOrThrow(client, docType, internalContent, rules);
+  } catch (err) {
+    logStructured(
+      "ERROR",
+      `context-doc condensation: "${docType}" could not be condensed by any vendor — client-tier copy skipped this run, internal tier unaffected`,
+      {
+        event: "context_document.condense_failed",
+        clientId: client.id,
+        docType,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    );
+    return { docType, content: "" };
+  }
+}
+
+async function condenseOneOrThrow(
   client: Client,
   docType: ContextDocType,
   internalContent: string,
@@ -68,17 +110,36 @@ Update the frontmatter:
 
 Return ONLY the condensed markdown document. No preamble, no explanation.`;
 
-  const condenseStream = streamText({
-    model: anthropic(MODELS.SONNET),
-    system: systemPrompt,
-    messages: [{ role: "user", content: userMessage }],
+  // SCRUM-387 — routes this document to a model BEFORE the first call: Vertex-
+  // primary/Anthropic-fallback for a standard document, or an escalation to
+  // Opus (high complexity) / Gemini (does not fit Claude's window) — see
+  // context-doc-routing.ts for the full design and citations. Both passes
+  // below (initial, and the truncation-triggered retry) reuse the SAME route:
+  // the document being condensed has not changed, so neither has its
+  // complexity.
+  const route = routeContextDocCondensation(docType, internalContent, {
     maxOutputTokens: CONDENSE_MAX_TOKENS,
   });
-  const text = await condenseStream.text;
-  logger.trackStream(condenseStream, {
-    clientId: client.id, agentId: null, agentName: `Condense: ${docType}`,
-    modelName: MODELS.SONNET, operation: "doc_condense",
+  logStructured("INFO", `context-doc condensation route: ${route.rationale}`, {
+    event: "context_document.route",
+    clientId: client.id,
+    docType,
+    tier: route.complexity.tier,
+    score: route.complexity.score,
+    escalated: route.escalated,
   });
+
+  const first = await runCondensationAttempts(
+    route.attempts,
+    (resolved) =>
+      streamText({
+        model: resolved.model,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userMessage }],
+        maxOutputTokens: CONDENSE_MAX_TOKENS,
+      }),
+    { clientId: client.id, docType, agentName: `Condense: ${docType}` },
+  );
 
   // Detect truncation/omission: the condensed doc must include both the first and last ## sections.
   const internalSections = internalContent.match(/^## .+/gm) ?? [];
@@ -87,7 +148,7 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
 
   // Strip model preamble, then any trailing meta-commentary the model appended
   // after the document ("If you intended a different template…").
-  const condensed = stripTrailingMetaCommentary(stripPreamble(text));
+  const condensed = stripTrailingMetaCommentary(stripPreamble(first.text));
   // Match the heading boundary (## prefix) to avoid substring false-positives.
   const missingFirst = firstInternalSection && !condensed.includes(`## ${firstInternalSection}`);
   const missingLast = lastInternalSection && !condensed.includes(`## ${lastInternalSection}`);
@@ -95,25 +156,25 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
   if (missingFirst || missingLast) {
     // Retry as a fresh call — do not include the truncated assistant turn, which anchors
     // the model to the incomplete first output and defeats a full-rewrite instruction.
-    const condenseRetryStream = streamText({
-      model: anthropic(MODELS.SONNET),
-      system: systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content:
-            userMessage +
-            "\n\nCRITICAL: You MUST condense every section from the original document. Do not stop before reaching the last section.",
-        },
-      ],
-      maxOutputTokens: CONDENSE_MAX_TOKENS,
-    });
-    const cont = await condenseRetryStream.text;
-    logger.trackStream(condenseRetryStream, {
-      clientId: client.id, agentId: null, agentName: `Condense (retry): ${docType}`,
-      modelName: MODELS.SONNET, operation: "doc_condense",
-    });
-    const rewritten = stripTrailingMetaCommentary(stripPreamble(cont));
+    const retry = await runCondensationAttempts(
+      route.attempts,
+      (resolved) =>
+        streamText({
+          model: resolved.model,
+          system: systemPrompt,
+          messages: [
+            {
+              role: "user",
+              content:
+                userMessage +
+                "\n\nCRITICAL: You MUST condense every section from the original document. Do not stop before reaching the last section.",
+            },
+          ],
+          maxOutputTokens: CONDENSE_MAX_TOKENS,
+        }),
+      { clientId: client.id, docType, agentName: `Condense (retry): ${docType}` },
+    );
+    const rewritten = stripTrailingMetaCommentary(stripPreamble(retry.text));
     // Fall back to the first-pass result if the rewrite returned empty content,
     // or if it covers fewer of the internal doc's sections — a retry must never
     // be allowed to hand back less than the pass that triggered it.
@@ -124,6 +185,124 @@ Return ONLY the condensed markdown document. No preamble, no explanation.`;
 
   return { docType, content: condensed };
 }
+
+/**
+ * Executes `build` against each of `route`'s candidate model resolutions IN
+ * ORDER, returning the first that succeeds (SCRUM-387). For the baseline
+ * (standard-complexity) route this is the Vertex-primary/Anthropic-fallback
+ * attempt: `attempts[0]` is Vertex, `attempts[1]` is direct Anthropic — a real
+ * retry across vendors at call time, not a config pin. For an escalated route
+ * (Opus / Gemini) `attempts` has exactly one candidate, so this degrades to a
+ * plain call with no fallback — there is nothing else verified to fall back
+ * to for those models (see context-doc-routing.ts).
+ *
+ * A candidate's OWN failure (network error, refused wiring, upstream error —
+ * anything `resolve()` or the `streamText` call throws) is caught and logged,
+ * then the next candidate is tried; only when every candidate has failed does
+ * this throw, and it throws the LAST candidate's error, since that is the one
+ * whose failure is still live.
+ *
+ * One retry on the SAME vendor for a transient failure (see
+ * `isTransientCondensationError`) before moving on: the 2026-09-07 run saw
+ * Vertex answer "No output generated" on six documents in a row and direct
+ * Anthropic close the connection on another — weather, not configuration,
+ * and a second call seconds later usually answers.
+ */
+async function runCondensationAttempts(
+  attempts: readonly CondensationModelAttempt[],
+  build: (resolved: ResolvedAi) => ReturnType<typeof streamText>,
+  ctx: { clientId: string; docType: string; agentName: string },
+): Promise<{ text: string; resolved: ResolvedAi }> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts.length; i++) {
+    const attempt = attempts[i]!;
+    let retried = false;
+    for (;;) {
+      try {
+        const resolved = attempt.resolve();
+        const stream = build(resolved);
+        const text = await stream.text;
+        logger.trackStream(stream, {
+          clientId: ctx.clientId,
+          agentId: null,
+          agentName: ctx.agentName,
+          modelName: resolved.modelId,
+          vendor: resolved.vendor,
+          operation: "doc_condense",
+        });
+        if (i > 0) {
+          logStructured(
+            "WARNING",
+            `context-doc condensation: primary vendor "${attempts[0]!.vendor}" was bypassed — ` +
+              `"${ctx.docType}" served by fallback vendor "${attempt.vendor}"`,
+            {
+              event: "context_document.condense_fallback",
+              docType: ctx.docType,
+              from: attempts[0]!.vendor,
+              to: attempt.vendor,
+            },
+          );
+        }
+        return { text, resolved };
+      } catch (err) {
+        lastErr = err;
+        if (!retried && isTransientCondensationError(err)) {
+          retried = true;
+          logStructured(
+            "WARNING",
+            `context-doc condensation: vendor "${attempt.vendor}" (model "${attempt.modelId}") failed transiently for "${ctx.docType}" — retrying once`,
+            {
+              event: "context_document.condense_attempt_retry",
+              docType: ctx.docType,
+              vendor: attempt.vendor,
+              modelId: attempt.modelId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+          if (CONDENSATION_RETRY_DELAY_MS.current > 0) {
+            await new Promise((resolve) => setTimeout(resolve, CONDENSATION_RETRY_DELAY_MS.current));
+          }
+          continue;
+        }
+        const more = i < attempts.length - 1;
+        logStructured(
+          more ? "WARNING" : "ERROR",
+          `context-doc condensation: vendor "${attempt.vendor}" (model "${attempt.modelId}") failed for ` +
+            `"${ctx.docType}"${more ? " — falling back" : " — no remaining vendors"}`,
+          {
+            event: "context_document.condense_attempt_failed",
+            docType: ctx.docType,
+            vendor: attempt.vendor,
+            modelId: attempt.modelId,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+        break;
+      }
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error(`context-doc condensation: all vendor attempts failed for "${ctx.docType}"`);
+}
+
+/**
+ * Errors worth one immediate retry on the SAME vendor before moving on: the
+ * stream ending with nothing (the AI SDK's `AI_NoOutputGeneratedError`, which
+ * is what an upstream 5xx/overload looks like through `streamText`), a
+ * connection the provider closed, or an explicit overload/rate-limit status.
+ * Everything else — a refused wiring, a bad request — goes straight to the
+ * next vendor, since repeating it would repeat the same answer.
+ */
+export function isTransientCondensationError(err: unknown): boolean {
+  const message = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+  return /No output generated|NoOutputGenerated|other side closed|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|overloaded|rate limit|\b(429|502|503|504|529)\b/i.test(
+    message,
+  );
+}
+
+/** Pause between a transient failure and its retry. Mutable so the test suite does not wait. */
+export const CONDENSATION_RETRY_DELAY_MS = { current: 1_500 };
 
 /**
  * Re-condense existing internal docs for a client (monthly refresh light pass).

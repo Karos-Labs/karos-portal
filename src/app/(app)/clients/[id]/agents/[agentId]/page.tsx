@@ -10,22 +10,46 @@ import {
   listJobs,
   listPlannedScheduledRuns,
 } from "@/lib/data";
-import { availableCredits, creditBlockReason, CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
-import { Badge, EmptyState, PageHeader } from "@/components/ui";
+import { availableCredits, creditBlockReason, isBillableClientActor } from "@/lib/credits";
+import { Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AgentIdentity } from "@/components/agent-identity";
+import { AgentIdentity, socialPlatformsFor, type SocialPlatform } from "@/components/agent-identity";
+import { TaskKickoffStrip } from "@/components/client-agents/task-kickoff-strip";
+import { buildTaskKickoffView } from "@/lib/task-kickoff";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { isAgentServiceConfigured } from "@/lib/agent-service/client";
+import {
+  resolveDispatchedAgentEngineProductId,
+  shouldShowEngineHealthBanner,
+} from "@/lib/agent-engine/health";
+import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
+import { EngineHealthBanner } from "@/components/engine-health-banner";
+import { IntakeBlockedBanner } from "@/components/client-agents/intake-blocked-banner";
+import { RunsPausedNotice } from "@/components/runs-paused-notice";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { isLaunchInFlight, lastRunFailedAgentIds, rosterStatus } from "@/lib/client-agents";
+import {
+  agentNeedsSetup,
+  isLaunchInFlight,
+  lastRunFailedAgentIds,
+  latestBlockedIntake,
+  rosterStatus,
+} from "@/lib/client-agents";
 import { sanitizeIntegrations } from "@/lib/integrations/sanitize";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
-import { LegacyAgentPanel } from "@/components/client-agents/legacy-agent-panel";
+import { LegacyAgentPanel, SchedulePaceControl } from "@/components/client-agents/legacy-agent-panel";
+import { AgentSetupHero } from "@/components/client-agents/agent-setup-hero";
+import { AgentStarButton } from "@/components/client-agents/agent-star-button";
+import { ClientAgentRunHistory } from "@/components/client-agents/client-agent-run-history";
+import { AgentArchiveRows } from "@/components/client-agents/agent-archive-rows";
+import { clientArchiveLink } from "@/lib/agent-intake-links";
+import { relativeTime } from "@/lib/utils";
+import { CALENDAR_QUERY_KEYS } from "@/lib/calendar-view-modes";
+import { ContactUsButton } from "@/components/contact-us-modal";
 import { ClipGallery } from "@/components/client-agents/clip-gallery";
 import { DailyFinderPanel } from "@/components/client-agents/daily-finder-panel";
 import {
@@ -34,11 +58,12 @@ import {
   type SourceFile,
 } from "@/components/client-agents/archetype-cards";
 import { evaluateLegacyRunGate } from "@/lib/client-agent-runs";
-import { agentArchetype } from "@/lib/agent-archetype";
+import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
 import {
   agentProducedAssets,
   agentsWithDeliveredWork,
   agentsWithUpcomingContent,
+  agentUpcomingCalendarDays,
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
@@ -48,40 +73,52 @@ import {
 import {
   agentInputsView,
   buildAgentSetupFacts,
+  intakeFamilyFor,
   readAgentInputDocs,
 } from "@/lib/agent-detail-sections";
 import {
   AgentInputsSection,
   AgentSetupSection,
-  AgentStatusStrip,
+  AgentStatusLine,
+  type AgentStatusFact,
 } from "@/components/client-agents/agent-sections";
 import {
+  buildBlogAgentIntakeView,
   buildLinkedInAgentIntakeView,
+  buildNewsletterAgentIntakeView,
   buildRedditAgentIntakeView,
+  buildReputationAgentIntakeView,
   buildXAgentIntakeView,
 } from "@/lib/agent-intake-views";
 import {
   agentKeyMatchesClientSlug,
+  defaultRunBatchSize,
+  isBlogAgentIdentity,
   isLinkedInAgentIdentity,
+  isNewsletterAgentIdentity,
   isRedditAgentIdentity,
+  isReputationAgentIdentity,
   isXAgentIdentity,
   launchProfileFor,
 } from "@/lib/custom-agent-launch";
 import { summarizeAgentEconomics } from "@/lib/credit-reporting";
+import { resolveRunPriceQuote } from "@/lib/run-price";
 import { ControlRoom } from "@/components/client-agents/control-room";
 import { CurationPane } from "@/components/client-agents/client-agents-section";
+import { StaffOnlySection } from "@/components/staff-only-section";
 import { deriveAgentHealth } from "@/lib/agent-health";
 import { nextRunCountdown } from "@/lib/scheduled-runs";
 import {
   buildAgentSetup,
   type AgentIntakePanes,
+  rosterNextLabel,
   scheduleZonesByAgent,
   toClientAgentRows,
   toRunRows,
   toScheduleRows,
   toSummary,
 } from "@/lib/client-agent-rows";
-import { relativeTime } from "@/lib/utils";
+import { draftsDisplayTitle } from "@/lib/deliverable-titles";
 import type { Job } from "@/lib/types";
 
 /**
@@ -123,6 +160,30 @@ async function agentIntakePane(
       }),
     };
   }
+  if (isNewsletterAgentIdentity(agent.key)) {
+    return {
+      newsletter: await buildNewsletterAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
+  if (isBlogAgentIdentity(agent.key)) {
+    return {
+      blog: await buildBlogAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
+  if (isReputationAgentIdentity(agent.key)) {
+    return {
+      reputation: await buildReputationAgentIntakeView(clientId, {
+        isStaff: opts.isStaff,
+        jobs: opts.jobs,
+      }),
+    };
+  }
   return {};
 }
 
@@ -155,12 +216,19 @@ export default async function ClientAgentDetailPage({
   params: Promise<{ id: string; agentId: string }>;
   /** `asset` - Copilot chat's staff deep link, lands on Control Room's Outputs
    *  tab with this asset pre-opened (OutputsHub/ControlRoom). Staff-only: a
-   *  CLIENT_USER never receives this param (their side has no Control Room). */
-  searchParams: Promise<{ asset?: string }>;
+   *  CLIENT_USER never receives this param (their side has no Control Room).
+   *
+   *  `task` - Home's recommended-task press (portal feedback round 2,
+   *  2026-09; round 6 replaced the one generic label with a per-row one). Names
+   *  a recommended task this agent would execute; the page answers it with the
+   *  kickoff strip at the top of the main column. Validated in
+   *  lib/task-kickoff.ts, never trusted: a task id for another client, or one
+   *  already started, resolves to null and nothing mounts. */
+  searchParams: Promise<{ asset?: string; task?: string }>;
 }) {
   const user = await requireUser();
   const { id, agentId } = await params;
-  const { asset: deepLinkAssetId } = await searchParams;
+  const { asset: deepLinkAssetId, task: kickoffTaskId } = await searchParams;
 
   if (user.role === "CLIENT_USER") {
     if (user.clientId !== id) redirect(user.clientId ? `/clients/${user.clientId}` : "/assets");
@@ -211,6 +279,18 @@ export default async function ClientAgentDetailPage({
 
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const now = Date.now();
+
+  // The recommended task this page was opened FOR, if any (portal feedback
+  // round 2, 2026-09). Fed the client's already-booked dates so the inferred
+  // start date it carries is the same one the calendar would have given it —
+  // the assets are already in hand above, so this opens no second query.
+  const kickoffTask = await buildTaskKickoffView({
+    clientId: id,
+    taskId: kickoffTaskId,
+    scheduledAt: assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
+    now,
+  });
+
   const umbrella = umbrellaForAgent(umbrellas, agent.id);
   // Has this agent landed work here? Asked ONCE, through the function the roster
   // lists by, and used for both the gate below and the status strip further
@@ -237,12 +317,75 @@ export default async function ClientAgentDetailPage({
     notFound();
   }
 
-  const summary = toSummary(agent);
+  // THE SAME NUMBER THE SUBMIT CORE WILL HOLD (credits rework, 2026-09), not
+  // the constant behind it. This quoted the raw `agent.creditCost` while
+  // `submitCustomAgentJob` had already moved to the measured median, so a client
+  // read one price on the card and watched a different one leave their balance.
+  // Both sides now resolve through the SAME ladder over this client's own jobs —
+  // which this page has already loaded — so the quote, the credit gate below and
+  // the hold are one number by construction rather than by two files agreeing.
+  //
+  // THROUGH run-price.ts (review wave, 2026-09). It called
+  // `estimateRunCreditsFromJobs` directly, which is the estimator's inner half:
+  // no `CREDITS_PLAN_V2_ENABLED` gate (so with the rework off it quoted a
+  // measured median against a constant charge) and no family carried default (so
+  // a newsletter run was quoted at 25 and charged at 10).
+  const price = resolveRunPriceQuote({
+    agent: { id: agent.id, key: agent.key, creditCost: agent.creditCost ?? null },
+    clientId: id,
+    jobs,
+  });
+  const cost = price.credits;
+  // RESOLVED BEFORE THE SUMMARY, and that is the whole point of its position
+  // (review wave, 2026-09). `toSummary(agent)` used to be called with no pricing
+  // at all, so the three surfaces that take it — the run dialog's footer, the
+  // schedule modal's weekly total and LegacyAgentPanel — fell back to
+  // `creditCost ?? CREDIT_COSTS.customAgentRun` and quoted a DIFFERENT number
+  // from the panel eight lines below them, on the same screen, for the same
+  // press. They also never hedged: `priceIsEstimate` was absent, so with the
+  // rework on a client read "Costs 25 credits" for a hold that settles.
+  //
+  // The figure carried is the PER-OUTPUT one: the dialog multiplies it by the
+  // visible batch size itself (agentRunCost × batchSizeFrom), so handing it the
+  // already-multiplied `runCost` would square the batch.
+  const summary = toSummary(agent, {
+    runCostEstimate: cost,
+    priceIsEstimate: price.isEstimate,
+  });
+  // WOULD A RUN PRESSED ON THIS PAGE ACTUALLY REACH AGENT-ENGINE? (T-B21)
+  //
+  // Resolved HERE, on the server, and handed to the three components that mount
+  // the run dialog. `resolveDispatchedAgentEngineProductId` is the same call
+  // `submit-custom.ts` makes per run — dispatch enabled, this client has a
+  // lab slug to run as, this agent key routable — and it is
+  // the single definition of that predicate, deliberately not re-derived
+  // anywhere else (see its own doc comment). It reads `process.env` behind
+  // `server-only`, so the dialog physically cannot ask it and has to be told.
+  //
+  // Until this existed the dialog asked the KEY-ONLY resolver instead, which is
+  // blind to both flags: every client not yet cut over was shown "Direction for
+  // this run" and, on the media products, "Source media" — for a run that then
+  // went to agent-service, which reads neither, so both answers were dropped in
+  // silence. The same defect SCRUM-249/T-B5 closed in the copilot chat route;
+  // this was its second call site.
+  //
+  // One pair, so a one-row map: an absent entry means the legacy path, which is
+  // what the shape means everywhere it is read.
+  const engineProductId = resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug);
+  const engineDispatch: EngineDispatchMap = engineProductId
+    ? { [id]: { [agent.key]: engineProductId } }
+    : {};
   const spendable = isBillableClientActor(user) ? availableCredits(credits, now) : undefined;
-  const cost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+  // What ONE PRESS of "create" actually charges: the per-output base × what a
+  // fresh dialog submits (visible batch defaults only — 1 for every agent
+  // today, so today runCost === cost). The gate, the block reason and the
+  // panel's button all quote THIS, so a future visible multi-output default
+  // cannot wave a client into a dialog whose Start run the server refuses.
+  const runBatchSize = defaultRunBatchSize({ key: agent.key, name: agent.name });
+  const runCost = cost * runBatchSize;
   const creditBlockReasons: Record<string, string> =
-    spendable !== undefined && spendable < cost
-      ? { [agent.id]: creditBlockReason(credits, cost, now) }
+    spendable !== undefined && spendable < runCost
+      ? { [agent.id]: creditBlockReason(credits, runCost, now) }
       : {};
 
   // Ruling 7: the inline pane rides the setup state, keyed by agent. Staff get
@@ -262,9 +405,13 @@ export default async function ClientAgentDetailPage({
           ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
         })
       : Promise.resolve(undefined),
-    readAgentInputDocs(id, agent.key),
+    readAgentInputDocs(id, agent.key, client.name),
   ]);
   const agentSetup = await buildAgentSetup(id, [summary], panes);
+  // Declared HERE, not further down, because the status strip reads it: the badge
+  // and the run gate must answer "can this be run" off one object, and a `const`
+  // is not hoisted.
+  const setup = agentSetup[agent.id] ?? null;
   const scheduleRows = toScheduleRows(scheduledRuns, viewerIsClient);
   const rows = umbrella
     ? await toClientAgentRows({
@@ -313,6 +460,12 @@ export default async function ClientAgentDetailPage({
     now,
   });
 
+  // SCRUM-404: whether this agent's latest run stopped waiting on the client.
+  // `isStaff` rather than `viewerIsClient` so a staff member in View-as-Client
+  // sees the same banner the client does — this is the one non-delivery both
+  // registers need, and the component switches the wording, not the visibility.
+  const blockedIntake = latestBlockedIntake(jobs, agent.name, { staff: isStaff });
+
   // `produced` is this page's LIST; `hasDelivered` above is the strip's VERDICT,
   // and it is also what the roster card that opened this page reads, so the two
   // pages cannot disagree.
@@ -343,6 +496,13 @@ export default async function ClientAgentDetailPage({
     scheduleRefusalAt: schedule?.lastErrorAt ?? null,
     scheduleActive: schedule?.status === "active",
     hasDelivered: stripHasDelivered,
+    // The second proof of "this can be run", beside delivered work: the SAME
+    // object `legacyGate` and `needsSetup` below read, handed over whole so the
+    // conjunction is spelled once, inside `rosterStatus` (round 6 review, C2).
+    // The badge cannot say "Not set up yet" over a working Run button, which is
+    // what it did for any configured agent that had simply never been asked yet.
+    // Null when this agent runs on no intake: unknown must not read as ready.
+    setup,
     // Read through the SAME helper the roster uses (lastRunFailedAgentIds), not
     // re-derived from `agentRuns` below: that list is staff-only and capped at
     // eight rows, so a client's page would answer this differently — or not at
@@ -378,6 +538,10 @@ export default async function ClientAgentDetailPage({
   // the §7.3 idiom, and it decides the HERO only - status, archive, data,
   // connectors and feedback are the common chassis and render for all three.
   const archetype = agentArchetype({ key: agent.key, name: agent.name });
+  // What ONE run of this agent makes, in the client's words. Every control and
+  // refusal on this page is named from it, so a never-post product (Reddit)
+  // cannot end up with "Create a new post" as its strongest affordance.
+  const outputNoun = OUTPUT_NOUN[archetype];
 
   // The agent's own schedule row, unredacted, for the day projections.
   // `scheduleRows` above is the client-safe projection and deliberately drops
@@ -410,9 +574,16 @@ export default async function ClientAgentDetailPage({
   // company view by whitelist (toRedditIntakeView), so what lands in the RSC
   // payload is the client's own answers and nothing else from the shared
   // intake document.
+  //
+  // BUILT ONCE PER RENDER (review wave, 2026-09). The staff branch above has
+  // already built exactly this view for the intake pane, and this line built a
+  // second one — two reads of the intake document and two of the feedback log,
+  // per staff page load, for one projection of the same rows. The pane's copy is
+  // the same function over the same arguments, so it is reused where it exists
+  // and only a client render (no panes) pays for the build.
   const finderIntake =
     archetype === "daily_finder"
-      ? (await buildRedditAgentIntakeView(id, { isStaff, jobs })).company
+      ? (panes?.reddit ?? (await buildRedditAgentIntakeView(id, { isStaff, jobs }))).company
       : null;
 
   // The clip maker's source material: what it has to cut FROM. `mimeType` is
@@ -425,6 +596,15 @@ export default async function ClientAgentDetailPage({
   const archiveRows = (
     clipView ? clipView.documents : finderView ? finderView.documents : produced
   ).slice(0, 8);
+  // Whether the hero above this archive actually shows anything. The daily
+  // finder and the clip gallery both claim "everything this agent has made is
+  // above", and on a brand-new agent that pointed at an empty card: two empty
+  // states in a column, one of them citing the other.
+  const hasAnythingAbove = clipView
+    ? clipView.clips.length > 0
+    : finderView
+      ? finderView.today.length > 0 || finderView.earlier.length > 0
+      : true;
   const archiveHeading =
     archetype === "template_calendar" ? "What it has made for you" : "Documents it produced";
 
@@ -437,6 +617,21 @@ export default async function ClientAgentDetailPage({
   const agentRuns = isStaff
     ? toRunRows(jobs, true, umbrellas).filter((run) => run.agentName === agent.name)
     : [];
+  // Portal revamp, Surface 03 — "Run history shows the last three, and opens
+  // to all of them." Same toRunRows() the staff rows above use, just with
+  // staff=false: it already strips prompt/href/error/runType and excludes
+  // launch/test runs (client-agent-rows.ts).
+  //
+  // B1 (parity pass 2026-09): built for BOTH roles now. It was gated on
+  // `viewerIsClient`, so a staff member previewing this page had a card missing
+  // from the middle of the client's column — the run history the client reads
+  // simply was not there, and the fuller staff copy inside ControlRoom sits
+  // below the fold in a different shape. Staff get the client's card AND their
+  // own; the rows here stay the client-safe ones (no prompt, no href, no raw
+  // error), because this is the client's card and it must render identically.
+  const clientAgentRuns = toRunRows(jobs, false, umbrellas).filter(
+    (run) => run.agentName === agent.name,
+  );
   const reviewCount = isStaff
     ? jobs
         .filter(
@@ -488,14 +683,19 @@ export default async function ClientAgentDetailPage({
           .map((item) => ({ id: item.id, name: item.name, at: item.createdAt }))
       : [];
 
-  const setup = agentSetup[agent.id] ?? null;
   const connections = sanitizeIntegrations(integrations);
   // Platform ids for the deliverable modal's publish controls - the same
   // sanitized set the connector chips below render, never the raw integration
   // docs (which carry credentials).
   const connectedPlatformNames = connections.map((connection) => connection.platform);
   const launchInFlight = umbrella ? isLaunchInFlight(umbrella.launchState) : false;
-  const agentServiceConfigured = isAgentServiceConfigured();
+  // An agent routed to agent-engine never touches agent-service, so the
+  // service's configuration has nothing to say about whether ITS runs are
+  // available. Until 2026-09-07 this read `isAgentServiceConfigured()` alone,
+  // and an environment with AGENT_SERVICE_URL unset (production's promote
+  // config defaults it to "") told every engine-routed client "Agent runs are
+  // paused right now" and disabled Run on a page whose runs would have worked.
+  const agentServiceConfigured = isAgentServiceConfigured() || engineProductId !== undefined;
 
   // CD-H8. The run gate for the legacy shape, evaluated HERE for the same
   // reason every other gate on this surface is: a control may only offer a
@@ -506,9 +706,10 @@ export default async function ClientAgentDetailPage({
   const legacyGate = evaluateLegacyRunGate({
     serviceConfigured: agentServiceConfigured,
     setup,
-    cost,
+    cost: runCost,
     ...(spendable !== undefined ? { availableCredits: spendable } : {}),
     creditBlockReason: creditBlockReasons[agent.id] ?? null,
+    noun: outputNoun,
   });
 
   // F31. The legacy branch had no run state at all: a client pressed "Create a
@@ -629,24 +830,284 @@ export default async function ClientAgentDetailPage({
   // `isInClientArchive` drops published work past the 30-day window - so the
   // number is what is in the Workspace right now, and a label promising a
   // lifetime total would be wrong for exactly the clients who have the most.
-  // Staff see every asset, so for them it is the count without a window.
-  const statusFacts = [
-    ...(lastDelivered !== null ? [{ label: "Last delivered", at: lastDelivered }] : []),
-    ...(produced.length > 0
+  // Staff see every asset, so for them the NUMBER is the count without a
+  // window.
+  //
+  // Where "everything this agent has made" actually lives for THIS viewer.
+  // The old link sent both readers to /clients/<id>/assets, which redirects a
+  // CLIENT_USER to /tasks — the Workspace board, not the archive tab they were
+  // promised. clientArchiveLink is the four-call-site answer to exactly this.
+  const archive = clientArchiveLink({ clientId: id, isStaff });
+
+  // ── WHAT COMES NEXT (round 6) ──
+  // The one question a client of a daily stream has, and the old strip could not
+  // answer it: its only two facts were "Last delivered" and "In your Workspace",
+  // both about the past. These are the days the client's own calendar already
+  // shows them as locked "Upcoming post" chips — days, never titles or per-day
+  // counts (A3/A4; see the function's own note).
+  //
+  // A SECOND PASS OVER `assets`, NOT A SECOND OPINION. The status word above
+  // takes `hasUpcomingContent` from `agentsWithUpcomingContent`, which is the
+  // function every roster reads, and this one is the same predicate over the
+  // same array with the days kept — pinned to agree, agent for agent, in
+  // agent-detail-archetypes.test.ts. No new read: `assets` is already loaded.
+  const upcomingDays = agentUpcomingCalendarDays({
+    assets,
+    jobs,
+    agent: { id: agent.id, name: agent.name, key: agent.key },
+    umbrellas,
+    clientSlug: client.agentsRepoSlug,
+    now,
+  });
+  const calendarBase = isStaff ? `/clients/${id}/calendar` : "/calendar";
+  const dayLink = (dateKey: string) =>
+    `${calendarBase}?${CALENDAR_QUERY_KEYS.view}=day&${CALENDAR_QUERY_KEYS.date}=${dateKey}`;
+
+  // ONE LABEL, TWO NUMBERS (B3, parity pass 2026-09). The word used to split
+  // too — staff read "Deliverables" where the client reads "In your Workspace"
+  // — which put a different noun in the same slot of the same line for no
+  // reason a reader could see. The count legitimately differs (the archive
+  // window is a client rule); the label does not have to, and "your" is read
+  // in client context as the client's, which is what a preview is for.
+  //
+  // NEXT FIRST, then the plan, then history: the line is read left to right and
+  // the reader's question is about the days ahead. Every fact that has a
+  // destination carries it (round 6) — the next day opens the calendar on that
+  // day, the Workspace count opens the archive.
+  const statusFacts: AgentStatusFact[] = [
+    ...(upcomingDays[0]
       ? [
           {
-            label: viewerIsClient ? "In your Workspace" : "Deliverables",
-            value: String(produced.length),
+            // `rosterNextLabel`, the label the ROSTER row prints for the same
+            // fact (round 6 review, D5). This page had its own one-line
+            // formatter, which said "Thu 5" where the roster says "Tomorrow" —
+            // two spellings of one date, on a row and the page it opens.
+            text: `Next ${outputNoun} ${rosterNextLabel(upcomingDays[0].at, now)}`,
+            href: dayLink(upcomingDays[0].dateKey),
           },
         ]
       : []),
+    ...(upcomingDays.length > 1
+      ? [{ text: `${upcomingDays.length} days planned`, href: `${calendarBase}` }]
+      : []),
+    // `relativeTime` rather than a date, which is what the strip printed here
+    // before and what every other "last X" stamp in the portal says. It falls
+    // back to the date itself past 30 days.
+    ...(lastDelivered !== null
+      ? [{ text: `Last delivered ${relativeTime(lastDelivered)}` }]
+      : []),
+    ...(produced.length > 0
+      ? [{ text: `${produced.length} in your Workspace`, href: archive.href }]
+      : []),
   ];
+
+  // ── WHICH AGENTS GET THE RUN BAND (Daniel's ruling, 2026-08-06) ──
+  //
+  // It used to be `schedule?.status === "active" || hasDelivered` — production
+  // HISTORY. An agent that had never produced got no run gesture and no price
+  // card, so the only way to obtain the affordance was to already have used it.
+  // For X that was invisible (it has delivered), and for a freshly granted
+  // LinkedIn agent it meant a fully-configured product with nowhere to press:
+  // "READY TO RUN" on the inputs band, and nothing on the page that could run it.
+  //
+  // `intakeDriven` is the third way in, and it is deliberately about CAPABILITY
+  // rather than history: an agent whose readiness the server can actually answer
+  // (X / LinkedIn / Reddit — `setup` is non-null exactly for those) is an agent
+  // that can be asked for something. The gate below still decides whether the
+  // press is OFFERED, and it now knows every rung the submit cores know — so
+  // widening who SEES the band cannot widen who can fire a refused run.
+  //
+  // Deliberately not "every agent": one with no `setup` has no server-answerable
+  // readiness, so its band could only guess. Those keep the old behaviour.
+  const intakeDriven = setup !== null;
+  const legacyShape = !row && (schedule?.status === "active" || hasDelivered || intakeDriven);
+
+  // Portal revamp, Surface 03 — "there is no way past setup." For an
+  // intake-driven agent (the only shape AgentSetupState can answer readiness
+  // for), `ready` and `standUpDone` are the same two rungs the run gates
+  // already evaluate server-side (client-agent-runs.ts) — this is a THIRD
+  // reader of the same two fields, not a new predicate. Deliberately not
+  // "&& !hasDelivered": an agent that has already produced is unambiguously
+  // past setup regardless of what these two flags say right now (a later
+  // intake edit cannot un-launch a live agent), so hasDelivered stays inside
+  // `legacyShape`'s own OR rather than gating this flag.
+  // ONE PREDICATE, and `rosterStatus`'s AF-5 gate is the other reader of it
+  // (round 6 review, C2/C3). It was spelled here and re-spelled there as
+  // `readyToRun === false && !hasDelivered`, so the hero this flag paints and
+  // the badge above it could disagree — and did: "Live" over "it starts
+  // producing for you". `setup: null` (no intake) is not "needs setup", which is
+  // why `intakeDriven` does not have to be asked separately any more.
+  const needsSetup = agentNeedsSetup({ setup, hasDelivered });
+
+
+  // ── Which platform this agent's page is ABOUT, for the connectors card ──
+  // An intake-driven agent (X/LinkedIn/Reddit) drafts for one platform, and
+  // its sidebar listing Google Analytics beside "Connected accounts" answered
+  // a question nobody on this page asked. Scoped to the agent's own family, and
+  // an agent with no family falls back to its OWN detected identity rather than
+  // to the full list — see the note on `detectedPlatforms` below, which is where
+  // that fallback stopped being "show everything" (review wave, 2026-09).
+  // Display-only: connectedPlatformNames above still carries every platform,
+  // because publish targets are not page-scoped.
+  const family = intakeFamilyFor(agent.key);
+  const FAMILY_PLATFORMS: Record<NonNullable<typeof family>, string[]> = {
+    x: ["twitter"],
+    linkedin: ["linkedin", "linkedin_community"],
+    reddit: ["reddit"],
+    // The newsletter and the blog have NO platform connection, and an empty
+    // list is the honest answer rather than an omission. Neither product holds
+    // a credential: an issue is sent from the client's own email platform and
+    // an article is published on their own CMS, both by them. So these three
+    // families get NO connectors section at all — see the length check below,
+    // which is what an empty list here means.
+    newsletter: [],
+    blog: [],
+    // EMPTY, and for a different reason than the two above — which is why it is
+    // not folded in with them. The newsletter and the blog have no platform at
+    // all. Reputation READS five (Google Business, Yelp, App Store, Trustpilot,
+    // Facebook), but none of them is a Karos INTEGRATION: the runner reaches
+    // them through its own egress allowlist, and this card lists connections the
+    // CLIENT has authorised. Listing them here would offer a "Connect" affordance
+    // for accounts nothing in this portal can connect.
+    reputation: [],
+  };
+  /**
+   * A NULL FAMILY NO LONGER MEANS "SHOW EVERY CONNECTION" (portal feedback
+   * round 2, 2026-09). Only the six intake families above have a family at all,
+   * so the Instagram agent — and every custom agent — fell through to the full
+   * list and printed Google Analytics beside "Connected accounts", which is the
+   * exact defect the family scoping was written to fix, just for the agents it
+   * did not cover.
+   *
+   * The fallback is the agent's OWN identity, resolved by the detector every
+   * other surface already brands this agent with (agent-identity.tsx's
+   * `socialPlatformsFor`, over `${key} ${name}` — the same string AgentMark and
+   * the roster pass it), then mapped onto integration-registry platform ids.
+   * One detector, so the logo in the header and the connector in the sidebar
+   * can never disagree about which platform this page is about.
+   */
+  const SOCIAL_TO_INTEGRATION_IDS: Record<SocialPlatform, string[]> = {
+    instagram: ["instagram"],
+    x: ["twitter"],
+    tiktok: ["tiktok"],
+    linkedin: ["linkedin", "linkedin_community"],
+    reddit: ["reddit"],
+    youtube: ["youtube"],
+    // Retired as a Karos integration — the registry has no facebook connector
+    // to link to, so a Facebook-identified agent maps to nothing and falls to
+    // the "no detectable platform" case below rather than offering a connect
+    // affordance for an account this portal cannot connect.
+    facebook: [],
+  };
+  const identityPlatformIds = socialPlatformsFor(`${agent.key} ${agent.name}`).flatMap(
+    (platform) => SOCIAL_TO_INTEGRATION_IDS[platform],
+  );
+  // EMPTY IS THE SAME ANSWER AS NONE (review wave, 2026-09). This resolved to
+  // `[]` for the newsletter, the blog and reputation — and `[]` is truthy, so
+  // the section below mounted for all three and printed its no-account
+  // sentence: "No account connected yet. Posts are delivered to your Workspace
+  // for you to publish." Those products do not post, have no account to connect
+  // and, for two of them, produce no posts at all. A card that exists only to
+  // say something false about the product is worse than no card.
+  //
+  // Null, not `[]`, so the one condition below covers both ways of having
+  // nothing to name: a family that owns no connector, and an agent with no
+  // family AND no detectable platform. Neither gets a section — not an empty
+  // one, and not the "Manage connections" link either. There is no honest
+  // sentence to write in either case: the page cannot name the account it would
+  // be talking about, so it says nothing instead of listing every unrelated
+  // connection the client happens to hold.
+  const detectedPlatforms = family ? FAMILY_PLATFORMS[family] : identityPlatformIds;
+  const familyPlatforms: string[] | null =
+    detectedPlatforms.length > 0 ? detectedPlatforms : null;
+  const scopedConnections = familyPlatforms
+    ? connections.filter((connection) => familyPlatforms.includes(connection.platform))
+    : [];
+
+  // The row's display title, by VIEWER (F132: label rows by what was
+  // produced, never by what was typed — the typed brief stays staff-facing).
+  // Staff rows show `meta.runLabel` (what the run was asked to do) beside the
+  // base title; a client's batch rows, which were N identical copies of the
+  // agent's name, get the family's produced-work noun — the client component
+  // dates it with the row's own delivery stamp, in the VIEWER's timezone,
+  // because a server-formatted day can sit one day off beside the client-side
+  // relative stamp on the same row.
+  // PLURAL-SAFE, and that is the whole design of this table: it is only read
+  // when the per-post title below could NOT be made, which happens when the
+  // delivery holds more than one draft or cannot be parsed at all. A singular
+  // noun here would be a false count on exactly the rows that are not one post.
+  // "Batch" is gone from both (it tells a client their week arrived in a lump,
+  // the A3/A4 tell); "drafts" is honest without saying how many.
+  //
+  // The two families no longer differ: one X press drafts one post, the same
+  // as LinkedIn (Daniel's ruling, 2026-08-11 — the canonical instructions in
+  // scripts/promote-x-agent-v2.ts pin it, and X_V2_MAX_OUTPUTS_PER_RUN backs
+  // it server-side). The plural noun stays honest for LEGACY X deliveries
+  // still in the archive, which genuinely hold a week of drafts — and this
+  // fallback only ever shows for a row with no usable title, which after the
+  // title backfill is almost exclusively those.
+  const FAMILY_BATCH_NOUN: Record<NonNullable<typeof family>, string> = {
+    x: "X drafts",
+    linkedin: "LinkedIn drafts",
+    reddit: "Reddit reply draft",
+    // SINGULAR for both, and not for tidiness: one run of either product
+    // prepares exactly ONE thing. "Batch" would tell a client their week
+    // arrived in a lump, which is the A3/A4 rule the other three nouns are
+    // carefully worded around.
+    newsletter: "Newsletter issue",
+    blog: "Blog article",
+    // "Replies", plural, and it is the one exception to the singular rule its two
+    // neighbours follow. One pulse genuinely does produce several drafts, one per
+    // review worth answering — so a singular here would be the inaccuracy, not the
+    // batch-shaped tell the rule guards against. What that rule forbids is
+    // implying a WEEK arrived in one lump; a set of replies to a set of reviews is
+    // just what the run is.
+    reputation: "Review replies",
+  };
+  // A one-post delivery is named by what the post is ABOUT ("X post · First
+  // words of the hook"), not by its date — a list of dated rows tells the client
+  // when things happened but never what any of them said. A delivery holding
+  // several drafts cannot honestly take one subject as its name, so it keeps
+  // the dated plural noun above.
+  //
+  // Both families read the post's own opening words. LinkedIn's "Topic:" meta
+  // bullet looks like the better source and is not: those are written in the
+  // lab's vocabulary (catalog row slugs, series names), which is internal
+  // shorthand a client should never be shown as the name of their own post.
+  //
+  // `draftsDisplayTitle` is the ONE composer, shared with the modal these rows
+  // open, so the name on the row and the name on the panel cannot disagree.
+  const rowTitleFields = (
+    asset: (typeof archiveRows)[number],
+  ): { title: string } | { fallbackNoun: string } => {
+    const stored = (asset.title ?? "").trim();
+    const generic =
+      !stored ||
+      stored === agent.name ||
+      (umbrella?.displayName ? stored === umbrella.displayName : false);
+    if (!generic || !family) return { title: stored || agent.name };
+    const topical = draftsDisplayTitle(asset.content);
+    if (topical) return { title: topical };
+    return { fallbackNoun: FAMILY_BATCH_NOUN[family] };
+  };
+  // B4 (parity pass 2026-09). The run label used to be CONCATENATED into the
+  // title for staff — `${stored || agent.name} · ${runLabel}` — and it did more
+  // than add a word: it took the whole staff branch out of the composer above,
+  // so a row a client reads as "Why founders keep hiring the wrong first
+  // marketer" read to staff as "Instagram Agent · Week 3 refresh". The primary
+  // text is the client's on both, and the operator's run label rides after it
+  // as its own muted span, which is additive rather than substitutive.
+  const rowRunLabel = (asset: (typeof archiveRows)[number]): string | null => {
+    const runLabel = asset.meta?.runLabel;
+    if (!isStaff || typeof runLabel !== "string") return null;
+    return runLabel.trim() || null;
+  };
 
   return (
     <>
       {/* AF-9: `running` already is "a run this viewer started is in flight", so
-          the poller and the mark on the strip can no longer answer that question
-          differently — which they did, and which is why a staff run left a static
+          the poller and the mark on the status line can no longer answer that
+          question differently — which they did, and which is why a staff run left a static
           page behind it. */}
       {(launchInFlight || running) && <AutoRefresh />}
       <div className="mb-4">
@@ -658,19 +1119,78 @@ export default async function ClientAgentDetailPage({
         </Link>
       </div>
 
-      <PageHeader
-        title={umbrella?.displayName ?? agent.name}
-        description={blurb}
-        action={
-          <div className="flex items-center gap-2">
-            <AgentIdentity
-              identity={`${agent.key} ${agent.name}`}
-              {...(agent.icon ? { icon: agent.icon } : {})}
-            />
-            <StatusBadge label={status.label} tone={status.tone} />
+      {/* THE HEADER, REARRANGED (round 6, decision 10).
+          It used to stack three things in `PageHeader`'s action slot on the
+          right: the 48px identity tile, a mono uppercase status chip, and Pin.
+          The chip said the same word the status band said a hundred pixels
+          lower, in a second typographic voice, and the tile sat as far from the
+          agent's name as the layout allowed.
+          So: the tile is beside the h1, the same anatomy as a roster row; Pin
+          stays right; the chip is gone and the status line below is where the
+          word is said. Written out here rather than through `PageHeader`, which
+          takes a plain string title and no identity slot. */}
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <AgentIdentity
+            identity={`${agent.key} ${agent.name}`}
+            {...(agent.icon ? { icon: agent.icon } : {})}
+          />
+          <div className="min-w-0">
+            <h1 className="text-3xl text-foreground">{umbrella?.displayName ?? agent.name}</h1>
+            {blurb && <p className="mt-1.5 text-sm text-muted">{blurb}</p>}
           </div>
-        }
+        </div>
+        {/* Portal revamp, Surface 01 follow-up: the rail is not the only way in.
+            A prominent, always-visible button here answers a report that the
+            sidebar toggle was hard to find in the first place — and since round
+            6 it is the ONLY pin control, the rail's rows having lost their
+            stars. */}
+        <AgentStarButton
+          clientId={id}
+          agentId={agent.id}
+          starred={(client.starredAgentIds ?? []).includes(agent.id)}
+        />
+      </div>
+
+      {/* ── STATUS (CD-K1, restated by round 6's decision 10) ──
+          ONE statement of the state, directly under the header, where the chip
+          used to repeat what the tinted band below already said. It reads the
+          SAME resolved `status` the roster card that opened this page reads, so
+          the rule that a schedule refusal outranks Live (F24/F129) cannot hold
+          in one place and not the other.
+
+          `staffNote` is the Internal line — AF-5's operational truth and a last
+          run that failed — and is passed for staff only, so a client's HTML does
+          not carry it at all. The client reads the word alone, which is the
+          ruling.
+
+          "Adjust pace" is the line's trailing control and renders only when a
+          schedule exists (`SchedulePaceControl` returns null otherwise). It
+          replaces the pace CARD the old band seated in its aside, whose second
+          face read "No schedule yet. Your Karos team sets one up." to exactly
+          the imported streams that were filling the client's calendar. */}
+      <div className="mb-6">
+      <AgentStatusLine
+        status={status}
+        running={running}
+        noun={outputNoun}
+        facts={statusFacts}
+        {...(isStaff && status.staffNote ? { staffNote: status.staffNote } : {})}
+        {...(legacyShape && archetype !== "daily_finder"
+          ? {
+              trailing: (
+                <SchedulePaceControl
+                  clientId={id}
+                  agent={summary}
+                  schedule={schedule}
+                  viewerIsClient={viewerIsClient}
+                  {...(spendable !== undefined ? { availableCredits: spendable } : {})}
+                />
+              ),
+            }
+          : {})}
       />
+      </div>
 
       {/* One banner, two registers — the roster page's idiom (agents/page.tsx),
           for the same reason. This tree renders for BOTH readers, so the client
@@ -679,12 +1199,24 @@ export default async function ClientAgentDetailPage({
           then what to do, then the reassurance: the reassurance sat between the
           other two and buried the action. */}
       {!agentServiceConfigured && (
-        <p className="mb-4 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning">
-          <Icon name="TriangleAlert" className="mr-1.5 inline h-4 w-4" />
-          {viewerIsClient
-            ? "Agent runs are paused right now. Starting a new post will not work until this clears. Contact your Karos team if you need a post today. Everything below is unaffected."
-            : "Agent runs are paused. The agent-service environment is not configured, so starting a post will fail until it is set. Everything below is unaffected."}
-        </p>
+        <RunsPausedNotice viewerIsClient={viewerIsClient} cause="service" outputNoun={outputNoun} />
+      )}
+      {/* SCRUM-264: this agent's own run controls are what a cut-over client
+          actually presses - the roster's banner (agents/page.tsx) only warns
+          before they get here. Same gate, one agent's key instead of the
+          whole enabled list. */}
+      {shouldShowEngineHealthBanner(client.agentsRepoSlug, [agent.key]) && (
+        <EngineHealthBanner viewerIsClient={viewerIsClient} />
+      )}
+
+      {/* SCRUM-404: the same slot, for the other reason an agent produces
+          nothing. A `blocked_intake` run never started because a context
+          document is missing, and it maps to `job.status: "failed"` — which the
+          client-facing surfaces correctly refuse to show a client (AF-14),
+          because our failures are not theirs to attend to. A missing intake IS
+          theirs, so it reads its own field. */}
+      {blockedIntake && (
+        <IntakeBlockedBanner reason={blockedIntake.reason} viewerIsClient={viewerIsClient} outputNoun={outputNoun} />
       )}
 
       {/* CD-H7a's idiom, for the same failure one level up: the two-column
@@ -697,22 +1229,15 @@ export default async function ClientAgentDetailPage({
           the gap; below it the page is a single column. */}
       <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
-          {/* ── STATUS (CD-K1) ──
-              The header badge says the same word in the same breath, and that
-              is the point: Albert's directive is about how LOUDLY the page says
-              it, not whether the word appears. The strip leads the column with
-              a breathing halo; the badge stays the compact form for the header
-              row. Both read the SAME resolved `status`, so the rule that a
-              schedule refusal outranks Live (F24/F129) cannot hold in one place
-              and not the other. */}
-          {/* `staffNote` is AF-5's operational truth and is passed for staff
-              only — the client reads the word alone, which is the ruling. */}
-          <AgentStatusStrip
-            status={status}
-            running={running}
-            facts={statusFacts}
-            {...(isStaff && status.staffNote ? { staffNote: status.staffNote } : {})}
-          />
+          {/* ── THE RECOMMENDED TASK THIS PAGE WAS OPENED FOR ──
+              First in the column, above the hero: the client pressed "Let's do
+              this" on Home and this band is the answer to "why am I here".
+              Below it is the rest of the page — the intake forms it tells them
+              to fill in first. (The status line is above it, in the header's own
+              block, because it is a statement about the page rather than about
+              this visit.) Identical for staff and clients (parity pass,
+              2026-09). */}
+          {kickoffTask && <TaskKickoffStrip clientId={id} task={kickoffTask} />}
 
           {/* ── THE ARCHETYPE HERO (CD-I1) ──
               Deliberately ABOVE the controls band. Albert asked for the clip
@@ -746,6 +1271,43 @@ export default async function ClientAgentDetailPage({
               The panel reads `view.scheduleState` — one answer, one source. */}
           {finderView && <DailyFinderPanel clientId={id} view={finderView} />}
 
+          {/* Portal revamp, Surface 03: an intake-driven agent that has not
+              finished setup gets ONE thing on the page — video + a Setup
+              button — instead of the hero-plus-inputs-band pair below (a run
+              band whose button the gate merely disabled, alongside a second
+              "NEEDED" prompt to the same forms). The wrapped block is
+              UNCHANGED beneath this condition; every other agent shape
+              (umbrella live/launch-card, legacy-scheduled) renders exactly as
+              it did before this branch existed. */}
+          {needsSetup ? (
+            /* `#setup` (round 6, alignment fix 2). The setup ladder's step 3
+               links `…/agents/<id>#setup` for an agent whose intake is already
+               saved, and step 4 links `#run` — the anchors the approval
+               promised, so the press lands ON the control rather than at the top
+               of a long page. `scroll-mt-24` clears the sticky header. The two
+               are mutually exclusive by construction, exactly like the one
+               accent control they carry, so a client following either link
+               reaches whichever of them this agent actually renders. */
+            <div id="setup" className="scroll-mt-24">
+              <AgentSetupHero
+                agent={summary}
+                clientId={id}
+                engineDispatch={engineDispatch}
+                contextItems={contextItems}
+                viewerIsClient={viewerIsClient}
+                setup={setup!}
+                previewVideoUrl={agent.previewVideoUrl}
+              />
+            </div>
+          ) : (
+            <>
+          {/* `#run` (round 6, alignment fix 2): the run control the ladder's
+              step 4 links to. One wrapper around the four mutually exclusive
+              shapes below, because exactly one of them renders and each of them
+              IS this agent's run control — so the anchor names the thing the
+              client was sent to press whichever shape they have.
+              `scroll-mt-24` clears the sticky header. */}
+          <div id="run" className="scroll-mt-24">
           {/* Hero: the launch card for a non-live umbrella (§7.1 states 1–3),
               the working agent once it is live. An agent with no umbrella at
               all has neither - it is simply not set up, and says so rather
@@ -765,7 +1327,7 @@ export default async function ClientAgentDetailPage({
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
             />
-          ) : schedule?.status === "active" || hasDelivered ? (
+          ) : legacyShape ? (
             /* The legacy shape (CD-H8): no umbrella was ever bound, but a weekly
                schedule is firing — so this agent genuinely IS producing, and the
                roster and header badge it Live.
@@ -796,17 +1358,23 @@ export default async function ClientAgentDetailPage({
             <LegacyAgentPanel
               clientId={id}
               agent={summary}
-              cost={spendable !== undefined ? cost : null}
+              engineDispatch={engineDispatch}
+              noun={outputNoun}
+              // B5 (parity pass 2026-09): passed for BOTH readers now. It was
+              // `spendable !== undefined ? runCost : null`, i.e. billable
+              // client actors only, so the staff copy of this card was one line
+              // shorter than the client's and the band's height did not match.
+              // The panel renders the staff register of the same fact.
+              cost={runCost}
+              batchSize={runBatchSize}
               gate={legacyGate}
               // The banner above already made the outage statement; the gate's
               // own paragraph would repeat it 150px lower in different words.
               outageAnnounced={!agentServiceConfigured}
-              schedule={schedule}
               {...(setup ? { setup } : {})}
               contextItems={contextItems}
               viewerIsClient={viewerIsClient}
               viewer={{ name: user.name, email: user.email }}
-              {...(spendable !== undefined ? { availableCredits: spendable } : {})}
               activeRun={
                 legacyRun
                   ? {
@@ -834,12 +1402,19 @@ export default async function ClientAgentDetailPage({
                nothing rather than a second, staler version of it. */
             null
           ) : (
+            /* R9 (round 6): NOT A DEAD END, and no promise no code keeps. It
+               said "They will let you know when it is ready" — there is no
+               notification path — and offered nothing to press. The Support
+               trigger is the way to ask for it, which is the only action that
+               exists for an agent nobody has stood up. */
             <EmptyState
               icon={<Icon name="Bot" className="h-7 w-7" />}
               title="Not set up yet"
-              description="Your Karos team sets this agent up for your brand before it starts producing. They will let you know when it is ready."
+              description="Your Karos team sets this up. Tell us when you want it."
+              action={<ContactUsButton variant="row" userName={user.name} userEmail={user.email} />}
             />
           )}
+          </div>
 
           {/* ── INPUTS (CD-K1 directive 1) ──
               Daniel's intake surfaces, reachable from the agent they belong to.
@@ -849,6 +1424,8 @@ export default async function ClientAgentDetailPage({
               date and links the page that owns its writes - the forms are
               REUSED, never forked. */}
           {inputs && <AgentInputsSection view={inputs} />}
+            </>
+          )}
 
           {/* ── SETTINGS (CD-K1 directive 2) ──
               What the launch run decided: the registry, the rotation, the pace,
@@ -857,41 +1434,59 @@ export default async function ClientAgentDetailPage({
               fills is that none of those editors ever says WHEN. */}
           {setupFacts.length > 0 && <AgentSetupSection facts={setupFacts} />}
 
-          {/* ── CONTROL ROOM (AgentOps upgrade) ──
-              Consolidates what used to be three scattered staff-only sections
-              (StaffAgentControls, AgentRunHistory, AgentEconomicsCard) into one
-              tabbed panel, plus what none of them had: a real (not fabricated)
-              health read, an explicit next-scheduled-execution line, and a
-              Test Run trigger. Staff only - never mounted for a CLIENT_USER,
-              same gate every section it replaces already used. */}
-          {isStaff && (
-            <ControlRoom
-              health={agentHealth}
-              nextRunLabel={nextRunLabel}
-              clientId={id}
-              agent={summary}
-              {...(schedule ? { schedule } : {})}
-              {...(setup ? { setup } : {})}
-              contextItems={contextItems}
-              reviewCount={reviewCount}
-              reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
-              {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
-              viewer={{ name: user.name, email: user.email }}
-              runs={agentRuns}
-              agents={[summary]}
-              economics={economics}
-              economicsAgentName={umbrella?.displayName ?? agent.name}
-              launchCreditCost={agent.launchCreditCost ?? null}
-              outputs={produced}
-              {...(deepLinkAssetId ? { initialOpenAssetId: deepLinkAssetId } : {})}
-            />
-          )}
+          {/* Portal revamp, Surface 03 — the client-facing run history, last
+              three opening to all of them. Rendered for BOTH roles since the
+              parity pass (B1, 2026-09): staff used to be the only reader with a
+              hole where this card sits, which is the exact thing a preview is
+              supposed to rule out. Their fuller copy (prompt/href/error) still
+              lives inside ControlRoom below, in the staff-only frame. */}
+          <ClientAgentRunHistory runs={clientAgentRuns} />
 
-          {/* Where staff confirm the template set before a client ever sees it
-              (the Q3 curation gate). Umbrella-only by nature - it edits the
-              umbrella's registry - and never shown for an unbound agent. */}
-          {isStaff && row && umbrella && umbrella.launchState !== "not_launched" && (
-            <CurationPane agent={row} />
+          {/* ── STAFF ONLY: THE CONTROL ROOM AND THE CURATION GATE ──
+              B2 (parity pass 2026-09). Both were already client-invisible, and
+              both were styled exactly like the cards above and below them, so a
+              staff preview read one continuous column and nothing said where
+              the client's page stopped. ONE frame around the pair rather than
+              two: they are the same block of operator surface, and a second
+              dashed hairline 20px later reads as a second kind of thing.
+
+              CONTROL ROOM (AgentOps upgrade): consolidates what used to be
+              three scattered staff-only sections (StaffAgentControls,
+              AgentRunHistory, AgentEconomicsCard) into one tabbed panel, plus
+              what none of them had: a real (not fabricated) health read, an
+              explicit next-scheduled-execution line, and a Test Run trigger.
+
+              CURATION PANE: where staff confirm the template set before a
+              client ever sees it (the Q3 curation gate). Umbrella-only by
+              nature - it edits the umbrella's registry - and never shown for an
+              unbound agent. */}
+          {isStaff && (
+            <StaffOnlySection label="Staff only · control room">
+              <ControlRoom
+                health={agentHealth}
+                nextRunLabel={nextRunLabel}
+                clientId={id}
+                agent={summary}
+                engineDispatch={engineDispatch}
+                {...(schedule ? { schedule } : {})}
+                {...(setup ? { setup } : {})}
+                contextItems={contextItems}
+                reviewCount={reviewCount}
+                reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
+                {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
+                viewer={{ name: user.name, email: user.email }}
+                runs={agentRuns}
+                agents={[summary]}
+                economics={economics}
+                economicsAgentName={umbrella?.displayName ?? agent.name}
+                launchCreditCost={agent.launchCreditCost ?? null}
+                outputs={produced}
+                {...(deepLinkAssetId ? { initialOpenAssetId: deepLinkAssetId } : {})}
+              />
+              {row && umbrella && umbrella.launchState !== "not_launched" && (
+                <CurationPane agent={row} />
+              )}
+            </StaffOnlySection>
           )}
 
           {/* ── The per-agent archive (common chassis) ──
@@ -906,37 +1501,50 @@ export default async function ClientAgentDetailPage({
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-4 py-3 text-xs text-muted-2">
                 {archetype === "template_calendar"
                   ? "Nothing yet. Finished work appears here once your Karos team has approved it."
-                  : "Nothing else yet. Everything this agent has made is above."}
+                  : hasAnythingAbove
+                    ? "Nothing else yet. Everything this agent has made is above."
+                    : "Nothing yet. Finished work appears here once your Karos team has approved it."}
               </p>
             ) : (
-              <ul className="space-y-1.5">
-                {archiveRows.map((asset) => (
-                  <li
-                    key={asset.id}
-                    className="flex items-center justify-between gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-xs text-foreground">
-                      {asset.title || "Untitled"}
-                    </span>
-                    {asset.templateName && <Badge tone="neutral">{asset.templateName}</Badge>}
-                    {/* The set above is already delivered-work-only for a
-                        client; the STAMP has to match. `createdAt` is the
-                        generation instant a whole batch shares, so eight rows
-                        under "What it has made for you" all read "3 hours ago"
-                        - the same batch tell the asset filter three screens up
-                        was added to close. Staff keep the generation time. */}
-                    <span className="shrink-0 text-[11px] text-muted-2">
-                      {relativeTime(deliverableStamp(asset, viewerIsClient))}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              /* Each row now carries its own way in — a neon-outline
+                 View-output control, opening the same detail modal the archive uses (the
+                 per-draft reader for agent batches). The rows used to be inert:
+                 title, stamp, and one small text link under the list, so
+                 reaching a specific deliverable meant leaving the page and
+                 finding it again in the Workspace.
+
+                 The STAMP is computed here, not in the component: the set is
+                 already delivered-work-only for a client, and the stamp has to
+                 match. `createdAt` is the generation instant a whole batch
+                 shares, so eight rows under "What it has made for you" would
+                 all read "3 hours ago" - the same batch tell the asset filter
+                 three screens up was added to close. Staff keep the
+                 generation time. */
+              <AgentArchiveRows
+                rows={archiveRows.map((asset) => {
+                  const runLabel = rowRunLabel(asset);
+                  return {
+                    asset,
+                    at: deliverableStamp(asset, viewerIsClient),
+                    ...rowTitleFields(asset),
+                    ...(runLabel ? { runLabel } : {}),
+                  };
+                })}
+                viewerIsClient={viewerIsClient}
+              />
             )}
             <Link
-              href={`/clients/${id}/assets`}
-              className="mt-2 inline-flex items-center gap-1 text-xs text-neon hover:underline"
+              href={archive.href}
+              className="focus-ring mt-2 inline-flex items-center gap-1 text-xs text-muted transition-colors hover:text-foreground"
             >
-              Open your Workspace <Icon name="ArrowRight" className="h-3 w-3" />
+              {/* R7 (flow audit 2026-09): the CONTROL's words, identical
+                  everywhere the archive is offered — "Open your archive" was
+                  one of eight spellings of one destination. */}
+              {/* R8: ChevronRight, the one trailing glyph. Home renders the
+                  identical control (client-home-overview.tsx) and the two must
+                  not differ by a glyph as well as having differed by a name. */}
+              {archive.linkLabel}
+              <Icon name="ChevronRight" className="h-3 w-3 text-muted-2" />
             </Link>
           </section>
         </div>
@@ -994,11 +1602,13 @@ export default async function ClientAgentDetailPage({
                     ? "This agent writes from what you saved here. Update it any time."
                     : "This agent needs this before it can write for you."}
                 </p>
+                {/* A quiet text link: no glyph after the label, and the accent
+                    stays on the page's one forward control (round 6 rule 3). */}
                 <Link
                   href={setup.href}
-                  className="mt-2 inline-flex items-center gap-1 text-xs text-neon hover:underline"
+                  className="focus-ring mt-2 inline-flex items-center text-xs text-muted hover:text-foreground hover:underline"
                 >
-                  {setup.ready ? "Review it" : "Set it up"} <Icon name="ArrowRight" className="h-3 w-3" />
+                  {setup.ready ? "Review it" : "Set it up"}
                 </Link>
               </div>
             ) : (
@@ -1011,16 +1621,26 @@ export default async function ClientAgentDetailPage({
 
           {/* ── Connectors ── read-only chips. Connecting and reconnecting are
               settings actions, so this states the fact and links there rather
-              than growing a second place to change them. */}
+              than growing a second place to change them.
+              MOUNTED ONLY WHEN THIS PAGE CAN NAME ITS PLATFORM (portal feedback
+              round 2, 2026-09) — see `familyPlatforms` above. The whole
+              section goes, "Manage connections" included: a link to the
+              integrations tab is not an answer to a question this agent never
+              raised. */}
+          {familyPlatforms && (
           <section>
             <SectionHeading title="Connected accounts" />
-            {connections.length === 0 ? (
+            {scopedConnections.length === 0 ? (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
-                No accounts connected yet. Posts are delivered to your Workspace for you to publish.
+                {/* The platform can always be named here: a null-or-empty
+                    familyPlatforms took the whole section away above, so the
+                    generic "No accounts connected yet" fallback that used to
+                    sit here had no reachable case left to serve. */}
+                {`No ${platformLabel(familyPlatforms[0]!)} account connected yet. Posts are delivered to your Workspace for you to publish.`}
               </p>
             ) : (
               <ul className="space-y-1.5">
-                {connections.map((connection) => (
+                {scopedConnections.map((connection) => (
                   <li
                     key={connection.id}
                     className="flex items-center justify-between gap-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2"
@@ -1045,12 +1665,13 @@ export default async function ClientAgentDetailPage({
               </ul>
             )}
             <Link
-              href={`/clients/${id}/settings?tab=channels`}
-              className="mt-2 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground"
+              href={`/clients/${id}/settings?tab=settings`}
+              className="focus-ring mt-2 inline-flex items-center text-xs text-muted hover:text-foreground hover:underline"
             >
-              Manage connections <Icon name="ArrowRight" className="h-3 w-3" />
+              Manage connections
             </Link>
           </section>
+          )}
 
         </aside>
       </div>
@@ -1060,20 +1681,6 @@ export default async function ClientAgentDetailPage({
 
 function SectionHeading({ title }: { title: string }) {
   return (
-    <h2 className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{title}</h2>
+    <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
   );
-}
-
-function StatusBadge({ label, tone }: { label: string; tone: string }) {
-  if (tone === "live") {
-    return (
-      <Badge tone="success">
-        <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-neon" aria-hidden="true" />
-        {label}
-      </Badge>
-    );
-  }
-  if (tone === "attention") return <Badge tone="warning">{label}</Badge>;
-  if (tone === "progress") return <Badge tone="info">{label}</Badge>;
-  return <Badge tone="neutral">{label}</Badge>;
 }

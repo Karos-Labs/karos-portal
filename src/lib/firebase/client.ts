@@ -2,7 +2,6 @@
 
 import { initializeApp, getApps, getApp, type FirebaseOptions } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 // Fallbacks keep module init from throwing during static prerender when env
@@ -18,7 +17,6 @@ const firebaseConfig: FirebaseOptions = {
 
 export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
 export const storage = getStorage(firebaseApp);
 // Auth-only provider: standard implicit-grant flow — no extra scopes, no offline.
 // access_type:"offline" forces the code-grant flow which Firebase's redirect handler

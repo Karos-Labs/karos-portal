@@ -53,12 +53,14 @@ export const REDDIT_MAX_RUNS_PER_WEEK = 5;
 export const REDDIT_OUTPUTS_PER_RUN = 1;
 
 /**
- * The X agent v2 rebuild's batch size is a run input under test at 5/10/21
- * (docs/one-pagers/x-agent-v2-FRAMEWORK.md, Revision 2) — a coarser dial than
- * the generic 5-per-run ceiling, which would otherwise silently clamp a
- * client's "21 drafts" selection down to 5 with no visible warning why.
+ * One post per run — Daniel's ruling, 2026-08-11: the X agent drafts one post
+ * per run and batches do not exist. Pinned rather than clamped, the same way
+ * REDDIT_OUTPUTS_PER_RUN is above, and the same shape LinkedIn v2 already
+ * ships ("D42: default is ONE post per run" in the lab manifest). The old
+ * 5/10/21 batch dial (x-agent-v2-FRAMEWORK.md Revision 2) is retired; the lab
+ * repo's SKILL.md still describes it and is stale on this point.
  */
-export const X_V2_MAX_OUTPUTS_PER_RUN = 21;
+export const X_V2_MAX_OUTPUTS_PER_RUN = 1;
 
 /**
  * The scheduling ceilings for one agent. Pure and shared so the dialog's
@@ -77,6 +79,23 @@ export function scheduleLimitsFor(agentKey: string): {
     return { maxRunsPerWeek: MAX_RUNS_PER_WEEK, maxOutputsPerRun: X_V2_MAX_OUTPUTS_PER_RUN };
   }
   return { maxRunsPerWeek: MAX_RUNS_PER_WEEK, maxOutputsPerRun: MAX_OUTPUTS_PER_RUN };
+}
+
+/**
+ * How many SEPARATE RUNS one press (or one scheduled fire) may fan out into on
+ * the agent-engine path, where a run always delivers exactly one post and a
+ * request for N posts is honoured as N runs (submit-custom.ts).
+ *
+ * Distinct from `maxOutputsPerRun` above, which caps how many outputs ONE
+ * legacy agent-service run is told to write. X's own cap there is 1 ("one
+ * run drafts one post") and that still holds here — each of the N runs is one
+ * post — so X takes the general ceiling. Reddit stays at 1 as the hard product
+ * rule: one run drafts ONE reply, and a batch of replies into someone else's
+ * community is not a product.
+ */
+export function maxPostsPerSubmission(agentKey: string): number {
+  if (isRedditAgentIdentity(agentKey)) return REDDIT_OUTPUTS_PER_RUN;
+  return MAX_OUTPUTS_PER_RUN;
 }
 
 /**

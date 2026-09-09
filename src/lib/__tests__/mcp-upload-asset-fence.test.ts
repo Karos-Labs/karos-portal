@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * `upload_asset` is called BY A RUNNING AGENT, and its `type` argument is that
  * agent's own choice. The asset type decides whether the product offers to
  * publish — `PUBLISHABLE_PLATFORMS` is keyed by it — so a Reddit reply typed
- * `social_post` is offered to twitter, linkedin, facebook and tiktok. Reddit is
+ * `social_post` is offered to twitter, linkedin and tiktok. Reddit is
  * draft-only by hard product rule: a human posts the reply from their own
  * account, and no posting code path exists or may be added.
  *

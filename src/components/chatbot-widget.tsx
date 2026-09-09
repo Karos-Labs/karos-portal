@@ -2,14 +2,25 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
 import { renderSectionBody } from "@/lib/doc-render";
-import type { ClientReport } from "@/lib/types";
+import { readChatStream, type ChatStreamEvent } from "@/lib/chat/client-stream";
+import type { Asset, ClientReport } from "@/lib/types";
+import { CHAT_MODEL_KEYS, CHAT_MODEL_OPTIONS, type ChatModelKey } from "@/lib/ai/chat-models";
+import { RunAttachments, type RunAttachment } from "@/components/agents/run-attachments";
+import { AssetDetailModal } from "@/components/asset-detail-modal";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
+
+/**
+ * T-B18: the payload of one `data-feedback` part (stream-protocol.ts /
+ * client-stream.ts), as recorded against the assistant turn that wrote it.
+ */
+type FeedbackNote = Extract<ChatStreamEvent, { type: "feedback" }>["feedback"];
 
 interface Message {
   id: string;
@@ -23,6 +34,38 @@ interface Message {
    * `content` is still what goes to the API.
    */
   display?: string;
+  /**
+   * Filenames/URIs of files sent WITH this message (T-B5), shown as a small
+   * chip row under the user bubble. Display-only - the actual `MediaAsset`
+   * objects the turn carried are never persisted here (`isPersistedMessage`
+   * only re-hydrates strings), so reloading a restored transcript shows a
+   * message was attached without re-attaching the files it named.
+   */
+  attachmentLabels?: string[];
+  /**
+   * `provide_feedback` calls this turn recorded, structurally — not just the
+   * confirmation sentence in `content` (T-B18). Rendered as a chip under the
+   * reply; a persisted transcript keeps these across a reload exactly like it
+   * keeps `content` (isPersistedMessage below validates the shape on restore).
+   */
+  feedbackNotes?: FeedbackNote[];
+  /**
+   * Deliverables this turn's tool calls resolved to (flow audit 2026-09, R12).
+   *
+   * The copilot had exactly ONE link out of itself — the feedback chip — so a
+   * client who asked it to find, edit or reschedule an output was handed a
+   * description of a deliverable and no way to open it, while the product has a
+   * perfectly good `AssetDetailModal` with eight other openers. These are the
+   * ids the tools already name (see `deliverableFromToolCall`), rendered as the
+   * chip that opens that same modal.
+   */
+  deliverables?: Deliverable[];
+}
+
+/** One asset a turn's tools touched: the id, and the best name we were given for it. */
+interface Deliverable {
+  assetId: string;
+  title?: string;
 }
 
 /** One of this client's LIVE agents, offered in the `@mention` dropdown. */
@@ -54,6 +97,50 @@ interface FocusAgent {
   name: string;
 }
 
+/**
+ * The asset one finished tool call resolved to, or null (flow audit 2026-09, R12).
+ *
+ * NOTHING NEW IS ASKED OF THE SERVER. Three of the copilot's tools already name
+ * an asset by id, and this reads the id from wherever that tool happens to put
+ * it:
+ *  · `find_output` prints `id: <id>` on its own line, under a `**Title**` line
+ *    (chat/route.ts's findOutputTool) — the whole point of the tool is to hand
+ *    back an exact id, so it is in the RESULT.
+ *  · `edit_output` and `reschedule_output` take `{ assetId }` as their INPUT
+ *    and answer with prose ("Saved.", "Moved to …"), so the id is in the call,
+ *    which `client-stream.ts` now carries through with the result.
+ *
+ * Both are matched conservatively: an unrecognised tool, a multi-match
+ * `find_output` ("Found 4 matching outputs…", which prints several ids and
+ * therefore resolves to no single deliverable) and a refusal string all return
+ * null, so the chip appears only where there is exactly one thing to open.
+ */
+function deliverableFromToolCall(evt: {
+  toolName: string;
+  output: unknown;
+  input?: unknown;
+}): Deliverable | null {
+  const input = (evt.input ?? {}) as Record<string, unknown>;
+  if (evt.toolName === "edit_output" || evt.toolName === "reschedule_output") {
+    // A refusal is still a tool result; only a save/move actually landed on an
+    // asset the reader can be sent to.
+    const output = typeof evt.output === "string" ? evt.output : "";
+    const landed = /^(Saved\.|Moved to )/.test(output.trim());
+    if (!landed) return null;
+    const assetId = typeof input.assetId === "string" ? input.assetId : null;
+    if (!assetId) return null;
+    const title = typeof input.newTitle === "string" ? input.newTitle : undefined;
+    return { assetId, ...(title ? { title } : {}) };
+  }
+  if (evt.toolName !== "find_output" || typeof evt.output !== "string") return null;
+  const ids = [...evt.output.matchAll(/^id: (\S+)$/gm)].map((m) => m[1]!);
+  // The multi-match branch lists `· id: …` inline on several lines and never on
+  // its own; a single confident answer is the only one with exactly one.
+  if (ids.length !== 1) return null;
+  const title = /^\*\*(.+?)\*\*/m.exec(evt.output)?.[1];
+  return { assetId: ids[0]!, ...(title && title !== "Untitled" ? { title } : {}) };
+}
+
 /* ── Transcript persistence ──────────────────────────────────────────── */
 
 /**
@@ -65,6 +152,26 @@ const THREAD_KEY_PREFIX = "karos.copilot.thread.";
 /** Cap what we write back - a long thread is not worth a quota error. */
 const MAX_PERSISTED_MESSAGES = 40;
 
+/** One persisted `feedbackNotes` entry — validated field-by-field, same reasoning as `isPersistedMessage`. */
+function isPersistedFeedbackNote(v: unknown): v is FeedbackNote {
+  if (!v || typeof v !== "object") return false;
+  const n = v as Record<string, unknown>;
+  return (
+    typeof n.agentName === "string" &&
+    typeof n.agentId === "string" &&
+    (n.scope === "agent" || n.scope === "template") &&
+    (n.templateKey === undefined || typeof n.templateKey === "string") &&
+    (n.category === undefined || typeof n.category === "string")
+  );
+}
+
+/** One persisted `deliverables` entry — same field-by-field rule as the notes above. */
+function isPersistedDeliverable(v: unknown): v is Deliverable {
+  if (!v || typeof v !== "object") return false;
+  const d = v as Record<string, unknown>;
+  return typeof d.assetId === "string" && (d.title === undefined || typeof d.title === "string");
+}
+
 function isPersistedMessage(v: unknown): v is Message {
   if (!v || typeof v !== "object") return false;
   const m = v as Record<string, unknown>;
@@ -72,7 +179,17 @@ function isPersistedMessage(v: unknown): v is Message {
     typeof m.id === "string" &&
     (m.role === "user" || m.role === "assistant") &&
     typeof m.content === "string" &&
-    (m.display === undefined || typeof m.display === "string")
+    (m.display === undefined || typeof m.display === "string") &&
+    (m.attachmentLabels === undefined ||
+      (Array.isArray(m.attachmentLabels) && m.attachmentLabels.every((x) => typeof x === "string"))) &&
+    // sessionStorage is this tab's own prior write, but still untrusted shape
+    // as far as this type guard is concerned - a corrupted/older-shape entry
+    // (or one written by a pre-T-B18 build in the same session) is dropped
+    // rather than handed to render as a malformed chip.
+    (m.feedbackNotes === undefined ||
+      (Array.isArray(m.feedbackNotes) && m.feedbackNotes.every(isPersistedFeedbackNote))) &&
+    (m.deliverables === undefined ||
+      (Array.isArray(m.deliverables) && m.deliverables.every(isPersistedDeliverable)))
   );
 }
 
@@ -108,7 +225,7 @@ function buildProactiveActions(): ProactiveAction[] {
       sublabel: "Brief on a tracked competitor + counter-strategy tasks",
       trigger:
         "Give me an intel brief on one of the competitors in our tracker, built from the tracked competitor data you already hold. Start by asking me which tracked competitor to focus on.",
-      color: "#6b9fd4",
+      color: "var(--info)",
       deep: true,
     },
     {
@@ -118,7 +235,7 @@ function buildProactiveActions(): ProactiveAction[] {
       sublabel: "Surface presence gaps and push optimization tasks",
       trigger:
         "Run a brand visibility and market presence audit. Identify gaps in our brand positioning and generate specific optimization action items.",
-      color: "#d9a13d",
+      color: "var(--warning)",
       deep: true,
     },
     {
@@ -145,7 +262,7 @@ function buildProactiveActions(): ProactiveAction[] {
       sublabel: "Propose this week's content plan as ready-to-run tasks",
       trigger:
         "Propose a content plan for this week using the AI agents actually available on this account, and suggest a concrete plan I can turn into tasks.",
-      color: "#e5484d",
+      color: "var(--danger)",
       deep: true,
     },
   ];
@@ -204,43 +321,17 @@ const SLASH_COMMANDS: SlashCommand[] = [
 ];
 
 /**
- * The "View" link on a task the copilot just added — written as MARKDOWN,
- * because an assistant turn is rendered through `renderSectionBody`, which
- * escapes the text first and then formats it, and turns a link into an anchor
- * only when the href is http(s), mailto, a fragment, or a genuinely same-origin
- * path (`isSafeHref`).
- *
- * KEYED ON `?task=`, NOT `?owner=`, and that is a ruling rather than a
- * shorthand. The board's two tabs are split by owner and are DISJOINT:
- * `?owner=client` selects the client tab and everything else — a bare `/tasks`
- * included — selects "karos", so a link that guesses lands the reader on a board
- * that does not hold the card it just named. `?task=` makes the board resolve
- * the tab itself (`ownerTab(inferOwner(linkedTask))`, tasks-board.tsx) and open
- * the ticket with it, so neither the owner→tab mapping nor the owner inference
- * for a task with no stored owner is copied here. `taskBoardHref` in
- * client-home-overview.tsx reached the same answer against the same two rules;
- * this is that answer applied to the copilot, not a second opinion.
- *
- * WHY THE COPILOT NEEDS THE LINK AND QuickAddTaskBar DOES NOT. F65 put the named
- * announcement on both, and the two recover differently: the quick-add bar sits
- * ON the board and moves it to the right tab through `onAdded`, while the
- * copilot is a dock over whatever page the reader is on. Without this the reply
- * named a card with no way to reach it — and the id needed to reach it was being
- * fetched from the action and thrown away.
- *
- * Empty string when the action returned no id, so the sentence just ends.
- */
-function taskLink(taskId: string | undefined): string {
-  return taskId ? ` [View](/tasks?task=${encodeURIComponent(taskId)})` : "";
-}
-
-/**
  * What the transcript says after `/add-task`.
  *
- * Pure and exported so the sentence and its link can be asserted as text and as
- * RENDERED markup — the two ways this can silently stop working are the id going
- * missing from the sentence and `renderSectionBody` declining to make an anchor
- * of it.
+ * USED TO CARRY A "[View]" LINK TO THE TASK, KEYED ON ITS ID (#122, F65) —
+ * REVERSED 2026-08. That link opened the Workspace board straight to the
+ * ticket, deliberately keyed on `?task=` rather than a guessed `?owner=` tab so
+ * the reader always landed on the card just named. The board is gone entirely
+ * now, and nothing replaced it as a screen that shows one task by id — Home's
+ * own attention rows hit the identical wall and went the same way
+ * (client-home-overview.tsx's `taskBoardHref` removal; notification-bell.tsx's
+ * `TaskAlertRow`), so this reply now drops the link rather than naming a
+ * destination the reader cannot reach.
  */
 export function addTaskReply(
   result: Pick<
@@ -253,7 +344,7 @@ export function addTaskReply(
       ? (result.error ?? "That's already on your task board.")
       : (result.error ?? "Couldn't add that task. Try again.");
   }
-  return `Added${result.title ? ` "${result.title}"` : ""} to your task board.${taskLink(result.taskId)}`;
+  return `Added${result.title ? ` "${result.title}"` : ""} to your task board.`;
 }
 
 /* ── Copilot hook ────────────────────────────────────────────────────── */
@@ -271,6 +362,27 @@ function useCopilot(
   const [error, setError] = useState<string | null>(null);
   /** Set by picking `@AgentName` - sent as `focusAgentId` on every turn until cleared. */
   const [focusAgent, setFocusAgent] = useState<FocusAgent | null>(null);
+  /**
+   * Manual model-picker override (T-B3/SCRUM-246). `null` means "Auto" - the
+   * route's own cost-based routing (cheap Gemini by default, Haiku for a
+   * `deep` proactive action) decides. A picked key is sent as `model` on
+   * every turn until cleared, taking priority over `deep` server-side
+   * (`resolveChatModel`, lib/ai/chat-models.ts) - picking "Fast" even
+   * overrides one of the three proactive actions' own `deep: true`. Session-
+   * only by design, unlike `focusAgent`: a cost preference from a prior visit
+   * silently carrying into a new one is a worse default than just asking
+   * again, and this is a plain UI convenience, not billed state worth a
+   * client-visible receipt.
+   */
+  const [preferredModel, setPreferredModel] = useState<ChatModelKey | null>(null);
+  /**
+   * T-B5: files uploaded (browser → GCS, real `gs://` URIs - see
+   * `RunAttachments`) and staged for the NEXT message only. Not persisted
+   * (unlike `focusAgent`/the transcript): a signed-URL upload is a live GCS
+   * object either way, and re-offering a stale pending attachment across a
+   * reload is a worse default than just asking the user to attach again.
+   */
+  const [attachments, setAttachments] = useState<RunAttachment[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   // Scoped to viewer AND client: sessionStorage survives sign-out in the same
   // tab, and StaffCopilotDock writes under this prefix too - an unscoped key
@@ -355,6 +467,7 @@ function useCopilot(
     setInput("");
     setError(null);
     setStreaming(false);
+    setAttachments([]);
     try {
       sessionStorage.removeItem(storageKey);
     } catch {
@@ -374,16 +487,24 @@ function useCopilot(
       const trimmed = text.trim();
       if (!trimmed || streaming) return;
 
+      // Captured before any state update below clears it - this message's
+      // attachments, not whatever is pending by the time the fetch resolves.
+      const turnAttachments = attachments;
+
       const userMsg: Message = {
         id: crypto.randomUUID(),
         role: "user",
         content: trimmed,
         ...(display ? { display } : {}),
+        ...(turnAttachments.length > 0
+          ? { attachmentLabels: turnAttachments.map((a) => a.label ?? a.uri) }
+          : {}),
       };
       const assistantId = crypto.randomUUID();
 
       setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
       setInput("");
+      setAttachments([]);
       setStreaming(true);
       setError(null);
 
@@ -400,6 +521,17 @@ function useCopilot(
             messages: history,
             ...(focusAgent ? { focusAgentId: focusAgent.id } : {}),
             ...(deep ? { deep: true } : {}),
+            // Sent as one of CHAT_MODEL_OPTIONS's keys, never a raw model id -
+            // the route treats this exactly as untrusted as any other request
+            // body field and validates it against its own server-side copy of
+            // the same allowlist (resolveChatModel, lib/ai/chat-models.ts).
+            ...(preferredModel ? { model: preferredModel } : {}),
+            // T-B5: already-uploaded `MediaAsset`-shaped attachments for this
+            // turn - real `gs://` URIs from RunAttachments' signed-URL upload,
+            // not a form field. UNTRUSTED like everything else in this body;
+            // the route re-validates every field (parseChatAttachments),
+            // including tying each `gs://` path back to THIS client.
+            ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           }),
           signal: controller.signal,
         });
@@ -409,54 +541,82 @@ function useCopilot(
           throw new Error((errBody as { error?: string }).error ?? `HTTP ${response.status}`);
         }
 
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
+        // T-B4: the route now returns a real UI-message stream (typed data
+        // parts, tool-call/tool-result parts) instead of a bare text body.
+        // `readChatStream` decodes it into the events this handler reacts to.
         let accumulated = "";
         let brandingUpdated = false;
         let tasksCreated = false;
-        // Set once the marker is seen, so a later chunk containing more
-        // "<!--" text (unlikely, but the model writes free text) can't
-        // re-trigger this and stomp a focus change the user made meanwhile.
-        let focusMarkerSeen = false;
+        let sawErrorPart = false;
+        // T-B18: every `data-feedback` part this turn wrote (normally one -
+        // provide_feedback is one call - but not assumed to be, same as
+        // stream-protocol.ts's own comment on the `job` part above it).
+        const feedbackNotes: FeedbackNote[] = [];
+        // R12: the deliverables this turn's tools resolved to, deduped — a
+        // find-then-edit sequence names the same asset twice and is still one
+        // thing to open.
+        const deliverables: Deliverable[] = [];
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          if (chunk.includes("Branding guidelines updated")) brandingUpdated = true;
-          if (chunk.includes("Created") && chunk.includes("task")) tasksCreated = true;
-          accumulated += chunk;
-          // The plain-text half of @mention focus (set_agent_focus, chat/route.ts):
-          // the tool rides its answer inside an HTML comment the same way the
-          // brand-sync block already does, so it renders invisibly
-          // (stripPipelineMarkers, doc-render.ts) while still being sniffable
-          // here, on the raw stream, before that stripping happens.
-          if (!focusMarkerSeen) {
-            const m = /<!--\s*COPILOT_FOCUS:([\s\S]*?)\s*-->/.exec(accumulated);
-            if (m) {
-              focusMarkerSeen = true;
-              try {
-                const payload = JSON.parse(m[1]) as { id: string; name: string } | null;
-                setFocusAgent(payload);
-              } catch {
-                /* malformed payload - leave focus exactly as it was */
+        for await (const evt of readChatStream(response)) {
+          switch (evt.type) {
+            case "text-delta":
+              accumulated += evt.delta;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
+              );
+              break;
+            case "agent-focus":
+              // Replaces the old COPILOT_FOCUS HTML-comment sniff: a typed
+              // data part instead of text regexed out of the raw stream.
+              setFocusAgent(evt.focusAgent);
+              break;
+            case "tool-result":
+              // Replaces sniffing the model's own PROSE for magic substrings
+              // ("Branding guidelines updated", "Created ... task") - these
+              // are the tool's actual name and return value, not a guess
+              // about how the model chose to phrase its answer.
+              if (evt.toolName === "update_branding_guidelines") brandingUpdated = true;
+              if (evt.toolName === "create_tasks" && typeof evt.output === "string" && evt.output.startsWith("Created ")) {
+                tasksCreated = true;
               }
-            }
+              {
+                const deliverable = deliverableFromToolCall(evt);
+                if (deliverable && !deliverables.some((d) => d.assetId === deliverable.assetId)) {
+                  deliverables.push(deliverable);
+                }
+              }
+              break;
+            case "feedback":
+              // Structural confirmation that standing feedback was recorded -
+              // rendered as a chip on this assistant message below, not just
+              // read off the model's own confirmation sentence in `content`.
+              feedbackNotes.push(evt.feedback);
+              break;
+            case "error":
+              sawErrorPart = true;
+              break;
           }
+        }
+
+        if (feedbackNotes.length > 0) {
           setMessages((prev) =>
-            prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
+            prev.map((m) => (m.id === assistantId ? { ...m, feedbackNotes } : m)),
           );
         }
 
-        // A provider failure mid-stream (token depletion, a 5xx) produces no
-        // text-delta parts at all - the plain text-stream protocol this route
-        // returns has no channel to carry an error part, so the request still
-        // completes normally with nothing written (chat/route.ts's onError
-        // logs it and alerts the Karos team server-side, but can't tell the
-        // client). Left alone this renders as a permanently "typing" bubble.
-        // An error-free completion with no visible text is itself the signal.
-        const visibleContent = accumulated.replace(/<!--\s*COPILOT_FOCUS:[\s\S]*?-->/g, "").trim();
-        if (!visibleContent) {
+        if (deliverables.length > 0) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, deliverables } : m)),
+          );
+        }
+
+        // A provider failure mid-stream (token depletion, a 5xx) now arrives
+        // as a real `error` protocol part (T-B4) - detected directly, rather
+        // than inferred from "the turn produced no visible text at all" the
+        // way the old text-only protocol forced this to be. The no-visible-
+        // text check stays as a backstop for any other empty-completion case.
+        const visibleContent = accumulated.trim();
+        if (sawErrorPart || !visibleContent) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId
@@ -484,7 +644,7 @@ function useCopilot(
         setStreaming(false);
       }
     },
-    [clientId, messages, streaming, focusAgent, onBrandingChange, onTasksCreated, router],
+    [clientId, messages, streaming, focusAgent, preferredModel, attachments, onBrandingChange, onTasksCreated, router],
   );
 
   /**
@@ -533,8 +693,74 @@ function useCopilot(
 
   return {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
-    focusAgent, setFocusAgent,
+    focusAgent, setFocusAgent, preferredModel, setPreferredModel,
+    attachments, setAttachments,
   };
+}
+
+/* ── Manual model picker ─────────────────────────────────────────────── */
+
+/**
+ * T-B3/SCRUM-246's manual override. "Auto" (the default, `value === null`)
+ * defers to the route's own cost-based routing; the other two pills force a
+ * specific allowlisted model for every turn until changed back. Rendered
+ * from `CHAT_MODEL_KEYS`/`CHAT_MODEL_OPTIONS` rather than a hardcoded copy of
+ * the label pair, so this can never drift from the actual server-side
+ * allowlist it is choosing keys out of.
+ */
+function ModelPicker({
+  value,
+  onChange,
+}: {
+  value: ChatModelKey | null;
+  onChange: (key: ChatModelKey | null) => void;
+}) {
+  /* One segmented control on the composer's footer line (QA 2026-09). It used
+     to be its own bordered band above the input - a `border-t` of its own
+     stacked on the form's `border-t`, three loose text pills and a "Model"
+     word, sitting in the panel like a second toolbar. Now the input row is
+     the composer and this is one quiet line under it: label left, a single
+     track with three segments right. Active segment is paper on the surface
+     ladder, not orange - the accent is rationed to the send button. */
+  const options: { key: ChatModelKey | null; label: string; description: string }[] = [
+    { key: null, label: "Auto", description: "Picks the model per message, by cost." },
+    ...CHAT_MODEL_KEYS.map((key) => ({
+      key,
+      label: CHAT_MODEL_OPTIONS[key].label,
+      description: CHAT_MODEL_OPTIONS[key].description,
+    })),
+  ];
+  return (
+    <div className="mt-2 flex items-center justify-between gap-3">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">Model</span>
+      <div
+        role="group"
+        aria-label="Copilot model"
+        className="flex items-center gap-0.5 rounded-md border border-border bg-surface-2 p-0.5"
+      >
+        {options.map((o) => {
+          const active = value === o.key;
+          return (
+            <button
+              key={o.key ?? "auto"}
+              type="button"
+              onClick={() => onChange(o.key === null ? null : value === o.key ? null : o.key)}
+              aria-pressed={active}
+              title={o.description}
+              className={cn(
+                "rounded-[4px] px-2.5 py-1 text-[11px] leading-none transition-colors",
+                active
+                  ? "bg-background text-foreground shadow-[inset_0_0_0_1px_var(--border)]"
+                  : "text-muted-2 hover:text-foreground",
+              )}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /* ── Typing dots ─────────────────────────────────────────────────────── */
@@ -550,6 +776,77 @@ function TypingDots() {
         />
       ))}
     </span>
+  );
+}
+
+/* ── Feedback chip (T-B18) ───────────────────────────────────────────── */
+
+/** Human copy for a feedback note's scope - same two values `provideFeedbackTool`'s confirmation prose uses. */
+function feedbackScopeLabel(note: FeedbackNote): string {
+  return note.scope === "template" && note.templateKey
+    ? `"${note.templateKey}" format`
+    : `everything ${note.agentName} makes`;
+}
+
+/**
+ * Structural confirmation that a `provide_feedback` call recorded a standing
+ * note - the client-facing surface this data-feedback part exists for (T-B18;
+ * see stream-protocol.ts's `ChatDataParts.feedback` doc comment). `self-start`
+ * keeps it from stretching to the bubble's width above it (its flex-col parent
+ * defaults every child to stretch) - it reads as a chip, not a second bubble.
+ *
+ * Links to the SAME feedback surface the context-doc "Correct Info" pattern's
+ * shape inspired this loop from: the agent's own detail page, where
+ * `ClientAgentFeedbackModal` already lists, edits and withdraws every open
+ * note (agent-detail-panel.tsx) - this chip is a shortcut into that existing
+ * management surface, not a second one.
+ */
+function FeedbackChip({ clientId, note }: { clientId: string; note: FeedbackNote }) {
+  return (
+    <Link
+      href={`/clients/${clientId}/agents/${note.agentId}`}
+      className="group flex w-fit max-w-full items-center gap-1.5 self-start rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-border-strong hover:bg-surface-3 hover:text-foreground"
+    >
+      <Icon name="MessageSquareQuote" className="h-3 w-3 shrink-0 text-muted-2 group-hover:text-foreground" />
+      <span className="truncate">
+        Feedback saved &middot; shapes {feedbackScopeLabel(note)}
+      </span>
+      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
+        Manage
+      </span>
+    </Link>
+  );
+}
+
+/**
+ * The copilot's way OUT (flow audit 2026-09, R12).
+ *
+ * Same shape as `FeedbackChip` above — this is deliberately one visual family,
+ * not a second one — but it opens `AssetDetailModal`, the product's one
+ * deliverable viewer, rather than navigating. The audit's complaint was that
+ * `/edit-output`, `/inspect-job`, `/reschedule-post` and `find_output` all
+ * terminate as prose in the transcript: the client is handed a description of
+ * their post with nothing to press.
+ */
+function DeliverableChip({
+  deliverable,
+  onOpen,
+}: {
+  deliverable: Deliverable;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group flex w-fit max-w-full items-center gap-1.5 self-start rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-border-strong hover:bg-surface-3 hover:text-foreground"
+    >
+      <Icon name="FileText" className="h-3 w-3 shrink-0 text-muted-2 group-hover:text-foreground" />
+      <span className="truncate">{deliverable.title ?? "This output"}</span>
+      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
+        Open
+      </span>
+    </button>
   );
 }
 
@@ -743,8 +1040,33 @@ interface Props {
   docked?: boolean;
   /** When provided (docked mode), shows a collapse control in the header. */
   onCollapse?: () => void;
+  /**
+   * Docked mode only: whether the dock's surface is actually OPEN right now —
+   * the lg+ rail expanded, or the narrow-viewport sheet showing.
+   *
+   * Docked mode is permanently `panelOpen`, and neither dock surface unmounts
+   * this widget when it closes (the rail clips it, the sheet hides it with
+   * `display:none`), so the focus pass below fired once on mount and never
+   * again. Re-opening the sheet or expanding the rail left the reader with no
+   * caret and no way to type without reaching for the mouse. Defaults to `true`
+   * so the floating (non-docked) mount is unaffected.
+   */
+  active?: boolean;
   /** Position classes for the floating bubble + panel (non-docked mode). */
   floatingPosition?: string;
+}
+
+/**
+ * Why the deliverable fetch failed, in the one bit the reader's message depends
+ * on: a 403 is the day-not-arrived gate and has its own sentence; everything
+ * else is a fault and gets the retry line. A `.catch` sees only a rejection, so
+ * the distinction has to be carried on the error itself.
+ */
+class AssetOpenError extends Error {
+  constructor(readonly notAllowed: boolean) {
+    super(notAllowed ? "forbidden" : "unavailable");
+    this.name = "AssetOpenError";
+  }
 }
 
 export function ChatbotWidget({
@@ -756,6 +1078,7 @@ export function ChatbotWidget({
   hasGoogleIntegration = false,
   docked = false,
   onCollapse,
+  active = true,
   floatingPosition = "bottom-6 right-6",
 }: Props) {
   const router = useRouter();
@@ -773,7 +1096,8 @@ export function ChatbotWidget({
 
   const {
     messages, input, setInput, send, sendAddTask, streaming, error, reset,
-    focusAgent, setFocusAgent,
+    focusAgent, setFocusAgent, preferredModel, setPreferredModel,
+    attachments, setAttachments,
   } = useCopilot(clientId, viewerUid, onBrandingChange, onTasksCreated);
 
   // Whether to show the proactive welcome instead of the standard empty state
@@ -784,10 +1108,74 @@ export function ChatbotWidget({
     if (panelOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, panelOpen]);
 
-  // Focus input on open
+  // Focus the input when the panel OPENS — on the rising edge of "is this chat
+  // actually on screen", which is `panelOpen` for the floating mount and
+  // `active` for a docked one (the dock never unmounts this widget, so
+  // `panelOpen` is a constant `true` there and this effect fired only on mount;
+  // review wave, 2026-09, L5). Both conditions are ANDed so neither surface can
+  // steal focus while it is hidden.
+  const visible = panelOpen && active;
   useEffect(() => {
-    if (panelOpen) setTimeout(() => inputRef.current?.focus(), 50);
-  }, [panelOpen]);
+    if (!visible) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [visible]);
+
+  /* ── The deliverable a chip opened (flow audit 2026-09, R12) ───────── */
+  // The dock is mounted by the (app) layout with a clientId and nothing else,
+  // so unlike the modal's eight other openers it has no asset in hand — only
+  // the id its own tools named. `/api/assets/[id]` answers with the asset the
+  // SERVER says this viewer may read, already redacted, plus which register to
+  // speak in; the modal is mounted from that and from nothing else.
+  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
+  const [openAsset, setOpenAsset] = useState<{ asset: Asset; viewerIsClient: boolean } | null>(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  /**
+   * Every press gets its own attempt.
+   *
+   * `openAssetId` alone is not enough to key the fetch: after a failure the id
+   * stays set, so pressing the SAME chip again set state to the value it
+   * already had, React bailed out, and the effect never re-ran — the chip went
+   * dead for the rest of the session over one dropped request. The nonce
+   * changes on every press, so a retry is always a new effect run.
+   */
+  const [assetRequest, setAssetRequest] = useState(0);
+  const openDeliverable = useCallback((assetId: string) => {
+    setAssetError(null);
+    setOpenAssetId(assetId);
+    setAssetRequest((n) => n + 1);
+  }, []);
+  useEffect(() => {
+    if (!openAssetId) return;
+    let cancelled = false;
+    fetch(`/api/assets/${encodeURIComponent(openAssetId)}`)
+      .then(async (r) => {
+        // ONE MESSAGE PER CAUSE (review wave, 2026-09). Every failure used to
+        // land on "isn't available to open yet", which is the sentence for a
+        // 403 — a post whose day has not arrived, withheld from a client by the
+        // same gate the download route uses. A dropped connection, a 500 or a
+        // deleted asset got that same line, and it tells the reader to wait for
+        // a day that will never make any difference. `notAllowed` carries the
+        // distinction out of the fetch, since a rejection is all a `.catch` sees.
+        if (!r.ok) throw new AssetOpenError(r.status === 403);
+        return (await r.json()) as { asset: Asset; viewerIsClient: boolean };
+      })
+      .then((data) => {
+        if (!cancelled) setOpenAsset({ asset: data.asset, viewerIsClient: data.viewerIsClient });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setAssetError(
+          err instanceof AssetOpenError && err.notAllowed
+            ? "That output isn't available to open yet."
+            : "Couldn't open this output. Try again.",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `assetRequest` is the retry key — see openDeliverable.
+  }, [openAssetId, assetRequest]);
 
   /* ── @mention roster ──────────────────────────────────────────────── */
   // Fetched independently of a chat turn - the `@` dropdown has to be ready
@@ -958,7 +1346,7 @@ export function ChatbotWidget({
             <div className="min-w-0">
               <p className="font-serif text-base leading-none">AI Copilot</p>
               <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">
-                {clientName} · Powered by Claude
+                {clientName} · KarosAI
               </p>
             </div>
             <div className="flex items-center gap-1">
@@ -1014,31 +1402,82 @@ export function ChatbotWidget({
                   key={msg.id}
                   className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}
                 >
-                  <div
-                    className={cn(
-                      "max-w-[88%] rounded-md px-3.5 py-2.5 text-sm leading-relaxed",
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : "border border-border bg-surface-2 text-foreground",
-                    )}
-                  >
-                    {msg.content ? (
-                      msg.role === "assistant" ? (
-                        // The model writes markdown - the system prompt is itself
-                        // authored in it and the flagship actions ask for
-                        // multi-section deliverables - so a pre-wrapped span put
-                        // asterisks, hash marks and table pipes on screen (QA F89).
-                        // renderSectionBody escapes before formatting, so model
-                        // output cannot inject markup; it is the same renderer the
-                        // documents view uses.
-                        <div dangerouslySetInnerHTML={{ __html: renderSectionBody(msg.content) }} />
+                  {/* Single flex child of the row above, so `justify-end`/
+                      `justify-start` still positions the whole stack - the
+                      bubble and (T-B18) its feedback chip render as a COLUMN
+                      inside it rather than two items competing for the row. */}
+                  <div className="flex max-w-[88%] flex-col gap-1.5">
+                    <div
+                      className={cn(
+                        "rounded-md px-3.5 py-2.5 text-sm leading-relaxed",
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "border border-border bg-surface-2 text-foreground",
+                      )}
+                    >
+                      {msg.content ? (
+                        msg.role === "assistant" ? (
+                          // The model writes markdown - the system prompt is itself
+                          // authored in it and the flagship actions ask for
+                          // multi-section deliverables - so a pre-wrapped span put
+                          // asterisks, hash marks and table pipes on screen (QA F89).
+                          // renderSectionBody escapes before formatting, so model
+                          // output cannot inject markup; it is the same renderer the
+                          // documents view uses.
+                          <div dangerouslySetInnerHTML={{ __html: renderSectionBody(msg.content) }} />
+                        ) : (
+                          // `display` is the action's own label when the chip's
+                          // hidden trigger is what was actually sent (QA F15).
+                          <span style={{ whiteSpace: "pre-wrap" }}>{msg.display ?? msg.content}</span>
+                        )
                       ) : (
-                        // `display` is the action's own label when the chip's
-                        // hidden trigger is what was actually sent (QA F15).
-                        <span style={{ whiteSpace: "pre-wrap" }}>{msg.display ?? msg.content}</span>
-                      )
-                    ) : (
-                      <TypingDots />
+                        <TypingDots />
+                      )}
+                      {/* T-B5: what was attached to THIS message, not a
+                          generic "files" line - a client scanning back through
+                          the transcript should see which message a photo rode
+                          in on. */}
+                      {msg.attachmentLabels && msg.attachmentLabels.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {msg.attachmentLabels.map((label, i) => (
+                            <span
+                              key={`${msg.id}-attachment-${i}`}
+                              className="inline-flex items-center gap-1 rounded bg-black/10 px-1.5 py-0.5 text-[10px] text-primary-foreground/80"
+                            >
+                              <Icon name="Paperclip" className="h-2.5 w-2.5" />
+                              <span className="max-w-[160px] truncate">{label}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {/* T-B18: structural confirmation of what provide_feedback
+                        recorded - not just the model's prose. One chip per
+                        data-feedback part this turn wrote. Links into the
+                        agent's own feedback panel (agent-detail-panel.tsx's
+                        ClientAgentFeedbackModal) - the place a client can
+                        already see, edit or withdraw the note this chip is
+                        confirming. */}
+                    {msg.role === "assistant" && msg.feedbackNotes && msg.feedbackNotes.length > 0 && (
+                      <>
+                        {msg.feedbackNotes.map((note, i) => (
+                          <FeedbackChip key={i} clientId={clientId} note={note} />
+                        ))}
+                      </>
+                    )}
+                    {/* R12: one chip per deliverable this turn's tools resolved
+                        to, opening the same modal the calendar, the archive and
+                        the agent pages open. */}
+                    {msg.role === "assistant" && msg.deliverables && msg.deliverables.length > 0 && (
+                      <>
+                        {msg.deliverables.map((deliverable) => (
+                          <DeliverableChip
+                            key={deliverable.assetId}
+                            deliverable={deliverable}
+                            onOpen={() => openDeliverable(deliverable.assetId)}
+                          />
+                        ))}
+                      </>
                     )}
                   </div>
                 </div>
@@ -1081,6 +1520,16 @@ export function ChatbotWidget({
             <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
               <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger" />
               <p className="text-xs text-danger">{error}</p>
+            </div>
+          )}
+
+          {/* R12: a chip that resolved to something this reader may not open
+              (a post whose day has not arrived) says so, rather than being a
+              control that does nothing when pressed. */}
+          {assetError && (
+            <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
+              <Icon name="Lock" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+              <p className="text-xs text-muted">{assetError}</p>
             </div>
           )}
 
@@ -1164,42 +1613,86 @@ export function ChatbotWidget({
                   ))}
               </div>
             )}
-            <form
-              onSubmit={handleSubmit}
-              className="flex items-center gap-2 border-t border-border px-3 py-3"
-            >
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                setHighlightedIndex(0);
-              }}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                showProactiveWelcome
-                  ? "Describe a task, or ask a question…"
-                  : "Ask about performance, brand, competitors…"
-              }
-              disabled={streaming}
-              className="flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || streaming}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
-              aria-label="Send"
-            >
-              {streaming ? (
-                <Icon name="Loader" className="h-4 w-4 animate-spin" />
-              ) : (
-                <Icon name="ArrowUp" className="h-4 w-4" />
-              )}
-            </button>
+            {/* THE ATTACH CONTROL IS ON THE INPUT LINE (2026-09).
+                
+                T-B5 gave the chat a real upload surface — the same signed-URL
+                path RunAttachments already does for the admin agent card, so a
+                chat attachment is a real `gs://` MediaAsset the moment the file
+                finishes uploading, before the message is even sent. That part
+                is unchanged and is the whole reason this reuses that component
+                rather than growing a second uploader.
+
+                What changed is WHERE it sits. It was its own bordered strip
+                above the model picker: a full-width band carrying a labelled
+                "Attach a file" button and a sentence explaining what
+                attachments are for, permanently, on a panel where most messages
+                attach nothing. The product owner's read was that it felt clunky
+                and out of place, and the honest description of it is that a
+                rarely-used control was given more room than the message box.
+
+                `layout="composer"` puts a `+` on the input line beside the send
+                button, moves the sentence into that button's tooltip and
+                accessible name, and shows the staged files above the line only
+                when there are some. The text input and the send button are its
+                children so the three share one row — see that component's
+                `AttachmentLayout`. */}
+            <form onSubmit={handleSubmit} className="border-t border-border px-3 py-3">
+              <RunAttachments
+                clientId={clientId}
+                attachments={attachments}
+                onChange={setAttachments}
+                disabled={streaming}
+                mode="chat"
+                layout="composer"
+              >
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    setHighlightedIndex(0);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    showProactiveWelcome
+                      ? "Describe a task, or ask a question…"
+                      : "Ask about performance, brand, competitors…"
+                  }
+                  disabled={streaming}
+                  className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim() || streaming}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
+                  aria-label="Send"
+                >
+                  {streaming ? (
+                    <Icon name="Loader" className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Icon name="ArrowUp" className="h-4 w-4" />
+                  )}
+                </button>
+              </RunAttachments>
+              {/* Footer line of the same composer - see ModelPicker. */}
+              <ModelPicker value={preferredModel} onChange={setPreferredModel} />
             </form>
           </div>
         </div>
       )}
+
+      {/* R12: the copilot's one way into a deliverable. The SAME component the
+          calendar, the archive and the agent pages open — mounted once here,
+          not a second viewer written for the chat. */}
+      <AssetDetailModal
+        asset={openAsset?.asset ?? null}
+        open={openAsset != null}
+        onClose={() => {
+          setOpenAssetId(null);
+          setOpenAsset(null);
+        }}
+        viewerIsClient={openAsset?.viewerIsClient ?? true}
+      />
 
       <style>{`
         @keyframes bounce {

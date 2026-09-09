@@ -27,6 +27,7 @@ import {
   getAgentIntake,
   getClient,
   upsertAgentIntake,
+  upsertClientActionState,
 } from "@/lib/data";
 import {
   REDDIT_COMMENT_CAP,
@@ -184,6 +185,12 @@ export async function addRedditDraftFeedbackAction(input: {
   reasonCode?: string;
   subreddit?: string;
   threadUrl?: string;
+  /**
+   * Which of v2's two replies the human took. Validated, not trusted: the value
+   * arrives from the browser and lands in the file the agent learns voice from,
+   * so anything other than the two positional ids is dropped rather than stored.
+   */
+  selectedApproach?: string;
 }): Promise<{ error?: string }> {
   const user = await requireClientAccess(input.clientId);
   // Reddit collects one company-account intake and has no seats, so a section
@@ -235,7 +242,20 @@ export async function addRedditDraftFeedbackAction(input: {
     ...(threadUrl ? { threadUrl } : {}),
     createdBy: user.uid,
     createdAt: Date.now(),
+    // Only the two positional ids reach Firestore. This value is read back into
+    // feedback.jsonl and becomes a voice signal, so a junk string would teach the
+    // agent nothing and pollute the log it learns from.
+    ...(input.selectedApproach === "approach-1" || input.selectedApproach === "approach-2"
+      ? { selectedApproach: input.selectedApproach }
+      : {}),
   });
+  // Action 14 ("give us your feedback on a post") — event-tracked, no live
+  // signal answers it (lib/action-list.ts). Only the client's own feedback
+  // counts, not a staff member logging it on their behalf.
+  if (user.role === "CLIENT_USER") {
+    const feedbackClientId = input.clientId;
+    await upsertClientActionState(feedbackClientId, "14", "done");
+  }
   revalidatePath(`/clients/${input.clientId}/reddit-agent`);
   revalidatePath(`/clients/${input.clientId}/agents`);
   return {};

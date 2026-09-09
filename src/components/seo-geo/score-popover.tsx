@@ -57,9 +57,22 @@ export function ScorePopover({
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         className={cn(
-          "inline-flex items-baseline gap-1 rounded-md font-mono text-2xl font-medium text-foreground",
-          "underline decoration-dotted decoration-1 underline-offset-4 transition-colors",
-          "hover:text-neon focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25",
+          /* A REAL TARGET (round 6, WCAG 2.5.8): the trigger was the 16px glyph
+             row alone. `min-h-6 py-0.5` gives it 24px without moving the
+             figure, and the hover is the quiet-link rule (muted to foreground)
+             rather than `hover:text-neon`, which is not a rule anywhere in
+             globals.css and spent the accent on a hover over a number. The
+             hover lands on the dotted underline (the affordance) rather than on
+             the figure, because a score that changes colour under the mouse
+             reads as a different score. */
+          /* round 6 review (E13): NUMBERS ARE SANS. `stat-number` (sans face,
+             tabular numerals) rather than `font-mono` — this figure is the same
+             kind of number, at the same size, as Home's KPIs, and globals.css's
+             header states the rule the mono face broke here. Size and weight
+             are unchanged. */
+          "stat-number focus-ring inline-flex min-h-6 items-baseline gap-1 rounded-md py-0.5 text-2xl font-medium text-foreground",
+          "underline decoration-muted-3 decoration-dotted decoration-1 underline-offset-4 transition-colors",
+          "hover:decoration-foreground",
         )}
       >
         <span className="sr-only">{srLabel}</span>

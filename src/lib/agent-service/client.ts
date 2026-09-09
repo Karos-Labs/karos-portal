@@ -91,6 +91,37 @@ export async function cancelAgentServiceJob(serviceJobId: string): Promise<{ sta
   return request<{ status: string }>(`/v1/jobs/${serviceJobId}/cancel`, { method: "POST" });
 }
 
+/**
+ * Re-queues a failed/dead-lettered job against its own retained checkpoint —
+ * the failed attempt's output tree, so the resumed run doesn't redo (and
+ * re-bill) work that already finished. Throws `AgentServiceNotResumable` when
+ * the service has nothing to resume from (already retried past the point of
+ * having a checkpoint, too old, or it never wrote anything) — callers should
+ * catch that specifically and fall back to submitting a fresh job.
+ */
+export class AgentServiceNotResumable extends Error {}
+
+export async function retryAgentServiceJob(serviceJobId: string): Promise<{ status: string; attempt: number }> {
+  const { baseUrl, token } = config();
+  const idToken = await iamIdToken();
+  const headers: Record<string, string> = { [SERVICE_TOKEN_HEADER]: token };
+  if (idToken) headers.authorization = `Bearer ${idToken}`;
+  const res = await fetch(`${baseUrl}/v1/jobs/${serviceJobId}/retry`, {
+    method: "POST",
+    headers,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (res.status === 404 || res.status === 409) {
+    throw new AgentServiceNotResumable(`Job ${serviceJobId} is not resumable (${res.status})`);
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.error(`[agent-service] retry failed (${res.status}): ${body.slice(0, 500)}`);
+    throw new Error(`Agent service retry failed (${res.status}). Please try again or contact support.`);
+  }
+  return (await res.json()) as { status: string; attempt: number };
+}
+
 export function isAgentServiceConfigured(): boolean {
   return Boolean(process.env.AGENT_SERVICE_URL && process.env.AGENT_SERVICE_TOKEN);
 }

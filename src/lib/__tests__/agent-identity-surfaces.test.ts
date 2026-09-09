@@ -334,7 +334,10 @@ describe("the surfaces route through the shared label functions", () => {
       calls: ["runRowLabel(", "scheduleRowLabel("],
     },
     { file: "src/app/(app)/jobs/page.tsx", calls: ["runRowLabel("] },
-    { file: "src/app/(app)/tasks/tasks-body.tsx", calls: ["runRowLabel(", "contentLabelsByAsset("] },
+    // tasks-body.tsx used to cover contentLabelsByAsset( here too, alongside
+    // runRowLabel(. It was deleted with the Workspace board's routes (2026-08);
+    // client Home is a live caller of the same function now.
+    { file: "src/app/(app)/clients/[id]/page.tsx", calls: ["contentLabelsByAsset("] },
     { file: "src/lib/client-agent-rows.ts", calls: ["runRowLabel("] },
   ];
 

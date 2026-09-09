@@ -6,6 +6,11 @@ import { Card, CardTitle, Button, Input, Textarea, Label } from "@/components/ui
 import { Icon } from "@/components/icon";
 import { CLIENT_CATEGORY_MAX_LENGTH, clientCategoryValue, cn } from "@/lib/utils";
 import { updateClientAction } from "@/lib/actions";
+import {
+  MAX_FORBIDDEN_TOPICS,
+  formatForbiddenTopics,
+  parseForbiddenTopics,
+} from "@/lib/dynamic-agent-guardrails";
 import type { Client } from "@/lib/types";
 
 export function ClientEditor({ client }: { client: Client }) {
@@ -23,7 +28,11 @@ export function ClientEditor({ client }: { client: Client }) {
     domainsCsv: (client.domains ?? []).join(", "),
     description: client.description ?? "",
     brandVoice: client.brandVoice ?? "",
+    // Topic guardrails, one per line. Parsed server-side by updateClientAction
+    // (docs/dynamic-agent-guardrails.md) — this box only round-trips the text.
+    forbiddenTopicsText: formatForbiddenTopics(client.forbiddenTopics),
   });
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Logo state - managed independently (API route writes directly to DB)
   const [logoUrl, setLogoUrl] = useState(client.logoUrl ?? "");
@@ -89,8 +98,13 @@ export function ClientEditor({ client }: { client: Client }) {
 
   async function save() {
     setSaving(true);
+    setSaveError(null);
     try {
-      await updateClientAction(client.id, form);
+      const result = await updateClientAction(client.id, form);
+      if (result && result.ok === false) {
+        setSaveError(result.error);
+        return;
+      }
       setEditing(false);
       router.refresh();
     } finally {
@@ -135,6 +149,11 @@ export function ClientEditor({ client }: { client: Client }) {
           <Field label="Meeting domains" value={(client.domains ?? []).join(", ")} />
         </div>
         <Field label="About" value={client.description} multiline />
+        <Field
+          label={`Topics we do not cover (${(client.forbiddenTopics ?? []).length})`}
+          value={formatForbiddenTopics(client.forbiddenTopics)}
+          multiline
+        />
       </Card>
     );
   }
@@ -268,6 +287,24 @@ export function ClientEditor({ client }: { client: Client }) {
         <Label>About</Label>
         <Textarea value={form.description} onChange={(e) => set("description", e.target.value)} className="min-h-[60px]" />
       </div>
+      <div>
+        <Label>Topics we do not cover</Label>
+        <p className="mb-1.5 text-[11px] leading-snug text-muted-2">
+          One topic per line, up to {MAX_FORBIDDEN_TOPICS}. Every agent this client runs is told to stay off
+          these, and each finished draft is checked against them before your team sees it. Leave empty to turn
+          the check off.
+        </p>
+        <Textarea
+          value={form.forbiddenTopicsText}
+          onChange={(e) => set("forbiddenTopicsText", e.target.value)}
+          className="min-h-[90px]"
+          placeholder={"competitor pricing\npending litigation"}
+        />
+        <p className="mt-1 text-[11px] text-muted-2">
+          {parseForbiddenTopics(form.forbiddenTopicsText).length} / {MAX_FORBIDDEN_TOPICS}
+        </p>
+      </div>
+      {saveError ? <p className="text-xs text-danger" role="alert">{saveError}</p> : null}
       <div className="flex gap-2">
         <Button onClick={save} loading={saving}>Save</Button>
         <Button variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>

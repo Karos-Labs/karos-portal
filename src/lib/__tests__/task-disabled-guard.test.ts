@@ -24,8 +24,6 @@ vi.mock("@/lib/execution-engine", () => ({
   runTaskExecution: vi.fn().mockResolvedValue(undefined),
   plannedTaskExecutionCost: vi.fn().mockResolvedValue(5),
   resolveTaskType: vi.fn().mockReturnValue("content_generation"),
-  runAutopilotBatch: vi.fn().mockResolvedValue(undefined),
-  runClaimedTasks: vi.fn().mockResolvedValue(undefined),
   dispatchArtifactEmail: vi.fn(),
 }));
 
@@ -111,27 +109,14 @@ describe("a paused task is refused at every execution-trigger door", () => {
   });
 });
 
-describe("the pending-batch runner skips paused tasks", () => {
-  it("charges and runs nothing when every pending task is paused", async () => {
-    (data.listClientTasks as any).mockResolvedValue([makeTask(), makeTask({ id: "t2" })]);
-    const { runPendingTasksBatchAction } = await import("@/lib/actions/settings-actions");
-
-    const result = await runPendingTasksBatchAction("c1");
-
-    expect(result).toMatchObject({ ok: true, started: 0 });
-    expect(data.claimTaskForExecution).not.toHaveBeenCalled();
-    expect(data.chargeClientCredits).not.toHaveBeenCalled();
-  });
-
-  it("prices the batch preview on only the tasks that will actually run", async () => {
-    (data.listClientTasks as any).mockResolvedValue([makeTask(), makeTask({ id: "t2" })]);
-    const { previewPendingTasksBatchAction } = await import("@/lib/actions/settings-actions");
-
-    const result = await previewPendingTasksBatchAction("c1");
-
-    expect(result).toMatchObject({ ok: true, count: 0, credits: 0, billable: true });
-  });
-});
+// "the pending-batch runner skips paused tasks" used to test this same guard
+// through runPendingTasksBatchAction/previewPendingTasksBatchAction — the
+// Workspace board's own "run all pending" batch action and its price preview.
+// Both were deleted with the board (2026-08): the board was their only caller,
+// so once it was removed they were an unreachable pair of charge points rather
+// than a feature with nowhere left to trigger from. The guard they exercised
+// is still covered above via updateTaskStatusAction, startTaskExecutionAction,
+// and requestAdjustmentsAction, the triggers that remain.
 
 describe("setTaskDisabledAction is admin-only", () => {
   it("refuses a CLIENT_USER", async () => {

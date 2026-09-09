@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { adminAuth } from "@/lib/firebase/admin";
@@ -28,10 +29,10 @@ export const metadata = { title: "Settings · Karos CMO" };
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; returnTo?: string }>;
 }) {
   const user = await requireUser();
-  const { tab: initialTab } = await searchParams;
+  const { tab: initialTab, returnTo } = await searchParams;
 
   // A client whose client document resolves has their own settings page; carry
   // the tab so a deep link keeps naming the panel it named. A CLIENT_USER with
@@ -42,16 +43,14 @@ export default async function SettingsPage({
     if (href) redirect(href);
   }
 
-  // Fetch the Firebase Auth record to discover which sign-in providers are linked.
-  const firebaseUser = await adminAuth().getUser(user.uid);
+  // Fetch the Firebase Auth record (sign-in providers) and, for CLIENT_USER
+  // accounts, the company name — independent reads, run concurrently.
+  const [firebaseUser, client] = await Promise.all([
+    adminAuth().getUser(user.uid),
+    user.clientId ? getClient(user.clientId) : Promise.resolve(null),
+  ]);
   const providers = firebaseUser.providerData.map((p) => p.providerId);
-
-  // Resolve the company name for CLIENT_USER accounts.
-  let clientName: string | null = null;
-  if (user.clientId) {
-    const client = await getClient(user.clientId);
-    clientName = client?.name ?? null;
-  }
+  const clientName = client?.name ?? null;
 
   const tabs: SettingsTab[] = [
     {
@@ -70,7 +69,20 @@ export default async function SettingsPage({
 
   return (
     <>
-      <PageHeader title="Settings" description="Your profile and how you sign in." />
+      <PageHeader
+        title="Settings"
+        description="Your profile and how you sign in."
+        action={
+          returnTo && returnTo.startsWith("/clients/") ? (
+            <Link
+              href={returnTo}
+              className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Back to client settings
+            </Link>
+          ) : undefined
+        }
+      />
       <SettingsTabs tabs={tabs} initialTab={initialTab} />
     </>
   );

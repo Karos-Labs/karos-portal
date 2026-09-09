@@ -12,9 +12,13 @@ import { cancelAgentServiceJob, isAgentServiceConfigured, submitAgentServiceJob 
 import type { AgentServiceContextFile } from "./types";
 import { buildXAgentContextFiles, hasXAgentIntake, isXAgent } from "./x-agent-context";
 import {
+  LI_COMPANY_IDENTITY,
   buildLinkedInAgentContextFiles,
   hasLinkedInAgentIntake,
+  hasLinkedInV2Setup,
   isLinkedInAgent,
+  isLinkedInSetupV2,
+  isLinkedInV2Agent,
 } from "./linkedin-agent-context";
 import {
   buildRedditAgentContextFiles,
@@ -101,9 +105,9 @@ export async function submitCustomAgentRun(args: {
     return { error: `Prompt is too long (max ${MAX_PROMPT_CHARS.toLocaleString()} characters).` };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
+  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
   if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
+    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
   }
 
   // X agent (e13): attach the portal-collected intake, ongoing boxes, and
@@ -146,8 +150,28 @@ export async function submitCustomAgentRun(args: {
         error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent drafts from the company page form there. Nothing has run.`,
       };
     }
+    // The v2 twin of the submit core's stood-up rung. A SCHEDULED writer run
+    // needs it more than a manual one, not less: nobody is watching this fire, so
+    // an un-set-up client's schedule would spend a run a week to be told the same
+    // thing. Every scheduled v2 run is for the company page — a schedule row
+    // carries no identity, and inventing one here would silently draft on a
+    // person's profile on a cadence nobody chose for them.
+    if (isLinkedInV2Agent(agent.key) && !isLinkedInSetupV2(agent.key)) {
+      if (!(await hasLinkedInV2Setup(client.id))) {
+        return {
+          error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the LinkedIn agent card, which stands up the lanes, the voice and the first topics. Nothing has run.`,
+        };
+      }
+    }
     try {
-      contextFiles.push(...(await buildLinkedInAgentContextFiles(client.id, agent.name)));
+      contextFiles.push(
+        ...(await buildLinkedInAgentContextFiles({
+          clientId: client.id,
+          agentKey: agent.key,
+          agentName: agent.name,
+          identity: LI_COMPANY_IDENTITY,
+        })),
+      );
     } catch (e) {
       return {
         error: `Could not attach the client's LinkedIn intake data: ${e instanceof Error ? e.message : "unknown error"}`,
@@ -212,6 +236,19 @@ export async function submitCustomAgentRun(args: {
 
   // Charge upfront (billable client actors only) with jobId pairing so the
   // webhook's failure refund and the reconcile sweeps can hand the credits back.
+  //
+  // THE SECOND CHARGE PATH, and it needs no estimate of its own (credits
+  // rework, 2026-09). Unlike `submitCustomAgentJob`, this core does not resolve
+  // a price — the caller hands it one, the way `input.charge` does over there —
+  // so there is nothing here to calibrate. What it DOES take part in is the
+  // other half: `chargeClientCredits` stamps every row it writes as a hold, and
+  // the webhook settles that hold against the run's real cost by `jobId`, which
+  // this passes. So a fire through this core is reconciled exactly like one
+  // through its twin, with no code here to keep in step.
+  //
+  // (Its one caller today, /api/scheduler, passes `charge: null` — every fire
+  // through it is free to the client and absent from the ledger, so there is
+  // nothing to settle either.)
   const charged = args.charge != null;
   if (args.charge) {
     try {

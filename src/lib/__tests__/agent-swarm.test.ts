@@ -47,9 +47,9 @@ import {
 import type { ClientTask } from "@/lib/types";
 
 const SAMPLE_TASKS: SwarmTaskDraft[] = [
-  { title: "Publish LinkedIn thought-leadership article on Trend X", description: "d1", priority: "high", productType: "blog_article", platform: "linkedin", weight: 80 },
+  { title: "Publish LinkedIn thought-leadership article on Trend X", description: "d1", priority: "high", productType: "landing_page", platform: "linkedin", weight: 80 },
   { title: "Produce TikTok short on customer win", description: "d2", priority: "medium", productType: "social_post", platform: "tiktok", weight: 60 },
-  { title: "Draft monthly newsletter issue", description: "d3", priority: "low", productType: "newsletter_issue", weight: 40 },
+  { title: "Draft monthly newsletter issue", description: "d3", priority: "low", productType: "landing_page", weight: 40 },
 ];
 
 function turn(tasks: SwarmTaskDraft[], message = "my move") {
@@ -66,6 +66,8 @@ const input: SwarmInput = {
     gapSummary: "- linkedin: GAP",
     brandingSummary: "Tone: bold",
     benchmarkSummary: "No data",
+    stalenessSummary: "No agent staleness — every granted agent has run recently.",
+    reviewBacklogSummary: "No review backlog.",
     customAgents: [],
   },
 };
@@ -347,12 +349,12 @@ describe("persistSwarmTasks — dedup + capacity", () => {
       { title: "Run bespoke brand video", description: "d", priority: "high", customAgentId: "ca_1", weight: 90 },
     ];
     await persistSwarmTasks("c1", "u1", drafts, [
-      { id: "ca_1", name: "Brand Video Agent", description: "Makes videos" },
+      { id: "ca_1", key: "brand-video-agent", name: "Brand Video Agent", description: "Makes videos" },
     ]);
     expect(createClientTaskMock).toHaveBeenCalledWith(
       expect.objectContaining({
         owner: "karos_managed",
-        metadata: expect.objectContaining({ customAgentId: "ca_1", customAgentName: "Brand Video Agent" }),
+        metadata: expect.objectContaining({ customAgentId: "ca_1", agentName: "Brand Video Agent" }),
       }),
     );
     // Custom-agent tasks don't carry a managed product_run trigger.
@@ -363,12 +365,86 @@ describe("persistSwarmTasks — dedup + capacity", () => {
 
   it("ignores a hallucinated customAgentId not granted to the client", async () => {
     const drafts: SwarmTaskDraft[] = [
-      { title: "Ghost agent task", description: "d", priority: "medium", customAgentId: "nope", productType: "blog_article", weight: 50 },
+      { title: "Ghost agent task", description: "d", priority: "medium", customAgentId: "nope", productType: "landing_page", weight: 50 },
     ];
-    await persistSwarmTasks("c1", "u1", drafts, [{ id: "ca_1", name: "Real", description: "d" }]);
+    await persistSwarmTasks("c1", "u1", drafts, [{ id: "ca_1", key: "real", name: "Real", description: "d" }]);
     const arg = createClientTaskMock.mock.calls[0][0] as { metadata?: Record<string, unknown> };
     // Falls back to the managed productType path; no bogus customAgentId persisted.
     expect(arg.metadata?.customAgentId).toBeUndefined();
-    expect(arg.metadata?.productType).toBe("blog_article");
+    expect(arg.metadata?.productType).toBe("landing_page");
+  });
+
+  // SCRUM-255 regression: persistSwarmTasks used to call findDuplicateReason
+  // without the draft's customAgentId, so tier-3 (same executor + platform
+  // scope, same week/day) could never match on a custom-agent task — a
+  // second swarm run could pile up unlimited duplicate tasks against the same
+  // custom agent every week. Distinct titles on both sides prove tier-3 (the
+  // executor+platform scope), not tier-1/2 (title matching), is what fires.
+  it("applies tier-3 dedup to a custom-agent task against the live board", async () => {
+    const existing: ClientTask = {
+      id: "t1",
+      clientId: "c1",
+      title: "Ship a Brand Video for the launch",
+      status: "in_progress",
+      priority: "high",
+      source: "copilot",
+      owner: "karos_managed",
+      metadata: { customAgentId: "ca_1", platform: "instagram" },
+      createdBy: "u1",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 1, tasks: [existing] });
+
+    const drafts: SwarmTaskDraft[] = [
+      {
+        title: "Produce another Brand Video clip",
+        description: "d",
+        priority: "high",
+        customAgentId: "ca_1",
+        platform: "instagram",
+        weight: 90,
+      },
+    ];
+    const result = await persistSwarmTasks("c1", "u1", drafts, [
+      { id: "ca_1", key: "brand-video-agent", name: "Brand Video Agent", description: "Makes videos" },
+    ]);
+
+    expect(result.duplicatesSkipped).toBe(1);
+    expect(result.created).toBe(0);
+    expect(createClientTaskMock).not.toHaveBeenCalled();
+  });
+
+  // Same fix, exercised within one batch: the pool entry pushed for an
+  // accepted custom-agent draft must itself carry customAgentId, or a second
+  // draft in the same consensus targeting the same agent+platform sails
+  // through untouched.
+  it("applies tier-3 dedup between two custom-agent drafts in the same batch", async () => {
+    getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 0, tasks: [] });
+    const drafts: SwarmTaskDraft[] = [
+      {
+        title: "Produce a Brand Video for the launch",
+        description: "d",
+        priority: "high",
+        customAgentId: "ca_1",
+        platform: "instagram",
+        weight: 90,
+      },
+      {
+        title: "Produce another Brand Video clip",
+        description: "d",
+        priority: "medium",
+        customAgentId: "ca_1",
+        platform: "instagram",
+        weight: 80,
+      },
+    ];
+    const result = await persistSwarmTasks("c1", "u1", drafts, [
+      { id: "ca_1", key: "brand-video-agent", name: "Brand Video Agent", description: "Makes videos" },
+    ]);
+
+    expect(result.created).toBe(1);
+    expect(result.duplicatesSkipped).toBe(1);
+    expect(createClientTaskMock).toHaveBeenCalledTimes(1);
   });
 });

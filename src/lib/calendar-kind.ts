@@ -80,6 +80,61 @@ export function postKind(a: CalendarKindInput): CalendarAssetKind | null {
 }
 
 /**
+ * The kinds that describe a slot which HAS NOT HAPPENED YET.
+ *
+ * "published" is the only one excluded on its own merits. The other two absent
+ * members are excluded by the date test in `isUpcomingPost` instead, and
+ * deliberately: "failed" and "held" are only ever written by the publish cron
+ * AT publish time, so a post carrying either is past due by construction —
+ * listing them here would be a claim about the cron, and the date test is a
+ * fact about the post.
+ */
+const UPCOMING_KINDS: ReadonlySet<CalendarAssetKind> = new Set<CalendarAssetKind>([
+  "scheduled",
+  "placeholder",
+  "draft",
+]);
+
+/**
+ * IS THIS POST STILL COMING UP? (2026-09)
+ *
+ * ── THE BUG THIS FUNCTION EXISTS TO CLOSE ────────────────────────────────
+ *
+ * Home's Calendar widget was empty in production for a client whose Calendar
+ * page had thirteen upcoming posts on it. The two surfaces asked different
+ * questions about the same assets:
+ *
+ *   the calendar page   postKind(a) !== null
+ *   Home's widget       a.status === "scheduled" && a.scheduledAt > now
+ *
+ * and `postKind` admits THREE statuses, not one. A post that is `approved` with
+ * a date is chipped "Scheduled post" (or "Placeholder", when `publishMode` says
+ * so) on the calendar and was invisible to the widget. Verified against
+ * production: XO Digital had 22 assets, 21 `approved` and 1 `draft`, and not one
+ * `scheduled` — 13 future-dated placeholders on the calendar, 0 on Home. The
+ * widget was not failing to load; it was asking for a status that client's
+ * content never enters, because approval arms auto-publish and the bulk
+ * uploader writes `publishMode: "placeholder"`.
+ *
+ * So the predicate lives HERE, beside `postKind`, and is asked by both. A
+ * second spelling of "what is upcoming" in a widget is what produced the
+ * defect, and re-deriving it there would only reset the clock on it.
+ *
+ * READS ONLY `CalendarKindInput` + `scheduledAt`, which matters across the
+ * redaction boundary: a client's future-dated post arrives whitelist-redacted
+ * (`redactLockedAsset`), and that copy carries `status`, `scheduledAt` and
+ * `publishMode` — every field this needs. `publishError` it does not carry, but
+ * a locked post classifying "scheduled" instead of "failed"/"held" is the
+ * residual already pinned in calendar-locked-chip.test.ts, and either way the
+ * date test is what decides membership here.
+ */
+export function isUpcomingPost(a: CalendarKindInput, now: number): boolean {
+  if ((a.scheduledAt ?? 0) <= now) return false;
+  const kind = postKind(a);
+  return kind != null && UPCOMING_KINDS.has(kind);
+}
+
+/**
  * VIEWER-AWARE for `published`, literal for everything else.
  *
  * `published` is the one kind that is also an asset STATUS, so it has a register
@@ -99,15 +154,17 @@ export function postKindLabel(kind: CalendarAssetKind, viewerIsClient: boolean):
 }
 
 /**
- * The legend/filter key domain: every chip kind, plus the one RUN bucket the
- * legend also toggles ("review" is a past run whose `jobStatus` is "review", not
- * an asset kind at all).
+ * The legend/filter key domain: every chip kind, plus two buckets that are not
+ * `CalendarAssetKind` at all — "review" is a past run whose `jobStatus` is
+ * "review", and "suggested" (2026-08) is a Task-Map proposal placed on an
+ * inferred date (lib/calendar-suggestion-placement.ts), a `ClientTask` with no
+ * asset status for `postKind` to classify in the first place.
  *
  * Here rather than in run-calendar because WHO CAN MATCH a key is a fact about
  * `postKind` above and about calendar-past-runs' visibility table — not about
  * the component that paints the dots.
  */
-export type CalendarFilterKey = CalendarAssetKind | "review";
+export type CalendarFilterKey = CalendarAssetKind | "review" | "suggested";
 
 /**
  * Every filter key. Exhaustive by construction — a new `CalendarAssetKind` is a
@@ -122,6 +179,7 @@ const FILTER_KEY_PRESENT: Record<CalendarFilterKey, true> = {
   held: true,
   draft: true,
   review: true,
+  suggested: true,
 };
 
 export const ALL_CALENDAR_FILTER_KEYS = Object.keys(FILTER_KEY_PRESENT) as CalendarFilterKey[];
@@ -129,29 +187,37 @@ export const ALL_CALENDAR_FILTER_KEYS = Object.keys(FILTER_KEY_PRESENT) as Calen
 /**
  * Which assets a CLIENT's calendar is built from at all.
  *
- * ONE home for it, because it is now asked twice: calendar-body filters the
- * fetched assets through it, and the legend rule below derives what a client can
- * therefore match. Written as the positive question so the two readers cannot
+ * ONE home for it, because it is asked in three places that must not disagree:
+ * calendar-body filters the fetched assets through it, the legend rule below
+ * derives what a client can therefore match, and client-state-domain's
+ * "performance" surface unions it with the archive to decide what a client's
+ * dashboard may show. Written as the positive question so none of the three can
  * disagree about the polarity.
  *
- * Drafts only. A client's calendar has never shown internal drafts (it matches
- * /assets, which redirects a client away entirely), and the archive excludes them
- * too — but the SCOPE of this predicate is the calendar's own asset set, which is
- * the one thing the legend rule may reason from.
+ * NO LONGER DRAFT-EXCLUDING, by product decision: a client's calendar and
+ * dashboard now show the same pending work staff see, including unapproved
+ * drafts — "these are their posts, they should see it like admins, even if it's
+ * only pending and not approved yet". This reverses the draft-hiding rule this
+ * function used to enforce (directives A3/A4, still described in
+ * client-state-domain.ts's module docstring for history); the Archive view is
+ * unaffected and still excludes drafts via `isInClientArchive`, which does not
+ * call this function.
  */
-export function isClientCalendarStatus(status: CalendarKindInput["status"]): boolean {
-  return status !== "draft";
+export function isClientCalendarStatus(_status: CalendarKindInput["status"]): boolean {
+  return true;
 }
 
 /**
  * Filter keys a CLIENT's calendar can never hold — so the legend must not offer
  * them a dot that can never dim anything.
  *
- * ENUMERATED, not guessed at, and the enumeration is what the set is for. The
- * finding named the Draft chip; the sharper question is which of the other six
- * are in the same position, and the answer is none of them:
+ * ENUMERATED, not guessed at, and the enumeration is what the set is for.
+ * Every chip kind is matchable by a client today, "draft" included now that
+ * `isClientCalendarStatus` no longer drops draft-status assets before `postKind`
+ * sees them (see that function's docstring for the reversal):
  *
- *  • published, scheduled — most of a client's calendar. Obviously matchable.
+ *  • published, scheduled, draft — a client's calendar shows every status staff
+ *    see, unredacted content aside.
  *  • placeholder — `publishMode: "placeholder"` reaches a client on both sides
  *    of the unlock: redactLockedAsset carries that one value through, and an
  *    unlocked post keeps the field whole. While it was stripped the chip was
@@ -163,12 +229,16 @@ export function isClientCalendarStatus(status: CalendarKindInput["status"]): boo
  *  • held — verified live for clients, and the reason the kind exists: the
  *    publish cron writes its ordering hold onto an approved, dated, past-due
  *    post and nothing in the client projection removes it.
- *  • review — calendar-past-runs' table marks the "review" run state
- *    client-visible, and a client's card needs one unlocked deliverable, which
- *    is the ordinary case for a run in review.
- *  • draft — the one that cannot. `isClientCalendarStatus` drops draft-status
- *    assets before `postKind` ever sees them, and postKind's only "draft" branch
- *    requires exactly that status.
+ *  • review — WITHHELD as of 2026-08 (the locked decision "In review is
+ *    removed. We are not reviewing anything."). calendar-past-runs' table
+ *    now marks the "review" run state client-INVISIBLE — see that table's
+ *    own note — so this is the one entry here that answers off a different
+ *    table (`pastRunStatuses`) rather than off `postKind`'s grid, same as the
+ *    reversed test below reads it. run-calendar.tsx also strips the "review"
+ *    legend chip unconditionally for every viewer (its own `key !== "review"`
+ *    filter) — belt-and-braces, not this entry's reason for existing: THIS
+ *    entry is what keeps `calendarFilterKeyMatchable` truthful on its own,
+ *    without relying on that separate UI-level filter to cover for it.
  *
  * The derivation is pinned in calendar-kind.test.ts, which probes `postKind`
  * over every shape it reads rather than trusting this list. It is an UPPER bound
@@ -178,7 +248,7 @@ export function isClientCalendarStatus(status: CalendarKindInput["status"]): boo
  * a client needed, not a chip they cannot use.
  */
 const CLIENT_UNMATCHABLE_FILTER_KEYS: ReadonlySet<CalendarFilterKey> = new Set<CalendarFilterKey>([
-  "draft",
+  "review",
 ]);
 
 /** Can this viewer's calendar hold anything this filter key would hide? */
@@ -252,6 +322,9 @@ const CALENDAR_FILTER_LABEL: Record<CalendarFilterKey, string> = {
   // register. `jobStatusLabel` rather than the map so the ONE fallback applies
   // here too, and so this line cannot outlive a rename of the entry.
   review: jobStatusLabel("review"),
+  // A Task-Map proposal (2026-08) — not a `JobStatus` or an asset status, so it
+  // takes neither of the other two registers; its own word, same for chip and legend.
+  suggested: "Suggested",
 };
 
 /**
@@ -264,4 +337,50 @@ const CALENDAR_FILTER_LABEL: Record<CalendarFilterKey, string> = {
 export function calendarFilterLabel(key: CalendarFilterKey, viewerIsClient: boolean): string {
   if (key === "published") return assetStatusLabel("published", viewerIsClient);
   return CALENDAR_FILTER_LABEL[key];
+}
+
+/* ────────────────── the RUN half of the same legend row ────────────────── */
+
+/**
+ * The two run states the calendar's legend names.
+ *
+ * WHY THEY MOVED HERE. They were two string literals in run-calendar.tsx,
+ * sitting in the same flex row as the filter chips above and at the same visual
+ * weight — which is exactly the arrangement that produced the report this
+ * register answers: nine words in one row, of which "Scheduled run" looked like
+ * a duplicate of "Scheduled" and "Completed run" looked like a duplicate of
+ * "Published". They are not duplicates. They describe a different OBJECT: a run
+ * is a job the agent performed, a post is a thing that job produced. One
+ * completed run can leave a post that is scheduled, waiting, or failed to
+ * publish, so neither pair can be collapsed without losing a real state.
+ *
+ * They belong in this module for the same reason `CALENDAR_FILTER_LABEL` does,
+ * and its own note says it: words that sat in a component "could not be asked
+ * for by anything else — including a test". These were the two left behind. Now
+ * that both halves are registers, `calendar-legend-registers.test.ts` can state
+ * the thing a reader actually needs true — that no run word and post word are
+ * confusable — instead of it being a matter of whoever last edited the JSX.
+ *
+ * The SWATCHES stay in the component. Presentation is its business, the same
+ * split this module already made when it took the words and left the colours.
+ */
+export type CalendarRunLegendKey = "scheduledRun" | "completedRun";
+
+const CALENDAR_RUN_LEGEND_LABEL: Record<CalendarRunLegendKey, string> = {
+  scheduledRun: "Scheduled run",
+  completedRun: "Completed run",
+};
+
+/**
+ * Every run legend key, in the order the row renders them. Derived from the
+ * record for the same reason `ALL_CALENDAR_FILTER_KEYS` is: an array can silently
+ * omit a member the legend then never draws.
+ */
+export const ALL_CALENDAR_RUN_LEGEND_KEYS = Object.keys(
+  CALENDAR_RUN_LEGEND_LABEL,
+) as CalendarRunLegendKey[];
+
+/** The run legend dot's label. Not viewer-aware: both readers see the same run. */
+export function calendarRunLegendLabel(key: CalendarRunLegendKey): string {
+  return CALENDAR_RUN_LEGEND_LABEL[key];
 }

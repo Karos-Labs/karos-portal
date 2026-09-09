@@ -230,6 +230,19 @@ const NO_ENGINE_DATA = {
   sentence: "This snapshot carries no AI engine data.",
 } as const;
 
+/**
+ * The line under a score tile. The score counts an unmeasured check as zero,
+ * so on its own it reads low for a site that passed everything the audit
+ * could see; when the engine reported how the site did on the checks that
+ * DID run, say both halves in one breath. Snapshots from before that field
+ * existed keep the line they always had.
+ */
+export function coverageLineFor(coveragePct: number, measuredBasisScore: number | null | undefined): string {
+  const base = `measured ${coveragePct}% of checks`;
+  if (typeof measuredBasisScore !== "number" || coveragePct <= 0 || coveragePct >= 100) return base;
+  return `${base} · ${measuredBasisScore}/100 on the checks that ran`;
+}
+
 export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
   const seoBand = scoreBand(insights.seoScore);
   const geoBand = scoreBand(insights.geoReadiness);
@@ -276,7 +289,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       tone: seoMeasured ? seoBand.tone : "neutral",
       bandLabel: seoMeasured ? seoBand.label : "not measured yet",
       coveragePct: insights.seoDataCoveragePct,
-      coverageLine: `measured ${insights.seoDataCoveragePct}% of checks`,
+      coverageLine: coverageLineFor(insights.seoDataCoveragePct, insights.seoMeasuredBasisScore),
       breakdownTitle: "What's behind this score",
       breakdown: checkBreakdown(SEO_CHECKS, insights.seoChecks),
     },
@@ -289,7 +302,7 @@ export function buildScoreViews(insights: SeoGeoInsights): ScoreView[] {
       tone: readinessMeasured ? geoBand.tone : "neutral",
       bandLabel: readinessMeasured ? geoBand.label : "not measured yet",
       coveragePct: insights.geoReadinessCoveragePct,
-      coverageLine: `measured ${insights.geoReadinessCoveragePct}% of checks`,
+      coverageLine: coverageLineFor(insights.geoReadinessCoveragePct, insights.geoReadinessMeasuredBasisScore),
       breakdownTitle: "What's behind this score",
       breakdown: checkBreakdown(GEO_READINESS_CHECKS, insights.geoChecks),
     },
@@ -342,6 +355,24 @@ export function formatCaptured(capturedAt: number): string {
   return new Date(capturedAt).toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * The same date, compact, for the one-line measurement stamp under the
+ * Visibility scores eyebrow (portal feedback round 4, 2026-09). Same fixed
+ * locale + UTC discipline as `formatCaptured` above, and the same reason: this
+ * string is server-rendered and pinned by tests, so it must not drift with the
+ * render host. en-GB because the stamp reads as a date, not as a sentence
+ * ("4 Aug 2026"), and the long form is still what prose uses.
+ */
+export function formatCapturedShort(capturedAt: number): string {
+  if (!Number.isFinite(capturedAt)) return "an earlier run";
+  return new Date(capturedAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
     year: "numeric",
     timeZone: "UTC",
   });
@@ -677,14 +708,111 @@ export interface EngineView {
   ghost: { label: string; explainer: string } | null;
 }
 
-/** Display order for every engine surface. CD-B2 removed Perplexity and Copilot. */
-const ENGINE_ORDER: EngineId[] = ["chatgpt", "gemini", "claude"];
+/**
+ * Display order for every engine surface. CD-B2 (2026-07-27) had dropped
+ * Perplexity and Copilot; T-B16/SCRUM-271 restores them now that agent-engine
+ * genuinely captures all five (`@/lib/seo-geo`'s `EngineId` widening doc has
+ * the full story). A snapshot with no perplexity/copilot rows (every
+ * pre-T-B16 capture) simply never populates those two columns — `byEngine.get`
+ * below and `buildAnswerGridViews`'s own `answered.has` filter both already
+ * drop an engine with nothing to show, so this list growing costs nothing on
+ * an old snapshot.
+ */
+const ENGINE_ORDER: EngineId[] = ["chatgpt", "perplexity", "gemini", "claude", "copilot"];
+
+/* ── The measurement stamp (portal feedback round 4, 2026-09) ─────── */
+
+export interface MeasuredEngineView {
+  engine: EngineId;
+  name: string;
+}
+
+export interface MeasurementLineView {
+  /**
+   * "Measured 4 Aug 2026 on 20 buyer questions" — one line, no fractions, and
+   * the count is what the engines ANSWERED rather than what we asked (review
+   * wave, 2026-09): every number under this line is computed from the answers.
+   */
+  line: string;
+  /** Engines that actually answered this run, in display order. */
+  measured: MeasuredEngineView[];
+  /**
+   * Engines we ASKED that came back with nothing. An engine with no row at all
+   * (every pre-T-B16 snapshot has none for Perplexity or Copilot) is absent from
+   * both lists: it was never asked on that run, and "returned no answers" would
+   * be a claim about a request nobody made.
+   */
+  missingNote: string | null;
+}
+
+/**
+ * Folds the old capture strip into one sentence.
+ *
+ * IT USED TO BE A CARD: "Snapshot from August 4, 2026 (3 days ago) · 20 real
+ * buyer questions · 3 of 3 AI engines measured", then a "No refresh is scheduled
+ * yet" line, then five engine chips each carrying a status badge and an info
+ * tooltip — including the two that measured nothing, which is a lot of furniture
+ * to say that two engines were quiet. The product owner's read was that the box
+ * repeats what the report says elsewhere and buries the one fact worth keeping:
+ * when this was measured and on what.
+ *
+ * So: the date, the question count, and the engines that ANSWERED (rendered as
+ * logo marks beside the line). The ones that did not are a note on the line
+ * rather than a chip of their own, and the fraction is gone — "3 of 3" invited
+ * a reader to wonder which two of five were missing without telling them.
+ */
+export function buildMeasurementLine(insights: SeoGeoInsights): MeasurementLineView {
+  const asked = insights.promptSet?.length ?? 0;
+  const byEngine = new Map((insights.perEngine ?? []).map((e) => [e.engine, e] as const));
+  const measured: MeasuredEngineView[] = [];
+  const silent: string[] = [];
+  /**
+   * The most questions any one engine actually ANSWERED — which is what "on N
+   * buyer questions" has to count (review wave, 2026-09).
+   *
+   * `promptSet.length` is what we asked. A run in which an engine timed out
+   * halfway, or the pipeline was cut short, asked 20 and measured 12, and the
+   * line said 20 above a report built entirely from the 12. Every engine gets
+   * the same prompt set, so the largest per-engine count is the number of
+   * questions this snapshot has any answer for at all.
+   */
+  let answered = 0;
+  for (const engine of ENGINE_ORDER) {
+    const row = byEngine.get(engine);
+    if (!row) continue;
+    const name = ENGINE_LABELS[engine] ?? "Engine";
+    if (row.captureTier !== "UNAVAILABLE" && row.promptsMeasured > 0) {
+      measured.push({ engine, name });
+      answered = Math.max(answered, row.promptsMeasured);
+    } else silent.push(name);
+  }
+  // Never MORE than we asked: a stored count that overshoots the prompt set is
+  // a broken record, not a reason to claim a bigger sample.
+  const counted = answered > 0 ? Math.min(answered, asked || answered) : asked;
+  const stamp = `Measured ${formatCapturedShort(insights.capturedAt)}`;
+  return {
+    line: counted > 0 ? `${stamp} on ${counted} buyer question${counted === 1 ? "" : "s"}` : stamp,
+    measured,
+    missingNote:
+      silent.length === 0
+        ? null
+        : `${listPhrase(silent)} returned no answers this run.`,
+  };
+}
+
+/** "a", "a and b", "a, b and c" — client copy, so no serial comma and no dashes. */
+function listPhrase(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
 
 /** Closed provider → "measured through …" phrase (provenance without badges). */
 const PROVIDER_PHRASES: Record<string, string> = {
   OpenAI: "through the OpenAI API",
   Gemini: "through the Google Gemini API",
   Anthropic: "through the Anthropic API",
+  Perplexity: "through the Perplexity API",
+  Microsoft: "through Copilot",
 };
 
 function providerPhrase(source: string | null): string {
@@ -991,15 +1119,23 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
   const brandRate = b.measured > 0 ? b.named / b.measured : null;
   const catRate = c.measured > 0 ? c.named / c.measured : null;
 
+  /**
+   * NOT "the work below" any more (round 6). This sentence renders in two
+   * places — Home's "SEO & AI visibility" card and the panel's presence section
+   * — and there is no plan under either of them: the Karos-owned action plan was
+   * unmounted from the client report, and on Home the takeaway was never above
+   * anything. Naming the agents instead is true on both surfaces and says who is
+   * doing it.
+   */
   let takeaway: string | null = null;
   if (brandRate !== null && catRate !== null) {
     if (brandRate >= 0.5 && catRate < 0.25) {
       takeaway =
-        "Engines know who you are, but you're missing from the questions new customers ask. That's the gap the work below closes.";
+        "Engines know who you are, but you're missing from the questions new customers ask. That's the gap our agents are working on.";
     } else if (brandRate < 0.5 && catRate < 0.25) {
       takeaway = "Engines rarely name you even when asked directly. Improving your AI readiness comes first.";
     } else if (brandRate >= 0.5 && catRate >= 0.25) {
-      takeaway = "You show up both by name and in open category questions. The work below protects that position.";
+      takeaway = "You show up both by name and in open category questions. Our agents' job now is to protect that position.";
     } else {
       takeaway =
         "You appear in category questions more often than when buyers ask about you by name. Strengthening your brand signals makes that recognition stick.";
@@ -1024,8 +1160,26 @@ export function buildPresence(insights: SeoGeoInsights): PresenceView {
       emptyLine: "No category questions were measured this run.",
     }),
     takeaway,
+    /**
+     * TWO conditions, and the second one was missing (2026-08).
+     *
+     * The gate used to be `competitors > 0` alone — "is there a roster to have a
+     * share OF" — and never asked whether anything was MEASURED. But
+     * `computeRosterSharePct` (lib/seo-geo.ts) returns a literal `0` when its
+     * denominator is empty, which is every degraded capture: an all-UNAVAILABLE
+     * engine run, an imported bundle, a snapshot where no category question came
+     * back. So a client whose category tile correctly read "No category
+     * questions were measured this run" got a confident **0%** beside it, on a
+     * meter drawn to zero, for the same run — and this is the number this
+     * object's own explainer calls "the single number for how much of the AI
+     * conversation you own". Zero there is a verdict, not a blank.
+     *
+     * `measured` is the same count the category tile above branches on, read
+     * through the same `presenceCounts` helper, so the two cells can no longer
+     * disagree about whether the run produced anything.
+     */
     rosterShare:
-      competitors > 0
+      competitors > 0 && c.measured > 0
         ? {
             value: `${Math.round(insights.rosterSharePct)}%`,
             pct: Math.round(insights.rosterSharePct),
@@ -1519,15 +1673,25 @@ const QUALIFIER_DEFAULT = "Under review by the Karos team";
  * repo. Naming an agent a client doesn't have is the exact defect F7 reports.
  */
 const REC_PRODUCTS: Record<string, ManagedTaskType> = {
-  // Content-shaped checks → the blog_article product.
-  "GEO-02": "blog_article",
-  "GEO-03": "blog_article",
-  "GEO-09": "blog_article",
-  "GEO-20": "blog_article",
-  "GEO-22": "blog_article",
-  "BOTH-13": "blog_article",
-  "BOTH-16": "blog_article",
-  // Page-level title / description work → the landing_page product.
+  // THE SEVEN CONTENT-SHAPED CHECKS LEFT THIS MAP 2026-08-06, when the blog
+  // stopped being a managed product: GEO-02, GEO-03, GEO-09, GEO-20, GEO-22,
+  // BOTH-13 and BOTH-16 all pointed at `blog_article`.
+  //
+  // They were NOT re-pointed at the v2 blog agent, and this file's own doctrine
+  // is the reason. The paragraph above refuses to name the LinkedIn and Reddit
+  // agents here because they are per-client CUSTOM agents, this panel never
+  // receives `client.customAgentIds`, and "naming an agent a client doesn't have
+  // is the exact defect F7 reports". The blog is now exactly that kind of agent,
+  // so mapping it here would reintroduce the defect this map was cleaned up to
+  // remove — for seven ids at once.
+  //
+  // What those seven gaps lose is one clause: the sentence reads "<fix route>"
+  // instead of "<fix route> Produced by the Blog article managed product." The
+  // gap, its severity, its rank and its fix route are unchanged. Re-adding the
+  // clause honestly needs this panel to be handed the client's grants, which is
+  // a prop change through seo-geo-panel.tsx, not an edit here.
+  //
+  // Page-level title / description work → the landing_page product, still managed.
   "SEO-02": "landing_page",
   "SEO-06": "landing_page",
 };
@@ -1650,6 +1814,12 @@ const CELL_VIEW: Record<string, { label: string; tone: Tone; mark: AnswerCellVie
   named: { label: "Named", tone: "info", mark: "solid" },
   cited_not_named: { label: "Used your site, didn't name you", tone: "warning", mark: "ring" },
   absent: { label: "Not named", tone: "neutral", mark: "hollow" },
+  // T-B16/SCRUM-271: Gemini-only — a genuinely different fact from "absent"
+  // (an AI Overview came back and simply skipped the brand). Never falls
+  // through to CELL_VIEW_DEFAULT ("Not measured"), which would wrongly claim
+  // the prompt wasn't captured this run — it was, and it has a real cell
+  // stating so.
+  aio_absent: { label: "No AI Overview shown", tone: "neutral", mark: "hollow" },
   unavailable: { label: "Not measured", tone: "neutral", mark: "none" },
 };
 const CELL_VIEW_DEFAULT = CELL_VIEW.unavailable;
@@ -1754,10 +1924,20 @@ export function buildAnswerGridViews(insights: SeoGeoInsights): AnswerGridView |
       groups.push({ intentLabel: intentLabel(intent), basisLabel: basisLabel(intent), rows });
   }
 
+  // aio_absent only ever appears on a Gemini cell (see GeoProbe.aioAbsent) —
+  // the legend explains it only when the grid actually contains one, rather
+  // than teaching every client a state their own data never shows.
+  const hasAioAbsent = grid.some((row) => (row.cells ?? []).some((c) => c.state === "aio_absent"));
   return {
     engines,
     groups,
-    legend: [CELL_VIEW.named_first, CELL_VIEW.named, CELL_VIEW.cited_not_named, CELL_VIEW.absent],
+    legend: [
+      CELL_VIEW.named_first,
+      CELL_VIEW.named,
+      CELL_VIEW.cited_not_named,
+      CELL_VIEW.absent,
+      ...(hasAioAbsent ? [CELL_VIEW.aio_absent] : []),
+    ],
   };
 }
 

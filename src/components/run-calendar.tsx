@@ -1,29 +1,52 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { ContentPlatformMark, SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
-import { Badge, Button } from "@/components/ui";
+import { Badge, Button, buttonClass } from "@/components/ui";
 import { jobStatusMeta } from "@/components/job-status";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { MarkPostedRow } from "@/components/mark-posted-row";
 import { ScheduleRunModal } from "@/components/schedule-run-modal";
 import { platformLabel } from "@/lib/integrations/platforms";
-import { setPlannedRunStatusAction, deletePlannedRunAction } from "@/lib/actions/planned-run-actions";
+import {
+  setPlannedRunStatusAction,
+  deletePlannedRunAction,
+  updatePlannedRunPromptAction,
+} from "@/lib/actions/planned-run-actions";
+import { markActionDoneAction } from "@/lib/actions/action-list-actions";
 import { pastRunHasNoDeliverables, showsPastRunReviewControl } from "@/lib/calendar-past-runs";
 import { cn, relativeTime } from "@/lib/utils";
+import { sameLocalDay } from "@/lib/scheduling";
+import { formatDayLong } from "@/lib/date-format";
+import { ArchiveView } from "@/components/archive-view";
+// The statuses THIS archive may hold, for the reader it is being rendered to —
+// the same function that builds its dropdown, so a restored `?status=` cannot
+// name one the control does not offer.
+import { offeredStatesFor } from "@/lib/client-state-domain";
+import {
+  useSuggestionActions,
+  SuggestionRow,
+  type SuggestedTaskView,
+} from "@/components/pending-task-suggestions";
 import type { AssetImage } from "@/lib/asset-images";
 import {
+  ALL_CALENDAR_RUN_LEGEND_KEYS,
   calendarFilterKeyMatchable,
   calendarFilterLabel,
+  calendarRunLegendLabel,
   postKindLabel,
   type CalendarAssetKind,
   type CalendarFilterKey,
+  type CalendarRunLegendKey,
 } from "@/lib/calendar-kind";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
+
+/** The one `useSuggestionActions(clientId)` instance RunCalendar lifts to the top and threads down. */
+type SuggestionActions = ReturnType<typeof useSuggestionActions>;
 
 /* ── Serializable shapes built by the calendar page ──────────────────── */
 
@@ -217,6 +240,43 @@ function dayKey(at: number): string {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 }
 
+/**
+ * Portal revamp, Surface 05 — the four calendar views. Week is the default.
+ *
+ * Declared in lib/calendar-view-modes.ts since portal feedback round 2
+ * (2026-09): the archive view is a URL destination (`/calendar?view=archive`)
+ * and the SERVER page that parses `?view=` validates against the same list -
+ * which it cannot import from this "use client" module without getting a
+ * client-reference proxy instead of the array.
+ *
+ * Only the TYPE is re-exported (review wave, 2026-09). The array was too, and
+ * nothing imported it — a value re-exported through a "use client" module is
+ * the exact hazard the plain module exists to remove, so leaving a second door
+ * to it open invited the bug back. Import it from lib/calendar-view-modes.
+ */
+export type { CalendarViewMode } from "@/lib/calendar-view-modes";
+import {
+  CALENDAR_QUERY_KEYS,
+  CALENDAR_TIME_VIEW_MODES,
+  formatCalendarDate,
+  formatCalendarHidden,
+  parseCalendarDate,
+  subscribeToCalendarUrl,
+  type CalendarViewMode,
+} from "@/lib/calendar-view-modes";
+
+/** Midnight of the same viewer-local day, on the one clock dayKey/the grid already use. */
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Midnight of the Sunday that starts this instant's week (viewer-local, same clock as the grid). */
+function startOfWeek(d: Date): Date {
+  const start = startOfDay(d);
+  start.setDate(start.getDate() - start.getDay());
+  return start;
+}
+
 function timeStr(at: number, timeZone?: string): string {
   // Pinned locale: SSR (Node) and the browser must format identically or the
   // chip title attributes trigger hydration mismatches. Pinning the zone too
@@ -279,7 +339,10 @@ const POST_CHIP_CLASS: Record<CalendarPost["kind"], string> = {
   // Solid border against placeholder's dashed one, and no danger tint: a held
   // post is real, dated work that is simply next in line.
   held: "border border-muted-2/60 bg-foreground/[0.06] text-foreground/70",
-  draft: "border border-dashed border-muted-2/40 bg-foreground/[0.02] text-muted-2",
+  // Neon tint, not the same dashed grey as placeholder: a draft is unapproved
+  // content awaiting review, the same fact notification-bell's "review_pending"
+  // task row already marks with neon rather than a neutral tone.
+  draft: "border border-dashed border-neon/40 bg-neon/[0.05] text-neon",
 };
 
 
@@ -347,6 +410,36 @@ function PostChip({
   );
 }
 
+/**
+ * A Task-Map suggestion's compact grid chip — visually distinct from every
+ * real `CalendarAssetKind` on purpose (dashed warning tint, never the rest of
+ * the palette): it is a PROPOSAL placed on an inferred date, not dated
+ * content, and must not read as one more scheduled/draft/placeholder kind.
+ * Clicking it opens the day detail, same as any other chip in a cell — the
+ * Approve/Dismiss controls live there and in the week/day views, where a
+ * suggestion gets the full interactive row (see SuggestionRow).
+ */
+function SuggestionChip({
+  task,
+  size = "cell",
+}: {
+  task: SuggestedTaskView;
+  size?: ChipSize;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-1 rounded border border-dashed border-warning/50 bg-warning/10 text-warning leading-tight truncate",
+        CHIP_SIZE[size],
+      )}
+      title={`Suggested${task.platform ? ` · ${platformLabel(task.platform)}` : ""} · ${task.title}`}
+    >
+      <Icon name="Sparkles" className="h-2.5 w-2.5 shrink-0" />
+      <span className="truncate">{task.title}</span>
+    </div>
+  );
+}
+
 /* ── Day detail ──────────────────────────────────────────────────────── */
 
 function ScheduledRunCard({
@@ -391,6 +484,36 @@ function ScheduledRunCard({
   const [busy, setBusy] = useState<null | "pause" | "delete">(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Portal revamp, Surface 05 — "the box to add [instructions]." Local edit
+  // state for the prompt only; pause/delete keep their own `busy`/`error` so
+  // saving a note can never disable the pause button or vice versa.
+  const [editingPrompt, setEditingPrompt] = useState(false);
+  const [promptDraft, setPromptDraft] = useState(run.prompt ?? "");
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [promptError, setPromptError] = useState<string | null>(null);
+
+  async function savePrompt() {
+    setSavingPrompt(true);
+    setPromptError(null);
+    try {
+      const res = await updatePlannedRunPromptAction(run.id, promptDraft);
+      if (res?.error) {
+        setPromptError(res.error);
+        return;
+      }
+      setEditingPrompt(false);
+      // Action 13 ("Add context to a post that is coming up") — event-tracked,
+      // no live signal answers it (lib/action-list.ts). This IS the one save
+      // site the SOW names ("Instructions saved on one"); fire-and-forget,
+      // same as action 12 above.
+      if (viewerIsClient) void markActionDoneAction(run.clientId, "13");
+      router.refresh();
+    } catch (e) {
+      setPromptError(e instanceof Error ? e.message : "Couldn't save these instructions.");
+    } finally {
+      setSavingPrompt(false);
+    }
+  }
 
   // Both handlers previously ignored the result and never cleared the busy
   // flag: a refused call span forever with no message and left the card on
@@ -471,10 +594,58 @@ function ScheduledRunCard({
           {run.stuckMessage && <p className="mt-1.5 text-xs text-danger">{run.stuckMessage}</p>}
           {run.agentDescription && <p className="mt-1.5 text-xs text-muted-2">{run.agentDescription}</p>}
           <div className="mt-2.5 border-t border-border pt-2">
-            <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-2">Will run</p>
-            <p className="text-xs italic text-muted">
-              {run.prompt ? `“${run.prompt}”` : "Runs the agent's default playbook."}
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-2">
+                Instructions
+              </p>
+              {!editingPrompt && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPromptDraft(run.prompt ?? "");
+                    setPromptError(null);
+                    setEditingPrompt(true);
+                  }}
+                  className="text-[11px] text-muted-2 underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  {run.prompt ? "Edit" : "Add"}
+                </button>
+              )}
+            </div>
+            {editingPrompt ? (
+              <div className="mt-1.5">
+                <textarea
+                  autoFocus
+                  rows={2}
+                  maxLength={4000}
+                  value={promptDraft}
+                  onChange={(e) => setPromptDraft(e.target.value)}
+                  placeholder="Anything this post should know…"
+                  className="w-full rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50"
+                />
+                {promptError && <p className="mt-1 text-xs text-danger">{promptError}</p>}
+                <div className="mt-1.5 flex items-center gap-2">
+                  <Button size="sm" variant="accent" disabled={savingPrompt} onClick={savePrompt}>
+                    {savingPrompt ? "Saving…" : "Save"}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingPrompt(false);
+                      setPromptError(null);
+                    }}
+                    disabled={savingPrompt}
+                    className="text-xs text-muted hover:text-foreground"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs italic text-muted">
+                {run.prompt ? `“${run.prompt}”` : "Nothing added yet. Runs the agent's default playbook."}
+              </p>
+            )}
           </div>
           {/* The schedule's own track record - this card IS a future
               projection with no job of its own, so this is the only place it
@@ -871,10 +1042,6 @@ function PausedRunNotice({ run, onDone }: { run: PausedRunMemo; onDone: () => vo
  */
 const NO_RUN_STATUS = { tone: "neutral" as const, label: "Done" };
 
-/** `Button` renders a <button>; an anchor can't nest one, so it borrows the look. */
-const REVIEW_BUTTON_CLASS =
-  "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-xs text-foreground transition-all duration-200 hover:border-foreground/30 hover:bg-foreground/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25";
-
 function PastRunCard({
   run,
   canOpenJob,
@@ -999,14 +1166,19 @@ function PastRunCard({
           {showReviewControl && (
             <div className="mt-2">
               {href ? (
-                <Link href={href} className={REVIEW_BUTTON_CLASS}>
+                /* round 6 (rule 2): no glyph after a button label. A trailing
+                   chevron belongs to a row that navigates, not to a control.
+                   round 6 review (E3): `Button` renders a <button> and an anchor
+                   cannot nest one, so it borrows the recipe rather than
+                   restating it — the `REVIEW_BUTTON_CLASS` const that used to
+                   live here had drifted to `transition-all` and its own
+                   focus-visible ring. */
+                <Link href={href} className={buttonClass({ variant: "outline", size: "sm" })}>
                   Review deliverable
-                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
                 </Link>
               ) : (
                 <Button size="sm" variant="outline" onClick={openAsset ?? undefined}>
                   Review deliverable
-                  <Icon name="ArrowRight" className="h-3.5 w-3.5" />
                 </Button>
               )}
             </div>
@@ -1133,6 +1305,231 @@ function PostCard({
   );
 }
 
+/* ── Week / Day views (portal revamp, Surface 05) ──────────────────────
+   Both read the SAME dayKey-mapped data the month grid already builds
+   (runsByDay/postsByDay) — no new data shape, just a different layout over
+   it, so nothing here can disagree with the month view about what is on a
+   given day. */
+
+function WeekView({
+  weekDays,
+  today,
+  runsByDay,
+  postsByDay,
+  suggestionsByDay,
+  selectedKey,
+  onSelectDay,
+  onOpenAsset,
+  viewerIsClient,
+  canSchedule,
+  onScheduleAt,
+  suggestionActions,
+}: {
+  weekDays: Date[];
+  today: Date;
+  runsByDay: Map<string, CalendarRun[]>;
+  postsByDay: Map<string, CalendarPost[]>;
+  suggestionsByDay: Map<string, SuggestedTaskView[]>;
+  selectedKey: string | null;
+  onSelectDay: (key: string) => void;
+  onOpenAsset: (id: string) => void;
+  viewerIsClient: boolean;
+  canSchedule: boolean;
+  onScheduleAt: (at: number) => void;
+  /** Approve/Dismiss for the full rows below — one shared instance, lifted to RunCalendar. */
+  suggestionActions: SuggestionActions;
+}) {
+  return (
+    <>
+      {/* Week grid — one row, richer previews than the month cell allows */}
+      <div className="hidden grid-cols-7 sm:grid">
+        {weekDays.map((d) => {
+          const key = dayKey(d.getTime());
+          const isToday = sameLocalDay(d.getTime(), today.getTime());
+          const dayRuns = runsByDay.get(key) ?? [];
+          const dayPosts = postsByDay.get(key) ?? [];
+          const daySuggestions = suggestionsByDay.get(key) ?? [];
+          const chipCount = dayRuns.length + dayPosts.length + daySuggestions.length;
+          const isSelected = key === selectedKey;
+          const canScheduleHere = chipCount === 0 && canSchedule;
+          const activate = () => {
+            if (chipCount > 0) onSelectDay(key);
+            else if (canScheduleHere) onScheduleAt(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9, 0, 0, 0).getTime());
+          };
+          const interactive = chipCount > 0 || canScheduleHere;
+          const shownRuns = dayRuns.slice(0, 4);
+          const shownPosts = dayPosts.slice(0, Math.max(0, 4 - shownRuns.length));
+          const shownSuggestions = daySuggestions.slice(
+            0,
+            Math.max(0, 4 - shownRuns.length - shownPosts.length),
+          );
+          return (
+            <div
+              key={key}
+              onClick={activate}
+              role={interactive ? "button" : undefined}
+              tabIndex={interactive ? 0 : -1}
+              onKeyDown={(event) => {
+                if (!interactive) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  activate();
+                }
+              }}
+              className={cn(
+                "min-h-[150px] border-b border-r border-border p-1.5 text-left align-top transition-colors last:border-r-0",
+                isToday && "bg-foreground/[0.04]",
+                isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
+                interactive && "cursor-pointer hover:bg-surface-2",
+              )}
+            >
+              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-2">
+                <span>{DAY_LABELS[d.getDay()]}</span>
+                <span className={cn(
+                  "flex h-5 w-5 items-center justify-center rounded-full text-[11px] leading-none",
+                  isToday ? "bg-primary text-primary-foreground font-bold" : "text-foreground",
+                )}>
+                  {d.getDate()}
+                </span>
+              </p>
+              <div className="space-y-1">
+                {shownRuns.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
+                {shownPosts.map((p) => (
+                  <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
+                ))}
+                {shownSuggestions.map((s) => <SuggestionChip key={s.id} task={s} size="row" />)}
+                {chipCount > 4 && <p className="pl-1 text-[11px] text-muted-2">+{chipCount - 4} more</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Day-by-day list underneath — the SOW's own phrase: "the day by day
+          list underneath covers the next week." Shown at every width (unlike
+          the month view's mobile-only agenda), since a 7-cell week already
+          fits without the density problem a 42-cell month has. `sm:hidden`
+          previously contradicted this exact comment — it hid the list at
+          every width ≥640px, i.e. virtually every desktop/tablet session. */}
+      <ul className="divide-y divide-border">
+        {weekDays.map((d) => {
+          const key = dayKey(d.getTime());
+          const isToday = sameLocalDay(d.getTime(), today.getTime());
+          const dayRuns = runsByDay.get(key) ?? [];
+          const dayPosts = postsByDay.get(key) ?? [];
+          const daySuggestions = suggestionsByDay.get(key) ?? [];
+          const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
+          return (
+            <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+              <button
+                type="button"
+                onClick={() => onSelectDay(key)}
+                className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
+              >
+                <span className="text-xs font-semibold">{DAY_LABELS[d.getDay()]} {d.getDate()}</span>
+                <span className="text-[11px] text-muted-2">
+                  {dayCount === 0 ? "Nothing yet" : `${dayCount} item${dayCount === 1 ? "" : "s"}`}
+                </span>
+                <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 text-muted-2" />
+              </button>
+              {dayCount > 0 && (
+                <div className="space-y-1.5">
+                  {dayRuns.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
+                  {dayPosts.map((p) => (
+                    <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
+                  ))}
+                  {daySuggestions.map((s) => (
+                    <div key={s.id} className="rounded-md border border-dashed border-warning/40 bg-warning/5 px-2.5 py-2">
+                      <SuggestionRow
+                        task={s}
+                        isPending={suggestionActions.pendingIds.has(s.id)}
+                        error={suggestionActions.errors[s.id]}
+                        onApprove={() => suggestionActions.approve(s.id, s.at)}
+                        onSkip={() => suggestionActions.skip(s.id)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
+function DayView({
+  day,
+  isToday,
+  runs,
+  posts,
+  suggestions,
+  onOpenAsset,
+  viewerIsClient,
+  canSchedule,
+  onScheduleAt,
+  suggestionActions,
+}: {
+  day: Date;
+  isToday: boolean;
+  runs: CalendarRun[];
+  posts: CalendarPost[];
+  suggestions: SuggestedTaskView[];
+  onOpenAsset: (id: string) => void;
+  viewerIsClient: boolean;
+  canSchedule: boolean;
+  onScheduleAt: (at: number) => void;
+  suggestionActions: SuggestionActions;
+}) {
+  const empty = runs.length === 0 && posts.length === 0 && suggestions.length === 0;
+  return (
+    <div className="p-4">
+      <p className="mb-3 flex items-center gap-2 text-sm font-medium">
+        {day.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+        {isToday && <Badge tone="neon">Today</Badge>}
+      </p>
+      {empty ? (
+        <div className="rounded-md border border-dashed border-border bg-surface-2/50 px-4 py-6 text-center">
+          <p className="text-xs text-muted-2">Nothing on this day.</p>
+          {/* PARITY PASS (2026-09), same ruling as the header control above:
+              the day view's empty state is a PAINTED offer, not the silent
+              empty-cell click, and in accent orange it was the only thing on
+              an otherwise identical empty day — so it says "Internal" and
+              gives up the accent. */}
+          {canSchedule && (
+            <button
+              type="button"
+              onClick={() => onScheduleAt(new Date(day.getFullYear(), day.getMonth(), day.getDate(), 9, 0, 0, 0).getTime())}
+              className="mt-2 text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
+            >
+              Internal · Schedule a run
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {runs.map((r) => <RunChip key={r.kind + r.id} run={r} size="row" />)}
+          {posts.map((p) => (
+            <PostChip key={p.assetId} post={p} onOpen={onOpenAsset} size="row" viewerIsClient={viewerIsClient} />
+          ))}
+          {suggestions.map((s) => (
+            <div key={s.id} className="rounded-md border border-dashed border-warning/40 bg-warning/5 px-2.5 py-2">
+              <SuggestionRow
+                task={s}
+                isPending={suggestionActions.pendingIds.has(s.id)}
+                error={suggestionActions.errors[s.id]}
+                onApprove={() => suggestionActions.approve(s.id, s.at)}
+                onSkip={() => suggestionActions.skip(s.id)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main component ──────────────────────────────────────────────────── */
 
 export function RunCalendar({
@@ -1147,6 +1544,17 @@ export function RunCalendar({
   agents = [],
   connectedPlatformsByClient,
   defaultClientId,
+  archiveAssets,
+  agentLabelByAssetId,
+  initialViewMode,
+  initialArchiveStatus,
+  initialDate,
+  initialArchiveAgent,
+  initialArchiveSearch,
+  initialHiddenStatuses,
+  initialAssetId,
+  suggestions = [],
+  suggestionsClientId,
 }: {
   runs: CalendarRun[];
   /**
@@ -1184,11 +1592,408 @@ export function RunCalendar({
    */
   connectedPlatformsByClient?: Record<string, string[]>;
   defaultClientId?: string;
+  /**
+   * Archive view (portal revamp, Surface 05) — the SAME reader ArchiveView
+   * always took (Workspace's Archive tab, Account Center's Archive tab): a
+   * client's set is POSTED work from the last ~30 days (getClientArchiveAssets),
+   * staff keep the full library. Filtered server-side in calendar-body.tsx,
+   * not derived from `assets` above — that prop is unfiltered (it feeds the
+   * detail modal's lookup) and archive membership is a real rule, not "every
+   * asset this page happens to have in hand".
+   */
+  archiveAssets?: Asset[];
+  /** assetId → agent label for the rows above (§7.3 identity, contentLabelsByAsset). */
+  agentLabelByAssetId?: Record<string, string>;
+  /**
+   * Which view this calendar OPENS on, from the page's own `?view=` (portal
+   * feedback round 2, 2026-09). Account Center gave up its Archive tab —
+   * "Archive does not need to be in settings, it's in the calendar" — so the
+   * archive needs a URL, and every producer of the old settings deep link now
+   * writes `?view=archive`.
+   *
+   */
+  initialViewMode?: CalendarViewMode;
+  /**
+   * The anchor day of the active time view, from `?date=` (flow audit 2026-09,
+   * R5) — a `YYYY-MM-DD` day the page has already validated. Absent means
+   * today, which is where this calendar has always opened.
+   *
+   * A STRING, NOT MILLIS, and that is the whole point (review wave, 2026-09).
+   * Millis meant the page parsed `YYYY-MM-DD` at local midnight in the SERVER's
+   * zone and this component read the instant back in the reader's: west of the
+   * server that is the previous day, and the two sides render different grids
+   * from the same prop — a hydration mismatch on top of a wrong anchor. A day
+   * string means the same day everywhere; it is parsed below, once, against the
+   * only clock this calendar uses (see `dayKey`).
+   */
+  initialDate?: string;
+  /** The archive's agent filter from `?agent=`, already narrowed by the page to a label this archive holds. */
+  initialArchiveAgent?: string;
+  /** The archive's title search from `?q=`. */
+  initialArchiveSearch?: string;
+  /**
+   * The archive's own status filter, seeded once from `?status=` — the other
+   * half of the same deep link (the Reporting chart's "Content by status" rows
+   * write both params). Validated by the page, which narrows it through
+   * `offeredStatesFor("archive", …)` so a status this archive cannot hold falls
+   * back to the unfiltered list rather than an empty one.
+   */
+  initialArchiveStatus?: Asset["status"] | "all";
+  /**
+   * The legend chips this reader has dimmed, from `?hidden=` (review wave,
+   * 2026-09). They decide what the grid PAINTS, so a week shared with them set
+   * has to arrive with them set — otherwise the link shows the recipient a
+   * different screen from the one the sender was looking at.
+   */
+  initialHiddenStatuses?: readonly CalendarFilterKey[];
+  /**
+   * ONE DELIVERABLE, OPENED ON LOAD, from `?asset=` (round 6, decision 8).
+   *
+   * Handed straight to the archive, which is the view that holds the tiles and
+   * the detail modal. The page validates nothing beyond its presence: what may
+   * be shown is `isInClientArchive`'s answer, and the archive already refuses an
+   * id it does not hold rather than opening an empty modal.
+   */
+  initialAssetId?: string;
+  /**
+   * Task-Map proposals (pending, karos_managed/copilot), already carrying an
+   * inferred `at` (lib/calendar-suggestion-placement.ts) — placed on their own
+   * date, distinct from every real `CalendarAssetKind` (see SuggestionChip).
+   * Never derived from `posts`/`assets`: a suggestion is a ClientTask, not an
+   * Asset, and has no asset status for `postKind` to classify.
+   */
+  suggestions?: SuggestedTaskView[];
+  /**
+   * The one client Approve/Dismiss on a suggestion acts against — absent (and
+   * `suggestions` therefore always empty) on the cross-client staff overview,
+   * which has no single client to approve a task for.
+   */
+  suggestionsClientId?: string;
 }) {
   const today = useMemo(() => new Date(), []);
-  const [viewYear, setViewYear] = useState(today.getFullYear());
-  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  /**
+   * Where every view opens: `?date=` when the URL named a real day, today
+   * otherwise (flow audit 2026-09, R5). One value, so a link that says
+   * `?view=month&date=2026-03-04` lands Month on March and Week on the week of
+   * the 4th — the three anchors below are all derived from it rather than each
+   * quietly starting at today.
+   */
+  const anchorDay = useMemo(
+    () => parseCalendarDate(initialDate) ?? today,
+    [initialDate, today],
+  );
+  const [viewYear, setViewYear] = useState(anchorDay.getFullYear());
+  const [viewMonth, setViewMonth] = useState(anchorDay.getMonth());
+  // Portal revamp, Surface 05 — "Three views, weekly by default." Month's own
+  // year/month state above is untouched by this: Week and Day each navigate
+  // off their own anchor instant instead, so switching views never resets
+  // Month's position (or vice versa).
+  // Seeded from `?view=` when the URL named one (portal feedback round 2,
+  // 2026-09); Week otherwise, which is still the default this page opens on.
+  const [viewMode, setViewMode] = useState<CalendarViewMode>(initialViewMode ?? "week");
+  // Action 12 ("Look at your week") — event-tracked, no live signal answers it
+  // (lib/action-list.ts). Week is the default view, so a client who lands
+  // here at all has satisfied it; fire once per mount, never per re-render.
+  const firedWeekAction = useRef(false);
+  useEffect(() => {
+    if (firedWeekAction.current) return;
+    if (!viewerIsClient || !defaultClientId || viewMode !== "week") return;
+    firedWeekAction.current = true;
+    void markActionDoneAction(defaultClientId, "12");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire-once-on-mount by design, not a viewMode watcher
+  }, []);
+  const [weekAnchor, setWeekAnchor] = useState(() => startOfWeek(anchorDay));
+  const [dayAnchor, setDayAnchor] = useState(() => startOfDay(anchorDay));
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  /**
+   * The archive's three filters, HELD HERE (review wave, 2026-09).
+   *
+   * They used to be ArchiveView's own state, seeded once per mount. Leaving the
+   * archive and coming back remounted it, so the filters reset to the seed
+   * props — which `replaceState` had left describing the FIRST load, not the
+   * URL the reader was looking at. Back had the same shape of bug: the query
+   * still said `status=published&agent=…`, and the list showed everything.
+   * One owner, one answer: this component holds them, the URL mirrors them,
+   * `popstate` writes them back, and ArchiveView renders what it is given.
+   */
+  const [archiveFilters, setArchiveFilters] = useState<{
+    status: Asset["status"] | "all";
+    agent: string;
+    search: string;
+  }>(() => ({
+    status: initialArchiveStatus ?? "all",
+    agent: initialArchiveAgent ?? "all",
+    search: initialArchiveSearch ?? "",
+  }));
+  // Status filter: which of the named calendar statuses are currently hidden.
+  // "review" is a CalendarRun bucket (jobStatus === "review", i.e. Pending
+  // Review) — everything else is a CalendarPost kind. Seeded from `?hidden=`
+  // and mirrored back into it below (review wave, 2026-09): these chips decide
+  // what the grid paints, so a shared week has to carry them.
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<CalendarFilterKey>>(
+    () => new Set(initialHiddenStatuses ?? []),
+  );
+
+  /* ── URL state (flow audit 2026-09, R5) ─────────────────────────────
+     Nothing on this page used to reach the URL: view mode, the anchor and the
+     archive's filters were all local, so Back exited the calendar instead of
+     undoing the last move and neither a week nor a filtered archive could be
+     sent to anyone. The split below is the whole rule:
+
+       · VIEW MODE is a `pushState` — a real history entry, because moving
+         between Week and Archive is the move a reader expects Back to undo.
+       · EVERYTHING ELSE (the anchor, the archive's three filters) is
+         `replaceState` — they refine the view you are already in, and one Back
+         per arrow press or per keystroke would bury the entry that matters
+         under twenty that do not.
+
+     BOTH ARE THE NATIVE HISTORY API, not `router.push`. Next 16 supports
+     `history.pushState`/`replaceState` for exactly this case and keeps
+     `usePathname`/`useSearchParams` in step with them. `router.push` would be
+     a navigation: a full RSC refetch of a page that has just re-read every run,
+     post, asset and archive row on the server — on every press of Day, Week,
+     Month or Archive — to produce markup identical to what this component can
+     already render from state it is holding. Nothing on this page depends on
+     the server for a view change; the payload is the same for all four views.
+
+     Neither call re-renders the server component, so the seed props above stay
+     as they were for the life of the page. That is correct rather than a
+     compromise: they are what a FRESH load or a pasted link opens on, and from
+     mount onward the URL is being made to describe state React already holds.
+     The `popstate` handler below is what closes the loop for Back/Forward. */
+  const writeCalendarQuery = useCallback(
+    (next: Partial<Record<keyof typeof CALENDAR_QUERY_KEYS, string | null>>, mode: "push" | "replace") => {
+      if (typeof window === "undefined") return;
+      const params = new URLSearchParams(window.location.search);
+      for (const [key, value] of Object.entries(next)) {
+        const param = CALENDAR_QUERY_KEYS[key as keyof typeof CALENDAR_QUERY_KEYS];
+        if (value == null || value === "") params.delete(param);
+        else params.set(param, value);
+      }
+      const query = params.toString();
+      const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
+      if (mode === "push") window.history.pushState(null, "", url);
+      else window.history.replaceState(null, "", url);
+    },
+    [],
+  );
+
+  /**
+   * The time view "Back to calendar" returns to (flow audit 2026-09, R6).
+   *
+   * Remembered rather than hardcoded to Week: a reader who was on Month, opened
+   * the archive and pressed Back to calendar meant *their* calendar. Seeded to
+   * Week because that is where this page opens, and never set to "archive" —
+   * the whole point is that it names somewhere else to go.
+   */
+  const [lastTimeView, setLastTimeView] = useState<Exclude<CalendarViewMode, "archive">>(
+    initialViewMode && initialViewMode !== "archive" ? initialViewMode : "week",
+  );
+
+  /**
+   * THE DAY THE ACTIVE TIME VIEW IS SITTING ON — one anchor, whichever view is
+   * showing (review wave, 2026-09).
+   *
+   * Month used to keep a year/month pair that nothing but Month's own arrows
+   * ever moved, so the three views drifted apart the moment the reader touched
+   * one: page Week forward to April and press Month, and Month opened on
+   * whatever month the page had LOADED in. Every move now goes through this
+   * single day — `goToView` carries it into the view being entered, the arrows
+   * below keep all three in step with it, and `?date=` is its spelling.
+   */
+  const activeAnchor = useMemo(
+    () =>
+      viewMode === "month"
+        ? new Date(viewYear, viewMonth, 1)
+        : viewMode === "day"
+          ? dayAnchor
+          : weekAnchor,
+    [viewMode, viewYear, viewMonth, dayAnchor, weekAnchor],
+  );
+
+  /**
+   * Move to a view, and say so in the URL.
+   *
+   * The date written is the anchor the view being ENTERED will actually use —
+   * which is the anchor the reader is LEAVING, carried across, so Week → Month
+   * opens the month they were reading rather than the one the page loaded in.
+   * Archive has no anchor, so it drops the param instead of carrying a stale
+   * one into a list that has no dates.
+   *
+   * ENTERING A TIME VIEW ALSO CLEARS THE ARCHIVE'S FILTERS (review wave,
+   * 2026-09). They belong to a list that is no longer on screen; leaving them
+   * in the query made every week link a reader copied carry a stranger's
+   * `status=`/`agent=`/`q=`, which then took effect the next time anyone opened
+   * the archive from it.
+   */
+  const goToView = useCallback(
+    (mode: CalendarViewMode) => {
+      setSelectedKey(null);
+      setViewMode(mode);
+      if (mode === "archive") {
+        writeCalendarQuery({ view: mode, date: null }, "push");
+        return;
+      }
+      setLastTimeView(mode);
+      setViewYear(activeAnchor.getFullYear());
+      setViewMonth(activeAnchor.getMonth());
+      setWeekAnchor(startOfWeek(activeAnchor));
+      setDayAnchor(startOfDay(activeAnchor));
+      setArchiveFilters({ status: "all", agent: "all", search: "" });
+      writeCalendarQuery(
+        {
+          view: mode,
+          date: formatCalendarDate(activeAnchor),
+          status: null,
+          agent: null,
+          search: null,
+        },
+        "push",
+      );
+    },
+    [activeAnchor, writeCalendarQuery],
+  );
+
+  /**
+   * The legend chips, mirrored into `?hidden=` (review wave, 2026-09).
+   *
+   * `replaceState`, like the anchor and the archive's filters: dimming "Drafts"
+   * refines the grid you are already reading, and one history entry per chip
+   * press would bury the view-mode entry Back is for.
+   */
+  const toggleStatus = useCallback(
+    (key: CalendarFilterKey) => {
+      // Built outside the updater, not inside it: a state updater that also
+      // writes history is called twice in development's double-render and
+      // writes twice with it.
+      const next = new Set(hiddenStatuses);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      setHiddenStatuses(next);
+      writeCalendarQuery({ hidden: formatCalendarHidden(next) }, "replace");
+    },
+    [hiddenStatuses, writeCalendarQuery],
+  );
+
+  /**
+   * The archive's own three filters: held above, mirrored into the URL here
+   * (flow audit 2026-09, R5). `replaceState`, like the anchor: a filter refines
+   * the list you are already reading, and one history entry per keystroke of the
+   * search box would make Back useless. "all"/"" clear their param rather than
+   * writing `status=all`, so an unfiltered archive has a clean link.
+   *
+   * DEBOUNCED HERE (review wave, 2026-09) — it used to be debounced inside
+   * ArchiveView, which could only do it by keeping a second copy of the filters
+   * and letting the two drift. The state moves at once (the search box must
+   * echo every keystroke); only the history write waits. WebKit throttles
+   * history writes to roughly 100 in 30 seconds and then silently drops the
+   * rest, so an uncoalesced keystroke-per-write would spend the page's whole
+   * budget on a search box and leave the view switcher — the one entry Back
+   * actually needs — unable to write at all.
+   */
+  const filterWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (filterWriteTimer.current) clearTimeout(filterWriteTimer.current);
+  }, []);
+  const onArchiveFiltersChange = useCallback(
+    (filters: { status: Asset["status"] | "all"; agent: string; search: string }) => {
+      setArchiveFilters(filters);
+      if (filterWriteTimer.current) clearTimeout(filterWriteTimer.current);
+      filterWriteTimer.current = setTimeout(() => {
+        writeCalendarQuery(
+          {
+            status: filters.status === "all" ? null : filters.status,
+            agent: filters.agent === "all" ? null : filters.agent,
+            search: filters.search.trim() || null,
+          },
+          "replace",
+        );
+      }, 300);
+    },
+    [writeCalendarQuery],
+  );
+
+  /**
+   * A DELIVERABLE WAS OPENED (round 6, decision 8).
+   *
+   * Two jobs, both of them the point of `?asset=`:
+   *
+   *  · The param leaves the URL, with `replaceState` like every other refinement
+   *    this component writes. The modal is a gesture rather than a view — Back
+   *    should step out of the archive, not reopen a post the reader has closed —
+   *    and a link that keeps reopening on reload is a link nobody can leave.
+   *  · Action 05 is written for a CLIENT. "See your first output" was proxied by
+   *    "an output exists", a fact about us; this is the event itself, recorded
+   *    the same way `12` is recorded above when a client opens their week.
+   *
+   * ONCE PER MOUNT (round 6, alignment fix 4). The row is a flag — "this client
+   * has opened a deliverable" — and it is an upsert, so firing it on the second
+   * and the ninetieth open of the archive buys nothing and costs a write each
+   * time. The ref is the whole gate: the state that would let this ask "is 05
+   * already done?" is not read by either calendar page, and adding a Firestore
+   * read to answer a question a boolean answers is the trade ruling 8 forbids.
+   */
+  const resultActionWritten = useRef(false);
+  const onArchiveAssetOpened = useCallback(
+    // round 6 review (D2): no parameter. Neither half of this needs to know
+    // WHICH deliverable was opened — the param comes off the URL wholesale and
+    // action 05 is a flag — and an unread argument only invites a reader to
+    // think one of them is keyed on it.
+    () => {
+      writeCalendarQuery({ asset: null }, "replace");
+      if (!viewerIsClient || !defaultClientId) return;
+      if (resultActionWritten.current) return;
+      resultActionWritten.current = true;
+      void markActionDoneAction(defaultClientId, "05");
+    },
+    [defaultClientId, viewerIsClient, writeCalendarQuery],
+  );
+
+  /**
+   * BACK AND FORWARD (flow audit 2026-09, R5).
+   *
+   * The props above are the SEED — what a fresh load or a pasted link opens on.
+   * They cannot be the ongoing source of truth, because `replaceState` (the
+   * anchor, the archive's filters, the legend chips) deliberately does not
+   * re-render the server component, so a prop would be stale exactly when the
+   * reader steps back.
+   *
+   * `popstate` is the honest channel: the history stack is an external system,
+   * this subscribes to it, and every entry — pushed by the view switcher or
+   * replaced by an arrow press — carries the complete state in its query. So
+   * Back steps Archive → Week, and Back again steps the week it was on, from
+   * the URL rather than from a second copy of the state kept in React.
+   *
+   * The reading and the subscribing are `lib/calendar-view-modes`'s
+   * (`calendarStateFromQuery` / `subscribeToCalendarUrl`) so that the restore
+   * is testable as behaviour rather than as source text — this effect is only
+   * the wiring from that state onto this component's.
+   */
+  useEffect(
+    () =>
+      subscribeToCalendarUrl((restored) => {
+        setSelectedKey(null);
+        setViewMode(restored.view);
+        if (restored.view !== "archive") setLastTimeView(restored.view);
+        if (restored.date) {
+          setWeekAnchor(startOfWeek(restored.date));
+          setDayAnchor(startOfDay(restored.date));
+          setViewYear(restored.date.getFullYear());
+          setViewMonth(restored.date.getMonth());
+        }
+        // The archive's filters come back too, narrowed by the same rule the
+        // page seeds them with: an entry naming a status THIS archive cannot
+        // hold restores the unfiltered list, never an empty one.
+        setArchiveFilters({
+          status:
+            offeredStatesFor("archive", viewerIsClient).find((s) => s === restored.status) ?? "all",
+          agent: restored.agent,
+          search: restored.search,
+        });
+        setHiddenStatuses(new Set(restored.hidden));
+      }),
+    [viewerIsClient],
+  );
   const [lightbox, setLightbox] = useState<{ images: AssetImage[]; index: number } | null>(null);
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -1201,17 +2006,6 @@ export function RunCalendar({
    * with it. See PausedRunNotice.
    */
   const [pausedRun, setPausedRun] = useState<PausedRunMemo | null>(null);
-  // Status filter: which of the named calendar statuses are currently hidden.
-  // "review" is a CalendarRun bucket (jobStatus === "review", i.e. Pending
-  // Review) — everything else is a CalendarPost kind.
-  const [hiddenStatuses, setHiddenStatuses] = useState<Set<CalendarFilterKey>>(new Set());
-  const toggleStatus = (key: CalendarFilterKey) =>
-    setHiddenStatuses((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
   const assetById = useMemo(() => new Map(assets.map((a) => [a.id, a])), [assets]);
   const openAsset = openAssetId ? assetById.get(openAssetId) ?? null : null;
 
@@ -1222,6 +2016,25 @@ export function RunCalendar({
   const visibleRuns = useMemo(
     () => runs.filter((r) => !(r.jobStatus === "review" && hiddenStatuses.has("review"))),
     [runs, hiddenStatuses],
+  );
+  // One shared instance for every Approve/Skip control this render tree offers
+  // (week's day-by-day list, day view, day-detail panel) — lifted here rather
+  // than one hook call per surface, so a click in any of them and the instant
+  // optimistic removal it drives are consistent across all three. Declared
+  // ABOVE `visibleSuggestions` so that memo can actually filter on
+  // `removedIds` — a skipped/approved suggestion's task doc is gone the
+  // moment the action resolves, so it must stop rendering immediately rather
+  // than waiting for the next full `suggestions` prop refresh.
+  // `?? ""` is never actually exercised: `suggestions` is only ever non-empty
+  // when calendar-body.tsx also passed a real `suggestionsClientId`.
+  const suggestionActions = useSuggestionActions(suggestionsClientId ?? "");
+
+  const visibleSuggestions = useMemo(
+    () =>
+      hiddenStatuses.has("suggested")
+        ? []
+        : suggestions.filter((s) => !suggestionActions.removedIds.has(s.id)),
+    [suggestions, hiddenStatuses, suggestionActions.removedIds],
   );
 
   const runsByDay = useMemo(() => {
@@ -1242,6 +2055,15 @@ export function RunCalendar({
     return m;
   }, [visiblePosts]);
 
+  const suggestionsByDay = useMemo(() => {
+    const m = new Map<string, SuggestedTaskView[]>();
+    for (const s of visibleSuggestions) {
+      const k = dayKey(s.at);
+      (m.get(k) ?? m.set(k, []).get(k)!).push(s);
+    }
+    return m;
+  }, [visibleSuggestions]);
+
   const totalDays = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(viewYear, viewMonth, 1).getDay();
   const totalCells = Math.ceil((firstDayOfWeek + totalDays) / 7) * 7;
@@ -1257,27 +2079,105 @@ export function RunCalendar({
   // Below `sm` the grid is replaced by this list of days that actually have
   // something on them.
   const agendaDays = useMemo(() => {
-    const out: { key: string; day: number; runs: CalendarRun[]; posts: CalendarPost[] }[] = [];
+    const out: {
+      key: string;
+      day: number;
+      runs: CalendarRun[];
+      posts: CalendarPost[];
+      suggestions: SuggestedTaskView[];
+    }[] = [];
     for (let day = 1; day <= totalDays; day++) {
       const key = `${viewYear}-${viewMonth}-${day}`;
       const dayRuns = runsByDay.get(key) ?? [];
       const dayPosts = postsByDay.get(key) ?? [];
-      if (dayRuns.length + dayPosts.length > 0) out.push({ key, day, runs: dayRuns, posts: dayPosts });
+      const daySuggestions = suggestionsByDay.get(key) ?? [];
+      if (dayRuns.length + dayPosts.length + daySuggestions.length > 0) {
+        out.push({ key, day, runs: dayRuns, posts: dayPosts, suggestions: daySuggestions });
+      }
     }
     return out;
-  }, [totalDays, viewYear, viewMonth, runsByDay, postsByDay]);
+  }, [totalDays, viewYear, viewMonth, runsByDay, postsByDay, suggestionsByDay]);
 
-  function prevMonth() {
+  /* Each of the four below now also writes `?date=` (flow audit 2026-09, R5),
+     with `replaceState`: an arrow press refines the view you are already in, so
+     it belongs in the URL — for sharing and for reload — but not in the history
+     stack, where twenty of them would bury the view-mode entry Back is for. */
+  function shiftMonth(by: number) {
     setSelectedKey(null);
-    if (viewMonth === 0) { setViewYear((y) => y - 1); setViewMonth(11); } else setViewMonth((m) => m - 1);
+    const next = new Date(viewYear, viewMonth + by, 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+    writeCalendarQuery({ date: formatCalendarDate(next) }, "replace");
+  }
+  function prevMonth() {
+    shiftMonth(-1);
   }
   function nextMonth() {
-    setSelectedKey(null);
-    if (viewMonth === 11) { setViewYear((y) => y + 1); setViewMonth(0); } else setViewMonth((m) => m + 1);
+    shiftMonth(1);
   }
+  /* And each of the two below moves Month's own year/month with it (review
+     wave, 2026-09): the three views share ONE anchor, so paging Week into April
+     and pressing Month opens April rather than the month the page loaded in.
+     `shiftMonth` needs no equivalent — `goToView` re-derives Week's and Day's
+     anchors from whichever view the reader is leaving. */
+  function shiftWeek(days: number) {
+    setSelectedKey(null);
+    const next = new Date(weekAnchor);
+    next.setDate(next.getDate() + days);
+    setWeekAnchor(next);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+    writeCalendarQuery({ date: formatCalendarDate(next) }, "replace");
+  }
+  function shiftDay(days: number) {
+    setSelectedKey(null);
+    const next = new Date(dayAnchor);
+    next.setDate(next.getDate() + days);
+    setDayAnchor(next);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+    writeCalendarQuery({ date: formatCalendarDate(next) }, "replace");
+  }
+  /** One prev/next pair and one label, whichever view is active — the header reads one control, not four. */
+  const goPrev =
+    viewMode === "month" ? prevMonth : viewMode === "week" ? () => shiftWeek(-7) : () => shiftDay(-1);
+  const goNext =
+    viewMode === "month" ? nextMonth : viewMode === "week" ? () => shiftWeek(7) : () => shiftDay(1);
+  const weekDays = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => new Date(weekAnchor.getFullYear(), weekAnchor.getMonth(), weekAnchor.getDate() + i)),
+    [weekAnchor],
+  );
+  const rangeLabel =
+    viewMode === "month"
+      ? `${MONTH_NAMES[viewMonth]} ${viewYear}`
+      : viewMode === "week"
+        ? (() => {
+            const end = weekDays[6];
+            const sameMonth = weekAnchor.getMonth() === end.getMonth();
+            return sameMonth
+              ? `${MONTH_NAMES[weekAnchor.getMonth()].slice(0, 3)} ${weekAnchor.getDate()}–${end.getDate()}`
+              : `${MONTH_NAMES[weekAnchor.getMonth()].slice(0, 3)} ${weekAnchor.getDate()} – ${MONTH_NAMES[end.getMonth()].slice(0, 3)} ${end.getDate()}`;
+          })()
+        : viewMode === "day"
+          ? formatDayLong(dayAnchor.getTime())
+          : "Archive";
 
   const selectedRuns = selectedKey ? (runsByDay.get(selectedKey) ?? []) : [];
   const selectedPosts = selectedKey ? (postsByDay.get(selectedKey) ?? []) : [];
+  const selectedSuggestions = selectedKey ? (suggestionsByDay.get(selectedKey) ?? []) : [];
+  /**
+   * ONE INTERACTIVE ROW PER SUGGESTION (review wave, 2026-09).
+   *
+   * Week already prints every day's suggestions as full Approve/Skip rows in
+   * the day-by-day list under the grid, so opening a day there put a THIRD copy
+   * of the same proposal on screen (grid chip, week row, this panel) — the
+   * "shown up 3 times" complaint that got the standalone Recommended-tasks card
+   * deleted, reappearing in a different arrangement. The panel defers to that
+   * list in Week and keeps its own rows for Month and Day, where nothing else
+   * offers them. It still SAYS the day has suggestions: silence would read as
+   * "nothing here" beside a day that has something.
+   */
+  const showSuggestionRows = viewMode !== "week";
   const selectedScheduled = selectedRuns.filter((r) => r.kind === "scheduled").sort((a, b) => a.at - b.at);
   const selectedPast = selectedRuns.filter((r) => r.kind === "past").sort((a, b) => b.at - a.at);
 
@@ -1320,29 +2220,95 @@ export function RunCalendar({
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
+            {/* PARITY PASS (2026-09). Whether a client may schedule their own
+                run is still an open product question, so the control keeps its
+                staff-only gate — but it no longer makes the two versions of
+                this header look like different products. As `variant="accent"`
+                it was the strongest orange on the page and existed for exactly
+                one of the two readers; as a neutral outline button carrying an
+                "Internal" badge it reads as an operator affordance sitting on
+                the client's calendar, which is what it is. Empty-cell click
+                scheduling below is deliberately untouched: it paints nothing,
+                so it shifts nothing. */}
             {canSchedule && (
-              <Button
-                size="sm"
-                variant="accent"
-                className="shrink-0 whitespace-nowrap"
-                onClick={() => setScheduleOpen(true)}
-              >
-                <Icon name="Plus" className="h-3.5 w-3.5" />
-                Schedule a run
-              </Button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 whitespace-nowrap"
+                  onClick={() => setScheduleOpen(true)}
+                >
+                  <Icon name="Plus" className="h-3.5 w-3.5" />
+                  Schedule a run
+                </Button>
+                <Badge tone="neutral">Internal</Badge>
+              </div>
             )}
-            <div className="flex items-center gap-1">
-              <button onClick={prevMonth} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
-                <Icon name="ChevronLeft" className="h-4 w-4" />
-              </button>
-              <span className="w-[130px] shrink-0 whitespace-nowrap text-center text-sm font-medium">{MONTH_NAMES[viewMonth]} {viewYear}</span>
-              <button onClick={nextMonth} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground">
-                <Icon name="ChevronRight" className="h-4 w-4" />
-              </button>
-            </div>
+            {viewMode !== "archive" && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={goPrev}
+                  aria-label={`Previous ${viewMode}`}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                >
+                  <Icon name="ChevronLeft" className="h-4 w-4" />
+                </button>
+                <span className="w-[150px] shrink-0 whitespace-nowrap text-center text-sm font-medium">{rangeLabel}</span>
+                <button
+                  onClick={goNext}
+                  aria-label={`Next ${viewMode}`}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+                >
+                  <Icon name="ChevronRight" className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
+        {/* View switcher (portal revamp, Surface 05; restructured by the flow
+            audit 2026-09, R6). Day/Week/Month is a TIME control — three ranges
+            of the same grid. Archive is not a fourth range: it has no grid and
+            no dates, entering it hides the prev/next arrows, and sitting in the
+            same segmented strip it read as "a longer month". It is its own
+            labelled control now, on the other side of the row, saying what it
+            holds. Week is still the default. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border px-4 py-2">
+          <div className="flex items-center gap-1" role="group" aria-label="Calendar range">
+            {CALENDAR_TIME_VIEW_MODES.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={viewMode === mode}
+                onClick={() => goToView(mode)}
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors",
+                  viewMode === mode
+                    ? "bg-surface-2 text-foreground"
+                    : "text-muted hover:bg-surface-2 hover:text-foreground",
+                )}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+          {viewMode !== "archive" && (
+            <button
+              type="button"
+              onClick={() => goToView("archive")}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+            >
+              <Icon name="Archive" className="h-3.5 w-3.5" />
+              Archive
+              <span className="hidden text-[11px] font-normal text-muted-2 sm:inline">
+                · everything we&apos;ve delivered
+              </span>
+            </button>
+          )}
+        </div>
+
+        {viewMode === "month" && (
+        <>
         {/* Day-of-week header - seven columns need width to mean anything */}
         <div className="hidden grid-cols-7 border-b border-border sm:grid">
           {DAY_LABELS.map((d) => (
@@ -1359,7 +2325,8 @@ export function RunCalendar({
             const key = isValid ? `${viewYear}-${viewMonth}-${day}` : "";
             const dayRuns = isValid ? (runsByDay.get(key) ?? []) : [];
             const dayPosts = isValid ? (postsByDay.get(key) ?? []) : [];
-            const chipCount = dayRuns.length + dayPosts.length;
+            const daySuggestions = isValid ? (suggestionsByDay.get(key) ?? []) : [];
+            const chipCount = dayRuns.length + dayPosts.length + daySuggestions.length;
             const isLastCol = (i + 1) % 7 === 0;
             const isSelected = key !== "" && key === selectedKey;
 
@@ -1376,45 +2343,65 @@ export function RunCalendar({
             };
             const interactive = isValid && (chipCount > 0 || canScheduleHere);
 
+            // The day-number is the one focusable control for this cell (below) -
+            // the cell div itself no longer carries role/tabIndex/onClick, which
+            // is what used to nest it around PostChip's own <button> (invalid
+            // nested-interactive HTML).
             return (
               <div
                 key={i}
-                onClick={activate}
-                role={interactive ? "button" : undefined}
-                tabIndex={interactive ? 0 : -1}
-                aria-label={canScheduleHere ? `Schedule a run on ${MONTH_NAMES[viewMonth]} ${day}` : undefined}
-                onKeyDown={(event) => {
-                  if (!interactive) return;
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    activate();
-                  }
-                }}
                 className={cn(
                   "min-h-[84px] border-b border-r border-border p-1 text-left align-top transition-colors",
                   !isValid && "bg-surface-deep",
                   isToday && "bg-foreground/[0.04]",
                   isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
-                  interactive && "cursor-pointer hover:bg-surface-2",
                   isLastCol && "border-r-0",
                 )}
               >
                 {isValid && (
                   <>
-                    <span className={cn(
-                      "mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium leading-none",
-                      isToday ? "bg-primary text-primary-foreground font-bold" : "text-muted-2",
-                    )}>
-                      {day}
-                    </span>
+                    {interactive ? (
+                      <button
+                        type="button"
+                        onClick={activate}
+                        aria-label={
+                          canScheduleHere
+                            ? `Schedule a run on ${MONTH_NAMES[viewMonth]} ${day}`
+                            : `${MONTH_NAMES[viewMonth]} ${day}, ${viewYear} · ${chipCount} items`
+                        }
+                        className={cn(
+                          "mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium leading-none transition-colors hover:bg-surface-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-neon/50",
+                          isToday ? "bg-primary text-primary-foreground font-bold" : "text-muted-2",
+                        )}
+                      >
+                        {day}
+                      </button>
+                    ) : (
+                      <span className={cn(
+                        "mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-medium leading-none",
+                        isToday ? "bg-primary text-primary-foreground font-bold" : "text-muted-2",
+                      )}>
+                        {day}
+                      </span>
+                    )}
                     <div className="space-y-[3px]">
-                      {dayRuns.slice(0, 3).map((r) => <RunChip key={r.kind + r.id} run={r} />)}
-                    {dayRuns.length < 3 &&
-                      dayPosts
-                        .slice(0, 3 - dayRuns.length)
-                        .map((p) => (
-                          <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} viewerIsClient={viewerIsClient} />
-                        ))}
+                      {(() => {
+                        const shownRuns = dayRuns.slice(0, 3);
+                        const shownPosts = dayPosts.slice(0, Math.max(0, 3 - shownRuns.length));
+                        const shownSuggestions = daySuggestions.slice(
+                          0,
+                          Math.max(0, 3 - shownRuns.length - shownPosts.length),
+                        );
+                        return (
+                          <>
+                            {shownRuns.map((r) => <RunChip key={r.kind + r.id} run={r} />)}
+                            {shownPosts.map((p) => (
+                              <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} viewerIsClient={viewerIsClient} />
+                            ))}
+                            {shownSuggestions.map((s) => <SuggestionChip key={s.id} task={s} />)}
+                          </>
+                        );
+                      })()}
                     {chipCount > 3 && <p className="pl-1 text-[11px] text-muted-2">+{chipCount - 3} more</p>}
                   </div>
                 </>
@@ -1431,8 +2418,9 @@ export function RunCalendar({
               Nothing scheduled in {MONTH_NAMES[viewMonth]}.
             </li>
           ) : (
-            agendaDays.map(({ key, day, runs: dayRuns, posts: dayPosts }) => {
+            agendaDays.map(({ key, day, runs: dayRuns, posts: dayPosts, suggestions: daySuggestions }) => {
               const isToday = isCurrentMonth && day === today.getDate();
+              const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
               return (
                 <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
                   <button
@@ -1444,8 +2432,7 @@ export function RunCalendar({
                       {DAY_LABELS[new Date(viewYear, viewMonth, day).getDay()]} {day}
                     </span>
                     <span className="text-[11px] text-muted-2">
-                      {dayRuns.length + dayPosts.length} item
-                      {dayRuns.length + dayPosts.length === 1 ? "" : "s"}
+                      {dayCount} item{dayCount === 1 ? "" : "s"}
                     </span>
                     <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 text-muted-2" />
                   </button>
@@ -1454,22 +2441,148 @@ export function RunCalendar({
                     {dayPosts.map((p) => (
                       <PostChip key={p.assetId} post={p} onOpen={setOpenAssetId} size="row" viewerIsClient={viewerIsClient} />
                     ))}
+                    {daySuggestions.map((s) => <SuggestionChip key={s.id} task={s} size="row" />)}
                   </div>
                 </li>
               );
             })
           )}
         </ul>
+        </>
+        )}
 
-        {/* Legend + status filter - each chip toggles that status's visibility on the grid above. */}
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
-          <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
-          <LegendDot className="bg-foreground/25" label="Completed run" />
+        {viewMode === "week" && (
+          <WeekView
+            weekDays={weekDays}
+            today={today}
+            runsByDay={runsByDay}
+            postsByDay={postsByDay}
+            suggestionsByDay={suggestionsByDay}
+            selectedKey={selectedKey}
+            onSelectDay={setSelectedKey}
+            onOpenAsset={setOpenAssetId}
+            viewerIsClient={viewerIsClient}
+            canSchedule={canSchedule}
+            onScheduleAt={(at) => {
+              setSchedulePrefillAt(at);
+              setScheduleOpen(true);
+            }}
+            suggestionActions={suggestionActions}
+          />
+        )}
+
+        {viewMode === "day" && (
+          <DayView
+            day={dayAnchor}
+            isToday={sameLocalDay(dayAnchor.getTime(), today.getTime())}
+            runs={runsByDay.get(dayKey(dayAnchor.getTime())) ?? []}
+            posts={postsByDay.get(dayKey(dayAnchor.getTime())) ?? []}
+            suggestions={suggestionsByDay.get(dayKey(dayAnchor.getTime())) ?? []}
+            onOpenAsset={setOpenAssetId}
+            viewerIsClient={viewerIsClient}
+            canSchedule={canSchedule}
+            onScheduleAt={(at) => {
+              setSchedulePrefillAt(at);
+              setScheduleOpen(true);
+            }}
+            suggestionActions={suggestionActions}
+          />
+        )}
+
+        {viewMode === "archive" && (
+          <div className="p-4">
+            {/* The way out (flow audit 2026-09, R6). The archive is a MODE of
+                this component, not a route, so it had no back link, no
+                breadcrumb and — since the prev/next arrows hide here — no
+                obvious exit at all but a lowercase tab word. This returns to
+                whichever time view the reader came from, through the same
+                `goToView` the strip uses, so Back and this control agree. */}
+            <button
+              type="button"
+              onClick={() => goToView(lastTimeView)}
+              className="mb-4 inline-flex items-center gap-1.5 rounded-md text-xs font-medium text-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+            >
+              <Icon name="ChevronLeft" className="h-3.5 w-3.5" />
+              Back to calendar
+            </button>
+            {archiveAssets && agentLabelByAssetId ? (
+              <ArchiveView
+                assets={archiveAssets}
+                agentLabelByAssetId={agentLabelByAssetId}
+                viewerIsClient={viewerIsClient}
+                // CONTROLLED (review wave, 2026-09): the values live in this
+                // component, so leaving the archive and coming back — or
+                // stepping Back onto an entry whose query names filters —
+                // shows the list the URL is describing, instead of resetting
+                // to whatever the page happened to load with.
+                status={archiveFilters.status}
+                agent={archiveFilters.agent}
+                search={archiveFilters.search}
+                // R9: the never-had-anything empty state offers the agents page,
+                // which is where the work that would fill this archive comes
+                // from. `defaultClientId` is the one client in scope — absent on
+                // the staff cross-client overview, which never reaches this
+                // branch anyway.
+                {...(defaultClientId ? { agentsHref: `/clients/${defaultClientId}/agents` } : {})}
+                onFiltersChange={onArchiveFiltersChange}
+                {...(initialAssetId ? { initialAssetId } : {})}
+                onAssetOpened={onArchiveAssetOpened}
+              />
+            ) : (
+              <p className="text-xs text-muted-2">Archive isn&apos;t available from this view.</p>
+            )}
+          </div>
+        )}
+
+        {/* Legend + status filter - each chip toggles that status's visibility
+            on the grid above. SUPPRESSED IN THE ARCHIVE (flow audit 2026-09,
+            R6): there is no grid there, so every chip in this row was a control
+            that did nothing to what the reader was looking at. */}
+        {viewMode !== "archive" && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border px-4 py-2">
+          {/* TWO REGISTERS, AND THE ROW NOW SAYS SO (SCRUM-422).
+
+              It was one flat row of nine words at one weight, and it was read
+              from outside as one taxonomy that repeated itself: "Scheduled run"
+              beside "Scheduled", "Completed run" beside "Published". They are
+              not repetitions — a run is a job the agent performed, a post is a
+              thing that job produced, and one completed run can leave a post
+              that is scheduled, waiting, or failed to publish. Deleting either
+              pair would have hidden a real state to fix a labelling problem.
+
+              So nothing is removed and the two halves are named instead. It
+              also fixes a second thing the flat row hid: the run dots are
+              LEGEND ONLY while the post words are FILTERS you can press, and at
+              equal weight in one row there was no way to tell that pressing
+              "Completed run" does nothing. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+              Runs
+            </span>
+            {ALL_CALENDAR_RUN_LEGEND_KEYS.map((key) => (
+              <LegendDot
+                key={key}
+                className={RUN_LEGEND_DOT_CLASS[key]}
+                label={calendarRunLegendLabel(key)}
+              />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+              Posts
+            </span>
           {(Object.keys(STATUS_FILTER_CHIP_CLASS) as CalendarFilterKey[])
             // A filter this viewer's calendar can never make dim anything is not
             // offered at all — see calendarFilterKeyMatchable for which those are
             // and why. The chips a client CAN match are unchanged.
             .filter((key) => calendarFilterKeyMatchable(key, viewerIsClient))
+            // Portal revamp, Surface 05 — "In review is removed. We are not
+            // reviewing anything." The key/type stays (calendar-kind.ts's
+            // exhaustive CalendarFilterKey still names it, and a review-status
+            // run still renders its own badge) — this only drops the LEGEND
+            // chip and the ability to dim it, so nothing on this screen calls
+            // itself a review step any more.
+            .filter((key) => key !== "review")
             .map((key) => (
               <FilterChip
                 key={key}
@@ -1481,7 +2594,9 @@ export function RunCalendar({
                 onClick={() => toggleStatus(key)}
               />
             ))}
+          </div>
         </div>
+        )}
       </div>
 
       {/* Day detail */}
@@ -1494,10 +2609,34 @@ export function RunCalendar({
             </button>
           </div>
 
-          {selectedScheduled.length + selectedPast.length + selectedPosts.length === 0 ? (
+          {selectedScheduled.length + selectedPast.length + selectedPosts.length + selectedSuggestions.length === 0 ? (
             <p className="text-xs text-muted-2">Nothing on this day.</p>
           ) : (
             <div className="space-y-4">
+              {selectedSuggestions.length > 0 && (
+                <Section title="Suggested">
+                  {showSuggestionRows ? (
+                    selectedSuggestions.map((s) => (
+                      <div key={s.id} className="rounded-md border border-dashed border-warning/40 bg-warning/5 px-3.5 py-3">
+                        <SuggestionRow
+                          task={s}
+                          isPending={suggestionActions.pendingIds.has(s.id)}
+                          error={suggestionActions.errors[s.id]}
+                          onApprove={() => suggestionActions.approve(s.id, s.at)}
+                          onSkip={() => suggestionActions.skip(s.id)}
+                        />
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs text-muted-2">
+                      {selectedSuggestions.length === 1
+                        ? "One suggestion for this day."
+                        : `${selectedSuggestions.length} suggestions for this day.`}{" "}
+                      Approve or skip them in the list above.
+                    </p>
+                  )}
+                </Section>
+              )}
               {selectedScheduled.length > 0 && (
                 <Section title="Upcoming runs">
                   {selectedScheduled.map((r) => (
@@ -1586,6 +2725,17 @@ export function RunCalendar({
   );
 }
 
+/**
+ * The run legend's SWATCHES, beside the filter chips' own map for the same
+ * reason: calendar-kind owns the words, this file owns how they look. A Record
+ * so a new `CalendarRunLegendKey` is a compile error here rather than a key the
+ * legend silently stops drawing.
+ */
+const RUN_LEGEND_DOT_CLASS: Record<CalendarRunLegendKey, string> = {
+  scheduledRun: "border border-dashed border-foreground/40 bg-foreground/[0.03]",
+  completedRun: "bg-foreground/[0.07]",
+};
+
 function LegendDot({ className, label }: { className: string; label: string }) {
   return (
     <div className="flex items-center gap-1.5 text-[11px] text-muted-2">
@@ -1605,9 +2755,10 @@ function LegendDot({ className, label }: { className: string; label: string }) {
  * Every member is NAMED here — that is what the Record buys — but not every
  * member is OFFERED to every viewer: the render site filters through
  * `calendarFilterKeyMatchable`, which is where the per-viewer answer and its
- * enumeration live. Today that withholds exactly one chip from a client
- * ("draft", a status their calendar is never built from); "held" and the rest
- * stay, because a client's calendar can hold them.
+ * enumeration live. Today that withholds nothing from a client — "draft"
+ * included, since a client's calendar and dashboard now show the same pending
+ * work staff see (see `isClientCalendarStatus`'s docstring in lib/calendar-kind
+ * for the reversal).
  *
  * THE LABELS ARE NO LONGER HERE. They moved to `calendarFilterLabel`
  * (lib/calendar-kind) because two of them were wrong in a way a component-local
@@ -1625,6 +2776,9 @@ const STATUS_FILTER_CHIP_CLASS: Record<CalendarFilterKey, string> = {
   placeholder: POST_CHIP_CLASS.placeholder,
   failed: POST_CHIP_CLASS.failed,
   review: "bg-warning/25",
+  // Same dashed-warning tint as SuggestionChip — a proposal, not a real
+  // asset-status kind, so it deliberately doesn't reuse any of the six above.
+  suggested: "border border-dashed border-warning/50 bg-warning/10",
 };
 
 /** A legend dot that also toggles that status's visibility on the grid - dimmed while hidden. */

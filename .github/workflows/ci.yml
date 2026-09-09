@@ -3,11 +3,15 @@ name: CI
 # Status checks for PRs and pushes. Deploys live in deploy-prep.yml /
 # promote-production.yml, which call the same reusable quality.yml so the gate
 # is identical everywhere.
+# dev-tomer is the integration branch: task branches PR into it, and it is
+# promoted to main. Without it listed here a PR into dev-tomer gets NO status
+# checks at all -- the gate would only reappear at the main promotion, after
+# review had already happened against nothing.
 on:
   push:
-    branches: [main]
+    branches: [main, dev-tomer]
   pull_request:
-    branches: [main]
+    branches: [main, dev-tomer]
 
 jobs:
   checks:

@@ -279,13 +279,20 @@ export const MCP_TOOLS: McpTool[] = [
       const job = await getJob(id);
       if (!job) throw new ToolError("Job not found.");
       await requireClient(actor, job.clientId);
+      // `input.inputs` (Dynamic Agent Studio jobs only) is a JSON blob of the
+      // client's raw form answers, persisted solely so a failed run can be
+      // resumed from scratch — it is not meant for display, and dumping it
+      // into a tool result would bloat an agent's context with a client's
+      // full intake submission. The job-detail UI excludes the same key for
+      // the same reason (src/app/(app)/jobs/[id]/page.tsx).
+      const { inputs: _inputs, ...redactedInput } = job.input;
       return textResult({
         id: job.id,
         clientId: job.clientId,
         title: job.title,
         status: job.status,
         agentName: job.agentName,
-        input: job.input,
+        input: redactedInput,
         events: job.events,
         error: job.error ?? null,
         assetIds: job.assetIds,
@@ -420,7 +427,7 @@ export const MCP_TOOLS: McpTool[] = [
       // THE SECOND PATH THAT TYPES A DELIVERABLE FROM RUNTIME DATA, and it is
       // the running agent's own choice: `type` is a tool argument, so a Reddit
       // run holding a job token could ask for `social_post` and have its reply
-      // offered to twitter/linkedin/facebook/tiktok. The delivery webhook's fence
+      // offered to twitter/linkedin/tiktok. The delivery webhook's fence
       // is the same one, asked of the same two signals — the deliverable's text
       // and the run's identity (agent-service/deliverable-asset-type.ts).
       //

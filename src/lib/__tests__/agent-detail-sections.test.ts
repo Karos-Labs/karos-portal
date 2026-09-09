@@ -90,6 +90,7 @@ describe("toAgentInputRows", () => {
   it("carries a label, a summary and a date — and none of the document's private fields", () => {
     const rows = toAgentInputRows({
       agent: "x",
+      companyName: "Karos Labs",
       company: makeIntake({
         offLimits: "Never mention the lawsuit",
         cvUrl: "https://secret",
@@ -101,7 +102,9 @@ describe("toAgentInputRows", () => {
       takes: [],
     });
     const company = rows.find((r) => r.id === "company");
-    expect(company?.label).toBe("Company profile");
+    // The client's own name on the row, not "Company profile" — that read as a
+    // document about the business when the row is the brand's own X account.
+    expect(company?.label).toBe("Karos Labs company account");
     expect(company?.detail).toBe("@karoslabs");
     expect(company?.updatedAt).toBe(NOW - 2 * DAY);
     // AF-7 MOVED THE LINE, and it is worth naming where it moved to. `offLimits`
@@ -259,20 +262,82 @@ describe("toAgentInputRows", () => {
     expect(seat?.updatedAt).toBe(NOW - 3 * DAY);
   });
 
-  it("gives Reddit no seats and no news drop", () => {
-    // e15 has no seat model and its intake surface renders none. Empty seat
-    // rows would promise a per-person product that does not exist, and the
-    // shared news drop is consumed by X and LinkedIn only.
+  it("gives Reddit and the newsletter no seats and no news drop", () => {
+    // Neither has a seat model, and neither intake surface renders one: e15
+    // drafts as one account, and a newsletter issue goes out from the business
+    // rather than from a person. Empty seat rows would promise a per-person
+    // product that does not exist, and the shared news drop is consumed by X
+    // and LinkedIn only — the newsletter's seven-day scan FINDS what happened.
+    //
+    // FED THE ROWS THEY MUST IGNORE, which is the whole test: a seat and a news
+    // update are passed in, so a guard that let either family through would
+    // produce extra rows here rather than passing on an empty fixture. This is
+    // the case the old `agent !== "reddit"` negative list got wrong — it
+    // answered "yes, you have seats" for every family nobody had thought about.
+    // Reddit's row is now composed from the client's name, like X and
+    // LinkedIn: it has no seat model on purpose, so that ONE row is the whole
+    // of who the agent speaks as, and naming it after the company says so.
+    // The newsletter keeps its own label — there is no account there at all.
+    const cases: Array<[AgentIntake["agent"], string]> = [
+      ["reddit", "Karos Labs company account"],
+      ["newsletter", "Your newsletter details"],
+    ];
+    for (const [agent, label] of cases) {
+      const rows = toAgentInputRows({
+        agent,
+        companyName: "Karos Labs",
+        company: makeIntake({ agent, handle: agent === "reddit" ? "u/karoslabs" : null }),
+        seats: [makeSeat()],
+        intake: [
+          makeIntake({ id: "intake-seat", agent, seatId: "seat-1", handle: "someone" }),
+        ],
+        news: [{ id: "n1", clientId: "c1", title: "Launch", date: "2026-07-01", createdBy: "u", createdAt: NOW }],
+        takes: [{ id: "t1", clientId: "c1", seatId: "s", take: "x", date: "2026-07-25", createdBy: "u", createdAt: NOW }],
+        directionRequests: [
+          {
+            id: "d1",
+            clientId: "c1",
+            account: "company",
+            request: "talk about pricing",
+            date: "2026-08-04",
+            status: "open",
+            createdBy: "u",
+            createdAt: NOW,
+          },
+        ],
+      });
+      expect(rows.map((r) => r.id), agent).toEqual(["company"]);
+      expect(rows[0].label, agent).toBe(label);
+    }
+  });
+
+  it("leaves the newsletter's company row a bare dated link, with no empty drawer", () => {
+    // `intakeAnswersFor` returns [] for this family on purpose: the newsletter's
+    // intake is scheduling and compliance configuration, not the per-account
+    // identity answers the other three show inline, and a half-filled drawer
+    // would imply this page is where a client reads their newsletter setup.
+    // `answersOf` drops an empty list rather than attaching one, so the row
+    // stays the plain link to the surface that IS the place to read it.
     const rows = toAgentInputRows({
-      agent: "reddit",
-      company: makeIntake({ agent: "reddit", handle: "u/karoslabs" }),
-      seats: [makeSeat()],
+      agent: "newsletter",
+      company: makeIntake({ agent: "newsletter", handle: null, updatedAt: NOW - 2 * DAY }),
+      seats: [],
       intake: [],
-      news: [{ id: "n1", clientId: "c1", title: "Launch", date: "2026-07-01", createdBy: "u", createdAt: NOW }],
+      news: [],
       takes: [],
     });
-    expect(rows.map((r) => r.id)).toEqual(["company"]);
-    expect(rows[0].label).toBe("Your Reddit account");
+    const company = rows.find((r) => r.id === "company");
+    expect(company?.answers).toBeUndefined();
+    expect(company?.filled).toBe(true);
+    expect(company?.updatedAt).toBe(NOW - 2 * DAY);
+    // No handle on this family, and the fallback copy has to say so without
+    // implying an account name is coming. Comma, not an em dash: no em dashes
+    // anywhere a client reads (2026-08 directive; F71's " - " stays banned too).
+    expect(company?.detail).toBe("Saved, no account name yet");
+    // Never "Company profile": there is no profile and no account here, and
+    // that label would send a reader looking for an identity page.
+    expect(company?.label).toBe("Your newsletter details");
+    expect(company?.icon).toBe("Mail");
   });
 
   it("dates the drops from their newest row, and says so when they are empty", () => {
@@ -295,7 +360,7 @@ describe("toAgentInputRows", () => {
     expect(empty.find((r) => r.id === "takes")?.filled).toBe(false);
   });
 
-  it("gives LinkedIn the news drop but never the X takes box", () => {
+  it("gives LinkedIn the news drop and its own steering wheel, but never the X takes box", () => {
     const rows = toAgentInputRows({
       agent: "linkedin",
       company: null,
@@ -304,18 +369,83 @@ describe("toAgentInputRows", () => {
       news: [],
       takes: [{ id: "t1", clientId: "c1", seatId: "s", take: "x", date: "2026-07-25", createdBy: "u", createdAt: NOW }],
     });
-    expect(rows.map((r) => r.id)).toEqual(["company", "news"]);
+    // `direction` is LinkedIn v2's Section A0 ("what to cover next"), which is
+    // NOT the shared news drop and NOT X's takes box: the drop says what
+    // happened, a take is a person's opinion for X, and this says what the next
+    // LinkedIn post should be about.
+    expect(rows.map((r) => r.id)).toEqual(["company", "news", "direction"]);
+  });
+
+  it("gives X the takes box but never LinkedIn's steering wheel", () => {
+    const rows = toAgentInputRows({
+      agent: "x",
+      company: null,
+      seats: [],
+      intake: [],
+      news: [],
+      takes: [],
+      directionRequests: [
+        {
+          id: "d1",
+          clientId: "c1",
+          account: "company",
+          request: "talk about pricing",
+          date: "2026-08-04",
+          status: "open",
+          createdBy: "u",
+          createdAt: NOW,
+        },
+      ],
+    });
+    expect(rows.map((r) => r.id)).toEqual(["company", "news", "takes"]);
+  });
+
+  it("counts only OPEN direction requests as filled — a covered row is history", () => {
+    const row = (id: string, status: "open" | "covered") => ({
+      id,
+      clientId: "c1",
+      account: "company",
+      request: `r-${id}`,
+      date: "2026-08-04",
+      status,
+      createdBy: "u",
+      createdAt: NOW,
+    });
+    const base = { agent: "linkedin" as const, company: null, seats: [], intake: [], news: [], takes: [] };
+    const covered = toAgentInputRows({ ...base, directionRequests: [row("d1", "covered")] });
+    expect(covered.find((r) => r.id === "direction")?.filled).toBe(false);
+    expect(covered.find((r) => r.id === "direction")?.answers).toBeUndefined();
+    const open = toAgentInputRows({ ...base, directionRequests: [row("d2", "open")] });
+    expect(open.find((r) => r.id === "direction")?.filled).toBe(true);
+    expect(open.find((r) => r.id === "direction")?.answers).toEqual([
+      { label: "2026-08-04", value: "r-d2" },
+    ]);
   });
 });
 
 describe("intakeFamilyFor", () => {
-  it("places the three intake agents and nothing else", () => {
+  it("places the four intake agents and nothing else", () => {
     expect(intakeFamilyFor("karos-x-agent-v2")).toBe("x");
     expect(intakeFamilyFor("karos-reddit-agent")).toBe("reddit");
     expect(intakeFamilyFor("karos-linkedin-company-geektime")).toBe("linkedin");
+    expect(intakeFamilyFor("karos-newsletter-writer-v2")).toBe("newsletter");
     // A clip maker runs on files, not on a form — it must get no inputs band
     // rather than an empty one implying it needs answers nobody has given.
     expect(intakeFamilyFor("branded-shorts")).toBeNull();
+  });
+
+  it("places only the newsletter WRITER, not its three steps", () => {
+    // Same rule the run gate and the roster use: the writer is the agent a
+    // person means, and setup / manager / compliance-lock are its steps. Giving
+    // a step its own inputs band would put a second "What it runs on" section on
+    // a card nothing lists, for data the reader never chose to open.
+    for (const step of [
+      "karos-newsletter-setup-v2",
+      "karos-newsletter-manager-v2",
+      "karos-compliance-lock-v2",
+    ]) {
+      expect(intakeFamilyFor(step), step).toBeNull();
+    }
   });
 });
 
@@ -419,8 +549,11 @@ describe("wiring", () => {
   const route = () => source("src/app/(app)/clients/[id]/agents/[agentId]/page.tsx");
 
   it("mounts all three bands on the agent's own page", () => {
+    // round 6: the tinted status STRIP is one plain status LINE now (decision
+    // 10), so the symbol changed; the assertion is still that all three of the
+    // page's own bands are mounted.
     const src = route();
-    for (const symbol of ["AgentStatusStrip", "AgentInputsSection", "AgentSetupSection"]) {
+    for (const symbol of ["AgentStatusLine", "AgentInputsSection", "AgentSetupSection"]) {
       expect(src, symbol).toContain(symbol);
     }
   });
@@ -457,7 +590,7 @@ describe("wiring", () => {
     const src = route();
     // Whitespace-tolerant: the element gained AF-5's staff note and wraps over
     // several lines now, and this test is about where the value COMES FROM.
-    expect(src).toMatch(/<AgentStatusStrip\s+status=\{status\}/);
+    expect(src).toMatch(/<AgentStatusLine\s+status=\{status\}/);
     expect(code(source("src/components/client-agents/agent-sections.tsx"))).not.toContain(
       "launchState",
     );
@@ -472,6 +605,26 @@ describe("wiring", () => {
     expect(src).toMatch(/isStaff && status\.staffNote \? \{ staffNote: status\.staffNote \}/);
     const strip = source("src/components/client-agents/agent-sections.tsx");
     expect(strip).toContain("{staffNote}");
+  });
+
+  it("says the state ONCE, in the status line and not in a header chip", () => {
+    // round 6, decision 10. The header stacked a mono uppercase status Badge
+    // beside the identity tile and the strip repeated the same word a hundred
+    // pixels lower, in a second typographic voice. The chip and the page's
+    // private copy of `RosterStatusBadge` are both gone; the line is the
+    // statement, and the tile now sits beside the h1 rather than out in the
+    // action slot.
+    const src = route();
+    expect(src, "the duplicated StatusBadge is back").not.toContain("StatusBadge");
+    expect(src).toMatch(/<AgentIdentity[\s\S]{0,200}<h1/);
+    // And the pace CARD (with its "No schedule yet" aside) is the line's
+    // trailing control now.
+    expect(src).toContain("<SchedulePaceControl");
+    expect(src).not.toContain("SchedulePaceCard");
+    expect(
+      code(source("src/components/client-agents/legacy-agent-panel.tsx")),
+      "the pace card's no-schedule aside is back",
+    ).not.toContain("No schedule yet");
   });
 
   it("links the existing intake pages instead of forking their forms", () => {
@@ -527,7 +680,12 @@ describe("wiring", () => {
     // maintain a system's records. AgentSetupState carries both names; the
     // client-facing surfaces read clientLabel and the staff ones keep `label`.
     const rows = source("src/lib/client-agent-rows.ts");
-    expect(rows).toContain('const clientLabel = "Your X details"');
+    // Flow audit 2026-09, R7: the label now opens with the destination page's
+    // own <h1> ("X agent" → "X agent details") so the link and the page it
+    // lands on say the same thing. The rule this test guards is unchanged —
+    // client surfaces read `clientLabel`, staff ones keep `label` — so only the
+    // string moved.
+    expect(rows).toContain('const clientLabel = "X agent details"');
     expect(rows).toContain("setupLabel: setup.clientLabel");
     const strip = source("src/components/client-agents/agent-sections.tsx");
     expect(strip).not.toContain("Manage {view.label}");

@@ -1,3 +1,8 @@
+import {
+  STAFF_ONLY_LEDGER_FIELDS,
+  redactLedgerForClient,
+} from "@/lib/credit-reporting";
+import type { CreditLedgerEntry } from "@/lib/types";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import ts from "typescript";
@@ -1346,7 +1351,18 @@ describe('the "the cap stopped N of these" note', () => {
       })
       .map(toRel);
     expect(offenders, "call queueCapacitySkipNote instead of writing your own").toEqual([HOME]);
-  }, 20_000);
+    // 120s, not 45s (2026-09). This walks and AST-parses every module under
+    // src/ — the most expensive assertion in the suite — and 45s was measured
+    // on a run of this FILE alone. In the full suite, sharing cores with ~300
+    // other files, the same walk takes over twice as long and the budget was
+    // exceeded, so the guard failed with a timeout rather than a finding: red
+    // for a reason that says nothing about the rule it protects.
+    //
+    // A timeout is not a performance assertion, and this one was being read as
+    // one by accident. The walk's cost also grows with the tree, so a number
+    // tuned against an unloaded run is a tripwire on every future file added to
+    // src/ — which is the wrong thing for a copy guard to be watching.
+  }, 120_000);
 });
 
 /* ── the review refusals: one rule, one home, and two conditions ──────────── */
@@ -1544,7 +1560,7 @@ describe("a client-facing dialog and the control that opens it", () => {
  *     is painted on `app/(app)/jobs/[id]/page.tsx`, which opens with
  *     `requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"])`; `ClientTask.sourceLabel`
  *     is written and never read at all; `ClientTask.metadata.executionError` is
- *     read ONLY as `Boolean(task.metadata?.executionError)` (tasks-board.tsx:241),
+ *     read ONLY as `!!t.metadata?.executionError` (campaigns/[campaignId]/page.tsx),
  *     which paints its own "Execution failed." instead. Rewriting those as client
  *     copy would be busywork at best and would put an operator's diagnostics in a
  *     client's register at worst.
@@ -2158,7 +2174,7 @@ const NOT_ON_A_CLIENT_SCREEN: Readonly<Record<string, string>> = {
   // "Submitted to agent service" are the operator's trace of a dispatch.
   "createJob.events[].message": "jobs/[id] event log — a staff-gated page",
   "updateJob.events[].message": "jobs/[id] event log — a staff-gated page",
-  // Read ONLY as `Boolean(task.metadata?.executionError)` (tasks-board.tsx:241),
+  // Read ONLY as `!!t.metadata?.executionError` (campaigns/[campaignId]/page.tsx),
   // which paints its own "Execution failed." No surface renders the string, on
   // either side of the boundary — which is also why its own spaced hyphen
   // ("couldn't be reached - please try again") is out of scope here rather than
@@ -2171,8 +2187,9 @@ const NOT_ON_A_CLIENT_SCREEN: Readonly<Record<string, string>> = {
   // The audit trail in my-action-items.tsx, mounted behind `isAdmin` on a
   // dashboard that redirects CLIENT_USER away before it renders.
   "updateActionItem.history[]": "admin-only action-item audit trail",
-  // token-manager.tsx on app/(app)/connect, requireUser(["KAROS_ADMIN",
-  // "KAROS_EMPLOYEE"]).
+  // Minted by createAccessTokenAction, staff-only (requireStaff). The one UI
+  // that ever rendered a token's name (token-manager.tsx on app/(app)/connect)
+  // was removed with that page (2026-08); no surface reads it now.
   "createAccessToken.name": "staff-gated personal access tokens",
   // KEYED BY TIER, because the audience is the argument and not the field. The
   // transcript signal doc is the only literal content this writer takes, and it
@@ -2205,6 +2222,17 @@ const NOT_TEXT: readonly string[] = [
   "(data.ts raw write).kind",
   "(data.ts raw write).status",
   "addEmployeeSeat.status",
+  // "open" | "covered" — the state a direction request is in. The intake box
+  // sorts and groups on it and prints its own words ("Already covered"); the
+  // stored enum never reaches a screen.
+  "addLiDirectionRequest.status",
+  // Always the literal "company" — newsletter has no seats, so the field exists
+  // only to keep the four feedback ledgers structurally identical. The intake
+  // box prints the ACTION and the issue number; it never reads this.
+  "addNewsletterDraftFeedback.account",
+  // A MIME type on a captured state file, chosen so the injection re-attaches
+  // the file with the shape the skill reads. Nothing renders it.
+  "upsertLiAgentState.contentType",
   "chargeClientCredits.operation",
   "claimTaskForExecution.(arg2)[]",
   "clearAgentIntakeFields.(arg1)[]", // field NAMES to clear, not values
@@ -2212,7 +2240,17 @@ const NOT_TEXT: readonly string[] = [
   "createAsset.channels[]",
   "createAsset.createdBy",
   "createAsset.meta.source",
-  "createAsset.mimeType",
+  // `createAsset.mimeType` LEFT THIS LIST in 2026-09, and the guard is what
+  // said so: the bulk-upload writer's `mimeType: opts.contentType || "video/mp4"`
+  // became `mimeType: mediaMimeFor(opts.contentType, opts.filename)` when the
+  // uploader started taking images, so no writer puts a literal at that path any
+  // more and the citation had rotted into a field nobody writes.
+  //
+  // NO COVERAGE WAS LOST. The literals moved behind a function (lib/media-kinds),
+  // which this walk cannot see through by construction — it reads a string where
+  // it is written IN THE SAME EXPRESSION — and what they are is MIME types, not
+  // prose. If a writer ever puts a literal back at that path it arrives here as
+  // an unclassified field, which is the fail-closed direction.
   "createAsset.publishMode",
   "createAsset.status",
   "createAsset.type",
@@ -2230,6 +2268,10 @@ const NOT_TEXT: readonly string[] = [
   "createCustomAgent.color",
   "createCustomAgent.icon",
   "createJob.agentId",
+  // "system" for an internally-triggered dispatch (onboarding's observable agent-engine
+  // steps, dispatch-research-agents.ts) vs. a real user id otherwise — an internal
+  // provenance marker, never rendered as prose on any client screen.
+  "createJob.createdBy",
   "createJob.events[].level",
   "createJob.status",
   "createPlannedScheduledRun.status",
@@ -2239,11 +2281,25 @@ const NOT_TEXT: readonly string[] = [
   "logActivity.type", // drives the timeline's icon/label config, never printed raw
   "logActivity.metadata.runType", // metadata is dropped at the RSC boundary entirely
   "logActivity.metadata.taskType",
+  // Same non-client-facing metadata bucket as taskType/runType above. Only
+  // newly visible to this walk because submitDynamicAgentJob's call site
+  // (submit-custom.ts) spells it `agentKey: \`dynamic:${spec.id}\`` — a
+  // template literal with a literal "dynamic:" fragment — where the
+  // pre-existing hardcoded-agent call site spells the same field as a bare
+  // identifier (`agentKey: agent.key`) with no literal text for the walk to
+  // find; the field itself is not new.
+  "logActivity.metadata.agentKey",
   "logFeedback.agentId",
   "logFeedback.creatorRole",
   "logFeedback.scope",
   "markIntegrationExpired.(arg1)",
-  "releaseTaskClaim.(arg1)",
+  // "releaseTaskClaim.(arg1)" was here for the literal "pending" the Workspace
+  // board's own batch runner passed (runPendingTasksBatchAction,
+  // settings-actions.ts). That action was deleted with the board (2026-08) —
+  // it was the only caller left once the board's routes were removed — and
+  // every remaining releaseTaskClaim call passes a variable (claimed.status),
+  // not a literal, so the citation is dropped rather than left pointing at
+  // nothing.
   "replaceReportCompetitors.(arg1)",
   "updateActionItem.status",
   "updateAsset.publishMode",
@@ -2262,6 +2318,12 @@ const NOT_TEXT: readonly string[] = [
   "updatePlannedScheduledRun.status",
   "updateTranscript.assignment",
   "upsertAgentIntake.agent",
+  // The 15-item action list's own id ("01".."15") and status
+  // ("dismissed"/"not_relevant"/"done") — read back through
+  // lib/action-list.ts's resolveActionList, never printed raw; the widget
+  // renders the matching ActionDefinition's label, not this row.
+  "upsertClientActionState.(arg1)",
+  "upsertClientActionState.(arg2)",
   "upsertClientContextDoc.docType",
   "upsertClientContextDoc.tier",
   "upsertClientIntegration.method",
@@ -2269,6 +2331,9 @@ const NOT_TEXT: readonly string[] = [
   "upsertClientIntegration.status",
   "upsertClientMarketingAnalytics.assetType",
   "upsertClientMarketingAnalytics.platform",
+  // Jira issue type name (Task/Bug/Story) — an admin-only config value read
+  // only by the Jira API client, never rendered on any client screen.
+  "upsertJiraConfig.issueType",
 ];
 
 describe("the client copy that travels through the database", () => {
@@ -2679,10 +2744,14 @@ describe("the client copy that travels through the database", () => {
     // "Intel Report generated" kept this green, which is the exact drift the test
     // is for. The two persisted writers own the description as well; the timeline
     // composes its own from the report's score and date.
+    // Used to be three tellings — components/activity-timeline.tsx composed a
+    // third from the report's score and date. That component was deleted
+    // 2026-08 (it was rendered only inside ProgressView, which lost its own
+    // last renderer when the Workspace board's routes were removed), so only
+    // the two persisted writers remain to check.
     for (const rel of [
       "app/api/intel-report-schedule/route.ts",
       "lib/actions/intel-actions.ts",
-      "components/activity-timeline.tsx",
     ]) {
       expect(code(src(rel)), `${rel} no longer CALLS the title builder`).toContain(
         "researchReportReadyTitle(",
@@ -2693,7 +2762,7 @@ describe("the client copy that travels through the database", () => {
         "researchReportReadyDescription(",
       );
     }
-  }, 20_000);
+  }, 45_000);
 
   it("calls the correction one thing on the card that prices it and records it", () => {
     // The OTHER half of a consolidation, and this file's own rename walked into
@@ -2736,5 +2805,85 @@ describe("the client copy that travels through the database", () => {
       [...new Set([...panelNouns, ...ledgerNouns])],
       "the panel and the ledger rows it renders use two different nouns for one purchase",
     ).toHaveLength(1);
+  });
+});
+
+/**
+ * THE SWEEP ABOVE CANNOT SEE NUMBERS, and two-phase charging put a staff-only
+ * NUMBER on rows a client's own ledger renders (credits rework, 2026-09).
+ *
+ * Everything above this point is a string scan: it finds literals written to
+ * Firestore and demands an audience for each. `CreditLedgerEntry.actualUsd` is
+ * what a run cost KAROS, in dollars, and `settlementCapped` says it cost us more
+ * than double what we quoted — neither is a literal, neither is prose, and
+ * neither would ever have tripped that scan. They are also exactly the figure
+ * the two-audience split exists to keep from clients: `agent-economics.tsx` is
+ * hard-gated on `viewerIsStaff` for this one number, and settlement rows now
+ * carry it on the objects the client's own feed is built from.
+ *
+ * So the boundary for them is asked structurally instead: one named list, one
+ * redactor, and a check that the list is complete against the type rather than
+ * against somebody's memory.
+ */
+describe("staff-only NUMERIC ledger fields never reach a client's payload", () => {
+  const staffRow: CreditLedgerEntry = {
+    id: "settle_charge-1",
+    clientId: "c1",
+    delta: 7,
+    balanceAfter: 507,
+    kind: "settlement",
+    operation: "custom_agent_run",
+    reason: "Settled · cost less · charged 18 credits, estimated 25 · Instagram agent",
+    actorUid: "system",
+    actorName: "Credit settlement",
+    createdAt: 1_000,
+    phase: "settlement",
+    settlesEntryId: "charge-1",
+    estimateCredits: 25,
+    actualUsd: 0.9,
+    settlementCapped: true,
+  };
+
+  it("strips our dollar cost and the cap flag, alongside staff identity", () => {
+    const [row] = redactLedgerForClient([staffRow]);
+    expect(row!.actualUsd).toBeUndefined();
+    expect(row!.settlementCapped).toBeUndefined();
+    expect(row!.actorName).toBeUndefined();
+    expect(row!.actorUid).toBe("");
+  });
+
+  it("keeps everything the client's own row is built from", () => {
+    // Non-vacuity, and the actual product requirement: a settled row still has
+    // to render "18 credits (estimated 25)" and its reason line.
+    const [row] = redactLedgerForClient([staffRow]);
+    expect(row!.estimateCredits).toBe(25);
+    expect(row!.delta).toBe(7);
+    expect(row!.kind).toBe("settlement");
+    expect(row!.reason).toBe(staffRow.reason);
+  });
+
+  it("redacts every field the list names, and the list names every one it should", () => {
+    // The failure mode is ADDITION: the next staff-only field on
+    // CreditLedgerEntry has to be refused somewhere, and a hand-written object
+    // literal on a page is not where anyone looks.
+    const [row] = redactLedgerForClient([staffRow]) as unknown as Array<Record<string, unknown>>;
+    for (const field of STAFF_ONLY_LEDGER_FIELDS) {
+      expect(row![field], `${field} survived redaction`).toBeFalsy();
+    }
+    expect(STAFF_ONLY_LEDGER_FIELDS).toContain("actualUsd");
+    expect(STAFF_ONLY_LEDGER_FIELDS).toContain("settlementCapped");
+  });
+
+  it("the settings page hands a client viewer the redactor's output, not its own literal", () => {
+    // Where the decision has to be made: CreditsPanel is a "use client"
+    // component, so a field passed to it is in the RSC payload whether or not it
+    // is painted. A second, hand-rolled strip on the page is how one gets
+    // forgotten.
+    const page = readFileSync(
+      join(process.cwd(), "src/app/(app)/clients/[id]/settings/page.tsx"),
+      "utf8",
+    );
+    expect(page).toContain("redactLedgerForClient(");
+    expect(page).toMatch(/ledger=\{isStaff \? creditLedger/);
   });
 });

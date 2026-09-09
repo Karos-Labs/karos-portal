@@ -1,6 +1,5 @@
 import { after } from "next/server";
 import { streamText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 
 import { getCurrentUser, isStaff } from "@/lib/auth";
 import {
@@ -15,15 +14,15 @@ import { canViewClient } from "@/lib/client-visibility";
 import { engagementIsMockOrStale, rankByEngagement } from "@/lib/analytics";
 import { integrationNeedsReconnect } from "@/lib/integration-status";
 import { logger } from "@/services/logger";
-import { MODELS } from "@/lib/constants";
 import { CREDIT_COSTS } from "@/lib/credits";
 import { chargeClientModelCall, refundOnce } from "@/lib/client-model-charge";
 import { clientCategoryValue } from "@/lib/utils";
 import type { Asset, ClientMarketingAnalytics } from "@/lib/types";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 export const maxDuration = 30;
 
-const MODEL = anthropic(MODELS.HAIKU);
+const MODEL = aiFor("insights.summary").model;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
@@ -50,8 +49,17 @@ const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
  * liked — the same shape as the four unmetered calls this cluster closed. It is
  * charged at `CREDIT_COSTS.chatMessage` (1), the existing rate for one
  * client-pressed model call, and refunded if the briefing never streams.
+ *
+ * POST, not GET (2026-08): this route can spend a client's credits
+ * (`?force=1`), and a GET is exactly what a cross-site page can trigger
+ * unattended — a top-level navigation or an auto-redirecting link fires an
+ * authenticated GET from the signed-in visitor's own browser with no
+ * confirmation. `<AiInsights/>`'s own fetch never relied on GET semantics (no
+ * EventSource, just a streamed fetch), so there was nothing to preserve by
+ * keeping it. SameSite=Lax cookies aren't sent on a cross-site POST, which is
+ * what actually closes the gap.
  */
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user || user.disabled) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -159,6 +167,28 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const engagementIsMock = engagementIsMockOrStale(scopedRecords, stalePlatforms);
   const dataSourceHeaders = engagementIsMock ? { "X-Insights-Data-Source": "mock" } : undefined;
 
+  /**
+   * THE GATE ABOVE IS ALL-OR-NOTHING, AND THE DIGEST NEEDS PER-ROW (2026-08).
+   *
+   * `engagementIsMockOrStale` asks `every(...)`, so it only fires when NOTHING
+   * is real. A client with one live Instagram row and twelve mock ones failed
+   * it: no badge, no `needs-connection`, and `buildDigest` then averaged the
+   * invented scores together with the measured one into `thisWeekAvgScore`,
+   * `deltaPct`, `perPlatform`, `topPerformers` and `bottomPerformers` — all of
+   * it interpolated into the prompt under "PERFORMANCE DATA (measured; do not
+   * invent beyond this)".
+   *
+   * The all-or-nothing gate is still right for the BADGE (it answers "is this
+   * whole panel demo data?"). The digest is built from live rows only, so a
+   * mixed set can no longer average a fabrication into a real number.
+   *
+   * Mock rows still exist in Firestore — the sync cron stopped writing them in
+   * 2026-08 (analytics-providers.ts), but everything written before that is
+   * still there — which is why this filter is a permanent fixture and not a
+   * migration step.
+   */
+  const measuredRecords = scopedRecords.filter((r) => r.source === "live");
+
   // QA F125: a "Demo data" badge does not offset paragraphs of specific, numbered budget
   // advice derived from invented figures. When every engagement row is mock, a client (or
   // staff viewing as one) gets the empty state + connect link instead of a briefing — no
@@ -176,7 +206,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     );
   }
 
-  const digest = buildDigest(scopedRecords, assets, stalePlatforms);
+  const digest = buildDigest(measuredRecords, assets, stalePlatforms);
 
   // No measured engagement yet — the sync cron hasn't captured any published-content
   // metrics for this client (no connected socials yet, nothing published yet, or the
@@ -233,7 +263,7 @@ Write the update now.`;
               clientId,
               agentId: null,
               agentName: "ai_insights",
-              modelName: MODELS.HAIKU,
+              ...usageFor("insights.summary"),
               operation: "ai_insights_pipeline_summary",
               inputTokens: usage.inputTokens ?? 0,
               outputTokens: usage.outputTokens ?? 0,
@@ -294,7 +324,7 @@ Write the briefing now.`;
             clientId,
             agentId: null,
             agentName: "ai_insights",
-            modelName: MODELS.HAIKU,
+            ...usageFor("insights.summary"),
             operation: "ai_insights_summary",
             inputTokens: usage.inputTokens ?? 0,
             outputTokens: usage.outputTokens ?? 0,
@@ -424,8 +454,26 @@ function buildDigest(
   }
   const thisWeekAvg = avg(thisWeek);
   const lastWeekAvg = avg(lastWeek);
+  /**
+   * BOTH cohorts have to be non-empty, not just the denominator (2026-08).
+   *
+   * `avg([])` returns 0, and the guard only asked `lastWeekAvg > 0` — so a
+   * client who published nothing in the last seven days while having
+   * prior-week rows got `thisWeekAvg = 0` divided into a real baseline and a
+   * **-100%** handed to the model under the header "PERFORMANCE DATA (measured;
+   * do not invent beyond this)", with the system prompt asking for a
+   * week-over-week section. The briefing then told them engagement had
+   * collapsed, when the truth was that nothing shipped — a different fact, with
+   * a different fix, and the `sampleSize === 0` escape hatch never fires here
+   * because sampleSize counts ALL records rather than this week's.
+   *
+   * An empty week has no average to compare, so there is no delta. null is the
+   * shape the prompt already handles.
+   */
   const deltaPct =
-    lastWeekAvg > 0 ? Math.round(((thisWeekAvg - lastWeekAvg) / lastWeekAvg) * 1000) / 10 : null;
+    thisWeek.length > 0 && lastWeek.length > 0 && lastWeekAvg > 0
+      ? Math.round(((thisWeekAvg - lastWeekAvg) / lastWeekAvg) * 1000) / 10
+      : null;
 
   const platformScores = new Map<string, number[]>();
   for (const r of records) {

@@ -82,7 +82,17 @@ export function AudienceSimulation({
   // quoted a price they will not be charged. This component sits four prop-hops
   // below the server pages that know the difference; the residual is written out
   // at simulationPrice in lib/credits.ts rather than implied away here.
-  const price = simulationPrice(viewerIsClient);
+  //
+  // ASKED WITH `true`, THEN MARKED (flow audit 2026-09, R3). The quote used to
+  // be asked with `viewerIsClient`, so an unbilled reader got no price at all —
+  // a staff member previewing an account could not see the figure the client is
+  // charged for a button sitting on their screen, and the panel measured
+  // differently in the two views. This is `refresh-task-map-button.tsx`'s
+  // accepted parity treatment: the CLIENT's figure for both readers, from the
+  // same helper so a reprice still moves it, plus a rendered word saying whose
+  // charge it is for the reader who is not paying it.
+  const price = simulationPrice(true);
+  const whoseCharge = viewerIsClient ? "" : " — what the client is charged, not you";
 
   // Intro state — nothing run yet.
   if (!results && !loading && !error) {
@@ -92,7 +102,7 @@ export function AudienceSimulation({
         title="Pre-flight audience simulation"
         description={
           "Test this content against 2–4 distinct stakeholder personas (for example: buyers, strategists, skeptics, or competitors) before you publish." +
-          (price ? ` Each run costs ${price}.` : "")
+          (price ? ` Each run costs ${price}${whoseCharge}.` : "")
         }
         action={
           <Button size="sm" onClick={() => void run()}>
@@ -114,7 +124,19 @@ export function AudienceSimulation({
         {!loading && (
           <div className="flex items-center gap-2">
             {/* Re-run is a second press at the same price, so it says so too. */}
-            {price && <span className="text-[11px] text-muted-2">{price}</span>}
+            {price && (
+              <span className="text-[11px] text-muted-2">
+                {price}
+                {!viewerIsClient && (
+                  <span
+                    className="ml-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+                    title="What the client is charged · staff runs are free"
+                  >
+                    client
+                  </span>
+                )}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => void run()}

@@ -11,13 +11,12 @@ import {
   buildCitationView,
   buildIntentPromptViews,
   buildMeasurementBasis,
+  buildMeasurementLine,
   buildQuestionPlanLine,
   healRecommendations,
   buildPresence,
   buildPromptViews,
-  buildRosterChips,
   buildRosterDrift,
-  buildRosterSanity,
   buildScoreViews,
   buildSnapshotTrust,
   capturedNothing,
@@ -26,6 +25,7 @@ import {
   type AnswerCellView,
   type AnswerGridView,
   type EngineView,
+  type MeasurementLineView,
   type ScoreView,
   type TrackedCompetitorRef,
 } from "@/components/seo-geo/presenter";
@@ -35,6 +35,8 @@ import { FlagButton } from "@/components/seo-geo/flag-button";
 import { GapList } from "@/components/seo-geo/gap-list";
 import { ScorePopover } from "@/components/seo-geo/score-popover";
 import { SeoGeoActionPlan } from "@/components/seo-geo-action-plan";
+import { EngineLogo } from "@/components/engine-logo";
+import { StaffOnlySection } from "@/components/staff-only-section";
 
 /**
  * SEO & GEO insights panel (SCRUM-52 redesign). Server component: all domain
@@ -51,7 +53,7 @@ function InfoTip({ text }: { text: string }) {
       <button
         type="button"
         aria-label="What this means"
-        className="flex h-4 w-4 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-foreground/25"
+        className="focus-ring flex h-4 w-4 items-center justify-center rounded-full text-muted-2 transition-colors hover:text-foreground"
       >
         <Icon name="Info" className="h-3 w-3" />
       </button>
@@ -179,7 +181,24 @@ function Meter({ pct, color, className }: { pct: number; color: string; classNam
 
 /* ── 1 · Headline scores ─────────────────────────────────────────── */
 
+/**
+ * ONE number treatment across the product (portal feedback round 4, 2026-09).
+ *
+ * These figures were mono at `text-2xl` while Home's "Your numbers" card renders
+ * the SAME ScoreView at `text-3xl` in the sans face, so the two screens quoting
+ * one snapshot disagreed about what a score looks like. Everything here now
+ * matches home-kpis.tsx's `ScoreCell`: `.stat-number` for the face (sans +
+ * tabular numerals, per globals.css), the same size/weight/tracking, the same
+ * "/ 100" suffix, and the same meter — a band-tinted track at low alpha rather
+ * than `surface-3`, which in light mode is a three-point step off the card and
+ * left the unfilled half invisible.
+ *
+ * THE METER NOW DRAWS THE SCORE, not data coverage. Home's does, and a coverage
+ * bar sitting where a reader expects the score is worse than no bar: coverage is
+ * a caveat, and it keeps its sentence underneath, where it reads as one.
+ */
 function ScoreTile({ view }: { view: ScoreView }) {
+  const color = TONE_COLORS[view.tone];
   return (
     <Card className="min-w-0">
       <div className="flex items-center gap-1.5">
@@ -189,19 +208,29 @@ function ScoreTile({ view }: { view: ScoreView }) {
         <InfoTip text={view.explainer} />
       </div>
       {view.value === null ? (
-        <p className="mt-1.5 font-mono text-2xl font-medium text-muted-2">n/a</p>
+        <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-muted-2">
+          &ndash;
+        </p>
       ) : (
-        <p className="mt-1.5 font-mono text-2xl font-medium">
-          <span style={{ color: TONE_COLORS[view.tone] }}>{view.value}</span>
-          <span className="ml-1 text-sm font-normal text-muted-2">/100</span>
+        <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight">
+          <span style={{ color }}>{view.value}</span>
+          <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>
         </p>
       )}
-      <p className="mt-0.5 text-[11px]" style={{ color: TONE_COLORS[view.tone] }}>
+      <p className="mt-1.5 text-[11px]" style={{ color }}>
         {view.bandLabel}
       </p>
       <div className="mt-2.5">
-        <Meter pct={view.coveragePct} color="var(--muted-3)" />
-        <p className="mt-1 text-[11px] text-muted-2">{view.coverageLine}</p>
+        <div
+          className="h-2 overflow-hidden rounded-full"
+          style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
+        >
+          <div
+            className="h-full rounded-full"
+            style={{ width: `${Math.min(100, Math.max(0, view.value ?? 0))}%`, background: color }}
+          />
+        </div>
+        <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{view.coverageLine}</p>
       </div>
       {view.breakdown.length > 0 && (
         <Disclosure summary={view.breakdownTitle} className="mt-3 border-t border-border pt-2.5">
@@ -213,7 +242,7 @@ function ScoreTile({ view }: { view: ScoreView }) {
                     {row.label}
                     {row.note && <span className="text-muted-2"> · {row.note}</span>}
                   </span>
-                  {row.pct !== null && <span className="font-mono text-foreground">{row.pct}%</span>}
+                  {row.pct !== null && <span className="stat-number text-foreground">{row.pct}%</span>}
                 </div>
                 <Meter pct={row.pct ?? 0} color="var(--foreground)" className="opacity-40" />
               </li>
@@ -225,15 +254,43 @@ function ScoreTile({ view }: { view: ScoreView }) {
   );
 }
 
-/* ── 2 · Capture context strip ───────────────────────────────────── */
+/* ── 2 · Capture context ─────────────────────────────────────────── */
 
-function EngineChip({ view }: { view: EngineView }) {
+/**
+ * The whole capture strip, folded into one line (portal feedback round 4,
+ * 2026-09): when we measured, on how many questions, and which engines actually
+ * answered — as marks, because a reader recognises them faster than they read
+ * three names, and because it is the row that makes the numbers above look
+ * measured rather than asserted (see engine-logo.tsx).
+ *
+ * Engines that returned nothing are a note on the row, not chips of their own —
+ * and the note is PRINTED (review wave, 2026-09). It used to live in `title`
+ * plus a screen-reader copy, which is hover-only for everyone reading with
+ * their eyes on a mouse and invisible on a phone: "Gemini returned no answers
+ * this run" is the one line that explains a missing engine, and a reader who
+ * never sees it reads the scores as covering engines they do not.
+ */
+function MeasurementStamp({ view }: { view: MeasurementLineView }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1">
-      <span className="text-xs text-foreground">{view.name}</span>
-      <Badge tone={view.statusTone}>{view.statusLabel}</Badge>
-      <InfoTip text={view.explainer} />
-    </span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <p className="text-[11px] text-muted-2">{view.line}</p>
+      {view.measured.length > 0 && (
+        <ul className="flex flex-wrap items-center gap-1.5">
+          {view.measured.map((e) => (
+            <li
+              key={e.engine}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-[11px] text-muted"
+            >
+              <EngineLogo engine={e.engine} className="h-3.5 w-3.5 shrink-0" />
+              {e.name}
+            </li>
+          ))}
+        </ul>
+      )}
+      {view.missingNote && (
+        <p className="basis-full text-[11px] text-muted-2">{view.missingNote}</p>
+      )}
+    </div>
   );
 }
 
@@ -269,7 +326,7 @@ function EngineCard({ view }: { view: EngineView }) {
                     {b.isClient && <span className="ml-1 text-[10px] text-muted-2">(you)</span>}
                   </span>
                 </span>
-                <span className="whitespace-nowrap font-mono text-[11px] text-muted-2">{b.line}</span>
+                <span className="stat-number whitespace-nowrap text-[11px] text-muted-2">{b.line}</span>
               </div>
               {b.measured ? (
                 <div className="h-2 overflow-hidden rounded-sm bg-surface-3">
@@ -277,6 +334,11 @@ function EngineCard({ view }: { view: EngineView }) {
                     className="h-full rounded-sm"
                     style={{
                       width: `${b.pctOfMax}%`,
+                      // Orange for you, slate for them (round 6, Albert
+                      // 2026-09-06). Round 6 made your bar ink to save the
+                      // screen's one accent; the ruling is that the ration
+                      // governs CONTROLS, and a bar is data. Orange is what
+                      // makes your bar findable among the roster's.
                       background: b.isClient ? "var(--neon)" : "var(--info)",
                       opacity: b.isClient ? 1 : 0.55,
                     }}
@@ -296,7 +358,7 @@ function EngineCard({ view }: { view: EngineView }) {
               <span className="truncate">{s.label}:</span>
               <InfoTip text={s.explainer} />
             </span>
-            <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-foreground">{s.value}</span>
+            <span className="stat-number shrink-0 whitespace-nowrap text-[11px] text-foreground">{s.value}</span>
           </div>
         ))}
       </div>
@@ -336,8 +398,13 @@ function UnmeasuredEngineCard({ view }: { view: EngineView }) {
 export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
   const scores = buildScoreViews(insights);
   const trust = buildSnapshotTrust(insights);
+  // The capture strip's one surviving fact, moved to sit WITH the numbers it
+  // qualifies (portal feedback round 4, 2026-09). It travels with the tiles for
+  // the same reason the legacy warning does: the Reporting tab lifts these above
+  // the fold, and a date left behind in the panel dates nothing.
+  const measurement = buildMeasurementLine(insights);
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* CD-B4: say it once, above the numbers, when this snapshot was produced
           by a measurement setup we've since replaced - rather than presenting
           superseded maths as the client's position today. It travels WITH the
@@ -357,6 +424,11 @@ export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
           <ScoreTile key={view.key} view={view} />
         ))}
       </div>
+      {/* UNDER the tiles (round 6, think-reporting §3 · handoffs/E.md): it is
+          the caption of the numbers, not a preface to them. The legacy banner
+          above keeps its place, because it qualifies the numbers before they
+          are read. */}
+      <MeasurementStamp view={measurement} />
     </div>
   );
 }
@@ -367,6 +439,23 @@ export function SeoGeoScores({ insights }: { insights: SeoGeoInsights }) {
  * with a real Approve control that persists and posts to the activity timeline)
  * is the primary view - `gaps[]` is documented INTERNAL and is demoted to a
  * staff-only technical disclosure (dev-handoff §3b/§4, QA Fix 6/7).
+ *
+ * UNMOUNTED ON THE CLIENT REPORT (portal feedback round 4, 2026-09). The product
+ * owner's ruling on this section: "This section is all false. All these 'what
+ * we're fixing' items are not true." Every measured check below target became a
+ * row here regardless of confidence, each one carrying an owner line promising
+ * Karos would draft the fix and an Approve button that filed a task. Account
+ * Center's Reporting tab renders `<ClientSuggestions/>` in its place - the small
+ * confirmed subset the CLIENT owns (`buildClientSuggestions`), with no owner
+ * line and no control that commits anyone.
+ *
+ * It is kept rather than deleted, and so are `seo-geo-action-plan.tsx` and
+ * `lib/actions/seo-geo-task-actions.ts`, because the plan itself is still built
+ * and persisted on every capture for the cross-repo routable-recommendation
+ * contract (docs/routable-recommendation-contract.md). Re-mounting this is
+ * therefore a decision someone takes on purpose, not a merge accident - which is
+ * why `hidePlan` defaults to true below and why seo-geo-mounting.test.ts pins
+ * the Reporting tab against it.
  */
 export function SeoGeoPlan({
   insights,
@@ -431,7 +520,7 @@ export function SeoGeoPanel({
   intelScheduleNextRunAt = null,
   isRefreshing = false,
   hideScores = false,
-  hidePlan = false,
+  hidePlan = true,
 }: {
   insights: SeoGeoInsights | null;
   /** The CURRENT tracked-5 (same selector as the sidebar) - keeps every panel
@@ -452,11 +541,12 @@ export function SeoGeoPanel({
   /** A refresh run holds the workspace lock right now - rendered in place on the
    *  capture strip instead of leaving a stale snapshot looking current. */
   isRefreshing?: boolean;
-  /** QA F99/F124: the client dashboard lifts the headline scores and the action
-   *  plan out of this panel so they sit above the fold instead of five screens
-   *  down. Both default to rendering here, so every other call site (and the
-   *  staff dashboard) is unchanged. */
+  /** QA F99/F124: the client dashboard lifts the headline scores out of this
+   *  panel so they sit above the fold instead of five screens down. */
   hideScores?: boolean;
+  /** DEFAULTS TO TRUE since portal feedback round 4 (2026-09): the Karos-owned
+   *  "What we're fixing" plan is not shown on a client-facing report any more
+   *  (see SeoGeoPlan). A caller has to ask for it back by name. */
   hidePlan?: boolean;
 }) {
   if (!insights) {
@@ -471,7 +561,6 @@ export function SeoGeoPanel({
             <FlagButton
               subject="Question about our search and AI visibility snapshot"
               message=""
-              label="Ask the Karos team"
             />
           }
         />
@@ -525,10 +614,6 @@ export function SeoGeoPanel({
   // tracked list; this banner explains what changed since the capture.
   const drift = buildRosterDrift(insights, trackedCompetitors);
   const discovered = buildDiscoveredViews(insights, trackedCompetitors);
-  const rosterChips = buildRosterChips(insights, trackedCompetitors, clientWebsite);
-  // Staff-only roster verdict (CD-J1 directive 4); null when there is nothing to
-  // say - nobody tracked, or no measured answers to check a roster against.
-  const rosterSanity = buildRosterSanity(insights, trackedCompetitors);
   // What this snapshot's comparison numbers are actually measured over. A legacy
   // record's figures cover every question; the copy must say so rather than
   // relabel them "category" (CD-J1 bounce 2b).
@@ -558,53 +643,70 @@ export function SeoGeoPanel({
           go with them rather than stay behind in a collapsed section. */}
       {!hideScores && <SeoGeoScores insights={insights} />}
 
-      {/* 2 · Where we looked: the "N of 5 engines" disclosure, all engines visible */}
-      <Card>
-        <p
-          className="font-mono text-[11px]"
-          style={{ color: strip.tone === "warning" ? TONE_COLORS.warning : "var(--muted)" }}
-        >
-          {strip.line}
-        </p>
-        {/* QA F20: an in-place refreshing state, so a stale snapshot never sits
-            there looking current while a run is rewriting it. */}
-        {strip.refreshing && (
-          <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-neon">
-            <Icon name="Loader" className="h-3 w-3 animate-spin" />
-            Refreshing this snapshot now. The numbers below are the previous run.
-          </p>
-        )}
-        {!strip.refreshing && strip.nextLine && (
-          <p className="mt-1.5 text-[11px] text-muted-2">{strip.nextLine}</p>
-        )}
-        {/* The report promises a "next snapshot" throughout, and for a client whose
-            schedule was never switched on, one never comes. Say so, and give them
-            the existing route to ask for one. */}
-        {!strip.refreshing && strip.scheduleFlagPrefill && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <span className="text-[11px] text-muted-2">{strip.noScheduleLine}</span>
-            <FlagButton
-              subject={strip.scheduleFlagPrefill.subject}
-              message={strip.scheduleFlagPrefill.message}
-              label="Ask us to schedule refreshes"
-            />
-          </div>
-        )}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {engines.map((view) => (
-            <EngineChip key={view.engine} view={view} />
-          ))}
-        </div>
-        {noEnginesMeasured && (
-          <p className="mt-3 rounded-md border border-info/30 bg-info/10 px-3 py-2 text-xs text-info">
-            We couldn&apos;t capture any AI engine answers this run. Your search score and AI
-            readiness are unaffected. We&apos;ll retry on the next snapshot.
-          </p>
-        )}
-      </Card>
+      {/* 2 · WHAT IS LEFT OF THE CAPTURE STRIP (portal feedback round 4, 2026-09).
+          The box used to open this section with the snapshot date, the question
+          count, an "N of 5 engines measured" fraction, a "no refresh is
+          scheduled" sentence and five status chips. The date and the engines
+          moved up to sit with the scores (`MeasurementStamp`, always rendered by
+          SeoGeoScores whether the tiles are lifted or not), the fraction is gone,
+          and the schedule sentence is staff-only: it names a control no client
+          has, on a page that promises a next snapshot in six other places.
 
-      {/* 3 · Presence split: the branded-vs-category story + roster share */}
-      <Card>
+          What stays is what a reader has to act on: a run rewriting these numbers
+          right now, and a run that captured no AI answers at all. Both are
+          conditional, so on a healthy snapshot this section renders nothing at
+          all rather than an empty card. */}
+      {(strip.refreshing || noEnginesMeasured) && (
+        <Card>
+          {/* QA F20: an in-place refreshing state, so a stale snapshot never sits
+              there looking current while a run is rewriting it. */}
+          {strip.refreshing && (
+            /* round 6 (ruling 2): `text-neon`. Orange never signals status —
+               "a run is rewriting these numbers" is a status, and the judgment
+               scale is the one that says it. The band two lines below already
+               reads `info` for the same class of fact. */
+            <p className="inline-flex items-center gap-1.5 text-[11px] text-info">
+              <Icon name="Loader" className="h-3 w-3 animate-spin" />
+              Refreshing this snapshot now. The numbers below are the previous run.
+            </p>
+          )}
+          {noEnginesMeasured && (
+            <p
+              className={`rounded-md border border-info/30 bg-info/10 px-3 py-2 text-xs text-info ${strip.refreshing ? "mt-3" : ""}`}
+            >
+              We couldn&apos;t capture any AI engine answers this run. Your search score and AI
+              readiness are unaffected. We&apos;ll retry on the next snapshot.
+            </p>
+          )}
+        </Card>
+      )}
+
+      {/* The schedule, for the people who can do something about it. A client
+          reading "no refresh is scheduled yet" could only ask us; staff can set
+          one, and the same prefilled route is here for them to escalate with. */}
+      {!isClientViewer && !strip.refreshing && (strip.nextLine || strip.scheduleFlagPrefill) && (
+        <StaffOnlySection label="Staff only · refresh schedule">
+          {strip.nextLine && <p className="text-[11px] text-muted-2">{strip.nextLine}</p>}
+          {strip.scheduleFlagPrefill && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-muted-2">{strip.noScheduleLine}</span>
+              <FlagButton
+                subject={strip.scheduleFlagPrefill.subject}
+                message={strip.scheduleFlagPrefill.message}
+              />
+            </div>
+          )}
+        </StaffOnlySection>
+      )}
+
+      {/* 3 · Presence split: the branded-vs-category story + roster share.
+
+          `id="presence"` and the `#share` anchor below are where Home's two SEO
+          cells land (round 6, home-standing.tsx): each cell opens the section
+          its own number is computed in, the same device `#visibility-scores`
+          already gave the KPI card's visibility cell. `scroll-mt-24` clears the
+          sticky chrome, as the other anchored sections do. */}
+      <Card id="presence" className="scroll-mt-24">
         <CardTitle className="mb-1">Do buyers find you?</CardTitle>
         <p className="mb-4 text-xs text-muted-2">
           Whether AI engines name you when buyers ask by name versus when they ask open category
@@ -632,6 +734,8 @@ export function SeoGeoPanel({
                       srLabel={`${tile.heading}: ${tile.pctLabel}. See how this was measured.`}
                     />
                   </div>
+                  {/* round 6, Albert 2026-09-06: back to `--neon`. Meter fills
+                      are data, not controls. */}
                   <Meter pct={tile.pct ?? 0} color="var(--neon)" className="mt-1.5" />
                 </>
               ) : (
@@ -642,7 +746,7 @@ export function SeoGeoPanel({
         </div>
         {presence.takeaway && <p className="mt-3 text-sm text-muted">{presence.takeaway}</p>}
         {presence.rosterShare && (
-          <div className="mt-4 border-t border-border pt-3">
+          <div id="share" className="mt-4 scroll-mt-24 border-t border-border pt-3">
             <div className="flex items-center gap-1.5">
               <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
                 Your share of the conversation
@@ -652,9 +756,10 @@ export function SeoGeoPanel({
               <InfoTip text={presence.rosterShare.explainer} />
             </div>
             <div className="mt-1.5 flex items-center gap-3">
-              <span className="font-mono text-lg font-medium text-foreground">
+              <span className="stat-number text-lg font-medium text-foreground">
                 {presence.rosterShare.value}
               </span>
+              {/* round 6, Albert 2026-09-06: back to `--neon`, as above. */}
               <Meter pct={presence.rosterShare.pct} color="var(--neon)" className="flex-1" />
             </div>
             <p className="mt-1 text-[11px] text-muted-2">{presence.rosterShare.caption}</p>
@@ -726,7 +831,7 @@ export function SeoGeoPanel({
                   <BrandFavicon website={d.url} name={d.name} faviconSize={32} className="h-4 w-4 rounded-[3px]" />
                   <span className="truncate text-muted">{d.name}</span>
                 </span>
-                <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-muted-2">
+                <span className="stat-number shrink-0 whitespace-nowrap text-[11px] text-muted-2">
                   {d.line}
                 </span>
               </li>
@@ -795,45 +900,6 @@ export function SeoGeoPanel({
       </Card>
       )}
 
-      <Card>
-        <CardTitle className="mb-1">Who we compare you against</CardTitle>
-        <p className="mb-3 text-xs text-muted-2">
-          The brands your visibility is measured against on every snapshot.
-        </p>
-        {/* CD-J1 directive 4 - STAFF ONLY. A roster of never-named brands makes
-            every comparison above honest and meaningless at once: bars at zero
-            against opponents who aren't in the race. The client cannot tell that
-            apart from "you're losing", so the team gets told instead. A suggestion,
-            never an action - the roster is an account decision and nothing here
-            mutates it. */}
-        {!isClientViewer && rosterSanity && (
-          <div className="mb-3 rounded-md border border-warning/30 bg-warning/10 px-3 py-2">
-            <p className="flex items-start gap-1.5 text-xs font-medium text-warning">
-              <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0" />
-              {rosterSanity.headline}
-            </p>
-            <p className="mt-1 text-[11px] text-muted">{rosterSanity.detail}</p>
-          </div>
-        )}
-        <div className="flex flex-wrap gap-1.5">
-          {rosterChips.map((chip, i) => (
-            <span
-              key={`${chip.name}-${i}`}
-              className={
-                chip.isClient
-                  ? "inline-flex items-center gap-1 rounded-[4px] border border-neon/30 bg-neon/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-neon"
-                  : "inline-flex items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted"
-              }
-            >
-              <BrandFavicon website={chip.url} name={chip.name} faviconSize={32} className="h-3 w-3 rounded-[2px]" />
-              {chip.name}
-              {chip.isClient && <span>(you)</span>}
-              {chip.pending && <span className="text-muted-2">· next snapshot</span>}
-            </span>
-          ))}
-        </div>
-      </Card>
-
       {/* QA F19: this Card is NOT gated on there being citations. The client's own
           citation sentence used to be nested inside a `quotedInstead.length > 0`
           check, so the single most important line in the section - your site was
@@ -865,7 +931,7 @@ export function SeoGeoPanel({
                   <span className="w-20 shrink-0">
                     <Meter pct={(r.citations / leaderboardMax) * 100} color="var(--info)" />
                   </span>
-                  <span className="w-6 shrink-0 text-right font-mono text-[11px] text-muted-2">
+                  <span className="stat-number w-6 shrink-0 text-right text-[11px] text-muted-2">
                     {r.citations}
                   </span>
                 </li>
@@ -883,12 +949,15 @@ export function SeoGeoPanel({
       </Card>
       )}
 
-      {/* 7 · Catch-all flag affordance */}
-      <div className="flex justify-end">
+      {/* 7 · Catch-all flag affordance. R7 (flow audit 2026-09): the invitation
+          is a SENTENCE beside the control, not the control's own label — the
+          button opens the same support dialog four other triggers open, and it
+          says the same word they do. */}
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-[11px] text-muted-2">Something look off?</span>
         <FlagButton
           subject={generic.subject}
           message={generic.message}
-          label="Something look off? Flag it to the Karos team"
         />
       </div>
     </div>

@@ -88,12 +88,14 @@ describe("account settings are TABS, not a page behind a button hop", () => {
     expect(page).toContain('label: "Account security"');
   });
 
-  it("offers no entry that navigates off the row", () => {
+  it("offers no entry that navigates a client off the row", () => {
     // The hop, in every form it had: the header action it started as, and the
-    // link entry it became.
+    // link entry it became. A staff-only cross-link to /settings (staff's own
+    // account, not a second page for the client's) is not this hop — it never
+    // renders for the CLIENT_USER the row belongs to — so it is gated behind
+    // `isStaff ?` rather than banned outright.
     const header = page.slice(page.indexOf("<PageHeader"), page.indexOf("<SettingsTabs"));
-    expect(header).not.toContain("Account settings");
-    expect(header).not.toContain("action=");
+    expect(flat(header)).toMatch(/action=\{\s*isStaff \?/);
     const pageCode = code(SETTINGS_PAGE);
     expect(pageCode).not.toContain('href: "/settings"');
     expect(pageCode).not.toContain('label: "Account settings"');
@@ -169,8 +171,12 @@ describe("deep links name their tab", () => {
     ["src/app/(app)/clients/[id]/agents/page.tsx", "Manage integrations"],
   ];
 
-  it.each(CHANNELS)("%s links to the channels tab (%s)", (rel) => {
-    expect(source(rel)).toContain("/settings?tab=channels");
+  // Portal revamp: Channels stopped being its own top-level tab — "Settings
+  // becomes a tab inside it" folded Channels/Automation/Team into one generic
+  // Settings tab (Account Center, Surface 06) — so every one of these now
+  // names THAT tab instead.
+  it.each(CHANNELS)("%s links to the settings tab (%s)", (rel) => {
+    expect(source(rel)).toContain("/settings?tab=settings");
   });
 
   it("client-analytics sets it on both the Manage link and the reconnect badge", () => {
@@ -179,7 +185,7 @@ describe("deep links name their tab", () => {
     // third one added later without a tab should fail here.
     const hrefs = src.match(/\/settings[a-z?=]*/g) ?? [];
     expect(hrefs).toHaveLength(2);
-    expect(hrefs.every((h) => h === "/settings?tab=channels")).toBe(true);
+    expect(hrefs.every((h) => h === "/settings?tab=settings")).toBe(true);
   });
 
   it("both credits pills in the client rail open the Credits tab", () => {
@@ -196,7 +202,192 @@ describe("deep links name their tab", () => {
   it("the tab ids used by those links are real tabs on the settings page", () => {
     const page = source(SETTINGS_PAGE);
     expect(page).toContain('{ id: "credits", label: "Credits"');
-    expect(page).toContain('{ id: "channels", label: "Channels"');
+    expect(page).toContain('{ id: "settings", label: "Settings"');
+  });
+});
+
+/* ── portal feedback round 2 (2026-09): the strip that lost two tabs ─────── */
+
+describe("Account Center's tab strip", () => {
+  const page = source(SETTINGS_PAGE);
+  const pageCode = code(SETTINGS_PAGE);
+  const tabsCode = code(TABS);
+
+  it("is a grouped side navigation, never a scrolling or wrapping tab row", () => {
+    // Round 2 of the portal feedback (2026-09) went through both tab-row
+    // shapes and rejected each: the `overflow-x-auto` strip ("I don't like
+    // this menu with the slide bar") and then the `flex-wrap` one that grew a
+    // second line ("still don't like the display here"). NN/g's "Tabs, Used
+    // Right" rules out both — a tab row must not become a carousel and tab
+    // lists must not stack — and its vertical-navigation guidance is what
+    // eight growing sections actually call for. Asked of the code, not the
+    // prose: the component's own comment names the shapes it stopped using.
+    expect(tabsCode).not.toContain("overflow-x-auto");
+    expect(tabsCode).not.toContain("w-max");
+    expect(tabsCode).not.toContain("flex-wrap");
+    // A vertical tablist with text labels, headings per group, and a native
+    // picker below md so a phone sees every section in one tap.
+    expect(tabsCode).toContain('aria-orientation="vertical"');
+    expect(tabsCode).toContain('role="tablist"');
+    expect(tabsCode).toContain("<optgroup");
+    expect(tabsCode).toContain("md:grid-cols-[13.5rem_minmax(0,1fr)]");
+    expect(tabsCode).toContain("window.history.replaceState");
+    // Every client section is filed under a heading, so the list reads as
+    // three short groups rather than one long column.
+    // Documents left this list in round 4 (2026-09) — see the Profile-tab
+    // block below for where it went and what still points at it.
+    for (const id of ["profile", "competitors", "reporting", "settings", "credits"]) {
+      expect(pageCode).toMatch(new RegExp(`id: "${id}",[^}]*group: "`));
+    }
+    expect(pageCode).toContain('group: "Your account"');
+  });
+
+  it("carries neither an Archive nor a Meetings tab", () => {
+    // "Archive does not need to be in settings, it's in the calendar. Meetings
+    // can be a sub-section in, like, account settings."
+    expect(pageCode).not.toContain('id: "archive"');
+    expect(pageCode).not.toContain('id: "meetings"');
+    expect(pageCode).not.toContain("<ArchiveView");
+    // And the header offers neither as a destination of its own. It DOES name
+    // meetings (review wave, 2026-09): they are content of the Settings tab and
+    // the description has to say what the five tabs hold, so what is refused
+    // here is a link or a tab id, not the word — "archive" is not even that,
+    // because that content left the page entirely.
+    const header = page.slice(page.indexOf("<PageHeader"), page.indexOf("<SettingsTabs"));
+    expect(header).not.toContain("archive");
+    expect(header).not.toContain("tab=meetings");
+    expect(header).not.toMatch(/href=[^>]*meetings/);
+  });
+
+  it("resolves the retired archive deep link to the calendar, per reader", () => {
+    // THE NEW TEST THIS PASS OWES: `?tab=archive` is in histories, bookmarks
+    // and sent emails, and no re-pointing of producers can reach those. It is
+    // answered server-side, before anything renders, and it keeps `?status=` —
+    // the chart's own second param — rather than dropping the reader on an
+    // unfiltered list.
+    const flatPage = flat(pageCode);
+    expect(flatPage).toContain('if (initialTab === "archive")');
+    expect(flatPage).toContain("`&status=${encodeURIComponent(statusParam)}`");
+    // A CLIENT_USER's calendar is the flat route; staff read this client's
+    // calendar at the scoped one, because theirs is the cross-client overview.
+    expect(flatPage).toContain("`/calendar?view=archive${q}`");
+    expect(flatPage).toContain("`/clients/${encodeURIComponent(id)}/calendar?view=archive${q}`");
+    // The redirect runs BEFORE the page's own reads, not after them.
+    expect(pageCode.indexOf('initialTab === "archive"')).toBeLessThan(
+      pageCode.indexOf("await Promise.all"),
+    );
+  });
+
+  it("keeps the scoped calendar's own redirect from eating the query", () => {
+    // The staff-shaped URL above is routinely pasted to a client, who is
+    // bounced from /clients/<id>/calendar to /calendar — a redirect that
+    // dropped `?view=archive` would land them on an ordinary week.
+    const cal = flat(code("src/app/(app)/clients/[id]/calendar/page.tsx"));
+    expect(cal).toContain("new URLSearchParams(");
+    expect(cal).toContain("`/calendar${suffix}`");
+  });
+
+  /* ── portal feedback round 4 (2026-09): documents move into Profile ────── */
+
+  it("carries no Documents tab, and holds the documents on Profile instead", () => {
+    // "And the documents can live in Profile."
+    expect(pageCode).not.toContain('id: "documents"');
+    // Not gone from the page — re-homed. The anchor is what a deep link lands
+    // on, and it sits AFTER the client's own profile blocks and BEFORE the
+    // staff-only editor frame, which by the parity rule closes every tab.
+    const flatPage = flat(pageCode);
+    // `scroll-mt-24` since the review wave (2026-09), so the anchor clears the
+    // sticky chrome the way #visibility-scores already did — hence a match on
+    // the anchor and its content rather than on one exact line.
+    expect(flatPage).toMatch(/<section id="documents"[^>]*>\s*\{documentsSection\}\s*<\/section>/);
+    expect(flatPage).toMatch(/<section id="documents" className="scroll-mt-24">/);
+    const profileTab = flatPage.slice(
+      flatPage.indexOf("const profileSection = ("),
+      flatPage.indexOf("const competitorAiVisibility"),
+    );
+    const order = [
+      "<ClientProfilePanel",
+      "<BrandColorsSection",
+      '<section id="documents"',
+      "<StaffOnlySection",
+    ].map((s) => profileTab.indexOf(s));
+    expect(order.every((i) => i > -1), profileTab).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  /* ── round 6 (2026-09): the Seats card leaves Profile ────────────────── */
+
+  it("carries no Seats card on Profile, and no read to feed one", () => {
+    // "Remove the Seats card from Profile (not useful)." It was a read-only
+    // list of names whose own copy pointed at two OTHER pages, and those pages
+    // are the editors: a seat is a per-agent input, edited on the X and
+    // LinkedIn intake pages, both reached from the agent detail page's "What it
+    // runs on" band. Nothing linked to the card — no `#seats` anchor exists
+    // anywhere in `src` — so this is a removal with no landing to re-point.
+    //
+    // Comment-stripped, because the page explains at length what it used to do.
+    const stripped = stripComments(pageCode);
+    expect(stripped).not.toMatch(/<CardTitle[^>]*>Seats/);
+    expect(stripped, "the seat roster read is still paid for").not.toContain("listClientSeats");
+    expect(stripped, "seatSetupLinks outlived the card it fed").not.toContain("seatSetupLinks");
+    // The OTHER seats object is untouched: the Settings tab's "Manage employee
+    // seats" is the LinkedIn OAuth `EmployeeSeat`, which this page still reads
+    // and sanitizes.
+    expect(stripped).toContain("sanitizeLinkedinSeats");
+  });
+
+  it("resolves the retired documents deep link onto the block that holds them", () => {
+    // Same reasoning as the archive redirect above: histories, bookmarks and
+    // sent emails hold `?tab=documents`, and a deep link that lands on the
+    // content is worth more than one that lands on an apology.
+    const flatPage = flat(pageCode);
+    expect(flatPage).toContain('if (initialTab === "documents")');
+    expect(flatPage).toContain(
+      "`/clients/${encodeURIComponent(id)}/settings?tab=profile#documents`",
+    );
+    expect(pageCode.indexOf('initialTab === "documents"')).toBeLessThan(
+      pageCode.indexOf("await Promise.all"),
+    );
+    // And the header stops listing it as a destination of its own.
+    const header = page.slice(page.indexOf("<PageHeader"), page.indexOf("<SettingsTabs"));
+    expect(header).toContain("Profile and documents");
+  });
+
+  it("opens the Competitors tab on every competitor, with no collapse", () => {
+    // "Since it's only competitors now we can show all of them right off the
+    // bat." `limit={null}` was already the rule (nothing is dropped); what
+    // round 4 removed is the six-row `collapseTo`, so the tab no longer opens
+    // on a subset of a list it holds in full.
+    const flatPage = flat(pageCode);
+    const mount = flatPage.slice(
+      flatPage.indexOf("<CompetitorTrack"),
+      flatPage.indexOf("<CompetitorTrack") + 400,
+    );
+    expect(mount).toContain("limit={null}");
+    expect(mount).not.toContain("collapseTo");
+    // And the rows are fed the client's own AI-answer count, which is the only
+    // number the competitor rows cannot carry themselves.
+    expect(mount).toContain("aiVisibility={competitorAiVisibility}");
+  });
+
+  it("renders Meetings as the last of the Settings tab's own sections", () => {
+    // A sub-section, with the anchor that makes `?tab=settings#meetings` land
+    // on it — and still ahead of the admin-only frame, which by the parity
+    // rule closes every tab it appears on.
+    expect(page).toMatch(/<Card id="meetings"/);
+    // Same anchor-offset rule as #documents and #visibility-scores.
+    expect(flat(pageCode)).toContain('<Card id="meetings" className="scroll-mt-24">');
+    const settingsTab = flat(pageCode).slice(
+      flat(pageCode).indexOf("const settingsSection = ("),
+      flat(pageCode).indexOf("const sections: SettingsTab[]"),
+    );
+    // Order, asked as order: a JSX comment sits between the last two, so the
+    // four are pinned by position rather than by one adjacent string.
+    const order = ["{channelsSection}", "{automationSection}", "{teamSection}", "{meetingsSection}", "{adminAutomationSection}"].map(
+      (s) => settingsTab.indexOf(s),
+    );
+    expect(order.every((i) => i > -1), settingsTab).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 });
 
@@ -232,17 +423,14 @@ describe("a long client description cannot break the no-scroll rail", () => {
     expect(flat(panel)).toContain('compact && "line-clamp-2"');
   });
 
-  it("passes compact at the no-scroll mounts and not at the scrolling ones", () => {
-    // FOUR mounts now, two per shell. Until V3 the staff shell had only the
-    // one — its desktop rail carried a company chip instead of this panel — so
-    // "which mounts clamp?" had a single answer to give and the rule read as a
-    // property of the client's rail rather than of height-constrained mounts.
-    // Both desktop rails are the no-scroll layout the clamp was written for
-    // (CD-E3); both Company sheets scroll and keep the full text.
-    for (const [rel, src] of [
-      [RAIL, railSrc],
-      [SIDEBAR, sidebarSrc],
-    ] as const) {
+  it("clamps the height-constrained mounts, leaves the sheets and Account Center full", () => {
+    // Reversed after Account Center shipped: explicit direction restored the
+    // full brand card to BOTH rails ("not collapsed into a bare minimal text
+    // link"), so this is no longer "nowhere in the rails" — it is FOUR mounts
+    // now (desktop aside × 2, mobile sheet × 2), on top of Account Center's
+    // own fifth, uncompacted one. `compact` still marks exactly the no-scroll
+    // desktop asides; both Company sheets scroll and keep the full text.
+    for (const [rel, src] of [[RAIL, railSrc], [SIDEBAR, sidebarSrc]] as const) {
       const mounts = [...src.matchAll(/<ClientProfilePanel[\s\S]*?\/>/g)].map((m) => flat(m[0]));
       expect(mounts, `${rel} mounts the panel on its rail and in its sheet`).toHaveLength(2);
       expect(
@@ -250,11 +438,12 @@ describe("a long client description cannot break the no-scroll rail", () => {
         `${rel} clamps the height-constrained mount and only that one`,
       ).toHaveLength(1);
     }
-    // Staff's client-context sheet is the SAME scrolling frame as the client's
-    // own, so it shows the same full text. Clamping only there was a one-word
-    // AF-3 parity break (audit, 6547959).
-    expect(sidebarSrc).toContain("<ClientProfilePanel client={clientCtx.client} />");
-    expect(sidebarSrc).not.toContain("<ClientProfilePanel client={clientCtx.client} compact />");
+    const settingsPageSrc = source(SETTINGS_PAGE);
+    const acMounts = [...settingsPageSrc.matchAll(/<ClientProfilePanel[\s\S]*?\/>/g)].map((m) =>
+      flat(m[0]),
+    );
+    expect(acMounts, "Account Center mounts the panel exactly once").toHaveLength(1);
+    expect(acMounts[0]).not.toMatch(/\bcompact\b/);
   });
 
   it("keeps the clamp on the text, not on the chips beside it", () => {
@@ -292,17 +481,26 @@ describe("a long client description cannot break the no-scroll rail", () => {
 
   it("picks a cap that provably fits one line at the narrower mount", () => {
     // THE ARITHMETIC BEHIND THE NUMBER, so it can be re-derived rather than
-    // trusted. The narrower of the two mounts is the staff sidebar: `w-64`
-    // (256px) minus its 1px border, minus the body's `px-4`, minus the panel's
-    // own `px-1`, leaves 215px for a chip on its own line. The chip spends 38px
-    // of that on its 2px border, `px-2`, 14px mark and `gap-1.5`.
+    // trusted. It was measured at the narrowest mount that existed when the cap
+    // was set: the staff sidebar at `w-64` (256px) minus its 1px border, minus
+    // the body's `px-4`, minus the panel's own `px-1`, leaving 215px for a chip
+    // on its own line. The chip spends 38px of that on its 2px border, `px-2`,
+    // 14px mark and `gap-1.5`.
     //
     // The remaining 177px was measured in a browser at the app's own font
     // (Hanken Grotesk, `text-xs` = 12px): the widest title-case category of 28
     // characters renders at 176.7px and fits; at 29 it renders at 183.7px and
-    // does not. So 28 is the largest cap that holds, and the client rail's
-    // `w-72` has 32px more than the mount the number was measured at.
-    expect(sidebarSrc).toContain("hidden w-64 shrink-0");
+    // does not.
+    //
+    // THAT MOUNT NO LONGER EXISTS, and the cap is now conservative rather than
+    // tight (parity pass 2026-09, rulings D1/D2). ClientProfilePanel — the only
+    // thing that renders this chip — is mounted in the staff rail ONLY in client
+    // context, and in client context that rail is `w-72`, the client rail's own
+    // width. So both surviving mounts have the 32px of headroom the client rail
+    // always had, and 28 is a number that provably fits at a width narrower than
+    // either. The `w-64` below is the agency nav, which never draws a chip.
+    expect(sidebarSrc).toMatch(/clientCtx \? "relative z-30 w-72" : "w-64"/);
+    expect(sidebarSrc).toContain("hidden shrink-0 border-r border-border bg-background md:block");
     expect(railSrc).toContain("hidden w-72 shrink-0");
     expect(flat(code(PANEL))).toContain(
       'const CHIP = "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-muted"',
@@ -358,7 +556,7 @@ describe("a long client description cannot break the no-scroll rail", () => {
 
 /* ── CD-L P1/P2: what the Brand Profile sheet is for ─────────────────────── */
 
-describe("the Brand Profile sheet asks for three things", () => {
+describe("the Brand Profile sheet asks for four things", () => {
   const flat = (t: string) => t.replace(/\s+/g, " ");
   const PANEL = "src/components/client-profile-panel.tsx";
   const ACTIONS = "src/lib/actions/client-actions.ts";
@@ -371,24 +569,33 @@ describe("the Brand Profile sheet asks for three things", () => {
     return flat(src.slice(from, src.indexOf("export function ClientProfilePanel", from)));
   })();
 
-  it("offers Contact Email, Website and About, and nothing else", () => {
-    for (const label of ["Contact Email", "Website", "About"]) {
+  it("offers Contact Email, Website, About and Company picture, and nothing else", () => {
+    for (const label of ["Contact Email", "Website", "About", "Company picture"]) {
       expect(modal, `the sheet no longer asks for ${label}`).toContain(`>${label}<`);
     }
     // The three that left, each for its own reason (see the component's note).
     for (const gone of ["Brand Voice", "Industry", "Meeting Domain"]) {
       expect(modal, `${gone} is still in the sheet`).not.toContain(`>${gone}<`);
     }
-    // Exactly three inputs, so a fourth cannot be added without answering here.
-    expect((modal.match(/<label className=\{labelCls\}>/g) ?? [])).toHaveLength(3);
+    // Company picture (portal revamp, Account Center Profile tab) is the one
+    // deliberate fourth field — a client managing their own logo through the
+    // same fenced route staff always could (see the logo route's own note).
+    // Exactly four inputs, so a fifth cannot be added without answering here.
+    expect((modal.match(/<label className=\{labelCls\}>/g) ?? [])).toHaveLength(4);
   });
 
   it("writes only those three, so the fields it dropped keep their stored values", () => {
     // The form object IS the action payload (`updateClientProfileAction(client.id,
     // form)`), so the state shape is the write contract. Brand Voice is a
     // DOCUMENT and the sheet must not keep a second copy of it.
-    expect(modal).toContain(
-      "useState({ contactEmail: client.contactEmail ?? \"\", website: client.website ?? \"\", description: client.description ?? \"\", })",
+    // round 6: `description` now falls back to the legacy `brief` field when a
+    // client has no description yet (the ladder's "Complete your profile" step
+    // lands on this field and has to show what is actually stored). The three
+    // KEYS are the contract this test is about, so they are asked for as keys
+    // rather than as one frozen initialiser string that any legitimate default
+    // rewrites.
+    expect(modal).toMatch(
+      /useState\(\{ contactEmail: client\.contactEmail \?\? "", website: client\.website \?\? "", description: [^}]*, \}\)/,
     );
     for (const gone of ["brandVoice", "industry", "domainsCsv"]) {
       expect(modal, `the sheet still writes ${gone}`).not.toContain(gone);
@@ -475,10 +682,16 @@ describe("the Brand Profile sheet asks for three things", () => {
       "category: clientCategoryValue(client) ?? \"\"",
     );
     expect(grid).toContain("maxLength={CLIENT_CATEGORY_MAX_LENGTH}");
-    // And the action behind it refuses the old key outright rather than mapping
-    // it, because it takes a whole Partial<Client> from a staff caller.
-    expect(flat(code("src/lib/actions/client-actions.ts"))).toContain(
-      "delete (patch as Partial<Client> & { industry?: string }).industry",
+    // And the action behind it cannot write the old key at all: it copies an
+    // allowlist of named fields off the input (2026-09), and `industry` is not
+    // on it — so a stale caller sending the legacy key writes nothing rather
+    // than re-opening the split.
+    const actions = code("src/lib/actions/client-actions.ts");
+    const list = actions.slice(
+      actions.indexOf("const CLIENT_EDITABLE_TEXT_FIELDS = ["),
+      actions.indexOf("] as const;", actions.indexOf("const CLIENT_EDITABLE_TEXT_FIELDS = [")),
     );
+    expect(list).toContain('"category"');
+    expect(list).not.toContain('"industry"');
   });
 });

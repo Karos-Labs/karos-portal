@@ -135,6 +135,28 @@ else
   secret_put "$PROD_PROJECT_ID" TOKEN_ENCRYPTION_KEY "$KEY"
 fi
 
+# NEXT_PUBLIC_FIREBASE_* — public Firebase Web SDK config, but cloudbuild.yaml's
+# docker-build step reads them from THIS project's own Secret Manager (Next.js
+# only inlines NEXT_PUBLIC_* from build-time ENV, so they can't be deferred to
+# the Cloud Run runtime --set-secrets step). Same shared Firebase project as
+# prod, so the values must be identical — copy, don't regenerate. Missing this
+# is exactly what breaks prep login with "auth/api-key-not-valid": the build
+# falls back to the literal placeholder in src/lib/firebase/client.ts.
+for VAR in NEXT_PUBLIC_FIREBASE_API_KEY NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN \
+           NEXT_PUBLIC_FIREBASE_PROJECT_ID NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET \
+           NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID NEXT_PUBLIC_FIREBASE_APP_ID; do
+  if have secrets describe "$VAR" --project="$PREP_PROJECT_ID"; then
+    echo "  $VAR already exists in prep — leaving unchanged"
+  elif have secrets describe "$VAR" --project="$PROD_PROJECT_ID"; then
+    gcloud secrets versions access latest --secret="$VAR" --project="$PROD_PROJECT_ID" \
+      | gcloud secrets create "$VAR" --project="$PREP_PROJECT_ID" --data-file=- --replication-policy=automatic
+    echo "  copied $VAR from prod"
+  else
+    read -rsp "  $VAR not found in prod either — paste its value: " value; echo
+    secret_put "$PREP_PROJECT_ID" "$VAR" "$value"
+  fi
+done
+
 # ── 4. Cross-project Artifact Registry read (needed for promote-production) ─
 say "Granting production's Cloud Build SA read access to prep's Artifact Registry"
 PROD_PROJECT_NUMBER=$(gcloud projects describe "$PROD_PROJECT_ID" --format='value(projectNumber)')

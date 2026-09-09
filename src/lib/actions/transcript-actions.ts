@@ -10,9 +10,10 @@ import {
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { ensureActionItemDoc, historyEntry } from "@/lib/action-items";
-import { ingestTranscript, appendMeetingSignalToContextDoc, buildActionItemsByOwner } from "@/lib/transcripts/ingest";
+import { ingestTranscript, appendMeetingSignalToContextDoc } from "@/lib/transcripts/ingest";
 import { listFirefliesTranscripts, fetchFirefliesTranscript } from "@/lib/transcripts/fireflies";
-import type { Transcript } from "@/lib/types";
+import { syncActionItemAssignmentToJira } from "@/lib/integrations/jira";
+import type { AppUser, Transcript } from "@/lib/types";
 import { requireStaff, requireAdmin } from "./_shared";
 
 /** Assign a transcript to a client, Karos Labs internal, or unassociated.
@@ -193,37 +194,6 @@ export async function toggleActionItemCompletionAction(
 }
 
 /**
- * Reassign a single action item to a new owner name.
- * Rebuilds actionItemsByOwner snapshot from the updated owners array.
- */
-export async function setActionItemOwnerAction(
-  transcriptId: string,
-  itemIndex: number,
-  ownerName: string | null,
-): Promise<void> {
-  await requireStaff();
-  const t = await getTranscript(transcriptId);
-  if (!t) throw new Error("Transcript not found");
-
-  const total = t.actionItems?.length ?? 0;
-  const owners: (string | null)[] = t.actionItemOwners?.length === total
-    ? [...t.actionItemOwners]
-    : Array.from({ length: total }, (_, i) => {
-        if (!t.actionItemsByOwner) return null;
-        for (const [name, tasks] of Object.entries(t.actionItemsByOwner)) {
-          if (tasks.includes(t.actionItems?.[i] ?? "")) return name === "Unassigned" ? null : name;
-        }
-        return null;
-      });
-
-  if (itemIndex >= 0 && itemIndex < owners.length) owners[itemIndex] = ownerName;
-  const actionItemsByOwner = buildActionItemsByOwner(t.actionItems ?? [], owners);
-
-  await updateTranscript(transcriptId, { actionItemOwners: owners, actionItemsByOwner });
-  revalidatePath(`/transcripts/${transcriptId}`);
-}
-
-/**
  * Explicitly assign (or un-assign) a meeting action item to a user by their UID.
  */
 export async function assignActionItemToUserAction(
@@ -251,11 +221,12 @@ export async function assignActionItemToUserAction(
   const newAssignedIds = [...(t.actionItemAssignedUserIds ?? Array<null>(len).fill(null))];
   while (newAssignedIds.length < len) newAssignedIds.push(null);
 
+  let target: AppUser | null = null;
   if (assignedUserId === null) {
     newOwners[itemIndex] = null;
     newAssignedIds[itemIndex] = null;
   } else {
-    const target = await getUser(assignedUserId);
+    target = await getUser(assignedUserId);
     newOwners[itemIndex] = target?.name ?? target?.email ?? null;
     newAssignedIds[itemIndex] = assignedUserId;
   }
@@ -278,11 +249,17 @@ export async function assignActionItemToUserAction(
           ? `Reassigned from ${doc.assigneeName} to ${newName} by ${viewer.name}`
           : `Assigned to ${newName} by ${viewer.name}`
         : `Unassigned by ${viewer.name}`;
+      const jira = target ? await syncActionItemAssignmentToJira(doc, assignedUserId, target.email) : null;
       await updateActionItem(doc.id, {
         assigneeUserId: assignedUserId,
         assigneeName: assignedUserId ? newName : null,
         updatedAt: Date.now(),
-        history: [...doc.history, historyEntry("reassigned", detail, { id: viewer.uid, name: viewer.name })],
+        history: [
+          ...doc.history,
+          historyEntry("reassigned", detail, { id: viewer.uid, name: viewer.name }),
+          ...(jira ? [historyEntry("jira_linked", `Linked to Jira issue ${jira.jiraIssueKey}`, { id: "system", name: "Jira sync" })] : []),
+        ],
+        ...(jira ?? {}),
       });
     }
   } catch { /* Non-fatal — transcript update already persisted */ }

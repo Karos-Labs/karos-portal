@@ -52,7 +52,10 @@ describe("client integration credentials — encrypted at rest", () => {
   it("stores OAuth tokens ENCRYPTED and returns them DECRYPTED", async () => {
     await upsertClientIntegration({
       clientId: "c1",
-      platform: "facebook",
+      // Any OAuth platform id does; this said "facebook", which is no longer a
+      // channel Karos Labs offers (portal feedback round 2, 2026-09). The
+      // encryption path is keyed by nothing but the id, so the id is arbitrary.
+      platform: "instagram",
       credentials: { accessToken: "secret-at", refreshToken: "secret-rt" },
       method: "oauth",
       connectedBy: "u1",
@@ -60,7 +63,7 @@ describe("client integration credentials — encrypted at rest", () => {
       updatedAt: 0,
     });
 
-    const raw = store.get("c1_facebook") as { credentials: Record<string, string> };
+    const raw = store.get("c1_instagram") as { credentials: Record<string, string> };
     expect(isEncrypted(raw.credentials.accessToken)).toBe(true);
     expect(raw.credentials.accessToken).not.toContain("secret-at");
 

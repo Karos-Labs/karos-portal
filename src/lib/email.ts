@@ -102,16 +102,21 @@ export type Html = Markup;
  * still accepts a plain `string`, so the four senders outside this module build
  * their own markup and are unaffected by the tag. Read before claiming they are
  * safe, because they differ:
- *   · execution-actions.ts interpolates the task title, the client name and the
- *     triggering user's name and address RAW;
- *   · request-actions.ts interpolates the company name, website, address and
- *     use-case RAW, from an UNAUTHENTICATED public form;
+ *   · execution-actions.ts now hand-escapes its five interpolations
+ *     (escapeHtml from text-utils.ts, 2026-08) — task title, client name,
+ *     recipient, the error message, and the triggering user's name/email were
+ *     RAW before that;
+ *   · request-actions.ts now hand-escapes its four interpolations the same
+ *     way — company name, website, admin email and use-case were RAW before
+ *     that, from an UNAUTHENTICATED public form;
  *   · execution-engine.ts hand-escapes its two interpolations;
  *   · job-alerts.ts hand-escapes at every CALL SITE, while its own `alertShell`
  *     interpolates the row values and the link raw — the caller-remembers
  *     contract this tag exists to replace, currently honoured.
- * Those files are another fixer's; moving them onto this tag is a separate
- * change, and the first two are the ones that matter.
+ * Those first two were the ones that mattered (staff-facing alerts fed by
+ * client/staff-editable fields, and an unauthenticated public form); moving
+ * every sender onto this tag instead of a per-site escapeHtml call is a
+ * separate, later change.
  *
  * Not an XSS sanitiser: it escapes text into an HTML *text/attribute-value*
  * position, which is where every interpolation in this module's templates sits.

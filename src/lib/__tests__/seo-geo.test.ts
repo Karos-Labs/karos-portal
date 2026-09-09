@@ -338,7 +338,8 @@ describe("PDF/report contract: intent taxonomy, answer grid, citations", () => {
   it("classifies prompts into the DISC/COMP/PROB/BRAND/NAV taxonomy", () => {
     expect(classifyIntent("best cafes to work from in Tel Aviv", gaz)).toBe("discovery");
     expect(classifyIntent("best app to find work-friendly cafes", gaz)).toBe("comparison");
-    expect(classifyIntent("Acme Fintech alternative", gaz)).toBe("comparison"); // comparison wins over brand
+    // Names the brand — a guaranteed mention, not earned visibility — so brand wins over comparison wording.
+    expect(classifyIntent("Acme Fintech alternative", gaz)).toBe("brand");
     expect(classifyIntent("where can I work with outlets right now", gaz)).toBe("problem");
     expect(classifyIntent("is Acme Fintech good?", gaz)).toBe("brand");
     expect(classifyIntent("acmefintech.com pricing", gaz)).toBe("navigational");
@@ -367,11 +368,21 @@ describe("PDF/report contract: intent taxonomy, answer grid, citations", () => {
     expect(grid[1].cells.find((c) => c.engine === "claude")?.state).toBe("absent");
   });
 
-  it("has a wired provider for every tracked engine (CD-B2)", () => {
-    for (const engine of Object.keys(ENGINE_PROVIDERS) as Array<keyof typeof ENGINE_PROVIDERS>) {
+  it("has a wired direct-connector provider for every engine this portal calls itself; the two agent-engine-only engines are honestly null (T-B16/SCRUM-271)", () => {
+    // CD-B2 (2026-07-27) asserted every TRACKED engine had a wired PORTAL
+    // connector, back when the tracked set was exactly the three engines this
+    // portal itself calls. T-B16/SCRUM-271 widens EngineId to the real
+    // five-engine agent-engine roster without adding two direct connectors on
+    // this side — perplexity/copilot reach clientSeoGeo only through
+    // agent-engine's own capture (see ENGINE_PROVIDERS's doc comment), so
+    // `null` here is the honest, deliberate answer for those two, not a gap.
+    for (const engine of ["chatgpt", "gemini", "claude"] as const) {
       expect(ENGINE_PROVIDERS[engine]).not.toBeNull();
     }
-    expect(Object.keys(ENGINE_LABELS).sort()).toEqual(["chatgpt", "claude", "gemini"]);
+    for (const engine of ["perplexity", "copilot"] as const) {
+      expect(ENGINE_PROVIDERS[engine]).toBeNull();
+    }
+    expect(Object.keys(ENGINE_LABELS).sort()).toEqual(["chatgpt", "claude", "copilot", "gemini", "perplexity"]);
   });
 
   it("computes the citation leaderboard and always keeps the client's own line", () => {
@@ -883,6 +894,19 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
     expect(resolveRecCopy("GEO-27:chatgpt", { title: "whatever was frozen" })).toEqual(
       REC_COPY["GEO-27"],
     );
+  });
+
+  // round 6: MOVED HERE from seo-geo-client-suggestions.test.ts. GEO-27 is no
+  // longer a client suggestion — share of voice is an outcome our agents move,
+  // not homework for the reader — but its REC_COPY entry stays for the
+  // cross-repo plan contract, and the claim it must not make is unchanged.
+  it("says share of voice for GEO-27, because that is what it measures", () => {
+    // The gap fires on `shareOfVoice`, the rival's share of the brand mentions
+    // in those answers. A brand named in fewer answers can still hold the
+    // larger share, so "named more often than you" was a claim this report had
+    // not made (review wave, 2026-09).
+    const copy = REC_COPY["GEO-27"];
+    expect(`${copy.title} ${copy.description}`).not.toMatch(/named (more often|most often)/i);
   });
 
   it("refuses to hand back an internal label for an id it cannot resolve", () => {

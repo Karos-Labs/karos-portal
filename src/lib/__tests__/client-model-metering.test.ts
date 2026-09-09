@@ -47,6 +47,7 @@ vi.mock("@ai-sdk/anthropic", () => ({
 }));
 vi.mock("@/services/logger", () => ({
   logger: { logUsage: vi.fn(), logGenerationFailure: vi.fn() },
+  readWebSearchCount: () => 0,
 }));
 
 import { generateText, streamText } from "ai";
@@ -64,11 +65,17 @@ const CLIENT_USER = {
   clientId: "c1",
   createdAt: 0,
 };
+// KAROS_ADMIN, not KAROS_EMPLOYEE: this file's own getClient() mock returns a
+// client with no assignedEmployeeIds, so an employee fixture would now be
+// refused by requireClientAccess's D-77 assignment fence (2026-08) — a
+// tenancy question this file isn't asking. Billing treats admin and employee
+// identically (isBillableClientActor only branches on CLIENT_USER), so this
+// is a like-for-like swap for what "is staff, and isn't charged" means here.
 const STAFF = {
   uid: "u-staff",
   email: "tomer@karoslabs.com",
   name: "Tomer",
-  role: "KAROS_EMPLOYEE" as const,
+  role: "KAROS_ADMIN" as const,
   createdAt: 0,
 };
 const DENIAL = new CreditError(
@@ -83,7 +90,7 @@ const asStaff = () => vi.mocked(getCurrentUser).mockResolvedValue(STAFF as any);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(data.chargeClientCredits).mockResolvedValue({ balance: 100 });
+  vi.mocked(data.chargeClientCredits).mockResolvedValue({ balance: 100, entryId: "charge-1" });
   vi.mocked(data.creditClientCredits).mockResolvedValue({ balance: 100 });
   vi.mocked(data.getClient).mockResolvedValue({ id: "c1", name: "Acme", brief: "We sell things." } as any);
 });
@@ -165,13 +172,17 @@ describe("#29 — the copilot's Refresh Task Map chip", () => {
    * the response — reading it twice is what a plain `res.json()` would attempt.
    */
   async function refreshTaskMap(): Promise<{ res: Response; body: string }> {
-    const { GET } = await import("@/app/api/tasks/generate-swarm/route");
-    const res = await GET(new Request("https://portal.test/api/tasks/generate-swarm?clientId=c1"));
+    const { POST } = await import("@/app/api/tasks/generate-swarm/route");
+    const res = await POST(
+      new Request("https://portal.test/api/tasks/generate-swarm", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "c1" }),
+      }),
+    );
     const body = res.body ? await new Response(res.body).text() : "";
     return { res, body };
   }
   const swarmYielding = (created: number) =>
-    // eslint-disable-next-line require-yield
     vi.mocked(runSwarm).mockImplementation(async function* () {
       yield { type: "done", created } as any;
     });
@@ -382,9 +393,9 @@ describe("#30 — Audience Simulation", () => {
  */
 describe("AI Insights · the forced Refresh", () => {
   async function refresh(force: boolean) {
-    const { GET } = await import("@/app/api/clients/[id]/insights/route");
+    const { POST } = await import("@/app/api/clients/[id]/insights/route");
     const url = `https://portal.test/api/clients/c1/insights${force ? "?force=1" : ""}`;
-    return GET(new Request(url), { params: Promise.resolve({ id: "c1" }) });
+    return POST(new Request(url, { method: "POST" }), { params: Promise.resolve({ id: "c1" }) });
   }
 
   beforeEach(() => {

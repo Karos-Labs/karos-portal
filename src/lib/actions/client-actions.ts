@@ -5,6 +5,8 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import {
   createClient,
+  getClient,
+  getCustomAgent,
   updateClient,
   deleteClientCascade,
   getClientByKeyId,
@@ -14,11 +16,14 @@ import {
 } from "@/lib/data";
 import { applyBrandingForClient } from "@/lib/branding";
 import { requireUser } from "@/lib/auth";
+import { canViewClient } from "@/lib/client-visibility";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
 import type { Client, SocialLinks } from "@/lib/types";
 import { clampClientCategoryValue } from "@/lib/utils";
 import { toStoredPace } from "@/lib/daily-pace";
 import { isValidTimeZone } from "@/lib/run-cadence";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
+import { parseForbiddenTopics, validateForbiddenTopics } from "@/lib/dynamic-agent-guardrails";
 import { requireStaff, logGenerationFailure } from "./_shared";
 
 export async function createClientAction(input: {
@@ -154,6 +159,25 @@ export async function clientOwnerEmailAction(clientId: string): Promise<{ email:
 }
 
 /**
+ * The text fields a staff editor may write on a client record, by NAME.
+ *
+ * NOT exported: this is a `"use server"` module, and every runtime export of
+ * one has to be an async function. Pinned by `server-action-input-shape-sweep.test.ts`
+ * (the list exists and the patch is built from it, never spread from the input)
+ * and by `settings-nav.test.ts` (the legacy `industry` key is not on it).
+ */
+const CLIENT_EDITABLE_TEXT_FIELDS = [
+  "name",
+  "contactEmail",
+  "website",
+  "category",
+  "description",
+  "brandVoice",
+  "agentsRepoSlug",
+  "timeZone",
+] as const;
+
+/**
  * Client-editable profile fields (self-service). A CLIENT_USER may update their
  * own client's category / team size / social links / contact email / website /
  * short description; staff may update any client. Deliberately narrow — no
@@ -215,85 +239,218 @@ export async function updateClientProfileAction(
   return { ok: true };
 }
 
+/**
+ * How many agents one client may pin. See the ceiling's own note inside
+ * `toggleStarredAgentAction` for why an unbounded array was the problem.
+ *
+ * NOT exported: this is a `"use server"` module, and every export of one has to
+ * be an async function.
+ */
+const MAX_STARRED_AGENTS = 24;
+
+/**
+ * Pin or unpin an agent above the client rail's "AI agents" dropdown
+ * (Surface 01, portal revamp). Same self-service rule as
+ * `updateClientProfileAction`: a CLIENT_USER may star their own client's
+ * agents; staff may star for a client they can VIEW (`canViewClient` - an
+ * admin, or an employee assigned to it), including from client context at
+ * onboarding. Any-staff-any-client was the old rule, and it became reachable
+ * from every client page once the staff rail mounted the real star buttons
+ * (parity pass 2026-09). `starred: true` appends to the end of the pinned order;
+ * `false` removes it — the dropdown itself decides display order from the
+ * stored array, so no explicit position argument is needed.
+ */
+export async function toggleStarredAgentAction(
+  clientId: string,
+  agentId: string,
+  starred: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
+    return { ok: false, error: "Not authorized to edit this client's starred agents." };
+  }
+
+  const client = await getClient(clientId);
+  if (!client) return { ok: false, error: "Client not found." };
+
+  // ANY-STAFF-ANY-CLIENT was too wide, and the parity pass 2026-09 is what made
+  // it reachable: the staff shell's client-context rail now mounts the client's
+  // real ClientRailAgentsNav, star buttons and all, so an unassigned employee
+  // who opened a client page had a working write into that client's record.
+  // `canViewClient` is the one fence every other /clients/[id] surface asks
+  // (requireVisibleClient resolves through it), so this asks the same question
+  // rather than inventing a second answer. Stars stay LIVE for staff who do
+  // pass it — Karos sets a client's first stars at onboarding, from exactly
+  // this control.
+  if (isStaff && !canViewClient(user, client)) {
+    return { ok: false, error: "You are not assigned to this client." };
+  }
+
+  const current = client.starredAgentIds ?? [];
+
+  // WHAT IS BEING PINNED, asked before it is written (review wave, 2026-09).
+  //
+  // The action authorized the WRITER and then took the `agentId` on trust, so
+  // any authorized caller could put an arbitrary string into
+  // `Client.starredAgentIds` — a retired agent, another client's per-client
+  // instance, a typo, a value from a stale tab. Nothing crashed, because
+  // `railAgentsForClient` re-applies these same fences on read and simply drops
+  // what does not pass; the ids just accumulated silently in the document,
+  // unpaintable and unremovable through the UI (a row that never renders has no
+  // star to click). The rail's own read rule is therefore the write rule.
+  //
+  // UNPINNING SKIPS ALL OF IT, deliberately: `starred: false` only ever removes
+  // an id, and refusing to remove a pin because the agent behind it was
+  // disabled or retired is exactly how a document gets stuck with one.
+  if (starred) {
+    const agent = await getCustomAgent(agentId);
+    // The same three clauses railAgentsForClient applies, in the same order:
+    // the agent exists, it is enabled, and it is not another client's
+    // per-client instance (an entry skill baked under ONE lab folder, #132).
+    if (!agent || !agent.enabled || !agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
+      return { ok: false, error: "That agent is not available for this client." };
+    }
+    // A LENGTH CEILING, because this array is unbounded input into a document
+    // that is read on every page of both shells. The rail's own cap is on the
+    // UNSTARRED group (UNSTARRED_AGENT_CAP = 6) and pinned rows are deliberately
+    // never capped there — a client curates that set — so nothing downstream
+    // bounds it. 24 is comfortably past any real roster (the catalog runs past
+    // 20) and well short of a document a script could inflate.
+    if (!current.includes(agentId) && current.length >= MAX_STARRED_AGENTS) {
+      return {
+        ok: false,
+        error: `You can pin up to ${MAX_STARRED_AGENTS} agents. Unpin one to add another.`,
+      };
+    }
+  }
+
+  const next = starred
+    ? current.includes(agentId)
+      ? current
+      : [...current, agentId]
+    : current.filter((id) => id !== agentId);
+
+  await updateClient(clientId, { starredAgentIds: next });
+  // Server-side revalidation here is belt-and-suspenders, not the mechanism
+  // this depends on for the tab that just clicked — that tab calls
+  // `router.refresh()` itself right after this action resolves (see
+  // ClientRailAgentsNav and AgentStarButton), which is unambiguous per
+  // Next's own docs regardless of route-group path resolution. This call is
+  // only for a DIFFERENT tab/session revisiting later, so it uses the one
+  // path the docs confirm outright rather than a guessed route-group
+  // segment: `/` + "layout" is documented as "purge the Client Cache, and
+  // invalidate all cached data" — the ClientRail data this needs to reach
+  // lives in the ROOT `(app)/layout.tsx`, which sits one level under `/`.
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
 export async function updateClientAction(
   id: string,
-  input: Partial<Client> & {
+  input: {
+    name?: string;
+    contactEmail?: string;
+    website?: string;
+    category?: string;
+    description?: string;
+    brandVoice?: string;
+    agentsRepoSlug?: string;
+    timeZone?: string;
+    dailyDigestEnabled?: boolean;
+    /** The forbidden-topics list, when a caller already has it as an array. */
+    forbiddenTopics?: string[];
     domainsCsv?: string;
     /** As typed in the Edit dialog. Blank/unusable ⇒ that lane has no ceiling set. */
     clipsPerDay?: string;
     postsPerDay?: string;
+    /** The forbidden-topics box, one topic per line. See dynamic-agent-guardrails.ts. */
+    forbiddenTopicsText?: string;
   },
 ) {
   await requireStaff();
-  const patch: Partial<Client> = { ...input };
-  if (input.domainsCsv !== undefined) {
+
+  // ALLOWLISTED, FIELD BY FIELD — never `{ ...input }`.
+  //
+  // This action used to take a whole `Partial<Client>` and spread it into the
+  // patch, then `delete` the seven keys it knew were dangerous (clientKeyId,
+  // createdAt, createdBy, lastDigestSentDay, assignedEmployeeIds, industry, and
+  // the form-only helpers). A denylist over a wire payload is a list of the
+  // holes somebody has already found: a server action's parameter type is a
+  // compile-time claim about THIS repo's callers, not a check on the POST body,
+  // so every other `Client` key — `customAgentIds` (which agents a client is
+  // granted), `status`, `onboardingStatus`, `isAiProcessing`, `linkedinSeatLimit`,
+  // `setupLadderOrder`, `logoStoragePath`, and every field added since — could
+  // be written by any staff session that called the action directly, and a new
+  // field was writable the day it was added to the type. The only two callers
+  // (`ClientEditor` and the Clients-page Edit dialog) send exactly the fields
+  // below, so nothing loses a capability; what changes is that the API now says
+  // what it accepts instead of what it refuses. `updateAssetAction` made the
+  // same move for the same reason (see its "BUILT FIELD BY FIELD" note).
+  const patch: Partial<Client> = {};
+  const text = (v: unknown): string | undefined => (typeof v === "string" ? v.trim() : undefined);
+  for (const key of CLIENT_EDITABLE_TEXT_FIELDS) {
+    const value = text(input[key]);
+    if (value !== undefined) patch[key] = value;
+  }
+  // A blank name is not an edit, it is a record nobody can find again.
+  if (input.name !== undefined && !patch.name) return { ok: false as const, error: "Client name is required." };
+  if (patch.contactEmail !== undefined) patch.contactEmail = patch.contactEmail.toLowerCase();
+  // The same ceiling the client's own form is held to. A category typed by staff
+  // renders in the same chip, in the same rail, at the same width. (`industry`
+  // IS `category`, CD-L; the legacy key is simply not on the list above, so a
+  // stale caller sending it writes nothing rather than re-opening the split.)
+  if (patch.category !== undefined) patch.category = clampClientCategoryValue(patch.category);
+  // Store just the client folder slug even if a full repo URL/path was pasted.
+  if (patch.agentsRepoSlug !== undefined) patch.agentsRepoSlug = normalizeLabSlug(patch.agentsRepoSlug);
+  // An unresolvable zone is stored as empty rather than kept: `clientTimeZone`
+  // would fall back to the runtime's anyway, and a box that keeps showing a
+  // typo the product is ignoring is worse than one that clears.
+  if (patch.timeZone !== undefined) patch.timeZone = isValidTimeZone(patch.timeZone) ? patch.timeZone : "";
+  if (input.dailyDigestEnabled !== undefined) patch.dailyDigestEnabled = input.dailyDigestEnabled === true;
+
+  // Topic guardrails (docs/dynamic-agent-guardrails.md). Parsed here rather
+  // than in the browser for the same reason the pace boxes are: the parse has
+  // to happen on the write side to be true of the API and not just of the one
+  // form that calls it.
+  //
+  // An empty box stores `[]`, not a dropped key — updateClient merges, so an
+  // absent key would leave the previous list in force and clearing the box
+  // would silently do nothing.
+  if (input.forbiddenTopicsText !== undefined) {
+    const topics = parseForbiddenTopics(input.forbiddenTopicsText);
+    const error = validateForbiddenTopics(topics);
+    if (error) return { ok: false as const, error };
+    patch.forbiddenTopics = topics;
+  } else if (Array.isArray(input.forbiddenTopics)) {
+    // A caller that sent the array directly is held to the same limits.
+    const topics = parseForbiddenTopics(input.forbiddenTopics.filter((t) => typeof t === "string").join("\n"));
+    const error = validateForbiddenTopics(topics);
+    if (error) return { ok: false as const, error };
+    patch.forbiddenTopics = topics;
+  }
+  if (typeof input.domainsCsv === "string") {
     patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
-    delete (patch as { domainsCsv?: string }).domainsCsv;
   }
   // THE PACE, from the two typed boxes. Sent as strings and resolved here, not
   // in the browser: these are ceilings a day planner walks, and a 0 or a NaN
   // reaching storage is a cursor that never finds a free day (see clampPerDay).
-  // Both blank ⇒ `undefined`, which CLEARS the field and puts the client back on
-  // the single item a day.
+  // Both blank ⇒ `null`, which CLEARS the field and puts the client back on the
+  // single item a day. `null` rather than a dropped key because updateClient
+  // merges, so an absent key would leave the previous pace in place and
+  // clearing the boxes would appear to do nothing.
   if (input.clipsPerDay !== undefined || input.postsPerDay !== undefined) {
-    // `null` rather than a dropped key when both boxes are blank: updateClient
-    // merges, so an absent key would leave the previous pace in place and
-    // clearing the boxes would appear to do nothing. Both spellings resolve to
-    // the one-item-a-day default on the read side.
     patch.dailyPace =
       toStoredPace({
         clipsPerDay: Number(input.clipsPerDay),
         postsPerDay: Number(input.postsPerDay),
       }) ?? null;
   }
-  delete (patch as Partial<Client> & { clipsPerDay?: string }).clipsPerDay;
-  delete (patch as Partial<Client> & { postsPerDay?: string }).postsPerDay;
-  // An unresolvable zone is stored as empty rather than kept: `clientTimeZone`
-  // would fall back to the runtime's anyway, and a box that keeps showing a
-  // typo the product is ignoring is worse than one that clears.
-  if (patch.timeZone !== undefined) {
-    const zone = patch.timeZone.trim();
-    patch.timeZone = isValidTimeZone(zone) ? zone : "";
-  }
-  if (patch.dailyDigestEnabled !== undefined) {
-    patch.dailyDigestEnabled = patch.dailyDigestEnabled === true;
-  }
-  if (patch.contactEmail) patch.contactEmail = patch.contactEmail.toLowerCase();
-  // The same ceiling the client's own form is held to. A category typed by staff
-  // renders in the same chip, in the same rail, at the same width.
-  if (patch.category !== undefined) patch.category = clampClientCategoryValue(patch.category);
-  // `industry` IS `category`, and this action no longer writes the old name
-  // (CD-L). The Edit dialog's box used to send it, which is how the same fact
-  // ended up in two fields with two ceilings and two editors — the client typed
-  // a category into their profile chip while staff typed an industry here, and
-  // the copilot and the intel pipeline read only the staff one. Stripped rather
-  // than mapped: this takes a whole `Partial<Client>`, so silently redirecting
-  // the key would let a stale caller overwrite a category it never named.
-  // Stored values stay put; `clientCategoryValue` is what still reads them.
-  delete (patch as Partial<Client> & { industry?: string }).industry;
-  // Store just the client folder slug even if a full repo URL/path was pasted.
-  if (patch.agentsRepoSlug !== undefined) patch.agentsRepoSlug = normalizeLabSlug(patch.agentsRepoSlug);
-  // Immutable / security-sensitive fields — only dedicated actions may change these.
-  delete (patch as Partial<Client> & { clientKeyId?: string }).clientKeyId;
-  delete (patch as Partial<Client> & { createdAt?: number }).createdAt;
-  delete (patch as Partial<Client> & { createdBy?: string }).createdBy;
-  // The digest cron's own bookkeeping. It is a record of what was SENT, so a
-  // staff edit that set it would suppress a client's mail for that day (or, set
-  // backwards, send it twice). Nothing in the UI offers it; this action takes a
-  // whole Partial<Client>, so the strip is what makes that true of the API too.
-  delete (patch as Partial<Client> & { lastDigestSentDay?: number }).lastDigestSentDay;
-  // `assignedEmployeeIds` is now a PERMISSION (canViewClient), and this action
-  // is gated on requireStaff() alone while taking a whole Partial<Client> — so
-  // an employee the fence excludes could post their own uid into the array and
-  // lift it, which is the one field a fenced actor must not be able to write.
-  // Nothing loses a capability: no surface in this app sends the field through
-  // here (grep — the only writers are client creation and registration
-  // approval), so this strips a hole rather than a feature. Reassignment needs
-  // an admin-only action once the two-field split above is resolved.
-  delete (patch as Partial<Client> & { assignedEmployeeIds?: string[] }).assignedEmployeeIds;
+
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");
+  return { ok: true as const };
 }
 
 /**

@@ -60,11 +60,17 @@ export interface PlatformConfig {
  * Platform IDs that have an automated OAuth flow defined.
  * Derived from OAUTH_CONFIGS keys but kept here so client components can read
  * it without importing the server-only oauth.ts module.
+ *
+ * NOT EVERY OAUTH_CONFIGS KEY — "facebook" is one Karos Labs does not sell
+ * (portal feedback round 2, 2026-09: "we don't work with Facebook"), so it is
+ * off this list and off PLATFORM_REGISTRY, and nothing offers a client a
+ * Connect button for it. The oauth.ts config and the publisher stay where they
+ * are: an account already connected keeps working, and its scopes are still
+ * covered by oauth-scopes.test.ts.
  */
 export const OAUTH_SUPPORTED_PLATFORM_IDS = new Set<string>([
   "linkedin",
   "linkedin_community",
-  "facebook",
   "instagram",
   "twitter",
   "youtube",
@@ -121,10 +127,16 @@ export const PENDING_VERIFICATION_PLATFORM_IDS = new Set<string>(["tiktok"]);
  * Single source of truth — the publish cron, the asset card, and the schedule
  * form all read this map. Order matters: first connected match wins when a
  * platform has to be inferred.
+ *
+ * `social_post` DROPPED FACEBOOK (portal feedback round 2, 2026-09). It is a
+ * target list, so a target we do not sell being on it means the auto-publish
+ * cron could pick it as the inferred platform for a post nobody meant to send
+ * there. `publishToFacebook` still exists for anything already connected — it
+ * is simply no longer inferable.
  */
 export const PUBLISHABLE_PLATFORMS: Record<string, string[]> = {
   instagram_post: ["instagram", "tiktok"],
-  social_post: ["twitter", "linkedin", "facebook", "tiktok"],
+  social_post: ["twitter", "linkedin", "tiktok"],
   article: ["linkedin"],
   email: [],
   note: [],
@@ -208,31 +220,13 @@ export const PLATFORM_REGISTRY: PlatformConfig[] = [
     ],
     category: "publishing",
   },
-  {
-    id: "facebook",
-    name: "Facebook",
-    icon: "Share2",
-    color: "#1877F2",
-    description: "Post updates and campaigns to your Facebook Page.",
-    fields: [
-      {
-        key: "accessToken",
-        label: "Page Access Token",
-        type: "password",
-        required: true,
-        hint: "Generate a long-lived Page token via the Graph API Explorer",
-      },
-      {
-        key: "pageId",
-        label: "Page ID",
-        type: "text",
-        required: true,
-        placeholder: "123456789",
-        hint: "Found in your Facebook Page settings → About → Page transparency",
-      },
-    ],
-    category: "publishing",
-  },
+  /* NO FACEBOOK ENTRY (portal feedback round 2, 2026-09: "throughout it all we
+     can remove Facebook, we don't work with Facebook"). This array IS the
+     Connect list — every card and every "Add a channel" row is one of these —
+     so removing the entry is what takes the channel off the Integrations tab
+     and out of the onboarding wizard. `PLATFORM_LABELS.facebook` stays: a
+     client with a Facebook integration already in Firestore must still see it
+     named rather than see the raw id. */
   {
     id: "linkedin",
     name: "LinkedIn",

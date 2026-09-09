@@ -15,21 +15,34 @@ export const maxDuration = 120;
  * agents arguing in real time. The final frames report the locked consensus and
  * how many tasks were persisted.
  *
- * GET with `?clientId=` so it works over EventSource semantics, and fenced by
- * `canViewClient` exactly as the `/api/clients/[id]/*` routes are — this one
- * lives under a different path but takes the same argument, and it is the only
- * member of that set that takes a lock, charges, and WRITES.
+ * POST, not GET (2026-08): this route takes the client's AI lock, spends 5 of
+ * their credits, and writes tasks to their board — a GET is exactly what a
+ * cross-site page can trigger unattended (a top-level navigation or an
+ * auto-redirecting link fires an authenticated GET from the signed-in
+ * visitor's own browser with no confirmation). The caller never relied on
+ * GET/EventSource semantics — it's a streamed `fetch` with a reader, same as
+ * `/api/clients/[id]/insights` — so there was nothing to preserve by keeping
+ * it. SameSite=Lax cookies aren't sent on a cross-site POST, which is what
+ * actually closes the gap. Fenced by `canViewClient` exactly as the
+ * `/api/clients/[id]/*` routes are — this one lives under a different path
+ * but takes the same argument, and it is the only member of that set that
+ * takes a lock, charges, and WRITES.
  */
-export async function GET(req: Request) {
+export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user || user.disabled) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const url = new URL(req.url);
-  const clientId = url.searchParams.get("clientId");
+  let body: { clientId?: string; trend?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const clientId = body.clientId ?? null;
   // Optional explicit trend/event — when present the run builds a campaign bundle.
-  const trend = url.searchParams.get("trend");
+  const trend = body.trend ?? null;
   if (!clientId) {
     return Response.json({ error: "clientId is required" }, { status: 400 });
   }

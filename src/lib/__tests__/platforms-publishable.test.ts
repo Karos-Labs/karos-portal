@@ -14,7 +14,8 @@ import {
 } from "@/lib/agent-service/deliverable-asset-type";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { recommendedScheduleFields } from "@/lib/scheduling";
-import type { AssetType, ManagedTaskType } from "@/lib/types";
+import { MEDIA_REGISTRATION, type MediaKind } from "@/lib/media-kinds";
+import type { AssetType, WireTaskType } from "@/lib/types";
 import { isStringDelimiter, matchingBrace, skipStringLiteral } from "./source-scan";
 
 /**
@@ -26,7 +27,7 @@ import { isStringDelimiter, matchingBrace, skipStringLiteral } from "./source-sc
  * Two distinct failures are pinned here, because the second is the one that
  * nearly happened: Reddit does not appear as a publish TARGET, and a Reddit
  * deliverable does not land on an asset type that can be pushed to some OTHER
- * platform. social_post publishes to twitter/linkedin/facebook/tiktok, so a
+ * platform. social_post publishes to twitter/linkedin/tiktok, so a
  * Reddit reply typed social_post would have been offered for cross-posting to
  * a platform it was never written for.
  */
@@ -57,7 +58,7 @@ describe("Reddit stays unpublishable", () => {
  * straight past both: `metadata.asset_type` could name any whitelisted type, so a
  * scheduled Reddit run whose schedule row said `social_post` produced a Reddit
  * reply that every publish surface offered and the auto-publish cron would push to
- * whichever of twitter/linkedin/facebook/tiktok was connected.
+ * whichever of twitter/linkedin/tiktok was connected.
  *
  * One rule written twice, one copy missed. So the question this section asks is not
  * "is the webhook fixed" but "WHICH PATHS CAN SET AN ASSET'S TYPE", answered by
@@ -535,6 +536,36 @@ const PINNED_DERIVATIONS: Readonly<Record<string, string>> = {
   // just below.
   '(productType && PRODUCT_ASSET_TYPE[productType]) ?? "note"':
     "task approval → PRODUCT_ASSET_TYPE, keyed by the managed catalog",
+  // agent-engine's own reverse-completion materialization (Task 3) — THE FOURTH
+  // RUNTIME DERIVATION. Routes through the same shared `deliverableAssetType` the
+  // webhook and MCP paths use rather than inventing its own mapping.
+  //
+  // THE FENCE HERE IS NO LONGER THEORETICAL, and that is why this pin changed.
+  // The old expression read the task type out of `WIRE_TASK_TYPE_BY_PRODUCT`, a
+  // three-product map holding only "social_post"/"landing_page" — so the note
+  // here could say "neither a Reddit product" and mean it. `PRODUCT_DELIVERABLES`
+  // now covers the whole engine catalog, `reddit-agent` included, and a Reddit
+  // reply's `social_post` base is fenced down to `note` by this very call. The
+  // `hint` is new too (`custom` + a whitelisted hint is how blog/newsletter reach
+  // `article`/`email` without minting a RETIRED task type) and it is fenced by the
+  // same rule: `deliverableAssetType` applies the fence to its RESULT, never to
+  // the argument that produced it, so a hint cannot route around it.
+  "deliverableAssetType({ taskType: spec.taskType, hint: spec.assetTypeHint ?? null, content: materialization.content, identity: [job.agentEngineProductId], })":
+    "agent-engine materialize → deliverableAssetType",
+  // The media dropzone (2026-09), when it stopped being video-only. The type is
+  // picked by MEDIA KIND — image vs video, resolved by `mediaKindFor` from the
+  // uploaded file's content type or its filename — so it is a runtime
+  // derivation and this scan refused it, correctly.
+  //
+  // WHY IT NEEDS NO FENCE, as against the four above: those derive a type from
+  // an AGENT'S IDENTITY or from a caller-supplied hint, which is the channel the
+  // Reddit defect travelled down. This one derives it from a two-member union
+  // over a two-entry literal table, so its whole RANGE is two source literals
+  // and nothing an agent, a tool argument or a metadata field can say moves it.
+  // Pinned by "the media dropzone's own type table" below, exhaustively over
+  // `MediaKind` — the range, the Reddit rule, and the type/channel pairing that
+  // sent it here in the first place.
+  "MEDIA_REGISTRATION[kind].type": "media upload → MEDIA_REGISTRATION, closed over MediaKind",
 };
 
 /**
@@ -554,6 +585,8 @@ const PINNED_OPAQUE_PAYLOADS: Readonly<Record<string, string>> = {
     "webhook → recommendedScheduleFields, two declared fields",
   "...(chainFamily ? {} : recommendedScheduleFields(assetType, created))":
     "lab import → the same two declared fields, or nothing",
+  "...recommendedScheduleFields(assetType, 0, materialization.channels?.[0])":
+    "agent-engine materialize → recommendedScheduleFields, same two declared fields",
   // approveAssetAction's own patch, declared `Omit<Partial<Asset>, "type">` — the
   // compiler refuses a type on it. Named for that one action precisely so this pin
   // cannot spread its exemption over anything else's `patch`.
@@ -707,7 +740,10 @@ describe("#49 — every path that types an asset is fenced or literal", () => {
 
 describe("#49 — the draft-only fence", () => {
   const TYPES = Object.keys(PUBLISHABLE_PLATFORMS) as AssetType[];
-  const TASK_TYPES: ManagedTaskType[] = [
+  // WireTaskType, not ManagedTaskType: the fence has to hold on the DELIVERY
+  // path, and that path still receives the retired newsletter type from a v1 job
+  // that was queued when the service was cut.
+  const TASK_TYPES: WireTaskType[] = [
     "social_post",
     "newsletter_issue",
     "blog_article",
@@ -764,6 +800,8 @@ describe("#49 — the draft-only fence", () => {
       }),
     ).toBe("social_post");
     expect(deliverableAssetType({ taskType: "blog_article" })).toBe("article");
+    // A draining v1 issue still lands as an email, not as a slot-less note. It
+    // is the one run nobody can re-fire, because the product no longer exists.
     expect(deliverableAssetType({ taskType: "newsletter_issue" })).toBe("email");
     // An unknown or hostile hint falls back to the task type's own default.
     expect(deliverableAssetType({ taskType: "custom", hint: "video_masterpiece" })).toBe("note");
@@ -786,5 +824,52 @@ describe("#49 — the draft-only fence", () => {
       expect(/reddit/i.test(product.taskType)).toBe(false);
       expect(/reddit/i.test(product.name)).toBe(false);
     }
+  });
+
+  /**
+   * The pin for `MEDIA_REGISTRATION[kind].type` (the media dropzone, 2026-09).
+   *
+   * Three properties, and the first is what makes the other two enough: the
+   * derivation's RANGE is closed. Unlike the four fenced derivations above it
+   * reads neither an agent identity nor a caller-supplied hint — only a
+   * `MediaKind`, a two-member union — so enumerating the union enumerates every
+   * type this path can ever produce.
+   */
+  describe("the media dropzone's own type table", () => {
+    const KINDS: MediaKind[] = ["image", "video"];
+
+    it("has an entry per kind, and no third answer", () => {
+      // Non-vacuity, and the closed-range claim itself: if `MediaKind` gains a
+      // member, `Record<MediaKind, …>` makes that a compile error at the table
+      // and this count makes it a failure here.
+      expect(Object.keys(MEDIA_REGISTRATION).sort()).toEqual([...KINDS].sort());
+    });
+
+    it("produces no draft-only deliverable type", () => {
+      // The rule this whole section exists for. A media upload is a file
+      // somebody already has; it cannot be a Reddit reply. Asserted over the
+      // range rather than over the two literals, so a future entry is covered.
+      for (const kind of KINDS) {
+        const type = MEDIA_REGISTRATION[kind].type;
+        expect(/reddit/i.test(type), `${kind} → ${type}`).toBe(false);
+        // …and it is a REAL type this product publishes, not an inert one: the
+        // opposite failure would be an upload nobody can ever push.
+        expect((PUBLISHABLE_PLATFORMS[type] ?? []).length, `${kind} → ${type}`).toBeGreaterThan(0);
+      }
+    });
+
+    it("pairs each type with a channel that type can publish to", () => {
+      // The defect that sent this table here: `social_post` + `["instagram"]`,
+      // a pairing every publish surface rejects because it intersects
+      // PUBLISHABLE_PLATFORMS[type] with the asset's channels. Derived from the
+      // map, so widening either side moves this expectation with it.
+      for (const kind of KINDS) {
+        const { type, channel } = MEDIA_REGISTRATION[kind];
+        expect(
+          PUBLISHABLE_PLATFORMS[type] ?? [],
+          `a ${kind} registers as "${type}" on "${channel}", which that type rejects`,
+        ).toContain(channel);
+      }
+    });
   });
 });

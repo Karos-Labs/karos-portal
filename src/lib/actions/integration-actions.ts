@@ -63,7 +63,6 @@ export async function saveIntegrationAction(
   await autoCompleteTasksOnIntegrationConnect(clientId, platform).catch(() => {});
 
   revalidatePath(`/clients/${clientId}`);
-  revalidatePath("/tasks");
 }
 
 /**
@@ -125,11 +124,18 @@ export async function deleteIntegrationAction(
   }
 }
 
-/** Mint a personal access token for MCP clients. Returns the plaintext ONCE. */
+/**
+ * Mint a personal access token for MCP clients. Returns the plaintext ONCE.
+ *
+ * No page revalidation: the one surface that rendered a staff member's token
+ * list (`/connect`) is gone (2026-08). The MCP auth path these tokens serve
+ * (`src/lib/mcp/auth.ts`) is unaffected — this is only the admin UI for
+ * managing them, and this action stays as the write API a future surface
+ * would call.
+ */
 export async function createAccessTokenAction(name: string) {
   const user = await requireStaff();
   const { id, token } = await issueAccessToken(user.uid, name);
-  revalidatePath("/connect");
   return { id, token };
 }
 
@@ -139,5 +145,4 @@ export async function revokeAccessTokenAction(id: string) {
   const owned = await listAccessTokens(user.uid);
   if (!owned.some((t) => t.id === id)) throw new Error("Token not found");
   await updateAccessToken(id, { revoked: true });
-  revalidatePath("/connect");
 }

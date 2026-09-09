@@ -198,23 +198,32 @@ describe("the legend's per-viewer chips", () => {
   it("probes every kind the calendar has, so the derivation below is not narrow", () => {
     // Non-vacuity for the whole describe: the grid must reach EVERY chip kind,
     // or "a client cannot match this one" could be an artefact of a grid that
-    // never built the shape. "review" is the one key that is not an asset kind —
-    // it is a run state — so it is excluded here and asked of its own table
-    // below.
+    // never built the shape. "review" and "suggested" are the two keys that
+    // are not asset kinds at all — a run state and a Task-Map proposal
+    // (lib/calendar-suggestion-placement.ts) respectively, neither derivable
+    // from a `CalendarKindInput` shape — so both are excluded here and asked
+    // of their own tables below.
     const everyKind = kindsFrom(grid());
     expect([...everyKind].sort()).toEqual(
-      ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "review").sort(),
+      ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "review" && k !== "suggested").sort(),
     );
   });
 
-  it("withholds from a client exactly the chips their calendar cannot hold", () => {
+  it("offers a client every chip their calendar can hold — drafts included, by reversal", () => {
     const clientKinds = kindsFrom(grid().filter((a) => isClientCalendarStatus(a.status)));
     // "review" comes off the run-visibility table, not off postKind — one home
-    // each, and read here rather than restated.
+    // each, and read here rather than restated. "suggested" is simpler still:
+    // a Task-Map suggestion has never been staff-only (its grid placement in
+    // run-calendar.tsx has always rendered for a client's own calendar), so it
+    // is matchable for every viewer, unconditionally — the same answer
+    // `calendarFilterKeyMatchable` gives by NOT listing it in
+    // CLIENT_UNMATCHABLE_FILTER_KEYS.
     const clientCanMatch = (key: CalendarFilterKey): boolean =>
       key === "review"
         ? pastRunStatuses({ isClient: true }).has("review")
-        : clientKinds.has(key);
+        : key === "suggested"
+          ? true
+          : clientKinds.has(key);
 
     for (const key of ALL_CALENDAR_FILTER_KEYS) {
       expect(calendarFilterKeyMatchable(key, true), `client chip: ${key}`).toBe(
@@ -223,25 +232,27 @@ describe("the legend's per-viewer chips", () => {
     }
 
     // The answer that derivation produces today, pinned so a change to it is a
-    // decision someone takes rather than a diff nobody reads. "draft" is the one
-    // a client's calendar is never built from; "held" in particular stays, and it
-    // was verified live for clients.
-    expect(calendarFilterKeyMatchable("draft", true)).toBe(false);
-    for (const key of ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "draft")) {
-      expect(calendarFilterKeyMatchable(key, true), `client chip: ${key}`).toBe(true);
+    // decision someone takes rather than a diff nobody reads. "draft" used to be
+    // withheld (a client's calendar was never built from it); the product
+    // decision behind `isClientCalendarStatus` reversed that, so every OTHER key
+    // is matchable for a client, same as staff. "review" is pinned the other way
+    // now (2026-08, locked: "In review is removed") — the one key a client's
+    // calendar can never hold at all, reversing what this same loop asserted
+    // before that decision landed.
+    for (const key of ALL_CALENDAR_FILTER_KEYS) {
+      expect(calendarFilterKeyMatchable(key, true), `client chip: ${key}`).toBe(key !== "review");
     }
   });
 
-  it("offers staff every chip, including the one a client is not shown", () => {
-    // The neighbouring case: the gate withholds by VIEWER, so it must not have
-    // been achieved by dropping the chip from the legend for everybody. Staff
-    // see internal drafts on their calendar and filter by them.
+  it("offers staff every chip — unchanged by the client-side reversal", () => {
+    // The neighbouring case: staff always saw internal drafts on their calendar
+    // and filtered by them, before and after the reversal above.
     for (const key of ALL_CALENDAR_FILTER_KEYS) {
       expect(calendarFilterKeyMatchable(key, false), `staff chip: ${key}`).toBe(true);
     }
-    expect(isClientCalendarStatus("draft")).toBe(false);
-    // …and the filter it derives from is about drafts alone, not a blanket drop.
-    for (const status of STATUSES.filter((s) => s !== "draft")) {
+    // `isClientCalendarStatus` always returns `true` now — see its docstring —
+    // so every status, draft included, passes for both viewers.
+    for (const status of STATUSES) {
       expect(isClientCalendarStatus(status), status).toBe(true);
     }
   });

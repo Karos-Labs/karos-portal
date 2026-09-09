@@ -255,6 +255,68 @@ describe("planClientChain — migrate mode (Karos oracle)", () => {
   });
 });
 
+/**
+ * HIGH #1 (2026-08 platform audit): approving a Task-Map suggestion sets the
+ * webhook-created asset's `scheduledAt` to the day the client saw and
+ * clicked Approve on — but `reflowClientChain` ran unconditionally right
+ * after, and `isPinned` (reflow mode) treats a FUTURE-dated draft with chain
+ * provenance as a candidate, not as pinned. The suggestion's date was
+ * silently relocated to the family lane's next free day in the same request
+ * that created it. Fixed by passing `skipIds: [assetId]` to that reflow call
+ * — this is the unmocked test of the mechanism itself (webhook-suggested-date
+ * .test.ts covers the createAsset side with `reflowClientChain` mocked out
+ * entirely, which is exactly why this bug shipped past it).
+ */
+describe("planClientChain — reflow mode must not relocate an approved suggestion's date", () => {
+  /** A webhook-created draft: real chain provenance (orderKey), no lab-import meta. */
+  function webhookAsset(overrides: Partial<Asset> = {}): Asset {
+    return makeAsset({
+      orderKey: orderKeyForCreatedAt(NOW, overrides.id ?? "webhook-asset"),
+      ...overrides,
+    });
+  }
+
+  it("without skipIds, reflow relocates the suggestion-dated asset off the day the client approved", () => {
+    // The client approved this suggestion for Thursday the 16th.
+    const approved = webhookAsset({ id: "approved-1", scheduledAt: at(2026, 7, 16, 11) });
+    const plan = planClientChain([approved], { now: NOW });
+
+    // isPinned is false for a future-dated draft in reflow mode, so it is a
+    // CANDIDATE and gets reassigned to the lane's next free day (today,
+    // 2026-07-14) instead of staying on the 16th — the bug, reproduced.
+    expect(plan.map((p) => p.id)).toEqual(["approved-1"]);
+    expect(plan[0].scheduledAt).not.toBe(at(2026, 7, 16, 11));
+    expect(plan[0].scheduledAt).toBe(slot(2026, 7, 14));
+  });
+
+  it("with skipIds, the approved date survives reflow AND still blocks its day for other candidates", () => {
+    const approved = webhookAsset({ id: "approved-1", scheduledAt: at(2026, 7, 16, 11) });
+    // Three ordinary, undated reflow candidates — enough to walk the lane's
+    // one-a-day cursor from the 14th through the 16th, so the third one
+    // proves the skipped asset's day still books (it must roll onto the
+    // 17th instead of colliding with the 16th), not just that its own date
+    // is left alone.
+    const ordinary1 = webhookAsset({ id: "ordinary-1" });
+    const ordinary2 = webhookAsset({ id: "ordinary-2" });
+    const ordinary3 = webhookAsset({ id: "ordinary-3" });
+
+    const plan = planClientChain([approved, ordinary1, ordinary2, ordinary3], {
+      now: NOW,
+      skipIds: ["approved-1"],
+    });
+
+    // The approved asset is excluded from candidacy entirely — no assignment
+    // for it means its stored scheduledAt is left exactly as the client saw it.
+    const byId = new Map(plan.map((p) => [p.id, p.scheduledAt]));
+    expect(byId.has("approved-1")).toBe(false);
+    expect(byId.get("ordinary-1")).toBe(slot(2026, 7, 14));
+    expect(byId.get("ordinary-2")).toBe(slot(2026, 7, 15));
+    // The 16th is occupied by the skipped-but-still-booking approved asset —
+    // the cursor rolls past it to the 17th rather than double-booking.
+    expect(byId.get("ordinary-3")).toBe(slot(2026, 7, 17));
+  });
+});
+
 describe("planClientChain — migrate mode (XO oracle)", () => {
   it("starts the chain on 07-15 when a pre-chain managed single occupies 07-14", () => {
     const testRun = (n: string, key: string, o: Partial<Asset> = {}) =>

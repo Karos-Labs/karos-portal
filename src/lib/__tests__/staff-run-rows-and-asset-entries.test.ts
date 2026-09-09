@@ -1,20 +1,13 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { eventsFromJobs, type TimelineJob } from "@/components/activity-timeline";
-import { JOB_STATUS_META, jobStatusLabel } from "@/lib/job-status-copy";
-import type { JobStatus } from "@/lib/types";
 import { isStringDelimiter, matchingBrace, skipStringLiteral, stripComments } from "./source-scan";
 
 /**
- * THREE STAFF SURFACES THAT SAID THE WRONG THING OR LED NOWHERE — the rules that
+ * TWO STAFF SURFACES THAT SAID THE WRONG THING OR LED NOWHERE — the rules that
  * replaced them, and nothing wider.
  *
- *  · #91  the staff activity timeline titled EVERY run "<agent> delivered a
- *         draft", whatever its status. A queued run, a cancelled one and a
- *         failed one were indistinguishable, and a failed one contradicted
- *         itself inside a single row: "delivered a draft" over "Failed: …".
  *  · #112 /assets?clientId= — the staff review grid scoped to one client —
  *         rendered read-only cards under a comment saying it existed "so they
  *         can review/approve upcoming posts".
@@ -23,19 +16,23 @@ import { isStringDelimiter, matchingBrace, skipStringLiteral, stripComments } fr
  *         titled "AI Agents", while the content library that should hold it
  *         told its readers an agent run was the only way content arrives.
  *
- * WHAT IS AND IS NOT CLAIMED HERE. The run-state assertions are behavioural —
- * they drive `eventsFromJobs` over every state in the union, so a state added to
- * `JobStatus` is covered without anyone editing this file. The /assets
- * assertions are source scans, because a server component cannot be rendered in
- * a node run; they are therefore claims about the SHAPE of that file and say
- * nothing about what the browser paints. Every NEGATIVE scan reads comment-free
- * text via `stripComments` — this suite's own subject matter is quoted at length
- * in the docstrings it is scanning, so "the code does not say X" run against raw
- * source would be satisfied by the prose explaining why it must not. Raw source
- * is read exactly once, and positively, to prove that strip is load-bearing.
+ * A THIRD SURFACE USED TO LIVE HERE (#91, the staff activity timeline naming
+ * every run "<agent> delivered a draft" regardless of status). That component
+ * (activity-timeline.tsx) was deleted 2026-08: it was rendered only inside
+ * ProgressView, which lost its own last renderer when the Workspace board's
+ * routes were removed, so the fix it pinned went with the surface it fixed.
+ *
+ * WHAT IS AND IS NOT CLAIMED HERE. The /assets assertions are source scans,
+ * because a server component cannot be rendered in a node run; they are
+ * therefore claims about the SHAPE of that file and say nothing about what the
+ * browser paints. Every NEGATIVE scan reads comment-free text via
+ * `stripComments` — this suite's own subject matter is quoted at length in the
+ * docstrings it is scanning, so "the code does not say X" run against raw
+ * source would be satisfied by the prose explaining why it must not. Raw
+ * source is read exactly once, and positively, to prove that strip is
+ * load-bearing.
  */
 
-const TIMELINE = "src/components/activity-timeline.tsx";
 const ASSETS_PAGE = "src/app/(app)/assets/page.tsx";
 
 function read(rel: string): string {
@@ -45,38 +42,6 @@ function read(rel: string): string {
 /** Comment-free source for `rel`. */
 function code(rel: string): string {
   return stripComments(read(rel));
-}
-
-/* ─────────────────── #91 · a run row named for its own state ─────────────── */
-
-// activity-timeline.tsx is a "use client" component and imports the server
-// action barrel for its staff note composer. Nothing under test touches it.
-vi.mock("@/lib/actions", () => ({ addActivityNoteAction: async () => {} }));
-
-/**
- * Every run state there is, read off the register's own key set rather than
- * listed here — `JOB_STATUS_META` is a `Record<JobStatus, …>`, which tsc keeps
- * total, so a new state joins these tests unasked.
- */
-const ALL_STATUSES = Object.keys(JOB_STATUS_META) as JobStatus[];
-
-const AGENT = "Reddit reply agent";
-
-function timelineJob(overrides: Partial<TimelineJob> = {}): TimelineJob {
-  return {
-    id: "job-1",
-    agentName: AGENT,
-    status: "review",
-    title: "reddit_reply · Acme",
-    createdAt: 1_754_000_000_000,
-    ...overrides,
-  };
-}
-
-function rowFor(status: JobStatus, overrides: Partial<TimelineJob> = {}) {
-  const rows = eventsFromJobs([timelineJob({ status, ...overrides })]);
-  expect(rows).toHaveLength(1);
-  return rows[0];
 }
 
 /**
@@ -110,74 +75,14 @@ function jsxAttr(mount: string, name: string): string | null {
   return null;
 }
 
-describe("the staff activity timeline names a run by its own state", () => {
-  it("finds states to judge, so the loops below are not empty walks", () => {
-    // The register is the source of the loop bound; if it ever came back empty
-    // every assertion under it would pass by vacuity.
-    expect(ALL_STATUSES.length).toBeGreaterThan(4);
-    expect(ALL_STATUSES).toContain("failed");
-    expect(ALL_STATUSES).toContain("queued");
-  });
-
-  it("titles each state exactly `<agent> · <that state's register label>`", () => {
-    // The bound, asserted where the loop is and not only in the sibling above:
-    // an `it` whose whole body is a `for` over an empty list passes, and that is
-    // the failure mode this suite is least likely to notice about itself.
-    expect(ALL_STATUSES.length).toBeGreaterThan(4);
-    for (const status of ALL_STATUSES) {
-      expect(rowFor(status).title).toBe(`${AGENT} · ${jobStatusLabel(status)}`);
-    }
-  });
-
-  it("gives no two run states the same title — the shape of the defect", () => {
-    // THE assertion. Before the fix every state produced the same string, so
-    // this set had size 1 whatever the union's size was — which is why the
-    // comparison is against `ALL_STATUSES.length` and no number is written here.
-    const titles = ALL_STATUSES.map((status) => rowFor(status).title);
-    expect(new Set(titles).size).toBe(ALL_STATUSES.length);
-  });
-
-  it("never announces a delivery for a state that is not one", () => {
-    expect(ALL_STATUSES.length).toBeGreaterThan(4);
-    const delivered = jobStatusLabel("delivered");
-    for (const status of ALL_STATUSES) {
-      if (status === "delivered") continue;
-      expect(rowFor(status).title, `${status} claims ${delivered}`).not.toContain(delivered);
-    }
-  });
-
-  it("says a failure once, and lets the error stand without a prefix", () => {
-    // The row used to carry the word twice — "delivered a draft" as the title
-    // and "Failed: <error>" underneath it.
-    const row = rowFor("failed", { error: "Upstream returned 502" });
-    expect(row.title).toBe(`${AGENT} · ${jobStatusLabel("failed")}`);
-    expect(row.description).toBe("Upstream returned 502");
-  });
-
-  it("falls back to the run's own title when a failed run stored no message", () => {
-    // "Failed: Unknown error" is gone; the title already carries the state, so
-    // the description spends its line on the only other fact there is.
-    const row = rowFor("failed", { title: "reddit_reply · Acme" });
-    expect(row.description).toBe("reddit_reply · Acme");
-  });
-
-  it("keeps the retired phrase in the explanation only, never in the code", () => {
-    // Deliberately reads BOTH texts: the docstrings quote the old title because
-    // explaining the fix requires it, which is exactly why a raw-source scan
-    // would be satisfied by prose.
-    expect(read(TIMELINE)).toContain("delivered a draft");
-    expect(code(TIMELINE)).not.toContain("delivered a draft");
-  });
-});
-
 /* ────────── #112 · one client's library is still a review surface ────────── */
 
 /**
  * Where `<Name` opens in `src` at or after `from`, as a WHOLE element name, or
  * -1.
  *
- * `indexOf("<BulkUploadClips")` is a prefix match, so it is satisfied by
- * `<BulkUploadClipsPreview` — a mutation run against the first draft of this
+ * `indexOf("<MediaUploadButton")` is a prefix match, so it is satisfied by
+ * `<MediaUploadButtonPreview` — a mutation run against the first draft of this
  * file renamed the one render site and the entrance count below did not move.
  * The character after the name has to be one that can follow a tag name.
  */
@@ -303,16 +208,23 @@ function emptyStateDescriptions(rel: string): string[] {
   });
 }
 
-describe("bulk clip upload is reachable from the content library", () => {
+describe("media upload is reachable from the content library", () => {
   it("has more than one entrance in the product", () => {
     // The finding's own measurement: `grep -rn BulkUploadClips src` returned one
     // import and one render site, and that site was the action row of a page
     // titled "AI Agents" — for a feature that involves no agent at all.
-    // `elementAt`, not `includes("<BulkUploadClips")`: that prefix is satisfied
-    // by `<BulkUploadClipsPreview`, and a mutation run proved it — the render
-    // site was renamed and this count did not move.
+    // `elementAt`, not `includes("<MediaUploadButton")`: that prefix is
+    // satisfied by `<MediaUploadButtonPreview`, and a mutation run proved it —
+    // the render site was renamed and this count did not move.
+    //
+    // THE COMPONENT WAS `BulkUploadClips` UNTIL 2026-09, when it stopped being
+    // clip-only ("Upload media": images and video through one control) and its
+    // file and export were renamed with it. This guard caught that rename by
+    // going red, which is what it is for — the name it watches is the name that
+    // has to be updated here, deliberately, rather than a substring that would
+    // survive any rename and check nothing.
     const rendered = SOURCE_FILES.filter(
-      (f) => elementAt(code(f), "BulkUploadClips", 0) !== -1,
+      (f) => elementAt(code(f), "MediaUploadButton", 0) !== -1,
     );
     expect(rendered.length, `only these render it: ${rendered.join(", ") || "nothing"}`)
       .toBeGreaterThan(1);
@@ -338,7 +250,11 @@ describe("bulk clip upload is reachable from the content library", () => {
     const route = "/" + ASSETS_PAGE.replace("src/app/(app)/", "").replace("/page.tsx", "");
     const src = code(ASSETS_PAGE);
     expect(src).toMatch(new RegExp(`<Form\\s+action="${route}"`));
-    expect(src).toMatch(/const \{ clientId: \w+ \} = await searchParams/);
+    // `[^}]*` after the binding, not `\}` immediately: the page grew a second
+    // param in 2026-09 (`status`, the "Content by status" deep link), and this
+    // assertion is about the page READING clientId off searchParams, not about
+    // it being the only thing it reads.
+    expect(src).toMatch(/const \{ clientId: \w+[^}]*\} = await searchParams/);
     expect(src).toMatch(/name="clientId"/);
   });
 });

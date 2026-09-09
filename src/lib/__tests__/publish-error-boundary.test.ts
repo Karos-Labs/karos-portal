@@ -223,8 +223,10 @@ describe("the ordering hold, the one publish error a client may read", () => {
         { clientCanSeeBlocker: true },
       );
       // Ledger F71: " - " is banned in client copy, and this line reintroduced it.
+      // The em dash that replaced it is now banned as well (2026-08 directive:
+      // no em dashes anywhere a client reads) — sentence punctuation instead.
       expect(message).not.toContain(" - ");
-      expect(message).toContain("—");
+      expect(message).not.toContain("—");
       expect(message).toContain(CLIENT_ASSET_STATUS_LABEL[status]);
       // The raw enum is lowercase and every rendered label is capitalised, so
       // the enum appearing at all means it was interpolated as prose.
@@ -278,8 +280,7 @@ describe("the ordering hold, the one publish error a client may read", () => {
 /* ── source-level guards ─────────────────────────────────────────────────
    The publish cron is a route handler over Firestore, and the banners below are
    server components — none of them can be invoked from a unit test. These read
-   the source, the same way activity-timeline-boundary.test.ts does, and assert
-   the guarantee rather than the presence of a line.                         */
+   the source and assert the guarantee rather than the presence of a line.   */
 
 const ROOT = process.cwd();
 

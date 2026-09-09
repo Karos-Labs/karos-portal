@@ -200,14 +200,14 @@ describe("where an approved item goes is on the row (AF-11)", () => {
   });
 });
 
-describe("a BOTH-lever gap reaches both markdown briefs", () => {
-  const brief = readFileSync(join(process.cwd(), "src/lib/intel/seo-geo.ts"), "utf8");
-
-  it("excludes only the opposite lever, never by strict equality", () => {
-    // `=== "SEO"` / `=== "GEO"` is what dropped the promoted gaps from both.
-    expect(brief).toContain('g.lever !== "GEO"');
-    expect(brief).toContain('g.lever !== "SEO"');
-    expect(brief).not.toContain('g.lever === "SEO"');
-    expect(brief).not.toContain('g.lever === "GEO"');
-  });
-});
+// The "a BOTH-lever gap reaches both markdown briefs" describe block that used
+// to live here read `src/lib/intel/seo-geo.ts`'s source directly to guard a
+// `=== "SEO"` / `=== "GEO"` strict-equality regression in the markdown-brief
+// generation it — and only it — performed. SCRUM-274 (T-B19) deleted that
+// file wholesale: it was the old, hardcoded onboarding pipeline's in-process
+// SEO/GEO research orchestrator (`runSeoGeoResearch`, called exclusively from
+// the now-also-deleted `src/lib/intel/pipeline.ts`), superseded by the real
+// `seo-geo-agent` dispatched through agent-engine. There is no markdown brief
+// left for this guard to protect — see this ticket's report for the full
+// file-by-file account. `healRecommendations`' own BOTH-lever dedupe (tested
+// above, in `@/components/seo-geo/presenter`) is untouched by this deletion.

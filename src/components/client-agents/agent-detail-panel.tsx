@@ -12,21 +12,10 @@ import { SlotNoteModal } from "./slot-note-modal";
 import { OptionPicked, OptionPicker } from "./option-picker";
 import { noRunnableTemplateReason, visibleTemplates } from "@/lib/client-agent-runs";
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
-import type { AgentArchetype } from "@/lib/agent-archetype";
+import { OUTPUT_NOUN, type AgentArchetype } from "@/lib/agent-archetype";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
+import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
-/**
- * What one run of this agent makes, in the client's words (CD-I1).
- *
- * "Create a new post" is wrong on a clip maker and wrong on a Reddit agent, and
- * a control that misnames its own output is how a client presses a button
- * expecting one thing and is billed for another.
- */
-const OUTPUT_NOUN: Record<AgentArchetype, string> = {
-  template_calendar: "post",
-  clip_maker: "clip",
-  daily_finder: "reply",
-};
 
 /**
  * The interactive half of an agent's detail page (CD-G1).
@@ -163,9 +152,9 @@ export function AgentDetailPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your {agent.activeRun.templateName ?? "next"} {noun} now. This takes 10–20
-              minutes. Your Karos team reviews it when it lands, and finished work appears in your
-              Workspace once approved.
+              Making your {agent.activeRun.templateName ?? "next"} {noun} now. This takes{" "}
+              {RUN_ESTIMATE_SENTENCE}. Your Karos team reviews it when it lands, and finished work
+              appears in your Workspace once approved.
             </p>
           </div>
           {/* F30, restored. The cancel used to ride the generic run rows, and
@@ -188,9 +177,37 @@ export function AgentDetailPanel({
             <p className="text-sm text-foreground">Create a new {noun}</p>
             <p className="mt-0.5 text-xs text-muted-2">
               {runnableTemplate
-                ? `Makes one ${runnableTemplate.name} ${noun} now. It takes 10–20 minutes, and your Karos team reviews it before it reaches your Workspace.`
+                ? `Makes one ${runnableTemplate.name} ${noun} now. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
                 : `Making a ${noun} now is not available yet.`}
             </p>
+            {/* Portal revamp, Surface 03: the cost is a step on the page, never
+                on the button — moved off the label into its own line, same
+                treatment legacy-agent-panel.tsx already uses. */}
+            {agent.runCost != null && (
+              <p className="mt-1 flex items-center gap-1 text-xs text-muted-2">
+                {/* Two registers, one line (review wave, 2026-09). The line used
+                    to be absent for staff, because the row carried no price for
+                    them — so this card and LegacyAgentPanel, on the same page,
+                    disagreed about whether a run has a cost worth stating. Only
+                    the copy differs now: the staff register names whose credits
+                    move.
+
+                    round 6 (ruling 2): the coin was `text-neon` for a client, a
+                    second orange inches from this card's one accent button, and
+                    an icon chip is ink or grey by rule. One class for both
+                    readers, so there is no per-viewer branch left to drift. */}
+                <Icon name="Coins" className="h-3 w-3 text-muted-2" />
+                {/* "About" only when the price is a hold that settles to real
+                    usage (credits rework, 2026-09) — resolved on the server and
+                    carried on the row, because a client component cannot read a
+                    non-NEXT_PUBLIC_ env var. With the rework off the quoted
+                    figure IS the charge and hedging it would mislead the other
+                    way. */}
+                {agent.runCostIsEstimate ? "About" : "Costs"} {agent.runCost} credit
+                {agent.runCost === 1 ? "" : "s"}
+                {!viewerIsClient && " · billed to the client"}
+              </p>
+            )}
           </div>
           <Button
             variant="accent"
@@ -199,9 +216,16 @@ export function AgentDetailPanel({
             onClick={createPost}
           >
             <Icon name="Sparkles" className="h-4 w-4" />
-            {agent.runCost != null
-              ? `Create new ${noun} · ${agent.runCost} credits`
-              : `Create new ${noun}`}
+            {/* THE LABEL NAMES THE FORMAT (flow audit 2026-09, R15). Two
+                controls start a run on this page — this one and each format
+                row's "Run now" — and this one used to read "Create new post"
+                while silently picking the first runnable format, so a reader
+                could not predict which of their four formats they were about
+                to spend a run on. The sentence beside it already named the
+                format; the button, which is the thing people actually read
+                before pressing, did not. "Run now" stays exactly as it is:
+                that one has always named its format by sitting on it. */}
+            {runnableTemplate ? `New ${runnableTemplate.name} ${noun}` : `Create new ${noun}`}
           </Button>
         </div>
         {/* The reason it is off, PAINTED. The Button primitive sets
@@ -213,11 +237,13 @@ export function AgentDetailPanel({
             {/* The intake rung links the page that fixes it, the same way the
                 launch card does for its own intake block. */}
             {firstBlock?.code === "setup_missing" && agent.setupHref && (
+              // A quiet text link, and no arrow character after the label
+              // (round 6 rule 3).
               <a
                 href={agent.setupHref}
-                className="mt-1 inline-block text-xs text-neon hover:underline"
+                className="focus-ring mt-1 inline-block text-xs text-muted hover:text-foreground hover:underline"
               >
-                {agent.setupLabel ?? "Your agent details"} →
+                {agent.setupLabel ?? "Your agent details"}
               </a>
             )}
             {firstBlock?.code === "credits_short" && viewer && (
@@ -315,9 +341,10 @@ export function AgentDetailPanel({
               <Icon name="SlidersHorizontal" className="h-4 w-4" /> Adjust pace
             </Button>
           )}
-          <p className="text-xs text-muted-2">
-            {agent.runCost != null ? `${agent.runCost} credits per ${noun}` : "Staff runs are free"}
-          </p>
+          {/* No price line here. The run button at the top of this panel is the
+              one gesture that spends and already quotes its cost, so a second
+              number beside the steering controls said it twice and read as a
+              per-post rate for what is a flat per-run charge. */}
         </div>
       </section>
 
@@ -362,8 +389,8 @@ export function AgentDetailPanel({
 
 function SectionHeading({ title, hint }: { title: string; hint?: string }) {
   return (
-    <div className="mb-2.5">
-      <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{title}</h2>
+    <div className="mb-3">
+      <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
       {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
     </div>
   );

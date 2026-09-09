@@ -16,9 +16,16 @@ import {
   clientSafeRunError,
   initialAgentBrief,
   launchProfileFor,
+  postCountFrom,
+  quoteMultiplierFrom,
+  quoteIsEstimate,
+  BATCH_SIZE_FIELD_KEY,
+  POST_COUNT_FIELD_KEY,
   X_SETUP_REQUIRED_PREFIX,
 } from "@/lib/custom-agent-launch";
-import { CREDIT_DENIAL_PREFIX } from "@/lib/credits";
+import { CREDIT_DENIAL_PREFIX, creditsLabel, estimatedCreditsLabel } from "@/lib/credits";
+import { intakePageHref } from "@/lib/agent-intake-links";
+import { stripComments } from "./source-scan";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import * as data from "@/lib/data";
 import { buildAgentSetup } from "@/lib/client-agent-rows";
@@ -34,7 +41,7 @@ describe("custom agent launch profiles", () => {
     const x = launchProfileFor({ key: "karos-x-agent-v2", name: "X Agent" });
 
     expect(instagram.fields.map((field) => field.key)).toEqual(
-      expect.arrayContaining(["run_mode", "request", "platform", "post_count"]),
+      expect.arrayContaining(["run_mode", "request", "platform", "batch_size"]),
     );
     expect(linkedin.fields.map((field) => field.key)).toEqual(
       expect.arrayContaining(["executive", "request", "proof"]),
@@ -44,8 +51,10 @@ describe("custom agent launch profiles", () => {
     // The X agent is intake-driven (its agent data holds handles, off-limits,
     // rosters, takes) — the launch brief only scopes the run. It must never
     // ask for things the agent BUILDS (audience, themes, cadence) or already
-    // stores (account handles).
-    expect(x.fields.map((field) => field.key)).toEqual(["run_scope", "batch_size", "request"]);
+    // stores (account handles). `requestedMode` (agent-engine RFC-12) scopes
+    // the run too — which KIND of post this time — and is not something the
+    // agent builds or stores.
+    expect(x.fields.map((field) => field.key)).toEqual(["run_scope", "requestedMode", "batch_size", "request"]);
     expect(x.fields.map((field) => field.key)).not.toEqual(
       expect.arrayContaining(["account", "audience", "themes", "cadence"]),
     );
@@ -142,6 +151,139 @@ describe("custom agent launch profiles", () => {
     expect(offenders).toEqual([]);
   });
 
+  /**
+   * ROUND 6, DECISION 5: THE DIALOG'S PRICE MUST MATCH THE DIALOG'S DEFAULTS.
+   *
+   * "Number of posts" defaulted to 3 and was never the multiplier of anything a
+   * client could read: the footer quoted `cost × batch_size`, `batch_size` is
+   * hidden on every profile that has one, so 1 post, 3 posts and 10 posts all
+   * quoted the same flat per-run price. The count is now what the quote
+   * multiplies by, and the default is 1 so the opening quote is the price of the
+   * run the dialog is actually set up to do.
+   */
+  describe("the visible post count is the quote's multiplier", () => {
+    const instagram = launchProfileFor({
+      key: "karos-instagram-tiktok-content-agent",
+      name: "Instagram + TikTok Content Agent",
+    });
+
+    it("opens on one post", () => {
+      // round 6: was "3". The count is the quote's multiplier now, and a default
+      // above 1 makes the first number a client reads a number they did not ask
+      // for.
+      //
+      // THE KEY IS `batch_size`, not `post_count`. Round 6 and the 2026-09-05
+      // run-dialog pass fixed the same defect from opposite ends and met here:
+      // that pass made Instagram's count VISIBLE as the shared batch key, which
+      // is the only one the submit core splits into N runs and charges for.
+      // `post_count` stayed a dialog-only number no engine workflow ever read,
+      // so quoting off it would have gone back to promising a client something
+      // the run does not do. It is not in this profile's brief at all.
+      const count = instagram.fields.find((field) => field.key === BATCH_SIZE_FIELD_KEY);
+      expect(count?.defaultValue).toBe("1");
+      expect(count?.hidden ?? false).toBe(false);
+      expect(postCountFrom(initialAgentBrief(instagram))).toBeUndefined();
+      expect(quoteMultiplierFrom(initialAgentBrief(instagram))).toBe(1);
+    });
+
+    it("follows the count the reader can see", () => {
+      expect(quoteMultiplierFrom({ ...initialAgentBrief(instagram), [BATCH_SIZE_FIELD_KEY]: "4" })).toBe(4);
+      // The defect itself: this used to be 1 for every count, because the count
+      // and the multiplier were different keys.
+      expect(quoteMultiplierFrom({ [BATCH_SIZE_FIELD_KEY]: "5" })).toBe(5);
+      // `post_count` remains the fallback the round-6 helper was written for, so
+      // a profile that still shows one quotes off it rather than off nothing.
+      expect(quoteMultiplierFrom({ [POST_COUNT_FIELD_KEY]: "10" })).toBe(10);
+    });
+
+    it("multiplies exactly once, and never by a count it cannot trust", () => {
+      // No profile declares both keys, but the helper must not double-count if
+      // one ever does - and batch_size wins, because that is also what the
+      // submit sends as the charge multiplier.
+      expect(quoteMultiplierFrom({ [BATCH_SIZE_FIELD_KEY]: "3", [POST_COUNT_FIELD_KEY]: "5" })).toBe(3);
+      for (const bad of ["0", "-2", "2.5", "three", ""]) {
+        expect(quoteMultiplierFrom({ [POST_COUNT_FIELD_KEY]: bad })).toBe(1);
+      }
+      expect(quoteMultiplierFrom({})).toBe(1);
+    });
+
+    it("leaves an agent with no visible count quoting one run", () => {
+      // The X and LinkedIn writers carry a HIDDEN batch_size. Hidden means inert
+      // for pricing (2026-08-05), and they have no post_count at all, so their
+      // quote stays the flat per-run price.
+      for (const key of ["karos-x-agent-v2", "karos-linkedin-writer-v2"]) {
+        const profile = launchProfileFor({ key, name: "Agent" });
+        const visible = Object.fromEntries(
+          Object.entries(initialAgentBrief(profile)).filter(
+            ([field]) => !profile.fields.find((f) => f.key === field)?.hidden,
+          ),
+        );
+        expect(quoteMultiplierFrom(visible)).toBe(1);
+      }
+    });
+
+    /**
+     * ROUND 6 REVIEW (D6): A COUNT-BASED QUOTE IS AN ESTIMATE BY NATURE.
+     *
+     * The multiplication above is honest and unchanged; the WORDING was not.
+     * `post_count` multiplies the quote and never reaches the submit's
+     * `chargeMultiplier`, so on a deploy with settlement off the footer printed
+     * an exact "75 credits" for three posts against a flat one-run hold. Two
+     * independent reasons to hedge, and only the absence of BOTH earns "N
+     * credits": settlement on for the deploy, or the count as the multiplier.
+     */
+    it("hedges a count-based quote whatever the deploy's settlement setting is", () => {
+      expect(quoteIsEstimate({ [POST_COUNT_FIELD_KEY]: "3" })).toBe(true);
+      // batch_size IS the charge multiplier, so that quote equals the hold.
+      expect(quoteIsEstimate({ [BATCH_SIZE_FIELD_KEY]: "3" })).toBe(false);
+      expect(
+        quoteIsEstimate({ [BATCH_SIZE_FIELD_KEY]: "3", [POST_COUNT_FIELD_KEY]: "5" }),
+        "batch_size won the multiplier but not the wording",
+      ).toBe(false);
+      // Nothing to hedge: no key, or a count the multiplier refused.
+      expect(quoteIsEstimate({})).toBe(false);
+      for (const bad of ["0", "-2", "2.5", "three", ""]) {
+        expect(quoteIsEstimate({ [POST_COUNT_FIELD_KEY]: bad })).toBe(false);
+      }
+    });
+
+    it("prints the two label forms the footer is allowed to print", () => {
+      // The same composition `briefQuoteLabel` performs, asserted on the strings
+      // a client actually reads. "About" is capitalized by the footer's own
+      // `sentenceStart`, so the helpers stay lower case here.
+      const perRun = 25;
+      const counted = { [POST_COUNT_FIELD_KEY]: "3" };
+      const batched = { [BATCH_SIZE_FIELD_KEY]: "3" };
+      const label = (values: Record<string, string>, settlementOn: boolean) => {
+        const amount = perRun * quoteMultiplierFrom(values);
+        return settlementOn || quoteIsEstimate(values)
+          ? estimatedCreditsLabel(amount)
+          : creditsLabel(amount);
+      };
+      // The defect: this used to read "75 credits".
+      expect(label(counted, false)).toBe("about 75 credits");
+      expect(label(counted, true)).toBe("about 75 credits");
+      // The exact form survives exactly where the quote is the charge.
+      expect(label(batched, false)).toBe("75 credits");
+      expect(label(batched, true)).toBe("about 75 credits");
+      expect(label({}, false)).toBe("25 credits");
+    });
+
+    it("is the label the run dialog's footer actually calls", () => {
+      const src = stripComments(
+        readFileSync(join(__dirname, "..", "..", "components", "custom-agents.tsx"), "utf8"),
+      );
+      // The footer must not go back to `runPriceLabel`, which knows only about
+      // settlement.
+      expect(src).toContain("[briefQuoteLabel(agent, visibleBriefValues)]");
+      const at = src.indexOf("function briefQuoteLabel");
+      expect(at, "the footer's label helper moved").toBeGreaterThan(-1);
+      const body = src.slice(at, at + 500);
+      expect(body).toContain("agentRunCost(agent) * quoteMultiplierFrom(values)");
+      expect(body).toMatch(/agent\.priceIsEstimate \|\| quoteIsEstimate\(values\)/);
+    });
+  });
+
   it("serializes guided answers into the service prompt without losing labels", () => {
     const profile = launchProfileFor({ key: "acme-linkedin-ghostwriter", name: "LinkedIn Ghostwriter" });
     const values = {
@@ -164,7 +306,7 @@ describe("clientSafeRunError", () => {
     const safe = clientSafeRunError(raw);
     expect(safe).not.toContain("AGENT_SERVICE_URL");
     expect(safe).not.toBe(raw);
-    expect(clientSafeRunError("AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks.")).toBe(
+    expect(clientSafeRunError("AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks.")).toBe(
       safe,
     );
   });
@@ -280,10 +422,36 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
 
   it("always resolves an href, pane or no pane", () => {
     // Three agents, three hrefs, and none of them conditional on a payload.
-    for (const route of ["x-agent", "linkedin-agent", "reddit-agent"]) {
-      expect(rows).toContain(`/clients/\${clientId}/${route}`);
+    //
+    // ASKED OF THE TABLE THEY NOW COME FROM (flow audit 2026-09, R16). These
+    // routes used to be spelled inline here AND a second time in
+    // custom-agents.tsx's own `INTAKE_ROUTE`; the copy is gone and both readers
+    // ask `intakePageHref` (lib/agent-intake-links.ts). So the assertion is that
+    // each family resolves one, plus the real path the shared table returns —
+    // pinning the template literal again would just re-pin a spelling that no
+    // longer lives in this file.
+    for (const family of ["x", "linkedin", "reddit"] as const) {
+      expect(rows).toContain(`intakePageHref(clientId, "${family}")`);
     }
-    expect(rows).toContain("{ ready, href, label, clientLabel }");
+    expect(intakePageHref("c1", "x")).toBe("/clients/c1/x-agent");
+    expect(intakePageHref("c1", "linkedin")).toBe("/clients/c1/linkedin-agent");
+    expect(intakePageHref("c1", "reddit")).toBe("/clients/c1/reddit-agent");
+    // The pane-less branch still carries href/label/clientLabel — the href is
+    // NOT conditional on a payload.
+    //
+    // TWO EXACT LITERALS rather than one regex over both. The obvious rewrite
+    // when `standUpDone` arrived was `standUpDone(?:: true)?`, and that
+    // alternation is blind to the one substitution this pair exists to catch: a
+    // LinkedIn branch that HARDCODES `standUpDone: true` instead of resolving the
+    // predicate would satisfy it, which is precisely the regression. The families
+    // with no stand-up run say so with a literal; LinkedIn's is resolved, so the
+    // two shapes are different on purpose and are pinned separately.
+    expect(rows, "the families with no stand-up run must say so with a literal").toContain(
+      "{ ready, standUpDone: true, href, label, clientLabel }",
+    );
+    expect(rows, "LinkedIn's stand-up must be RESOLVED, never hardcoded true").toContain(
+      "{ ready, standUpDone, href, label, clientLabel }",
+    );
   });
 
   it("attaches a prefetched form to the agent it belongs to", () => {
@@ -299,6 +467,55 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
     expect(rows).toContain("hasXAgentIntake(clientId)");
     expect(rows).toContain("hasLinkedInAgentIntake(clientId, agent.key)");
     expect(rows).toContain("hasRedditAgentIntake(clientId)");
+  });
+
+  it("answers the LinkedIn v2 STAND-UP question too, from the cores' predicate", () => {
+    // A saved form is not a stood-up agent. LinkedIn v2 derives its lanes, its
+    // voice and its first topics from a one-time run, and BOTH submit cores
+    // refuse a writer run before it has happened — so a surface that resolves
+    // only `ready` hands out a press the server turns away (F131).
+    //
+    // hasLinkedInV2Setup used to be called by the two cores ALONE, which is why
+    // two control surfaces disagreed with them at once: this readiness object and
+    // the schedule gate — where the cost was a schedule that passed, read as live,
+    // and was then refused on every single fire with no job row, no failed status
+    // and nothing on screen to explain it. (The run gate is the third surface and
+    // is asserted by the next test, which is where its ordering lives.)
+    for (const file of ["src/lib/client-agent-rows.ts", "src/lib/jobs/schedule-gate.ts"]) {
+      const src = readFileSync(join(process.cwd(), file), "utf8");
+      expect(src, `${file} never asks whether v2 has been stood up`).toContain(
+        "hasLinkedInV2Setup(",
+      );
+      // THE FULL CONJUNCTION THE CORES SPELL, not either half of it. Keyed to v2
+      // because the e10 generation has no stand-up run, AND exempting the setup
+      // skill because it is the run that WRITES the foundation row.
+      //
+      // Asserted as one pattern because the halves separately cannot catch what
+      // shipped once: the rung was keyed to v2 and not exempted, which made these
+      // surfaces stricter than the cores they mirror and refused the only run that
+      // could ever satisfy them — so a paused setup schedule could never be
+      // resumed. A test that merely proved both function NAMES appear stayed green
+      // through exactly that.
+      expect(
+        src,
+        `${file} does not spell the cores' guard: v2 AND not the setup skill`,
+      ).toMatch(/isLinkedInV2Agent\((?:agent\.)?key\)\s*&&\s*!isLinkedInSetupV2\((?:agent\.)?key\)/);
+    }
+  });
+
+  it("declares the stand-up refusal code the run gate returns", () => {
+    // The CODE only. The rung's behaviour — what it returns, where it sits in the
+    // ladder, and the two cases where it must stay silent — is asserted by
+    // evaluating the function in client-agent-runs.test.ts, which is strictly
+    // better than measuring byte offsets in this file's source.
+    //
+    // An earlier version of this test DID pin the order by offset, and it was
+    // wrong in a way worth recording: it sliced from the function's name to the
+    // END OF FILE, so it only happened to cover one function because that gate is
+    // the module's last export. The bound is the part such a test has to get
+    // right, and the behavioural test needs no bound at all.
+    const src = readFileSync(join(process.cwd(), "src/lib/client-agent-runs.ts"), "utf8");
+    expect(src).toContain('code: "stand_up_required"');
   });
 
   it("carries the agent key at the CORES' call sites, not only the card's", () => {

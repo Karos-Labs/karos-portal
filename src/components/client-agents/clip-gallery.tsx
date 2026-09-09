@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { assetImages, assetVideos } from "@/lib/asset-images";
-import { clientDeliveryStamp } from "@/lib/asset-visibility";
+import { deliverableStamp } from "@/lib/asset-visibility";
 import { relativeTime } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
 
@@ -99,7 +99,10 @@ function ClipTile({
     <button
       type="button"
       onClick={onOpen}
-      className="group flex w-full flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-neon/50 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/60"
+      /* round 6 (rule 3): one fill step and the accent hairline (`row-lift`),
+         no lift and no shadow, and the portal's one focus treatment rather
+         than a second ring recipe of its own. */
+      className="focus-ring row-lift group flex w-full flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-surface text-left"
     >
       <div className="relative aspect-[9/16] w-full overflow-hidden border-b border-border bg-black/60">
         {poster ? (
@@ -131,7 +134,7 @@ function ClipTile({
               keep the generation time - for them it is the fact worth
               knowing. */}
           <span className="text-[11px] text-muted-2">
-            {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}
+            {relativeTime(deliverableStamp(asset, viewerIsClient))}
           </span>
         </div>
       </div>

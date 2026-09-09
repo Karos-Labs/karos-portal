@@ -14,7 +14,7 @@
 
 import "server-only";
 import type { Asset, EmployeeSeat, MarketingMetrics } from "@/lib/types";
-import { mockRawMetrics, normalizePlatformMetrics, type RawPlatformMetrics } from "@/lib/analytics";
+import { normalizePlatformMetrics, type RawPlatformMetrics } from "@/lib/analytics";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
 
 /** Thrown when a platform's Insights API isn't wired up yet — triggers the mock fallback. */
@@ -27,7 +27,12 @@ export class MetricsUnavailableError extends Error {
 
 export interface PlatformMetricsResult {
   metrics: MarketingMetrics;
-  /** "live" once a real API answered; "mock" while we fall back. */
+  /**
+   * Always "live" now, and the union is kept only because `ClientMarketingAnalytics`
+   * rows written before 2026-08 carry "mock" and every consumer still has to be
+   * able to filter them out. Nothing in this module produces a "mock" result any
+   * more — see the dispatcher note below.
+   */
   source: "live" | "mock";
 }
 
@@ -447,23 +452,59 @@ export async function fetchMetaMentions(token: string, pageOrIgId: string): Prom
 /* ── Dispatcher ──────────────────────────────────────────────────────── */
 
 /**
- * Fetch and normalize the recent performance metrics for one asset on one
- * platform. Tries the live API first. `TokenExpiredError` propagates so the
- * batch marks the integration for reauth. `MetricsUnavailableError` (ingest
- * off / no token / no post id — including when the client has no connected
- * integration at all, i.e. `credentials` is `{}`) falls back to deterministic
- * mock so dev + demo keep working. Any OTHER live failure propagates so the
- * batch skips that asset rather than persisting fake numbers as if real.
+ * THE MOCK FALLBACK IS GONE FROM BOTH DISPATCHERS (2026-08).
+ *
+ * They used to answer `MetricsUnavailableError` — ingest disabled, no token, no
+ * post id, no connected integration at all — by returning
+ * `mockRawMetrics(...)` with `source: "mock"`, "so dev + demo keep working".
+ * The sync route then PERSISTED those rows into `clientMarketingAnalytics`,
+ * where they are indistinguishable from measurements except by a flag that
+ * three of the four downstream consumers never read: content generation quoted
+ * them as proven winners, the strategy swarm narrated them to the client as
+ * measurement, and a fabricated score ≥ 80 was enough to open a whole campaign.
+ * Fencing each consumer helps, but the honest fix is upstream — a metric nobody
+ * measured should not exist as a row.
+ *
+ * So an unavailable metric now returns `null` and the batch writes NOTHING for
+ * that asset. "We have no data yet" is a state this product already renders
+ * well (empty states, `needs-connection`, "Not measured yet"); it does not need
+ * a number to stand in for it.
+ *
+ * `TokenExpiredError` still propagates so the batch marks the integration for
+ * reauth, and any other live failure still propagates so the batch skips that
+ * asset — both unchanged.
  */
+export async function fetchPlatformMetrics(
+  platform: string,
+  credentials: Record<string, string>,
+  asset: Asset,
+): Promise<PlatformMetricsResult | null> {
+  try {
+    const raw = await fetchLiveRaw(platform, credentials, asset);
+    return { metrics: normalizePlatformMetrics(platform, raw), source: "live" };
+  } catch (err) {
+    if (err instanceof MetricsUnavailableError) return null;
+    throw err; // TokenExpiredError and real HTTP failures propagate to the batch loop
+  }
+}
+
 /**
  * Fetch aggregate metrics for one LinkedIn employee-advocacy seat (its personal
  * handle). The seat's token is validated live so an expired one surfaces as
- * TokenExpiredError (the sync then pauses the seat); detailed member-post
- * analytics require the LinkedIn Marketing API (elevated access), so until that's
- * granted the numbers are best-effort mock keyed per seat. `seat.credentials`
- * must already be DECRYPTED (getEmployeeSeatsForSync does this).
+ * TokenExpiredError and the sync pauses the seat.
+ *
+ * IT HAS NO LIVE PATH AT ALL, AND THAT IS WHY IT RETURNS NULL. Member-post
+ * analytics need the LinkedIn Marketing API (elevated access), which has not
+ * been granted — so this function validated the token and then threw its own
+ * unavailability error, meaning EVERY successful call returned mock. Worse, the
+ * sync wrote that row under `assetLabel: seat.employeeName`, filing an invented
+ * engagement score against a named real person.
+ *
+ * Until the Marketing API is granted there is nothing true to report for a
+ * seat, so nothing is reported. The live token check is kept: it is what keeps
+ * a dead seat getting paused instead of silently rotting.
  */
-export async function fetchSeatMetrics(seat: EmployeeSeat): Promise<PlatformMetricsResult> {
+export async function fetchSeatMetrics(seat: EmployeeSeat): Promise<PlatformMetricsResult | null> {
   try {
     if (!liveIngestEnabled()) throw new MetricsUnavailableError("linkedin seat (live disabled)");
     const token = seat.credentials.accessToken;
@@ -472,30 +513,10 @@ export async function fetchSeatMetrics(seat: EmployeeSeat): Promise<PlatformMetr
       headers: { Authorization: `Bearer ${token}` },
     });
     assertNotExpired("linkedin", res);
-    // Token is valid but member-post analytics aren't reachable yet — best-effort mock.
+    // Token is valid, but member analytics are not reachable — nothing to write.
     throw new MetricsUnavailableError("linkedin seat (member analytics require Marketing API access)");
   } catch (err) {
-    if (err instanceof MetricsUnavailableError) {
-      const raw = mockRawMetrics("linkedin", seat.id);
-      return { metrics: normalizePlatformMetrics("linkedin", raw), source: "mock" };
-    }
+    if (err instanceof MetricsUnavailableError) return null;
     throw err;
-  }
-}
-
-export async function fetchPlatformMetrics(
-  platform: string,
-  credentials: Record<string, string>,
-  asset: Asset,
-): Promise<PlatformMetricsResult> {
-  try {
-    const raw = await fetchLiveRaw(platform, credentials, asset);
-    return { metrics: normalizePlatformMetrics(platform, raw), source: "live" };
-  } catch (err) {
-    if (err instanceof MetricsUnavailableError) {
-      const raw = mockRawMetrics(platform, asset.id);
-      return { metrics: normalizePlatformMetrics(platform, raw), source: "mock" };
-    }
-    throw err; // TokenExpiredError and real HTTP failures propagate to the batch loop
   }
 }

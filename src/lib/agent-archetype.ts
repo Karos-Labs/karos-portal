@@ -109,3 +109,22 @@ export const AGENT_ARCHETYPE_PATTERNS = {
   COMBINED_CONTENT_ENGINE,
   FEED_PLUS_CLIP_ENGINE,
 } as const;
+
+/**
+ * What ONE run of this shape makes, in the client's words.
+ *
+ * "Create a new post" is wrong on a clip maker and wrong on a Reddit agent, and
+ * a control that misnames its own output is how a client presses a button
+ * expecting one thing and is billed for another. Reddit is the sharp case: its
+ * whole product promise is that we never post, so a page whose strongest
+ * affordance says "post" contradicts the rule it is built around.
+ *
+ * Lives here rather than in a panel because BOTH panels need it — the umbrella
+ * one and the legacy one — and two copies is how the Reddit page ended up
+ * saying "reply" in its hero and "post" on its button.
+ */
+export const OUTPUT_NOUN: Record<AgentArchetype, string> = {
+  template_calendar: "post",
+  clip_maker: "clip",
+  daily_finder: "reply",
+};

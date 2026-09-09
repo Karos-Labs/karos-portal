@@ -424,7 +424,7 @@ describe("#49 — the asset_type hint cannot make a Reddit reply publishable", (
   it("lands a Reddit reply as a library note even when the run asked for social_post", async () => {
     // The live shape: a scheduled Reddit run whose schedule row says social_post.
     // Typed social_post, the reply is offered on every publish surface and the
-    // auto-publish cron pushes it to whichever of twitter/linkedin/facebook/tiktok
+    // auto-publish cron pushes it to whichever of twitter/linkedin/tiktok
     // is connected — a reply written for one thread, cross-posted to four feeds.
     vi.stubGlobal(
       "fetch",

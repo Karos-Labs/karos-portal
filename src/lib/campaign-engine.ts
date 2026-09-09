@@ -2,9 +2,9 @@
  * Omnichannel Campaign engine.
  *
  * When a high-weight trend or event warrants more than a single post, this turns
- * it into a cohesive, dependent bundle across MANAGED_PRODUCTS: a core authority
- * anchor (a blog article), a distribution vehicle (a newsletter summarizing it),
- * and matching social pieces — with explicit relational dependencies (the
+ * it into a cohesive, dependent bundle: a core authority anchor (a blog article)
+ * and a distribution vehicle (a newsletter summarizing it), BOTH now v2 CUSTOM
+ * agents rather than managed products, plus matching social pieces — with explicit relational dependencies (the
  * newsletter and socials depend on the anchor). It runs the Creative Entropy
  * Guard first so a repetitive theme is pushed toward a fresh angle before any
  * tasks are written.
@@ -15,23 +15,25 @@
 
 import "server-only";
 import { generateObject } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { after } from "next/server";
-import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
 import { logger } from "@/services/logger";
 import {
   getClient,
   listAssets,
   createCampaign,
   createClientTask,
+  listCustomAgents,
   updateCampaign,
   getTaskBoardCapacity,
 } from "@/lib/data";
+import { BLOG_WRITER_V2_KEY, NEWSLETTER_WRITER_V2_KEY } from "@/lib/custom-agent-launch";
 import { taskWeekKey, findDuplicateReason } from "@/lib/task-dedup";
 import { freshnessGuard } from "@/lib/entropy-guard";
 import type { ClientTask, TaskPriority, TaskSource, TaskOwner } from "@/lib/types";
 import { clientCategoryValue } from "@/lib/utils";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 const SOCIAL_PLATFORMS = ["linkedin", "facebook", "instagram", "twitter", "youtube", "tiktok"] as const;
 
@@ -65,11 +67,33 @@ export type CampaignBlueprint = z.infer<typeof campaignBlueprintSchema>;
 
 export type CampaignRole = "anchor" | "distribution" | "social";
 
+/**
+ * One piece of the bundle, and the executor it is destined for.
+ *
+ * TWO EXECUTOR SHAPES SINCE THE NEWSLETTER MOVED, because the two paths differ
+ * at the point of persistence rather than just in name. A managed product is a
+ * fixed string every client shares. A custom agent is a Firestore DOCUMENT whose
+ * id differs per environment (prep and production hold different ids) and which
+ * a client may not even be granted — so the KEY is carried here and resolved to
+ * an id when the task is written, exactly as the swarm planner already does for
+ * the custom agents it assigns. A draft holding an id could not be built without
+ * a Firestore read, and this half of the module is pure on purpose.
+ */
 export interface CampaignTaskDraft {
   role: CampaignRole;
   title: string;
   description: string;
-  productType: "blog_article" | "newsletter_issue" | "social_post";
+  /**
+   * The managed product for this piece, or `"custom"` when a custom agent runs
+   * it — in which case `customAgentKey` names which one.
+   */
+  productType: "social_post" | "custom";
+  /**
+   * The lab skill key of the custom agent that executes this piece. Set only
+   * when `productType` is `"custom"`; resolved to that client's granted agent
+   * document at persist time.
+   */
+  customAgentKey?: string;
   platform?: string;
   weight: number;
   /** Roles this piece depends on — resolved to real task ids at persist time. */
@@ -88,19 +112,30 @@ function weightToPriority(weight: number): TaskPriority {
  * depends on anchor). Anchor is always first so id resolution is trivial.
  */
 export function buildCampaignTaskDrafts(blueprint: CampaignBlueprint): CampaignTaskDraft[] {
+  // THE ANCHOR IS A CUSTOM AGENT NOW TOO, and it is the piece the whole bundle
+  // hangs off: the newsletter and every social piece depend on it, and the
+  // dependency rule is that a dependent cannot start until its dependency has
+  // produced a deliverable. So an anchor that cannot be assigned an executor
+  // stalls the entire campaign, not just its own row — which is why the persist
+  // site still writes it unassigned rather than dropping it.
   const anchor: CampaignTaskDraft = {
     role: "anchor",
     title: blueprint.anchor.title,
     description: blueprint.anchor.description,
-    productType: "blog_article",
+    productType: "custom",
+    customAgentKey: BLOG_WRITER_V2_KEY,
     weight: blueprint.anchor.weight,
     dependsOnRoles: [],
   };
+  // The distribution vehicle is still a newsletter; it is no longer a managed
+  // product. It routes to the v2 writer by KEY — the id is per-environment and
+  // per-grant, so it is resolved when the task is written, not here.
   const newsletter: CampaignTaskDraft = {
     role: "distribution",
     title: blueprint.newsletter.title,
     description: blueprint.newsletter.description,
-    productType: "newsletter_issue",
+    productType: "custom",
+    customAgentKey: NEWSLETTER_WRITER_V2_KEY,
     weight: blueprint.newsletter.weight,
     dependsOnRoles: ["anchor"],
   };
@@ -221,14 +256,14 @@ export async function generateCampaignBundle(
     clientId: input.clientId,
     agentId: null,
     agentName: "Campaign Director",
-    modelName: MODELS.SONNET,
+    ...usageFor("campaign.plan"),
     operation: "campaign_generation",
   };
   let blueprint: CampaignBlueprint;
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ object: blueprint, usage } = await generateObject({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("campaign.plan").model,
       schema: campaignBlueprintSchema,
       system,
       prompt: buildCampaignPrompt(client.name, clientCategoryValue(client), input.trend),
@@ -260,9 +295,52 @@ export async function generateCampaignBundle(
   let duplicatesSkipped = 0;
   let capSkipped = 0;
 
+  // Custom-agent executors, resolved BEFORE the dedup pass rather than at the
+  // persist site — and the ordering is load-bearing, not tidiness.
+  //
+  // `findDuplicateReason`'s third rule flags a candidate whose EXECUTOR and
+  // platform scope already have an active task this week, and `executorKey`
+  // reads `customAgentId ?? productType`. Both the anchor and the distribution
+  // piece now carry `productType: "custom"`, so resolving afterwards meant the
+  // dedup compared two DIFFERENT agents as one executor called "custom" and
+  // dropped whichever came second — silently turning every campaign into a
+  // three-piece bundle missing its newsletter. Resolving first means each piece
+  // is deduped against the agent it will actually run on, which is also what
+  // matches existing board tasks: those store the ID, never the key.
+  const customByKey = new Map(
+    (await listCustomAgents()).filter((a) => a.enabled).map((a) => [a.key, a]),
+  );
+  const agentForDraft = (draft: CampaignTaskDraft) =>
+    draft.productType === "custom" && draft.customAgentKey
+      ? customByKey.get(draft.customAgentKey)
+      : undefined;
+  /**
+   * The executor identity the DEDUP compares on: the resolved agent id when we
+   * have one, and the draft's KEY when we do not.
+   *
+   * The fallback is the part worth explaining. When neither custom agent is
+   * registered — a fresh environment, or both disabled — `agentForDraft` returns
+   * undefined for both pieces, `executorKey` falls back to `productType`, and the
+   * anchor and the newsletter are once again one executor called "custom". The
+   * second piece gets dropped for being a duplicate of the first, in exactly the
+   * situation where the bundle is already most degraded.
+   *
+   * The key cannot collide, because it is what distinguishes the two products in
+   * the first place. It will not match an existing board task (those store ids),
+   * and that is the safe direction: an unassignable piece is deduped on its title
+   * alone rather than against a scope it cannot really be in.
+   */
+  const executorIdentity = (draft: CampaignTaskDraft) =>
+    agentForDraft(draft)?.id ?? (draft.productType === "custom" ? draft.customAgentKey : undefined);
+
   for (const draft of drafts) {
     const reason = findDuplicateReason(
-      { title: draft.title, productType: draft.productType, platform: draft.platform },
+      {
+        title: draft.title,
+        productType: draft.productType,
+        ...(executorIdentity(draft) ? { customAgentId: executorIdentity(draft) } : {}),
+        platform: draft.platform,
+      },
       pool,
       now,
     );
@@ -285,7 +363,11 @@ export async function generateCampaignBundle(
       priority: weightToPriority(draft.weight),
       source: "content_dispatch" as TaskSource,
       owner: "karos_managed" as TaskOwner,
-      metadata: { productType: draft.productType, platform: draft.platform },
+      metadata: {
+        productType: draft.productType,
+        ...(executorIdentity(draft) ? { customAgentId: executorIdentity(draft) } : {}),
+        platform: draft.platform,
+      },
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -318,12 +400,37 @@ export async function generateCampaignBundle(
       .map((r) => roleToId[r])
       .filter((id): id is string => !!id);
     const metadata: Record<string, unknown> = {
-      productType: draft.productType,
-      completionTrigger: `product_run:${draft.productType}`,
       campaignRole: draft.role,
       // Denormalized so the producing asset can carry the capsule label without a join.
       campaignTitle: blueprint.title,
     };
+    // The two executor shapes, and the reason they are written differently.
+    //
+    // A managed product gets a `product_run:` completion trigger because the
+    // webhook mints exactly that string from the delivered `task_type`. A CUSTOM
+    // run delivers `task_type: "custom"`, so a trigger built from a custom
+    // agent's key could never match and the task would sit pending for ever —
+    // which is precisely how the v1 newsletter tasks this migration cleans up
+    // became stranded. So a custom piece gets NO trigger, exactly as the swarm
+    // planner already does ("no product_run trigger — that flow is separate").
+    if (draft.productType === "custom") {
+      const agent = agentForDraft(draft);
+      // A campaign whose distribution agent is not registered or not enabled
+      // still gets its task: the piece is real editorial work and dropping it
+      // silently would leave a bundle with a hole nobody can see. It lands
+      // unassigned, which is a state the board already renders — a staff member
+      // picks an executor — rather than one pointing at an agent that is not there.
+      if (agent) {
+        metadata.customAgentId = agent.id;
+        // `agentName`, not `customAgentName` — the one field name for the
+        // linked agent's display name (see ClientTask.metadata's doc comment
+        // in types.ts, and agent-swarm.ts's persistSwarmTasks; SCRUM-255).
+        metadata.agentName = agent.name;
+      }
+    } else {
+      metadata.productType = draft.productType;
+      metadata.completionTrigger = `product_run:${draft.productType}`;
+    }
     if (draft.platform) metadata.platform = draft.platform;
 
     const taskId = await createClientTask({

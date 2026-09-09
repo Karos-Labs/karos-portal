@@ -213,17 +213,38 @@ vi.mock("@/lib/agent-roster", () => ({
   buildAgentCatalog: vi.fn(() => []),
 }));
 vi.mock("ai", () => ({
-  streamText: vi.fn(() => ({ toTextStreamResponse: () => new Response("ok") })),
+  streamText: vi.fn(() => ({ toTextStreamResponse: () => new Response("ok"), stream: null })),
   generateText: vi.fn(),
   generateObject: vi.fn(),
   tool: (t: unknown) => t,
   isLoopFinished: () => () => false,
   stepCountIs: () => () => false,
+  // T-B4: the route no longer calls `streamText` itself — it goes through
+  // `createChatStreamResponse` (src/lib/chat/stream-protocol.ts), which wraps
+  // it in these three. Faked just enough to preserve this test's real point
+  // (capturing the `tools` registry `streamText` is called with): the fake
+  // `execute`s synchronously, same as the real `createUIMessageStream` does
+  // for an `execute` with no top-level `await` before its `streamText` call,
+  // so `streamText`'s mock has already recorded its call by the time this
+  // file's `toolRegistry()` inspects it.
+  createUIMessageStream: ({ execute }: { execute: (o: { writer: unknown }) => unknown }) => {
+    const writer = { write: () => {}, merge: () => {}, onError: undefined, setOutcome: () => {} };
+    void execute({ writer });
+    return new ReadableStream();
+  },
+  createUIMessageStreamResponse: () => new Response("ok"),
+  toUIMessageStream: () => new ReadableStream(),
 }));
 vi.mock("@ai-sdk/anthropic", () => ({
   anthropic: Object.assign((id: string) => ({ id }), {
     tools: { webSearch_20250305: () => ({}) },
   }),
+}));
+// T-B3/SCRUM-246: chat.client's cost-based default now resolves to vendor
+// "google" (Gemini) rather than always "anthropic" — see the matching note in
+// client-api-access-guard.test.ts.
+vi.mock("@ai-sdk/google-vertex", () => ({
+  googleVertex: Object.assign((id: string) => ({ id }), { tools: {} }),
 }));
 
 import { streamText } from "ai";

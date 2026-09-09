@@ -9,6 +9,7 @@ import { Badge, Button, Card, CardTitle, EmptyState, PageHeader } from "@/compon
 import { Icon } from "@/components/icon";
 import { LabImportButton } from "@/components/lab-import";
 import { OpsImport } from "@/components/ops-import";
+import { XTitleBackfill } from "@/components/x-title-backfill";
 
 /**
  * Ops Import (admin only) - land work produced locally into the live portal.
@@ -130,6 +131,11 @@ export default async function OpsImportPage() {
             ))}
           </div>
         )}
+      </section>
+
+      <section className="mt-8">
+        <h2 className="mb-3 text-sm font-medium">Archive maintenance</h2>
+        <XTitleBackfill />
       </section>
     </div>
   );

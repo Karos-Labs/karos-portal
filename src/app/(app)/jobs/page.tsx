@@ -57,6 +57,7 @@ export default async function JobsPage() {
       emailed: Boolean(job.emailedTo),
       ...(job.customAgentId ? { customAgentId: job.customAgentId } : {}),
       ...(job.error ? { error: job.error } : {}),
+      ...(job.heldReason ? { heldReason: job.heldReason } : {}),
     }));
 
   // ── Upcoming Scheduled Runs (item 2's "future" pane) ─────────────────

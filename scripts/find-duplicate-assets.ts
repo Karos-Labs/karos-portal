@@ -90,8 +90,14 @@ function stamp(ms?: number): string {
   return typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : "—";
 }
 
+const GROUP_KIND_LABEL: Record<DuplicateGroup<AssetRow>["kind"], string> = {
+  gcsPath: "path",
+  labRun: "lab-import item",
+  titleDay: "same day + title",
+};
+
 function printGroup(group: DuplicateGroup<AssetRow>, deletable: boolean) {
-  console.log(`\n  ${group.kind === "gcsPath" ? "path" : "same day + title"}: ${group.label}`);
+  console.log(`\n  ${GROUP_KIND_LABEL[group.kind]}: ${group.label}`);
   for (const m of group.members) {
     const keep = m.id === group.survivor.id;
     const verdict = keep ? "KEEP" : deletable ? "drop" : "dup ";
@@ -190,16 +196,20 @@ async function main() {
   }
 
   const all = findDuplicateGroups(scannable);
-  const exact = all.filter((g) => g.kind === "gcsPath");
+  // gcsPath (bulk-uploaded clips) and labRun (lab-imported items) are the same
+  // shape of evidence — a durable per-item identity the write side now creates
+  // idempotently against, so a shared one predates that guard rather than
+  // describing two legitimately separate posts. Both are high confidence.
+  const exact = all.filter((g) => g.kind === "gcsPath" || g.kind === "labRun");
   const heuristic = all.filter((g) => g.kind === "titleDay");
 
   // ── High confidence ──────────────────────────────────────────────────
   console.log(
-    `\n=== SAME gcsPath, agreeing placement — high confidence (${exact.length} group(s)) ===`,
+    `\n=== SAME gcsPath or lab-import item, agreeing placement — high confidence (${exact.length} group(s)) ===`,
   );
   console.log(
-    "  One clip, written more than once. A clip reused on two DIFFERENT days is two real posts " +
-      "and is not grouped here at all.",
+    "  One clip or lab-import item, written more than once. The same item reused on two DIFFERENT " +
+      "days is two real posts and is not grouped here at all.",
   );
   if (exact.length === 0) console.log("  none");
   for (const [clientId, groups] of byClient(exact)) {

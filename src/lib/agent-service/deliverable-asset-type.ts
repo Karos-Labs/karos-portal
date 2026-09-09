@@ -6,8 +6,8 @@
  * decides whether the asset card offers "Publish now", whether the schedule form
  * lists channels, and whether the auto-publish cron will push the text to
  * whichever platform the client has connected. A Reddit reply typed
- * `social_post` is therefore offered to twitter, linkedin, facebook and tiktok —
- * a reply written for one thread, cross-posted to four strangers' feeds.
+ * `social_post` is therefore offered to twitter, linkedin and tiktok —
+ * a reply written for one thread, cross-posted to three strangers' feeds.
  *
  * REDDIT IS DRAFT-ONLY BY HARD PRODUCT RULE: a human always posts the reply from
  * their own account, and no posting code path exists or may be added. That rule
@@ -36,18 +36,28 @@
 
 import { PUBLISHABLE_PLATFORMS } from "@/lib/integrations/platforms";
 import { parseRedditDrafts } from "@/lib/reddit-drafts";
-import type { AssetType, ManagedTaskType } from "@/lib/types";
+import type { AssetType, WireTaskType } from "@/lib/types";
 
-/** The asset type each catalog task type's deliverable lands as. */
+/**
+ * The asset type each task type's deliverable lands as.
+ *
+ * KEYED BY `WireTaskType`, not `ManagedTaskType`, and the difference is
+ * load-bearing: the retired `newsletter_issue` row stays. This map is read on
+ * the DELIVERY path, so it has to answer for a v1 job that was already queued
+ * when the service was cut — dropping the row would land that issue as a
+ * slot-less `note` in the library instead of an `email`, on the one run nobody
+ * can re-fire because the product no longer exists.
+ */
 const TASK_TYPE_ASSET_TYPE = {
   social_post: "social_post",
+  /** RETIRED product, drain-only. See the note above before removing. */
   newsletter_issue: "email",
   blog_article: "article",
   landing_page: "note",
   // Custom agents produce any shape, so the slot-less library note is the safe
   // default; the submitter can hint the real type (below).
   custom: "note",
-} as const satisfies Record<ManagedTaskType, AssetType>;
+} as const satisfies Record<WireTaskType, AssetType>;
 
 /**
  * Asset types a `custom` run may REQUEST via `metadata.asset_type` — a hint is
@@ -151,7 +161,8 @@ export function isDraftOnlyDeliverable(deliverable: {
  * here.
  */
 export function deliverableAssetType(run: {
-  taskType: ManagedTaskType;
+  /** `WireTaskType`, so a draining v1 run still resolves its real asset type. */
+  taskType: WireTaskType;
   /** `metadata.asset_type` as it arrived, unvalidated. */
   hint?: string | null;
   /** The deliverable's primary text, when the run produced one. */
@@ -182,7 +193,7 @@ export function deliverableAssetType(run: {
  * folder called `reddit-agent` already lands draft-only). What it cannot see is a
  * Reddit batch exported under any other folder name — `social-replies`, say —
  * which was typed `social_post`, and `PUBLISHABLE_PLATFORMS` then offers a reply
- * written for one thread to twitter, linkedin, facebook and tiktok.
+ * written for one thread to twitter, linkedin and tiktok.
  *
  * So the folder's answer is the base and the fence is applied over it with BOTH
  * halves: the item's own text, and the folder name as identity. Same shape as

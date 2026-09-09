@@ -2,22 +2,50 @@ import "server-only";
 
 import { getAsset, listClientSeats, listPlannedScheduledRuns } from "@/lib/data";
 import { matchAccountTitleToSeat } from "@/lib/client-seats";
-import { CREDIT_COSTS } from "@/lib/credits";
+import { isCreditsPlanV2Enabled } from "@/lib/credits";
+import { runPriceQuotes } from "@/lib/run-price";
+// The one family→route table, shared with the run dialog's recovery link (R16).
+import { intakePageHref } from "@/lib/agent-intake-links";
 import { hasXAgentIntake } from "@/lib/agent-service/x-agent-context";
-import { hasLinkedInAgentIntake } from "@/lib/agent-service/linkedin-agent-context";
+import {
+  hasLinkedInAgentIntake,
+  hasLinkedInV2Setup,
+  isLinkedInSetupV2,
+  isLinkedInV2Agent,
+} from "@/lib/agent-service/linkedin-agent-context";
 import { hasRedditAgentIntake } from "@/lib/agent-service/reddit-agent-context";
+import {
+  hasNewsletterAgentIntake,
+  hasNewsletterV2Setup,
+} from "@/lib/agent-service/newsletter-agent-context";
+import { hasBlogAgentIntake, hasBlogV2Setup } from "@/lib/agent-service/blog-agent-context";
+import {
+  hasReputationAgentIntake,
+  hasReputationV2Setup,
+  isReputationSetupInlinedForClient,
+} from "@/lib/agent-service/reputation-agent-context";
 import {
   agentKeyMatchesClientSlug,
   clientSafeRefusal,
+  isBlogAgentIdentity,
   isLinkedInAgentIdentity,
+  isReputationAgentIdentity,
+  isNewsletterAgentIdentity,
   isRedditAgentIdentity,
   isXAgentIdentity,
+  isSubAgent,
 } from "@/lib/custom-agent-launch";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
+import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
 import { selectAgentSchedules, weeklyFireDays } from "@/lib/agent-schedule-selection";
 import { runRowLabel, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgentFeedback } from "@/lib/data-client-agents";
-import { dateKeyInZone, evaluateLaunchGate, isOptionsMode } from "@/lib/client-agents";
+import {
+  dateKeyInZone,
+  evaluateLaunchGate,
+  isOptionsMode,
+  type RosterStatusTone,
+} from "@/lib/client-agents";
 import { evaluateTemplateRunGate } from "@/lib/client-agent-runs";
 import { canNoteSlot } from "@/lib/slot-notes";
 import { parseXDrafts } from "@/lib/x-drafts";
@@ -26,7 +54,10 @@ import { refLaneLabel } from "@/lib/draft-lane-label";
 import { upcomingSlots } from "@/lib/client-agent-slots";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import type { ComponentProps } from "react";
+import type { BlogAgentIntake } from "@/components/blog-agent-intake";
+import type { ReputationAgentIntake } from "@/components/reputation-agent-intake";
 import type { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
+import type { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import type { RedditAgentIntake } from "@/components/reddit-agent-intake";
 import type { XAgentIntake } from "@/components/x-agent-intake";
 import type { AgentSetupState, ClientAgentScheduleRow, CustomAgentRunRow, RunnableAgentSummary } from "@/components/custom-agents";
@@ -62,7 +93,17 @@ export const WEEK_STRIP_DAYS = 7;
  * module's doctrine says redaction belongs at the boundary rather than at
  * render, and a field nothing paints is exactly the case that rule is for.
  */
-export function toSummary(agent: CustomAgent): RunnableAgentSummary {
+export function toSummary(
+  agent: CustomAgent,
+  /**
+   * What one run of this agent will actually be HELD at for this client, and
+   * whether the settle-to-actual rework is on for this deployment. Both are
+   * server-resolved and both are optional: a STAFF-LIBRARY mount has no client
+   * to measure against and no price to hedge, and falls back to `creditCost`
+   * with the pre-rework wording (credits rework, 2026-09).
+   */
+  pricing?: { runCostEstimate?: number | null; priceIsEstimate?: boolean },
+): RunnableAgentSummary {
   return {
     id: agent.id,
     key: agent.key,
@@ -72,7 +113,120 @@ export function toSummary(agent: CustomAgent): RunnableAgentSummary {
     color: agent.color,
     creditCost: agent.creditCost ?? null,
     enabled: agent.enabled,
+    ...(pricing?.runCostEstimate != null ? { runCostEstimate: pricing.runCostEstimate } : {}),
+    ...(pricing?.priceIsEstimate ? { priceIsEstimate: true } : {}),
   };
+}
+
+/* ──────────────── the roster row's derived labels (round 6) ──────────────── */
+
+/**
+ * Which fix an "attention" row points a client at.
+ *
+ * The status WORD is unchanged by this (round 6 ruling 4 keeps the seven words,
+ * and one exported badge renders them): "Needs attention" and "Setup needs
+ * attention" are both a state, and this is the reason behind the state, which is
+ * what decides the verb the row offers. Resolved once, by
+ * `buildClientRosterEntries`, never re-derived by a component.
+ *
+ * IT MUST NAME WHAT PRODUCED THE TONE (round 6 review, D7). `"credits"` is a
+ * real answer and not an aspiration: the roster does not read the credit balance
+ * (#130), but it does not need to — the SCHEDULER stored the denial it refused
+ * with in `PlannedScheduledRun.lastError`, `clientSafeRefusal` passes credit
+ * denials through verbatim, and `isCreditDenialMessage` recognises them under
+ * all three of the house styles that line has been minted in. That refusal is
+ * also the rung that OUTRANKS everything else in `rosterStatus`, so it is asked
+ * first: an agent badged "Needs attention" over a credit denial was being
+ * offered "Set up" whenever its intake happened to be incomplete as well, which
+ * is the wrong lever on the one state the client can fix themselves.
+ */
+export type RosterAttentionReason = "intake" | "launch" | "credits";
+
+/**
+ * The one idle word that means "set up, just not asked yet".
+ *
+ * Spelled out rather than imported so the mapping below fails SAFE: any other
+ * idle word (today only "Not set up yet") falls through to "Request setup", and
+ * offering a setup request on an agent that is already running is a smaller
+ * error than offering a run on one the server would refuse (F131).
+ */
+const RUNS_ON_REQUEST_LABEL = "Runs on request";
+
+/**
+ * What ONE run of this agent makes, as the roster's verb.
+ *
+ * Off `agentArchetype` + `OUTPUT_NOUN`, which is where every other surface reads
+ * the noun from: a roster that says "Create post" above a Reddit agent
+ * contradicts the one rule that product is built around (a human always posts the
+ * reply from their own account), and a clip maker makes no posts at all.
+ */
+export function rosterRunVerb(identity: string): string {
+  const space = identity.indexOf(" ");
+  const key = space < 0 ? identity : identity.slice(0, space);
+  const name = space < 0 ? "" : identity.slice(space + 1);
+  const noun = OUTPUT_NOUN[agentArchetype({ key, name })];
+  return noun === "reply" ? "Draft reply" : `Create ${noun}`;
+}
+
+/**
+ * The verb a roster row offers, per status (round 6, think-agents §4).
+ *
+ * Null means the row has no verb, no chevron and no destination: a paused agent
+ * ("Coming Soon") has nowhere to go, which is the state the roster already
+ * rendered as a static box rather than a link.
+ *
+ * It is a LABEL on a whole-row link, never a nested button, so it can only ever
+ * promise the page it opens rather than fire anything from here.
+ */
+export function rosterRowVerb(input: {
+  status: { tone: RosterStatusTone; label: string };
+  /** `"<key> <name>"`, the same string the platform mark reads. */
+  identity: string;
+  attentionReason?: RosterAttentionReason | null;
+}): string | null {
+  const { tone, label } = input.status;
+  if (tone === "disabled") return null;
+  if (tone === "progress") return "Open";
+  if (tone === "attention") {
+    // "Open" when the reason is unknown: the page behind the row is where the
+    // reason and its fix both live, so it is the honest offer, and naming a fix
+    // we cannot see would send a client to the wrong lever.
+    switch (input.attentionReason) {
+      case "intake":
+        return "Set up";
+      case "launch":
+        return "Launch";
+      case "credits":
+        // The stored scheduler denial, still inside its freshness window. The
+        // agent's own page carries the balance and the top-up route.
+        return "Add credits";
+      default:
+        return "Open";
+    }
+  }
+  if (tone === "live" || label === RUNS_ON_REQUEST_LABEL) return rosterRunVerb(input.identity);
+  return "Request setup";
+}
+
+/**
+ * The next planned DAY, as the roster prints it: "Today", "Tomorrow", "Thu 5".
+ *
+ * A DAY and nothing else. What is planned for it, how many items sit on it and
+ * when they were generated are the calendar's business, and a roster that named
+ * a future post's title would publish the batch shape the archive filter exists
+ * to keep out of a client's view (A3/A4).
+ *
+ * Composed rather than handed to one `toLocaleDateString` call: the en-US
+ * `{ weekday, day }` pattern renders "5 Thu", which reads as a quantity.
+ */
+export function rosterNextLabel(at: number, now: number): string {
+  const day = new Date(at);
+  const startOfDay = (value: Date) =>
+    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const days = Math.round((startOfDay(day) - startOfDay(new Date(now))) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  return `${day.toLocaleDateString("en-US", { weekday: "short" })} ${day.getDate()}`;
 }
 
 /**
@@ -107,6 +261,20 @@ export function bindableAgents(args: {
     .filter(
       (agent) =>
         agent.enabled &&
+        // A STEP of another agent is not a thing to set up for a client. The
+        // LinkedIn setup and manager are fired by the LinkedIn agent's own
+        // surface, so offering them here would bind an umbrella to half an
+        // agent — and this dropdown is exactly where they leaked into a
+        // client-facing choice.
+        //
+        // STRUCTURAL ONLY (`isSubAgent`), deliberately not the wider
+        // `isUnlistedAgent`. Bindability and listing are different questions: a
+        // SUPERSEDED agent is hidden from rosters because it must not advertise
+        // itself to a client, but binding one is a staff act on an agent that
+        // still exists, and excluding it here broke the rule this dropdown is
+        // actually for — keeping a client's OWN per-client instance available
+        // (client-agent-projection-bind-offer.test.ts).
+        !isSubAgent(agent) &&
         agentKeyMatchesClientSlug(agent.key, args.clientSlug) &&
         !args.boundAgentIds.has(agent.id),
     )
@@ -270,8 +438,26 @@ export interface AgentIntakePanes {
   x?: ComponentProps<typeof XAgentIntake>;
   linkedin?: ComponentProps<typeof LinkedInAgentIntake>;
   reddit?: ComponentProps<typeof RedditAgentIntake>;
+  newsletter?: ComponentProps<typeof NewsletterAgentIntake>;
+  blog?: ComponentProps<typeof BlogAgentIntake>;
+  reputation?: ComponentProps<typeof ReputationAgentIntake>;
 }
 
+/**
+ * THE LINK LABEL AND THE PAGE TITLE ARE ONE VOCABULARY (flow audit 2026-09, R7 ·
+ * GOV.UK *Write effective links*, NN/g *Better Link Labels*).
+ *
+ * `clientLabel` is what every control that opens an intake page says, and it
+ * used to be a different phrase from the `<h1>` it lands on: "Your review
+ * details" opened a page headed "Reputation agent", "Your blog details" opened
+ * "Blog agent" — and was ALSO the title of a card on that page, so one phrase
+ * named two things. A reader cannot confirm they arrived where the link said.
+ *
+ * Every label now opens with its destination's own title verbatim ("Blog agent"
+ * → "Blog agent details"), so the page answers the link. It still reads as a
+ * noun phrase in the two sentences that embed it — the run gate's "{label} are
+ * missing." and the inputs band's "{label} →".
+ */
 export async function buildAgentSetup(
   clientId: string,
   agents: Array<{ id: string; key: string }>,
@@ -281,26 +467,44 @@ export async function buildAgentSetup(
     agents.map(async (agent): Promise<[string, AgentSetupState] | null> => {
       if (isXAgentIdentity(agent.key)) {
         const ready = await hasXAgentIntake(clientId);
-        const href = `/clients/${clientId}/x-agent`;
+        const href = intakePageHref(clientId, "x");
         const label = "X agent data";
-        const clientLabel = "Your X details";
+        const clientLabel = "X agent details";
+        // No stand-up run exists for X — it drafts from its form directly.
         return [
           agent.id,
           panes?.x
-            ? { ready, href, label, clientLabel, kind: "x", data: panes.x }
-            : { ready, href, label, clientLabel },
+            ? { ready, standUpDone: true, href, label, clientLabel, kind: "x", data: panes.x }
+            : { ready, standUpDone: true, href, label, clientLabel },
         ];
       }
       if (isLinkedInAgentIdentity(agent.key)) {
-        const ready = await hasLinkedInAgentIntake(clientId, agent.key);
-        const href = `/clients/${clientId}/linkedin-agent`;
+        // TWO questions, not one. `ready` is "is the form saved"; `standUpDone` is
+        // "has the one-time stand-up run happened". Both submit cores refuse a v2
+        // writer run on the second (submit-custom.ts's hasLinkedInV2Setup rung),
+        // so a surface that knows only the first offers a press the server turns
+        // away — the F131 shape this whole object exists to prevent.
+        //
+        // Keyed to the V2 predicate, matching the core: the e10 generation has no
+        // stand-up run, so requiring one of them would block runs the server
+        // would accept.
+        const [ready, standUpDone] = await Promise.all([
+          hasLinkedInAgentIntake(clientId, agent.key),
+          // The SETUP skill is exempt — it is the run that creates the foundation
+          // row, so demanding one of it would refuse the only run that can ever
+          // satisfy the rung. Both cores carry the same exemption.
+          isLinkedInV2Agent(agent.key) && !isLinkedInSetupV2(agent.key)
+            ? hasLinkedInV2Setup(clientId)
+            : Promise.resolve(true),
+        ]);
+        const href = intakePageHref(clientId, "linkedin");
         const label = "LinkedIn agent data";
-        const clientLabel = "Your LinkedIn details";
+        const clientLabel = "LinkedIn agent details";
         return [
           agent.id,
           panes?.linkedin
-            ? { ready, href, label, clientLabel, kind: "linkedin", data: panes.linkedin }
-            : { ready, href, label, clientLabel },
+            ? { ready, standUpDone, href, label, clientLabel, kind: "linkedin", data: panes.linkedin }
+            : { ready, standUpDone, href, label, clientLabel },
         ];
       }
       if (isRedditAgentIdentity(agent.key)) {
@@ -308,16 +512,122 @@ export async function buildAgentSetup(
         // its card computes `ready: true` by omission, which is the one answer
         // that cannot be right for an agent the submit core hard-gates.
         const ready = await hasRedditAgentIntake(clientId);
-        const href = `/clients/${clientId}/reddit-agent`;
+        const href = intakePageHref(clientId, "reddit");
         const label = "Reddit agent data";
-        const clientLabel = "Your Reddit details";
+        const clientLabel = "Reddit agent details";
+        // No stand-up run exists for Reddit either.
         return [
           agent.id,
           panes?.reddit
-            ? { ready, href, label, clientLabel, kind: "reddit", data: panes.reddit }
-            : { ready, href, label, clientLabel },
+            ? { ready, standUpDone: true, href, label, clientLabel, kind: "reddit", data: panes.reddit }
+            : { ready, standUpDone: true, href, label, clientLabel },
         ];
       }
+      if (isNewsletterAgentIdentity(agent.key)) {
+        // BOTH RUNGS, unlike the other three, and the difference is deliberate.
+        // Elsewhere `ready` asks only whether the form is saved, and the second
+        // question — has the one-time stand-up run happened — travels separately
+        // as the pane's own `isSetUp` flag. Here the writer CLAIMS an issue
+        // number in the index at its very first step, so a run started without
+        // one is charged for and dies immediately. The submit core gates on both
+        // (submitCustomAgentJob → hasNewsletterAgentIntake, then
+        // hasNewsletterV2Setup), so `ready` answers with both or it would offer
+        // a run the server refuses.
+        const [hasIntake, isSetUp] = await Promise.all([
+          hasNewsletterAgentIntake(clientId),
+          hasNewsletterV2Setup(clientId),
+        ]);
+        const href = intakePageHref(clientId, "newsletter");
+        const label = "Newsletter agent data";
+        const clientLabel = "Newsletter agent details";
+        return [
+          agent.id,
+          // `standUpDone: true` even though this family HAS a stand-up run, and
+          // that is not a lie — it is what the field means. It marks an
+          // OUTSTANDING stand-up step for the run gate to refuse on, and here
+          // there can never be one: `ready` above already folds `isSetUp` in, so
+          // the intake rung has refused first. Reporting the raw flag instead
+          // would fire the stand-up rung a second time, in LinkedIn's words, at a
+          // newsletter client. See the field's doc on AgentSetupState.
+          panes?.newsletter
+            ? {
+                ready: hasIntake && isSetUp,
+                standUpDone: true,
+                href,
+                label,
+                clientLabel,
+                kind: "newsletter",
+                data: panes.newsletter,
+              }
+            : { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel },
+        ];
+      }
+      if (isBlogAgentIdentity(agent.key)) {
+        // BOTH RUNGS, like the newsletter and for the same reason: the writer
+        // claims a post number in the index at step 01, so a run without one is
+        // charged for and dies. The submit core gates on both, so a one-rung
+        // answer here would offer a run the server refuses.
+        const [hasIntake, isSetUp] = await Promise.all([
+          hasBlogAgentIntake(clientId),
+          hasBlogV2Setup(clientId),
+        ]);
+        const href = intakePageHref(clientId, "blog");
+        const label = "Blog agent data";
+        const clientLabel = "Blog agent details";
+        return [
+          agent.id,
+          // Same as the newsletter above: `ready` already folds `isSetUp` in, so
+          // there is no outstanding stand-up step for the second rung to find.
+          panes?.blog
+            ? { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel, kind: "blog", data: panes.blog }
+            : { ready: hasIntake && isSetUp, standUpDone: true, href, label, clientLabel },
+        ];
+      }
+      if (isReputationAgentIdentity(agent.key)) {
+        // BOTH RUNGS, like the newsletter and the blog. The runner reads from the
+        // ROSTER setup resolves, and a pulse without one has nowhere to read —
+        // the submit core gates on both, so a one-rung answer here would offer a
+        // run the server refuses.
+        //
+        // Unless the engine does setup for this client itself: agent-engine's
+        // `reputation-agent` resolves and records the roster as its own
+        // `00-roster-setup` pre-flight, so an engine-routed client is ready the
+        // moment their details are on file — the roster row this used to wait
+        // for is never written on that path and never needed.
+        const [hasIntake, isSetUp, inlined] = await Promise.all([
+          hasReputationAgentIntake(clientId),
+          hasReputationV2Setup(clientId),
+          isReputationSetupInlinedForClient(clientId, agent.key),
+        ]);
+        const ready = hasIntake && (isSetUp || inlined);
+        const href = intakePageHref(clientId, "reputation");
+        const label = "Reputation agent data";
+        const clientLabel = "Reputation agent details";
+        return [
+          agent.id,
+          // `standUpDone: true`, the newsletter and blog idiom rather than
+          // LinkedIn's: `ready` above already folds `isSetUp` in, so the intake
+          // rung refuses first and there can never be an OUTSTANDING stand-up
+          // step for the run gate to catch. Reporting the raw flag would fire
+          // that rung a second time and tell a reputation client about LinkedIn.
+          // See the field's doc on AgentSetupState.
+          panes?.reputation
+            ? {
+                ready,
+                standUpDone: true,
+                href,
+                label,
+                clientLabel,
+                kind: "reputation",
+                data: panes.reputation,
+              }
+            : { ready, standUpDone: true, href, label, clientLabel },
+        ];
+      }
+      // The karos-carousel-runner branch used to live here. The whole family
+      // was retired in full 2026-08-29 (SCRUM-377/T-B25a) — no engine
+      // equivalent was ever planned. Removed from code and the db, do not
+      // reintroduce.
       return null;
     }),
   );
@@ -430,6 +740,28 @@ export async function toClientAgentRows(args: {
 }): Promise<ClientAgentCardRow[]> {
   const scheduleByAgentId = new Map(args.scheduleRows.map((row) => [row.agentId, row]));
   const rows: ClientAgentCardRow[] = [];
+  // Read once for the whole roster, on the server, and carried onto each
+  // row/summary for the client components that paint the price — they cannot
+  // read a non-NEXT_PUBLIC_ env var and must not try.
+  const planV2 = isCreditsPlanV2Enabled();
+  // One pass over `args.jobs` for the page, rather than one per agent card. Same
+  // arithmetic and the same rows as the submit core's own estimate — see
+  // runPriceQuotes. `args.jobs` is this client's own jobs, already loaded by
+  // every caller for the in-flight-run check, so the shared number costs no
+  // extra read.
+  //
+  // THROUGH run-price.ts, not `estimateRunCreditsByAgent` directly (review wave,
+  // 2026-09). The grouper is the arithmetic; the LADDER around it is what the
+  // submit core actually resolves a hold from, and calling the arithmetic alone
+  // dropped both of its outer rungs: the flag gate (with the rework off the
+  // server charges the constant, so quoting a measured median split the quote
+  // from the charge again) and the family's carried default (a newsletter run
+  // quoted at 25 and charged at 10).
+  const priceFor = runPriceQuotes({
+    clientId: args.umbrellas[0]?.clientId ?? "",
+    jobs: args.jobs,
+    agentFor: (id) => args.agentsById.get(id),
+  });
   // Fetched at most once per client, and only when a plain (non-staff,
   // non-group-admin) client viewer could actually be handed someone else's
   // personal option below — most page loads need it zero times.
@@ -467,7 +799,21 @@ export async function toClientAgentRows(args: {
     // sure of that if the same pure gate decided both.
     const live = umbrella.launchState === "live";
     const optionsMode = isOptionsMode(umbrella);
-    const runCost = agent.creditCost ?? CREDIT_COSTS.customAgentRun;
+    // Read once per row, on the server, and carried onto the row/summary for
+    // the client components that paint the price — they cannot read a
+    // non-NEXT_PUBLIC_ env var and must not try.
+    // THE ESTIMATE, matching what the submit core will actually hold (credits
+    // rework, 2026-09). This is the number the card prints, the number the
+    // template gate refuses on, and the number the ledger row will name, and
+    // they have to be one number: a card that offers a Run at 25 which the
+    // server holds 18 for is the same class of defect as a card that offers a
+    // Run the server refuses, which is why this gate is computed on the server
+    // at all.
+    //
+    // Resolved through the roster-wide quote resolver hoisted above the loop:
+    // same ladder as the submit core, same rows, one pass over `args.jobs` for
+    // the whole page instead of one per agent.
+    const runCost = priceFor(agent.id).credits;
     const templateGates: ClientAgentCardRow["templateGates"] = {};
     if (live) {
       for (const template of umbrella.templates) {
@@ -622,9 +968,24 @@ export async function toClientAgentRows(args: {
         args.viewerIsClient && umbrella.launchState !== "live" ? [] : (umbrella.templates ?? []),
 
       optionsMode,
-      // Staff never pay for a run, so quoting them a price would be a lie —
-      // the same rule the launch price already follows.
-      runCost: args.spendable !== undefined ? runCost : null,
+      // CARRIED FOR BOTH READERS (review wave, 2026-09), which is the opposite
+      // of what this line used to do. It was `args.spendable !== undefined ?
+      // runCost : null` — billable client actors only — so the two cards that
+      // read it (AgentDetailPanel, the live card's format rows) simply dropped
+      // their cost line for staff, while LegacyAgentPanel next door had already
+      // been given both registers by B5 and printed "· billed to the client".
+      // One page, two cards, two answers to "does a run have a price". The
+      // FIGURE is not a lie to staff — it is what the client will be held — and
+      // the components say whose money it is rather than hiding the fact.
+      //
+      // The LAUNCH price above still nulls for staff, deliberately: nothing on
+      // the staff side prints a staff register for it, so carrying it would put
+      // a bare price in front of a reader who is not charged it.
+      runCost,
+      // Wording only — see RunnableAgentSummary.priceIsEstimate. The FIGURE is
+      // the same for both readers; what changes is whether it is presented as a
+      // hold that settles or as the charge itself.
+      runCostIsEstimate: planV2,
       templateGates,
       week: slots.map((slot) => ({
         dateKey: slot.dateKey,
@@ -691,7 +1052,9 @@ export async function toClientAgentRows(args: {
               : null,
           }
         : null,
-      runnable: live ? toSummary(agent) : null,
+      runnable: live
+        ? toSummary(agent, { runCostEstimate: runCost, priceIsEstimate: planV2 })
+        : null,
       schedule: scheduleByAgentId.get(agent.id) ?? null,
       ...(args.spendable !== undefined ? { availableCredits: args.spendable } : {}),
     });

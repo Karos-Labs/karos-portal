@@ -1,6 +1,5 @@
 import { after } from "next/server";
-import { streamText, tool, generateObject, isLoopFinished, stepCountIs } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
+import { tool, generateObject, isLoopFinished, stepCountIs } from "ai";
 import { z } from "zod";
 import type { ModelMessage } from "ai";
 
@@ -29,7 +28,10 @@ import { findDuplicateReason, queueCapacitySkipNote } from "@/lib/task-dedup";
 import {
   CLIENT_PRICE_ROWS,
   CREDIT_COSTS,
+  ESTIMATED_PRICE_NOTE,
   availableCredits,
+  chatMessageCreditCost,
+  chatPricingFor,
   clientPriceText,
   creditsLabel,
 } from "@/lib/credits";
@@ -45,13 +47,22 @@ import {
   isStaffCopilotActor,
 } from "@/lib/copilot-tool-access";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
-import { clientSafeRunError, CLIENT_SAVE_REFUSAL_MESSAGE } from "@/lib/custom-agent-launch";
+import {
+  clientSafeRunError,
+  CLIENT_SAVE_REFUSAL_MESSAGE,
+  defaultRunBatchSize,
+  agentEngineProductAcceptsMediaAssets,
+} from "@/lib/custom-agent-launch";
+import { resolveDispatchedAgentEngineProductId } from "@/lib/agent-engine/health";
+import { parseChatAttachments } from "@/lib/chat/chat-attachments";
 import { isAssetUnlockedForClient } from "@/lib/post-chain";
+import { clientArchiveLink } from "@/lib/agent-intake-links";
 import { isInClientArchive, isLaunchDeliverable, isTestRunAsset } from "@/lib/asset-visibility";
 import { resolveContentIdentity, type ClientAgentIdentity } from "@/lib/agent-identity-map";
 import { buildProactiveSystemAppendix, buildGmailExtractionPrompt } from "@/lib/ai/prompts/proactive-assistant";
-import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { MANAGED_PRODUCTS, CAPABILITY_TAGS } from "@/lib/agent-service/products";
 import { getClientCustomAgents, buildAgentCatalog } from "@/lib/agent-roster";
+import { routeAgentRun } from "@/lib/agent-router";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { sendEmail, supportRequestEmail } from "@/lib/email";
 import { brandingToContextDocContent } from "@/lib/branding";
@@ -67,11 +78,31 @@ import {
   renderFeedbackMarkdown,
 } from "@/lib/client-agent-feedback";
 import type { Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
-import { MODELS, MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { MAX_ACTIVE_TASKS } from "@/lib/constants";
+import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
+import { aiFor, usageFor } from "@/lib/ai/provider";
+import { createChatStreamResponse, type ChatStreamWriter } from "@/lib/chat/stream-protocol";
+import { resolveChatModel } from "@/lib/ai/chat-models";
 
-export const maxDuration = 60;
-
-const STOP_WHEN = [isLoopFinished(), stepCountIs(6)];
+// This route sets no Vercel-style duration export — see
+// asset-media-download.test.ts's "asserts no request-duration ceiling it
+// does not control" for the same reasoning applied to another route:
+// `maxDuration` is a Vercel convention and is inert on this deploy, which
+// runs Cloud Build → Cloud Run with a single service-wide `--timeout=300`
+// in cloudbuild.yaml. A number here would just be a claim nothing enforces,
+// and the old `= 60` was actively misleading — it read as a 60s ceiling on
+// a route that actually had 300s.
+//
+// T-B24: the real, in-process budget for this route is `stepCountIs` below —
+// the AI SDK's tool-call loop, which stops after N *model* steps regardless
+// of wall-clock time. A copilot turn that has to look something up
+// (find_output/fetch_gmail_context), decide, act (run_agent_now/create_tasks/
+// edit_output/...) and answer easily spends a step per tool call plus a step
+// per intervening model turn; `stepCountIs(6)` cut that off mid-turn. Raised
+// to sit alongside this route's other multi-tool loops (RESEARCH_MAX_STEPS
+// in intel/pipeline.ts runs 20; branding.ts's rewrite loop runs 8) rather than
+// being the tightest budget in the codebase for the tool with the most tools.
+const STOP_WHEN = [isLoopFinished(), stepCountIs(16)];
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -90,18 +121,75 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     /** Set by the `@agent` mention chip — focuses the system prompt on one live umbrella. */
     focusAgentId?: string;
     /**
-     * This is a plain chatbot, so it defaults to Haiku — the 3 substantive
-     * proactive actions (Competitor Deep-Dive, Brand Visibility Audit,
-     * Content Plan) opt into Sonnet by setting this, since they run
-     * multi-step tool orchestration over a full strategy write-up rather
-     * than a quick Q&A turn. Everything else, including plain questions and
-     * a focused-agent conversation, stays on the cheap model.
+     * This is a plain chatbot, so it defaults to the cheap model — the 3
+     * substantive proactive actions (Competitor Deep-Dive, Brand Visibility
+     * Audit, Content Plan) opt into the quality model by setting this, since
+     * they run multi-step tool orchestration over a full strategy write-up
+     * rather than a quick Q&A turn. Everything else, including plain
+     * questions and a focused-agent conversation, stays on the cheap model —
+     * unless `model` below overrides it.
      */
     deep?: boolean;
+    /**
+     * Manual model-picker override (chatbot-widget.tsx). UNTRUSTED — this is
+     * raw request-body input, never passed to a vendor directly.
+     * `resolveChatModel()` (T-B3/SCRUM-246) only ever honors it as an exact
+     * key into the SERVER-SIDE allowlist `CHAT_MODEL_OPTIONS`
+     * (`lib/ai/chat-models.ts`); anything else — missing, the wrong type, a
+     * raw vendor model id, an attempted injection — is silently ignored in
+     * favor of the `deep`-based cost routing below, exactly as if this field
+     * had not been sent.
+     */
+    model?: unknown;
+    /**
+     * T-B5: files the client attached to THIS message
+     * (chatbot-widget.tsx's `RunAttachments` "chat" mode) — already real
+     * `gs://` URIs from a completed browser → GCS upload, not a form field
+     * the model has to fill in. UNTRUSTED like every other body field:
+     * `parseChatAttachments` re-validates shape, URI scheme/tenancy and role
+     * before anything below reads it — see that module's own doc comment for
+     * why tenancy (not just scheme) matters once this is client-reachable.
+     */
+    attachments?: unknown;
   };
   const messages = (body.messages ?? []) as ModelMessage[];
-  const modelId = body.deep ? MODELS.SONNET : MODELS.HAIKU;
-  const MODEL = anthropic(modelId);
+  // T-B5: validated once, read by both the system prompt appendix below (so
+  // the model knows a file exists to reference) and `run_agent_now`'s own
+  // execute (so the ACTUAL wiring into `briefValues.mediaAssets` happens in
+  // code we control, never by asking the model to reproduce a URI it was
+  // never given). Scoped to THIS route's own `clientId` — the tenancy check
+  // that makes an attacker-controlled `gs://` path unable to reference
+  // another client's media.
+  const turnAttachments = parseChatAttachments(body.attachments, clientId);
+  // T-B3 (SCRUM-246) owns the decision of WHICH model runs: cheap Gemini by
+  // default, the deep tier on request, and `body.model` treated as untrusted
+  // `unknown` against a mandatory server-side allowlist — an unrecognized
+  // value falls back to the `deep` default and never reaches a vendor.
+  //
+  // T-B4 (SCRUM-248) owns what the client is TOLD about it. It needs the FULL
+  // resolution, not just `.model`: `.modelId`/`.vendor` are what actually ran
+  // (the tier constant and the resolved id agree on first-party Anthropic and
+  // diverge on the Vertex binding — see ResolvedAi's doc comment in
+  // ai/provider.ts), and until that ticket the fact was computed here and then
+  // thrown away, because the text-only stream protocol had no channel to carry
+  // it.
+  //
+  // T-B23 (SCRUM-247) owns what the CLIENT IS CHARGED for it, and reads the
+  // same resolution rather than repeating it: `chatPricingFor` maps this key
+  // to its (provider, model) price row. T-B23 was built against the old
+  // `body.deep ? SONNET : HAIKU` ternary and shipped its own `chatModelFor`
+  // resolver; that resolver is deliberately NOT merged. Two paths deciding
+  // vendor+model from the request body is two places the allowlist can be
+  // forgotten, and only one of them would have had it.
+  //
+  // One resolution, three consumers.
+  const chatModel = resolveChatModel({ deep: body.deep, requestedModel: body.model });
+  const chatPrice = chatPricingFor(chatModel.key);
+  const resolvedAi = aiFor("chat.client", {
+    modelId: chatModel.option.modelId,
+    vendor: chatModel.option.vendor,
+  });
+  const MODEL = resolvedAi.model;
 
   const [client, report, competitors, contextDocs, jobs, assets, integrations, boardCapacity, benchmarks, customAgents, umbrellas] =
     await Promise.all([
@@ -161,9 +249,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const chatCharge = await chargeClientModelCall({
     user,
     clientId,
-    amount: CREDIT_COSTS.chatMessage,
+    // T-B23: priced on the model this turn actually runs — the key T-B3's
+    // allowlist resolved, mapped to its price row by `chatPricingFor` — not
+    // the old flat CREDIT_COSTS.chatMessage. modelName/provider are carried
+    // onto the ledger entry purely for telemetry (reconciling a client's
+    // credit spend against what the call actually cost Karos); they play no
+    // part in the amount charged above, and they now name the model that
+    // really served the turn rather than a hardcoded "anthropic".
+    amount: chatMessageCreditCost(chatPrice.model, chatPrice.provider),
     operation: "chat_message",
     reason: "Copilot chat message",
+    modelName: chatModel.option.modelId,
+    provider: chatPrice.provider,
   });
   if (chatCharge.denied !== null) {
     return Response.json({ error: chatCharge.denied }, { status: 402 });
@@ -326,8 +423,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `  - ${row.label}: ${clientPriceText(row, { withUnit: true })}` +
       (row.note ? ` (${row.note})` : ""),
   ).join("\n");
+  // × defaultRunBatchSize: what a fresh portal press CHARGES (visible batch
+  // selector defaults only — 1 for every agent today, so today this is the
+  // base). The list is pinned by "Never invent credit figures beyond these",
+  // so it must track the charge if a visible multi-output default ever lands.
   const agentPriceLines = customAgents
-    .map((a) => `  - ${a.name}: ${creditsLabel(a.creditCost ?? CREDIT_COSTS.customAgentRun)} per run`)
+    .map(
+      (a) =>
+        `  - ${a.name}: ${creditsLabel(
+          (a.creditCost ?? CREDIT_COSTS.customAgentRun) *
+            defaultRunBatchSize({ key: a.key, name: a.name }),
+        )} per run`,
+    )
     .join("\n");
   const creditsAppendix = credits
     ? `\n\n## Usage credits\n` +
@@ -339,9 +446,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       `quote THIS figure when asked what they have; it is the balance already clipped by their spend caps. ` +
       `Used ${credits.weekSpent}${credits.weeklyLimit != null ? ` of ${credits.weeklyLimit}` : ""} this week, ` +
       `${credits.monthSpent}${credits.monthlyLimit != null ? ` of ${credits.monthlyLimit}` : ""} this month.\n` +
-      `What each action costs. This is the same price list the client reads on their settings page:\n${priceLines}\n` +
+      // "typical" and "estimate", not "exact" (credits rework, 2026-09). Every
+      // figure below is a HOLD reserved when the work starts; the charge is then
+      // reconciled to what the run actually used, so a client's ledger can show
+      // less than the price quoted here. The prompt has to say so, because the
+      // block closes by forbidding the model to invent figures — which would
+      // otherwise make it defend a quote the bill contradicts. The old line
+      // called the per-agent prices "the exact price of one run of each".
+      `What each action typically costs. This is the same price list the client reads on their settings page:\n${priceLines}\n` +
+      `These are estimates. ${ESTIMATED_PRICE_NOTE} A run that uses less is charged less, and the client's ledger shows both figures.\n` +
       (agentPriceLines
-        ? `This client's agents and the exact price of one run of each:\n${agentPriceLines}\n`
+        ? `This client's agents and the typical price of one run of each:\n${agentPriceLines}\n`
         : `This client has no AI agents assigned yet.\n`) +
       `If spendable credits are under 20, proactively mention it and suggest asking the Karos team for a top-up. Never invent credit figures beyond these.`
     : "";
@@ -463,6 +578,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const nowAppendix = `\n\n## CURRENT DATE/TIME\n${new Date().toISOString()} (UTC). Convert relative dates ("next Thursday", "in two weeks") from this instant.`;
 
   /**
+   * T-B5: tells the model a real file exists for this turn WITHOUT ever
+   * handing it the file's own URI. The actual wiring into
+   * `briefValues.mediaAssets` happens inside `run_agent_now`'s execute, from
+   * `turnAttachments` directly (a closure over server-side state) — never by
+   * asking the model to read a URI out of this prompt and retype it, which is
+   * exactly the fragile "paste JSON of gs:// URIs" pattern this ticket
+   * replaces. The model's only job is to notice the attachment exists and
+   * call the tool; letting it also handle the identifier would just move the
+   * old textarea's failure mode into the model's own text generation.
+   */
+  const attachmentsAppendix =
+    turnAttachments.length > 0
+      ? `\n\n## ATTACHED FILES\nThe user attached ${turnAttachments.length} file(s) to this message` +
+        `${turnAttachments.some((a) => a.label) ? `: ${turnAttachments.map((a) => a.label ?? "an unnamed file").join(", ")}` : ""}. ` +
+        `If they ask you to run an agent using them, call run_agent_now for the matching agent. The file is wired into that run ` +
+        `automatically when that agent works from media - if it does not, run_agent_now will say so and the run still proceeds ` +
+        `without it. Never invent, guess, or ask the user to retype a file path or URI; you do not have one and do not need one.`
+      : "";
+
+  /**
    * AF-8 REACHES THE MODEL'S OWN SENTENCES TOO.
    *
    * "Why is there an M dash? We don't use those." The static guard
@@ -478,7 +613,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    */
   const styleAppendix =
     `\n\n## WRITING STYLE\nNever use an em dash (—) in your replies. Use a comma, a full stop, or "·" instead. ` +
-    `Do not substitute a spaced hyphen (" - ") either. An en dash is fine for ranges ("3–4 posts", "10–20 minutes").`;
+    `Do not substitute a spaced hyphen (" - ") either. An en dash is fine for ranges ("3–4 posts", "2–3 weeks").`;
 
   const systemPrompt =
     `${baseSystemPrompt}\n\n` +
@@ -502,9 +637,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     agentFeedbackAppendix +
     focusAppendix +
     nowAppendix +
+    attachmentsAppendix +
     styleAppendix;
 
   /* ── Shared tools ─────────────────────────────────────────────────── */
+
+  // T-B4: set once the response's UI-message-stream writer exists
+  // (createChatStreamResponse's `registerWriter`, called at the bottom of
+  // this handler, assigns it before the model call starts). Tools below close
+  // over this `let` binding by reference, so by the time the model ever
+  // actually invokes one, the assignment has already happened — a tool
+  // never fires before the stream that would carry its data part exists.
+  // Read through the union type only where a tool needs to push a typed
+  // data part outside its own string return value (run_agent_now,
+  // set_agent_focus, provide_feedback); every other tool ignores it.
+  let chatWriter: ChatStreamWriter | null = null;
 
   const updateBrandingTool = tool({
     description:
@@ -684,7 +831,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ),
       });
 
-      const haiku = anthropic(MODELS.HAIKU);
+      const haiku = aiFor("chat.followups").model;
       const extractionPrompt = buildGmailExtractionPrompt(
         emails,
         client.name,
@@ -703,7 +850,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           clientId,
           agentId: null,
           agentName: "proactive_signal_extractor",
-          modelName: MODELS.HAIKU,
+          ...usageFor("chat.followups"),
           operation: "operational_signal_extraction",
           inputTokens: haikuUsage.inputTokens ?? 0,
           outputTokens: haikuUsage.outputTokens ?? 0,
@@ -802,7 +949,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               .enum(["karos_managed", "client_managed"])
               .describe("karos_managed = Karos AI/staff executes; client_managed = client must do it"),
             productType: z
-              .enum(["social_post", "newsletter_issue", "blog_article", "landing_page"])
+              .enum(["social_post", "landing_page"])
               .optional()
               .describe(
                 "The MANAGED product (executing agent) for this task. Set for karos_managed content a managed product produces; omit when using agentId, for staff deliverables, and for client_managed tasks",
@@ -980,8 +1127,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    *     holds tasks, not deliverables; `client-home-overview.tsx` reasons
    *     exactly that about the same set two screens away ("The Workspace board
    *     holds tasks, not deliverables, so it does not contain these either").
-   *     The archive is a TAB of the same route, and `?tab=archive` is the param
-   *     ProgressView actually reads.
+   *     The archive is a VIEW OF THE CALENDAR — `/calendar?view=archive` for a
+   *     client, the client-scoped calendar for staff (portal feedback round 2,
+   *     2026-09: "Archive does not need to be in settings, it's in the
+   *     calendar"). It was Account Center's `?tab=archive` in between; both
+   *     spellings resolve through `clientArchiveLink`, which is why this branch
+   *     never had to be edited for the move.
    *  2. Adding the param alone would still have lied. `promptAssets` filters out
    *     future-dated, launch and test-run assets and nothing else, so a DRAFT is
    *     reachable by `find_output` — and a draft is excluded from a client's
@@ -1022,7 +1173,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     if (!isInClientArchive(asset, nowMs)) return null;
     if (umbrella) return `/clients/${clientId}/agents/${umbrella.customAgentId}`;
-    return "/tasks?tab=archive";
+    // The Workspace board's own archive tab (`/tasks?tab=archive`) is gone
+    // with the board itself, and Account Center's Archive tab went with the
+    // 2026-09 feedback pass — the calendar's archive view is the one place
+    // left, same helper every other archive link in the app goes through.
+    return clientArchiveLink({ clientId, isStaff: false }).href;
   };
 
   /** The "[View this output]" line, or nothing when no screen holds it. */
@@ -1140,23 +1295,147 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const runAgentNowTool = tool({
     description:
       "Trigger an ad-hoc run of one of this client's custom agents right now, billed at its normal per-run rate. " +
-      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits.",
+      "Match agentQuery against AVAILABLE AI EXECUTION AGENTS. Confirm with the user before calling. This spends credits. " +
+      "contextItemIds attaches existing client context files/images as reference for this run; briefValues carries any " +
+      "brief field values the agent needs as data (not prose). Both are optional. Returns the new job id. " +
+      "If the user attached file(s) to this message (see ATTACHED FILES above), do not pass them yourself. They are " +
+      "wired into the run automatically when the matched agent uses source media. " +
+      "T-B7: set requestedCapability when the request clearly asks for one specific C4 deliverable kind (see each " +
+      "agent's `capabilities` line above) — e.g. they asked for a video. The run is refused, not silently substituted, " +
+      "when the matched agent doesn't have that capability. Set requestedPlatform the same way when a specific target " +
+      "platform is named. Leave both unset for a generic run request. " +
+      "STAFF ONLY: publishAt schedules the resulting deliverable to publish on that date instead of landing as a draft " +
+      "(T-B9, 'generate now, publish on date X') — give it as ISO 8601, computed from CURRENT DATE/TIME above, and only " +
+      "when a staff user explicitly asked for a specific publish date. Never pass it for a client session.",
     inputSchema: z.object({
       agentQuery: z.string().describe("The agent's name"),
       prompt: z.string().optional().describe("Optional extra instruction for this run"),
+      contextItemIds: z
+        .array(z.string())
+        .optional()
+        .describe("Ids of existing client context items (files/images) to attach as reference for this run"),
+      briefValues: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe("Brief field values this agent needs as data, keyed by field name"),
+      requestedCapability: z
+        .enum(CAPABILITY_TAGS)
+        .optional()
+        .describe(
+          "Set only when the request clearly asks for one specific C4 deliverable kind (see each agent's " +
+            "`capabilities` line above) — e.g. they asked for a video. The run is refused if the matched agent " +
+            "doesn't have this capability. Leave unset for a generic run request.",
+        ),
+      requestedPlatform: z
+        .string()
+        .optional()
+        .describe(
+          "Canonical platform key (e.g. 'tiktok', 'instagram') if the request names a specific target platform for " +
+            "this run. The run is refused if the matched agent's `platforms` line above is non-empty and doesn't " +
+            "include it. Leave unset otherwise.",
+        ),
+      publishAt: z
+        .string()
+        .optional()
+        .describe("Staff only. Target publish date/time for the deliverable, ISO 8601, e.g. 2026-09-10T13:00:00.000Z"),
     }),
-    execute: async ({ agentQuery, prompt }) => {
-      const q = agentQuery.trim().toLowerCase();
-      const match = customAgents.find((a) => a.name.toLowerCase().includes(q));
-      if (!match) {
-        return customAgents.length > 0
-          ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${customAgents.map((a) => a.name).join(", ")}.`
-          : "This client has no AI agents assigned yet.";
+    execute: async ({ agentQuery, prompt, contextItemIds, briefValues, requestedCapability, requestedPlatform, publishAt }) => {
+      // T-B7 (SCRUM-251): a single routed decision replaces the old bare
+      // `customAgents.find((a) => a.name.toLowerCase().includes(q))` substring
+      // match — see agent-router.ts's doc comment for the full rationale. This
+      // resolves the agent by exact (normalized) name, gates on the C4
+      // capability/platform descriptor when the caller named one, and checks
+      // `requiredInputs` against `briefValues` — never falling back to running
+      // the name-matched agent when a gate fails.
+      const routed = routeAgentRun(customAgents, { agentQuery, requestedCapability, requestedPlatform, briefValues });
+      if (!routed.ok) {
+        return routed.reason;
       }
+      const match = routed.agent;
+      // T-B9: publishAt is staff-only — checked HERE, not only inside
+      // runCustomAgentAction, so a client session gets a copilot-authored
+      // refusal in its own voice rather than runCustomAgentAction's generic
+      // one. runCustomAgentAction still re-checks (a chat tool is not the only
+      // caller of that action), so this is belt, not the only suspenders.
+      let requestedScheduledAt: number | undefined;
+      if (publishAt) {
+        if (!isStaffCopilotActor(user)) {
+          return "Scheduling a publish date for a fresh run is a staff action. Ask your Karos team.";
+        }
+        const parsed = Date.parse(publishAt);
+        if (Number.isNaN(parsed)) {
+          return "That publish date didn't parse. Give it as ISO 8601, e.g. 2026-09-10T13:00:00.000Z.";
+        }
+        if (parsed <= Date.now()) {
+          return "Pick a publish date in the future.";
+        }
+        requestedScheduledAt = parsed;
+      }
+      // chargeMultiplier: what a FRESH portal dialog would submit for this
+      // agent (visible selector defaults only — a hidden batch size never
+      // scales a bill, see defaultRunBatchSize). Today that is 1 for every
+      // agent, so this changes nothing; it exists so a future profile with a
+      // visible multi-output default cannot be sold cheaper through chat than
+      // through its own page.
+      const chatBatchSize = defaultRunBatchSize({ key: match.key, name: match.name });
+
+      // T-B5: fold this turn's real, already-uploaded attachments into the
+      // SAME `briefValues.mediaAssets` JSON the run dialog's textarea field
+      // has always written (`MEDIA_ASSETS_FIELD_KEY`, custom-agent-launch.ts)
+      // — `toEngineRunInput` (agent-engine/product-mapping.ts) reads that key
+      // however it got filled in, so this is the one place that has to know
+      // the shape, not a second path the engine has to understand.
+      //
+      // Gated on `resolveDispatchedAgentEngineProductId`, NOT on
+      // `resolveAgentEngineProductIdForCustomAgent` alone: the earlier
+      // predicate only asks "does agent-engine have a workflow for this
+      // agent key", which says nothing about whether agent-engine dispatch
+      // is enabled at all or whether THIS client has a lab slug
+      // (`client.agentsRepoSlug`) for the engine to run as. (Until 2026-09-06 a
+      // per-client allowlist sat in that gate too; see health.ts for why it is
+      // gone.) Using the narrower predicate meant a client whose run did not
+      // reach the engine was told "Attached ... as source media for this run" for a run
+      // that silently fell through to the legacy agent-service path, which
+      // never reads `mediaAssets` at all. `resolveDispatchedAgentEngineProductId`
+      // (agent-engine/health.ts) is the SAME three-part gate
+      // `submit-custom.ts` applies immediately before it creates the job doc
+      // (that function now calls this one too, so the two cannot drift back
+      // apart) — so this can only ever claim "attached" when the run this
+      // tool is about to submit will really read it.
+      //
+      // Set (and OVERRIDE whatever the model put under
+      // `briefValues.mediaAssets`, if anything) rather than merged: the model
+      // was never given a real URI (see attachmentsAppendix above), so
+      // anything it supplied under that key is a guess, not data.
+      const engineProductId = resolveDispatchedAgentEngineProductId(match.key, client.agentsRepoSlug);
+      const mediaCapable = agentEngineProductAcceptsMediaAssets(engineProductId);
+      let attachmentNote = "";
+      let effectiveBriefValues = briefValues;
+      if (turnAttachments.length > 0) {
+        if (mediaCapable) {
+          effectiveBriefValues = { ...briefValues, mediaAssets: JSON.stringify(turnAttachments) };
+          attachmentNote = ` Attached ${turnAttachments.length === 1 ? "the file" : `${turnAttachments.length} files`} you sent as source media for this run.`;
+        } else {
+          // Still runs — an unused attachment is not a reason to block a run
+          // the user otherwise asked for — but said honestly rather than
+          // silently dropped, matching this route's general rule that a
+          // client is told what actually happened, not what was attempted.
+          // Reached both when the agent has no engine workflow that reads
+          // media AND when this client's runs of it are not (yet) routed to
+          // agent-engine at all — from the client's point of view those are
+          // the same fact: this run will not use the file.
+          attachmentNote = ` (The file(s) you attached aren't used by **${match.name}**, so they weren't sent with this run.)`;
+        }
+      }
+
       const result = await runCustomAgentAction({
         agentId: match.id,
         clientId,
         prompt: prompt?.trim() || "Run requested via Copilot chat.",
+        ...(contextItemIds && contextItemIds.length > 0 ? { contextItemIds } : {}),
+        ...(effectiveBriefValues && Object.keys(effectiveBriefValues).length > 0 ? { briefValues: effectiveBriefValues } : {}),
+        ...(chatBatchSize > 1 ? { chargeMultiplier: chatBatchSize } : {}),
+        ...(requestedScheduledAt != null ? { requestedScheduledAt } : {}),
       });
       if (result.error) {
         // REUSED, not re-answered: `clientSafeRunError` is exactly this shape (a
@@ -1175,7 +1454,45 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? clientSafeRunError(result.error)
           : `Couldn't start that run: ${result.error}`;
       }
-      return `Started a run of **${match.name}**. It takes 10–20 minutes, and your Karos team reviews the result before it reaches your Workspace.`;
+      // The MCP `run_agent` tool (staff-only, PAT-gated — src/lib/mcp/tools.ts)
+      // already proved job id must come back from a run-agent primitive so the
+      // caller can poll it. This is the client- and staff-reachable equivalent,
+      // authorized on the actual signed-in session via `runCustomAgentAction`
+      // (no PAT involved) — so it must not drop `result.jobId` on the floor the
+      // way this tool previously did. T-B9's scheduled variant carries the same
+      // id: a scheduled run is still a run someone has to be able to look up.
+      //
+      // T-B4: the job id ALSO goes out as a typed `data-job` part, not only
+      // baked into the confirmation sentence below. A future caller that wants
+      // to poll or display it can read a structured field instead of parsing
+      // a backtick-quoted id out of prose the model is free to reword. T-B5's
+      // file-processing run is exactly such a caller and deliberately does NOT
+      // get a second, parallel data part of its own for "a file was attached"
+      // — the upload itself is a synchronous browser→GCS PUT with no server-
+      // side job behind it (see run-media/route.ts), so the run this data-job
+      // part already announces IS the one thing that started; inventing a
+      // second signal for the same event is exactly the parallel-signal this
+      // ticket was told not to build.
+      // `result.jobId` is typed optional even on a non-error result (the
+      // action's own return shape) — guarded rather than asserted, so a
+      // theoretical id-less success still returns its confirmation sentence
+      // without emitting a data part that lies about having a job id.
+      if (result.jobId) {
+        chatWriter?.write({
+          type: "data-job",
+          data: {
+            jobId: result.jobId,
+            agentName: match.name,
+            status: "started",
+            ...(requestedScheduledAt != null
+              ? { scheduledAt: new Date(requestedScheduledAt).toISOString() }
+              : {}),
+          },
+        });
+      }
+      return requestedScheduledAt != null
+        ? `Started a run of **${match.name}** (job \`${result.jobId}\`), set to publish ${new Date(requestedScheduledAt).toISOString()} once it's ready.${attachmentNote}`
+        : `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.${attachmentNote}`;
     },
   });
 
@@ -1260,6 +1577,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ...(category ? { category } : {}),
       });
       if (result.error) return result.error;
+      // T-B4/T-B18: a typed `data-feedback` part alongside the confirmation
+      // prose. T-B18's client-facing surface (chatbot-widget.tsx, via
+      // client-stream.ts's `feedback` event) reacts to it structurally —
+      // which agent, which scope/template/category — instead of re-deriving
+      // that from a sentence written for a human to read. `agentId` is
+      // `customAgentId`, not `umbrella.id` — see stream-protocol.ts's
+      // `ChatDataParts.feedback` doc comment for why.
+      chatWriter?.write({
+        type: "data-feedback",
+        data: {
+          agentName: umbrella.displayName,
+          agentId: umbrella.customAgentId,
+          scope,
+          ...(scope === "template" && templateKey ? { templateKey } : {}),
+          ...(category ? { category } : {}),
+        },
+      });
       return `Saved. This ${
         scope === "template" ? `shapes only "${templateKey}" posts` : `applies to everything ${umbrella.displayName} makes`
       } from here on.`;
@@ -1274,13 +1608,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
    * instead of the mention chip.
    *
    * The client holds `focusAgentId` in its own state (sent back on every
-   * turn) — there is no other channel from server to client mid-stream, so
-   * the change rides inside a plain HTML comment in the reply text:
-   * `<!-- COPILOT_FOCUS:{...} -->`. `stripPipelineMarkers` (doc-render.ts)
-   * already strips every HTML comment before render — the SAME mechanism the
-   * brand-sync block already relies on to stay invisible — so this needs no
-   * new rendering code; the client only needs to sniff the raw stream for it
-   * (chatbot-widget.tsx) before the marker is stripped away.
+   * turn), so this still has to get the change to it mid-turn.
+   *
+   * T-B4: THIS USED TO RIDE INSIDE AN HTML COMMENT IN THE REPLY TEXT —
+   * `<!-- COPILOT_FOCUS:{...} -->`, sniffed out of the raw stream with a
+   * regex on the client (chatbot-widget.tsx) before `stripPipelineMarkers`
+   * (doc-render.ts) stripped it for render, the same trick the brand-sync
+   * block used to stay invisible. That was the only channel the OLD
+   * `toTextStreamResponse()` protocol had for anything but assistant prose.
+   * Now it is a real typed `data-agentFocus` part (same payload shape,
+   * `{ id, name } | null`, chosen so the client's existing handling barely
+   * changes) — a protocol-level signal instead of text the client has to
+   * regex out of its own transcript.
    */
   const setAgentFocusTool = tool({
     description:
@@ -1294,7 +1633,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }),
     execute: async ({ action, agentQuery }) => {
       if (action === "clear") {
-        return "Back to the general copilot. I'm not focused on a specific agent anymore.\n\n<!-- COPILOT_FOCUS:null -->";
+        chatWriter?.write({ type: "data-agentFocus", data: null });
+        return "Back to the general copilot. I'm not focused on a specific agent anymore.";
       }
       const q = (agentQuery ?? "").trim().toLowerCase();
       if (!q) return "Which agent would you like to focus on?";
@@ -1313,10 +1653,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? `I couldn't match "${agentQuery}" to one of this client's agents. Available: ${mentionableNames.join(", ")}.`
           : "This client has no agents to focus on yet.";
       }
-      const payload = JSON.stringify(resolved);
+      chatWriter?.write({ type: "data-agentFocus", data: resolved });
       return (
         `Switched focus to **${resolved.name}**. I'll prioritize it until you ask to focus on a different agent ` +
-        `or go back to general.\n\n<!-- COPILOT_FOCUS:${payload} -->`
+        `or go back to general.`
       );
     },
   });
@@ -1329,7 +1669,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         clientId,
         agentId: null,
         agentName: "chat_copilot",
-        modelName: modelId,
+        ...usageFor("chat.client", { modelId: chatModel.option.modelId, vendor: chatModel.option.vendor }),
         operation: "chat_copilot",
         inputTokens: usage.inputTokens ?? 0,
         outputTokens: usage.outputTokens ?? 0,
@@ -1337,10 +1677,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
-  /* ── Stream ──────────────────────────────────────────────────────── */
+  /* ── Stream (T-B4: real typed-data-part protocol, not text-only) ────── */
 
-  const result = streamText({
+  // See stream-protocol.ts's own doc comment for the full "why": in short,
+  // `toTextStreamResponse()` forwarded text-delta parts ONLY, so a job id, a
+  // tool call, which model ran, and even a provider error had no channel —
+  // the old COPILOT_FOCUS HTML-comment hack (removed above, in
+  // setAgentFocusTool) was this route's one workaround, and it only ever
+  // carried a string. `createChatStreamResponse` returns a real UI-message
+  // stream instead: text deltas, tool-call/tool-result parts (for free, from
+  // the protocol itself), and the typed `data-model` / `data-job` /
+  // `data-agentFocus` / `data-feedback` parts this file's tools write.
+  return createChatStreamResponse({
     model: MODEL,
+    modelMeta: { modelId: resolvedAi.modelId, vendor: resolvedAi.vendor },
     system: systemPrompt,
     messages,
     stopWhen: STOP_WHEN,
@@ -1358,16 +1708,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       provide_feedback: provideFeedbackTool,
       set_agent_focus: setAgentFocusTool,
     }),
+    // Assigns `chatWriter` (declared up in "Shared tools") before the model
+    // call starts, so run_agent_now / set_agent_focus / provide_feedback can
+    // push their typed data parts the moment they execute.
+    registerWriter: (writer) => {
+      chatWriter = writer;
+    },
     onFinish: ({ usage }) => logCopilotUsage(usage),
-    // The text-stream response protocol this route returns has no channel for
-    // an error part — toTextStreamResponse() only ever forwards "text-delta"
-    // parts, so a thrown/streamed provider error (token depletion, a 5xx)
-    // otherwise vanishes silently: the HTTP response still completes with
-    // whatever partial text came before it, usually none. This is the only
-    // place the real error is ever observed server-side, so it's also the
-    // only place the failure can be logged and alerted on — the client
-    // detects the resulting empty completion itself (chatbot-widget.tsx) and
-    // shows the friendly fallback message.
+    // Still the only place a stream failure is observed server-side, so still
+    // the only place it's logged and alerted on. What changed with T-B4 is
+    // what the CLIENT sees: `createChatStreamResponse` now emits a real
+    // `error` protocol part (sanitized before it reaches the client — see its
+    // own doc comment) instead of the turn silently completing with whatever
+    // partial text came before the failure, usually none.
     onError: ({ error }) => {
       const message = error instanceof Error ? error.message : String(error);
       logger.logGenerationFailure(
@@ -1375,7 +1728,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           clientId,
           agentId: null,
           agentName: "chat_copilot",
-          modelName: modelId,
+          ...usageFor("chat.client", { modelId: chatModel.option.modelId, vendor: chatModel.option.vendor }),
           operation: "chat_copilot",
         },
         error,
@@ -1390,6 +1743,4 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       console.error(`[chat] copilot stream error for client ${clientId}:`, classifyJobError(message)?.label ?? message);
     },
   });
-
-  return result.toTextStreamResponse();
 }

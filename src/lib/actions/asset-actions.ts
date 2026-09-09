@@ -8,6 +8,8 @@ import {
   updateAsset,
   updateJob,
   clearAssetSchedule,
+  clearAssetPublish,
+  deleteAsset,
   markAssetPublished,
   listClientIntegrations,
   markIntegrationExpired,
@@ -19,6 +21,7 @@ import {
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
 import { requireStaff } from "./_shared";
+import { trackUserAction } from "@/lib/telemetry/bi-tracker";
 import {
   TokenExpiredError,
   inferPlatform,
@@ -292,7 +295,7 @@ export async function approveAssetAction(
 ): Promise<void> {
   // Approval is a staff-only gate: requireAssetAccess alone would let a client
   // approve their own asset (and via opts.platform arm auto-publish).
-  await requireStaff();
+  const staffUser = await requireStaff();
   const asset = await requireAssetAccess(id);
   // A Test Run has its own graduation path (promoteTestAssetAction, which also
   // reflows the chain) — approving it here directly would flip it out of
@@ -375,6 +378,13 @@ export async function approveAssetAction(
 
   await updateAsset(id, approvalPatch);
   await closeProducingJobIfReviewed(asset);
+  trackUserAction({
+    clientId: asset.clientId,
+    userId: staffUser.uid,
+    eventName: "asset_approved",
+    surface: "assets",
+    targetId: id,
+  });
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
   revalidatePath(`/clients/${asset.clientId}/agents`);
@@ -503,6 +513,55 @@ export async function unscheduleAssetAction(id: string): Promise<void> {
   await clearAssetSchedule(id);
   revalidatePath("/assets");
   revalidatePath(`/clients/${asset.clientId}`);
+}
+
+/**
+ * Revert a published post back to draft — unscheduleAssetAction's
+ * counterpart, one status further back. Staff-only, same gate as
+ * publishAssetNowAction: this is a decision about a client's live-looking
+ * post, not a client's to make. Purely an internal state change — no platform
+ * integration exposes a way to un-post through us, so the post itself stays
+ * live wherever it was actually published; this only stops Karos calling it
+ * published and clears the schedule so it can be reworked and pushed again
+ * from scratch.
+ */
+export async function unpublishAssetAction(
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireStaff();
+  const asset = await getAsset(id);
+  if (!asset) return { ok: false, error: "Asset not found" };
+  if (asset.status !== "published") {
+    return { ok: false, error: "Only a published post can be unpublished" };
+  }
+  await clearAssetPublish(id);
+  revalidatePath("/assets");
+  revalidatePath("/calendar");
+  revalidatePath(`/clients/${asset.clientId}`);
+  return { ok: true };
+}
+
+/**
+ * Permanently delete a post's record. Staff-only, same gate as publishing it
+ * in the first place. Karos otherwise never hard-deletes an asset (ageing out
+ * of the client archive is a VIEW filter — see asset-visibility.ts); this is
+ * the one exception, for a mistaken or unwanted post someone wants gone from
+ * the workspace entirely. Removes only Karos's own record: no platform
+ * integration exposes a way to remove an already-live post, so this never
+ * reaches back to what's actually posted on LinkedIn/X/etc. — only what Karos
+ * still tracks about it.
+ */
+export async function deleteAssetAction(
+  id: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireStaff();
+  const asset = await getAsset(id);
+  if (!asset) return { ok: true }; // already gone
+  await deleteAsset(id);
+  revalidatePath("/assets");
+  revalidatePath("/calendar");
+  revalidatePath(`/clients/${asset.clientId}`);
+  return { ok: true };
 }
 
 /**

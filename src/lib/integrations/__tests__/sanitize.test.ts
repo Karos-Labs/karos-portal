@@ -23,8 +23,13 @@ describe("sanitizeIntegrations", () => {
 
   it("surfaces an existing client workspace's connected channels with public fields intact", () => {
     const raw = [
+      // Was Facebook, which left PLATFORM_REGISTRY entirely (portal feedback
+      // round 2, 2026-09) and so now sanitizes as an unknown platform — the
+      // case the last test in this file covers. Instagram declares the same
+      // two fields (a password `accessToken`, a text `pageId`), so the shape
+      // under test is unchanged.
       integration({
-        platform: "facebook",
+        platform: "instagram",
         accountName: "Acme Co",
         status: "active",
         credentials: { accessToken: "secret-token", pageId: "123456789" },
@@ -40,11 +45,11 @@ describe("sanitizeIntegrations", () => {
     const views = sanitizeIntegrations(raw);
 
     expect(views).toHaveLength(2);
-    const facebook = views.find((v) => v.platform === "facebook")!;
-    expect(facebook.accountName).toBe("Acme Co");
-    expect(facebook.status).toBe("active");
-    expect(facebook.credentials).toEqual({ pageId: "123456789" });
-    expect(facebook.secretsSet).toEqual(["accessToken"]);
+    const instagram = views.find((v) => v.platform === "instagram")!;
+    expect(instagram.accountName).toBe("Acme Co");
+    expect(instagram.status).toBe("active");
+    expect(instagram.credentials).toEqual({ pageId: "123456789" });
+    expect(instagram.secretsSet).toEqual(["accessToken"]);
 
     const linkedin = views.find((v) => v.platform === "linkedin")!;
     expect(linkedin.credentials).toEqual({ organizationId: "urn:li:organization:12345" });

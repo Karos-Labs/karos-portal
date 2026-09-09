@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, CardTitle, Badge } from "@/components/ui";
+import { Badge, buttonClass, Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
@@ -21,6 +21,57 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
   published: "success",
   delivered: "success",
 };
+
+/**
+ * A glyph for what KIND of deliverable a Recent activity row is (2026-09).
+ *
+ * Same map asset-card.tsx keeps for the same reason its own note gives: a
+ * per-type icon is presentation and belongs with the component that draws one.
+ * Two copies of five entries, agreeing, is the shape asset-type-copy.ts's SCOPE
+ * note explicitly declines to consolidate.
+ */
+const TYPE_ICON: Record<string, string> = {
+  instagram_post: "Camera",
+  email: "Mail",
+  article: "Newspaper",
+  social_post: "Share2",
+  note: "FileText",
+};
+
+/** The three inks an attention item can carry, and everything drawn from them. */
+const TONE_CLASS = {
+  danger: { text: "text-danger", chip: "bg-danger/10", border: "border-danger/30", wash: "bg-danger/[0.06]" },
+  warning: { text: "text-warning", chip: "bg-warning/10", border: "border-warning/30", wash: "bg-warning/[0.06]" },
+  info: { text: "text-info", chip: "bg-info/10", border: "border-info/30", wash: "bg-info/[0.06]" },
+} as const;
+
+type AttentionTone = keyof typeof TONE_CLASS;
+
+/**
+ * ONE thing waiting on this reader.
+ *
+ * A described list rather than five hand-placed JSX blocks, because the card
+ * now has to answer "which of these is the most urgent" — and picking a winner
+ * out of five conditionals is how the order silently stops matching the
+ * priority the copy claims. The array below IS the priority, top to bottom.
+ */
+interface AttentionItem {
+  key: string;
+  tone: AttentionTone;
+  icon: string;
+  /** The count sentence. Wraps; never truncated (see the header note). */
+  label: string;
+  hint: string;
+  /**
+   * Where the item is dealt with. OPTIONAL, and the reason is a standing rule
+   * rather than an oversight: several of these counts have no screen their
+   * reader can open (F97 × F149), so the row reports instead of promising a
+   * click it cannot honour. See each item's own comment at the build site.
+   */
+  href?: string;
+  /** The button's words when this item wins the primary slot. */
+  action?: string;
+}
 
 /**
  * Client-portal welcome widgets: what needs the client's attention right now,
@@ -47,34 +98,110 @@ const ASSET_STATUS_TONE: Record<Asset["status"], "warning" | "success" | "info">
  * never do). This keeps it off the SCREEN, and the two agree because there is
  * one function rather than two spellings. It is idempotent on an already-safe
  * string, so the doubled call changes nothing on the path that works.
+ *
+ * ── WHAT THE 2026-09 PASS CHANGED ────────────────────────────────────────
+ *
+ * The product owner's report on "Needs your attention" was that the widget got
+ * cut off and that neither the priority nor the next step was legible: five
+ * equal-weight rows, each a single-line-truncated count sentence over a
+ * two-line-clamped hint, with no indication which one mattered. So:
+ *
+ *  • NOTHING IN THE CARD TRUNCATES ANY MORE. Every `truncate` and `line-clamp`
+ *    on this card's own copy is gone and the label wraps instead. Truncation was
+ *    added when these were single-line counts in a two-column grid; the honest
+ *    fix for a sentence too long for its box is to let the box grow, and the
+ *    card is in a `space-y` column with nothing under it that a taller card
+ *    displaces. (`min-w-0` STAYS — that is CD-H4, a grid-track fix, and is what
+ *    stops the card itself from overflowing the shell.)
+ *  • THE MOST URGENT ITEM IS RENDERED DIFFERENTLY FROM THE REST: tone-washed
+ *    panel, bigger type, and its own action button when it has a destination.
+ *    The remainder collapse to compact one-line rows underneath.
+ *  • THE COUNT IS IN THE HEADER as "N items", which it already was, plus the
+ *    most urgent item's own count inside the panel.
  */
 export function ClientHomeOverview({
   clientId,
   tasks,
   assets,
   viewerIsClient = false,
+  agentLabelByAssetId,
+  recentActivityLimit = 5,
+  tasksHitLimit = false,
+  channelsNeedingAttention = 0,
+  channelsHref,
+  draftsHref,
+  now: nowProp,
 }: {
   /**
-   * Whose account this page is. Needed only so the archive links resolve for a
-   * STAFF reader: `?tab=archive` is read by ProgressView alone, and TasksBody
-   * mounts ProgressView only with a client in scope, so the flat
-   * `/tasks?tab=archive` these two links used to carry dropped a staff viewer
-   * onto the cross-client board with no archive at all — the same defect as #90
-   * on the three agent intake pages, found by grepping its shape rather than
-   * its symptom.
-   *
-   * The attention rows below were long read as NOT that shape, on the grounds
-   * that the board does hold this client's tasks. It holds them on one of two
-   * disjoint OWNER TABS, and a bare `/tasks` picks the wrong one for half of
-   * them — see `taskBoardHref` at the foot of this file (#101). Nothing in this
-   * card is staff-reachable in practice: the page hands `tasks` an empty array
-   * for a staff viewer, so every attention row is a client's.
+   * Whose account this page is. Needed so `clientArchiveLink` resolves the
+   * "See all activity" link below for a STAFF reader too — that helper takes
+   * the SAME href for either viewer now that Account Center's Archive tab is
+   * the one place left to reach it (the Workspace board, and the owner-tab
+   * routing `taskBoardHref` used to key into it, are both gone — 2026-08).
    */
   clientId: string;
   tasks: ClientTask[];
   assets: Asset[];
   /** Whose "Recent activity" this is - see the list below (A3/A4). */
   viewerIsClient?: boolean;
+  /**
+   * assetId → the agent name its row should carry (§7.3 identity, same
+   * contentLabelsByAsset join the Workspace archive and Account Center's
+   * Archive tab use). Optional — a caller with nothing to join against (no
+   * jobs/umbrellas in hand) still gets rows, just without the agent line.
+   * Portal revamp: this is what turns "Recent activity" into Home's
+   * "Recent Agent Activity" widget (Surface 02).
+   */
+  agentLabelByAssetId?: Record<string, string>;
+  /** How many rows the Recent activity list shows. Default unchanged (5). */
+  recentActivityLimit?: number;
+  /**
+   * Did `tasks` arrive at its query cap? (2026-08)
+   *
+   * The page fetches with `limit: 50` and every count below is a `.length` of
+   * that array, so a client with eighty open items read a flat "50 pending
+   * tasks" — a truncation printed as a total, and the two categories eat into
+   * one another's share of the same cap. When the cap was hit the counts are
+   * suffixed "+", which is the honest reading of a windowed list: at least this
+   * many. Optional and defaulting false so a caller that fetches everything
+   * (staff, who are handed an empty array anyway) says nothing extra.
+   */
+  tasksHitLimit?: boolean;
+  /**
+   * Channels whose token has died (2026-09).
+   *
+   * INHERITED FROM THE KPI CARD, not invented here. "Your numbers" used to
+   * carry a per-channel list with a "N need attention" summary above it, and
+   * that list was the duplicate of "Connected channels" the de-duplication pass
+   * removed. The list belonged with the detailed card; the WARNING belonged on
+   * the card whose entire subject is "what is asking something of you", which
+   * is this one. A dead LinkedIn is the most actionable item on the whole
+   * dashboard and it now sits at the top of the list that ranks by urgency,
+   * with the Settings tab that fixes it one click away.
+   *
+   * Optional and zero-defaulted so a caller with no integrations in hand simply
+   * raises no such row.
+   */
+  channelsNeedingAttention?: number;
+  /** Where a broken channel is reconnected. Required for the row to link. */
+  channelsHref?: string;
+  /**
+   * Where the drafts-in-review row opens, when the reader has such a screen.
+   *
+   * STAFF ONLY in practice, and that asymmetry is the F97 × F149 rule rather
+   * than a missing feature: approval is staff-only (`approveAssetAction` calls
+   * `requireStaff`), and no surface a CLIENT can reach lists a draft — the
+   * archive excludes them by design and the calendar filters them out — so the
+   * count and every candidate client destination are provably disjoint. A
+   * caller that passes nothing gets the reporting row it always had.
+   */
+  draftsHref?: string;
+  /**
+   * The caller's own render clock, in epoch millis. Optional: a caller with
+   * nothing to synchronise against omits it and gets today's behaviour. See the
+   * note beside its one use below for why the page passes one.
+   */
+  now?: number;
 }) {
   const archive = clientArchiveLink({ clientId, isStaff: !viewerIsClient });
   // Counted off the deliverables themselves, not off agent runs in `review` —
@@ -98,19 +225,135 @@ export function ClientHomeOverview({
   // list; the calendar shows it as waiting, which is where it is.
   const failedPublishes = assets.filter((a) => postKind(a) === "failed");
   const attentionCount =
-    deliverablesInReview.length + reviewPendingTasks.length + pendingTasks.length + failedPublishes.length;
+    deliverablesInReview.length +
+    reviewPendingTasks.length +
+    pendingTasks.length +
+    failedPublishes.length +
+    channelsNeedingAttention;
+  /**
+   * "+" when the number is a floor rather than a total (see `tasksHitLimit`).
+   * Applied only to the two counts derived from the capped `tasks` array —
+   * deliverables, failed publishes and channels come from sets fetched whole,
+   * and must not be marked as if they were windowed.
+   */
+  const more = tasksHitLimit ? "+" : "";
 
-  // Date.now() intentional: the archive is a time-windowed view (30 days) and a
-  // future-dated post is not in it yet, so "does this row have a destination"
-  // can only be answered against the current moment. Read once per render.
+  // The archive is a time-windowed view (30 days) and a future-dated post is not
+  // in it yet, so "does this row have a destination" can only be answered
+  // against the current moment. Read once per render, and preferably read by the
+  // CALLER (review wave, 2026-09): the page that hands this component its
+  // already-projected assets computed that projection against a clock of its
+  // own, and two clocks a few milliseconds apart can disagree about a row that
+  // unlocks between them.
   //
   // The directive has to be the LAST line before the statement - it applies to
   // the next SOURCE line, so with the explanation underneath it was suppressing
   // a comment and the rule fired anyway (an error in the tree since this
   // comment was written, and the "unused directive" warning beside it).
   // eslint-disable-next-line react-hooks/purity
-  const now = Date.now();
+  const now = nowProp ?? Date.now();
 
+  /**
+   * THE PRIORITY ORDER, and it is the array's order.
+   *
+   * Ranked by what the item ASKS OF THE READER, not by how many there are:
+   * something already broken first, then something the reader must sign off,
+   * then work in flight that asks nothing. The two "broken" items are also the
+   * two that reliably have a destination, so the primary slot below usually
+   * carries a real button — but that is a consequence of the ranking, not the
+   * reason for it. Ranking by "has a link" would have put a dead channel below
+   * a queue of drafts on the staff branch, which is the wrong answer.
+   */
+  const items: AttentionItem[] = [];
+
+  if (failedPublishes.length > 0) {
+    items.push({
+      key: "failed",
+      tone: "danger",
+      icon: "TriangleAlert",
+      label: `${failedPublishes.length} post${failedPublishes.length === 1 ? "" : "s"} failed to publish`,
+      // ONE failure quotes the stored reason; several cannot, so they
+      // get the destination instead. For a client the stored reason is
+      // the one client-safe sentence (it already names the way out:
+      // Karos can get it posted), and the row lands them on the
+      // calendar chip whose panel repeats it beside the only publish
+      // control a client has — "Mark as posted", for the case they
+      // posted it themselves. Staff keep the exception: it is the
+      // whole diagnostic value of the row.
+      hint:
+        failedPublishes.length === 1
+          ? failedPublishText(failedPublishes[0]!, viewerIsClient)
+          : "Review them on the calendar.",
+      // The calendar this reader can actually use. A bare `/calendar`
+      // is the CROSS-CLIENT overview for staff, so a staff reader on
+      // this client's dashboard clicking "3 posts failed to publish"
+      // landed on every client's grid and had to find them again —
+      // the same wrong-surface defect `clientArchiveLink` above fixes
+      // for the archive. A client has no client-scoped route (the
+      // staff one redirects them straight back), so theirs stays flat.
+      href: viewerIsClient ? "/calendar" : `/clients/${clientId}/calendar`,
+      action: "Open calendar",
+    });
+  }
+
+  if (channelsNeedingAttention > 0) {
+    items.push({
+      key: "channels",
+      tone: "warning",
+      icon: "Plug",
+      label: `${channelsNeedingAttention} channel${channelsNeedingAttention === 1 ? "" : "s"} need${channelsNeedingAttention === 1 ? "s" : ""} reconnecting`,
+      hint: "Posts cannot go out on a channel whose connection has expired.",
+      ...(channelsHref ? { href: channelsHref, action: "Reconnect" } : {}),
+    });
+  }
+
+  if (reviewPendingTasks.length > 0) {
+    items.push({
+      key: "review-tasks",
+      tone: "warning",
+      icon: "Eye",
+      label: `${reviewPendingTasks.length}${more} task${reviewPendingTasks.length === 1 && !more ? "" : "s"} ready for review`,
+      hint: "Completed work waiting for your sign-off.",
+      // NOT a link (2026-08): it used to open the Workspace board to this
+      // task's own owner tab (`taskBoardHref`), and the board is gone - "The
+      // Board is replaced by the action list on Home" (locked decision). The
+      // count is still a real, live signal; it just has nowhere left to send
+      // the reader, so it reports rather than links. notification-bell.tsx's
+      // TaskAlertRow carries the identical ruling for the identical rows.
+    });
+  }
+
+  if (deliverablesInReview.length > 0) {
+    items.push({
+      key: "drafts",
+      tone: "info",
+      icon: "Sparkles",
+      label: `${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"} in review`,
+      // Approval is staff-only by design (approveAssetAction calls
+      // requireStaff so a client can't approve and arm auto-publish),
+      // so for a client this row reports status rather than asking for a
+      // sign-off, and carries no destination — see `draftsHref`.
+      hint: viewerIsClient
+        ? "Your Karos team is reviewing these. They'll appear in the archive when ready."
+        : "Waiting on your approval before they can be scheduled.",
+      ...(draftsHref ? { href: draftsHref, action: "Review drafts" } : {}),
+    });
+  }
+
+  if (pendingTasks.length > 0) {
+    items.push({
+      key: "pending-tasks",
+      tone: "info",
+      icon: "Circle",
+      label: `${pendingTasks.length}${more} pending task${pendingTasks.length === 1 && !more ? "" : "s"}`,
+      hint: "Your Karos team is working through these.",
+      // Same no-destination ruling as the review row above.
+    });
+  }
+
+  const [primary, ...rest] = items;
+
+  const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.updatedAt ?? a.createdAt);
   // A3/A4, the treatment its siblings already carry (archive-view, the agent
   // detail page). Two things were wrong with this list for a client.
   //
@@ -130,11 +373,11 @@ export function ClientHomeOverview({
   // Membership is the archive's own predicate, which is also what decides
   // whether the row links (below) - so a client's rows are now exactly the rows
   // with somewhere to go. Staff keep every asset, stamped at generation.
-  const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.updatedAt ?? a.createdAt);
-  const recentAssets = [...assets]
+  const eligibleAssets = [...assets]
     .filter((a) => !viewerIsClient || isInClientArchive(a, now))
-    .sort((a, b) => stampOf(b) - stampOf(a))
-    .slice(0, 5);
+    .sort((a, b) => stampOf(b) - stampOf(a));
+  const recentAssets = eligibleAssets.slice(0, recentActivityLimit);
+  const olderCount = eligibleAssets.length - recentAssets.length;
 
   return (
     /* CD-H4: `min-w-0` on the cards, not decoration. A grid item's automatic
@@ -144,108 +387,79 @@ export function ClientHomeOverview({
        archive" were cut off by the shell's overflow-x-clip. With the floor at 0
        the card takes the track and the rows' existing min-w-0/truncate chain
        does the shortening it was always meant to do. */
-    <div className="grid gap-6 lg:grid-cols-2">
+    /* `@3xl` (48rem), NOT `lg` (2026-08). Tailwind's `lg:` asks the VIEWPORT,
+       and this card sits in a column the 288px rail has already taken a bite
+       out of — so at a 1024-1280px window the breakpoint fired on a content
+       area barely 700px wide and split it into two ~330px tracks. That is the
+       squeezed dashboard in the product owner's capture: "Needs your attention"
+       broken over three lines, "16 deliverables in review" wrapping mid-phrase.
+       A container query asks the only width that matters here, the one this
+       grid actually has, so the same component behaves correctly at every
+       window size, zoom level and rail width. */
+    <div className="grid gap-6 @4xl:grid-cols-2">
       {/* Needs your attention */}
-      <Card className="min-w-0">
-        <div className="mb-4 flex items-center justify-between">
-          <CardTitle>Needs your attention</CardTitle>
+      <Card className="flex min-w-0 flex-col">
+        {/* `flex-wrap`, and the title no longer truncates. The chip is
+            `shrink-0`; if the two cannot share a line the chip drops to the
+            next one rather than eating the heading. */}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex min-w-0 items-center gap-2">
+            <span
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${
+                primary ? TONE_CLASS[primary.tone].chip : "bg-success/10"
+              }`}
+            >
+              <Icon
+                name={primary ? "Inbox" : "CircleCheck"}
+                className={`h-3.5 w-3.5 ${primary ? TONE_CLASS[primary.tone].text : "text-success"}`}
+              />
+            </span>
+            Needs your attention
+          </CardTitle>
           {attentionCount > 0 && (
-            <Badge tone="warning">
-              {attentionCount} item{attentionCount === 1 ? "" : "s"}
+            <Badge tone={primary ? primary.tone : "neutral"}>
+              {attentionCount}
+              {more} item{attentionCount === 1 && !more ? "" : "s"}
             </Badge>
           )}
         </div>
 
-        {attentionCount === 0 ? (
+        {!primary ? (
           <div className="flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-3">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success/10">
               <Icon name="CircleCheck" className="h-4 w-4 text-success" />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">All caught up</p>
               <p className="text-xs text-muted-2">Nothing is waiting on you right now.</p>
             </div>
           </div>
         ) : (
-          <ul className="space-y-2">
-            {failedPublishes.length > 0 && (
-              <AttentionRow
-                tone="danger"
-                // The calendar this reader can actually use. A bare `/calendar`
-                // is the CROSS-CLIENT overview for staff, so a staff reader on
-                // this client's dashboard clicking "3 posts failed to publish"
-                // landed on every client's grid and had to find them again —
-                // the same wrong-surface defect `clientArchiveLink` above fixes
-                // for the archive, and `taskBoardHref` below for the board. A
-                // client has no client-scoped route (the staff one redirects
-                // them straight back), so theirs stays flat.
-                href={viewerIsClient ? "/calendar" : `/clients/${clientId}/calendar`}
-                icon="TriangleAlert"
-                label={`${failedPublishes.length} post${failedPublishes.length === 1 ? "" : "s"} failed to publish`}
-                // ONE failure quotes the stored reason; several cannot, so they
-                // get the destination instead. For a client the stored reason is
-                // the one client-safe sentence (it already names the way out:
-                // Karos can get it posted), and the row lands them on the
-                // calendar chip whose panel repeats it beside the only publish
-                // control a client has — "Mark as posted", for the case they
-                // posted it themselves. Staff keep the exception: it is the
-                // whole diagnostic value of the row.
-                hint={
-                  failedPublishes.length === 1
-                    ? failedPublishText(failedPublishes[0]!, viewerIsClient)
-                    : "Review them on the calendar."
-                }
-              />
+          <div className="space-y-2">
+            <PrimaryAttention item={primary} />
+            {rest.length > 0 && (
+              <ul className="space-y-2">
+                {rest.map((item) => (
+                  <AttentionRow key={item.key} item={item} />
+                ))}
+              </ul>
             )}
-            {deliverablesInReview.length > 0 && (
-              <AttentionRow
-                // Approval is staff-only by design (approveAssetAction calls
-                // requireStaff so a client can't approve and arm auto-publish),
-                // so this row reports status rather than asking for a sign-off.
-                //
-                // Deliberately NOT a link (F97 × F149). It counts drafts, and no
-                // surface a client can reach lists a draft: the archive excludes
-                // them by design (asset-visibility.ts getClientArchiveAssets),
-                // the calendar filters them out, and /assets redirects clients
-                // to /tasks. The Workspace board holds tasks, not deliverables,
-                // so it does not contain these either - the count and every
-                // candidate destination are provably disjoint. The hint already
-                // says the right thing: they show up once the team is done.
-                icon="Sparkles"
-                label={`${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"} in review`}
-                hint="Your Karos team is reviewing these. They'll appear in your archive when ready."
-              />
-            )}
-            {reviewPendingTasks.length > 0 && (
-              <AttentionRow
-                href={taskBoardHref(reviewPendingTasks)}
-                icon="Eye"
-                label={`${reviewPendingTasks.length} task${reviewPendingTasks.length === 1 ? "" : "s"} ready for review`}
-                hint="Completed work waiting for your sign-off."
-              />
-            )}
-            {pendingTasks.length > 0 && (
-              <AttentionRow
-                href={taskBoardHref(pendingTasks)}
-                icon="Circle"
-                label={`${pendingTasks.length} pending task${pendingTasks.length === 1 ? "" : "s"}`}
-                hint="Open items on your workspace board."
-              />
-            )}
-          </ul>
+          </div>
         )}
       </Card>
 
       {/* Recent activity */}
-      <Card className="min-w-0">
-        <div className="mb-4 flex items-center justify-between">
-          <CardTitle>Recent activity</CardTitle>
-          <Link
-            href={archive.href}
-            className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline"
-          >
-            Open archive
-          </Link>
+      <Card className="flex min-w-0 flex-col">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          {/* The orange chip stays (round 6, Albert 2026-09-06) — the third of
+              the three `bg-neon/10` heading chips Home carries. A heading glyph
+              is decoration; the accent ration is about CONTROLS. */}
+          <CardTitle className="flex min-w-0 items-center gap-2">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+              <Icon name="Activity" className="h-3.5 w-3.5 text-neon" />
+            </span>
+            Recent activity
+          </CardTitle>
         </div>
 
         {recentAssets.length === 0 ? (
@@ -253,13 +467,13 @@ export function ClientHomeOverview({
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-3">
               <Icon name="FolderOpen" className="h-4 w-4 text-muted-2" />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-medium text-foreground">No deliverables yet</p>
               <p className="text-xs text-muted-2">New assets will show up here as they land.</p>
             </div>
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="mb-3 space-y-2">
             {recentAssets.map((a) => {
               // Same rule as the attention row above: a row links to the
               // archive only when the archive would actually hold it, rather
@@ -270,11 +484,19 @@ export function ClientHomeOverview({
               // rendered as links to a list they are not in. One predicate,
               // asked here instead of re-derived.
               const inArchive = isInClientArchive(a, now);
+              const agentLabel = agentLabelByAssetId?.[a.id];
               const body = (
                 <>
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-3">
+                    <Icon
+                      name={TYPE_ICON[a.type] ?? "FileText"}
+                      className="h-4 w-4 text-muted-2"
+                    />
+                  </div>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-foreground">{a.title}</p>
                     <p className="mt-0.5 text-xs text-muted-2">
+                      {agentLabel ? `${agentLabel} · ` : ""}
                       {ASSET_TYPE_LABEL[a.type] ?? a.type} · {relativeTime(stampOf(a))}
                     </p>
                   </div>
@@ -288,29 +510,75 @@ export function ClientHomeOverview({
                   </Badge>
                 </>
               );
-              const base =
-                "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2";
+              /* TWO SHAPES, NOT ONE (round 6, rules 1 and 3). A row that opens
+                 the archive and a row that opens nothing wore the identical
+                 shell — border, `surface-2`, same padding — and the only
+                 difference was that one of them answered the mouse. The opener
+                 is now a full link row with the trailing chevron and
+                 `.focus-ring`; the inert row drops the border and the fill and
+                 sits on a divider, which is what rule 3 says a static box does
+                 when it cannot be a link. */
               return (
                 <li key={a.id}>
                   {inArchive ? (
-                    <Link href={archive.href} className={`${base} transition-colors hover:border-border-strong`}>
+                    <Link
+                      href={archive.href}
+                      className="row-lift focus-ring flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
+                    >
                       {body}
+                      <Icon
+                        name="ChevronRight"
+                        className="h-3.5 w-3.5 shrink-0 text-muted-2"
+                        aria-hidden
+                      />
                     </Link>
                   ) : (
-                    <div className={base}>{body}</div>
+                    <div className="flex items-center gap-3 border-b border-border px-3 py-2 last:border-b-0">
+                      {body}
+                    </div>
                   )}
                 </li>
               );
             })}
           </ul>
         )}
+
+        {/* The archive link, moved out of the header (2026-09).
+            It was a 12px link beside the heading — the least prominent thing on
+            the card and the only way off it — while the list silently stopped
+            at its limit with nothing saying more existed. At the foot of a list
+            it reads as the list's continuation, which is what it is, and it
+            names how many rows are behind it when it knows.
+            `mt-auto` so it sits at the bottom edge whichever card in the pair is
+            taller.
+
+            R7 (flow audit 2026-09): it said "See all activity", which is a
+            fifth name for the destination eight other controls call the
+            archive — and it goes to the same `/calendar?view=archive` as every
+            one of them. One vocabulary: `clientArchiveLink().linkLabel`.
+            R8: ChevronRight, the one trailing glyph a row that opens something
+            may carry. */}
+        <div className="mt-auto border-t border-border pt-3">
+          {/* FILL-ONLY HOVER (round 6). It carried `row-lift`, whose whole job
+              is to lift a HAIRLINE to the accent — on a row whose border is
+              `transparent`, so the hover tinted a border that is not drawn and
+              the accent was spent on nothing. This row has no border, so its
+              hover is the fill step alone. */}
+          <Link
+            href={archive.href}
+            className="focus-ring flex items-center justify-between gap-2 rounded-md px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
+          >
+            <span className="min-w-0">
+              {archive.linkLabel}
+              {olderCount > 0 ? ` (${olderCount} more)` : ""}
+            </span>
+            <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0" />
+          </Link>
+        </div>
       </Card>
     </div>
   );
 }
-
-const ATTENTION_ROW_BASE =
-  "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
 
 /**
  * What this reader is told about ONE post that did not go out.
@@ -339,90 +607,108 @@ export function failedPublishText(asset: Asset, viewerIsClient: boolean): string
   return viewerIsClient ? clientSafePublishError(stored) : stored;
 }
 
-/**
- * The Workspace board, opened on a tab that actually holds this row's work (#101).
- *
- * The board has TWO tabs, split by task owner, and they are disjoint by
- * construction: `?owner=client` selects the client tab and anything else — a bare
- * `/tasks` included — selects "karos". So these rows counted tasks of either
- * owner and then sent the client to the karos tab, which for a client whose
- * review-pending work is all client-owned holds none of it. QA F64 fixed exactly
- * this in the notification bell and left it here.
- *
- * KEYED TO A TASK, NOT TO AN OWNER, and that is the point rather than a
- * shorthand. `?task=` makes the board resolve the tab itself
- * (`ownerTab(inferOwner(linkedTask))`), and it OUTRANKS `?owner=` whenever the
- * task resolves — so the decision is asked of the surface that owns it. Building
- * `?owner=` here would mean copying TWO rules that are each already spelled more
- * than once: owner→tab (tasks-board.tsx and notification-bell.tsx) and
- * owner-inference for a task whose `owner` field is unset (tasks-board.tsx,
- * task-dedup.ts, execution-engine.ts, task-sync.ts). Neither of those is this
- * card's to own, and a copy of either is the kind of duplicate this campaign
- * keeps paying for.
- *
- * TWO RESIDUALS, because a promise a file cannot keep is worse than a stated
- * limit:
- *
- *  - The row is a COUNT and the link is singular. When a row's tasks span both
- *    owners, no single link opens a tab holding all of them; this opens the tab
- *    holding the FIRST — the same tab the bell would open for that card — and
- *    the ticket with it. Splitting the row per owner needs the mapping written
- *    here after all.
- *  - "The board holds this task" is not guaranteed, only overwhelmingly likely.
- *    Both surfaces read `listClientTasks` for this client, but with different
- *    windows: this page takes the 50 newest pending/review_pending, the board
- *    the 200 newest of every status. A client with more than 200 live tasks can
- *    therefore have a row whose task the board's page does not contain — and
- *    then `?task=` resolves to nothing and the board opens on its default tab,
- *    which is exactly today's behaviour. It degrades to the bug, never past it.
- *
- * Exported for test: the rule is which PARAM the board is keyed on, and that is
- * a fact about the returned string, not about anything rendered.
- */
-export function taskBoardHref(tasks: ClientTask[]): string {
-  const first = tasks[0];
-  return first ? `/tasks?task=${encodeURIComponent(first.id)}` : "/tasks";
-}
+// `taskBoardHref` (the Workspace board, opened on the tab holding a row's
+// work — #101) was removed with the board itself, 2026-08. The two task
+// attention items above still count real ClientTask rows; they just report
+// rather than link now, since there is nowhere left for them to send the
+// reader — see those items' own comments.
 
 /**
- * `href` is optional: a row whose items have no screen a client can open is
- * rendered as a plain status line, with no arrow and no hover affordance, so it
- * does not promise a destination it cannot deliver (F97 × F149).
+ * The most urgent item, rendered as the thing the reader should do next.
+ *
+ * A washed, tone-bordered panel rather than a fourth identical row: the whole
+ * complaint about the old card was that five equal rows communicated no
+ * priority, and a badge saying "5 items" over five identical lines does not
+ * answer "which one first". The label is `text-base` here and `text-sm` in the
+ * rows below, which is the hierarchy doing the work rather than the copy.
+ *
+ * The button renders only with a destination — see `AttentionItem.href`.
+ *
+ * IT IS AN `outline` CONTROL, WITH NO GLYPH (round 6, rule 2). It was a
+ * hand-rolled box whose border turned orange on hover, with an `ArrowRight`
+ * after its label — a third trailing glyph for one meaning, on a screen whose
+ * one orange belongs to the ladder's button. Home has no accent control once the
+ * ladder is done, and that is deliberate: nothing on this card is the step that
+ * moves the client forward.
  */
-function AttentionRow({
-  href,
-  icon,
-  label,
-  hint,
-  tone = "warning",
-}: {
-  href?: string;
-  icon: string;
-  label: string;
-  hint: string;
-  tone?: "warning" | "danger";
-}) {
+function PrimaryAttention({ item }: { item: AttentionItem }) {
+  const tone = TONE_CLASS[item.tone];
+  return (
+    <div className={`rounded-md border ${tone.border} ${tone.wash} p-3.5`}>
+      <div className="flex items-start gap-3">
+        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${tone.chip}`}>
+          <Icon name={item.icon} className={`h-4 w-4 ${tone.text}`} />
+        </div>
+        <div className="min-w-0 flex-1">
+          {/* No truncate, no line-clamp: see the card's own note. */}
+          <p className="text-base font-medium leading-snug text-foreground">{item.label}</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-2">{item.hint}</p>
+        </div>
+      </div>
+      {item.href && item.action && (
+        <Link href={item.href} className={`mt-3 ${OUTLINE_LINK_CLASS}`}>
+          {item.action}
+        </Link>
+      )}
+    </div>
+  );
+}
+
+/** `Button variant="outline"`'s own recipe on an anchor: `Button` is a real
+ *  <button> and an anchor cannot nest one. READ from `buttonClass` (round 6)
+ *  rather than restated. */
+const OUTLINE_LINK_CLASS = buttonClass({ variant: "outline", size: "sm" });
+
+/** The shell a row that OPENS something wears. A row that opens nothing does not
+ *  wear it — see `AttentionRow`. */
+const ATTENTION_ROW_BASE =
+  "flex items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5";
+
+/**
+ * A secondary attention item: the count, and the one line saying why.
+ *
+ * THE HINT IS RENDERED (round 6). It was moved into the row's `title` in
+ * 2026-09 to make the card less text-heavy, which is hover-only for anyone
+ * reading with their eyes on a mouse and invisible on a phone — and on the two
+ * rows that have NO destination it was the only thing on the card explaining
+ * why nothing happens when you press them. A row that reports has to say what
+ * it is reporting.
+ *
+ * `href` is still optional and still honest: a row whose items have no screen
+ * this reader can open is a plain status line, with no chevron and no hover
+ * affordance, and per rule 3 it does not wear the link's shell either — it
+ * drops the border and the fill and sits on a divider, so it does not promise a
+ * destination it cannot deliver (F97 × F149).
+ */
+function AttentionRow({ item }: { item: AttentionItem }) {
+  const tone = TONE_CLASS[item.tone];
   const body = (
     <>
-      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${tone === "danger" ? "bg-danger/10" : "bg-warning/10"}`}>
-        <Icon name={icon} className={`h-4 w-4 ${tone === "danger" ? "text-danger" : "text-warning"}`} />
+      <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${tone.chip}`}>
+        <Icon name={item.icon} className={`h-3.5 w-3.5 ${tone.text}`} />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground">{label}</p>
-        <p className="text-xs text-muted-2">{hint}</p>
+        <p className="text-sm text-foreground">{item.label}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-muted-2">{item.hint}</p>
       </div>
-      {href && <Icon name="ArrowRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />}
+      {/* R8 (flow audit 2026-09): ChevronRight, not ArrowRight. The portal had
+          three trailing glyphs for one meaning; a row that opens something now
+          carries exactly one, and it is the chevron the action rows and the
+          agent cards already use. */}
+      {item.href && <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />}
     </>
   );
 
   return (
     <li>
-      {href ? (
-        <Link href={href} className={`${ATTENTION_ROW_BASE} transition-colors hover:border-border-strong`}>
+      {item.href ? (
+        <Link href={item.href} className={`${ATTENTION_ROW_BASE} row-lift focus-ring`}>
           {body}
         </Link>
       ) : (
-        <div className={ATTENTION_ROW_BASE}>{body}</div>
+        <div className="flex items-center gap-3 border-b border-border px-3 py-2.5 last:border-b-0">
+          {body}
+        </div>
       )}
     </li>
   );

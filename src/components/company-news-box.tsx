@@ -136,7 +136,7 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
             </p>
           </div>
         ) : null}
-        {error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null}
+        {error ? <p className="mt-2 text-xs text-danger">{error}</p> : null}
         <Button onClick={add} disabled={pending} variant="subtle">
           {pending ? "Adding…" : "Drop the update"}
         </Button>

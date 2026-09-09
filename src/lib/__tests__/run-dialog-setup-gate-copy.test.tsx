@@ -30,8 +30,6 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/actions", () => ({
   createCustomAgentAction: vi.fn(),
   deleteCustomAgentAction: vi.fn(),
-  importCustomAgentsAction: vi.fn(),
-  listCustomAgentImportCandidatesAction: vi.fn(),
   runCustomAgentAction: vi.fn(),
   runCustomAgentTestAction: vi.fn(),
   setClientCustomAgentsAction: vi.fn(),
@@ -77,6 +75,7 @@ const AGENTS = [
     agent: { id: "a-x", key: "karos-x-agent", name: "X Agent" },
     setup: {
       ready: false,
+      standUpDone: true,
       href: "/clients/c1/x-agent",
       label: "X agent data",
       clientLabel: "Your X details",
@@ -86,6 +85,7 @@ const AGENTS = [
     agent: { id: "a-li", key: "karos-linkedin-agent", name: "LinkedIn Agent" },
     setup: {
       ready: false,
+      standUpDone: true,
       href: "/clients/c1/linkedin-agent",
       label: "LinkedIn agent data",
       clientLabel: "Your LinkedIn details",
@@ -95,6 +95,7 @@ const AGENTS = [
     agent: { id: "a-rd", key: "karos-reddit-agent", name: "Reddit Agent" },
     setup: {
       ready: false,
+      standUpDone: true,
       href: "/clients/c1/reddit-agent",
       label: "Reddit agent data",
       clientLabel: "Your Reddit details",
@@ -116,6 +117,9 @@ function gateMarkup(entry: {
         enabled: true,
       }}
       clientId="c1"
+      // The setup gate is upstream of any engine routing, and these agents'
+      // clients are not cut over: the legacy dialog, as before (T-B21).
+      engineDispatch={{}}
       contextItems={[]}
       viewerIsClient
       setup={entry.setup}
@@ -160,6 +164,9 @@ describe("the run dialog's setup gate, for an agent whose form was not prefetche
     const text = textOf(gateMarkup(ready));
 
     expect(text).not.toContain("Set up the X agent data first.");
-    expect(text).toContain("Start run");
+    // round 6: the brief's confirm was "Start run" and is now the same words as
+    // the trigger and the dialog title, noun-aware per agent (F1's three
+    // vocabularies). The X agent makes a post, so its dialog says "Create post".
+    expect(text).toContain("Create post");
   });
 });

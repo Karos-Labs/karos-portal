@@ -48,6 +48,20 @@ const INTAKE_FAMILY_PRESENT: Record<AgentIntake["agent"], true> = {
   x: true,
   linkedin: true,
   reddit: true,
+  // Newsletter has no per-seat concept — an issue goes out from the company,
+  // never from a person — so this family never HAS a seat row. It is listed
+  // anyway because the sweep's job is to leave no orphan behind, and "there are
+  // none" is cheaper to prove by looking than to assume.
+  newsletter: true,
+  // Same as newsletter: the blog writes for the company, and its only scope
+  // choice (company vs an executive byline) is a config field, not a seat. Listed
+  // for the same reason — proving there are none beats assuming it.
+  blog: true,
+  // Same as the two above: a review is about the business, never a person, so
+  // this family never HAS a seat row. Listed anyway, because the sweep's job is
+  // to leave no orphan behind and "there are none" is cheaper to prove by
+  // looking than to assume.
+  reputation: true,
 };
 const INTAKE_FAMILIES = Object.keys(INTAKE_FAMILY_PRESENT) as Array<AgentIntake["agent"]>;
 

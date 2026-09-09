@@ -663,7 +663,11 @@ describe("the wiring the executed tests rest on", () => {
     // path has nothing to re-sign from and the 7-day expiry is back.
     const upload = source(BULK_UPLOAD);
     expect(upload).toContain("gcsPath: opts.gcsPath");
-    expect(upload).toContain("const videoUrl = await createReadSignedUrl(opts.gcsPath)");
+    // `readUrl`, not `videoUrl`, since 2026-09: the same call, renamed when the
+    // uploader started registering images too (the URL lands on `imageUrl` for
+    // those). What this assertion is about is that the read URL is minted FROM
+    // `opts.gcsPath` — the durable identifier — and that is unchanged.
+    expect(upload).toContain("const readUrl = await createReadSignedUrl(opts.gcsPath)");
     expect(source("src/lib/gcs-media.ts")).toContain(
       "export const READ_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000",
     );

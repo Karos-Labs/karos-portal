@@ -70,7 +70,7 @@ export type IdentityPlatformHint = { platform?: string } | null | undefined;
  * purpose: `PUBLISHABLE_PLATFORMS` offers `instagram_post` to instagram AND
  * tiktok, so even this rung is the weaker of two readings and sits below the
  * umbrella below. `social_post` is not here at all — its publish targets are
- * twitter/linkedin/facebook/tiktok, so the `DEFAULT_PLATFORM_FOR_ASSET` entry
+ * twitter/linkedin/tiktok, so the `DEFAULT_PLATFORM_FOR_ASSET` entry
  * pointing it at instagram is a SCHEDULING default (which channel to try first)
  * and not a statement about the content. Rendering a logo off it would put an
  * Instagram mark on a post whose own type cannot be published to Instagram.

@@ -14,7 +14,7 @@
  * callers pass in the rows.
  */
 
-import { creditBucketFor, type CreditBucket } from "@/lib/credits";
+import { USD_PER_CREDIT, creditBucketFor, creditsForUsd, type CreditBucket } from "@/lib/credits";
 import type { ClientAgent, CreditLedgerEntry, CustomAgent, Job, JobRunType } from "@/lib/types";
 
 /* ── §6.2(a) the client's per-agent credit breakdown ──────────────── */
@@ -123,12 +123,25 @@ export function spendAgentNames(input: {
 /**
  * Group a client's charges by agent, then by kind.
  *
- * CHARGES ONLY. Grants, refunds and adjustments are balance movements, not
- * usage — folding a refund in as negative usage would show an agent that failed
- * and refunded as having cost less than it did, and folding a grant in would
- * show it as having earned credits. `kind === "charge"` is the filter, and the
- * ledger's own `delta` is negative on a charge so it is normalized to a
- * positive "spend" here.
+ * CHARGES AND THEIR SETTLEMENTS. Grants, refunds and adjustments are balance
+ * movements, not usage — folding a refund in as negative usage would show an
+ * agent that failed and refunded as having cost less than it did, and folding a
+ * grant in would show it as having earned credits.
+ *
+ * A SETTLEMENT IS THE EXCEPTION, and the reason it is one is the whole point of
+ * two-phase charging (credits rework, 2026-09): the charge row is an ESTIMATE,
+ * and the settlement row is the correction that makes it true. A breakdown that
+ * counted the 25-credit hold and ignored the 7 handed back would tell a client
+ * they spent 25 on a run their balance says cost 18 — the same defect as
+ * counting a refund, pointed the other way. So settlements are added SIGNED into
+ * the bucket their hold landed in, which they can be because they carry the
+ * hold's own `operation`, `agentId` and `jobId`.
+ *
+ * The ledger's `delta` is negative on a charge, so it is normalized to a
+ * positive "spend" here; a settlement's delta is positive when credits came
+ * back, so it is subtracted. A bucket is floored at zero rather than allowed to
+ * go negative: a settlement whose hold predates the rows this list was built
+ * from would otherwise render as negative usage, which is not a thing.
  */
 export function summarizeClientSpend(input: {
   ledger: CreditLedgerEntry[];
@@ -140,8 +153,11 @@ export function summarizeClientSpend(input: {
   const rows = new Map<string, AgentSpendRow>();
 
   for (const entry of input.ledger) {
-    if (entry.kind !== "charge") continue;
-    const credits = Math.abs(entry.delta);
+    if (entry.kind !== "charge" && entry.kind !== "settlement") continue;
+    // A charge's delta is negative and a settlement's is signed the other way
+    // (positive = credits handed back), so one negation puts both on the same
+    // "spend" axis.
+    const credits = -entry.delta;
     if (credits === 0) continue;
 
     const agentId = entry.agentId ?? null;
@@ -172,6 +188,11 @@ export function summarizeClientSpend(input: {
   }
 
   for (const row of rows.values()) {
+    // A settlement whose hold is not in this list (pruned, or filed under an
+    // agent whose charges are elsewhere) could otherwise leave a bucket, and a
+    // row, negative. Negative usage is not a thing a client can be shown.
+    for (const bucket of row.buckets) bucket.credits = Math.max(0, bucket.credits);
+    row.credits = Math.max(0, row.credits);
     row.buckets.sort((a, b) => BUCKET_ORDER.indexOf(a.bucket) - BUCKET_ORDER.indexOf(b.bucket));
   }
   // Biggest spend first; the unattributed bucket always sinks to the bottom so
@@ -320,4 +341,347 @@ export function calibrateLaunchPrice(input: {
       ratio != null &&
       (economics.launch.runs < CALIBRATION_MIN_SAMPLES || runRuns < CALIBRATION_MIN_SAMPLES),
   };
+}
+
+/* ── Self-calibrating run estimates (credits rework, 2026-09) ─────── */
+
+/** How many recent runs an estimate is measured over. */
+export const ESTIMATE_WINDOW = 10;
+
+/**
+ * Below this many measured runs, a median is one client's luck rather than a
+ * price. Same threshold and same posture as `CALIBRATION_MIN_SAMPLES`: report
+ * the fallback and SAY it is a fallback, never dress a thin sample as a
+ * measurement.
+ */
+export const ESTIMATE_MIN_SAMPLES = 3;
+
+export interface RunEstimate {
+  /** Credits to quote before the run. */
+  credits: number;
+  /** True when this came from the family default, not from measurement. */
+  fallback: boolean;
+  /** How many settled runs the median was taken over. 0 on a fallback. */
+  samples: number;
+}
+
+/** Middle value of a sorted copy; the lower middle on an even count. */
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor((sorted.length - 1) / 2)]!;
+}
+
+/**
+ * What one run of this agent should be QUOTED at, measured from what recent
+ * runs of it actually cost us.
+ *
+ * MEDIAN, NOT MEAN, and that is the whole design of this function. One runaway
+ * run — a retry storm, a research loop that would not converge — moves a mean
+ * enough to reprice the product for everyone, and the client who sees the new
+ * quote is not the client who caused it. The median moves only when the typical
+ * run moves, which is the thing a price is supposed to track.
+ *
+ * NEVER INVENTS A NUMBER. Under `ESTIMATE_MIN_SAMPLES` it returns
+ * `fallbackCredits` with `fallback: true` — the same refusal
+ * `calibrateLaunchPrice` makes, for the same reason: a quote conjured from one
+ * run is worse than the constant that has been roughly right all year.
+ *
+ * MEASURED FROM ACTUAL USD, NEVER FROM SETTLED CREDITS, which is what keeps the
+ * 2× settlement cap from suppressing its own input. If the estimate were
+ * computed from what clients were charged, an agent that persistently
+ * under-estimates would settle at the cap, feed the capped figure back in, and
+ * never learn its real price. Reading `job.external.totalCostUsd` breaks that
+ * loop by construction.
+ *
+ * Pure: the caller supplies the sample. `recentRunCostsUsd` below builds it
+ * from jobs the agent page already loads, so this costs no new read.
+ */
+export function estimateRunCredits(input: {
+  /** Newest-first actual USD of recent successful runs. */
+  recentUsd: readonly number[];
+  /** agent.creditCost ?? the family default ?? CREDIT_COSTS.customAgentRun. */
+  fallbackCredits: number;
+}): RunEstimate {
+  const sample = input.recentUsd
+    .filter((usd) => Number.isFinite(usd) && usd > 0)
+    .slice(0, ESTIMATE_WINDOW);
+  if (sample.length < ESTIMATE_MIN_SAMPLES) {
+    return { credits: input.fallbackCredits, fallback: true, samples: 0 };
+  }
+  return { credits: creditsForUsd(median(sample)), fallback: false, samples: sample.length };
+}
+
+/**
+ * How many of ONE agent's runs the sample is drawn from, after filtering and
+ * sorting.
+ *
+ * THE CAP BELONGS HERE, NOT AT A CALLER, and that is the whole note. The submit
+ * path used to pre-cap the client's whole job list to the 50 newest across ALL
+ * agents and then filter by agent, while the quoting surfaces filtered the full
+ * list — so a client running six agents could have every one of the newest 50
+ * jobs belong to a different agent, leaving the submit path with no sample and
+ * the card with ten. The two would then quote and hold different numbers, which
+ * is the exact defect D1 exists to prevent. One function, one input, one cap,
+ * applied after the filter it is a cap ON.
+ */
+export const RUN_SAMPLE_LIMIT = 50;
+
+/**
+ * The USD sample `estimateRunCredits` measures over, newest first.
+ *
+ * ONE RUNG, not three. `clientId` narrows to this client's own history and is
+ * what every caller passes; the parameter stays optional because
+ * `summarizeAgentEconomics`-style cross-client questions are a legitimate use of
+ * the same filter, not because a cross-client PRICING rung exists. It does not:
+ * it would need a read the surfaces that QUOTE the price cannot afford, and a
+ * ladder only one side can climb is how the quote and the hold came apart.
+ * Below the minimum sample the answer is the constant.
+ *
+ * Failed and cancelled runs are excluded for the reason
+ * `summarizeAgentEconomics` excludes them: a run that died is a partial one,
+ * and its cost is not the price of a delivered run. Launch runs are excluded
+ * too — a setup is a different piece of work and has its own price.
+ */
+export function recentRunCostsUsd(
+  jobs: readonly Job[],
+  filter: { customAgentId: string; clientId?: string },
+): number[] {
+  return jobs
+    .filter((job) => job.customAgentId === filter.customAgentId)
+    .filter((job) => !filter.clientId || job.clientId === filter.clientId)
+    .filter((job) => !FAILED_STATUSES.has(job.status))
+    .filter((job) => job.runType !== "launch" && job.runType !== "test")
+    .filter((job) => typeof job.external?.totalCostUsd === "number")
+    // SORTED HERE, IN MEMORY, and that is load-bearing rather than incidental:
+    // `listJobs` has no `orderBy`, so Firestore returns rows in document-id
+    // order — which for auto-ids is effectively arbitrary, not chronological.
+    // Taking "the last 10" off an unsorted read would sample ten random runs
+    // and call the result recent. Every caller hands the whole set in and the
+    // ordering is imposed at this one point.
+    .sort((a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0))
+    // Filter, then sort, THEN cap — see RUN_SAMPLE_LIMIT. Capping earlier
+    // samples the wrong runs; capping in a caller means two callers can cap
+    // differently, which is how the quote and the hold diverge.
+    .slice(0, RUN_SAMPLE_LIMIT)
+    .map((job) => job.external!.totalCostUsd!);
+}
+
+/**
+ * ONE ESTIMATE, computed the same way wherever it is needed — the price a
+ * client is QUOTED on the agent page and the price actually HELD at dispatch
+ * must be the same number, and the only way to guarantee that is one function
+ * over one input.
+ *
+ * They diverged in the first cut: the page quoted the constant while
+ * `submitCustomAgentJob` held the median, so a client read "25 credits" and
+ * watched 18 leave their balance. A quote that does not match the charge is
+ * worse than a quote that is merely stale.
+ *
+ * PURE, AND OVER THIS CLIENT'S JOBS ONLY. Both call sites already hold that
+ * list, so the shared number costs no read at all — which is also what let the
+ * cross-client rung go. That rung read the entire `jobs` collection to price a
+ * brand-new client's first run, and it could not be reproduced on the page
+ * without the same unbounded read; a ladder one caller can climb and the other
+ * cannot is exactly how the two numbers came apart. Two rungs now: this
+ * client's own measured median, then the constant.
+ */
+export function estimateRunCreditsFromJobs(
+  jobs: readonly Job[],
+  input: { clientId: string; customAgentId: string; fallbackCredits: number },
+): RunEstimate {
+  return estimateRunCredits({
+    recentUsd: recentRunCostsUsd(jobs, {
+      customAgentId: input.customAgentId,
+      clientId: input.clientId,
+    }),
+    fallbackCredits: input.fallbackCredits,
+  });
+}
+
+/**
+ * The same estimate for a WHOLE ROSTER, walking the job list once.
+ *
+ * `estimateRunCreditsFromJobs` filters the full list per agent, which is
+ * correct and, on a page rendering a dozen agent cards, a dozen passes over
+ * every job the client has ever run. Grouping first makes it one pass plus a
+ * map lookup, and — this is the part that matters — it is the SAME
+ * `estimateRunCredits` over the SAME rows, so a roster card and the dialog it
+ * opens cannot end up quoting different numbers because one of them took a
+ * shortcut.
+ */
+export function estimateRunCreditsByAgent(
+  jobs: readonly Job[],
+  input: { clientId: string; fallbackCreditsFor: (customAgentId: string) => number },
+): (customAgentId: string) => RunEstimate {
+  const byAgent = new Map<string, Job[]>();
+  for (const job of jobs) {
+    if (!job.customAgentId) continue;
+    if (job.clientId !== input.clientId) continue;
+    const bucket = byAgent.get(job.customAgentId);
+    if (bucket) bucket.push(job);
+    else byAgent.set(job.customAgentId, [job]);
+  }
+  const cache = new Map<string, RunEstimate>();
+  return (customAgentId: string) => {
+    const hit = cache.get(customAgentId);
+    if (hit) return hit;
+    const estimate = estimateRunCreditsFromJobs(byAgent.get(customAgentId) ?? [], {
+      clientId: input.clientId,
+      customAgentId,
+      fallbackCredits: input.fallbackCreditsFor(customAgentId),
+    });
+    cache.set(customAgentId, estimate);
+    return estimate;
+  };
+}
+
+/* ── What a client actually costs us this month (staff only) ──────── */
+
+export interface ClientMonthlyCost {
+  /** Our own measured spend on this client, month to date, in USD. */
+  usd: number;
+  /** The $130 line: MONTHLY_ALLOWANCE × USD_PER_CREDIT. */
+  budgetUsd: number;
+  /** usd / budgetUsd. Can exceed 1 — see the leaks below. */
+  fraction: number;
+  /** Runs counted, including failed and staff-fired ones. */
+  runs: number;
+  /**
+   * Rows we KNOW we could not price (`pricingUnresolved`). Reported rather than
+   * folded in as $0, because "we do not know" and "it was free" are two answers
+   * and only one of them is safe to show beside a budget.
+   */
+  unpricedRows: number;
+}
+
+/**
+ * Month-to-date cost to Karos of one client, beside the credits they were
+ * charged (credits rework, 2026-09, §staff).
+ *
+ * WHY THIS IS NOT `monthSpent × $0.05`. Settle-to-actual guarantees the $130
+ * line for every credit a client is CHARGED, and two kinds of real spend never
+ * reach the ledger at all:
+ *
+ *   1. runs nobody billed — staff-fired runs, admin "View as Client", and any
+ *      `ScheduledRun` with `billClientCredits !== true`. They burn real dollars
+ *      and write no credit row, so the credit cap cannot see them;
+ *   2. refunded failures — the client got their credits back, we did not get
+ *      our tokens back.
+ *
+ * So this counts BOTH, deliberately including the failed and cancelled jobs
+ * `summarizeAgentEconomics` excludes. That exclusion is right for calibration
+ * (a dead run is not the price of a live one) and wrong for a budget watch (a
+ * dead run still cost us). The gap between this figure and `monthSpent × $0.05`
+ * IS the leak, and showing the two side by side is what makes it visible rather
+ * than assumed.
+ *
+ * `usageRows` is optional: agent runs are the dominant cost and come from the
+ * jobs, so a caller with no cheap way to query `usageLogs` still gets a figure
+ * that is right about the money that matters. What it then misses is in-app
+ * model spend (copilot turns, corrections) — pennies per action, and for
+ * BILLABLE clients already reflected in the credits line beside it.
+ */
+export function summarizeClientMonthlyCost(input: {
+  /** This client's jobs. Filtered to the month here, not by the caller. */
+  jobs: readonly Job[];
+  /** Optional `usageLogs` rows for this client, any window. */
+  usageRows?: ReadonlyArray<
+    Pick<import("@/lib/models/usage-log").UsageLog, "estimatedCostUsd" | "timestamp" | "pricingUnresolved" | "jobId">
+  >;
+  /** `creditMonthKey(now)` — the window the credits doc is counting in. */
+  monthKey: string;
+  /** MONTHLY_ALLOWANCE, passed in so this stays a pure function of its inputs. */
+  monthlyAllowance: number;
+}): ClientMonthlyCost {
+  const inMonth = (ts?: number) =>
+    typeof ts === "number" && monthKeyOf(ts) === input.monthKey;
+
+  let usd = 0;
+  let runs = 0;
+  const countedJobIds = new Set<string>();
+  for (const job of input.jobs) {
+    const cost = job.external?.totalCostUsd;
+    if (typeof cost !== "number" || !Number.isFinite(cost)) continue;
+    if (!inMonth(job.updatedAt ?? job.createdAt)) continue;
+    usd += cost;
+    runs += 1;
+    countedJobIds.add(job.id);
+  }
+
+  let unpricedRows = 0;
+  for (const row of input.usageRows ?? []) {
+    if (!inMonth(row.timestamp)) continue;
+    if (row.pricingUnresolved) {
+      unpricedRows += 1;
+      continue;
+    }
+    // A usage row that belongs to a job already counted above would be the same
+    // dollars twice: the webhook logs per-model rows AND stores the run total.
+    if (row.jobId && countedJobIds.has(row.jobId)) continue;
+    usd += row.estimatedCostUsd;
+  }
+
+  const budgetUsd = input.monthlyAllowance * USD_PER_CREDIT;
+  return { usd, budgetUsd, fraction: budgetUsd > 0 ? usd / budgetUsd : 0, runs, unpricedRows };
+}
+
+/**
+ * Month key of a timestamp, spelled here rather than imported from `credits.ts`
+ * so this module keeps taking its window as a plain string argument. It is the
+ * same UTC calendar month `creditMonthKey` computes; `credit-reporting.test.ts`
+ * pins the two equal so they cannot drift.
+ */
+function monthKeyOf(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Fraction of the monthly budget at which staff are warned. */
+export const MONTHLY_COST_ALERT_FRACTION = 0.8;
+
+/* ── What a CLIENT may be handed from the ledger ──────────────────── */
+
+/**
+ * Ledger fields a client viewer must never receive, named once.
+ *
+ * TWO KINDS OF SECRET, ONE LIST. `actorUid`/`actorName` are staff identity —
+ * the admin who typed a grant. `actualUsd`/`settlementCapped` are staff
+ * ECONOMICS: what a run cost Karos in dollars, and whether it cost us more than
+ * double what we quoted. The second pair arrived with two-phase charging
+ * (credits rework, 2026-09) on the very rows a client's own ledger renders, and
+ * they are precisely the number the two-audience split exists to keep apart —
+ * `agent-economics.tsx` is hard-gated on `viewerIsStaff` for this one figure.
+ *
+ * A LIST RATHER THAN A SPREAD AT THE CALL SITE, because the failure mode is
+ * addition: the next staff-only field added to `CreditLedgerEntry` has to be
+ * refused somewhere, and a hand-written object literal on a page is not a place
+ * anyone thinks to look. `credit-attribution.test.ts` checks this list against
+ * the type.
+ */
+export const STAFF_ONLY_LEDGER_FIELDS = [
+  "actorUid",
+  "actorName",
+  "actualUsd",
+  "settlementCapped",
+] as const satisfies ReadonlyArray<keyof CreditLedgerEntry>;
+
+/**
+ * A ledger row as a CLIENT may receive it.
+ *
+ * STRIPPED, NOT WITHHELD AT RENDER. `CreditsPanel` is a `"use client"`
+ * component, so every field that crosses into it sits in the RSC payload and is
+ * readable from view-source whether or not the panel paints it. Deciding this on
+ * the server is the only place the decision is real.
+ *
+ * `actorUid` is emptied rather than deleted because the type requires it; the
+ * rest are set to `undefined`, which Next drops from the payload entirely.
+ */
+export function redactLedgerForClient(rows: readonly CreditLedgerEntry[]): CreditLedgerEntry[] {
+  return rows.map((row) => ({
+    ...row,
+    actorUid: "",
+    actorName: undefined,
+    actualUsd: undefined,
+    settlementCapped: undefined,
+  }));
 }

@@ -2,7 +2,9 @@ import Link from "next/link";
 import {
   getClient,
   listAssets,
+  listClientIntegrations,
   listClients,
+  listClientTasks,
   listCustomAgents,
   listJobs,
   listPlannedScheduledRuns,
@@ -10,7 +12,10 @@ import {
 import { listClientAgents } from "@/lib/data-client-agents";
 import { assetImages } from "@/lib/asset-images";
 import { clientVisibleCalendarAssets } from "@/lib/client-calendar";
+import { getClientArchiveAssets, getClientLibraryAssets } from "@/lib/asset-visibility";
+import { offeredStatesFor } from "@/lib/client-state-domain";
 import {
+  contentLabelsByAsset,
   identitiesByClient,
   runRowLabel,
   scheduleRowLabel,
@@ -26,6 +31,9 @@ import { postKind } from "@/lib/calendar-kind";
 import { projectPastRuns } from "@/lib/calendar-past-runs";
 import { clientSafeRefusal } from "@/lib/custom-agent-launch";
 import { pushablePlatformsByClient } from "@/lib/publish-targets";
+import { sameLocalDay } from "@/lib/scheduling";
+import { platformLabel } from "@/lib/integrations/platforms";
+import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
 import {
   clientCadenceLabel,
   describeCadence,
@@ -35,9 +43,28 @@ import {
 import { computeRunway } from "@/lib/runway";
 import { isValidTimeZone } from "@/lib/run-cadence";
 import { clientAgentBlurb } from "@/lib/agent-blurbs";
-import { PageHeader, EmptyState, Badge } from "@/components/ui";
+import { integrationIsUsable } from "@/lib/integration-status";
+import { isAiProcessingLockActive } from "@/lib/constants";
+import { isBillableClientActor } from "@/lib/credits";
+import { computePlatformGaps, gapPlatformNames } from "@/lib/calendar-gaps";
+import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
+import { PageHeader, EmptyState, Badge, buttonClass } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { CalendarSparseBanner } from "@/components/calendar-sparse-banner";
+import { ClientDownloads } from "@/components/client-downloads";
+import type { SuggestedTaskView } from "@/components/pending-task-suggestions";
+import { inferSuggestionDates } from "@/lib/calendar-suggestion-placement";
+// From the plain module, NOT from run-calendar.tsx (a client module): a server
+// component importing a value across that boundary gets a client reference, and
+// `.find` on it threw on every /calendar render (see lib/calendar-view-modes.ts).
+import {
+  CALENDAR_VIEW_MODES,
+  formatCalendarDate,
+  parseCalendarDate,
+  parseCalendarHidden,
+  type CalendarViewMode,
+} from "@/lib/calendar-view-modes";
 import {
   RunCalendar,
   type CalendarClientOption,
@@ -106,9 +133,70 @@ function cleanTitle(title: string): string {
  * browsing a single client's Calendar (/clients/[id]/calendar - the
  * sidebar's "View as client" picker, viewClientId is that client's id), or
  * the staff cross-client overview when no client is in scope.
+ *
+ * `view`/`status` are the RAW search params of whichever page mounted this
+ * (portal feedback round 2, 2026-09), validated here rather than at each of the
+ * two pages: the archive is a URL destination now — Account Center gave its
+ * Archive tab up to this calendar — and one parser is what keeps the flat and
+ * the client-scoped route agreeing on what a link may say.
  */
-export async function CalendarBody({ user, viewClientId }: { user: AppUser; viewClientId?: string }) {
+export async function CalendarBody({
+  user,
+  viewClientId,
+  view,
+  status,
+  date,
+  agent,
+  q,
+  hidden,
+  asset,
+}: {
+  user: AppUser;
+  viewClientId?: string;
+  /** `?view=` — day/week/month/archive. Anything else is ignored (Week stands). */
+  view?: string;
+  /** `?status=` — the archive's own filter, narrowed below to what it can hold. */
+  status?: string;
+  /** `?date=YYYY-MM-DD` — the anchor day of the active time view (flow audit 2026-09, R5). */
+  date?: string;
+  /** `?agent=` — the archive's agent filter, matched by label against what it actually holds. */
+  agent?: string;
+  /** `?q=` — the archive's title search. Free text; nothing to validate but its length. */
+  q?: string;
+  /** `?hidden=` — the legend chips this reader has dimmed (review wave, 2026-09). */
+  hidden?: string;
+  /**
+   * `?asset=` — ONE deliverable to open on load (round 6, decision 8). Passed
+   * through untouched: what the archive may show is `isInClientArchive`'s
+   * answer, not this page's, and the archive refuses an id it does not hold
+   * rather than opening an empty modal.
+   */
+  asset?: string;
+}) {
   const isClient = user.role === "CLIENT_USER";
+  // Unknown values are DROPPED, not defaulted loudly: a stale or typo'd link
+  // opens the ordinary calendar, which is the honest answer to a param this
+  // page cannot honour (same "fail open" rule statusFilterFromParam follows).
+  const initialViewMode: CalendarViewMode | undefined = CALENDAR_VIEW_MODES.find(
+    (mode) => mode === view,
+  );
+  // Same rule for the anchor: `parseCalendarDate` returns null for anything
+  // that is not a real local day, and a null seed means "today", which is
+  // where this calendar has always opened (flow audit 2026-09, R5).
+  //
+  // VALIDATED HERE, PARSED IN THE BROWSER (review wave, 2026-09). This used to
+  // pass `initialDate.getTime()`: an epoch instant produced by parsing
+  // `YYYY-MM-DD` at local midnight IN THE SERVER'S ZONE, then re-read as a
+  // local `Date` by the reader's. For anyone west of the server that lands on
+  // the previous day — the anchor is off by one AND the server and the browser
+  // render different grids from the same prop, which is a hydration mismatch.
+  // The `YYYY-MM-DD` string means the same thing on both sides, so it crosses
+  // instead and RunCalendar parses it against the only clock that matters.
+  const parsedDate = parseCalendarDate(date);
+  const initialDate = parsedDate ? formatCalendarDate(parsedDate) : undefined;
+  // `?hidden=`, narrowed to the legend keys that exist. Unknown keys are
+  // dropped rather than refused: same fail-open rule as every param above.
+  const initialHiddenStatuses = parseCalendarHidden(hidden);
 
   // ── Resolve scope ──────────────────────────────────────────────────
   let idSet: Set<string> | null = null; // null = every client (admin overview)
@@ -149,7 +237,17 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     single = true;
     title = "Calendar";
     const ownClient = await getClient(user.clientId);
-    if (ownClient) clients = [ownClient];
+    if (ownClient) {
+      clients = [ownClient];
+      // Set for a real client the same way the staff "View as client" branch
+      // sets them below — this was missing here, so the action-list effect
+      // that marks "Look at your week" done (needs viewerIsClient AND
+      // defaultClientId truthy in run-calendar.tsx) could never fire for an
+      // actual CLIENT_USER, and the runway badge's dailyPace read always fell
+      // back to the default pace instead of this client's configured one.
+      scopedClient = ownClient;
+      defaultClientId = ownClient.id;
+    }
   } else {
     const employeeFilter = user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined;
     clients = await listClients(employeeFilter);
@@ -164,7 +262,13 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
       single = true;
       scopedClient = viewClient;
       defaultClientId = viewClient.id;
-      title = `${viewClient.name} · Calendar`;
+      // PARITY PASS (2026-09). The h1 stays "Calendar", the same word the
+      // client reads on their own page. Prefixing it with the client's name
+      // made staff and client versions of the same screen open on a different
+      // heading, which is exactly the drift this pass removes — and which
+      // client is in scope is already stated by the rail and the URL, so the
+      // name was never the page title's job.
+      title = "Calendar";
       // "View as client" is scoped to this one client — the schedule-run
       // picker must not offer every other client staff can see.
       clientOptions = [{ id: viewClient.id, name: viewClient.name }];
@@ -179,21 +283,59 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
 
   // ── Fetch (single-client scope uses a Firestore filter; broader scopes
   //    fetch-then-filter, matching the assets page) ─────────────────────
-  const [runsRaw, jobsRaw, assetsRaw, customAgents, umbrellasRaw] = await Promise.all([
-    listPlannedScheduledRuns(singleFilter),
-    listJobs(singleFilter),
-    listAssets(singleFilter),
-    listCustomAgents(),
-    // §7.3. One scoped read for the whole page - the cross-client overview
-    // labels rows of many clients, and a per-row umbrella query would be one
-    // Firestore read per printed card.
-    listClientAgents(singleFilter),
-  ]);
+  const [runsRaw, jobsRaw, assetsRaw, customAgents, umbrellasRaw, integrations, pendingTasksRaw] =
+    await Promise.all([
+      listPlannedScheduledRuns(singleFilter),
+      listJobs(singleFilter),
+      listAssets(singleFilter),
+      listCustomAgents(),
+      // §7.3. One scoped read for the whole page - the cross-client overview
+      // labels rows of many clients, and a per-row umbrella query would be one
+      // Firestore read per printed card.
+      listClientAgents(singleFilter),
+      // Sparse-calendar detection + the Task Map's own proposals (Smart Task
+      // Map Fallback) — meaningless on the cross-client overview, which has no
+      // one client to be sparse about.
+      singleFilter ? listClientIntegrations(singleFilter.clientId) : Promise.resolve([]),
+      singleFilter
+        ? listClientTasks({ clientId: singleFilter.clientId, status: "pending" })
+        : Promise.resolve([]),
+    ]);
   const inScope = <T extends { clientId: string }>(arr: T[]): T[] =>
     idSet ? arr.filter((x) => idSet!.has(x.clientId)) : arr;
 
-  const scheduledRuns = inScope(runsRaw);
-  const jobs = inScope(jobsRaw);
+  /**
+   * THE CROSS-CLIENT OVERVIEW'S HORIZON (review wave, 2026-09).
+   *
+   * With no single client in scope, the three reads above are unfiltered — the
+   * whole `assets`, `jobs` and `plannedScheduledRuns` collections, every client
+   * that has ever existed, on a page that then paints a few weeks of them. And
+   * AutoRefresh re-runs the entire render every 4 seconds while anything is in
+   * flight, so the cost is paid again and again.
+   *
+   * Bounded IN MEMORY, which does not save the read but does bound everything
+   * downstream of it (the projections, the per-day maps, the payload shipped to
+   * the browser). Only the unscoped branch is trimmed: a single-client scope is
+   * already a `where clientId ==` query, and trimming it would cut the staff
+   * library the archive is built from.
+   *
+   * TODO(SCRUM-follow-up): make this a real query bound — `createdAt >=` for
+   * jobs/assets and `nextRunAt <=` for planned runs, as new bounded readers in
+   * `src/lib/data.ts` (owned elsewhere this wave, hence the in-memory filter
+   * here). Until then this is a payload bound, not a Firestore one.
+   */
+  const OVERVIEW_HORIZON_MS = 120 * 24 * 60 * 60 * 1000;
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const horizonNow = Date.now();
+  const horizonFrom = horizonNow - OVERVIEW_HORIZON_MS;
+  const horizonTo = horizonNow + OVERVIEW_HORIZON_MS;
+  const inHorizon = (at: number | undefined): boolean =>
+    at == null || (at >= horizonFrom && at <= horizonTo);
+
+  const scheduledRuns = inScope(runsRaw).filter(
+    (r) => !!singleFilter || inHorizon(r.nextRunAt),
+  );
+  const jobs = inScope(jobsRaw).filter((j) => !!singleFilter || inHorizon(j.createdAt));
   // WHAT A VIEWER'S CALENDAR IS MADE OF now lives in lib/client-calendar, and
   // this page is one of its two readers — the daily digest is the other, and it
   // has to be able to say it is showing the calendar rather than something like
@@ -207,12 +349,69 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // hand back the survivors. Deduped ONCE: the run cards ("drafted 8 posts") and
   // the runway badge read the same list, so a list still holding both copies
   // would print a deliverable twice and over-count the days filled through.
-  const scopedAssets = inScope(assetsRaw);
+  // The dates an asset can land on this calendar by: its scheduled slot, its
+  // publish stamp, or (for a row with neither, which the grid drops anyway)
+  // when it was created.
+  const scopedAssets = inScope(assetsRaw).filter(
+    (a) =>
+      !!singleFilter ||
+      inHorizon(a.scheduledAt) ||
+      inHorizon(a.publishedAt) ||
+      inHorizon(a.createdAt),
+  );
   const assets = clientVisibleCalendarAssets(scopedAssets, {
     isClient,
     // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
     now: Date.now(),
     viewer: { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin },
+  });
+
+  // ── Smart Task Map Fallback: sparse-calendar nudge + the Task Map's own
+  //    pending proposals, both scoped to the single client above (empty on
+  //    the cross-client overview, where `singleFilter` was never set). Same
+  //    gap math the swarm itself reasons from (lib/calendar-gaps.ts), so the
+  //    banner and the generator can never disagree about what's "sparse".
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const gapNow = Date.now();
+  const usablePlatforms = integrations
+    .filter((i) => i.platform !== "google" && integrationIsUsable(i))
+    .map((i) => i.platform);
+  const gapPlatforms = gapPlatformNames(computePlatformGaps(assets, usablePlatforms, gapNow));
+  const pendingSuggestionTasks = pendingTasksRaw.filter(
+    (t) => t.owner === "karos_managed" && t.source === "copilot",
+  );
+  // Inferred, never stored: a suggestion has no date field on the task itself
+  // (it's a proposal, not scheduled content), so its calendar placement is
+  // recomputed fresh against the client's CURRENT booked dates on every
+  // render (lib/calendar-suggestion-placement.ts) rather than going stale
+  // against a calendar that changes underneath a cached value.
+  const suggestionDates = inferSuggestionDates(
+    pendingSuggestionTasks.map((t) => ({
+      id: t.id,
+      platform: t.metadata?.platform as string | undefined,
+      priority: t.priority,
+    })),
+    assets.filter((a) => a.scheduledAt != null).map((a) => a.scheduledAt as number),
+    gapNow,
+  );
+  const suggestedTaskViews: SuggestedTaskView[] = pendingSuggestionTasks.map((t) => {
+    const meta = t.metadata ?? {};
+    // `agentName`, not `customAgentName` — the one field name every writer
+    // (agent-swarm.ts, campaign-engine.ts, the chat route) uses for the
+    // linked agent's display name (SCRUM-255).
+    const agentName = meta.agentName as string | undefined;
+    const productType = meta.productType as string | undefined;
+    const platform = meta.platform as string | undefined;
+    return {
+      id: t.id,
+      title: t.title,
+      ...(t.description ? { description: t.description } : {}),
+      priority: t.priority,
+      executorLabel:
+        agentName ?? MANAGED_PRODUCTS.find((p) => p.taskType === productType)?.name ?? "Karos AI",
+      ...(platform ? { platform } : {}),
+      at: suggestionDates.get(t.id)!,
+    };
   });
 
   // Agent lookups: by id for scheduled runs, by name for past jobs (jobs store
@@ -386,14 +585,8 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         // the VIEWER's clock — one calendar, one definition of a day — and this
         // zone reaches only `timeStr` and `zoneLabel`, which is how a reader can
         // still see the wall clock the schedule was actually set in.
-        //
-        // This sentence used to say the bucket was computed from it "exactly as
-        // on the server", and both halves stopped being true with that change.
-        // It is the THIRD copy of the claim; the other two were retired with the
-        // fix and this one, 280 lines below the first in the same file, was not.
-        // The residual is in `dayKey`'s own docstring: server and browser can
-        // now disagree about the day, and that is the trade the consolidation
-        // makes deliberately.
+        // (The residual — server and browser can disagree about which day an
+        // instant falls in — is stated in `dayKey`'s own docstring.)
         timeZone: runZone(r.timeZone),
         // Per OCCURRENCE, not per row: a projection that crosses a DST boundary
         // prints the offset in force on that day.
@@ -515,17 +708,35 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // so the asset's own booked channel outranks the agent that produced it.
   //
   // `assets` is already one document per post — see the dedupe above.
+  //
+  // Portal revamp, Surface 05 — "a future day names only the post type/agent
+  // placeholder, never a real title ahead of time." Display-only (the user
+  // chose this scope explicitly over touching Runway Autopilot/chain-reflow
+  // generation timing): `kind` is UNCHANGED — still "scheduled"/"placeholder"
+  // exactly as postKind derives it, so every filter/legend/tone stays correct
+  // — only the TITLE a client reads is swapped for a generic one on a day
+  // that has not happened yet. Staff keep the real title; they review
+  // upcoming content, which is the whole reason this campaign exists.
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const today = Date.now();
   const posts: CalendarPost[] = assets
     .map((a): CalendarPost | null => {
       const kind = postKind(a);
       if (!kind) return null;
       const at = kind === "published" ? (a.publishedAt ?? a.scheduledAt!) : a.scheduledAt!;
       const platform = assetRowPlatform(a, umbrellasFor(a.clientId));
+      const isFutureDay = kind !== "published" && at > today && !sameLocalDay(at, today);
+      const title =
+        isClient && isFutureDay
+          ? platform
+            ? `${platformLabel(platform)} post`
+            : (ASSET_TYPE_LABEL[a.type] ?? a.type)
+          : cleanTitle(a.title);
       return {
         assetId: a.id,
         clientId: a.clientId,
         clientName: single ? undefined : nameOf(a.clientId),
-        title: cleanTitle(a.title),
+        title,
         at,
         kind,
         ...(platform ? { platform } : {}),
@@ -577,6 +788,54 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   const scopedClientId = singleFilter?.clientId;
   const isEmpty = runs.length + posts.length === 0;
 
+  // Archive view (portal revamp, Surface 05) — same recipe tasks-body.tsx and
+  // Account Center's Archive tab use, scoped to a single client: the
+  // cross-client staff overview has no one client's archive to show, so it
+  // gets the view's own "not available from this view" fallback instead.
+  let archiveAssets: Asset[] | undefined;
+  let archiveAgentLabelByAssetId: Record<string, string> | undefined;
+  if (scopedClientId) {
+    const archiveViewer = { role: user.role, seatId: user.seatId, isGroupAdmin: user.isGroupAdmin };
+    // The deduped, client-redacted list already built above — never the raw
+    // pre-dedupe one (calendar-dedupe.test.ts: every downstream reader takes
+    // the deduped list, not the pre-dedupe one the posts map alone used to get).
+    const rawClientAssets = assets.filter((a) => a.clientId === scopedClientId);
+    archiveAssets = isClient
+      ? getClientLibraryAssets(getClientArchiveAssets(rawClientAssets, { viewer: archiveViewer }), {
+          forClient: true,
+          viewer: archiveViewer,
+        })
+      : getClientLibraryAssets(rawClientAssets);
+    archiveAgentLabelByAssetId = contentLabelsByAsset(
+      archiveAssets,
+      jobs.filter((j) => j.clientId === scopedClientId),
+      umbrellasFor(scopedClientId),
+    );
+  }
+
+  // `?status=`, NARROWED THROUGH `offeredStatesFor` — the same function that
+  // builds the archive's own dropdown, so the param can only ever seed a state
+  // this archive can hold. Moved here from Account Center's Archive tab with
+  // the tab itself (portal feedback round 2, 2026-09); the rule is unchanged. A
+  // link to `status=draft` (which a client's archive rejects by design) opens
+  // the unfiltered list rather than an empty one, and the chart that writes
+  // these links already declines to emit that case — this is the second,
+  // mechanical half of the same rule, at the boundary the URL actually crosses.
+  const initialArchiveStatus = offeredStatesFor("archive", isClient).find((s) => s === status);
+
+  // `?agent=` and `?q=`, the other two archive filters the view now writes back
+  // (flow audit 2026-09, R5). Same narrowing rule as `?status=`, applied to the
+  // only list that can answer it: the agent labels THIS archive actually holds.
+  // A link naming an agent whose work is not in this window opens the
+  // unfiltered archive rather than an empty one. `q` is free text — there is
+  // nothing to validate but its length, and an over-long one is truncated
+  // rather than refused, because a truncated search still finds something.
+  const archiveAgentNames = archiveAgentLabelByAssetId
+    ? new Set(Object.values(archiveAgentLabelByAssetId))
+    : new Set<string>();
+  const initialArchiveAgent = agent && archiveAgentNames.has(agent) ? agent : undefined;
+  const initialArchiveSearch = q ? q.slice(0, 120) : undefined;
+
   // Runway indicator (staff single-client scope only - the client's own view
   // hides internal drafts, which would understate the backlog). Reuses the same
   // pure calculator the top-up cron runs, so the badge and the autopilot agree.
@@ -587,12 +846,23 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
     const runway = computeRunway(assets, [], now, undefined, scopedClient?.dailyPace);
     if (runway.activeFamilies.length > 0) {
       const fmt = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      // PARITY PASS (2026-09). The badge stays — it is the one number that
+      // tells an operator whether this account is about to run dry — but it
+      // now SAYS it is staff-only. It sits in the shared header's action slot
+      // rather than in a StaffOnlySection frame (a frame around a single chip
+      // would shift the header layout), so the marker has to be the copy:
+      // "Internal · " on every variant, so nobody previewing an account reads
+      // a backlog figure the client will never be shown.
       if (runway.coveredThroughMs == null) {
-        runwayBadge = <Badge tone="danger">No runway. Calendar is empty ahead</Badge>;
+        runwayBadge = <Badge tone="danger">Internal · No runway. Calendar is empty ahead</Badge>;
       } else if (runway.coveredThroughMs < runway.horizonThroughMs) {
-        runwayBadge = <Badge tone="warning">Short runway. Filled through {fmt(runway.coveredThroughMs)}</Badge>;
+        runwayBadge = (
+          <Badge tone="warning">Internal · Short runway. Filled through {fmt(runway.coveredThroughMs)}</Badge>
+        );
       } else {
-        runwayBadge = <Badge tone="success">Runway: filled through {fmt(runway.coveredThroughMs)}</Badge>;
+        runwayBadge = (
+          <Badge tone="success">Internal · Runway: filled through {fmt(runway.coveredThroughMs)}</Badge>
+        );
       }
     }
   }
@@ -602,7 +872,24 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
   // is a server component, so without this it would sit on "queued"/"running"
   // until someone happens to reload. Mounted only while something is actually
   // in flight, same convention as the Agents page's AutoRefresh.
-  const runInFlight = jobs.some((j) => j.status === "queued" || j.status === "running");
+  //
+  // SCOPED TO WHAT THIS PAGE ACTUALLY PAINTED (review wave, 2026-09). It used
+  // to ask every job in scope, which on the staff cross-client overview is
+  // every job of every client they can see: one client with a job stuck
+  // "queued" put every staff member's overview into a 4-second full re-render
+  // loop forever, re-reading whole collections each tick, for a chip that was
+  // not even on the screen. A refresh is worth paying for when a row this
+  // render drew can change, so the question is asked of the rows themselves.
+  const renderedClientIds = new Set([...runs.map((r) => r.clientId), ...posts.map((p) => p.clientId)]);
+  const runInFlight = jobs.some(
+    (j) =>
+      (j.status === "queued" || j.status === "running") &&
+      (!!singleFilter || renderedClientIds.has(j.clientId)),
+  );
+
+  const viewerIsBilled = isBillableClientActor(user);
+  const scopedClientDoc = scopedClientId ? clientById.get(scopedClientId) : undefined;
+  const isAiProcessing = scopedClientDoc ? isAiProcessingLockActive(scopedClientDoc) : false;
 
   return (
     <>
@@ -615,9 +902,13 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
             title="No runs on the calendar yet"
             description="Schedules are set on the AI agents page. Once an agent has one, its runs and everything they produce show up here."
             action={
+              /* round 6 (rule 3): the accent recipe was restated here by hand,
+                 with `transition-all` and a lift. `buttonClass` is the one copy
+                 of the button voice, and this stays `accent` because on an empty
+                 calendar it IS the screen's single forward move. */
               <Link
                 href={`/clients/${scopedClientId}/agents`}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-neon px-4 text-sm font-semibold text-accent-ink transition-all duration-200 hover:-translate-y-0.5"
+                className={buttonClass({ variant: "accent" })}
               >
                 <Icon name="Bot" className="h-4 w-4" />
                 Set up an agent schedule
@@ -626,10 +917,32 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
           />
         </div>
       )}
+      {/* Smart Task Map Fallback — a complementary, finer-grained nudge about
+          near-term CONTENT coverage, not a second empty state: skipped while
+          `isEmpty` is showing its own "set up an agent schedule" CTA above,
+          which already covers "nothing is configured at all". */}
+      {!isEmpty && scopedClientId && (
+        <CalendarSparseBanner
+          clientId={scopedClientId}
+          gapPlatforms={gapPlatforms}
+          pendingSuggestionCount={suggestedTaskViews.length}
+          isAiProcessing={isAiProcessing}
+          viewerIsBilled={viewerIsBilled}
+        />
+      )}
+      {/* Every `initial…` below is seeded from the URL — see CalendarBody's
+          own note. The set grew with the calendar's own URL state (flow audit
+          2026-09, R5): the view, the anchor date, and the archive's three
+          filters are all written back by the calendar now, and all five are
+          validated here before they are handed over. Spread rather than passed
+          as `{undefined}` because of `exactOptionalPropertyTypes`, same as
+          every other optional prop on this element. */}
       <RunCalendar
         runs={runs}
         posts={posts}
         assets={assets}
+        suggestions={suggestedTaskViews}
+        {...(scopedClientId ? { suggestionsClientId: scopedClientId } : {})}
         // Whose vocabulary the detail modal uses. `isClient` and not
         // `!canSchedule`: staff in View as Client keep the staff register, which
         // is the split every other viewer-worded surface on this page already
@@ -646,7 +959,25 @@ export async function CalendarBody({ user, viewClientId }: { user: AppUser; view
         agents={agentOptions}
         {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
         defaultClientId={defaultClientId}
+        {...(archiveAssets ? { archiveAssets } : {})}
+        {...(archiveAgentLabelByAssetId ? { agentLabelByAssetId: archiveAgentLabelByAssetId } : {})}
+        {...(initialViewMode ? { initialViewMode } : {})}
+        {...(initialArchiveStatus ? { initialArchiveStatus } : {})}
+        {...(initialDate ? { initialDate } : {})}
+        {...(initialArchiveAgent ? { initialArchiveAgent } : {})}
+        {...(initialArchiveSearch ? { initialArchiveSearch } : {})}
+        {...(initialHiddenStatuses.length > 0 ? { initialHiddenStatuses } : {})}
+        {...(asset ? { initialAssetId: asset } : {})}
       />
+      {/* Persistent, always-visible — not tucked inside a day's own detail
+          panel, which a client reported not being able to find (2026-08).
+          Same zip route the retired standalone Downloads page used. No cross-
+          client equivalent: there is no single client's day to bundle. */}
+      {scopedClientId && (
+        <div className="mt-4">
+          <ClientDownloads clientId={scopedClientId} viewerIsClient={isClient} />
+        </div>
+      )}
     </>
   );
 }

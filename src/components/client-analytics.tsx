@@ -4,6 +4,9 @@ import { Icon } from "@/components/icon";
 import { cn, relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { assetsInClientState } from "@/lib/client-state-domain";
+// One spelling of the deep link, shared with the KPI card that writes the same
+// one - see the module's own note for the staff/client split and the null case.
+import { contentStatusHref } from "@/lib/content-status-links";
 import { integrationIsUsable, integrationNeedsReconnect } from "@/lib/integration-status";
 import { platformLabel } from "@/lib/integrations/platforms";
 import type { Asset, ClientIntegration, Job } from "@/lib/types";
@@ -31,7 +34,7 @@ const STATUS_COLOR: Record<Asset["status"], string> = {
 };
 
 /** A status Firestore holds and the union doesn't still gets a bar, in slate. */
-const UNKNOWN_STATUS_COLOR = "#9c9ca3";
+const UNKNOWN_STATUS_COLOR = "var(--muted)";
 
 /**
  * The counter tiles, on their own so a caller can place them somewhere the rest
@@ -89,10 +92,12 @@ export function ClientAnalyticsStats({
   viewerIsClient: boolean;
 }) {
   // THE FOUR TILES COUNT THIS CLIENT'S CONTENT, so they count only states this
-  // client's content can be in. "Deliverables" was `assets.length` over the
-  // dashboard's library projection, which keeps drafts by design — so the tile
-  // published a count of the unapproved work their team was holding, as the one
-  // number a client's dashboard opens with.
+  // client's content can be in per `client-state-domain`'s "performance" surface
+  // — which now admits every status a client's calendar does, drafts included
+  // (see `isClientCalendarStatus`'s docstring for the reversal). "Deliverables"
+  // is `assets.length` over the dashboard's library projection, which has always
+  // kept drafts by design ("pending work is reviewable"), so the tile's count
+  // and the library's own set now agree again.
   //
   // NARROWED HERE, not at the page that feeds it. `clients/[id]/page.tsx` builds
   // one asset set and hands it to two different components — this counter row,
@@ -165,12 +170,13 @@ export function ClientAnalytics({
   const staleChannels = integrations.filter((i) => integrationNeedsReconnect(i));
 
   // Content-by-status breakdown, over the states this client's content can
-  // actually be in. It used to be built straight off the incoming set, which for
-  // a client is the library projection — drafts included — so the chart drew a
-  // Draft row WITH ITS COUNT on the one tab that summarises everything, beside a
-  // Workspace and a calendar that both hide drafts on purpose (A4). Same helper
-  // as the tiles, so the bars and the totals above them cannot disagree about
-  // what counts; it also drops a status the union has never heard of, which
+  // actually be in per `client-state-domain`'s "performance" surface. That now
+  // agrees with the incoming set for a client too — the library projection keeps
+  // drafts, and so does the calendar and this chart, by the same reversed
+  // decision (see `isClientCalendarStatus`'s docstring). The Workspace archive is
+  // the one surface that still withholds "Draft" from a client. Same helper as
+  // the tiles, so the bars and the totals above them cannot disagree about what
+  // counts; it also drops a status the union has never heard of, which
   // `assetStatusLabel` would otherwise render as its raw stored value.
   const charted = assetsInClientState("performance", assets, viewerIsClient);
   const byStatus = new Map<string, number>();
@@ -179,7 +185,7 @@ export function ClientAnalytics({
   const maxCount = Math.max(1, ...statusRows.map(([, n]) => n));
 
   return (
-    <div className="space-y-6">
+    <div className="@container space-y-6">
       {!hideStats && (
         <ClientAnalyticsStats
           assets={assets}
@@ -193,10 +199,21 @@ export function ClientAnalytics({
         />
       )}
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      {/* `@container`-keyed, same reason as the Home widgets: `lg:` measured the
+          window, not the column the 288px rail leaves behind, so these two
+          charts halved themselves at a width where neither fit. */}
+      <div className="grid gap-6 @4xl:grid-cols-2">
         {/* Content by status */}
         <Card>
-          <CardTitle className="mb-4">Content by status</CardTitle>
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <CardTitle className="flex min-w-0 items-center gap-2">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+                <Icon name="ChartColumn" className="h-3.5 w-3.5 text-neon" />
+              </span>
+              <span className="min-w-0 truncate">Content by status</span>
+            </CardTitle>
+            <span className="shrink-0 font-mono text-xs text-muted-2">{charted.length} total</span>
+          </div>
           {statusRows.length === 0 ? (
             <EmptyState
               icon={<Icon name="FolderOpen" className="h-6 w-6" />}
@@ -204,23 +221,52 @@ export function ClientAnalytics({
               description="Deliverables produced by your agents will be summarized here."
             />
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-1.5">
               {statusRows.map(([status, count]) => {
                 const color = STATUS_COLOR[status as Asset["status"]] ?? UNKNOWN_STATUS_COLOR;
-                return (
-                  <li key={status}>
-                    <div className="mb-1 flex items-center justify-between text-xs">
-                      <span className="font-medium text-foreground">
+                const href = contentStatusHref(status, clientId, viewerIsClient);
+                const body = (
+                  <>
+                    <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate font-medium text-foreground">
                         {assetStatusLabel(status, viewerIsClient)}
                       </span>
-                      <span className="text-muted-2">{count}</span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {/* A count is a number: sans + tabular, not a synthesised mono bold
+                            (globals.css §5, review wave 2026-09). */}
+                        <span className="stat-number text-sm font-medium text-foreground">
+                          {count}
+                        </span>
+                        {href && (
+                          <Icon
+                            name="ArrowRight"
+                            className="h-3 w-3 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100"
+                          />
+                        )}
+                      </span>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-sm bg-surface-2">
+                    <div className="h-2.5 overflow-hidden rounded-sm bg-surface-2">
                       <div
                         className="h-full rounded-sm"
                         style={{ width: `${(count / maxCount) * 100}%`, background: color }}
                       />
                     </div>
+                  </>
+                );
+                // A bar with nowhere to go stays a bar. Only the linked ones get
+                // the group-hover arrow and the pointer.
+                return (
+                  <li key={status}>
+                    {href ? (
+                      <Link
+                        href={href}
+                        className="group block rounded-md border border-transparent px-2 py-1.5 transition-colors hover:border-neon/30 hover:bg-surface-2"
+                      >
+                        {body}
+                      </Link>
+                    ) : (
+                      <div className="px-2 py-1.5">{body}</div>
+                    )}
                   </li>
                 );
               })}
@@ -244,7 +290,7 @@ export function ClientAnalytics({
                 </p>
               )}
             </div>
-            <Link href={`/clients/${clientId}/settings?tab=channels`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
+            <Link href={`/clients/${clientId}/settings?tab=settings`} className="text-xs text-muted underline-offset-2 hover:text-foreground hover:underline">
               Manage
             </Link>
           </div>
@@ -261,7 +307,7 @@ export function ClientAnalytics({
                   key={i.platform}
                   className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{platformLabel(i.platform)}</p>
                     {i.accountName && <p className="truncate text-xs text-muted-2">{i.accountName}</p>}
                   </div>
@@ -269,7 +315,7 @@ export function ClientAnalytics({
                     // Same treatment Settings already gives a dead token, plus the
                     // route to fix it - the health truth existed, the dashboard
                     // just refused to show it.
-                    <Link href={`/clients/${clientId}/settings?tab=channels`} className="shrink-0">
+                    <Link href={`/clients/${clientId}/settings?tab=settings`} className="shrink-0">
                       <Badge tone="warning" className="hover:border-warning/60">
                         <Icon name="TriangleAlert" className="h-3 w-3" />
                         Reconnect needed →

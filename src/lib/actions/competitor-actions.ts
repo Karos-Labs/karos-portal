@@ -9,13 +9,11 @@ import {
   listClientCompetitors,
   replaceReportCompetitors,
   updateClientCompetitor,
-  getClientContextDocByTier,
-  upsertClientContextDoc,
 } from "@/lib/data";
 import { competitorBrandKeys, parseCompetitorInput } from "@/lib/competitor-input";
-import type { ClientCompetitor } from "@/lib/types";
 import { requireStaff, requireClientAccess, logActivity } from "./_shared";
-import { MODELS } from "@/lib/constants";
+import { CREDIT_COSTS } from "@/lib/credits";
+import { withClientModelCharge } from "@/lib/client-model-charge";
 import { logger } from "@/services/logger";
 
 import { SYSTEM_AI_ACTOR_NAME } from "@/lib/activity-actors";
@@ -83,6 +81,51 @@ async function upsertManualCompetitor(
   };
 }
 
+/**
+ * Best-effort website lookup for a manually-added competitor that has no URL —
+ * covers the client-facing add path, which (unlike the staff path below) never
+ * triggers full AI re-analysis. A single small model call so the row still
+ * gets its favicon and a clickable site automatically when the company is
+ * recognized; silently returns undefined otherwise (initials chip, no link).
+ * Client-billed like any other client-triggered model call — see the call
+ * site, which prices and refunds it through `withClientModelCharge`.
+ */
+async function resolveCompetitorWebsite(clientId: string, company: string): Promise<string | undefined> {
+  try {
+    const { generateObject } = await import("ai");
+    const { aiFor, usageFor } = await import("@/lib/ai/provider");
+    const { z } = await import("zod");
+
+    const schema = z.object({
+      url: z.string().optional().describe(
+        "The company's primary website domain, e.g. 'example.com'. Omit if you don't " +
+        "recognize this company or it has no website — never guess.",
+      ),
+    });
+
+    const usageMeta = {
+      clientId, agentId: null, agentName: "Competitor URL Lookup",
+      ...usageFor("competitor.analysis"), operation: "competitor_url_lookup",
+    };
+    const { object, usage } = await generateObject({
+      model: aiFor("competitor.analysis").model,
+      schema,
+      system: "You identify company websites for a competitor-tracking UI. Return a bare domain only — no protocol, no path.",
+      prompt: `What is the primary website domain for the company "${company}"?`,
+      maxOutputTokens: 200,
+    });
+
+    logger.logUsage({
+      ...usageMeta,
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+    });
+
+    return object.url?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Core AI competitor analysis helper — not exported. */
 async function _analyzeCompetitors(clientId: string): Promise<void> {
   const [client, competitors] = await Promise.all([
@@ -92,7 +135,7 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
   if (!client || competitors.length === 0) return;
 
   const { generateObject } = await import("ai");
-  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { aiFor, usageFor } = await import("@/lib/ai/provider");
   const { z } = await import("zod");
 
   const schema = z.object({
@@ -133,13 +176,13 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
 
   const competitorUsageMeta = {
     clientId, agentId: null, agentName: "Competitor Analysis",
-    modelName: MODELS.SONNET, operation: "competitor_analysis",
+    ...usageFor("competitor.analysis"), operation: "competitor_analysis",
   };
   let object: zType.infer<typeof schema>;
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ object, usage } = await generateObject({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("competitor.analysis").model,
       schema,
       system:
         "You are a competitive intelligence analyst producing data for a compact UI dashboard table. " +
@@ -180,104 +223,18 @@ async function _analyzeCompetitors(clientId: string): Promise<void> {
   );
 }
 
-/** Manually add a competitor to a client's tracker. */
-export async function addCompetitorAction(
-  clientId: string,
-  input: {
-    company: string;
-    url?: string;
-    founded?: string;
-    marketTier: ClientCompetitor["marketTier"];
-    minInvestment?: string;
-    overlap: ClientCompetitor["overlap"];
-    positioning?: string;
-    scale?: string;
-    keyStrengths?: string[];
-    keyWeaknesses?: string[];
-    threatLevel?: ClientCompetitor["threatLevel"];
-  },
-): Promise<void> {
-  await requireStaff();
-
-  const now = Date.now();
-  await createClientCompetitor({
-    clientId,
-    company: input.company,
-    url: input.url,
-    founded: input.founded,
-    marketTier: input.marketTier,
-    minInvestment: input.minInvestment,
-    overlap: input.overlap,
-    deepDive: false,
-    positioning: input.positioning,
-    scale: input.scale,
-    keyStrengths: input.keyStrengths ?? [],
-    keyWeaknesses: input.keyWeaknesses ?? [],
-    threatLevel: input.threatLevel,
-    source: "manual",
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  try {
-    // Target the internal doc specifically — this is analyst-grade data, not client-visible.
-    const existingDoc = await getClientContextDocByTier(clientId, "competitor-analysis", "internal");
-    if (existingDoc) {
-      const today = new Date().toISOString().slice(0, 10);
-      const signal = [
-        "",
-        "---",
-        "",
-        `## Manually Added Competitor - ${today}`,
-        `- **Company:** ${input.company}`,
-        ...(input.url ? [`- **Website:** ${input.url}`] : []),
-        `- **Market Tier:** ${input.marketTier}`,
-        ...(input.threatLevel ? [`- **Threat Level:** ${input.threatLevel}`] : []),
-        `- **Overlap:** ${input.overlap}`,
-        ...(input.positioning ? [`- **Positioning:** ${input.positioning}`] : []),
-        ...(input.keyStrengths?.length ? [`- **Key Strengths:** ${input.keyStrengths.join(", ")}`] : []),
-        ...(input.keyWeaknesses?.length ? [`- **Key Weaknesses:** ${input.keyWeaknesses.join(", ")}`] : []),
-      ].join("\n");
-
-      await upsertClientContextDoc({
-        clientId,
-        docType: "competitor-analysis",
-        tier: "internal",
-        content: existingDoc.content + signal,
-        version: (existingDoc.version ?? 1) + 1,
-        sources: existingDoc.sources,
-        createdAt: existingDoc.createdAt,
-        updatedAt: now,
-      });
-    }
-  } catch {
-    // Non-fatal: competitor creation already succeeded
-  }
-
-  revalidatePath(`/clients/${clientId}`);
-}
-
-/** Remove a competitor from the tracker (staff back office — any client). */
-export async function deleteCompetitorAction(id: string): Promise<void> {
-  await requireStaff();
-  const competitor = await getClientCompetitor(id);
-  await deleteClientCompetitor(id);
-  if (competitor?.clientId) revalidatePath(`/clients/${competitor.clientId}`);
-  revalidatePath("/clients");
-}
-
 /**
  * Stop tracking a competitor from the dashboard widget — accessible to staff and
  * the client's own CLIENT_USER. Re-fetches the competitor server-side and verifies
  * it actually belongs to `clientId` (mirrors requireTaskAccess) so a CLIENT_USER
  * can't delete another client's competitor by pairing a foreign id with their own
  * clientId; the same error is thrown whether the id is missing or belongs to
- * someone else, so foreign ids aren't leaked. A non-staff client may only remove
- * their own manually-added ("manual") competitors — staff-curated/report-imported
- * rows carry analyst work (deepDive, keyStrengths, etc.) and are only removable via
- * the staff-only deleteCompetitorAction above. Removing a row is sufficient to
- * trigger the dashboard's backfill — the tracked-list view is recomputed from
- * whatever remains, so the next highest-priority auto-seeded rival fills the slot.
+ * someone else, so foreign ids aren't leaked. Any tracked row — manual or
+ * report/staff-seeded — is removable by the client, not just their own manual
+ * adds: it's their tracker. Removing a row is sufficient to trigger the
+ * dashboard's backfill — the tracked-list view is recomputed from whatever
+ * remains, so the next highest-priority auto-seeded rival fills the slot
+ * (report rows also regenerate on the next intel run regardless).
  */
 export async function removeCompetitorAction(clientId: string, id: string): Promise<void> {
   const user = await requireClientAccess(clientId);
@@ -285,9 +242,6 @@ export async function removeCompetitorAction(clientId: string, id: string): Prom
 
   const competitor = await getClientCompetitor(id);
   if (!competitor || competitor.clientId !== clientId) throw new Error("Competitor not found");
-  if (!isStaff && competitor.source !== "manual") {
-    throw new Error("Only staff can remove report-sourced competitors");
-  }
 
   await deleteClientCompetitor(id);
 
@@ -303,43 +257,6 @@ export async function removeCompetitorAction(clientId: string, id: string): Prom
   revalidatePath(`/clients/${clientId}`);
 }
 
-/** Add a competitor by name/URL and trigger AI analysis for the full tracked list. */
-export async function addCompetitorAndAnalyzeAction(
-  clientId: string,
-  name: string,
-): Promise<void> {
-  const user = await requireStaff();
-  if (!name.trim()) throw new Error("Competitor name required");
-
-  const { company } = await upsertManualCompetitor(clientId, name);
-
-  await logActivity({
-    clientId,
-    timestamp: Date.now(),
-    type: "COMPETITOR_ADDED",
-    title: `Competitor added: ${company}`,
-    actor: user.name,
-    actorRole: "staff",
-  });
-
-  try {
-    await _analyzeCompetitors(clientId);
-    await logActivity({
-      clientId,
-      timestamp: Date.now(),
-      type: "COMPETITOR_ANALYZED",
-      title: "Competitor intelligence updated",
-      description: "AI analyzed all tracked competitors and refreshed profiles",
-      actor: SYSTEM_AI_ACTOR_NAME,
-      actorRole: "system",
-    });
-  } catch {
-    // Analysis failed; competitor name is saved, profiles will populate on next report run
-  }
-
-  revalidatePath(`/clients/${clientId}`);
-}
-
 /** Discover and fully analyze top competitors from scratch (for clients with no existing data). */
 export async function backfillCompetitorsAction(clientId: string): Promise<void> {
   await requireStaff();
@@ -347,7 +264,7 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
   if (!client) throw new Error("Client not found");
 
   const { generateObject } = await import("ai");
-  const { anthropic } = await import("@ai-sdk/anthropic");
+  const { aiFor, usageFor } = await import("@/lib/ai/provider");
   const { z } = await import("zod");
 
   const schema = z.object({
@@ -383,13 +300,13 @@ export async function backfillCompetitorsAction(clientId: string): Promise<void>
 
   const discoveryUsageMeta = {
     clientId, agentId: null, agentName: "Competitor Discovery",
-    modelName: MODELS.SONNET, operation: "competitor_analysis",
+    ...usageFor("competitor.analysis"), operation: "competitor_analysis",
   };
   let object: zType.infer<typeof schema>;
   let usage: { inputTokens?: number; outputTokens?: number };
   try {
     ({ object, usage } = await generateObject({
-      model: anthropic(MODELS.SONNET),
+      model: aiFor("competitor.analysis").model,
       schema,
       system:
         "You are a market intelligence analyst producing data for a compact UI dashboard table. " +
@@ -481,6 +398,33 @@ export async function addCompetitorByNameAction(
       });
     } catch {
       // Analysis failed; competitor is saved, profiles will populate on next report run
+    }
+  } else if (result.created && !result.url) {
+    // Client path skips full re-analysis (credits, latency) but still deserves
+    // the same automatic favicon + website every other row gets — priced and
+    // refunded like any other one-off AI tool the client presses in the
+    // portal (staff and View-as-Client sessions are never billed, per
+    // `withClientModelCharge`/`isBillableClientActor`).
+    const outcome = await withClientModelCharge(
+      {
+        user,
+        clientId,
+        amount: CREDIT_COSTS.taskAssist,
+        operation: "ai_tool",
+        reason: `Website lookup · ${company.slice(0, 60)}`,
+      },
+      async ({ refund }) => {
+        const found = await resolveCompetitorWebsite(clientId, company);
+        if (!found) {
+          await refund("Refund · no website found");
+          return undefined;
+        }
+        return found;
+      },
+    );
+    if (outcome.ok && outcome.result) {
+      await updateClientCompetitor(result.id, { url: outcome.result, updatedAt: Date.now() });
+      result.url = outcome.result;
     }
   }
 

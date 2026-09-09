@@ -14,19 +14,14 @@ import {
   updateCustomAgent,
   updatePlannedScheduledRun,
 } from "@/lib/data";
+import { listClientAgents, updateClientAgent } from "@/lib/data-client-agents";
 import type { PlannedScheduledRun } from "@/lib/types";
-import {
-  containsLabJargon,
-  defaultInstructionsFor,
-  fetchSkillFrontmatter,
-  isCustomAgentImportConfigured,
-  listCustomAgentImportCandidates,
-  type CustomAgentImportCandidate,
-} from "@/lib/agent-service/custom-agent-import";
-import { submitCustomAgentJob } from "@/lib/jobs/submit-custom";
+import { containsLabJargon } from "@/lib/agent-copy-rules";
+import { submitCustomAgentJob, type SubmitCustomAgentResult } from "@/lib/jobs/submit-custom";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { clientSafeRunError } from "@/lib/custom-agent-launch";
 import { CREDIT_COSTS, isBillableClientActor } from "@/lib/credits";
+import { isStaffCopilotActor } from "@/lib/copilot-tool-access";
 import { requireAdmin, requireClientAccess, requireStaff } from "./_shared";
 
 /* ── limits (mirror agent-service/src/schemas/task-types/custom.json) ── */
@@ -37,15 +32,6 @@ const MAX_SKILL_DIR_CHARS = 300;
 const MAX_CLIENT_BLURB_CHARS = 300; // 1–2 sentences — it is a card line, not a spec
 const MAX_SKILL_ROOTS = 8;
 const SKILL_DIR_RE = /^(?!.*\.\.)(?!.*\/\/)(products|skills|clients)\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
-
-const GROUP_APPEARANCE: Record<string, { icon: string; color: string }> = {
-  Live: { icon: "Zap", color: "#A3E635" },
-  Building: { icon: "Bot", color: "#FBBF24" },
-  Onboarding: { icon: "Search", color: "#38BDF8" },
-  Internal: { icon: "TrendingUp", color: "#F87171" },
-  Amazon: { icon: "Package", color: "#F97316" },
-  Other: { icon: "Sparkles", color: "#E879F9" },
-};
 
 function normalizeSkillDir(dir: string): string {
   return dir.trim().replace(/\/SKILL\.md$/, "").replace(/\/+$/, "");
@@ -277,6 +263,31 @@ export async function setCustomAgentEnabledAction(
 
 export async function deleteCustomAgentAction(id: string): Promise<{ error?: string }> {
   await requireAdmin();
+  // Snapshot before the delete: every umbrella/schedule lookup below keys off
+  // this agent's stable `key` or this doc's id, both gone once it's deleted.
+  const agent = await getCustomAgent(id);
+  if (agent) {
+    // Cross-client, like setCustomAgentEnabledAction's schedule pause below —
+    // neither umbrellas nor schedules are scoped to one client.
+    const [umbrellas, runs] = await Promise.all([listClientAgents(), listPlannedScheduledRuns()]);
+    // A deleted agent can never resolve again (resolveUmbrellaForAgent reads
+    // the customAgents doc first), so a bound umbrella left `live` becomes a
+    // phantom owner of its chainFamily — the calendar stays claimed while
+    // nothing can ever fill it. launch_failed is the state machine's existing
+    // "not live, error retained for staff" bucket; reusing it beats inventing
+    // a new terminal state for one cause.
+    await Promise.all(
+      umbrellas
+        .filter((u) => u.agentKey === agent.key && u.launchState !== "launch_failed")
+        .map((u) =>
+          updateClientAgent(u.id, {
+            launchState: "launch_failed",
+            launchError: "Bound custom agent was deleted.",
+          }),
+        ),
+    );
+    await pauseActiveSchedules(runs.filter((r) => r.customAgentId === id));
+  }
   await deleteCustomAgent(id);
   // Best-effort allowlist scrub; save flows also tolerate stale ids.
   try {
@@ -285,123 +296,11 @@ export async function deleteCustomAgentAction(id: string): Promise<{ error?: str
     // non-fatal — setClientCustomAgentsAction drops unknown ids on next save
   }
   revalidatePath("/agents");
+  revalidatePath("/clients");
   return {};
 }
 
 /* ─────────────────────────── import flow ────────────────────────── */
-
-export async function listCustomAgentImportCandidatesAction(): Promise<{
-  candidates?: Array<CustomAgentImportCandidate & { imported: boolean }>;
-  repoSha?: string;
-  error?: string;
-}> {
-  await requireAdmin();
-  if (!isCustomAgentImportConfigured()) {
-    return { error: "Set AGENTS_REPO_GITHUB_TOKEN to import agents from the karos-agents repo." };
-  }
-  try {
-    const [{ candidates, repoSha }, existing] = await Promise.all([
-      listCustomAgentImportCandidates(),
-      listCustomAgents(),
-    ]);
-    const importedKeys = new Set(existing.map((a) => a.key));
-    return {
-      ...(repoSha ? { repoSha } : {}),
-      candidates: candidates.map((c) => ({ ...c, imported: importedKeys.has(c.key) })),
-    };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Could not scan the agents repo." };
-  }
-}
-
-export async function importCustomAgentsAction(
-  keys: string[],
-): Promise<{ imported?: number; skipped?: number; flagged?: number; error?: string }> {
-  const user = await requireAdmin();
-  if (!isCustomAgentImportConfigured()) {
-    return { error: "Set AGENTS_REPO_GITHUB_TOKEN to import agents from the karos-agents repo." };
-  }
-  if (keys.length === 0) return { error: "Pick at least one agent to import." };
-
-  let candidates: CustomAgentImportCandidate[];
-  let repoSha: string | undefined;
-  try {
-    const scan = await listCustomAgentImportCandidates();
-    candidates = scan.candidates;
-    repoSha = scan.repoSha;
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Could not scan the agents repo." };
-  }
-  const byKey = new Map(candidates.map((c) => [c.key, c]));
-
-  let imported = 0;
-  let skipped = 0;
-  let flagged = 0;
-  for (const key of keys) {
-    const candidate = byKey.get(key);
-    if (!candidate) {
-      skipped++;
-      continue;
-    }
-    // The catalog is hand-maintained — never trust a path from it further than
-    // one we'd accept from the editor form.
-    if (
-      !SKILL_DIR_RE.test(candidate.entrySkillDir) ||
-      candidate.entrySkillDir.length > MAX_SKILL_DIR_CHARS ||
-      candidate.key.length > MAX_KEY_CHARS
-    ) {
-      skipped++;
-      continue;
-    }
-    if (await getCustomAgentByKey(key)) {
-      skipped++; // already imported — edit the existing agent instead of overwriting
-      continue;
-    }
-    // SKILL.md frontmatter gives the richest description; the catalog is the fallback.
-    const frontmatter = await fetchSkillFrontmatter(candidate.entrySkillDir);
-    const appearance = GROUP_APPEARANCE[candidate.group] ?? GROUP_APPEARANCE.Other;
-    const now = Date.now();
-    const description = (frontmatter.description || candidate.description).slice(0, 600);
-    // A manifest blurb is NEVER promoted to the client-facing one, however clean
-    // it looks. LAB_JARGON_RE is allow-by-default — five patterns cannot decide
-    // whether prose was written for a client, and the strings this finding was
-    // raised over ("parameterized clone of the proven reference engine",
-    // "pixel-verifiable and gated") sail through it. Promoting on a clean scan
-    // would also clear the "No client blurb" badge, so nobody would ever be
-    // prompted to rewrite them. Every import lands flagged; an admin writes the
-    // blurb in the editor, where the jargon guard does apply to what they type.
-    flagged++;
-    await createCustomAgent({
-      key: candidate.key,
-      name: candidate.name.slice(0, MAX_NAME_CHARS),
-      description,
-      clientBlurb: null,
-      icon: appearance.icon,
-      color: appearance.color,
-      entrySkillDir: candidate.entrySkillDir,
-      skillRoots: [],
-      includeClientSkills: true,
-      instructions: defaultInstructionsFor(candidate, frontmatter.description),
-      creditCost: null,
-      // Blocked/unreviewed skills import disabled so nobody fires them by accident;
-      // an admin flips the switch after reviewing the blocked_reason.
-      enabled: candidate.status === "ready",
-      source: {
-        path: candidate.entrySkillDir,
-        status: candidate.status,
-        ...(repoSha ? { repoSha } : {}),
-      },
-      createdBy: user.uid,
-      createdAt: now,
-      updatedAt: now,
-    });
-    imported++;
-  }
-  revalidatePath("/agents");
-  return { imported, skipped, flagged };
-}
-
-/* ───────────────────── per-client agent access ──────────────────── */
 
 export async function setClientCustomAgentsAction(
   clientId: string,
@@ -444,8 +343,32 @@ export async function runCustomAgentAction(input: {
   contextItemIds?: string[];
   /** "How many drafts?"-style batch-size controls (e.g. the X agent's 5/10/21). Clamped same as a scheduled fire. */
   chargeMultiplier?: number;
-}): Promise<{ jobId?: string; error?: string }> {
+  /**
+   * The brief's field values, for the few fields the server needs as data and
+   * not as prose — today the LinkedIn writer's "Post as". Untrusted: every
+   * reader validates against the client's own records. See
+   * SubmitCustomAgentInput.briefValues.
+   */
+  briefValues?: Record<string, string>;
+  /**
+   * T-B9 ("generate now, publish on date X"): a target publish date for this
+   * run's deliverable, epoch millis. STAFF-ONLY — `createPlannedRunAction`
+   * (schedule the GENERATION itself) is already staff-only, and this is the
+   * same trust tier applied to the honest alternative (run now, schedule the
+   * result), not a looser one. A client session passing this gets a clear
+   * refusal rather than the field being silently dropped.
+   */
+  requestedScheduledAt?: number;
+}): Promise<SubmitCustomAgentResult> {
   const user = await requireClientAccess(input.clientId);
+  if (input.requestedScheduledAt != null) {
+    if (!isStaffCopilotActor(user)) {
+      return { error: "Scheduling a publish date for a fresh run is a staff action." };
+    }
+    if (!Number.isFinite(input.requestedScheduledAt) || input.requestedScheduledAt <= Date.now()) {
+      return { error: "Pick a publish date in the future." };
+    }
+  }
   // §2 guard rail: an agent owned by a client-agent umbrella is not the
   // client's to run until that umbrella is live. Their surface for it is the
   // launch card, and a run fired here would charge for an agent that has no

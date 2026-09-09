@@ -16,6 +16,7 @@ import {
   statusLabel,
 } from "@/lib/action-items";
 import { ACTION_ITEM_STATUSES } from "@/lib/constants";
+import { syncActionItemAssignmentToJira } from "@/lib/integrations/jira";
 import type { ActionItem, ActionItemComment, ActionItemStatus, AppUser } from "@/lib/types";
 import { requireStaff } from "./_shared";
 
@@ -80,8 +81,9 @@ export async function reassignActionItemAction(
   if ((item.assigneeUserId ?? null) === assigneeUserId) return;
 
   let assignee: { userId: string; name: string } | null = null;
+  let target: AppUser | null = null;
   if (assigneeUserId) {
-    const target = await getUser(assigneeUserId);
+    target = await getUser(assigneeUserId);
     if (!target || target.disabled) throw new Error("Target user not found");
     assignee = { userId: assigneeUserId, name: target.name ?? target.email };
   }
@@ -91,18 +93,32 @@ export async function reassignActionItemAction(
       ? `Reassigned from ${item.assigneeName} to ${assignee.name} by ${actor.name}`
       : `Assigned to ${assignee.name} by ${actor.name}`
     : `Unassigned by ${actor.name}`;
+  const reassignedEntry = historyEntry("reassigned", detail, { id: actor.uid, name: actor.name });
 
   await updateActionItem(id, {
     assigneeUserId: assignee?.userId ?? null,
     assigneeName: assignee?.name ?? null,
     updatedAt: Date.now(),
-    history: [...item.history, historyEntry("reassigned", detail, { id: actor.uid, name: actor.name })],
+    history: [...item.history, reassignedEntry],
   });
 
   // Keep the source meeting's owner arrays and the notification bell in step. Non-fatal.
   try {
     const t = await getTranscript(item.transcriptId);
     if (t) await mirrorAssigneeToTranscript(t, item.sourceIndex, assignee);
+    if (assignee && target) {
+      const jira = await syncActionItemAssignmentToJira(item, assignee.userId, target.email);
+      if (jira) {
+        await updateActionItem(id, {
+          ...jira,
+          history: [
+            ...item.history,
+            reassignedEntry,
+            historyEntry("jira_linked", `Linked to Jira issue ${jira.jiraIssueKey}`, { id: "system", name: "Jira sync" }),
+          ],
+        });
+      }
+    }
   } catch { /* Non-fatal */ }
 
   revalidateFor(item);

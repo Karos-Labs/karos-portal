@@ -61,25 +61,94 @@ export function intakeRowHref(pageHref: string, rowId: string): string {
 /**
  * The archive a reader of an intake page can actually reach.
  *
- * `?tab=archive` is read only by ProgressView, and TasksBody mounts
- * ProgressView only when a client is IN SCOPE. All three intake pages are
- * staff-reachable, and all three hard-coded the flat `/tasks?tab=archive` — so
- * a staff viewer fell through to the cross-client branch and got a bare board
- * under "Every client's board in one place": no archive, no tabs, and no way to
- * reach the archive of the client whose page the link was on (#90). A client's
- * own `/tasks` IS their scope, so their link was right and stays unchanged.
+ * THE ARCHIVE IS A CALENDAR VIEW (portal feedback round 2, 2026-09): "Archive
+ * does not need to be in settings, it's in the calendar." It was Account
+ * Center's `?tab=archive` until this pass, and the Workspace board's own
+ * `/tasks?tab=archive` before that — one list that has now outlived two homes,
+ * which is the whole reason every caller asks this function instead of spelling
+ * a URL.
  *
- * The label moves with the destination. "your archive" is client-voiced copy
- * and reads as the READER's archive; pointed at one client's workspace it would
- * be telling a staff member that this client's archive is theirs.
+ * ONE VIEW, TWO ROUTES TO IT, split on the reader rather than on the list: the
+ * flat `/calendar` scopes itself to the viewer's own client, so it is a
+ * client's own calendar and the staff cross-client overview — which has no one
+ * archive to show. Staff therefore get the client-scoped route. This is the
+ * same split `toClientActions` makes for every other calendar row, and a
+ * CLIENT_USER handed the scoped URL is redirected to the flat one with the
+ * query intact, so a link pasted across readers still lands.
+ *
+ * The label moves with the READER too: pointed at one client's calendar for a
+ * STAFF reader, a client-voiced noun would be telling them this client's
+ * archive is theirs.
+ *
+ * TWO LABELS, AND THAT IS THE POINT (flow audit 2026-09, R7 · GOV.UK *Write
+ * effective links*: "do not use different link text for the same destination").
+ * The destination had eight spellings across the portal — "your archive", "Open
+ * your archive", "See all activity", "Open archive" — and a reader cannot tell
+ * that four differently-worded links land in one place.
+ *
+ *  · `linkLabel` is what a CONTROL says, and it is the same three words for
+ *    every reader: "Open archive". The one vocabulary.
+ *  · `label` is the noun for a link sitting INSIDE a sentence ("it appears in
+ *    the archive"), where a bare control label will not parse. The client's
+ *    "your archive" is gone with the rest of the spellings; only the staff/
+ *    client scoping split survives, because that is about whose archive it is.
  */
 export function clientArchiveLink(args: { clientId: string; isStaff: boolean }): {
   href: string;
   label: string;
+  linkLabel: string;
 } {
-  return args.isStaff
-    ? { href: `/clients/${args.clientId}/tasks?tab=archive`, label: "this client's archive" }
-    : { href: "/tasks?tab=archive", label: "your archive" };
+  return {
+    href: args.isStaff ? `/clients/${args.clientId}/calendar?view=archive` : "/calendar?view=archive",
+    label: args.isStaff ? "this client's archive" : "the archive",
+    linkLabel: "Open archive",
+  };
+}
+
+/* ──────────── the one family → intake page table, for both sides ──────────── */
+
+/**
+ * The six lab intake families, as one union.
+ *
+ * `custom-agents.tsx`'s `IntakeKind` is an alias of this rather than a second
+ * spelling of the same six words: a seventh family has to be added here, and a
+ * table that then fails to answer for it is a type error rather than a link
+ * that silently goes nowhere.
+ */
+export type IntakeFamily = "x" | "linkedin" | "reddit" | "newsletter" | "blog" | "reputation";
+
+/** Route segment of each family's own data page under `/clients/[id]`. */
+const INTAKE_PAGE_SEGMENT: Record<IntakeFamily, string> = {
+  x: "x-agent",
+  linkedin: "linkedin-agent",
+  reddit: "reddit-agent",
+  newsletter: "newsletter-agent",
+  blog: "blog-agent",
+  reputation: "reputation-agent",
+};
+
+/**
+ * A family's intake page for one client.
+ *
+ * THE ONE TABLE (flow audit 2026-09, R16). There were two: `buildAgentSetup`
+ * spelled these six routes inline while `custom-agents.tsx` kept a private
+ * `INTAKE_ROUTE` copy for the run dialog's error-recovery link, and nothing
+ * connected them — a moved route would have fixed one and left the other
+ * pointing at a 404. Deleting the copy alone was not enough: `buildAgentSetup`
+ * runs on the SERVER (it reads Firestore to answer `ready`), so a client
+ * component that only knows the family and a client id cannot ask it, which is
+ * exactly the position the run dialog's client picker is in — the client is
+ * chosen inside the dialog, so no server render upstream can have resolved a
+ * setup object for the pair.
+ *
+ * So the table lives here, in the module that is already client-safe by design
+ * and already owns where intake surfaces point, and BOTH sides read it:
+ * `buildAgentSetup` builds `AgentSetupState.href` from it, and the dialog falls
+ * back to it when it was handed no setup object. One table, two readers, and
+ * the fallback can no longer drift from the real thing.
+ */
+export function intakePageHref(clientId: string, family: IntakeFamily): string {
+  return `/clients/${clientId}/${INTAKE_PAGE_SEGMENT[family]}`;
 }
 
 /* ────────── the one control that offers a viewer their agent ───────── */
@@ -123,33 +192,46 @@ export function clientArchiveLink(args: { clientId: string; isStaff: boolean }):
  * destination rather than keeping it over a roster: naming the roster honestly
  * is worth more than a verb the page cannot honour.
  *
- * The two roles still differ in the WORD, because they arrive differently: a
- * client reached the intake page FROM the agent's detail page, so "Back to the
- * agent" is where they came from; a staff member typically did not, so theirs
- * names the destination instead.
+ * ONE WORD FOR BOTH ROLES (parity pass 2026-09). The two labels used to split
+ * on the viewer — "All agents"/"Open the agent" for staff, "Your agents"/"Back
+ * to the agent" for a client — with the arrow flipping too, so a staff member
+ * previewing an intake page met a header control the client never gets, in a
+ * different direction. The product owner's ruling is that staff read the
+ * client's page; a staff extra has to be an ADDITIVE, marked block, and a
+ * different word on a shared control is not additive, it is a divergence. Both
+ * roles also reached this page the same way in practice — from the agent's own
+ * detail page, which is where both roles' run gesture lives — so the client's
+ * arrival word is the true one for either of them.
  *
- * ONE LIMIT ON THAT WORD, now that a fourth caller exists. "Back" is an arrival
- * claim, and it is only true of the three intake pages — a client reading the
- * empty Workspace timeline did not come from an agent's page. It cannot be
- * WRONG there, because that caller has no resolvable instance to pass and only
- * ever reaches the roster branch; but a fifth caller that CAN resolve one would
- * need this split reconsidered rather than inherited.
+ * `isStaff` is still taken rather than dropped: every caller resolves it for
+ * its own guard anyway, and keeping it in the signature is what makes a future
+ * re-split a visible edit here rather than a new ternary at six call sites.
  */
 export function intakePageAction(args: {
   clientId: string;
+  /** Unused since the parity pass — see the note above before re-reading it. */
   isStaff: boolean;
   /** This client's granted, enabled instance — see requireIntakeAgentAccess. */
   agentId: string | null;
-}): { href: string; label: string } {
+}): { href: string; label: string; back: boolean } {
+  // `back` is the ARROW'S direction, and it belongs to the LABEL rather than to
+  // the viewer: only "Back to the agent" is a return, so only it earns a back
+  // chevron. The roster branch is a forward move — a caller can reach it from a
+  // surface that was never the agent's page (the Workspace timeline's empty
+  // state does), and a left chevron there would point at a journey the reader
+  // did not make. No arrows in the labels themselves: each caller draws the
+  // icon this flag names.
   if (!args.agentId) {
-    // No resolvable instance for either role: name the roster, drop the verb.
+    // No resolvable instance: name the roster, drop the verb.
     return {
       href: `/clients/${args.clientId}/agents`,
-      label: args.isStaff ? "All agents →" : "Your agents →",
+      label: "Your agents",
+      back: false,
     };
   }
   return {
     href: `/clients/${args.clientId}/agents/${args.agentId}`,
-    label: args.isStaff ? "Open the agent →" : "Back to the agent →",
+    label: "Back to the agent",
+    back: true,
   };
 }

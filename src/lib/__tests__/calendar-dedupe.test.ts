@@ -98,13 +98,25 @@ vi.mock("@/lib/data", () => ({
   ),
 }));
 
-vi.mock("@/lib/gcs-media", () => ({
-  ALLOWED_VIDEO_MIME_TYPES: ["video/mp4"],
-  MAX_VIDEO_BYTES: 5 * 1024 * 1024 * 1024,
+/**
+ * PARTIAL, via `importOriginal` (2026-09). This was a hand-written whole-module
+ * replacement listing six exports, and the module grew a seventh
+ * (`mediaKindFor`, when the uploader started taking images) — so the route
+ * under test threw "No mediaKindFor export is defined on the mock" and three
+ * idempotency tests went red for a reason that had nothing to do with
+ * idempotency.
+ *
+ * Only the three functions that TOUCH GCS are stubbed. Everything else —
+ * the allowlists, the size ceilings, `mediaKindFor`, `maxBytesFor` — is the
+ * real implementation, which is both what keeps this mock from rotting again
+ * and what makes these tests exercise the route's actual classification rather
+ * than a fixture's idea of it.
+ */
+vi.mock("@/lib/gcs-media", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/gcs-media")>()),
   createReadSignedUrl: vi.fn(async (p: string) => `https://signed.test/${p}`),
   createUploadSignedUrl: vi.fn(async () => "https://signed.test/upload"),
   listClientMediaObjects: vi.fn(async () => []),
-  mediaObjectPath: (clientId: string, filename: string) => `clients/${clientId}/podcast-clips/${filename}`,
 }));
 
 import { POST as bulkUploadPOST } from "@/app/api/assets/bulk-upload/route";

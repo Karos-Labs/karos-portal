@@ -43,30 +43,48 @@ afterEach(() => {
   delete process.env.ANALYTICS_LIVE_INGEST;
 });
 
-describe("fetchPlatformMetrics — live gating + fallback", () => {
-  it("falls back to mock (never calls fetch) when live ingest is disabled", async () => {
+/**
+ * These four used to assert the OPPOSITE — that each unavailable case "falls
+ * back to mock" — which is exactly the behaviour that put invented impressions
+ * into `clientMarketingAnalytics` for every client with no connected channel,
+ * and from there into content generation and the client-facing strategy swarm
+ * as measurement. The dispatcher returns null now and the sync writes nothing,
+ * so the cases are kept and inverted.
+ */
+describe("fetchPlatformMetrics — an unmeasurable asset yields NO row", () => {
+  it("returns null (and never calls fetch) when live ingest is disabled", async () => {
     process.env.ANALYTICS_LIVE_INGEST = "0";
     const res = await fetchPlatformMetrics("twitter", credentials(), asset());
-    expect(res.source).toBe("mock");
+    expect(res).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to mock when the asset has no captured platformPostId", async () => {
+  it("returns null when the asset has no captured platformPostId", async () => {
     const res = await fetchPlatformMetrics("twitter", credentials(), asset({ platformPostId: null }));
-    expect(res.source).toBe("mock");
+    expect(res).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to mock when the integration has no access token", async () => {
+  it("returns null when the integration has no access token", async () => {
     const res = await fetchPlatformMetrics("twitter", credentials({}), asset());
-    expect(res.source).toBe("mock");
+    expect(res).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to mock when there's no integration for the platform at all (empty credentials)", async () => {
+  it("returns null when there's no integration for the platform at all (empty credentials)", async () => {
     const res = await fetchPlatformMetrics("twitter", {}, asset());
-    expect(res.source).toBe("mock");
+    expect(res).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never reports a source other than live", async () => {
+    // The union still admits "mock" so legacy Firestore rows stay readable, but
+    // nothing this module PRODUCES may carry it.
+    fetchMock.mockResolvedValue(
+      jsonResponse({ data: { public_metrics: { impression_count: 10, like_count: 1 } } }),
+    );
+    const res = await fetchPlatformMetrics("twitter", credentials(), asset());
+    expect(res?.source).toBe("live");
   });
 });
 
@@ -81,10 +99,11 @@ describe("fetchPlatformMetrics — live success", () => {
       }),
     );
     const res = await fetchPlatformMetrics("twitter", credentials(), asset());
-    expect(res.source).toBe("live");
-    expect(res.metrics.impressions).toBe(1000);
-    expect(res.metrics.clicks).toBe(25);
-    expect(res.metrics.engagementRate).toBeCloseTo(0.06); // (40+10+10)/1000
+    expect(res).not.toBeNull();
+    expect(res!.source).toBe("live");
+    expect(res!.metrics.impressions).toBe(1000);
+    expect(res!.metrics.clicks).toBe(25);
+    expect(res!.metrics.engagementRate).toBeCloseTo(0.06); // (40+10+10)/1000
   });
 
   it("normalizes live YouTube statistics (string counts → numbers)", async () => {
@@ -96,9 +115,10 @@ describe("fetchPlatformMetrics — live success", () => {
       credentials(),
       asset({ platformPostId: "vid123" }),
     );
-    expect(res.source).toBe("live");
-    expect(res.metrics.impressions).toBe(5000);
-    expect(res.metrics.engagementRate).toBeCloseTo(0.024); // (100+20)/5000
+    expect(res).not.toBeNull();
+    expect(res!.source).toBe("live");
+    expect(res!.metrics.impressions).toBe(5000);
+    expect(res!.metrics.engagementRate).toBeCloseTo(0.024); // (100+20)/5000
   });
 });
 

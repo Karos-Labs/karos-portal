@@ -12,6 +12,7 @@ import {
   type RunnableAgentSummary,
   type AgentSetupState,
 } from "@/components/custom-agents";
+import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import { AgentEconomicsCard } from "@/components/client-agents/agent-economics";
 import { OutputsHub } from "@/components/client-agents/outputs-hub";
 import { AGENT_HEALTH_LABEL, type AgentHealth } from "@/lib/agent-health";
@@ -42,6 +43,7 @@ export function ControlRoom({
   nextRunLabel,
   clientId,
   agent,
+  engineDispatch,
   schedule,
   setup,
   contextItems,
@@ -62,6 +64,8 @@ export function ControlRoom({
   nextRunLabel: string | null;
   clientId: string;
   agent: RunnableAgentSummary;
+  /** Forwarded to StaffAgentControls' run dialog - see `EngineDispatchMap` (T-B21). */
+  engineDispatch: EngineDispatchMap;
   schedule?: ClientAgentScheduleRow;
   setup?: AgentSetupState;
   contextItems: ContextItem[];
@@ -118,6 +122,7 @@ export function ControlRoom({
             <StaffAgentControls
               clientId={clientId}
               agent={agent}
+              engineDispatch={engineDispatch}
               {...(schedule ? { schedule } : {})}
               {...(setup ? { setup } : {})}
               contextItems={contextItems}

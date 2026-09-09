@@ -195,7 +195,7 @@ export default function SignupPage() {
           <img
             src="/brand/kairos-head-disc-dark.svg"
             alt=""
-            className="mx-auto mb-4 h-12 w-12 rounded-full shadow-[inset_0_0_0_1px_rgba(242,241,236,0.14)]"
+            className="mx-auto mb-4 h-12 w-12 rounded-full shadow-[inset_0_0_0_1px_var(--border)]"
           />
           <p className="eyebrow mb-2">Your AI CMO</p>
           <h1 className="text-2xl">Karos Labs</h1>

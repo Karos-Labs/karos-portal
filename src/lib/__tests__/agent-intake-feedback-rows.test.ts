@@ -10,6 +10,9 @@ const D = vi.hoisted(() => ({
   listClientSeats: vi.fn(),
   listJobs: vi.fn(),
   listLiDraftFeedback: vi.fn(),
+  listLiDirectionRequests: vi.fn(),
+  listLiAgentState: vi.fn(),
+  listSeatVoiceProfiles: vi.fn(),
   listRedditDraftFeedback: vi.fn(),
   listXDraftFeedback: vi.fn(),
   listXNewsUpdates: vi.fn(),
@@ -115,6 +118,9 @@ beforeEach(() => {
   D.listClientSeats.mockResolvedValue([]);
   D.listJobs.mockResolvedValue([]);
   D.listLiDraftFeedback.mockResolvedValue([]);
+  D.listLiDirectionRequests.mockResolvedValue([]);
+  D.listLiAgentState.mockResolvedValue([]);
+  D.listSeatVoiceProfiles.mockResolvedValue([]);
   D.listRedditDraftFeedback.mockResolvedValue([]);
   D.listXDraftFeedback.mockResolvedValue([]);
   D.listXNewsUpdates.mockResolvedValue([]);

@@ -34,8 +34,16 @@ vi.mock("@/lib/agent-service/x-agent-context", () => ({ hasXAgentIntake: vi.fn()
 vi.mock("@/lib/agent-service/linkedin-agent-context", () => ({ hasLinkedInAgentIntake: vi.fn() }));
 vi.mock("@/lib/agent-service/reddit-agent-context", () => ({ hasRedditAgentIntake: vi.fn() }));
 
-const { scheduleZonesByAgent, toClientAgentRows, toRunRows, toScheduleRows, toSummary } =
-  await import("@/lib/client-agent-rows");
+const {
+  rosterNextLabel,
+  rosterRowVerb,
+  rosterRunVerb,
+  scheduleZonesByAgent,
+  toClientAgentRows,
+  toRunRows,
+  toScheduleRows,
+  toSummary,
+} = await import("@/lib/client-agent-rows");
 
 /**
  * The strip's horizon, as a literal. `WEEK_STRIP_DAYS` is deliberately NOT
@@ -192,6 +200,10 @@ const CARD_ROW_KEYS = [
   "templates",
   "optionsMode",
   "runCost",
+  // Wording only: whether `runCost` is a hold that settles to real usage or the
+  // charge itself. A boolean the server resolves because the card cannot read
+  // the env var (credits rework, 2026-09) — it carries no client data.
+  "runCostIsEstimate",
   "templateGates",
   "week",
   "today",
@@ -400,6 +412,7 @@ function cardArgs(patch: Partial<CardArgs> = {}): CardArgs {
     agentSetup: {
       ca_x: {
         ready: true,
+        standUpDone: true,
         href: "/clients/c1/x-agent",
         label: "X agent data",
         clientLabel: "Your X details",
@@ -536,6 +549,7 @@ describe("toRunRows — the run-history projection", () => {
     delivered: true,
     failed: true,
     cancelled: true,
+    held: true,
   };
 
   it("for every JobStatus, a client's row is a field-wise subset of staff's", () => {
@@ -1125,6 +1139,8 @@ describe("toClientAgentRows — the card projection", () => {
     delivered: false,
     failed: false,
     cancelled: false,
+    // Terminal: the run finished, it just produced nothing. Not in flight.
+    held: false,
   };
 
   it.each(Object.keys(ACTIVE_RUN_STATUSES) as JobStatus[])(
@@ -1469,15 +1485,26 @@ describe("toClientAgentRows — the card projection", () => {
 
   /* ───────────────── A5: the cost split ───────────────── */
 
-  it("quotes no price to a viewer who never pays, and no balance either", async () => {
+  it("quotes no launch price and no balance to a viewer who never pays", async () => {
     const fresh = [umbrella({ launchState: "not_launched" })];
     const staffArgs = cardArgs({ umbrellas: fresh, viewerIsClient: false, viewerIsStaff: true });
     delete staffArgs.spendable;
 
     const [staffRow] = await toClientAgentRows(staffArgs);
     expect(staffRow.launchCost).toBeNull();
-    expect(staffRow.runCost).toBeNull();
     expect("availableCredits" in staffRow).toBe(false);
+    // THE RUN PRICE IS THE EXCEPTION, and it is deliberate (review wave,
+    // 2026-09). It used to be nulled here with the launch price, which left the
+    // two cards that read it (AgentDetailPanel, the live card's format rows)
+    // with no cost line for staff while LegacyAgentPanel, on the same page,
+    // printed "· billed to the client" for the same fact. Whose money it is
+    // belongs in the sentence, not in whether the number arrives — so the row
+    // carries the CLIENT's price for both readers and the components say so.
+    //
+    // The launch price stays null because nothing on the staff side renders a
+    // staff register for it: a bare figure in front of a reader who is not
+    // charged it is the thing this test is really about.
+    expect(staffRow.runCost).toBe(25);
     // …and no price can block them.
     expect(staffRow.gate.allowed).toBe(true);
 
@@ -1535,6 +1562,7 @@ describe("toClientAgentRows — the card projection", () => {
         agentSetup: {
           ca_x: {
             ready: false,
+            standUpDone: true,
             href: "/clients/c1/x-agent",
             label: "X agent data",
             clientLabel: "Your X details",
@@ -1545,7 +1573,7 @@ describe("toClientAgentRows — the card projection", () => {
     expect(rows[0].templateGates.playbook).toStrictEqual({
       allowed: false,
       code: "setup_missing",
-      reason: "Your X details are missing — this agent needs them before it can make a post.",
+      reason: "Your X details are missing. This agent needs them before it can make a post.",
     });
     expect(rows[0].setupLabel).toBe("Your X details");
     // The operator's name for that page stays server-side.
@@ -1593,5 +1621,139 @@ describe("toClientAgentRows — the card projection", () => {
     expect(listFeedbackMock).not.toHaveBeenCalled();
     expect(rows[0]).toMatchObject({ week: [], feedback: [], today: null, runnable: null });
     expect(rows[0].templateGates).toEqual({});
+  });
+});
+
+/* ═════════════════ the roster row's derived labels (round 6) ═════════════════ */
+
+describe("rosterRunVerb — what one run of this agent makes", () => {
+  it("says reply for Reddit, and never post", () => {
+    // The product rule, not a preference: Reddit is draft-only and a human posts
+    // the reply from their own account. A roster row that says "Create post"
+    // above it contradicts the one promise the agent is built around.
+    expect(rosterRunVerb("karos-reddit-runner Reddit Agent")).toBe("Draft reply");
+    expect(rosterRunVerb("karos-reddit-agent Reddit Agent")).toBe("Draft reply");
+  });
+
+  it("says clip for the clip makers", () => {
+    expect(rosterRunVerb("karos-interview-clips Interview Clips")).toBe("Create clip");
+    expect(rosterRunVerb("karos-branded-shorts Branded Shorts")).toBe("Create clip");
+  });
+
+  it("says post for the combined content engine, which names TikTok but makes posts", () => {
+    // The ordering hazard agent-archetype.ts documents, asked of the verb: the
+    // flagship agent's key contains "tiktok" and its deliverable is a feed post.
+    expect(rosterRunVerb("karos-instagram-tiktok-content-agent Instagram Agent")).toBe(
+      "Create post",
+    );
+  });
+
+  it("says post for an agent nobody has classified", () => {
+    expect(rosterRunVerb("karos-something-new Something New")).toBe("Create post");
+  });
+
+  it("reads an identity with no name at all rather than throwing", () => {
+    // `identity` is `"<key> <name>"` by construction, but a row is not the place
+    // to discover that an agent was stored without one.
+    expect(rosterRunVerb("karos-reddit-runner")).toBe("Draft reply");
+  });
+});
+
+describe("rosterRowVerb — the verb a roster row offers per status", () => {
+  const identity = "karos-instagram-tiktok-content-agent Instagram Agent";
+
+  it("offers the run verb for the two set-up words", () => {
+    expect(rosterRowVerb({ status: { tone: "live", label: "Live" }, identity })).toBe(
+      "Create post",
+    );
+    expect(
+      rosterRowVerb({ status: { tone: "idle", label: "Runs on request" }, identity }),
+    ).toBe("Create post");
+  });
+
+  it("offers setup, launch or credits per the reason behind an attention word", () => {
+    for (const label of ["Needs attention", "Setup needs attention"]) {
+      expect(
+        rosterRowVerb({ status: { tone: "attention", label }, identity, attentionReason: "intake" }),
+      ).toBe("Set up");
+      expect(
+        rosterRowVerb({ status: { tone: "attention", label }, identity, attentionReason: "launch" }),
+      ).toBe("Launch");
+      expect(
+        rosterRowVerb({
+          status: { tone: "attention", label },
+          identity,
+          attentionReason: "credits",
+        }),
+      ).toBe("Add credits");
+    }
+  });
+
+  it("falls back to Open when the reason behind an attention word is unknown", () => {
+    // The page behind the row is where the reason and its fix both live, so it
+    // is the honest offer. Naming a fix we cannot see sends a client to the
+    // wrong lever.
+    expect(rosterRowVerb({ status: { tone: "attention", label: "Needs attention" }, identity })).toBe(
+      "Open",
+    );
+  });
+
+  it("offers Open while an agent is being set up", () => {
+    expect(rosterRowVerb({ status: { tone: "progress", label: "Setting up" }, identity })).toBe(
+      "Open",
+    );
+  });
+
+  it("offers Request setup for a never-set-up agent", () => {
+    expect(rosterRowVerb({ status: { tone: "idle", label: "Not set up yet" }, identity })).toBe(
+      "Request setup",
+    );
+  });
+
+  it("fails safe: any idle word it does not know asks for setup rather than a run", () => {
+    // F131 shape. Offering a run the server would refuse is the failure this
+    // direction of the fallback exists to prevent; offering setup on something
+    // already set up is merely redundant.
+    expect(rosterRowVerb({ status: { tone: "idle", label: "Something new" }, identity })).toBe(
+      "Request setup",
+    );
+  });
+
+  it("offers nothing at all for a paused agent", () => {
+    // Null is what makes the row static: no verb, no chevron, no destination.
+    expect(rosterRowVerb({ status: { tone: "disabled", label: "Coming Soon" }, identity })).toBeNull();
+  });
+});
+
+describe("rosterNextLabel — the next planned day", () => {
+  const noon = (year: number, month: number, day: number) =>
+    new Date(year, month, day, 12, 0, 0).getTime();
+
+  it("names today and tomorrow in words", () => {
+    const now = noon(2026, 8, 4);
+    expect(rosterNextLabel(now + 60_000, now)).toBe("Today");
+    expect(rosterNextLabel(noon(2026, 8, 5), now)).toBe("Tomorrow");
+  });
+
+  it("names any later day as weekday then date, in that order", () => {
+    // "5 Thu" is what the en-US `{ weekday, day }` pattern renders, and it reads
+    // as a quantity. The label is composed for exactly that reason.
+    const now = noon(2026, 8, 4);
+    expect(rosterNextLabel(noon(2026, 8, 10), now)).toBe("Thu 10");
+  });
+
+  it("compares DAYS, not the 24-hour gap between two instants", () => {
+    // 11pm tonight and 1am tomorrow are two hours apart and are not the same
+    // day, which is the only distinction this label makes.
+    const lateTonight = new Date(2026, 8, 4, 23, 0, 0).getTime();
+    const earlyTomorrow = new Date(2026, 8, 5, 1, 0, 0).getTime();
+    expect(rosterNextLabel(earlyTomorrow, lateTonight)).toBe("Tomorrow");
+  });
+
+  it("says Today rather than a past day for a stamp that has already gone by", () => {
+    // A roster row only ever asks this about a future day; if a stale one
+    // arrives, the row must not print a date in the past under the word "Next".
+    const now = noon(2026, 8, 4);
+    expect(rosterNextLabel(noon(2026, 8, 1), now)).toBe("Today");
   });
 });

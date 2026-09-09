@@ -56,10 +56,24 @@ export interface ClientAgentCardRow {
    */
   optionsMode: boolean;
   /**
-   * What one manual template run costs THIS viewer — the agent's flat per-run
-   * price (Q6: templates inherit it). null for staff, whose runs are free.
+   * What one manual template run costs THE CLIENT — the per-run price the
+   * submit core will hold (Q6: templates inherit it).
+   *
+   * Carried for BOTH readers since the review wave (2026-09). It used to be
+   * null for staff on the grounds that their own runs are free, which left the
+   * two cards reading it with no cost line at all while LegacyAgentPanel, one
+   * card away on the same page, printed the staff register of the same fact.
+   * Whose money it is belongs in the SENTENCE, not in whether the number
+   * arrives. Null only where no price could be resolved.
    */
   runCost: number | null;
+  /**
+   * Whether `runCost` is a HOLD that settles to real usage (the credits rework
+   * being on for this deployment) or the exact charge. Wording only — the cards
+   * cannot read the env var themselves, so the server tells them. See
+   * `RunnableAgentSummary.priceIsEstimate`.
+   */
+  runCostIsEstimate?: boolean;
   /**
    * Per template key: the §7.1 run gate, evaluated server-side with the same
    * pure function the action runs, so a row can only ever offer a press the

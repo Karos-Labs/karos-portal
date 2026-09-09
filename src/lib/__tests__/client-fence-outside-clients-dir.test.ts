@@ -107,10 +107,15 @@ beforeEach(() => {
 
 /* ───────────────────────── tasks/generate-swarm ───────────────────────── */
 
-describe("GET /api/tasks/generate-swarm", () => {
+describe("POST /api/tasks/generate-swarm", () => {
   async function call() {
-    const { GET } = await import("@/app/api/tasks/generate-swarm/route");
-    return GET(new Request("https://portal.test/api/tasks/generate-swarm?clientId=c1"));
+    const { POST } = await import("@/app/api/tasks/generate-swarm/route");
+    return POST(
+      new Request("https://portal.test/api/tasks/generate-swarm", {
+        method: "POST",
+        body: JSON.stringify({ clientId: "c1" }),
+      }),
+    );
   }
 
   it("refuses an unassigned employee", async () => {

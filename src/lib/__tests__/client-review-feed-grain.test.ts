@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { NotificationBell, ReviewSummaryRow } from "@/components/notification-bell";
+import { NotificationBell } from "@/components/notification-bell";
 import { visibleActionItems,
   actionItemKey,
   reviewFeedRows,
@@ -90,14 +90,6 @@ function renderBell(opts: { viewerIsClient: boolean; jobs: AgentReviewNotificati
   );
 }
 
-/**
- * The words a reader sees. Tags go first, then HTML entities — React escapes an
- * apostrophe to `&#x27;`, whose digits would otherwise answer "is there a number
- * in this row" for it.
- */
-function visibleText(markup: string): string {
-  return markup.replace(/<[^>]*>/g, "").replace(/&[#0-9a-zA-Z]+;/g, "");
-}
 
 /** Every `<NotificationBell …/>` element in a file, whitespace-normalised. */
 function bellMounts(source: string): string[] {
@@ -116,15 +108,22 @@ function jsxPropValue(mount: string, name: string): string | null {
   return (m[1] ?? m[2] ?? "true").trim();
 }
 
-describe("a client's review feed renders one row per batch, whatever the batch", () => {
-  it("collapses a whole deployed sweep to a single stampless row", () => {
+describe("a client's review feed renders no rows at all, whatever the batch", () => {
+  // round 6: the collapse became a removal. One stampless summary row answered
+  // the batch tell (#118) and left an inert row behind — it named work, carried
+  // no count and led nowhere, because nothing a client can open lists a draft.
+  // Albert's ruling is that every notification row must lead somewhere, so the
+  // fact stays on Home's attention card ("N deliverables in review"), where the
+  // count and the rows can sit together, and the bell stops carrying it.
+  //
+  // The questions below are unchanged in SHAPE: they still hold at every batch
+  // size and on both sides of the payload bound data.ts keeps, so neither end of
+  // the comparison is a literal and neither can rot.
+  it("renders nothing for a whole deployed sweep", () => {
     const batch = deployedBatchSize();
     expect(batch, "a sweep of one makes this test vacuous").toBeGreaterThan(1);
 
-    const rows = reviewFeedRows(sweep(batch), { viewerIsClient: true });
-    // One row — and it holds no job, so there is no per-item stamp for it to
-    // print. "No timestamps" is structural here rather than a rendering habit.
-    expect(rows).toEqual([{ kind: "summary" }]);
+    expect(reviewFeedRows(sweep(batch), { viewerIsClient: true })).toEqual([]);
   });
 
   it("holds on both sides of the payload cap, so the cap decides nothing", () => {
@@ -134,9 +133,8 @@ describe("a client's review feed renders one row per batch, whatever the batch",
       expect(
         reviewFeedRows(sweep(n), { viewerIsClient: true }),
         `${n} jobs in review`,
-      ).toHaveLength(1);
+      ).toHaveLength(0);
     }
-    // …and an empty queue is no row at all, or the bell would ring over nothing.
     expect(reviewFeedRows([], { viewerIsClient: true })).toHaveLength(0);
   });
 
@@ -149,29 +147,19 @@ describe("a client's review feed renders one row per batch, whatever the batch",
     expect(rows.map((r) => r.kind)).toEqual(Array(batch).fill("job"));
   });
 
-  it("moves the badge on every page by one, not by a fortnight", () => {
+  it("does not move the badge on every page at all, let alone by a fortnight", () => {
     // The badge is chrome: it is on screen before anything is opened, so a
-    // number that tracks the batch publishes the batch by itself.
+    // number that tracks the batch publishes the batch by itself. round 6: with
+    // no client row to count, a sweep moves a client's badge by zero and the
+    // bell shows no badge at all.
     const batch = deployedBatchSize();
     expect(renderBell({ viewerIsClient: true, jobs: sweep(batch) })).toContain(
-      'aria-label="Notifications (1 unread)"',
+      'aria-label="Notifications"',
     );
     expect(renderBell({ viewerIsClient: false, jobs: sweep(batch) })).toContain(
       `aria-label="Notifications (${batch} unread)"`,
     );
     expect(renderBell({ viewerIsClient: true, jobs: [] })).toContain('aria-label="Notifications"');
-  });
-
-  it("says nothing a client could date, count or click", () => {
-    const markup = renderToStaticMarkup(createElement(ReviewSummaryRow));
-    // No number: the dashboard one screen over already prints one ("N
-    // deliverables in review") and it counts a DIFFERENT set — deliverables in
-    // `draft`, not jobs in `review`. Two answers to one question was half of
-    // #118; a second, differently-derived count here would restore it.
-    expect(visibleText(markup)).not.toMatch(/\d/);
-    // No destination: nothing a client can open lists a draft, which is why the
-    // dashboard's identical row is not a link either.
-    expect(markup).not.toContain("<a");
   });
 
   it("is reached by every bell the client shell mounts", () => {
@@ -323,24 +311,33 @@ describe("a dismissal reaches the list, not only the count", () => {
  * THE FOOTER RULE HAD NO ASSERTION AT ALL.
  *
  * `showWorkspaceLink = taskAlerts.length > 0 || (reviewRows.length > 0 && !viewerIsClient)`
- * is the mechanical form of the comment above it: for a CLIENT the drafts those
- * review rows stand for are provably not on any screen they can open, so the
- * footer must not offer a destination for them. Dropping `&& !viewerIsClient`
- * restores "View workspace →" under a client's summary row — the dead end the
- * comment claims to close — and nothing in the diff noticed.
+ * was the mechanical form of the comment above it: for a CLIENT the drafts
+ * those review rows stand for are provably not on any screen they can open, so
+ * the footer must not offer a destination for them. Dropping `&& !viewerIsClient`
+ * restored "View workspace →" under a client's summary row — the dead end the
+ * comment claimed to close — and nothing in the diff noticed.
+ *
+ * RENAMED AND NARROWED 2026-08: the Workspace board is gone entirely, so the
+ * task-alert half of the OR (task alerts always had a board link, for either
+ * viewer) has nothing left to link to — TaskAlertRow is a status line now, same
+ * ruling as ReviewJobRow's client branch. `showJobsLink` is what remains: a
+ * staff-only link to `/jobs`, the aggregate review queue these AgentReviewNotification
+ * rows are drawn from. The viewer gate this test exists to pin is now the WHOLE
+ * expression rather than half of an OR, but it is exactly as easy to silently
+ * drop, so it is still asked here rather than assumed.
  *
  * Read off the assignment's own right-hand side rather than the file, because
  * `viewerIsClient` appears a dozen times in this component.
  */
 describe("the bell offers a client no destination for work they cannot open", () => {
-  it("gates the workspace link on the viewer, not only on the rows", () => {
+  it("gates the jobs link on the viewer, not only on the review rows", () => {
     const bell = code(BELL);
-    const at = bell.indexOf("const showWorkspaceLink");
-    expect(at, "showWorkspaceLink is gone — the footer rule moved").toBeGreaterThan(-1);
+    const at = bell.indexOf("const showJobsLink");
+    expect(at, "showJobsLink is gone — the footer rule moved").toBeGreaterThan(-1);
     const rhs = bell.slice(bell.indexOf("=", at) + 1, bell.indexOf(";", at));
-    // The review half must be viewer-conditioned. The task half is not: a task
-    // alert IS reachable on the board, so its link is honest for either viewer.
-    expect(rhs, "a client is offered a workspace link for review rows again").toMatch(
+    // Viewer-conditioned: a client's whole review queue collapses to one
+    // stampless summary row with no /jobs to offer them.
+    expect(rhs, "a client is offered a jobs link for review rows again").toMatch(
       /reviewRows[\s\S]*!viewerIsClient|!viewerIsClient[\s\S]*reviewRows/,
     );
   });

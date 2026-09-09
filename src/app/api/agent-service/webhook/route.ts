@@ -3,6 +3,7 @@ import { after } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { assetTitleFromJobTitle } from "@/lib/job-title";
+import { generateAssetTitle } from "@/lib/asset-titles";
 import {
   claimExternalJobCompletion,
   createAsset,
@@ -12,12 +13,79 @@ import {
   getJobByExternalServiceId,
   isJobInFlight,
   listClientSeats,
+  listLiDirectionRequests,
+  markLiDirectionRequestCovered,
   updateJob,
+  upsertLiAgentState,
+  upsertBlogAgentState,
+  upsertReputationAgentState,
+  upsertNewsletterAgentState,
+  upsertNewsletterLedgerEntry,
+  upsertRedditAgentState,
   upsertSeatVoiceProfile,
 } from "@/lib/data";
 import { isXAgent } from "@/lib/agent-service/x-agent-context";
-import { isLinkedInAgent } from "@/lib/agent-service/linkedin-agent-context";
-import { isRedditAgent } from "@/lib/agent-service/reddit-agent-context";
+import {
+  isLinkedInAgent,
+  isLinkedInSetupV2,
+  isLinkedInV2Agent,
+} from "@/lib/agent-service/linkedin-agent-context";
+import {
+  LI_STATE_MAX_CHARS,
+  coveredDirectionRequests,
+  isLiCommitArtifact,
+  liStateDateFor,
+  liStateKindFor,
+} from "@/lib/agent-service/linkedin-state-capture";
+import {
+  isRedditAgent,
+  isRedditRunnerV2,
+  isRedditSetupV2,
+} from "@/lib/agent-service/reddit-agent-context";
+import { isNewsletterAgent } from "@/lib/agent-service/newsletter-agent-context";
+import { isBlogAgent } from "@/lib/agent-service/blog-agent-context";
+import { isReputationAgent } from "@/lib/agent-service/reputation-agent-context";
+import {
+  REPUTATION_STATE_MAX_CHARS,
+  type ReputationClientFile,
+  buildReputationEnvelope,
+  reputationEnvelopeHasContent,
+  reputationStateContentType,
+  reputationStateDateFor,
+  reputationStateHasContent,
+  reputationStateKindFor,
+} from "@/lib/agent-service/reputation-state-capture";
+import {
+  BLOG_STATE_MAX_CHARS,
+  type BlogClientFile,
+  blogEnvelopeHasContent,
+  blogStateContentType,
+  blogStateDateFor,
+  blogStateKindFor,
+  buildBlogEnvelope,
+} from "@/lib/agent-service/blog-state-capture";
+import {
+  NEWSLETTER_STATE_MAX_CHARS,
+  type NewsletterClientFile,
+  buildNewsletterEnvelope,
+  newsletterEnvelopeHasContent,
+  newsletterStateContentType,
+  newsletterStateDateFor,
+  newsletterIssueNumberFrom,
+  newsletterLedgerKindFor,
+  newsletterStateKindFor,
+  NEWSLETTER_LEDGER_MAX_CHARS,
+} from "@/lib/agent-service/newsletter-state-capture";
+import {
+  REDDIT_STATE_MAX_CHARS,
+  type RedditClientFile,
+  buildRedditV2Envelope,
+  isRedditRunRecordArtifact,
+  redditOutcomeFrom,
+  redditStateContentType,
+  redditStateDateFor,
+  redditStateKindFor,
+} from "@/lib/agent-service/reddit-state-capture";
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -26,7 +94,7 @@ import {
 import { agentServiceFetchHeaders } from "@/lib/agent-service/client";
 import type { AgentServiceArtifact, AgentServiceWebhookPayload } from "@/lib/agent-service/types";
 import { deliverableAssetType } from "@/lib/agent-service/deliverable-asset-type";
-import type { ExternalJobArtifact, Job, JobRunEvent, JobStatus } from "@/lib/types";
+import type { BlogAgentState, ExternalJobArtifact, Job, JobRunEvent, JobStatus, LiAgentState, NewsletterAgentState, NewsletterLedgerEntry, RedditAgentState, ReputationAgentState } from "@/lib/types";
 import { uploadBytes } from "@/lib/storage";
 import { recommendedScheduleFields } from "@/lib/scheduling";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
@@ -38,6 +106,7 @@ import {
 import { orderKeyForCreatedAt } from "@/lib/post-chain";
 import { reflowClientChain } from "@/lib/chain";
 import { refundJobCharge } from "@/lib/credit-reconcile";
+import { settleJobCharge } from "@/lib/credit-settle";
 import { applyLaunchOutcome, isLaunchTemplatesArtifact } from "@/lib/jobs/launch-outcome";
 import { getClientAgent } from "@/lib/data-client-agents";
 import { syncOptionsFromBatchAsset } from "@/lib/client-agent-slots";
@@ -47,7 +116,9 @@ import {
   syncTaskForJobOutcome,
 } from "@/lib/task-sync";
 import { notifyJobFailure } from "@/lib/job-alerts";
+import { buildStepBreakdown, buildStepBreakdownFromCheckpoints } from "@/lib/jobs/step-breakdown";
 import { logger } from "@/services/logger";
+import { logStructured } from "@/lib/telemetry/structured-log";
 
 // The re-host phase is budgeted to end well inside this (rehost-budget.ts),
 // leaving the claim and the writes after it the remainder.
@@ -106,10 +177,143 @@ const usageSchema = z.object({
     )
     .default({}),
 });
-const webhookPayloadSchema = z.object({
+/**
+ * Dynamic Agent Studio's per-step report. Present only for a dynamic run; a
+ * hardcoded agent's webhook never carries it, which is why every field is
+ * optional at the payload level rather than gated on task_type.
+ */
+const dynamicRunSchema = z.object({
+  specId: z.string().min(1),
+  specVersion: z.number(),
+  steps: z
+    .array(
+      z.object({
+        stepId: z.string().min(1),
+        type: z.enum(["ai", "code"]),
+        label: z.string().default(""),
+        status: z.enum(["done", "failed"]),
+        durationMs: z.number().default(0),
+        model: z.string().optional(),
+        error: z.string().optional(),
+        /** This step's own token/cost usage (AI steps only). */
+        usage: usageSchema.optional(),
+        /**
+         * The per-step capability grants this step actually ran with.
+         *
+         * DECLARED, not optional-by-omission: zod strips undeclared keys, so
+         * while this field was missing from the schema the runner's capability
+         * record was silently dropped before it was ever stored on the job —
+         * the audit trail the network / client-data grants promise did not
+         * survive ingestion. See docs/dynamic-agent-guardrails.md §5.
+         */
+        capabilities: z
+          .object({
+            allowNetwork: z.boolean(),
+            allowClientData: z.boolean(),
+            networkHonored: z.boolean(),
+            clientDataHonored: z.boolean(),
+          })
+          .optional(),
+      }),
+    )
+    .default([]),
+  failedStepId: z.string().optional(),
+  failedStepIndex: z.number().optional(),
+  hasPartialOutput: z.boolean().optional(),
+  /** Topic guardrails, as exercised by this run. See docs/dynamic-agent-guardrails.md. */
+  guardrail: z
+    .object({
+      forbiddenTopics: z.array(z.string()).default([]),
+      injectedStepIds: z.array(z.string()).default([]),
+      verification: z
+        .object({
+          status: z.enum(["clean", "violation", "error"]),
+          violatedTopics: z.array(z.string()).default([]),
+          evidence: z.string().optional(),
+          model: z.string().optional(),
+          durationMs: z.number().default(0),
+        })
+        .optional(),
+    })
+    .optional(),
+  /** Output de-duplication verdict. Present only when the spec opted in. */
+  dedupe: z
+    .object({
+      status: z.enum(["ok", "similar", "no_history"]),
+      comparedCount: z.number().default(0),
+      maxSimilarity: z.number().default(0),
+      threshold: z.number().default(0),
+      mostSimilarJobId: z.string().optional(),
+    })
+    .optional(),
+});
+
+/**
+ * Timeline lines for a run whose guardrails or de-duplication check fired.
+ *
+ * // UPDATED (2026-08): a topic-guardrail violation now BLOCKS the run at
+ * the source (agent-service run-dynamic-job.ts returns `outcome: "failed"`),
+ * so no asset is created and the client is refunded like any other failed
+ * run — status already reflects it. This event is still emitted regardless,
+ * so staff see WHY a run failed without opening the internal trace, and it
+ * still fires unconditionally for a de-duplication "similar" finding, which
+ * remains flag-only (a similarity signal for a human to weigh, not a
+ * correctness violation). Staff-facing: the job page is staff-only.
+ *
+ * Returns [] for the overwhelmingly common case (no dynamic run, or a run
+ * where everything was clean), so an unflagged job's timeline is byte-identical
+ * to before this existed.
+ */
+function guardrailEvents(dynamicRun: z.infer<typeof dynamicRunSchema> | undefined): JobRunEvent[] {
+  if (!dynamicRun) return [];
+  const at = Date.now();
+  const out: JobRunEvent[] = [];
+  const verification = dynamicRun.guardrail?.verification;
+  if (verification?.status === "violation") {
+    const topics = verification.violatedTopics.join(", ") || "an unnamed topic";
+    out.push({
+      at,
+      level: "error",
+      message: `Topic guardrail: this draft engages with ${topics}. Review before sending it to the client.`,
+    });
+  } else if (verification?.status === "error") {
+    out.push({
+      at,
+      level: "info",
+      message: "Topic guardrail: the verification check could not be completed for this run.",
+    });
+  }
+  if (dynamicRun.dedupe?.status === "similar") {
+    const pct = Math.round(dynamicRun.dedupe.maxSimilarity * 100);
+    out.push({
+      at,
+      level: "info",
+      message: `Repetition check: this draft is ${pct}% similar to an earlier one for this client.`,
+    });
+  }
+  return out;
+}
+
+const jobCompletedPayloadSchema = z.object({
   event: z.literal("job.completed"),
   job_id: z.string().min(1),
   status: z.enum(["done", "failed", "cancelled", "dead_letter"]),
+  /**
+   * INBOUND, so this is deliberately WIDER than what the platform can start.
+   *
+   * `newsletter_issue` is retired — it is gone from `ManagedTaskType`, from
+   * `MANAGED_PRODUCTS` and from the service's own `TASK_TYPES`, so nothing can
+   * dispatch one any more. It stays HERE because a v1 job already queued when
+   * the service was cut still has to be able to report back: this schema runs
+   * before anything else, so a rejected enum means a 400, no claim, no asset, no
+   * refund on a failure, and the service retrying a delivery that can never
+   * succeed. The run is finished either way; the only question is whether the
+   * client gets the issue they paid for.
+   *
+   * The type mirror is `WireTaskType` (lib/types.ts). Remove this member only
+   * once no v1 job can possibly still be in flight — which is a date, not a
+   * deploy.
+   */
   task_type: z.enum(["social_post", "newsletter_issue", "blog_article", "landing_page", "custom"]),
   client_id: z.string().min(1),
   metadata: z.record(z.string(), z.string()).optional(),
@@ -120,7 +324,38 @@ const webhookPayloadSchema = z.object({
   error: z.string().optional(),
   transcript_url: z.string().optional(),
   attempt: z.number().default(0),
+  dynamic_run: dynamicRunSchema.optional(),
+  /**
+   * The hardcoded custom-agent path's best-effort step-boundary signal —
+   * present only when the skill happened to checkpoint its own progress by
+   * writing files as it went. See step-breakdown.ts's
+   * buildStepBreakdownFromCheckpoints for what this becomes.
+   */
+  write_checkpoints: z.array(z.object({ path: z.string().min(1), atMs: z.number() })).optional(),
+  run_duration_ms: z.number().optional(),
 });
+
+/**
+ * Dynamic Agent Studio only: a best-effort, fire-and-forget live-progress
+ * ping (see agent-service/src/api/internal.ts's /step-progress route). Unlike
+ * job.completed, losing one of these is harmless — the next ping, or the
+ * eventual job.completed, resyncs the Portal — so this branch (below) never
+ * touches credits, artifacts, or refunds.
+ */
+const jobStepProgressPayloadSchema = z.object({
+  event: z.literal("job.step_progress"),
+  job_id: z.string().min(1),
+  status: z.literal("running"),
+  client_id: z.string().min(1),
+  current_step_id: z.string().optional(),
+  current_step_name: z.string().optional(),
+  completed_step_ids: z.array(z.string()).default([]),
+});
+
+const webhookPayloadSchema = z.discriminatedUnion("event", [
+  jobCompletedPayloadSchema,
+  jobStepProgressPayloadSchema,
+]);
 
 function extension(name: string): string {
   const i = name.lastIndexOf(".");
@@ -157,6 +392,27 @@ function mbAtMost(bytes: number): number {
 /** An exact limit. The constants are whole megabytes, so this is lossless. */
 function mbExact(bytes: number): number {
   return bytes / MB;
+}
+
+/**
+ * A state-capture leg failed and the run is being delivered anyway.
+ *
+ * Six capture legs below (newsletter, its ledger, blog, reputation, reddit,
+ * linkedin) are best-effort by design — the deliverable in front of the client
+ * is finished whether or not the NEXT run's memory was saved — and each used to
+ * swallow its error in a bare `catch {}`. That kept a broken capture pipeline
+ * indistinguishable from a quiet one in the logs: an expired artifact URL, a
+ * runner that stopped emitting the file, or a store outage all looked like
+ * "nothing to capture" until an agent visibly lost its memory a run later. One
+ * structured WARNING per failed leg, with the job and the artifact path, is what
+ * lets that be found from Cloud Logging instead of from a client's complaint.
+ */
+function warnStateCaptureFailed(leg: string, jobId: string, artifactPath: string, err: unknown): void {
+  logStructured("WARNING", `agent-service webhook: ${leg} state capture failed; delivering without it`, {
+    jobId,
+    artifactPath,
+    error: err instanceof Error ? err.message : String(err),
+  });
 }
 
 /**
@@ -204,23 +460,26 @@ export async function POST(req: NextRequest) {
   }
   const payload = parsed.data;
 
+  // `metadata`/`task_type` only exist on the job.completed variant — a
+  // job.step_progress ping never carries either, by design, so this fallback
+  // (and the log line below it) is a no-op for that event rather than a
+  // lookup it could ever satisfy.
+  const platformJobId = payload.event === "job.completed" ? payload.metadata?.platform_job_id : undefined;
+
   let job = await getJobByExternalServiceId(payload.job_id);
-  if (!job) {
+  if (!job && platformJobId && payload.event === "job.completed") {
     // Submission race: the action may not have persisted external.serviceJobId
     // yet — fall back to the platform job id echoed through metadata.
-    const platformJobId = payload.metadata?.platform_job_id;
-    if (platformJobId) {
-      const candidate = await getJob(platformJobId);
-      if (
-        candidate &&
-        candidate.clientId === payload.client_id &&
-        (!candidate.external || candidate.external.serviceJobId === payload.job_id)
-      ) {
-        job = {
-          ...candidate,
-          external: candidate.external ?? { serviceJobId: payload.job_id, taskType: payload.task_type },
-        };
-      }
+    const candidate = await getJob(platformJobId);
+    if (
+      candidate &&
+      candidate.clientId === payload.client_id &&
+      (!candidate.external || candidate.external.serviceJobId === payload.job_id)
+    ) {
+      job = {
+        ...candidate,
+        external: candidate.external ?? { serviceJobId: payload.job_id, taskType: payload.task_type },
+      };
     }
   }
   if (!job || !job.external) {
@@ -251,13 +510,32 @@ export async function POST(req: NextRequest) {
     // attempt costs one or two Firestore reads and no re-host.
     console.error(
       `[webhook] no platform job matched service job ${payload.job_id} ` +
-        `(client ${payload.client_id}, platform_job_id ${payload.metadata?.platform_job_id ?? "absent"}). ` +
+        `(client ${payload.client_id}, platform_job_id ${platformJobId ?? "absent"}). ` +
         `Delivery failed for retry.`,
     );
     return NextResponse.json(
       { error: "No matching platform job — retry delivery" },
       { status: 503 },
     );
+  }
+
+  // Dynamic Agent Studio only: a live-progress ping, handled and returned
+  // entirely separately from job.completed below. Guarded by the SAME
+  // in-flight check the advisory pre-filter uses just below (a stale/
+  // out-of-order ping against an already-terminal job is a no-op), but with
+  // none of job.completed's claim/refund/artifact/asset machinery — this
+  // event never carries usage, credits, or artifacts.
+  if (payload.event === "job.step_progress") {
+    if (!isJobInFlight(job.status)) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
+    }
+    await updateJob(job.id, {
+      currentStepId: payload.current_step_id ?? null,
+      currentStepName: payload.current_step_name ?? null,
+      completedStepIds: payload.completed_step_ids,
+      updatedAt: Date.now(),
+    });
+    return NextResponse.json({ ok: true });
   }
 
   // Advisory pre-filter — an OPTIMISATION, not a second gate. The claim below
@@ -285,7 +563,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: true, reason: "Already processed" });
   }
 
-  const status = STATUS_MAP[payload.status] ?? "failed";
+  // `let`, not `const`: the zero-deliverable branch below corrects this to
+  // "failed" once it learns the "done" run produced nothing the client can
+  // see — the value here is only what the atomic claim needs up front.
+  let status = STATUS_MAP[payload.status] ?? "failed";
+  // Mirrors the correction above onto `job.error`, which otherwise stays
+  // forced to null for any payload.status === "done" (see the final
+  // updateJob below) even when this handler decides the run actually failed.
+  let statusError: string | null = null;
 
   // Client-charged runs (custom agents fired by CLIENT_USERs) get their
   // credits back when the run dies without deliverables. This MUST happen
@@ -353,6 +638,52 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Is this a LinkedIn v2 run, whose internal state files have to be captured
+  // during the artifact phase? Resolved HERE, before the loop, because the loop
+  // is where the artifacts stream past and the customAgent read is one document.
+  // Best-effort: a failed read means state is not captured this delivery, which
+  // costs the next run its memory and must not cost this client their post.
+  let isLinkedInStateJob = false;
+  let isLinkedInSetupJob = false;
+  // Reddit v2's state matters more than most: the run's rules audit decides
+  // whether a product may be named in a subreddit, and losing it is how an
+  // account gets banned. Same one-document read as the LinkedIn resolution.
+  let isRedditStateJob = false;
+  // Newsletter v2: the issue index in this run is the numbering authority, so a
+  // lost capture means the next run re-mints a number a subscriber already saw.
+  let isNewsletterStateJob = false;
+  // Blog v2: three claims per run (post number, subject, slug) and the client's
+  // whole standing site is rebuilt from completed runs, so a lost capture is how
+  // two presses write the same article — or how the rebuild deletes posts it can
+  // no longer see a run for.
+  let isBlogStateJob = false;
+  // Reputation v2: the response ledger is the no-repeat memory, and losing it
+  // means drafting a second public reply to a review a human already answered
+  // under the client's own name.
+  let isReputationStateJob = false;
+  // The karos-carousel-runner/-setup/-manager family used to have its own state
+  // job here (`isCarouselStateJob`). It was retired in full 2026-08-29
+  // (SCRUM-377/T-B25a) — no engine equivalent was ever planned. Removed from
+  // code and the db, do not reintroduce.
+  try {
+    const producing = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
+    isLinkedInStateJob = producing ? isLinkedInV2Agent(producing.key) : false;
+    isLinkedInSetupJob = producing ? isLinkedInSetupV2(producing.key) : false;
+    isRedditStateJob = producing
+      ? isRedditRunnerV2(producing.key) || isRedditSetupV2(producing.key)
+      : false;
+    isNewsletterStateJob = producing ? isNewsletterAgent(producing.key) : false;
+    isBlogStateJob = producing ? isBlogAgent(producing.key) : false;
+    isReputationStateJob = producing ? isReputationAgent(producing.key) : false;
+  } catch {
+    isLinkedInStateJob = false;
+    isLinkedInSetupJob = false;
+    isRedditStateJob = false;
+    isNewsletterStateJob = false;
+    isBlogStateJob = false;
+    isReputationStateJob = false;
+  }
+
   // ── Artifact re-host — the longest pre-claim phase (finding #45) ──
   // This used to run AFTER the claim, which is how a run lost its deliverables:
   // the claim wrote status "review" first, then a wall-clock kill or an instance
@@ -412,6 +743,80 @@ export async function POST(req: NextRequest) {
   // fetch (x-agent-v2). Launch runs only; launch deliverables stay staff-only
   // regardless via launchDeliverable:true below.
   const voiceProfileArtifacts: { seatSlug: string; content: string }[] = [];
+  // LinkedIn v2 durable state (ledger, topic catalog, agent memory, the
+  // manager's plan, the research cache, the foundation). These are INTERNAL
+  // artifacts — a client never reads a ledger — so they are fetched for their
+  // text only and never re-hosted, never attached to an asset. Without this the
+  // v2 skills' whole between-runs memory dies with the container; see
+  // lib/agent-service/linkedin-state-capture.ts.
+  const liStateArtifacts: {
+    kind: LiAgentState["kind"];
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
+  /**
+   * The writer's `12-commit.json`, if this run produced one. Read for exactly one
+   * field — which direction requests the run says it covered — so the portal can
+   * close those rows. Held as raw text and parsed after the claim: the pre-claim
+   * phase is a budget, not a place to do work whose result a lost race discards.
+   */
+  let liCommitJson: string | null = null;
+  // Reddit v2 durable state, same rules as the LinkedIn set: internal artifacts
+  // fetched for their TEXT only, never re-hosted, never attached to an asset.
+  // A Reddit v2 run's client-facing text files, kept so the folders can be
+  // flattened into the reader's envelope after the claim. The bytes are already
+  // decoded for primaryText, so this costs no extra fetch.
+  const redditClientFiles: RedditClientFile[] = [];
+  /** The run's own outcome record, for the four-outcome distinction. */
+  let redditRunRecord: string | null = null;
+  const newsletterClientFiles: NewsletterClientFile[] = [];
+  /** A blog v2 run's client-facing five, flattened into the envelope after the claim. */
+  const blogClientFiles: BlogClientFile[] = [];
+  /** A reputation pulse's client-facing folder, flattened after the claim. */
+  const reputationClientFiles: ReputationClientFile[] = [];
+  /** Reputation v2 durable state, same rules as its four siblings. */
+  const reputationStateArtifacts: {
+    kind: ReputationAgentState["kind"];
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
+  /** Blog v2 durable state, same rules as its three siblings. */
+  const blogStateArtifacts: {
+    kind: BlogAgentState["kind"];
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
+  /**
+   * The newsletter's PER-ISSUE published research, captured for the BLOG.
+   *
+   * The only cross-product capture in this handler: every other buffer here holds
+   * something the producing agent will read back itself. These rows are read by a
+   * DIFFERENT agent, and the newsletter run that produces them has no idea the
+   * blog exists.
+   */
+  const newsletterLedgerArtifacts: {
+    kind: "issue-items" | "scan-log";
+    issueNumber: string;
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
+  const newsletterStateArtifacts: {
+    kind: NewsletterAgentState["kind"];
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
+  const redditStateArtifacts: {
+    kind: RedditAgentState["kind"];
+    account: string | null;
+    content: string;
+    contentDate: string;
+    path: string;
+  }[] = [];
   // What is LEFT of the pre-claim deadline, counted from the top of the handler.
   // Every network call below is bounded by this rather than by a fixed
   // per-artifact constant, and a non-positive value means the budget is spent:
@@ -464,7 +869,191 @@ export async function POST(req: NextRequest) {
         });
       };
 
-      if (!artifact.client_facing) {
+      // An internal artifact that is LinkedIn v2 state: fetched for its text and
+      // nothing else. It is not re-hosted, so it never gains a client-facing URL,
+      // never joins `rehosted`, and cannot become part of a deliverable — the
+      // only thing that leaves this branch is a string in `liStateArtifacts`.
+      const liPath = artifact.path ?? artifact.name;
+      const liStateKind = isLinkedInStateJob ? liStateKindFor(liPath) : null;
+      const liIsCommit = isLinkedInStateJob && isLiCommitArtifact(liPath);
+      const newsletterState = isNewsletterStateJob ? newsletterStateKindFor(liPath) : null;
+      if (!artifact.client_facing && newsletterState && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, NEWSLETTER_STATE_MAX_CHARS);
+              if (text.trim()) {
+                newsletterStateArtifacts.push({
+                  kind: newsletterState,
+                  content: text,
+                  contentDate: newsletterStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch (err) {
+          // Best-effort and not reported to the client: the issue in front of
+          // them is finished either way. The cost is the NEXT run's memory, and
+          // the events below record that for staff. Logged, not swallowed: a
+          // silent catch here made a dead state pipeline look like a quiet one.
+          warnStateCaptureFailed("newsletter", job.id, liPath, err);
+        }
+      }
+      // The two LEDGER files a newsletter run publishes FOR THE BLOG. Fetched on
+      // the newsletter's delivery because that is the only moment they exist:
+      // the run folder is destroyed with the runner, and unlike the newsletter's
+      // own state the blog cannot regenerate them — they record what another
+      // product's paid research found. Internal, so fetched for their text only
+      // and never re-hosted.
+      const ledgerKind = isNewsletterStateJob ? newsletterLedgerKindFor(liPath) : null;
+      const ledgerIssue = ledgerKind ? newsletterIssueNumberFrom(liPath) : null;
+      if (!artifact.client_facing && ledgerKind && ledgerIssue && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, NEWSLETTER_LEDGER_MAX_CHARS);
+              if (text.trim()) {
+                newsletterLedgerArtifacts.push({
+                  kind: ledgerKind,
+                  issueNumber: ledgerIssue,
+                  content: text,
+                  contentDate: newsletterStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch (err) {
+          // Best-effort. The issue in front of the client is finished either way;
+          // the cost is the BLOG's next run, and the events below record it.
+          warnStateCaptureFailed("newsletter-ledger", job.id, liPath, err);
+        }
+      }
+      const blogState = isBlogStateJob ? blogStateKindFor(liPath) : null;
+      if (!artifact.client_facing && blogState && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, BLOG_STATE_MAX_CHARS);
+              if (text.trim()) {
+                blogStateArtifacts.push({
+                  kind: blogState,
+                  content: text,
+                  contentDate: blogStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch (err) {
+          // Best-effort, same as its three siblings.
+          warnStateCaptureFailed("blog", job.id, liPath, err);
+        }
+      }
+      const reputationState = isReputationStateJob ? reputationStateKindFor(liPath) : null;
+      if (!artifact.client_facing && reputationState && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, REPUTATION_STATE_MAX_CHARS);
+              // The guard that makes whole-file replace safe for the two ledgers:
+              // an empty body would REPLACE a full response ledger with nothing,
+              // which is exactly the state that produces a duplicate public reply.
+              if (reputationStateHasContent(text)) {
+                reputationStateArtifacts.push({
+                  kind: reputationState,
+                  content: text,
+                  contentDate: reputationStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch (err) {
+          // Best-effort, same as its four siblings.
+          warnStateCaptureFailed("reputation", job.id, liPath, err);
+        }
+      }
+      const redditState = isRedditStateJob ? redditStateKindFor(liPath) : null;
+      const redditIsRunRecord = isRedditStateJob && isRedditRunRecordArtifact(liPath);
+      if (!artifact.client_facing && (redditState || redditIsRunRecord) && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, REDDIT_STATE_MAX_CHARS);
+              if (text.trim() && redditIsRunRecord && !redditRunRecord) redditRunRecord = text;
+              if (text.trim() && redditState) {
+                redditStateArtifacts.push({
+                  kind: redditState.kind,
+                  account: redditState.account,
+                  content: text,
+                  contentDate: redditStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+            }
+          }
+        } catch (err) {
+          // Best-effort, and NOT reported to the client: the delivery in front of
+          // them is a finished set of replies either way. The cost is the NEXT
+          // run's memory, which the events below record for staff.
+          warnStateCaptureFailed("reddit", job.id, liPath, err);
+        }
+      } else if (!artifact.client_facing && (liStateKind || liIsCommit) && artifact.url) {
+        try {
+          const budget = Math.min(ARTIFACT_FETCH_TIMEOUT_MS, remainingRehostMs());
+          if (budget > 0) {
+            const res = await fetch(artifact.url, {
+              headers: agentServiceFetchHeaders(artifact.url),
+              signal: AbortSignal.timeout(budget),
+            });
+            if (res.ok) {
+              const text = (await res.text()).slice(0, LI_STATE_MAX_CHARS);
+              if (text.trim() && liStateKind) {
+                liStateArtifacts.push({
+                  kind: liStateKind,
+                  content: text,
+                  contentDate: liStateDateFor(liPath, handlerStartedAt),
+                  path: liPath,
+                });
+              }
+              if (text.trim() && liIsCommit) liCommitJson = text;
+            }
+          }
+        } catch (err) {
+          // Best-effort by design, and NOT reported to the client. State that
+          // fails to capture costs the NEXT run its memory, which the events
+          // below record for staff — but the delivery in front of this client is
+          // a finished post either way, and failing it would throw that away.
+          warnStateCaptureFailed("linkedin", job.id, liPath, err);
+        }
+      } else if (!artifact.client_facing) {
         // Internal working file: never re-hosted, never on the asset, not a
         // failure. Its service URL on the job record is the intended state.
       } else if (!artifact.url) {
@@ -520,14 +1109,58 @@ export async function POST(req: NextRequest) {
               if (TEXT_EXTENSIONS.includes(ext)) {
                 const content = bytes.toString("utf8");
                 // Setup-run per-seat voice profiles (x-agent-v2): captured off
-                // the same decoded bytes, launch runs only — same rule as the
+                // the same decoded bytes, setup runs only — same rule as the
                 // templates.json capture above.
+                //
+                // OR the LinkedIn v2 SETUP agent, which is the same kind of run
+                // reached a different way. `isLaunchRun` requires a clientAgents
+                // umbrella, and LinkedIn v2 deliberately has none: adding a
+                // person is a repeatable act, and that flow allows exactly one
+                // launch per umbrella (`already_live`). Keyed to the SETUP agent
+                // and never the writer — a drafting run must not be able to
+                // overwrite the voice it drafted with.
                 const voiceProfileMatch = artifact.name
                   .split("/")
                   .pop()
                   ?.match(/^voice-profile--(.+)\.md$/i);
-                if (isLaunchRun && voiceProfileMatch) {
+                if ((isLaunchRun || isLinkedInSetupJob) && voiceProfileMatch) {
                   voiceProfileArtifacts.push({ seatSlug: voiceProfileMatch[1], content });
+                }
+                // A Reddit v2 run's per-thread folders, kept as (path, text)
+                // pairs so the envelope can be assembled after the claim: the
+                // reader is handed ONE string, and these folders are what has to
+                // become it.
+                if (isRedditStateJob) {
+                  redditClientFiles.push({ path: artifact.path ?? artifact.name, text: content });
+                }
+                // The newsletter's D7 four. Collected as (path, text) pairs so the
+                // envelope can be assembled after the claim: the two themes are
+                // built by one command so they never disagree, which only holds
+                // if they reach the reader together.
+                if (isNewsletterStateJob) {
+                  newsletterClientFiles.push({
+                    path: artifact.path ?? artifact.name,
+                    text: content,
+                  });
+                }
+                // A blog v2 run's five client files — the standalone page, the
+                // CMS fragment, the markdown, about.txt and publish-notes.txt.
+                // Same reason as the newsletter's four: the reader is handed ONE
+                // string, and a size race would give them the page instead of the
+                // fragment they actually paste.
+                if (isBlogStateJob) {
+                  blogClientFiles.push({ path: artifact.path ?? artifact.name, text: content });
+                }
+                // A reputation pulse's client folder: `01-response-drafts/`,
+                // `02-flags/` and about.txt. Collected as (path, text) pairs
+                // because the FOLDER decides which bucket a file lands in, and
+                // the size race would otherwise hand the reader one draft and
+                // drop every flag — the half with a deadline.
+                if (isReputationStateJob) {
+                  reputationClientFiles.push({
+                    path: artifact.path ?? artifact.name,
+                    text: content,
+                  });
                 }
                 // DRAFTS.md is the pinned deliverable-of-record for the drafting
                 // agents (X, LinkedIn) — prefer it deterministically over the
@@ -594,10 +1227,83 @@ export async function POST(req: NextRequest) {
   // primary text is legitimately empty (task-sync.ts, on `artifact: ""` being a
   // real renderable state), and so is a PDF-only run. What is not a delivery is a
   // run where nothing at all reached our storage.
+  // ── Reddit v2: the folders become the reader's one string ──
+  // v2 writes client/<nn>-answer/{approach-1.md,approach-2.md,about.txt}, and the
+  // reader is handed `asset.content` alone. So the folders are flattened here,
+  // where the file bytes already exist, into the versioned envelope both sides
+  // import from lib/reddit-drafts.
+  //
+  // The OUTCOME comes from the run's own record, never from counting files. An
+  // empty thread list means either "nothing was worth your account's name" (a
+  // correct run) or "we could not read Reddit" (our datacenter address is
+  // blocked), and telling a client the first when the second is true blames their
+  // niche for our outage. With no record to read, `delivered` is only claimed when
+  // threads actually arrived.
+  const redditEnvelope =
+    isRedditStateJob && (redditClientFiles.length > 0 || redditRunRecord)
+      ? (() => {
+          const record = redditRunRecord ? redditOutcomeFrom(redditRunRecord) : { outcome: null };
+          const built = buildRedditV2Envelope({
+            files: redditClientFiles,
+            outcome: record.outcome ?? "delivered",
+            ...(record.consideredCount !== undefined
+              ? { consideredCount: record.consideredCount }
+              : {}),
+            ...(record.outcomeNote ? { outcomeNote: record.outcomeNote } : {}),
+          });
+          if (!record.outcome && built.threads.length === 0) built.outcome = "held";
+          return built;
+        })()
+      : null;
+  if (redditEnvelope) {
+    events.push({
+      at: Date.now(),
+      level: redditEnvelope.outcome === "degraded" ? "error" : "info",
+      message:
+        redditEnvelope.outcome === "degraded"
+          ? "Reddit could not be read on this run (datacenter addresses are blocked), so nothing was judged. This is not 'no good threads'."
+          : `Reddit run outcome: ${redditEnvelope.outcome} - ${redditEnvelope.threads.length} thread(s) delivered.`,
+    });
+  }
+
+  // ── Newsletter v2: the D7 four become the reader's one string ──
+  const newsletterEnvelope = isNewsletterStateJob
+    ? buildNewsletterEnvelope(newsletterClientFiles)
+    : null;
+  const newsletterEnvelopeJson =
+    newsletterEnvelope && newsletterEnvelopeHasContent(newsletterEnvelope)
+      ? JSON.stringify(newsletterEnvelope)
+      : null;
+
+  // ── Blog v2: the D40+D56 five become the reader's one string ──
+  const blogEnvelope = isBlogStateJob ? buildBlogEnvelope(blogClientFiles) : null;
+  const blogEnvelopeJson =
+    blogEnvelope && blogEnvelopeHasContent(blogEnvelope) ? JSON.stringify(blogEnvelope) : null;
+
+  // ── Reputation v2: the client folder becomes the reader's one string ──
+  const reputationEnvelope = isReputationStateJob
+    ? buildReputationEnvelope(reputationClientFiles)
+    : null;
+  const reputationEnvelopeJson =
+    reputationEnvelope && reputationEnvelopeHasContent(reputationEnvelope)
+      ? JSON.stringify(reputationEnvelope)
+      : null;
+
   const deliveredCount = rehosted.length;
   // For the Task Map sync below: the run may have been dispatched by a board
   // task, whose ticket gets the deliverable for client preview.
-  const taskArtifactContent = primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "";
+  const redditEnvelopeJson = redditEnvelope ? JSON.stringify(redditEnvelope) : null;
+  const taskArtifactContent = newsletterEnvelopeJson
+    ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : blogEnvelopeJson
+    ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : reputationEnvelopeJson
+    ? reputationEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : redditEnvelopeJson
+    ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+    : primaryText
+      ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
+      : "";
   const taskArtifactImage = orderedImageUrls[0] ?? null;
 
   // Last pre-claim guard: the re-host has eaten the budget this handler needed
@@ -663,7 +1369,7 @@ export async function POST(req: NextRequest) {
     // artifact convention. Best-effort AND after the claim: a save failure here
     // must not fail the whole delivery — the next launch run re-sweeps and
     // overwrites anyway.
-    if (isLaunchRun && voiceProfileArtifacts.length > 0) {
+    if ((isLaunchRun || isLinkedInSetupJob) && voiceProfileArtifacts.length > 0) {
       try {
         const customAgent = job.customAgentId ? await getCustomAgent(job.customAgentId) : null;
         const agentKey = customAgent?.key ?? "";
@@ -700,6 +1406,262 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // LinkedIn v2 durable state. After the claim and best-effort, like the sweep
+    // above: this is the NEXT run's memory, and losing it must not fail a delivery
+    // that already produced a post. It IS reported as an error event, because a
+    // run whose ledger did not persist will repeat itself and that is the only
+    // place anyone could find out why.
+    if (liStateArtifacts.length > 0) {
+      // Last write wins per kind, and the manifest's order is the run's own write
+      // order, so the newest copy of each file is the one that lands.
+      const byKind = new Map(liStateArtifacts.map((row) => [row.kind, row]));
+      for (const row of byKind.values()) {
+        try {
+          await upsertLiAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            content: row.content,
+            contentType: row.path.endsWith(".json")
+              ? "application/json"
+              : row.path.endsWith(".yaml") || row.path.endsWith(".yml")
+                ? "text/yaml"
+                : "text/markdown",
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] LinkedIn ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message: `LinkedIn ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
+    // Newsletter v2 durable state. After the claim and best-effort, like its two
+    // siblings. The ISSUE INDEX is called out in its own error line because its
+    // failure mode is not forgetfulness: without it the next run claims a number
+    // that already shipped, and a real subscriber list receives a second copy of
+    // the same issue.
+    if (newsletterStateArtifacts.length > 0) {
+      const byKind = new Map(newsletterStateArtifacts.map((row) => [row.kind, row]));
+      for (const row of byKind.values()) {
+        try {
+          await upsertNewsletterAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            content: row.content,
+            contentType: newsletterStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] newsletter ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              row.kind === "issue-index"
+                ? "The newsletter ISSUE INDEX did not persist. The next run may claim an issue number that has already been sent - check the index before running again."
+                : `Newsletter ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
+    // The newsletter's PER-ISSUE research, for the blog. One row per (issue,
+    // kind) so a client's whole shipped history stays readable — the blog walks a
+    // window of the six most recent issues, and overwriting the previous issue's
+    // handoff would make that window one deep.
+    //
+    // The issue MARKDOWN comes from the envelope rather than from a second fetch:
+    // it is client-facing, so its bytes are already decoded above. Taking it from
+    // the envelope also guarantees the blog reads exactly the text the client
+    // was given, which is the framework's own rule — never the internal trail.
+    if (newsletterLedgerArtifacts.length > 0 || (isNewsletterStateJob && newsletterEnvelope)) {
+      const rows: Array<{
+        kind: NewsletterLedgerEntry["kind"];
+        issueNumber: string;
+        content: string;
+        contentDate: string;
+        contentType: string;
+      }> = newsletterLedgerArtifacts.map((row) => ({
+        kind: row.kind,
+        issueNumber: row.issueNumber,
+        content: row.content,
+        contentDate: row.contentDate,
+        contentType: "application/json",
+      }));
+      const issueNumber = newsletterEnvelope?.issueNumber;
+      if (issueNumber && newsletterEnvelope?.text?.trim()) {
+        rows.push({
+          kind: "issue-markdown",
+          issueNumber,
+          content: newsletterEnvelope.text.slice(0, NEWSLETTER_LEDGER_MAX_CHARS),
+          contentDate: new Date(now).toISOString().slice(0, 10),
+          contentType: "text/markdown",
+        });
+      }
+      for (const row of rows) {
+        try {
+          await upsertNewsletterLedgerEntry({
+            clientId: job.clientId,
+            issueNumber: row.issueNumber,
+            kind: row.kind,
+            content: row.content,
+            contentType: row.contentType,
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] newsletter ledger ${row.kind} save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              `Issue ${row.issueNumber}'s ${row.kind} did not persist. The BLOG agent reads this to pick` +
+              " a subject, so that issue will not appear as a candidate for it. The newsletter itself is unaffected.",
+          });
+        }
+      }
+    }
+
+    // Blog v2 durable state. Reported as an error because the POST INDEX and the
+    // CLUSTERS file carry this run's three claims: without them two presses can
+    // take different post numbers and then write the same article, which is the
+    // failure the subject claim exists to prevent.
+    if (blogStateArtifacts.length > 0) {
+      const byKind = new Map(blogStateArtifacts.map((row) => [row.kind, row]));
+      for (const row of byKind.values()) {
+        try {
+          await upsertBlogAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            content: row.content,
+            contentType: blogStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] blog ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              row.kind === "post-index"
+                ? "The blog POST INDEX did not persist. The next run may claim a post number that has already published, and every pending internal link on it is lost - check the index before running again."
+                : row.kind === "clusters"
+                  ? "The blog CLUSTERS file did not persist. It holds this run's subject claim, so a second run could pick the same subject and write the same article."
+                  : `Blog ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
+    // The karos-carousel-runner/-setup/-manager family's durable-state persist
+    // block used to live here. The whole family was retired in full 2026-08-29
+    // (SCRUM-377/T-B25a) — no engine equivalent was ever planned. Removed from
+    // code and the db, do not reintroduce.
+
+    // Reputation v2 durable state. Reported as an error because the RESPONSE
+    // LEDGER is the no-repeat memory: without it the next pulse drafts a second
+    // public reply to a review a human already answered, under the client's own
+    // name, on a page strangers read.
+    if (reputationStateArtifacts.length > 0) {
+      const byKind = new Map(reputationStateArtifacts.map((row) => [row.kind, row]));
+      for (const row of byKind.values()) {
+        try {
+          await upsertReputationAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            content: row.content,
+            contentType: reputationStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] reputation ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              row.kind === "response-ledger"
+                ? "The reputation RESPONSE LEDGER did not persist. The next check may draft a second public reply to a review that has already been answered - check the ledger before running again."
+                : row.kind === "crisis-ledger"
+                  ? "The reputation CRISIS LEDGER did not persist. The record of what was escalated, and to whom, is missing for this run."
+                  : row.kind === "roster"
+                    ? "The reputation ROSTER did not persist. The next check has nowhere to read from and will stop."
+                    : `Reputation ${row.kind} did not persist - the next run will not see this run's changes to it.`,
+          });
+        }
+      }
+    }
+
+    // Reddit v2 durable state. After the claim and best-effort, like the sibling
+    // sweeps. Reported as an error event because a run whose RULES AUDIT did not
+    // persist is the one case where the next run is not merely forgetful but
+    // unsafe — it would hold no reading of what each subreddit allows.
+    if (redditStateArtifacts.length > 0) {
+      // Last write wins per (kind, account); the manifest's order is the run's own
+      // write order, so the newest copy of each file lands.
+      const byKey = new Map(
+        redditStateArtifacts.map((row) => [`${row.kind}::${row.account ?? ""}`, row]),
+      );
+      for (const row of byKey.values()) {
+        try {
+          await upsertRedditAgentState({
+            clientId: job.clientId,
+            kind: row.kind,
+            account: row.account,
+            content: row.content,
+            contentType: redditStateContentType(row.path),
+            contentDate: row.contentDate,
+            capturedFromJobId: job.id,
+            capturedAt: now,
+          });
+        } catch (e) {
+          console.error(`[webhook] Reddit ${row.kind} state save failed:`, e);
+          events.push({
+            at: Date.now(),
+            level: "error",
+            message:
+              `Reddit ${row.kind} did not persist` +
+              (row.kind === "rules-audit"
+                ? " - the next run has NO record of what each subreddit allows and must re-read them before drafting."
+                : " - the next run will not see this run's changes to it."),
+          });
+        }
+      }
+    }
+
+    // Close the direction requests this run reported covering. Matched on the
+    // exact request text, because that is what the run was given and the only
+    // handle it has on a row — the portal never sends it a document id.
+    if (liCommitJson) {
+      try {
+        const covered = coveredDirectionRequests(liCommitJson);
+        if (covered.length > 0) {
+          const open = (await listLiDirectionRequests(job.clientId, { status: "open" })).filter(
+            (row) => covered.includes(row.request.trim()),
+          );
+          for (const row of open) {
+            await markLiDirectionRequestCovered(job.clientId, row.id, job.id);
+          }
+        }
+      } catch (e) {
+        // A row left open is re-offered next run, which is the harmless
+        // direction: the client asked for it and gets it again.
+        console.error("[webhook] LinkedIn direction-request close failed:", e);
+      }
+    }
+
     if (deliveredCount > 0) {
       // Custom agents (e.g. the LinkedIn generators) produce any asset shape, so
       // the slot-less library note is the safe default — but the submitter can
@@ -728,10 +1690,71 @@ export async function POST(req: NextRequest) {
       // Separator and strip share one definition (lib/job-title.ts) — this
       // looked for an em dash while every builder wrote a hyphen, so it never
       // fired for any run from any path.
+      // The title stays the produced-work base — NEVER the typed brief. F132's
+      // ruling ("never echo free-text input as a client-facing label") is why
+      // Job.runLabel rides in meta below instead of being baked in here: meta
+      // lets a staff surface show what was asked while every client surface
+      // keeps reading a produced-work title. It also keeps free text out of
+      // AgentMark's platform sniff, which reads titles.
       const assetTitle = assetTitleFromJobTitle(job.title, job.agentName);
+      // The Reddit v2 envelope wins over the size-picked primary text: the
+      // reader parses this exact string, and one of the run's own approach
+      // files would otherwise be chosen as "the deliverable" by length.
+      // The newsletter envelope wins over the size race for the same reason
+      // Reddit's does: the largest text file here is one of the two HTML
+      // renders, and picking it would call half the deliverable the whole of
+      // it and lose the other three files.
+      // The blog envelope wins for the same reason both of those do, and its
+      // size race is the worst of the three: `<slug>.html` and
+      // `<slug>-body.html` are near-identical in length, so which one a
+      // client received as "the article" would have come down to how much
+      // page chrome the template happened to add.
+      const assetContent = newsletterEnvelopeJson
+        ? newsletterEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : blogEnvelopeJson
+        ? blogEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : reputationEnvelopeJson
+        ? reputationEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : redditEnvelopeJson
+        ? redditEnvelopeJson.slice(0, CONTENT_CHAR_CAP)
+        : primaryText
+          ? primaryText.content.slice(0, CONTENT_CHAR_CAP)
+          : "";
+      // A natural, topic-first name for the deliverable, written by Haiku from
+      // the same content string the asset stores (asset-titles.ts has the full
+      // contract). Null on any failure — the agent-name title below is the
+      // fallback, so naming can never cost a delivery. meta.titleGenerated is
+      // how display surfaces know the stored title is a real name rather than
+      // the agent-name placeholder: deliverable-titles' display-time composer
+      // steps aside for it.
+      const generatedTitle = assetContent
+        ? await generateAssetTitle({
+            content: assetContent,
+            clientId: job.clientId,
+            agentName: job.agentName,
+          })
+        : null;
       // Only real catalog products get a template chip; "custom" runs have no
       // managed product (getManagedProduct would fall back to the first one).
       const managedProduct = MANAGED_PRODUCTS.find((p) => p.taskType === payload.task_type);
+      // Was this run dispatched from an APPROVED Task-Map suggestion carrying
+      // an inferred calendar placement (metadata.suggestedDate, set by
+      // updateTaskStatusAction's targetDate param)? If so the resulting asset
+      // gets that date as its OWN scheduledAt below, instead of landing as an
+      // undated draft — invisible on the calendar regardless of anything the
+      // grid itself does, since `postKind` never places anything with no
+      // `scheduledAt` on a day cell. Same lookup the zero-deliverable refund
+      // path below already makes for an unrelated reason — never guessed at
+      // from the payload, always OUR record of the dispatch.
+      const dispatchingTask = await findDispatchingTask(
+        job.id,
+        job.clientId,
+        payload.metadata?.karos_task_id,
+      ).catch((e) => {
+        console.error("[webhook] dispatching-task lookup for suggestedDate failed:", e);
+        return null;
+      });
+      const suggestedScheduledAt = dispatchingTask?.metadata?.suggestedDate;
       // The job is already claimed (single delivery, see above), so a write
       // failure here can't fall back to redelivery — a naive throw would 500
       // and strand the run with no asset, no cost/usage log (the after() below
@@ -744,11 +1767,15 @@ export async function POST(req: NextRequest) {
           jobId: job.id,
           agentId: "agent-service",
           type: assetType,
-          title: assetTitle,
-          content: primaryText ? primaryText.content.slice(0, CONTENT_CHAR_CAP) : "",
+          title: generatedTitle ?? assetTitle,
+          content: assetContent,
           meta: {
             taskType: payload.task_type,
+            ...(generatedTitle ? { titleGenerated: true } : {}),
             agentsRepoSha: payload.agents_repo_sha,
+            // What the run was ASKED to do (see Job.runLabel). Staff-facing
+            // data: surfaces that show it must gate on the viewer (F132).
+            ...(job.runLabel ? { runLabel: job.runLabel } : {}),
             // ONLY the artifacts now in our own storage — see the `rehosted`
             // note above. This was `artifacts.filter(clientFacing)`, which put
             // every un-re-hosted 7-day service URL onto the client's asset:
@@ -787,6 +1814,46 @@ export async function POST(req: NextRequest) {
               : {}),
           orderKey: orderKeyForCreatedAt(now, job.id),
           ...recommendedScheduleFields(assetType, 0, platform),
+          // An approved Task-Map suggestion's inferred date wins over the
+          // generic recommendation above — the client approved a specific day,
+          // and this is what keeps the resulting draft visible on THAT day
+          // instead of vanishing off the calendar entirely (postKind returns
+          // null for anything with no scheduledAt).
+          ...(typeof suggestedScheduledAt === "number" ? { scheduledAt: suggestedScheduledAt } : {}),
+          // T-B9 ("generate now, publish on date X"): a staff-requested target
+          // publish date on the job (see Job.requestedScheduledAt) wins over
+          // both the recommendation above and the Task-Map suggestion above —
+          // it demands an actual scheduled post (`status: "scheduled"`), not
+          // merely a dated draft. `createPlannedRunAction` schedules the
+          // GENERATION and is staff-only by a different route;
+          // `scheduleAssetAction` only ever moves an asset that already
+          // exists. This is the run-now-then-schedule mechanism those two
+          // don't cover, applied at the one point the deliverable and the
+          // request meet.
+          //
+          // Never applied to a Test Run or a launch deliverable — neither is
+          // a real client calendar item regardless of what rides on the job
+          // that produced it (`scheduleAssetAction` itself refuses a Test Run
+          // for the same reason, asset-actions.ts). `publishMode: "manual"`
+          // rather than "auto": this only puts the deliverable on the
+          // calendar for a human to push live, and never auto-publishes to a
+          // platform sight-unseen — that is a decision this ticket does not
+          // make.
+          //
+          // Re-checked against "now" rather than trusted from request time:
+          // the run itself takes real time, and a date that has already
+          // passed by completion must not silently arm as a scheduled post
+          // dated in the past.
+          ...(typeof job.requestedScheduledAt === "number" &&
+          job.requestedScheduledAt > now &&
+          !isTestRun &&
+          !isLaunchRun
+            ? {
+                status: "scheduled" as const,
+                scheduledAt: job.requestedScheduledAt,
+                publishMode: "manual" as const,
+              }
+            : {}),
           createdBy: "agent-service",
           createdAt: now,
           updatedAt: now,
@@ -801,7 +1868,13 @@ export async function POST(req: NextRequest) {
         // document about templates. Test-run output is skipped the same way — it
         // must never get a calendar date until (if ever) promoted out of test.
         if (!isLaunchRun && !isTestRun) {
-          await reflowClientChain(job.clientId).catch(() =>
+          await reflowClientChain(job.clientId, {
+            // A suggestion-dated asset's scheduledAt IS the day the client
+            // saw and approved — reflow must not treat it as a candidate to
+            // relocate. skipIds still lets the day it occupies book normally,
+            // so nothing else can land on it either.
+            ...(typeof suggestedScheduledAt === "number" ? { skipIds: [assetId] } : {}),
+          }).catch(() =>
             events.push({
               at: Date.now(),
               level: "error",
@@ -913,6 +1986,15 @@ export async function POST(req: NextRequest) {
             `and none of them could be copied into platform storage. They are listed above with a reason each.`,
         });
       }
+      // The service said "done", but the client got nothing — the same outcome
+      // as a failed run (see the refund above), so the job record must read
+      // the same way. Left at "review" this sat in the same queue as a genuine
+      // success awaiting approval, indistinguishable from one in the UI.
+      status = "failed";
+      statusError =
+        notRehosted.length > 0
+          ? `No deliverable was created: ${notRehosted.length} client-facing file(s) could not be copied into platform storage`
+          : "The run finished without producing a client-facing deliverable";
     }
     // Counts what was ATTACHED, not what the manifest declared, and names the
     // shortfall rather than letting the run read as clean (#47/#50/#51). The
@@ -976,7 +2058,11 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error("[webhook] pre-write job re-read failed, merging onto the pre-re-host copy:", e);
   }
-  const mergedEvents = [...(freshJob?.events ?? job.events), ...events];
+  const mergedEvents = [
+    ...(freshJob?.events ?? job.events),
+    ...events,
+    ...guardrailEvents(payload.dynamic_run),
+  ];
   const mergedAssetIds = [...(freshJob?.assetIds ?? job.assetIds), ...newAssetIds];
 
   // Best-effort like the blocks below it: the job is already claimed (single
@@ -990,7 +2076,31 @@ export async function POST(req: NextRequest) {
       status,
       assetIds: mergedAssetIds,
       events: mergedEvents,
-      error: payload.status === "done" ? null : (payload.error ?? payload.status),
+      error: statusError ?? (payload.status === "done" ? null : (payload.error ?? payload.status)),
+      // Dynamic Agent Studio only: the structured per-step report, stored so the
+      // job page can render a step bar and an "incomplete" banner from data
+      // rather than parsing them back out of `error`. `stepBreakdown` is the
+      // same data reshaped into the Job Control Room's cost/token vocabulary
+      // (see step-breakdown.ts). Nothing is "current" once the run is terminal.
+      ...(payload.dynamic_run
+        ? { dynamicRun: payload.dynamic_run, stepBreakdown: buildStepBreakdown(payload.dynamic_run) }
+        : payload.write_checkpoints && payload.run_duration_ms !== undefined
+          ? {
+              // The hardcoded path's ESTIMATE — see buildStepBreakdownFromCheckpoints
+              // and JobStepBreakdownEntry.estimated. Only reached when a skill
+              // happens to checkpoint its own progress; every other hardcoded
+              // job (and every legacy one) simply never sets stepBreakdown,
+              // exactly as before this branch existed.
+              stepBreakdown: buildStepBreakdownFromCheckpoints(
+                payload.write_checkpoints,
+                payload.run_duration_ms,
+                { costUsd: payload.usage?.totalCostUsd, inputTokens, outputTokens },
+                payload.status !== "done",
+              ),
+            }
+          : {}),
+      currentStepId: null,
+      currentStepName: null,
       external: {
         ...job.external,
         ...(payload.agents_repo_sha ? { agentsRepoSha: payload.agents_repo_sha } : {}),
@@ -1077,6 +2187,50 @@ export async function POST(req: NextRequest) {
     console.error("[webhook] task sync failed:", e);
   }
 
+  // ── Settle the hold against what the run actually cost us ──
+  //
+  // Phase two of the two-phase charge (credits rework, 2026-09): the client was
+  // charged an ESTIMATE at dispatch, and this reconciles it to
+  // ceil(usage.totalCostUsd × 20), handing back the difference or taking the
+  // extra in one ledger row.
+  //
+  // AFTER THE SINGLE-USE CLAIM, unlike the refund at the top of this handler,
+  // and the difference is forced rather than chosen: the refund can run before
+  // the claim because it only needs `payload.status`, while a settlement needs
+  // the FINAL status — the zero-deliverable branch above corrects a "done" run
+  // to "failed" and refunds it, and settling a run that is about to be refunded
+  // is the one thing this design may never do. So it reads `status`, which by
+  // here is the corrected value.
+  //
+  // The cost of sitting after the claim is that a crash between the two loses
+  // this settlement, since a redelivery short-circuits at "Already processed".
+  // That is why /api/credits/reconcile sweeps unsettled holds: the deterministic
+  // `settle_<chargeEntryId>` id makes the retry free, so the sweep is the real
+  // retry path rather than webhook redelivery.
+  //
+  // BOTH LEDGER KEYS, for the reason the zero-deliverable refund above states at
+  // length: a task-dispatched run was charged under the TASK id before this job
+  // existed, and pairing on the job alone would leave most real client runs
+  // holding an estimate forever.
+  if (status === "review") {
+    try {
+      const settleTask = await findDispatchingTask(
+        job.id,
+        job.clientId,
+        payload.metadata?.karos_task_id,
+      ).catch(() => null);
+      await settleJobCharge(
+        [job.id, settleTask?.id],
+        payload.usage?.totalCostUsd,
+        job.agentName,
+      );
+    } catch (e) {
+      // Never fails the delivery. A lost settlement leaves the estimate
+      // standing, which is the pre-rework behaviour, and the sweep retries it.
+      console.error("[webhook] settlement failed:", e);
+    }
+  }
+
   const jobId = job.id;
   const clientId = job.clientId;
   const agentName = job.agentName;
@@ -1095,7 +2249,7 @@ export async function POST(req: NextRequest) {
     if (status === "failed") {
       const client = await getClient(clientId).catch(() => null);
       await notifyJobFailure(
-        { ...job, status, error: payload.error ?? payload.status },
+        { ...job, status, error: statusError ?? payload.error ?? payload.status },
         client,
       );
     }
@@ -1132,6 +2286,45 @@ export async function POST(req: NextRequest) {
         status: usageStatus,
         errorMessage: payload.error ?? payload.status,
       });
+    }
+    // Dynamic Agent Studio only: one usageLogs row PER STEP that spent tokens,
+    // tagged with stepId — in addition to the per-model run-level rows above,
+    // not instead of them. This is what makes "which step costs the most"
+    // answerable ACROSS jobs (the run-level rows above only answer it within
+    // one job's own sidebar); Job.stepBreakdown is the within-this-job answer.
+    //
+    // GATED ON status === "done", deliberately narrower than the run-level
+    // loop above: a resumed run's dynamic_run.steps carries every EARLIER
+    // attempt's completed steps too (resumeFrom prepends their original
+    // trace entries so step-level cost history survives a resume — see
+    // step-runner.ts), and THIS SAME webhook route already processed a
+    // job.completed delivery for that earlier failed attempt, logging those
+    // steps once already. Logging them again here on every later delivery
+    // would double (or triple...) count their tokens/cost in usageLogs and
+    // analyticsSnapshot every time. Restricting to the run's one eventual
+    // "done" delivery means every step is logged exactly once, ever — at the
+    // cost of a step's usageLogs row not existing at all if the job never
+    // succeeds (dead-lettered after exhausting attempts). That step's cost is
+    // still visible on Job.stepBreakdown (written regardless of status,
+    // right above), and the run-level rows above are unaffected either way.
+    for (const step of payload.status === "done" ? payload.dynamic_run?.steps ?? [] : []) {
+      const models = Object.entries(step.usage?.models ?? {});
+      if (models.length === 0) continue;
+      for (const [modelName, usage] of models) {
+        logger.logUsage({
+          clientId,
+          agentId: "agent-service",
+          agentName,
+          modelName,
+          operation: "managed_job_step",
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          jobId,
+          stepId: step.stepId,
+          status: step.status === "done" ? "success" : "failed",
+          ...(step.error ? { errorMessage: step.error } : {}),
+        });
+      }
     }
   });
 

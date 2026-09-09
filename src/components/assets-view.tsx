@@ -10,7 +10,11 @@ import { AssetCard } from "@/components/asset-card";
 // analytics chart was printing a third, drifted set of them to the same reader
 // (see asset-status-copy.ts).
 import { STAFF_ASSET_STATUS_LABEL } from "@/lib/asset-status-copy";
+import { deliverableStamp } from "@/lib/asset-visibility";
 import { platformLabel } from "@/lib/integrations/platforms";
+// The parser lives beside the function that WRITES `?status=`, so the two
+// cannot drift on what the param may contain - see content-status-links.ts.
+import type { StatusFilter } from "@/lib/content-status-links";
 import type { Asset } from "@/lib/types";
 
 const STATUS_ORDER: Asset["status"][] = ["draft", "approved", "scheduled", "delivered", "published"];
@@ -31,6 +35,7 @@ export function AssetsView({
   canApprove = false,
   clientNames,
   connectedPlatformsByClient,
+  initialStatus = "all",
 }: {
   assets: Asset[];
   /** Staff-only: show approve/schedule controls on each card. Clients never approve. */
@@ -44,8 +49,24 @@ export function AssetsView({
    * Platform ids only - never integration records, which carry decrypted tokens.
    */
   connectedPlatformsByClient?: Record<string, string[]>;
+  /**
+   * The status this list opens on, seeded from `?status=` by the page (2026-09).
+   *
+   * A REINTRODUCTION WITH ITS PRODUCER, which is the condition archive-view.tsx's
+   * own note sets. A `?status=` reader lived here until 2026-07-31 and was
+   * deleted because the one link that fed it had been re-pointed a week earlier,
+   * leaving a code path nothing exercised. The producer this time is the
+   * dashboard's "Content by status" chart (client-analytics.tsx's `statusHref`),
+   * whose whole purpose is to open this list filtered, and both halves are
+   * pinned by content-status-deeplink.test.ts.
+   *
+   * SEED ONLY, not a controlled value: the dropdown owns the filter after the
+   * first paint. Re-reading the param on every render would fight the reader,
+   * who would change the select and watch it snap back.
+   */
+  initialStatus?: StatusFilter;
 }) {
-  const [status, setStatus] = useState<Asset["status"] | "all">("all");
+  const [status, setStatus] = useState<StatusFilter>(initialStatus);
   const channels = useMemo(
     () => [...new Set(assets.flatMap((asset) => asset.channels ?? []))].sort(),
     [assets],
@@ -55,7 +76,18 @@ export function AssetsView({
     const matching = assets
       .filter((asset) => status === "all" || asset.status === status)
       .filter((asset) => channel === "all" || asset.channels?.includes(channel))
-      .sort((a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt));
+      // SORTED BY THE STAMP THE CARD PRINTS. It was `updatedAt ?? createdAt`
+      // while AssetCard prints `relativeTime(asset.createdAt)`, so a deliverable
+      // edited today but generated last month sat at the top reading "1 month
+      // ago" — the tiles were visibly out of sequence with their own timestamps,
+      // which is the reported defect ("even the dates are not in order").
+      //
+      // archive-view already states this rule and says why in the same words;
+      // `deliverableStamp` is the exported form of it. `false` rather than a
+      // prop because this route has no client viewer to ask: the page redirects
+      // a CLIENT_USER away ("this route stays the staff review surface"), and a
+      // staff stamp IS the generation instant.
+      .sort((a, b) => deliverableStamp(b, false) - deliverableStamp(a, false));
 
     return STATUS_ORDER.flatMap((groupStatus) => {
       const items = matching.filter((asset) => asset.status === groupStatus);
@@ -76,7 +108,7 @@ export function AssetsView({
         <select
           aria-label="Filter assets by status"
           value={status}
-          onChange={(event) => setStatus(event.target.value as Asset["status"] | "all")}
+          onChange={(event) => setStatus(event.target.value as StatusFilter)}
           className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-neon/40"
         >
           <option value="all">All statuses</option>
@@ -105,7 +137,14 @@ export function AssetsView({
             ))}
           </select>
         )}
-        <span className="ml-auto px-1 text-[11px] text-muted-2">Newest first</span>
+        {/* "Newest first" over a list GROUPED BY STATUS claimed an order the page
+            does not have: the sections run in lifecycle order (draft first,
+            published last), so a published post from today sits below a draft
+            from last month. archive-view's identical chip is honest because its
+            groups are ordered by their own newest item; these are not, and the
+            lifecycle order is the point of them. So the chip says which order it
+            is describing instead. */}
+        <span className="ml-auto px-1 text-[11px] text-muted-2">Newest first in each status</span>
       </div>
 
       {groupedAssets.length === 0 ? (

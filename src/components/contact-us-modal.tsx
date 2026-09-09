@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Icon } from "@/components/icon";
 import { Button, Input, Textarea, Label } from "@/components/ui";
 import { sendSupportEmailAction } from "@/lib/actions";
+import { INTAKE_ACTION_FAILED, intakeSave } from "@/lib/intake-save";
 
 export function ContactUsButton({
   variant = "icon",
@@ -13,8 +14,19 @@ export function ContactUsButton({
   label = "Support",
 }: {
   variant?: "icon" | "row";
-  userName: string;
-  userEmail: string;
+  /**
+   * Whose account the message goes out under, for the "Sending as" line only.
+   *
+   * OPTIONAL since the flow audit (2026-09, R17). Identity is resolved
+   * server-side in `sendSupportEmailAction` — "a support request can't be used
+   * to spoof another user's name/email" — so these are display, not payload,
+   * and requiring them kept the control off every surface that does not
+   * already carry the viewer: the intake pages, whose own failure copy tells
+   * the client to contact their Karos team, and the "Coming soon" channel
+   * tiles, which say the same. A mount with neither simply omits the line.
+   */
+  userName?: string;
+  userEmail?: string;
   /**
    * Row-variant trigger text. Defaults to the account-menu wording; callers
    * mounting it as a way out of a specific dead end (a spent-out credit cap)
@@ -62,12 +74,19 @@ export function ContactUsButton({
     };
     setError(null);
     startTransition(async () => {
-      const result = await sendSupportEmailAction(input);
-      if (result.ok) {
+      // Through the funnel like every other client-triggered write (#86). The
+      // hazard is the same one lib/intake-save.ts documents and it applies here
+      // with extra force: this dialog is what a client opens when something is
+      // already wrong, so a lapsed session — which REJECTS rather than
+      // returning — used to leave the Send button spinning back to idle with
+      // nothing said. It joined the funnel's scanned closure when the intake
+      // surfaces began mounting it (flow audit 2026-09, R17).
+      const result = await intakeSave(() => sendSupportEmailAction(input), INTAKE_ACTION_FAILED);
+      if ("ok" in result && result.ok) {
         setSuccess(true);
-      } else {
-        setError(result.error ?? "Something went wrong.");
+        return;
       }
+      setError(("error" in result ? result.error : null) ?? "Something went wrong.");
     });
   }
 
@@ -86,8 +105,8 @@ export function ContactUsButton({
         <button
           onClick={() => setOpen(true)}
           className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted transition-all duration-150 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neon/40"
-          aria-label="Contact support"
-          title="Contact us"
+          aria-label="Support"
+          title="Support"
         >
           <Icon name="Headphones" className="h-4 w-4" />
         </button>
@@ -117,8 +136,13 @@ export function ContactUsButton({
                   <Icon name="Headphones" className="h-4 w-4" />
                 </div>
                 <div>
+                  {/* One word for this dialog, wherever it is opened from
+                      (flow audit 2026-09, R7). It was "Contact Support" here,
+                      "Support" / "Contact us" on the triggers, "Request more
+                      credits" and "Ask/Flag to the Karos team" elsewhere — five
+                      names for one dialog. */}
                   <p id="support-dialog-title" className="text-sm font-semibold text-foreground">
-                    Contact Support
+                    Support
                   </p>
                   <p className="text-[11px] text-muted">We typically respond within 24 hours</p>
                 </div>
@@ -149,12 +173,14 @@ export function ContactUsButton({
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-                  <div className="flex items-center gap-2 rounded-md border border-foreground/10 bg-foreground/[0.03] px-3 py-2 text-xs text-muted">
-                    Sending as
-                    <span className="font-medium text-foreground">{userName}</span>
-                    <span className="text-muted-2">·</span>
-                    <span>{userEmail}</span>
-                  </div>
+                  {userName && userEmail ? (
+                    <div className="flex items-center gap-2 rounded-md border border-foreground/10 bg-foreground/[0.03] px-3 py-2 text-xs text-muted">
+                      Sending as
+                      <span className="font-medium text-foreground">{userName}</span>
+                      <span className="text-muted-2">·</span>
+                      <span>{userEmail}</span>
+                    </div>
+                  ) : null}
                   <div>
                     <Label htmlFor="cs-subject">Subject</Label>
                     <Input

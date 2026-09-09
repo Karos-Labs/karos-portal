@@ -42,28 +42,50 @@ type Kind = (typeof KINDS)[number];
  * pass by construction. Matched loosely, the same edit shows up as a literal
  * that fails the opening assertion.
  */
-function gateLiterals(file: string): Record<Kind, string> {
+function gateLiterals(file: string): Record<Kind, string[]> {
   const src = readFileSync(join(process.cwd(), file), "utf8");
   const literals = [...src.matchAll(/error: `([^`]*)`/g)].map((m) => m[1]);
-  const out = {} as Record<Kind, string>;
+  const out = {} as Record<Kind, string[]>;
   for (const kind of KINDS) {
     const hits = literals.filter((l) => l.includes(`\${${kind}_SETUP_REQUIRED_PREFIX}`));
-    if (hits.length !== 1) {
-      throw new Error(
-        `Expected exactly one ${kind} setup-gate message in ${file}, found ${hits.length}`,
-      );
+    if (hits.length === 0) {
+      throw new Error(`Expected at least one ${kind} setup-gate message in ${file}, found none`);
     }
-    out[kind] = hits[0];
+    out[kind] = hits;
   }
   return out;
 }
 
-/** The literals with their opening prefix interpolation removed. */
+/**
+ * MORE THAN ONE MESSAGE PER KIND IS ALLOWED, and LinkedIn v2 is why.
+ *
+ * That agent has three distinct things it can be un-set-up in: the company form
+ * is unsaved, the client has never been through setup at all, or the person a run
+ * names has no voice built yet. Each is a different thing for the reader to go and
+ * do, so collapsing them into one sentence would send someone to the wrong place —
+ * and the affordance they all share (the run dialog's `startsWith` on the prefix)
+ * works for every one of them.
+ *
+ * What the checks below still pin, and it is the part that can silently break:
+ * every message opens with its prefix, every message ends the same way, and the
+ * two cores do not drift. The FIRST literal per kind is the primary rung (the
+ * intake gate itself, in both cores), so that one is compared across cores
+ * directly; the rest must be a subset of the interactive core's, because the
+ * scheduled core has no run dialog and legitimately carries fewer rungs — a
+ * schedule row names no identity, so the seat rung has nothing to check.
+ */
 function gateMessages(file: string): { x: string; linkedin: string; reddit: string } {
   const literals = gateLiterals(file);
   const strip = (kind: Kind) =>
-    literals[kind].replace(new RegExp(`^\\$\\{${kind}_SETUP_REQUIRED_PREFIX\\}`), "");
+    literals[kind][0].replace(new RegExp(`^\\$\\{${kind}_SETUP_REQUIRED_PREFIX\\}`), "");
   return { x: strip("X"), linkedin: strip("LINKEDIN"), reddit: strip("REDDIT") };
+}
+
+/** Every message of one kind, prefix interpolation stripped. */
+function allGateMessages(file: string, kind: Kind): string[] {
+  return gateLiterals(file)[kind].map((l) =>
+    l.replace(new RegExp(`^\\$\\{${kind}_SETUP_REQUIRED_PREFIX\\}`), ""),
+  );
 }
 
 describe("agent data setup gate", () => {
@@ -72,6 +94,17 @@ describe("agent data setup gate", () => {
     expect(scheduled.x).toBe(interactive.x);
     expect(scheduled.linkedin).toBe(interactive.linkedin);
     expect(scheduled.reddit).toBe(interactive.reddit);
+    // Beyond the primary rung: the scheduled core may carry FEWER rungs than the
+    // interactive one (it has no identity to check a seat against), but never a
+    // rung worded differently. A message only the cron can produce, drifted from
+    // its twin, is the least visible copy bug in the product — nobody is watching
+    // that fire.
+    for (const kind of KINDS) {
+      const all = allGateMessages(CORES[0], kind);
+      for (const body of allGateMessages(CORES[1], kind)) {
+        expect(all, `${kind}: the scheduled core has a refusal the interactive core does not`).toContain(body);
+      }
+    }
   });
 
   it("opens each message with the prefix and nothing before it", () => {
@@ -82,15 +115,22 @@ describe("agent data setup gate", () => {
       // not fail; what has to be pinned is that the interpolation is the first
       // thing inside the backtick.
       for (const kind of KINDS) {
-        expect(
-          literals[kind].startsWith(`\${${kind}_SETUP_REQUIRED_PREFIX}`),
-          `${file}: the ${kind} refusal puts text before its prefix`,
-        ).toBe(true);
+        for (const literal of literals[kind]) {
+          expect(
+            literal.startsWith(`\${${kind}_SETUP_REQUIRED_PREFIX}`),
+            `${file}: a ${kind} refusal puts text before its prefix`,
+          ).toBe(true);
+        }
+        // EVERY rung, not just the first: a client who hits the second one reads
+        // it in the same banner and needs the same closing promise.
+        for (const body of allGateMessages(file, kind)) {
+          expect(
+            body.endsWith("Nothing has run."),
+            `${file}: a ${kind} refusal does not end "Nothing has run."`,
+          ).toBe(true);
+        }
       }
       const { x, linkedin, reddit } = gateMessages(file);
-      expect(x.endsWith("Nothing has run.")).toBe(true);
-      expect(linkedin.endsWith("Nothing has run.")).toBe(true);
-      expect(reddit.endsWith("Nothing has run.")).toBe(true);
 
       // And the consumer agrees: clientSafeRefusal passes a setup refusal
       // through verbatim and collapses anything else to one generic sentence,

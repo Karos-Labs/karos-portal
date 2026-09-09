@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Card, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { archiveTranscriptAction, unarchiveTranscriptAction } from "@/lib/actions";
-import { relativeTime } from "@/lib/utils";
+import { formatDateTime, relativeTime } from "@/lib/utils";
 import type { AppUser, Client, Role, Transcript } from "@/lib/types";
 
 /* ── Types ───────────────────────────────────────────────────────── */
@@ -246,7 +246,7 @@ function MeetingRow({
 
   return (
     <Card className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-      <Link href={`/transcripts/${t.id}`} className="min-w-0 flex-1">
+      <Link href={`/transcripts/${t.id}?from=/transcripts`} className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate font-medium">{t.title}</p>
           {t.isKarosInternal && <Badge tone="neutral">Karos Labs</Badge>}
@@ -264,6 +264,7 @@ function MeetingRow({
         </div>
         <p className="mt-1 line-clamp-2 text-sm text-muted">{t.summary || "Processing summary…"}</p>
         <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-2">
+          <span>{formatDateTime(t.meetingDate ?? t.createdAt)}</span>
           <span>{relativeTime(t.meetingDate ?? t.createdAt)}</span>
           {t.participants.length > 0 && <span>{t.participants.length} participants</span>}
           {isStaff && clientName && <span>{clientName}</span>}

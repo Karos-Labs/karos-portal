@@ -5,7 +5,7 @@
  * that never touches Firestore or React — same reason client-run-rows.ts next
  * door is pure.
  *
- * ── Why the review feed collapses for a client (A3/A4) ──────────────────────
+ * ── Why a client's bell carries neither Karos-owned feed (A3/A4, round 6) ────
  * A runway sweep tops one client up with up to RUNWAY_MAX_JOBS_PER_CLIENT jobs
  * (default 14, = RUNWAY_HORIZON_DAYS) inside a single minute, and every one of
  * them lands in `review`. A per-job feed therefore renders fourteen rows
@@ -14,18 +14,18 @@
  * fire. Capping the list cannot fix that: a cap of 15 never bites on a batch of
  * 14, and a cap that did bite would still print several same-stamped rows.
  *
- * So the client is told the review queue at the grain the dashboard already
- * tells it at: ONE row, no per-item stamps (client-home-overview.tsx, "N
- * deliverables in review"). The summary row deliberately carries NO count —
- * that card counts deliverables in `draft` and this feed counts jobs in
- * `review`, which are different sets, and two numbers answering one question is
- * the defect this closes rather than a second thing to fix. The count lives on
- * the dashboard, which counts the deliverables the client is actually waiting
- * for; the bell says who is holding them.
+ * The first answer (#118, R10) was to collapse each feed to a stampless summary
+ * line. That solved the batch tell and left an inert row: it named work, refused
+ * a count because the dashboard already prints one, and led nowhere, because
+ * nothing a client can open lists a draft. Round 6's ruling is that every
+ * notification row must lead somewhere, so the line is gone rather than
+ * softened — a persisting condition that asks nothing of the reader is an
+ * indicator, and its home is Home's attention card ("N deliverables in review",
+ * "N tasks ready for review"), where the count and the rows can sit together.
  *
- * Staff are unaffected: they get one row per job, with its stamp and its
- * /jobs/[id] link, because the batch shape is their own machinery and the
- * forensic detail is the point.
+ * Staff are unaffected: they get one row per job and one per task, with its
+ * stamp and its /jobs/[id] link, because the batch shape is their own machinery
+ * and the forensic detail is the point.
  *
  * `unreadNotificationCount` is the ONLY derivation of "how many unread" in the
  * product. Three surfaces used to compute it independently — the bell's own
@@ -41,8 +41,41 @@
 
 import type { ActionItemNotification, AgentReviewNotification, ClientTask } from "@/lib/types";
 
-/** A task row in the bell. Staff feeds are cross-client and carry `_clientName`. */
-export type TaskAlert = ClientTask & { _clientName?: string };
+/**
+ * The shape the bell's rows actually need (notification-bell.tsx's
+ * `TaskAlertRow`): title, status, priority, createdAt, and — for staff, whose
+ * feed is cross-client — `_clientName`. Nothing else.
+ *
+ * `NotificationFeeds.taskAlerts` is typed to THIS, not to `ClientTask`,
+ * because the bell is mounted from `app/(app)/layout.tsx`'s CLIENT_USER branch
+ * into `ClientRail`, a "use client" component — so whatever shape crosses
+ * there is serialized into every client-portal page's RSC payload and
+ * readable from view-source, whether or not `TaskAlertRow` paints it. A full
+ * `ClientTask` carries fields this codebase already classifies staff-only
+ * even for the task's own client (`client-copy-boundary.test.ts`'s
+ * NOT_ON_A_CLIENT_SCREEN entries for `metadata.executionError` and
+ * `sourceLabel`), plus `metadata.aiPlan`, `adjustmentFeedback`,
+ * `externalJobId`, `agentName`, and `createdBy` (a uid) — none of which a real
+ * CLIENT_USER's browser should receive. Staff still pass a full `ClientTask`
+ * per row (it structurally satisfies this narrower Pick); only the
+ * client-facing feed is narrowed at the source via `clientSafeTaskAlerts`,
+ * built by construction rather than by spreading the whole document and
+ * trusting the renderer to withhold the rest.
+ */
+export type TaskAlert = Pick<ClientTask, "id" | "title" | "status" | "priority" | "createdAt"> & {
+  _clientName?: string;
+};
+
+/** Narrows a client viewer's own task alerts to the fields the bell renders. */
+export function clientSafeTaskAlerts(tasks: readonly ClientTask[]): TaskAlert[] {
+  return tasks.map(({ id, title, status, priority, createdAt }) => ({
+    id,
+    title,
+    status,
+    priority,
+    createdAt,
+  }));
+}
 
 /** The three server-fetched feeds every bell mount — and every badge beside one — reads. */
 export interface NotificationFeeds {
@@ -88,31 +121,72 @@ export function visibleActionItems(
 }
 
 /**
- * One review row for a client, one row per job for staff.
+ * One row per job for staff. NO ROW AT ALL FOR A CLIENT (round 6, 2026-09).
  *
- * A summary row holds no job — which is what makes "no per-item timestamps"
- * structural rather than a rendering promise: there is no item to stamp.
+ * It used to collapse to one stampless summary line, which fixed the batch tell
+ * (#118, A3/A4) and left the row inert: it named work, carried no count and led
+ * nowhere, because nothing a client can open lists a draft. R10's own comment
+ * defended that as consistent with Home, where the same counts are also
+ * destination-less.
+ *
+ * Albert's round-6 ruling supersedes it: every notification row must be
+ * clickable and lead somewhere. A persisting condition that asks nothing of the
+ * reader is an indicator, not a notification (NN/g), so the fact stays where it
+ * already lives — Home's attention card, "N deliverables in review" — and the
+ * badge stops counting a row nobody can act on. Staff are untouched: the batch
+ * shape is their own machinery and /jobs/[id] is where they work.
  */
-export type ReviewFeedRow =
-  | { kind: "job"; job: AgentReviewNotification }
-  | { kind: "summary" };
+export type ReviewFeedRow = { kind: "job"; job: AgentReviewNotification };
 
 export function reviewFeedRows(
   reviewJobs: readonly AgentReviewNotification[],
   opts: { viewerIsClient: boolean },
 ): ReviewFeedRow[] {
-  if (!opts.viewerIsClient) return reviewJobs.map((job) => ({ kind: "job", job }));
-  return reviewJobs.length > 0 ? [{ kind: "summary" }] : [];
+  if (opts.viewerIsClient) return [];
+  return reviewJobs.map((job) => ({ kind: "job", job }));
+}
+
+/**
+ * One row per task for staff. NO ROW AT ALL FOR A CLIENT (round 6, 2026-09).
+ *
+ * The same revision as `reviewFeedRows` above, for the same reason and with the
+ * same history. R10 collapsed a client's per-task rows into one stampless
+ * summary line per status group, because the rows named work with nowhere to go
+ * (the Workspace board they used to open was removed in 2026-08 and nothing
+ * replaced it) and because a swarm proposes a whole set of tasks in one pass, so
+ * a per-task list on the chrome of every page publishes the batch. The audit's
+ * other option — give them Home's destination — did not survive, because on Home
+ * these very counts are ALSO destination-less by explicit ruling.
+ *
+ * Round 6 closes it from the other end: an inert row is not a row. Sign-off is
+ * staff-only (`approveAssetAction` calls `requireStaff`), content ideas already
+ * render on the calendar, and the counts still live on Home's attention card. So
+ * a client's bell no longer carries this feed and the badge no longer counts it.
+ *
+ * Staff are unaffected — cross-client rows with their own stamps and client
+ * names are the forensic detail they work from.
+ */
+export type TaskAlertFeedRow = { kind: "task"; task: TaskAlert };
+
+export function taskAlertRows(
+  taskAlerts: readonly TaskAlert[],
+  opts: { viewerIsClient: boolean },
+): TaskAlertFeedRow[] {
+  if (opts.viewerIsClient) return [];
+  return taskAlerts.map((task) => ({ kind: "task", task }));
 }
 
 /**
  * How many notification ROWS this viewer has — the number every badge, dot and
  * panel header in the product prints.
  *
- * Rows, not source records: for a client the whole review queue is one row, so
- * a sweep that mints fourteen jobs moves the badge by one. A badge reading "14"
- * the minute a sweep lands is the batch tell on the shell of every page just as
- * much as fourteen rows inside the panel are.
+ * Rows, not source records, and that is the whole contract: whatever the two
+ * feed builders above return for THIS viewer is what the panel paints and what
+ * every badge counts. For staff that is one row per job and per task; for a
+ * client, since round 6, it is the meeting action items and nothing else, so a
+ * sweep that mints fourteen review jobs moves a client's badge by zero. A badge
+ * reading "14" the minute a sweep lands is the batch tell on the shell of every
+ * page just as much as fourteen rows inside the panel are.
  */
 export function unreadNotificationCount(
   feeds: NotificationFeeds,
@@ -127,6 +201,8 @@ export function unreadNotificationCount(
   return (
     visibleActionItems(feeds.actionItems, opts.dismissed).length +
     reviewFeedRows(feeds.reviewJobs, opts).length +
-    feeds.taskAlerts.length
+    // ROWS, not records. Both builders answer for this viewer, so the sum is the
+    // panel's own row count by construction rather than by two lists agreeing.
+    taskAlertRows(feeds.taskAlerts, opts).length
   );
 }

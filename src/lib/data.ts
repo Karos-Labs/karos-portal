@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { adminDb } from "@/lib/firebase/admin";
+import { trackCreditUsage } from "@/lib/telemetry/bi-tracker";
 import type {
   AccessToken,
   ActionItem,
@@ -18,6 +19,8 @@ import type {
   ContextDocType,
   SeatVoiceProfile,
   Campaign,
+  ClientActionState,
+  ClientFollowerSnapshot,
   ClientInsightsCache,
   ClientIntegration,
   ClientMarketingAnalytics,
@@ -31,7 +34,9 @@ import type {
   CreditLedgerEntry,
   CreditOperation,
   CustomAgent,
+  DynamicAgentSpec,
   Job,
+  JiraConfig,
   JobStatus,
   LoginLog,
   PerformanceBenchmarks,
@@ -46,7 +51,15 @@ import type {
   XNewsUpdate,
   XTake,
   XDraftFeedback,
+  LiAgentState,
+  LiDirectionRequest,
   LiDraftFeedback,
+  BlogAgentState,
+  NewsletterAgentState,
+  ReputationAgentState,
+  NewsletterDraftFeedback,
+  NewsletterLedgerEntry,
+  RedditAgentState,
   RedditDraftFeedback,
 } from "@/lib/types";
 import {
@@ -54,6 +67,7 @@ import {
   applyCredit,
   assessCharge,
   defaultClientCredits,
+  isCreditsPlanV2Enabled,
   rollCreditWindows,
 } from "@/lib/credits";
 import { canViewClient } from "@/lib/client-visibility";
@@ -67,6 +81,8 @@ import {
   encryptCredentials,
   decryptCredentials,
   decryptCredentialsAvailable,
+  encryptToken,
+  decryptToken,
 } from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
@@ -91,6 +107,8 @@ const col = {
   clientContextDocs: () => adminDb().collection("clientContextDocs"),
   clientActivityLogs: () => adminDb().collection("clientActivityLogs"),
   clientIntegrations: () => adminDb().collection("clientIntegrations"),
+  // Agency-wide Jira connection — singleton doc, id "config" (not client-scoped).
+  jiraConfig: () => adminDb().collection("jiraConfig"),
   clientRequests: () => adminDb().collection("clientRequests"),
   loginLogs: () => adminDb().collection("loginLogs"),
   clientTasks: () => adminDb().collection("clientTasks"),
@@ -104,6 +122,9 @@ const col = {
   actionItems: () => adminDb().collection("actionItems"),
   // Platform-defined agents runnable via the agent service's "custom" task type.
   customAgents: () => adminDb().collection("customAgents"),
+  // Agent Studio's declarative dynamic-agent definitions. Global/admin-owned —
+  // deliberately NOT in CLIENT_SCOPED_COLLECTIONS (see the CRUD block below).
+  dynamicAgentSpecs: () => adminDb().collection("dynamicAgentSpecs"),
   // Recurring generator runs fired on a cadence by /api/scheduler.
   scheduledRuns: () => adminDb().collection("scheduledRuns"),
   // SEO & GEO insights: one doc per client (doc ID = clientId), written by the onboarding pipeline.
@@ -111,6 +132,14 @@ const col = {
   // Marketing performance analytics: one doc per (client, asset, platform),
   // doc ID = `${clientId}_${platform}_${assetId}`, written by /api/analytics/sync.
   clientMarketingAnalytics: () => adminDb().collection("clientMarketingAnalytics"),
+  // Channel follower/subscriber count snapshots (portal revamp Home KPIs, D6):
+  // one doc per (client, platform, day), doc ID =
+  // `${clientId}_${platform}_${capturedAt}`. Append-only — no writer exists
+  // yet; see the ClientFollowerSnapshot docstring in types.ts.
+  clientFollowerSnapshots: () => adminDb().collection("clientFollowerSnapshots"),
+  // The 15 preset actions' per-client state (portal revamp, Surface 08): one
+  // doc per (client, action), doc ID = `${clientId}_${actionId}`.
+  clientActionStates: () => adminDb().collection("clientActionStates"),
   // Omnichannel campaigns: themed bundles of dependent tasks/assets per client.
   campaigns: () => adminDb().collection("campaigns"),
   // Cached AI Insights briefing — one doc per client (doc ID = clientId), keyed
@@ -129,7 +158,38 @@ const col = {
   xTakes: () => adminDb().collection("xTakes"),
   xDraftFeedback: () => adminDb().collection("xDraftFeedback"),
   liDraftFeedback: () => adminDb().collection("liDraftFeedback"),
+  // LinkedIn v2: the live section's "what to cover next" rows (Section A0), and
+  // the durable copies of the files the v2 skills assume outlive a run. See the
+  // LiDirectionRequest / LiAgentState comments in types.ts for why each exists.
+  liDirectionRequests: () => adminDb().collection("liDirectionRequests"),
+  liAgentState: () => adminDb().collection("liAgentState"),
   redditDraftFeedback: () => adminDb().collection("redditDraftFeedback"),
+  // Reddit v2's durable state — the files the ephemeral runner would otherwise
+  // discard. See the RedditAgentState comment in types.ts for why the dated
+  // rules audit makes this a safety mechanism and not just a cache.
+  redditAgentState: () => adminDb().collection("redditAgentState"),
+  newsletterDraftFeedback: () => adminDb().collection("newsletterDraftFeedback"),
+  // Newsletter v2's durable state. The issue index in here is the numbering
+  // authority: lose it and a real subscriber list receives a second "Issue 004".
+  newsletterAgentState: () => adminDb().collection("newsletterAgentState"),
+  // ONE ROW PER ISSUE, unlike the state collection above — the blog walks a
+  // window of the six most recent shipped issues, so overwriting the previous
+  // issue's handoff would make that window one deep.
+  newsletterLedger: () => adminDb().collection("newsletterLedger"),
+  // Blog v2's durable state. The post index in here is its numbering authority
+  // and the clusters file is the subject-claim register that stops two runs
+  // writing the same article.
+  blogAgentState: () => adminDb().collection("blogAgentState"),
+  // Reputation v2's durable state. The response ledger in here is the no-repeat
+  // memory: lose it and the agent drafts a second public reply to a review a
+  // human already answered under the client's own name.
+  reputationAgentState: () => adminDb().collection("reputationAgentState"),
+  // Carousel v2's durable state. The whole karos-carousel-runner/-setup/-manager
+  // family was retired in full 2026-08-29 (SCRUM-377/T-B25a) — nothing writes
+  // here any more. The accessor stays ONLY so deleteClientCascade (below) still
+  // sweeps any historical docs a deleted client may carry; do not add a typed
+  // CRUD wrapper back on top of it.
+  carouselAgentState: () => adminDb().collection("carouselAgentState"),
   // Per-seat AI-built voice profiles (agent-scoped: x/linkedin/reddit), one doc
   // per (clientId, agent, seatId). See upsertSeatVoiceProfile.
   seatVoiceProfiles: () => adminDb().collection("seatVoiceProfiles"),
@@ -245,6 +305,22 @@ export async function listUsers(role?: Role): Promise<AppUser[]> {
 export async function countUsers(): Promise<number> {
   const snap = await col.users().count().get();
   return snap.data().count;
+}
+
+/**
+ * Registrations waiting in the admin queue — the number on the sidebar badge.
+ *
+ * The app layout computed this by reading EVERY user document on every staff
+ * request (`listUsers()`, then a filter), for a number that is almost always
+ * zero. Only disabled accounts can be pending, so the query asks for those and
+ * filters `approvedAt` in memory: an exact match on `null` would miss a record
+ * written before the field existed, and a disabled account that WAS approved
+ * (a deactivated colleague) is not a registration. Disabled accounts are a
+ * handful; the whole roster is not.
+ */
+export async function countPendingRegistrations(): Promise<number> {
+  const snap = await col.users().where("disabled", "==", true).get();
+  return snap.docs.filter((d) => !(d.data() as AppUser).approvedAt).length;
 }
 
 /* ----------------------------- clients ----------------------------- */
@@ -434,6 +510,8 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   "actionItems",
   "scheduledRuns",
   "clientMarketingAnalytics",
+  "clientFollowerSnapshots",
+  "clientActionStates",
   "campaigns",
   "clientSeats",
   "agentIntake",
@@ -444,7 +522,16 @@ const CLIENT_SCOPED_COLLECTIONS: Array<keyof typeof col> = [
   // step — the type is Array<keyof typeof col>, so an omission here is not a
   // compile error and no test covers the contents.
   "liDraftFeedback",
+  "liDirectionRequests",
+  "liAgentState",
   "redditDraftFeedback",
+  "redditAgentState",
+  "newsletterDraftFeedback",
+  "newsletterAgentState",
+  "newsletterLedger",
+  "blogAgentState",
+  "reputationAgentState",
+  "carouselAgentState",
   "plannedScheduledRuns",
   "seatVoiceProfiles",
 ];
@@ -533,6 +620,19 @@ export async function updateJob(id: string, data: Partial<Job>): Promise<void> {
   await col.jobs().doc(id).set(data, { merge: true });
 }
 
+/**
+ * Appends one asset id to `job.assetIds` with `arrayUnion` — safe under
+ * concurrent writers, which `updateJob(id, { assetIds: [...job.assetIds, x] })`
+ * is not: that spread is computed from whatever snapshot the caller holds, so
+ * two overlapping attachers each write "[] plus mine" and the job ends up
+ * referencing only the last one (the others become orphans that still show on
+ * /assets). Idempotent — attaching an id already present is a no-op.
+ */
+export async function attachAssetToJob(jobId: string, assetId: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.jobs().doc(jobId).set({ assetIds: FieldValue.arrayUnion(assetId), updatedAt: Date.now() }, { merge: true });
+}
+
 /** Deletes the job record only — assets created by the job keep living on /assets. */
 export async function deleteJob(id: string): Promise<void> {
   await col.jobs().doc(id).delete();
@@ -560,6 +660,73 @@ export async function getJobByExternalServiceId(serviceJobId: string): Promise<J
   const snap = await col.jobs().where("external.serviceJobId", "==", serviceJobId).limit(1).get();
   const doc = snap.docs[0];
   return doc ? withId<Job>(doc) : null;
+}
+
+/**
+ * Jobs dispatched through agent-engine (`agentId === "agent-engine"`,
+ * `src/lib/jobs/submit-managed.ts`) still non-terminal — candidates for the
+ * Task 2 reverse-completion sweep (`src/lib/agent-engine/reconcile.ts`,
+ * `src/app/api/agent-engine/reconcile/route.ts`). Mirrors
+ * `listStuckManagedJobs` exactly, minus its staleness filter: unlike the
+ * legacy webhook (which might just never arrive), agent-engine's own
+ * Firestore doc IS the source of truth here, so every in-flight job is a
+ * legitimate candidate to re-check, not only ones stuck past a threshold.
+ */
+export async function listInFlightAgentEngineJobs(limit = 25): Promise<Job[]> {
+  const snap = await col
+    .jobs()
+    .where("agentId", "==", "agent-engine")
+    .where("status", "in", IN_FLIGHT_JOB_STATUSES)
+    .get();
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    .filter((j) => j.agentEngineRunId)
+    .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
+    .slice(0, limit);
+}
+
+/**
+ * Engine jobs that reached `"review"` and have NOTHING ATTACHED — a completed
+ * run whose deliverable was never turned into an asset.
+ *
+ * A SECOND KIND OF INCOMPLETENESS, and the reason the sweep above cannot cover
+ * it: that one asks "has `job.status` caught up with the run?", and for these
+ * jobs the answer is yes. The status is correct and the deliverable is missing,
+ * so they are terminal, invisible to an `IN_FLIGHT_JOB_STATUSES` query, and
+ * were only ever healed if a human happened to open the Job page. That is how
+ * every engine job delivered before its product had a materializer became
+ * permanently asset-less: complete, "In review", nothing to review.
+ *
+ * `assetIds == []` IS A REAL SERVER-SIDE FILTER, not a convenience — Firestore
+ * compares the whole array, and it is what keeps this query proportional to the
+ * BACKLOG rather than to the review queue. Fetching every `review` job and
+ * filtering in memory would read a set that grows with every delivered job and
+ * never shrinks; this one returns only jobs that still need work, so it goes to
+ * zero once the backlog clears and stays there. Verified against prep: three
+ * equality filters, no composite index needed (Firestore merges single-field
+ * indexes for multiple `==`).
+ *
+ * It matches an EMPTY array, not an absent field. Nothing writes a job without
+ * `assetIds` (`Job` requires it and `dispatchAgentEngineRun` seeds `[]`), so
+ * that is a distinction with no cases today rather than a hole — worth knowing
+ * only because a hand-written doc would slip past this.
+ *
+ * Oldest-first and capped, same as the sweep above: a backlog that cannot be
+ * materialized at all (a product whose deliverable genuinely never landed) is
+ * re-read on every tick, and the cap is what bounds that.
+ */
+export async function listUnmaterializedAgentEngineJobs(limit = 25): Promise<Job[]> {
+  const snap = await col
+    .jobs()
+    .where("agentId", "==", "agent-engine")
+    .where("status", "==", "review")
+    .where("assetIds", "==", [])
+    .get();
+  return snap.docs
+    .map((d) => withId<Job>(d))
+    .filter((j) => j.agentEngineRunId)
+    .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0))
+    .slice(0, limit);
 }
 
 /**
@@ -703,12 +870,83 @@ export async function listAssets(opts?: { clientId?: string }): Promise<Asset[]>
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
 }
 
-export async function getAsset(id: string): Promise<Asset | null> {
-  const doc = await col.assets().doc(id).get();
-  return doc.exists ? withId<Asset>(doc) : null;
+/**
+ * How many assets each client has, as one aggregation query per client.
+ *
+ * The Clients page used to answer this by reading EVERY asset document in the
+ * database and counting in memory — the largest collection in the store, read
+ * whole, to print one number per card. A `count()` aggregation is billed per
+ * 1,000 index entries matched rather than per document, needs no composite
+ * index for a single equality filter, and returns no document bodies. Clients
+ * not in the result have zero assets.
+ */
+export async function countAssetsForClients(clientIds: readonly string[]): Promise<Record<string, number>> {
+  const entries = await Promise.all(
+    [...new Set(clientIds)].map(async (clientId) => {
+      const snap = await col.assets().where("clientId", "==", clientId).count().get();
+      return [clientId, snap.data().count] as const;
+    }),
+  );
+  return Object.fromEntries(entries);
 }
 
-export async function createAsset(data: Omit<Asset, "id">): Promise<string> {
+/**
+ * `cache()`-wrapped for the same reason as `getClient` above (SCRUM-265 item
+ * 3: "cache() on the hot getters"): a job's asset list and its own detail
+ * views can both ask for the same asset id within one request/render, and
+ * without this every one of those asks is its own Firestore round trip.
+ *
+ * NOT applied to `getJob` alongside it, deliberately: `refreshJobStatusAction`
+ * and `requestJobCancellation` (`src/lib/actions/external-job-actions.ts`)
+ * both call `getJob(jobId)` a SECOND time, by the same id, specifically to
+ * read back a value `updateJob` just wrote earlier in the same call — a
+ * request-scoped cache would hand them the pre-write copy forever, which is
+ * the opposite of what either was written to guarantee. No such re-read
+ * exists for `getAsset` today (checked every `updateAsset` call site); if one
+ * is ever added, it needs the same `getFreshX`-style escape hatch
+ * `layout.tsx`'s `starredAgentIds` backfill already uses for `getClient` —
+ * mutate the in-memory object directly rather than re-asking the cache.
+ */
+export const getAsset = cache(async (id: string): Promise<Asset | null> => {
+  const doc = await col.assets().doc(id).get();
+  return doc.exists ? withId<Asset>(doc) : null;
+});
+
+/**
+ * Creates an asset. With no `id`, an auto-generated one (the ordinary case,
+ * every existing caller).
+ *
+ * With an `id`, it is a caller-chosen DETERMINISTIC one and the create is
+ * idempotent against it: `.doc(id).create()` fails atomically when the id
+ * already exists — no read-then-write gap, so two callers racing the same id
+ * (a double click, a retry after a slow response) cannot both win. The
+ * loser's `create()` rejects with ALREADY_EXISTS (gRPC code 6) and that is
+ * treated as success, not an error: the id IS the idempotency key, so
+ * "someone already wrote this" and "I just wrote this" are the same outcome
+ * to a caller. Same idiom as `credit-reconcile.ts`'s `tx.create()` on a
+ * deterministic ledger id, minus the transaction — there is no read-modify-
+ * write here, just create-or-already-exists. Overloaded (rather than a
+ * differently-named sibling) so this stays the one writer #49's asset-type
+ * governance scan in platforms-publishable.test.ts has to know about.
+ */
+export async function createAsset(data: Omit<Asset, "id">): Promise<string>;
+export async function createAsset(
+  data: Omit<Asset, "id">,
+  id: string,
+): Promise<{ id: string; created: boolean }>;
+export async function createAsset(
+  data: Omit<Asset, "id">,
+  id?: string,
+): Promise<string | { id: string; created: boolean }> {
+  if (id) {
+    try {
+      await col.assets().doc(id).create(data);
+      return { id, created: true };
+    } catch (e) {
+      if ((e as { code?: number })?.code === 6) return { id, created: false };
+      throw e;
+    }
+  }
   const ref = await col.assets().add(data);
   return ref.id;
 }
@@ -966,6 +1204,42 @@ export async function clearAssetSchedule(id: string): Promise<void> {
   });
 }
 
+/**
+ * Revert a published asset to draft — clearAssetSchedule's counterpart, one
+ * status further back. Clears everything the publish left behind (the
+ * platform post id, the publish timestamp, the schedule that drove it) so the
+ * asset re-enters the pipeline exactly like a fresh draft rather than a
+ * published one wearing a draft label. Purely an internal record: no platform
+ * exposes a way to un-post through our integrations (integrations/publishers.ts
+ * has no delete call for any of them), so this never touches the live post.
+ */
+export async function clearAssetPublish(id: string): Promise<void> {
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await col.assets().doc(id).update({
+    status: "draft",
+    scheduledAt: FieldValue.delete(),
+    scheduledPlatform: FieldValue.delete(),
+    publishMode: FieldValue.delete(),
+    publishedAt: FieldValue.delete(),
+    platformPostId: FieldValue.delete(),
+    publishError: FieldValue.delete(),
+    publishClaimedAt: FieldValue.delete(),
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Permanently remove an asset record. Karos otherwise never hard-deletes one —
+ * ageing out of the client archive is a VIEW filter, not a delete (see
+ * asset-visibility.ts) — so this is the one exception, for a post someone
+ * genuinely wants gone from the workspace. Removes only Karos's own record:
+ * no platform integration exposes a way to remove the live post itself, so
+ * deleting here never reaches back to what's already posted on LinkedIn/X/etc.
+ */
+export async function deleteAsset(id: string): Promise<void> {
+  await col.assets().doc(id).delete();
+}
+
 /* --------------------------- transcripts --------------------------- */
 
 export async function listTranscripts(opts?: {
@@ -993,9 +1267,37 @@ export async function getTranscript(id: string): Promise<Transcript | null> {
   return doc.exists ? withId<Transcript>(doc) : null;
 }
 
+/** Thrown by createTranscript when a transcript for this externalId was already created
+ *  (by a concurrent sync/webhook call) between the caller's dedup check and this write. */
+export class TranscriptAlreadyExistsError extends Error {
+  constructor(public readonly existingId: string) {
+    super(`Transcript with this externalId already exists (id=${existingId})`);
+  }
+}
+
+/** Deterministic doc id per externalId, so two concurrent ingests for the same recording
+ *  race on the SAME Firestore doc instead of each creating their own via .add() — the
+ *  transaction below then makes "does it exist" and "create it" atomic. Manual entries get
+ *  a synthetic externalId (see ingestManualTranscriptAction) so this always applies. */
+function transcriptDocId(externalId: string): string {
+  return `ext_${externalId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
 export async function createTranscript(data: Omit<Transcript, "id">): Promise<string> {
-  const ref = await col.transcripts().add(data);
-  return ref.id;
+  if (!data.externalId) {
+    const ref = await col.transcripts().add(data);
+    return ref.id;
+  }
+  const id = transcriptDocId(data.externalId);
+  const ref = col.transcripts().doc(id);
+  const created = await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) return false;
+    tx.set(ref, data);
+    return true;
+  });
+  if (!created) throw new TranscriptAlreadyExistsError(id);
+  return id;
 }
 
 export async function updateTranscript(id: string, data: Partial<Transcript>): Promise<void> {
@@ -1061,6 +1363,21 @@ export async function listActionItemsForTranscript(transcriptId: string): Promis
   return snap.docs
     .map((d) => withId<ActionItem>(d))
     .sort((a, b) => a.sourceIndex - b.sourceIndex);
+}
+
+/**
+ * Assigned items missing a Jira link — created before Jira was configured,
+ * or that failed to sync (e.g. a misconfigured project key). Lets the "Retry
+ * pending Jira syncs" admin action catch these up in bulk rather than making
+ * someone re-open and reassign each one by hand. `jiraIssueKey` is absent
+ * (not explicitly null) on unsynced docs, which Firestore can't query for
+ * directly — filtered here instead of at the query layer.
+ */
+export async function listActionItemsPendingJiraSync(): Promise<ActionItem[]> {
+  const snap = await col.actionItems().get();
+  return snap.docs
+    .map((d) => withId<ActionItem>(d))
+    .filter((i) => !!i.assigneeUserId && !i.jiraIssueKey);
 }
 
 /* -------------------------- context items -------------------------- */
@@ -1255,13 +1572,101 @@ export async function upsertClientInsightsCache(
   await col.clientInsightsCache().doc(clientId).set({ clientId, ...patch }, { merge: true });
 }
 
+/**
+ * This client's best and worst measured content.
+ *
+ * MEASURED ROWS ONLY, FILTERED HERE (2026-08). Every row carries
+ * `source: "mock" | "live"`, and until 2026-08 the sync cron wrote a mock row
+ * whenever no live API could answer — including for every client with no
+ * connected channel at all. Those rows are gone from the WRITE path now
+ * (analytics-providers.ts), but everything written before that is still in
+ * Firestore, so the read has to refuse them too.
+ *
+ * The filter is at the source rather than at each caller because the callers
+ * are where it kept going wrong: of the four, only the copilot chat route ever
+ * checked, so content generation quoted invented figures as proven winners, the
+ * strategy swarm narrated them to the client as measurement, and a fabricated
+ * score ≥ 80 opened a paid campaign. One fence beats four, and a fifth caller
+ * inherits it for free.
+ *
+ * ZERO-IMPRESSION ROWS ARE ALSO REFUSED HERE (2026-08). `engagementScore` is
+ * `impressions > 0 ? clicks/impressions : 0` — no impressions means no
+ * denominator, so the score is forced to 0.0 regardless of what the content
+ * is. Provenance-wise the row is real ("live"), but informationally it's the
+ * same shape of problem the mock rows were: a number sitting where no
+ * measurement exists yet. Left in, it can never land in `top` (0.0 is the
+ * floor) but reliably wins `bottom` — a post nobody has been shown yet gets
+ * narrated to the client as their worst performer.
+ *
+ * `sampleSize` counts the rows that SURVIVE both filters, which is what
+ * re-arms the "no performance analytics captured yet" fallbacks downstream —
+ * those read `sampleSize > 0`, and a set that was all-mock, or is now all
+ * zero-impression, used to sail past it with a non-zero count.
+ */
 export async function getClientPerformanceBenchmarks(
   clientId: string,
   count = 5,
 ): Promise<PerformanceBenchmarks> {
-  const records = await listClientMarketingAnalytics(clientId);
+  const records = (await listClientMarketingAnalytics(clientId)).filter(
+    (r) => r.source === "live" && r.metrics.impressions > 0,
+  );
   const { top, bottom } = rankByEngagement(records, count);
   return { clientId, top, bottom, sampleSize: records.length };
+}
+
+/* ----------------- follower snapshots (portal revamp, D6) ----------------- */
+
+/** Deterministic doc id — one row per client+platform+day, re-runs overwrite in place. */
+function followerSnapshotDocId(clientId: string, platform: string, capturedAt: number): string {
+  return `${clientId}_${platform}_${capturedAt}`;
+}
+
+/** A client's whole follower history, oldest first (the shape a growth chart wants). */
+export async function listClientFollowerSnapshots(
+  clientId: string,
+): Promise<ClientFollowerSnapshot[]> {
+  const snap = await col.clientFollowerSnapshots().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<ClientFollowerSnapshot>(d))
+    .sort((a, b) => a.capturedAt - b.capturedAt);
+}
+
+/**
+ * Record one channel's follower count for one day. No caller exists yet — see
+ * the ClientFollowerSnapshot docstring in types.ts — this is the write side a
+ * future live-ingestion cron calls; `follower-tracking.ts`'s deterministic mock
+ * fills the display until then.
+ */
+export async function recordClientFollowerSnapshot(
+  input: Omit<ClientFollowerSnapshot, "id">,
+): Promise<void> {
+  const id = followerSnapshotDocId(input.clientId, input.platform, input.capturedAt);
+  await col.clientFollowerSnapshots().doc(id).set({ ...input, id }, { merge: true });
+}
+
+/* ----------------- the 15 preset actions (portal revamp, Surface 08) ----------------- */
+
+function actionStateDocId(clientId: string, actionId: string): string {
+  return `${clientId}_${actionId}`;
+}
+
+/** This client's whole action-state row set — small and bounded (at most 15), one read for the whole list. */
+export async function listClientActionStates(clientId: string): Promise<ClientActionState[]> {
+  const snap = await col.clientActionStates().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<ClientActionState>(d));
+}
+
+/** Upsert one action's state. Idempotent on the deterministic doc id — dismissing (or completing) the same action twice just rewrites `updatedAt`. */
+export async function upsertClientActionState(
+  clientId: string,
+  actionId: string,
+  status: ClientActionState["status"],
+): Promise<void> {
+  const id = actionStateDocId(clientId, actionId);
+  await col.clientActionStates().doc(id).set(
+    { id, clientId, actionId, status, updatedAt: Date.now() } satisfies ClientActionState,
+    { merge: true },
+  );
 }
 
 /* ------------------------------ campaigns --------------------------- */
@@ -1786,6 +2191,40 @@ export async function deleteClientIntegration(
   await col.clientIntegrations().doc(docId).delete();
 }
 
+/* -------------------- jira integration ------------------------------ */
+
+const JIRA_CONFIG_DOC_ID = "config";
+
+/**
+ * Read the agency-wide Jira connection. Unlike client integrations this is a
+ * single singleton doc — Jira here is one board for the whole agency's
+ * internal action items, not a per-client connection.
+ */
+export async function getJiraConfig(): Promise<JiraConfig | null> {
+  const doc = await col.jiraConfig().doc(JIRA_CONFIG_DOC_ID).get();
+  if (!doc.exists) return null;
+  const data = withId<JiraConfig>(doc);
+  return { ...data, apiToken: decryptToken(data.apiToken) };
+}
+
+/**
+ * Create or overwrite the Jira connection. `apiToken` is encrypted at rest,
+ * same scheme as `ClientIntegration.credentials`. Deterministic doc ID —
+ * there is only ever one.
+ */
+export async function upsertJiraConfig(data: Omit<JiraConfig, "id">): Promise<void> {
+  await col.jiraConfig().doc(JIRA_CONFIG_DOC_ID).set({
+    id: JIRA_CONFIG_DOC_ID,
+    ...data,
+    apiToken: encryptToken(data.apiToken),
+  });
+}
+
+/** Disconnect Jira entirely. */
+export async function deleteJiraConfig(): Promise<void> {
+  await col.jiraConfig().doc(JIRA_CONFIG_DOC_ID).delete();
+}
+
 /* ---------------- LinkedIn employee-advocacy seats ------------------ */
 /*
  * Seats live as an array on the client's `${clientId}_linkedin` integration doc.
@@ -2106,17 +2545,62 @@ export async function listLoginLogs(opts?: { since?: number; limit?: number }): 
 
 /* ─────────────────────── Proactive Task Board ───────────────────────── */
 
+/**
+ * Firestore's ceiling on the value list of an `in` filter. A wider client scope
+ * is split into this many ids per query and merged in JS.
+ */
+const TASK_CLIENT_SCOPE_CHUNK = 30;
+
 export async function listClientTasks(opts: {
   clientId?: string;
+  /**
+   * A CROSS-CLIENT scope, fenced IN THE QUERY (review wave, 2026-09).
+   *
+   * The staff bell used to read the newest 200 tasks agency-wide and then keep
+   * the ones belonging to the viewer's clients. For an admin that is the same
+   * answer either way, but an EMPLOYEE is fenced to their assignments — so an
+   * employee whose clients' tasks all sat outside the newest 200 got an empty
+   * bell and a "All caught up!" that was simply false. The `limit` has to be
+   * applied to the viewer's OWN rows, which means the scope has to reach the
+   * query.
+   *
+   * Ignored when `clientId` is set (that is the narrower fence already), and an
+   * EMPTY array means an empty scope, not "everything" — it fails closed.
+   */
+  clientIds?: string[];
   /** Single status or array of statuses — filtered in JS to avoid composite indexes. */
   status?: TaskStatus | TaskStatus[];
   limit?: number;
   /** Archived tasks are hidden unless requested (or explicitly asked for via status). */
   includeArchived?: boolean;
 }): Promise<ClientTask[]> {
+  // Wider than one `in` filter can carry: run a query per chunk and merge. Each
+  // chunk is already sorted and capped by the recursive call, and the newest
+  // `limit` of a subset is a superset of whatever survives globally, so
+  // re-sorting and re-capping the union is the same answer one query would give.
+  const scope = opts.clientId ? undefined : opts.clientIds && [...new Set(opts.clientIds)];
+  if (scope) {
+    if (scope.length === 0) return [];
+    if (scope.length > TASK_CLIENT_SCOPE_CHUNK) {
+      const chunks: string[][] = [];
+      for (let i = 0; i < scope.length; i += TASK_CLIENT_SCOPE_CHUNK) {
+        chunks.push(scope.slice(i, i + TASK_CLIENT_SCOPE_CHUNK));
+      }
+      const pages = await Promise.all(
+        chunks.map((clientIds) => listClientTasks({ ...opts, clientIds })),
+      );
+      return pages
+        .flat()
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, opts.limit ?? 200);
+    }
+  }
   // Avoid composite-index requirement by filtering in JS after a simple query.
   let q = col.clientTasks() as FirebaseFirestore.Query;
   if (opts.clientId) q = q.where("clientId", "==", opts.clientId);
+  // `in` expands to a disjunction of EQUALITY filters, so this needs no
+  // composite index either — same reason the single-status filter below is safe.
+  else if (scope) q = q.where("clientId", "in", scope);
   // Single-status Firestore filter for efficiency; multi-status done in JS below.
   if (typeof opts.status === "string") q = q.where("status", "==", opts.status);
   const snap = await q.get();
@@ -2362,6 +2846,43 @@ export async function removeCustomAgentFromClients(agentId: string): Promise<voi
   );
 }
 
+/* ─────────────────────── Dynamic Agent Specs ───────────────────────
+ *
+ * Agent Studio's declarative agent definitions (see DynamicAgentSpec in
+ * lib/types.ts). Global / admin-owned — one spec applies across every
+ * client, gated per-client by `allowedClientIds` — so this collection is
+ * intentionally NOT in CLIENT_SCOPED_COLLECTIONS below: a client delete must
+ * not cascade-delete a spec other clients still run.
+ */
+
+export async function listDynamicAgentSpecs(): Promise<DynamicAgentSpec[]> {
+  const snap = await col.dynamicAgentSpecs().get();
+  return snap.docs
+    .map((d) => withId<DynamicAgentSpec>(d))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function getDynamicAgentSpec(id: string): Promise<DynamicAgentSpec | null> {
+  const doc = await col.dynamicAgentSpecs().doc(id).get();
+  return doc.exists ? withId<DynamicAgentSpec>(doc) : null;
+}
+
+export async function createDynamicAgentSpec(data: Omit<DynamicAgentSpec, "id">): Promise<string> {
+  const ref = await col.dynamicAgentSpecs().add(data);
+  return ref.id;
+}
+
+export async function updateDynamicAgentSpec(
+  id: string,
+  data: Partial<Omit<DynamicAgentSpec, "id">>,
+): Promise<void> {
+  await col.dynamicAgentSpecs().doc(id).update(data);
+}
+
+export async function deleteDynamicAgentSpec(id: string): Promise<void> {
+  await col.dynamicAgentSpecs().doc(id).delete();
+}
+
 /* ─────────────────────── Scheduled Runs ─────────────────────────── */
 
 export async function createScheduledRun(data: Omit<ScheduledRun, "id">): Promise<string> {
@@ -2455,6 +2976,9 @@ type CreditEntryMeta = {
   jobId?: string | null;
   actorUid: string;
   actorName?: string;
+  /** See CreditLedgerEntry.modelName/.provider (T-B23). */
+  modelName?: string | null;
+  provider?: string | null;
 };
 
 /**
@@ -2465,9 +2989,12 @@ type CreditEntryMeta = {
  */
 export async function chargeClientCredits(
   args: CreditEntryMeta & { amount: number },
-): Promise<{ balance: number }> {
+): Promise<{ balance: number; entryId: string | null }> {
+  if (!Number.isSafeInteger(args.amount)) {
+    throw new Error("Credit amount must be a finite integer");
+  }
   const ref = col.clientCredits().doc(args.clientId);
-  return adminDb().runTransaction(async (tx) => {
+  const result = await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const now = Date.now();
     const current = snap.exists
@@ -2476,7 +3003,9 @@ export async function chargeClientCredits(
 
     const assessed = assessCharge(current, args.amount, now);
     if (!assessed.ok) throw new CreditError(assessed.code, assessed.message);
-    if (args.amount <= 0) return { balance: assessed.next.balance };
+    // A zero-amount charge writes no ledger row, so there is no hold to settle
+    // and `entryId` is honestly null rather than a made-up id.
+    if (args.amount <= 0) return { balance: assessed.next.balance, entryId: null };
 
     tx.set(ref, assessed.next);
     const entryRef = col.creditLedger().doc();
@@ -2490,12 +3019,36 @@ export async function chargeClientCredits(
       reason: args.reason,
       agentId: args.agentId ?? null,
       jobId: args.jobId ?? null,
+      modelName: args.modelName ?? null,
+      provider: args.provider ?? null,
       actorUid: args.actorUid,
       actorName: args.actorName,
       createdAt: now,
+      // Two-phase charging (credits rework, 2026-09): a charge written while the
+      // rework is ON is an ESTIMATE awaiting settlement. Stamped on the row
+      // rather than inferred, so a reader of the ledger alone can tell a hold
+      // from the pre-rework charges that were final by construction.
+      //
+      // GATED, like every other write this rework introduces: with the flag off
+      // nothing will ever settle these rows, so calling them holds would be a
+      // claim the ledger cannot keep. It decides nothing either way — the
+      // settlement path pairs on ids and reads `operation`, never this.
+      ...(isCreditsPlanV2Enabled() ? { phase: "hold" as const } : {}),
     } satisfies CreditLedgerEntry);
-    return { balance: assessed.next.balance };
+    return { balance: assessed.next.balance, entryId: entryRef.id };
   });
+  if (args.amount > 0) {
+    trackCreditUsage({
+      clientId: args.clientId,
+      amount: -args.amount,
+      balanceAfter: result.balance,
+      reason: args.reason,
+      source: args.operation,
+      model: args.modelName ?? null,
+      provider: args.provider ?? null,
+    });
+  }
+  return result;
 }
 
 /**
@@ -2509,23 +3062,49 @@ export async function creditClientCredits(
     kind: "grant" | "refund" | "adjustment";
     /** Refunds: when the original charge happened — scopes window-spend hand-back. */
     chargedAt?: number;
+    /**
+     * A DETERMINISTIC ledger doc id for this credit, making the write
+     * idempotent: if the doc already exists the whole call is a no-op and the
+     * balance is not moved a second time.
+     *
+     * Added for the in-request refund paths (credits rework, 2026-09), which
+     * until now wrote auto-id docs with no idempotency key at all — the gap
+     * `refundOnce` exists to paper over per-run, and which nothing could see
+     * across runs. Passing `refundEntryIdFor(chargeEntryId)` here gives them the
+     * same `refund_<chargeEntryId>` pairing the job path has always had, which
+     * is also what lets a settlement tell that a charge was already handed back.
+     * Omit for grants and adjustments: two identical admin grants are two real
+     * grants, not a duplicate.
+     */
+    entryId?: string;
   },
 ): Promise<{ balance: number }> {
+  if (!Number.isSafeInteger(args.amount)) {
+    throw new Error("Credit amount must be a finite integer");
+  }
   if (args.amount === 0) throw new Error("Amount must be non-zero");
   if (args.amount < 0 && args.kind !== "adjustment") {
     throw new Error("Only adjustments may deduct credits");
   }
   const ref = col.clientCredits().doc(args.clientId);
-  return adminDb().runTransaction(async (tx) => {
+  const result = await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const now = Date.now();
     const current = snap.exists
       ? (snap.data() as ClientCredits)
       : defaultClientCredits(args.clientId, now);
 
+    // Idempotency, when the caller supplied a deterministic id: read INSIDE the
+    // transaction so a concurrent duplicate is serialised against this one
+    // rather than both reading "absent" and both crediting.
+    const entryRef = args.entryId ? col.creditLedger().doc(args.entryId) : col.creditLedger().doc();
+    if (args.entryId) {
+      const existing = await tx.get(entryRef);
+      if (existing.exists) return { balance: current.balance, duplicate: true };
+    }
+
     const next = applyCredit(current, args.amount, args.kind, now, args.chargedAt);
     tx.set(ref, next);
-    const entryRef = col.creditLedger().doc();
     tx.set(entryRef, {
       id: entryRef.id,
       clientId: args.clientId,
@@ -2536,12 +3115,98 @@ export async function creditClientCredits(
       reason: args.reason,
       agentId: args.agentId ?? null,
       jobId: args.jobId ?? null,
+      modelName: args.modelName ?? null,
+      provider: args.provider ?? null,
       actorUid: args.actorUid,
       actorName: args.actorName,
       createdAt: now,
     } satisfies CreditLedgerEntry);
-    return { balance: next.balance };
+    return { balance: next.balance, duplicate: false };
   });
+  // A duplicate moved nothing, so reporting it as usage would double-count a
+  // hand-back that never happened.
+  if (result.duplicate) return { balance: result.balance };
+  trackCreditUsage({
+    clientId: args.clientId,
+    amount: args.amount,
+    balanceAfter: result.balance,
+    reason: args.reason,
+    source: args.operation,
+    model: args.modelName ?? null,
+    provider: args.provider ?? null,
+  });
+  return result;
+}
+
+/**
+ * Stamp the run a HOLD is paying for onto the charge row (credits rework,
+ * 2026-09) — see `CreditLedgerEntry.settlesJobId`.
+ *
+ * WHY THIS EXISTS AT ALL. A board-task dispatch is charged under the TASK id
+ * before any job exists, so two overlapping runs of one task file two holds
+ * under one key and "newest unpaired" stops naming a particular run. This is
+ * the earliest moment anything knows which job a given hold belongs to: the
+ * dispatch has just been given its job id.
+ *
+ * Stamps the NEWEST UNSTAMPED charge under the key, which is this dispatch's own
+ * — the charge was taken moments ago, immediately before the submit, and any
+ * older overlapping hold was stamped by its own dispatch on the same path.
+ *
+ * BEST EFFORT, and deliberately not transactional with the dispatch: an
+ * unstamped hold still settles, by the pre-existing newest-unpaired rule. This
+ * makes the common case exact; it is not load-bearing for correctness of a
+ * single in-flight run.
+ */
+export async function stampChargeSettlesJob(ledgerKey: string, jobId: string): Promise<void> {
+  // Gated with the rest of the rework: while it is dark nothing settles, so the
+  // stamp would be a read and a write per dispatch to record something nothing
+  // consults. A hold taken before the flag flips is simply unstamped, which is
+  // the legacy case the pairing already falls back to.
+  if (!isCreditsPlanV2Enabled()) return;
+  try {
+    const snap = await col
+      .creditLedger()
+      .where("jobId", "==", ledgerKey)
+      .limit(50)
+      .get();
+    const candidate = snap.docs
+      .map((d) => withId<CreditLedgerEntry>(d))
+      .filter((e) => e.kind === "charge" && e.delta < 0 && e.settlesJobId == null)
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!candidate) return;
+    await col.creditLedger().doc(candidate.id).set({ settlesJobId: jobId }, { merge: true });
+  } catch (e) {
+    console.error(`[credits] could not stamp charge under ${ledgerKey} with job ${jobId}:`, e);
+  }
+}
+
+/**
+ * This client's runs of ONE agent, bounded — the sample the run-price estimate
+ * is measured from (credits rework, 2026-09).
+ *
+ * TWO EQUALITY FILTERS AND A LIMIT, deliberately no `orderBy`: that pairing
+ * needs no composite index (Firestore merges single-field indexes for multiple
+ * `==`, the same reasoning `listReviewJobsNeedingAssets` records), while
+ * ordering alongside an equality filter would. The estimate sorts what comes
+ * back in memory before it takes the newest ten, so ordering here would buy an
+ * index and nothing else.
+ *
+ * REPLACES `listJobs({ clientId })` ON THE SUBMIT PATH, which read every job the
+ * client has ever run — on every single submit — to find at most ten numbers
+ * about one agent.
+ */
+export async function listJobsByClientAndAgent(
+  clientId: string,
+  customAgentId: string,
+  limit = 100,
+): Promise<Job[]> {
+  const snap = await col
+    .jobs()
+    .where("clientId", "==", clientId)
+    .where("customAgentId", "==", customAgentId)
+    .limit(limit)
+    .get();
+  return snap.docs.map((d) => withId<Job>(d));
 }
 
 /** Set the weekly/monthly spend caps (null = uncapped). Creates the doc with defaults if missing. */
@@ -2565,13 +3230,24 @@ export async function setClientCreditLimits(
   });
 }
 
-/** Ledger entries for a client, newest first. */
-export async function listCreditLedger(clientId: string, limit = 50): Promise<CreditLedgerEntry[]> {
+/**
+ * Ledger entries for a client, newest first. `limit` caps the rows returned;
+ * OMIT it to get the whole ledger.
+ *
+ * The fetch is unconditional either way — Firestore hands back every row and the
+ * cap is applied in memory afterwards. So a cap costs exactly the same read and
+ * can only ever remove information, which makes it the wrong default for any
+ * caller that AGGREGATES: a per-agent breakdown summed over the newest N rows,
+ * printed under "where your credits went", is a breakdown of a recent slice
+ * wearing the label of the whole ledger (2026-08). Cap the display lists, not
+ * the arithmetic.
+ */
+export async function listCreditLedger(clientId: string, limit?: number): Promise<CreditLedgerEntry[]> {
   const snap = await col.creditLedger().where("clientId", "==", clientId).get();
-  return snap.docs
+  const rows = snap.docs
     .map((d) => withId<CreditLedgerEntry>(d))
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, limit);
+    .sort((a, b) => b.createdAt - a.createdAt);
+  return limit === undefined ? rows : rows.slice(0, limit);
 }
 
 /* ─────────────────────── Task capacity / dedup ──────────────────── */
@@ -2831,6 +3507,320 @@ export async function listLiDraftFeedback(
   return snap.docs.map((d) => withId<LiDraftFeedback>(d)).sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/* ───────── LinkedIn v2: direction requests (the live section's Section A0) ───────── */
+
+export async function addLiDirectionRequest(
+  data: Omit<LiDirectionRequest, "id">,
+): Promise<string> {
+  const ref = await col.liDirectionRequests().add(data);
+  return ref.id;
+}
+
+/** Newest first. `account` scopes to one identity ("company" or a seat id). */
+export async function listLiDirectionRequests(
+  clientId: string,
+  opts?: { account?: string; status?: LiDirectionRequest["status"] },
+): Promise<LiDirectionRequest[]> {
+  let q = col.liDirectionRequests().where("clientId", "==", clientId);
+  if (opts?.account) q = q.where("account", "==", opts.account);
+  if (opts?.status) q = q.where("status", "==", opts.status);
+  const snap = await q.get();
+  return snap.docs
+    .map((d) => withId<LiDirectionRequest>(d))
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * Flip a request to `covered`, naming the run that covered it. Scoped by
+ * clientId as well as id so a caller cannot flip another client's row by
+ * guessing a document id.
+ */
+export async function markLiDirectionRequestCovered(
+  clientId: string,
+  id: string,
+  jobId: string,
+): Promise<boolean> {
+  const doc = await col.liDirectionRequests().doc(id).get();
+  if (!doc.exists || doc.data()?.clientId !== clientId) return false;
+  await doc.ref.set(
+    { status: "covered", coveredByJobId: jobId, coveredAt: Date.now() },
+    { merge: true },
+  );
+  return true;
+}
+
+export async function deleteLiDirectionRequest(clientId: string, id: string): Promise<boolean> {
+  const doc = await col.liDirectionRequests().doc(id).get();
+  if (!doc.exists || doc.data()?.clientId !== clientId) return false;
+  await doc.ref.delete();
+  return true;
+}
+
+/* ───────── LinkedIn v2: the durable state the ephemeral workspace loses ───────── */
+
+export async function getLiAgentState(
+  clientId: string,
+  kind: LiAgentState["kind"],
+): Promise<LiAgentState | null> {
+  const snap = await col
+    .liAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<LiAgentState>(snap.docs[0]);
+}
+
+export async function listLiAgentState(clientId: string): Promise<LiAgentState[]> {
+  const snap = await col.liAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<LiAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file. Wholesale replacement, not a merge: each of
+ * these is a whole file the run rewrote (the ledger it appended to, the catalog
+ * it flipped a row in), so the delivered copy IS the new state — merging two
+ * versions of a JSON document at the field level would produce a file neither
+ * run wrote.
+ *
+ * `version` counts captures rather than gating them. A lost update here is
+ * recoverable (the next run re-delivers its own copy) and the alternative — a
+ * transactional compare-and-set on a payload up to CONTENT_CHAR_CAP — buys
+ * nothing, because two concurrent LinkedIn runs for one client are already
+ * refused upstream by the in-flight check.
+ */
+export async function upsertLiAgentState(
+  data: Omit<LiAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getLiAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .liAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .liAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───────── Newsletter v2: the durable state the ephemeral runner loses ───────── */
+
+export async function getNewsletterAgentState(
+  clientId: string,
+  kind: NewsletterAgentState["kind"],
+): Promise<NewsletterAgentState | null> {
+  const snap = await col
+    .newsletterAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<NewsletterAgentState>(snap.docs[0]);
+}
+
+export async function listNewsletterAgentState(
+  clientId: string,
+): Promise<NewsletterAgentState[]> {
+  const snap = await col.newsletterAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<NewsletterAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file. Wholesale, not a field merge: each is a whole
+ * file the run rewrote, and merging two versions of the issue index at field
+ * level could produce a claim row neither run wrote — on the one file where being
+ * wrong sends a duplicate issue number to a real mailing list.
+ */
+export async function upsertNewsletterAgentState(
+  data: Omit<NewsletterAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getNewsletterAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .newsletterAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .newsletterAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───── Newsletter v2: the per-issue research the BLOG agent reads ───── */
+
+export async function getNewsletterLedgerEntry(
+  clientId: string,
+  issueNumber: string,
+  kind: NewsletterLedgerEntry["kind"],
+): Promise<NewsletterLedgerEntry | null> {
+  const snap = await col
+    .newsletterLedger()
+    .where("clientId", "==", clientId)
+    .where("issueNumber", "==", issueNumber)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<NewsletterLedgerEntry>(snap.docs[0]);
+}
+
+/** Every captured ledger row for this client, newest issue first. */
+export async function listNewsletterLedger(
+  clientId: string,
+): Promise<NewsletterLedgerEntry[]> {
+  const snap = await col.newsletterLedger().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<NewsletterLedgerEntry>(d))
+    // Numeric, not lexicographic: "010" must sort above "009", and the blog
+    // takes the SIX HIGHEST issues — a string sort would hand it the wrong six
+    // the moment a client passes issue 100.
+    .sort((a, b) => Number(b.issueNumber) - Number(a.issueNumber));
+}
+
+export async function upsertNewsletterLedgerEntry(
+  data: Omit<NewsletterLedgerEntry, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getNewsletterLedgerEntry(data.clientId, data.issueNumber, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .newsletterLedger()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col.newsletterLedger().add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───────── Blog v2: the durable state the ephemeral runner loses ───────── */
+
+export async function getBlogAgentState(
+  clientId: string,
+  kind: BlogAgentState["kind"],
+): Promise<BlogAgentState | null> {
+  const snap = await col
+    .blogAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<BlogAgentState>(snap.docs[0]);
+}
+
+export async function listBlogAgentState(clientId: string): Promise<BlogAgentState[]> {
+  const snap = await col.blogAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<BlogAgentState>(d));
+}
+
+/**
+ * Create-or-replace one blog state file. Wholesale, not a field merge: each is a
+ * whole file the run rewrote, and merging two versions of the post index at field
+ * level could produce a claim row neither run wrote — on the one file that decides
+ * whether two runs write the same article.
+ */
+export async function upsertBlogAgentState(
+  data: Omit<BlogAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getBlogAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .blogAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col.blogAgentState().add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/*
+ * Carousel v2's typed CRUD (getCarouselAgentState / listCarouselAgentState /
+ * upsertCarouselAgentState) used to live here. The whole
+ * karos-carousel-runner/-setup/-manager family was retired in full 2026-08-29
+ * (SCRUM-377/T-B25a) — no engine equivalent was ever planned. Removed from
+ * code and the db, do not reintroduce. The raw `col.carouselAgentState()`
+ * collection accessor above still exists, solely so `deleteClientCascade`
+ * sweeps any historical docs a deleted client may carry.
+ */
+
+/* ───────── Reputation v2: the durable state the ephemeral runner loses ───────── */
+
+export async function getReputationAgentState(
+  clientId: string,
+  kind: ReputationAgentState["kind"],
+): Promise<ReputationAgentState | null> {
+  const snap = await col
+    .reputationAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<ReputationAgentState>(snap.docs[0]);
+}
+
+export async function listReputationAgentState(
+  clientId: string,
+): Promise<ReputationAgentState[]> {
+  const snap = await col.reputationAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<ReputationAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file, WHOLE-FILE — including `crisis-ledger`,
+ * which is append-only in the runner's workspace and is still stored here as one
+ * blob.
+ *
+ * The run does its own appending and delivers the whole file; the portal never
+ * merges. Appending on this side would put two writers on one ledger with no
+ * ordering guarantee between the run's append and ours, on the one file that is
+ * an audit trail. The cost is that a run delivering a truncated ledger
+ * overwrites the full one, which is why the capture refuses an empty body and
+ * the webhook reports a failed capture rather than swallowing it.
+ */
+export async function upsertReputationAgentState(
+  data: Omit<ReputationAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getReputationAgentState(data.clientId, data.kind);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .reputationAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .reputationAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
+}
+
+/* ───────── Newsletter v2: the per-issue feedback ledger ───────── */
+
+export async function addNewsletterDraftFeedback(
+  data: Omit<NewsletterDraftFeedback, "id">,
+): Promise<string> {
+  const ref = await col.newsletterDraftFeedback().add(data);
+  return ref.id;
+}
+
+export async function listNewsletterDraftFeedback(
+  clientId: string,
+): Promise<NewsletterDraftFeedback[]> {
+  const snap = await col.newsletterDraftFeedback().where("clientId", "==", clientId).get();
+  return snap.docs
+    .map((d) => withId<NewsletterDraftFeedback>(d))
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
 export async function addRedditDraftFeedback(
   data: Omit<RedditDraftFeedback, "id">,
 ): Promise<string> {
@@ -2848,4 +3838,57 @@ export async function listRedditDraftFeedback(
   return snap.docs
     .map((d) => withId<RedditDraftFeedback>(d))
     .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/* ───────── Reddit v2: the durable state the ephemeral runner loses ───────── */
+
+/**
+ * One state file. `account` is part of the identity, not a filter: v2 keeps a
+ * separate memory and learning log per Reddit account, so a per-account kind
+ * read without it would hand one account's learned voice to another's replies.
+ */
+export async function getRedditAgentState(
+  clientId: string,
+  kind: RedditAgentState["kind"],
+  account: string | null = null,
+): Promise<RedditAgentState | null> {
+  const snap = await col
+    .redditAgentState()
+    .where("clientId", "==", clientId)
+    .where("kind", "==", kind)
+    .where("account", "==", account)
+    .limit(1)
+    .get();
+  return snap.empty ? null : withId<RedditAgentState>(snap.docs[0]);
+}
+
+export async function listRedditAgentState(clientId: string): Promise<RedditAgentState[]> {
+  const snap = await col.redditAgentState().where("clientId", "==", clientId).get();
+  return snap.docs.map((d) => withId<RedditAgentState>(d));
+}
+
+/**
+ * Create-or-replace one state file. Wholesale replacement, not a field merge:
+ * each of these is a whole file the run rewrote (the ledger it appended to, the
+ * audit row it re-verified), so the delivered copy IS the new state. Merging two
+ * versions of a JSON document field by field would produce a file neither run
+ * wrote — and for the rules audit that file decides whether a product may be
+ * named in a subreddit.
+ */
+export async function upsertRedditAgentState(
+  data: Omit<RedditAgentState, "id" | "version" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const existing = await getRedditAgentState(data.clientId, data.kind, data.account);
+  const now = Date.now();
+  if (existing) {
+    await col
+      .redditAgentState()
+      .doc(existing.id)
+      .set({ ...data, version: existing.version + 1, updatedAt: now }, { merge: true });
+    return existing.id;
+  }
+  const ref = await col
+    .redditAgentState()
+    .add({ ...data, version: 1, createdAt: now, updatedAt: now });
+  return ref.id;
 }

@@ -53,7 +53,7 @@ export function AiInsights({
     async (controller: AbortController, force: boolean) => {
       try {
         const url = `/api/clients/${clientId}/insights${force ? "?force=1" : ""}`;
-        const res = await fetch(url, { signal: controller.signal });
+        const res = await fetch(url, { method: "POST", signal: controller.signal });
         if (!res.ok) {
           const body = await res.json().catch(() => ({ error: "Request failed" }));
           throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
@@ -74,7 +74,7 @@ export function AiInsights({
           setText(accumulated);
         }
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
+        if (e instanceof DOMException && e.name === "AbortError") return;
         setError(e instanceof Error ? e.message : "Couldn't load insights.");
       } finally {
         setLoading(false);
@@ -155,7 +155,7 @@ export function AiInsights({
           description="Connect a social account and we'll brief you weekly on what's working."
           action={
             <Link
-              href={`/clients/${clientId}/settings?tab=channels`}
+              href={`/clients/${clientId}/settings?tab=settings`}
               className="text-xs text-neon underline-offset-2 hover:underline"
             >
               Connect a channel

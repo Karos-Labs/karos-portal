@@ -10,6 +10,7 @@ import {
   listJobs,
   listPlannedScheduledRuns,
   updatePlannedScheduledRun,
+  upsertClientActionState,
 } from "@/lib/data";
 import { CREDIT_COSTS, isBillableClientActor, scheduledAgentWeeklyCost } from "@/lib/credits";
 import { selectAgentSchedule } from "@/lib/agent-schedule-selection";
@@ -21,9 +22,10 @@ import {
 import { isValidTimeZone, runtimeTimeZone } from "@/lib/run-cadence";
 import { clientAgentRunRefusal } from "@/lib/client-agent-gate";
 import { unfireableScheduleReason } from "@/lib/jobs/schedule-gate";
-import type { PlannedRunCadence } from "@/lib/types";
+import type { AppUser, PlannedRunCadence } from "@/lib/types";
 import {
   CLIENT_NOT_FOUND_MESSAGE,
+  NOT_ASSIGNED_TO_CLIENT_MESSAGE,
   clientAccessRefusal,
   logActivity,
   requireClientAccess,
@@ -106,6 +108,34 @@ async function authorizeClient(clientId: string) {
   // first branch of clientAccessRefusal — but the compiler wants it said.
   if (refusal || !client) return { error: refusal ?? CLIENT_NOT_FOUND_MESSAGE };
   return { user, client };
+}
+
+/**
+ * `requireClientAccess` throws (2026-08: including the assignment check it
+ * now runs itself) — every OTHER caller in this codebase lets that propagate,
+ * but `configureClientAgentScheduleAction`/`setPlannedRunStatusAction` return
+ * `{ error }` rather than throw, the same convention `authorizeClient` above
+ * uses. This is that adapter, so the D-77 fence living in `requireClientAccess`
+ * doesn't turn a resolved `{ error }` result into a rejected promise here.
+ *
+ * ONLY the two assignment-fence messages are caught. A ROLE refusal
+ * ("Unauthorized"/"Forbidden" — no session, or a CLIENT_USER pointed at
+ * somebody else's workspace) still throws uncaught, unchanged from before
+ * this adapter existed: that distinction is a real, tested contract these
+ * two actions already had, not an accident to paper over.
+ */
+async function requireClientAccessResult(
+  clientId: string,
+): Promise<{ user: AppUser } | { error: string }> {
+  try {
+    return { user: await requireClientAccess(clientId) };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "";
+    if (message === NOT_ASSIGNED_TO_CLIENT_MESSAGE || message === CLIENT_NOT_FOUND_MESSAGE) {
+      return { error: message };
+    }
+    throw e;
+  }
 }
 
 /** Creates a planned agent run. Staff-only; any enabled repo agent is schedulable. */
@@ -217,17 +247,18 @@ export async function createPlannedRunAction(
 export async function configureClientAgentScheduleAction(
   input: ClientAgentScheduleInput,
 ): Promise<{ id?: string; weeklyCredits?: number; error?: string }> {
-  const user = await requireClientAccess(input.clientId);
+  const auth = await requireClientAccessResult(input.clientId);
+  if ("error" in auth) return { error: auth.error };
+  const { user } = auth;
   const [client, agent] = await Promise.all([
     getClient(input.clientId),
     getCustomAgent(input.customAgentId),
   ]);
-  // The assignment half — see authorizeClient above. `requireClientAccess` has
-  // already settled the role, and for a CLIENT_USER it has already settled the
-  // client too; this is what stops an employee assigned to nobody from setting
-  // any client's pace.
-  const refusal = clientAccessRefusal(user, client);
-  if (refusal || !client) return { error: refusal ?? CLIENT_NOT_FOUND_MESSAGE };
+  // `requireClientAccessResult` has already settled both the role AND the
+  // assignment (D-77, see requireClientAccess in _shared.ts) — this second
+  // `getClient` fetch is only to hand `client` to the rest of the function,
+  // not to re-check access.
+  if (!client) return { error: CLIENT_NOT_FOUND_MESSAGE };
   if (!agent || !agent.enabled) return { error: "Agent not found." };
 
   if (user.role === "CLIENT_USER" && !(client.customAgentIds ?? []).includes(agent.id)) {
@@ -451,19 +482,21 @@ export async function setPlannedRunStatusAction(
 ): Promise<{ error?: string }> {
   const run = await getPlannedScheduledRun(id);
   if (!run) return { error: "Scheduled run not found." };
-  const user = await requireClientAccess(run.clientId);
-  // The assignment half — see authorizeClient above. The client id comes off
-  // the STORED row rather than the request, so this is not about a forged
-  // clientId: it is about which staff may act on the row it names. Read once,
-  // here, and reused by the resume checks below.
+  const auth = await requireClientAccessResult(run.clientId);
+  if ("error" in auth) return { error: auth.error };
+  const { user } = auth;
+  // The client id comes off the STORED row rather than the request, so
+  // `requireClientAccessResult` above is about which staff may act on the row
+  // it names, not about a forged clientId. `requireClientAccess` has already
+  // settled the role AND the assignment (D-77); this fetch is only to hand
+  // `client` to the resume checks below, reused there.
   //
   // A row whose client document is gone refuses rather than passing: the
   // cascade delete sweeps `plannedScheduledRuns` and removes the client doc
   // LAST (data.ts), so a live row with a missing client is not a state this
   // app can reach — nothing is stranded by refusing it.
   const client = await getClient(run.clientId);
-  const refusal = clientAccessRefusal(user, client);
-  if (refusal) return { error: refusal };
+  if (!client) return { error: CLIENT_NOT_FOUND_MESSAGE };
   // BOTH ends of the transition, not just the requested one. Testing only the
   // REQUESTED status let `completed → active` through for a client: retiring is
   // refused, un-retiring was not, so a client could bring back a schedule staff
@@ -499,13 +532,23 @@ export async function setPlannedRunStatusAction(
   // cancelling are always allowed. A deleted agent has nothing left to test, and
   // that schedule cannot fire anyway.
   //
+  // The agent's OWN enabled flag is checked here too, same as create and
+  // configureClientAgentScheduleAction — this was the one gate missing on the
+  // resume path. Without it, pausing then resuming a schedule after staff
+  // disabled its agent silently re-armed `nextRunAt` on a row that reads
+  // "active" but can never fire: submitCustomAgentJob refuses a disabled agent
+  // before a job doc is even created, so the failure never surfaces as
+  // anything a client or staff member would see — not a job, not an error on
+  // the calendar, just a schedule that quietly never produces again.
+  //
   // `client` is re-tested for the compiler's sake, not for the product's: the
   // fence above returns on a missing client, so by here it is always present.
   // The clause used to carry the same meaning as the agent's ("nothing left to
   // test") and no longer does.
   if (status === "active") {
     const agent = await getCustomAgent(run.customAgentId);
-    if (agent && client) {
+    if (!agent || !agent.enabled) return { error: "Agent not found." };
+    if (client) {
       const blocked = await unfireableScheduleReason(client, agent);
       if (blocked) return { error: blocked };
     }
@@ -550,6 +593,40 @@ export async function setPlannedRunStatusAction(
     });
   }
   await updatePlannedScheduledRun(id, patch);
+  revalidatePath("/calendar");
+  return {};
+}
+
+/**
+ * Portal revamp, Surface 05 — "Clicking any scheduled day opens the
+ * instructions drawer, to view or add post-specific guidelines." `prompt` is
+ * the free-text request the run already fires with each time
+ * (createPlannedRunAction); this lets whoever may see the run — staff or the
+ * client whose schedule it is — update it later from the calendar, same
+ * assignment fence setPlannedRunStatusAction uses. Unlike that action there is
+ * no staff-only branch: a note is not the irreversible/monetary kind of change
+ * pause/resume and delete are.
+ */
+export async function updatePlannedRunPromptAction(
+  id: string,
+  prompt: string,
+): Promise<{ error?: string }> {
+  const run = await getPlannedScheduledRun(id);
+  if (!run) return { error: "Scheduled run not found." };
+  const user = await requireClientAccess(run.clientId);
+  const client = await getClient(run.clientId);
+  const refusal = clientAccessRefusal(user, client);
+  if (refusal) return { error: refusal };
+
+  const trimmed = prompt.trim().slice(0, MAX_PROMPT_CHARS);
+  await updatePlannedScheduledRun(id, { prompt: trimmed, updatedAt: Date.now() });
+  // Action 13 ("add context to a post that is coming up") — event-tracked,
+  // no live signal answers it (lib/action-list.ts). Fired only for the
+  // client's own edit, not a staff member editing on their behalf, and only
+  // when they actually added something rather than clearing the field.
+  if (user.role === "CLIENT_USER" && trimmed) {
+    await upsertClientActionState(run.clientId, "13", "done");
+  }
   revalidatePath("/calendar");
   return {};
 }

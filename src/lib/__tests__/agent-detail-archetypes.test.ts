@@ -19,11 +19,13 @@ const {
   agentProducedAssets,
   agentsWithDeliveredWork,
   agentsWithUpcomingContent,
+  agentUpcomingCalendarDays,
   buildClipMakerView,
   buildDailyFinderView,
   deliverableStamp,
   finderDays,
   templateDetails,
+  UPCOMING_WINDOW_DAYS,
 } = await import("@/lib/agent-detail-archetypes");
 
 /**
@@ -723,8 +725,27 @@ describe("agentsWithUpcomingContent", () => {
     ).toBe(0);
   });
 
-  it("ignores a draft, which never reaches a client's calendar", () => {
-    expect(ask({ assets: [imported({ status: "draft" })] }).size).toBe(0);
+  // round 6: INVERTED. The old pin ("ignores a draft, which never reaches a
+  // client's calendar") asserted the pre-August doctrine that
+  // `isClientCalendarStatus` had already reversed — a client's calendar shows
+  // unapproved drafts now, and the post chain only ever moves DRAFTS onto future
+  // days, so every future day of an imported stream is a draft by construction
+  // and this predicate answered "nothing upcoming" for the exact agents the
+  // AF-5 rung exists for (decision 1).
+  it("counts a draft, which a client's calendar shows on its future day", () => {
+    expect(ask({ assets: [imported({ status: "draft" })] }).has(instagram.id)).toBe(true);
+  });
+
+  // round 6: the ceiling that comes with counting drafts (decision 1). "Live" is
+  // a claim about now, so one post dated months out is not evidence of a
+  // producing agent, while the fortnight the client's calendar shows as planned
+  // is.
+  it("stops counting a day further out than the 14-day window", () => {
+    expect(ask({ assets: [imported({ scheduledAt: NOW + 13 * DAY })] }).has(instagram.id)).toBe(
+      true,
+    );
+    expect(ask({ assets: [imported({ scheduledAt: NOW + 15 * DAY })] }).size).toBe(0);
+    expect(UPCOMING_WINDOW_DAYS).toBe(14);
   });
 
   it("ignores launch and test-run output, which is on nobody's calendar", () => {
@@ -794,6 +815,67 @@ describe("agentsWithUpcomingContent", () => {
     expect(found).toBeInstanceOf(Set);
     expect([...found]).toEqual([instagram.id]);
     expect(JSON.stringify([...found])).not.toContain("Tuesday");
+  });
+
+  // round 6: the agent's own page prints "Next post Thu 5 · 7 posts planned",
+  // which is the same reading of the same calendar with the DAYS kept.
+  describe("agentUpcomingCalendarDays", () => {
+    const days = (assets: Asset[], agent = instagram) =>
+      agentUpcomingCalendarDays({
+        assets,
+        jobs: [],
+        agent,
+        umbrellas: [],
+        clientSlug: CLIENT_SLUG,
+        now: NOW,
+      });
+
+    it("counts distinct days, not items, earliest first", () => {
+      const found = days([
+        imported({ id: "u2", scheduledAt: NOW + 2 * DAY }),
+        imported({ id: "u1", scheduledAt: NOW + DAY }),
+        // Same day as u1, and it must not add a second day to the count: the
+        // client's calendar shows a day, and how many pieces sit on it is the
+        // batch shape (A3/A4).
+        imported({ id: "u1b", scheduledAt: NOW + DAY + 60_000 }),
+      ]);
+      expect(found.map((d) => d.at)).toEqual([NOW + DAY, NOW + 2 * DAY]);
+      expect(new Set(found.map((d) => d.dateKey)).size).toBe(2);
+    });
+
+    it("carries no title, no count and no status off the assets", () => {
+      const found = days([imported({ id: "u1", title: "Next Tuesday's post" })]);
+      expect(Object.keys(found[0]!).sort()).toEqual(["at", "dateKey"]);
+      expect(JSON.stringify(found)).not.toContain("Tuesday");
+    });
+
+    it("agrees with the roster's own predicate, agent for agent", () => {
+      // One reading of the calendar. A page that said "Next post Thu 5" under a
+      // word derived from a different predicate is the two-spellings defect
+      // this pair exists to prevent.
+      for (const asset of [
+        imported({ status: "draft" }),
+        imported({ scheduledAt: NOW + 15 * DAY }),
+        imported({ scheduledAt: NOW - DAY }),
+        imported({ meta: { source: "lab-import", agentFolder: "instagram-agent", testRun: true } }),
+      ]) {
+        expect(days([asset]).length > 0, JSON.stringify(asset.meta)).toBe(
+          ask({ assets: [asset] }).has(instagram.id),
+        );
+      }
+    });
+
+    it("credits nothing to an agent bound to another client", () => {
+      const instance = {
+        id: "ca-li",
+        name: "LinkedIn Agent",
+        key: "karos-linkedin-company-xodigital",
+      };
+      const theirs = imported({
+        meta: { source: "lab-import", agentFolder: "linkedin-company-xodigital" },
+      });
+      expect(days([theirs], instance)).toEqual([]);
+    });
   });
 });
 
@@ -1279,15 +1361,24 @@ describe("wiring", () => {
     // the service was down — they found out by pressing one.
     const src = source("src/app/(app)/clients/[id]/agents/page.tsx");
     expect(src).toContain("enabledAgents.length > 0 && !agentServiceConfigured");
-    // Both rosters read delivered work the same way, so one cannot call an
-    // agent "Not set up yet" while the other calls it "Runs on request".
-    expect(src).toContain("hasDelivered: completedAgentIds.has(agent.id)");
-    expect(src).toContain("hasDelivered: staffDeliveredAgentIds.has(agent.id)");
+    // round 6 review: BOTH rosters now read delivered work through the one
+    // assembly in `lib/client-roster.ts` — the staff branch's hand assembly is
+    // gone, so there is no second `hasDelivered:` line on this page to pin and
+    // no way for the two rosters to call one agent "Not set up yet" and the
+    // other "Runs on request". What is pinned instead is that the page has no
+    // assembly of its own and that the one home computes the input.
+    expect(source("src/lib/client-roster.ts")).toContain("hasDelivered,");
+    expect(src, "the staff branch may not assemble rosterStatus a second time").not.toContain(
+      "rosterStatus(",
+    );
   });
 
   it("leaves ONE home for 'has this agent delivered' — no surface owns a second copy", () => {
+    // round 6 review: the roster surface is `lib/client-roster.ts`. Both
+    // branches of the agents page read the entries it returns, so the shared
+    // answer is called there and the page itself must not call it at all.
     const surfaces = {
-      roster: "src/app/(app)/clients/[id]/agents/page.tsx",
+      roster: "src/lib/client-roster.ts",
       detail: "src/app/(app)/clients/[id]/agents/[agentId]/page.tsx",
     };
     for (const [name, file] of Object.entries(surfaces)) {

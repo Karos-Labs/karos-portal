@@ -33,11 +33,56 @@ const UPLOAD_TIMEOUT_MS = 30_000;
  * is awaited before the signal exists, so a hang there is outside this bound and
  * outside any deadline a caller computes from `timeoutMs`.
  */
+/** Reads back an existing object's OWN download token — never mints one, since a
+ *  mismatched token is a silent, unrenderable photo (see `uploadBytes`'s `ifAbsent`). */
+async function existingObjectUrl(
+  bucketName: string,
+  path: string,
+  accessToken: string,
+): Promise<{ url: string; path: string }> {
+  const encodedBucket = encodeURIComponent(bucketName);
+  const encodedPath = encodeURIComponent(path);
+  const res = await fetch(`https://storage.googleapis.com/storage/v1/b/${encodedBucket}/o/${encodedPath}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(
+      `Storage object "${path}" reported as already existing (412) but could not be read back: ` +
+        `${res.status} ${text}.`,
+    );
+  }
+  const data = (await res.json()) as { metadata?: { firebaseStorageDownloadTokens?: string } };
+  const token = data.metadata?.firebaseStorageDownloadTokens?.split(",")[0];
+  if (!token) {
+    throw new Error(`Storage object "${path}" already exists but carries no download token.`);
+  }
+  return { url: `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodedPath}?alt=media&token=${token}`, path };
+}
+
 export async function uploadBytes(args: {
   bytes: Buffer;
   path: string;
   contentType: string;
   timeoutMs?: number;
+  /**
+   * Refuse to overwrite an object already at `path`, rather than minting a
+   * new generation with a new token. Two overlapping writers to the same
+   * deterministic path (a retried lab import, a resumed upload) is exactly
+   * the shape that put a stale token in Firestore: both mint their own
+   * `downloadToken` locally, both write it into an asset's `meta`, but GCS
+   * has no notion of "two tokens" for one object — whichever write lands
+   * LAST wins the object, so the OTHER writer's Firestore doc now points a
+   * token that matches no live generation, and Firebase Storage answers with
+   * "Permission denied" (indistinguishable, from a caller's side, from a
+   * genuine access-rules rejection) forever after.
+   *
+   * `ifGenerationMatch=0` makes GCS itself the arbiter: it accepts the write
+   * only if no object exists there yet, and returns 412 otherwise — at which
+   * point the caller wants THE OBJECT THAT'S ACTUALLY THERE, not to have
+   * clobbered it, so this reads back its real token instead of throwing.
+   */
+  ifAbsent?: boolean;
 }): Promise<{ url: string; path: string }> {
   const { bytes, path, contentType } = args;
   // Floor of 1ms so a caller that has run its own budget to zero gets a prompt
@@ -66,8 +111,9 @@ export async function uploadBytes(args: {
   ]);
 
   const encodedBucket = encodeURIComponent(bucketName);
+  const preconditionParam = args.ifAbsent ? "&ifGenerationMatch=0" : "";
   const res = await fetch(
-    `https://storage.googleapis.com/upload/storage/v1/b/${encodedBucket}/o?uploadType=multipart`,
+    `https://storage.googleapis.com/upload/storage/v1/b/${encodedBucket}/o?uploadType=multipart${preconditionParam}`,
     {
       method: "POST",
       headers: {
@@ -80,6 +126,9 @@ export async function uploadBytes(args: {
   );
 
   if (!res.ok) {
+    if (args.ifAbsent && res.status === 412) {
+      return await existingObjectUrl(bucketName, path, accessToken);
+    }
     const text = await res.text().catch(() => res.statusText);
     throw new Error(
       `Storage upload failed for bucket "${bucketName}": ${res.status} ${text}. ` +

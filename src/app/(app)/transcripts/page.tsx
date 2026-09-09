@@ -7,16 +7,32 @@ import { MeetingSyncButton } from "@/components/meeting-sync-button";
 import { MeetingAutoSync } from "@/components/meeting-auto-sync";
 import { MeetingsClient } from "@/components/meetings-client";
 
-export default async function TranscriptsPage() {
+export default async function TranscriptsPage({
+  searchParams,
+}: {
+  /**
+   * `?client=<id>` scopes a STAFF reader's list to one workspace (review wave,
+   * 2026-09). It is what the "See all N meetings" link on a client's Account
+   * Center sends: that card counts one client's calls, so a link that opened
+   * the cross-client list quoted a number the destination did not show. A
+   * client reader's list is already scoped to their own workspace below, so the
+   * parameter is read for staff only and can widen nobody's access.
+   */
+  searchParams: Promise<{ client?: string }>;
+}) {
   const user = await requireUser();
   const isStaff = user.role !== "CLIENT_USER";
+  const { client: clientParam } = await searchParams;
+  const scopedClientId = isStaff && clientParam ? clientParam : undefined;
 
   const [transcripts, clients, users] = await Promise.all([
     user.role === "CLIENT_USER" && user.clientId
       ? listTranscripts({ clientId: user.clientId, excludeHiddenFromClient: true })
       : user.role === "CLIENT_USER"
         ? Promise.resolve([])
-        : listTranscripts(),
+        : scopedClientId
+          ? listTranscripts({ clientId: scopedClientId })
+          : listTranscripts(),
     isStaff ? listClients() : Promise.resolve([]),
     isStaff ? listUsers() : Promise.resolve([]),
   ]);
@@ -27,7 +43,14 @@ export default async function TranscriptsPage() {
         title="Meetings"
         description={
           isStaff
-            ? "Fireflies transcripts, auto-summarized and routed to clients."
+            ? scopedClientId
+              ? // Says what the list is showing, because a scoped list that
+                // describes itself as the cross-client one is the same
+                // mismatch the ?client= link was added to fix.
+                `Fireflies transcripts for ${
+                  clients.find((c) => c.id === scopedClientId)?.name ?? "this client"
+                }.`
+              : "Fireflies transcripts, auto-summarized and routed to clients."
             : "Summaries from your calls with the Karos team."
         }
         action={

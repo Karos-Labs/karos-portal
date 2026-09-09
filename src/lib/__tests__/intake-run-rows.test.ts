@@ -65,34 +65,58 @@ describe("a client's run history", () => {
   });
 });
 
+// carousel-agent-intake.tsx used to be a seventh surface here; the whole
+// karos-carousel family was retired in full 2026-08-29 (SCRUM-377/T-B25a) and
+// the component deleted along with it.
 const SURFACES = [
   "src/components/x-agent-intake.tsx",
   "src/components/linkedin-agent-intake.tsx",
   "src/components/reddit-agent-intake.tsx",
+  "src/components/newsletter-agent-intake.tsx",
+  "src/components/blog-agent-intake.tsx",
+  "src/components/reputation-agent-intake.tsx",
 ] as const;
 
 describe("the intake cards' run rows", () => {
   it("collapse a client's runs on the server, before the payload", () => {
     const views = readFileSync(join(process.cwd(), "src/lib/agent-intake-views.ts"), "utf8");
-    // One helper for all three surfaces — the drift that let Reddit print raw
+    // One helper for all six surfaces — the drift that let Reddit print raw
     // status words while X printed badges started as three copies of this.
     expect(views).toContain("function toRunRowViews(");
     expect(views).toMatch(/const rows = isStaff \? jobs : collapseRunsPerDay\(jobs\)/);
-    expect(views.match(/toRunRowViews\(/g)).toHaveLength(4); // the definition + 3 call sites
+    expect(views.match(/toRunRowViews\(/g)).toHaveLength(7); // the definition + 6 call sites
     // Staff keep every run and the forensic link.
     expect(views).toMatch(/isStaff \? \{ href: `\/jobs\/\$\{j\.id\}` \} : \{\}/);
   });
 
-  it("print relative language to a client and the instant to staff", () => {
+  it("print the same primary sentence to both roles, with the instant appended for staff", () => {
+    // PARITY PASS (2026-09). This used to assert the OPPOSITE: that the row's
+    // one label SPLIT on the viewer, `Run <date>` for staff and the relative
+    // sentence for a client. That is the divergence the parity ruling removed —
+    // a staff member previewing an intake page read a different row from the
+    // one the client gets, on a card that is otherwise identical. The client's
+    // sentence is now the primary text for both, the instant staff debug with
+    // is a secondary suffix, and the /jobs link on it carries an Internal
+    // marker because it leaves the client workspace.
     for (const rel of SURFACES) {
       const src = readFileSync(join(process.cwd(), rel), "utf8");
-      expect(src, `${rel} does not split the run stamp by viewer`).toMatch(
+      expect(src, `${rel} does not use the shared relative sentence`).toMatch(
+        /const label = `Worked on your content · \$\{relativeTime\(r\.createdAt\)\}`/,
+      );
+      // The split label, gone.
+      expect(src, `${rel} still splits the run stamp by viewer`).not.toMatch(
         /isStaff\s*\?\s*`Run \$\{formatDate\(r\.createdAt\)\}`/,
       );
-      expect(src, `${rel} does not use relative language for a client`).toMatch(
-        /`Worked on your content · \$\{relativeTime\(r\.createdAt\)\}`/,
+      // Staff keep the instant — additively, and gated.
+      expect(src, `${rel} drops the staff stamp`).toMatch(
+        /const stamp = `Run \$\{formatDate\(r\.createdAt\)\}`/,
       );
-      // The old form, gone: an exact generation date rendered to whoever asked.
+      expect(src, `${rel} shows the staff stamp to everyone`).toMatch(/\{isStaff &&\s*\(r\.href \?/);
+      // The staff-only route out is marked as one.
+      expect(src, `${rel} does not mark the /jobs link as internal`).toMatch(
+        /\{isStaff && r\.href && <Badge tone="neutral">Internal<\/Badge>\}/,
+      );
+      // The oldest form, still gone: an exact generation date to whoever asked.
       expect(src).not.toMatch(/<span>Run \{formatDate\(r\.createdAt\)\}<\/span>/);
     }
   });
@@ -105,7 +129,12 @@ describe("the intake cards' run rows", () => {
       const src = readFileSync(join(process.cwd(), rel), "utf8");
       const rendered = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
       expect(rendered, `${rel} still says "batch" to the client`).not.toMatch(/\bbatch\b/i);
-      expect(rendered).toMatch(/Once your Karos team has approved the (drafts|replies),/);
+      // The newsletter's noun is singular because one run prepares ONE issue —
+      // "the issues" would describe a batch, which is the very thing this test
+      // is here to keep out of client copy.
+      expect(rendered).toMatch(
+        /Once your Karos team has approved (the drafts|the replies|an issue|an article|a reply),/,
+      );
     }
   });
 });

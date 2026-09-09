@@ -495,10 +495,13 @@ const OTHER_REGISTER_WORDS = new Set<string>([
     calendarFilterLabel(k, true),
     calendarFilterLabel(k, false),
   ]),
-  ...ALL_CALENDAR_FILTER_KEYS.filter((k) => k !== "review").flatMap((k) => [
-    postKindLabel(k as CalendarAssetKind, true),
-    postKindLabel(k as CalendarAssetKind, false),
-  ]),
+  // `postKindLabel` is typed over `CalendarAssetKind`, not the wider
+  // `CalendarFilterKey` — "review" (a JobStatus) and "suggested" (a Task-Map
+  // proposal, 2026-08) are both filter keys with no asset status behind them,
+  // so both are excluded here rather than cast through with `as`.
+  ...ALL_CALENDAR_FILTER_KEYS.filter(
+    (k): k is CalendarAssetKind => k !== "review" && k !== "suggested",
+  ).flatMap((k) => [postKindLabel(k, true), postKindLabel(k, false)]),
 ]);
 
 const RUN_STATE_ONLY_WORDS = Object.values(JOB_STATUS_META)
@@ -686,6 +689,46 @@ describe("the managed-run progress strip", () => {
 
 /* ────────── shape 2: a second name hard-coded for a named status ─────────── */
 
+/**
+ * A key the two registers SHARE A SPELLING FOR while naming different things —
+ * the one shape the intersection below cannot tell apart from the defect it
+ * exists to catch, so it is enumerated with its reason rather than allowed by a
+ * loosened rule.
+ *
+ * `held` is the only member, and it is a genuine homograph, not drift:
+ *
+ *   • `CalendarAssetKind.held` — an ASSET whose publish is waiting its turn in
+ *     the format's ordering chain (`isPublishHold`, `PUBLISH_HOLD_HEADING`).
+ *     Client-facing, and the honest word for it is "Waiting": nothing is wrong,
+ *     an earlier post just hasn't gone out yet.
+ *   • `JobStatus.held` — a RUN that finished and produced nothing because a
+ *     product rule declined (agent-engine's own non-failure `held` outcome).
+ *     Staff-facing, and the honest word for it is "Held".
+ *
+ * Different key domains, different viewers, different facts. `job-status-copy`'s
+ * own SCOPE note already names this class — "a word shared between two of them
+ * ('approved', 'delivered') is a coincidence of English rather than a shared
+ * rule — ask the accessor for the domain you are in" — and this is the third
+ * such coincidence, the first one where the two words also differ.
+ *
+ * FORCING THEM TO AGREE WOULD BE THE BUG. A calendar legend reading "Held" over
+ * a client's waiting post claims their content was stopped; a run badge reading
+ * "Waiting" claims a finished run is still going. The `review` defect this test
+ * was written for was ONE fact with two names; this is two facts with one
+ * spelling, and the fix for one is the defect in the other.
+ *
+ * WRITTEN AS THE EXPECTED PAIR, the way `calendar-register-divergence.test.ts`
+ * writes its own three, so swapping this divergence for a different one cannot
+ * pass by keeping the exemption list the same length.
+ */
+const DELIBERATE_HOMOGRAPHS: Record<string, { legend: string; runState: string; why: string }> = {
+  held: {
+    legend: "Waiting",
+    runState: "Held",
+    why: "an asset waiting its turn to publish is not a run that produced nothing — different key domains, different viewers",
+  },
+};
+
 describe("the calendar legend names no state twice", () => {
   it("takes every key that is also a run state from the run-state register", () => {
     // DERIVED, and this is the whole assertion: intersect the filter keys with the
@@ -699,12 +742,30 @@ describe("the calendar legend names no state twice", () => {
     );
     expect(shared, "no filter key is a run state any more — check this is intended").not.toEqual([]);
     for (const key of shared) {
+      const homograph = DELIBERATE_HOMOGRAPHS[key];
       for (const viewerIsClient of [true, false]) {
+        if (homograph) {
+          // Both halves pinned, so closing the divergence — in EITHER register —
+          // fails here and gets read rather than merged.
+          expect(calendarFilterLabel(key, viewerIsClient), `legend word for the homograph "${key}" moved`).toBe(homograph.legend);
+          expect(jobStatusLabel(key as JobStatus), `run-state word for the homograph "${key}" moved`).toBe(homograph.runState);
+          continue;
+        }
         expect(
           calendarFilterLabel(key, viewerIsClient),
           `legend key "${key}" invents a word for a run state`,
         ).toBe(jobStatusLabel(key as JobStatus));
       }
+    }
+  });
+
+  it("has no stale homograph exemption", () => {
+    // An exemption for a key that is no longer in both domains is an exemption
+    // nothing checks — the shape `expectPinnedBothWays` exists for in the
+    // publishable-platforms guard, asked here for the same reason.
+    for (const key of Object.keys(DELIBERATE_HOMOGRAPHS)) {
+      expect(ALL_CALENDAR_FILTER_KEYS as readonly string[], `"${key}" is no longer a calendar filter key`).toContain(key);
+      expect(Object.hasOwn(JOB_STATUS_META, key), `"${key}" is no longer a run state`).toBe(true);
     }
   });
 
@@ -723,8 +784,9 @@ describe("the calendar legend names no state twice", () => {
     //    of WORK STAFF OWE on a deliverable — and this legend is naming a CHIP ON A
     //    DATE GRID: a draft-status asset that carries a `scheduledAt`. "Show
     //    awaiting review items" is not what that filter does. It stays the
-    //    calendar's own word, and it is withheld from clients entirely
-    //    (`calendarFilterKeyMatchable`), so no client reads either word.
+    //    calendar's own word ("Draft") for both viewers — reachable for a client
+    //    now that the calendar/dashboard draft-hiding rule was reversed, but still
+    //    never the register's staff word.
     //
     // So the closed question is not "does every shared key match the register" but
     // "does any key have a viewer-dependent word that the register did not give it".
@@ -754,9 +816,11 @@ describe("the calendar legend names no state twice", () => {
     // copy decision someone has to make on purpose, not a drift.
     expect(calendarFilterLabel("draft", false)).toBe("Draft");
     expect(STAFF_ASSET_STATUS_LABEL.draft).toBe("Awaiting review");
-    // And it is unreachable for a client, which is what keeps the divergence off a
-    // client's screen rather than merely off the one we looked at.
-    expect(calendarFilterKeyMatchable("draft", true)).toBe(false);
+    // The divergence is reachable for a client too now — the calendar/dashboard
+    // draft-hiding rule was deliberately reversed (see `isClientCalendarStatus`'s
+    // docstring), so a client's own legend uses "Draft" the same as staff's does
+    // (the words already agreed; only reachability changed).
+    expect(calendarFilterKeyMatchable("draft", true)).toBe(true);
     expect(calendarFilterKeyMatchable("draft", false)).toBe(true);
   });
 

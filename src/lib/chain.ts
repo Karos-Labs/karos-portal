@@ -21,7 +21,23 @@ import { planClientChain, type ChainAssignment, type ChainFamily } from "@/lib/p
  */
 export async function reflowClientChain(
   clientId: string,
-  opts?: { mode?: "reflow" | "migrate"; now?: number; startDayMs?: number; families?: ChainFamily[] },
+  opts?: {
+    mode?: "reflow" | "migrate";
+    now?: number;
+    startDayMs?: number;
+    families?: ChainFamily[];
+    /**
+     * Asset ids excluded from candidacy — their own date is left untouched,
+     * while the day it already occupies still books normally so nothing else
+     * lands on it. For a webhook-created asset that carries an approved
+     * Task-Map suggestion's `scheduledAt`: that date is the day the client
+     * saw and clicked Approve on, not a placeholder the chain is free to
+     * relocate — without this, planClientChain's `isPinned` treats any
+     * future-dated draft with chain provenance as a reflow candidate and
+     * silently re-dates it to the family lane's next free day.
+     */
+    skipIds?: string[];
+  },
 ): Promise<{ changed: number; assignments: ChainAssignment[] }> {
   // The client record comes along for ONE field: `dailyPace`, which decides how
   // many items a calendar day holds for them (lib/daily-pace). A read failure or
@@ -36,6 +52,7 @@ export async function reflowClientChain(
     ...(opts?.mode ? { mode: opts.mode } : {}),
     ...(opts?.startDayMs != null ? { startDayMs: opts.startDayMs } : {}),
     ...(opts?.families ? { families: opts.families } : {}),
+    ...(opts?.skipIds ? { skipIds: opts.skipIds } : {}),
     pace: client?.dailyPace ?? null,
   });
   await applyChainAssignments(assignments);

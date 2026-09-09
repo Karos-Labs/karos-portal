@@ -37,10 +37,21 @@ substitutions:
   # Failure-alert on-call list (job-alerts.ts) — separate from _ADMIN_EMAIL
   # above (support/signup mail). Keep in sync with cloudbuild.yaml's own copy.
   _ADMIN_EMAILS: "hello@karoslabs.com"
-  # Runway autopilot — production already runs this live (confirmed from the
-  # pre-CI-migration revision), unlike cloudbuild.yaml's off-by-default.
-  _RUNWAY_AUTOGEN_ENABLED: "1"
+  # Runway autopilot — turned OFF 2026-08-10 after an unrelated agent-service
+  # Anthropic credit exhaustion made its normal weekly top-up dispatch as a
+  # wall of failed jobs with no advance visibility on the portal (it fires
+  # immediately on a deficit, never as a schedule row). Route still measures
+  # and reports deficits either way; flip back to "1" to resume auto-dispatch.
+  _RUNWAY_AUTOGEN_ENABLED: "0"
   _RUNWAY_MAX_JOBS_PER_CLIENT: "14"
+  # Task Map autopilot (src/app/api/tasks/auto-generate) — off by default.
+  _TASKMAP_AUTOGEN_ENABLED: "0"
+  _TASKMAP_AUTOGEN_SWEEP_CAP: "3"
+  # Credits plan v2 / settle-to-actual — OFF in production until the shadow
+  # numbers have been checked against scripts/dump-agent-cost-report.ts. It
+  # changes what clients are billed and tops balances up monthly; neither is
+  # reversible by rolling the image back.
+  _CREDITS_PLAN_V2_ENABLED: "0"
   # The rest of these existed as literal env vars / Secret Manager refs on the
   # production Cloud Run service from its Cloud Run-native-CD days, discovered
   # via `gcloud run revisions describe` after a promote deploy wiped them (see
@@ -49,7 +60,40 @@ substitutions:
   # All the underlying secrets already exist in this (production) project's
   # Secret Manager; this file just wasn't referencing them.
   _ANALYTICS_LIVE_INGEST: "1"
+  # SCRUM-376/AU74 — NOT the same bucket agent-engine's own GCS_MEDIA_BUCKET
+  # names in production (`karoscmo-prod-media-assets`), and that is correct.
+  # The two variables share a name and nothing else:
+  #
+  #   this one     src/lib/gcs-media.ts + src/lib/chat/chat-attachments.ts,
+  #                both scoped to `clients/<clientId>/…` — staff-uploaded
+  #                podcast clips and client run-attachments.
+  #   the engine's publish.renderCarousel / branded-shorts output, written
+  #                under `instagram/…`.
+  #
+  # The portal does not read the engine's bucket. It fetches deliverables over
+  # an https signed URL and re-uploads them into Firebase Storage, skipping a
+  # bare `gs://` URI loudly — see materialize.ts's own note that such a URI
+  # "point[s] at a bucket this portal doesn't control access to long-term".
+  #
+  # DO NOT "unify" these. Verified live 2026-09-01: this service runs as
+  # firebase-adminsdk-fbsvc@karoscmo, which holds roles/storage.objectAdmin on
+  # karos-media-assets and NOTHING on karoscmo-prod-media-assets (that bucket
+  # has no non-legacy IAM bindings at all). Since SCRUM-373 moved these call
+  # sites to Application Default Credentials, the runtime SA is genuinely the
+  # principal — so repointing this variable 403s every getFiles() and every
+  # signed-URL mint, and the client podcast clips (which live under `clients/`
+  # in THIS bucket) vanish from the UI. Asserted in
+  # src/lib/__tests__/deploy-env-parity.test.ts.
   _GCS_MEDIA_BUCKET: "karos-media-assets"
+  # Agent-engine WORKSPACE bucket (src/lib/agent-engine/workspace-writer.ts) —
+  # the reconcile cron mirrors client knowledge into it. Empty = sync skipped.
+  # Set to production's engine artifacts bucket once its IAM grant exists.
+  # The bucket agent-engine-prod reads client knowledge from (its own
+  # GCS_WORKSPACE_BUCKET). Empty until 2026-09-07, which switched the portal's
+  # context-doc/brand/profile projection off in production while prep had it
+  # on: every research agent in prod ran without the client's own documents.
+  # karos-cmo-sa@karoscmo holds roles/storage.objectAdmin on it.
+  _AGENT_ENGINE_WORKSPACE_BUCKET: "karoscmo-prod-agent-workspace"
   # Agent-service webhook callback target — a stable Cloud Run URL for this
   # service, independent of _APP_URL/custom domain. Do not derive this from
   # _APP_URL; it must stay exactly what agent-service is configured to call.
@@ -58,6 +102,52 @@ substitutions:
   # has its own isolated "prep" database (see cloudbuild.yaml). Explicit here
   # for symmetry with cloudbuild.yaml's parameterization.
   _FIRESTORE_DATABASE_ID: "(default)"
+  # agent-engine dispatch. This was live on the running production revision but
+  # in no deploy config, so the next promote through this file would have
+  # turned it off — --set-env-vars replaces the entire set, the same shape as
+  # the 2026-07-31 incident noted above.
+  _AGENT_ENGINE_DISPATCH_ENABLED: "true"
+  # Control-plane dispatch, now that agent-middleware is deployed in karoscmo
+  # (europe-west1). These are PRODUCTION's own middleware and must never be
+  # pointed at prep's, which resolves prompts and templates from prep's
+  # Firestore — a production job answered by prep's control plane would run
+  # against prompts nobody reviewed for production.
+  #
+  # The audience is the project-number URL form because that is exactly what
+  # the service's own AUTH_AUDIENCE is set to. Cloud Run answers on two URL
+  # forms and the middleware accepts a token minted for only one of them, so
+  # these two strings have to stay character-identical.
+  _AGENT_MIDDLEWARE_DISPATCH_ENABLED: "true"
+  _AGENT_MIDDLEWARE_URL: "https://agent-middleware-42999994788.europe-west1.run.app"
+  _AGENT_MIDDLEWARE_AUDIENCE: "https://agent-middleware-42999994788.europe-west1.run.app"
+  # agent-engine direct-dispatch settings. These were live on the running
+  # production revision and in NO deploy config, so the 2026-08-22 promote
+  # dropped all four -- the same --set-env-vars replacement hazard as the
+  # 2026-07-31 incident noted above, and the second time it has bitten this
+  # file. AGENT_ENGINE_PUBSUB_TOPIC is the one that matters most: without it
+  # isAgentEnginePubSubConfigured() is false, so a control-plane outage has
+  # nowhere to fall back to and every dispatch fails instead of degrading.
+  _AGENT_ENGINE_PUBSUB_TOPIC: "karos-agent-runs-prod"
+  _AGENT_ENGINE_URL: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app"
+  # Its own substitution rather than reusing _AGENT_ENGINE_URL: the audience
+  # must match the receiving service exactly, and keeping them separate lets
+  # a mismatch be fixed without moving the URL.
+  _AGENT_ENGINE_AUDIENCE: "https://agent-engine-prod-zc6vfwnzsq-ew.a.run.app"
+  # Read by the telemetry BigQuery client and the GCS/Firestore clients.
+  # SCRUM-371: prod ran as firebase-adminsdk-fbsvc@ - Firebase's own SA, holding
+  # project-wide storage.admin and secretmanager.secretAccessor. karos-cmo-sa@ is
+  # dedicated and narrowly granted: per-secret accessor (31), topic-scoped
+  # pubsub.publisher, dataset-scoped BigQuery WRITER, logging.logWriter, and
+  # run.invoker on the three services the portal mints ID tokens for.
+  #
+  # It deliberately holds NO storage role: GCS still authenticates with
+  # FIREBASE_SERVICE_ACCOUNT_KEY, not the runtime SA. See SCRUM-373.
+  #
+  # Unlike cloudbuild.yaml this step is an args array, not a bash script, so the
+  # flag is passed unconditionally - an empty value here would be an invalid
+  # --service-account=. Keep this substitution non-empty.
+  _RUNTIME_SERVICE_ACCOUNT: "karos-cmo-sa@karoscmo.iam.gserviceaccount.com"
+  _GOOGLE_CLOUD_PROJECT: "karoscmo"
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -95,6 +185,7 @@ steps:
       - run
       - deploy
       - ${_SERVICE}
+      - --service-account=${_RUNTIME_SERVICE_ACCOUNT}
       - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:${_SHA}
       - --region=${_REGION}
       - --platform=managed
@@ -104,10 +195,35 @@ steps:
       - --max-instances=10
       - --memory=1Gi
       - --cpu=1
+      # cpu=1 against concurrency=80 means after() background work (chain
+      # reflow, usage logging, etc.) runs on a CPU that Cloud Run throttles to
+      # ~0 the moment the response is sent under request-based billing — see
+      # docs/qa-sweep-2026-07/TOMER-HANDOVER.md §3.1. --no-cpu-throttling
+      # switches this service to instance-based billing so after() work
+      # actually gets CPU to run on instead of being best-effort.
+      - --no-cpu-throttling
       - --timeout=300
       - --concurrency=80
-      - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,SEGMIND_API_KEY=SEGMIND_API_KEY:latest,NEXT_PUBLIC_FIREBASE_API_KEY=NEXT_PUBLIC_FIREBASE_API_KEY:latest,NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:latest,NEXT_PUBLIC_FIREBASE_PROJECT_ID=NEXT_PUBLIC_FIREBASE_PROJECT_ID:latest,NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:latest,NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:latest,NEXT_PUBLIC_FIREBASE_APP_ID=NEXT_PUBLIC_FIREBASE_APP_ID:latest,AGENTS_REPO_GITHUB_TOKEN=github-token:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,OAUTH_STATE_SECRET=OAUTH_STATE_SECRET:latest,LINKEDIN_CLIENT_ID=LINKEDIN_CLIENT_ID:latest,LINKEDIN_CLIENT_SECRET=LINKEDIN_CLIENT_SECRET:latest,TWITTER_CLIENT_ID=TWITTER_CLIENT_ID:latest,TWITTER_CLIENT_SECRET=TWITTER_CLIENT_SECRET:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,LINKEDIN_COMMUNITY_CLIENT_SECRET=LINKEDIN_COMMUNITY_CLIENT_SECRET:latest,LINKEDIN_COMMUNITY_CLIENT_ID=LINKEDIN_COMMUNITY_CLIENT_ID:latest
-      - --set-env-vars=EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},ADMIN_EMAILS=${_ADMIN_EMAILS},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},AGENT_SERVICE_CALLBACK_URL=${_AGENT_SERVICE_CALLBACK_URL},NEXT_PUBLIC_APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT},ANALYTICS_LIVE_INGEST=${_ANALYTICS_LIVE_INGEST},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID}
+      - --set-secrets=KAROS_STAFF_KEY=KAROS_STAFF_KEY:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,RESEND_API_KEY=RESEND_API_KEY:latest,FIREFLIES_API_KEY=FIREFLIES_API_KEY:latest,FIREFLIES_WEBHOOK_SECRET=FIREFLIES_WEBHOOK_SECRET:latest,FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest,CRON_SECRET=CRON_SECRET:latest,AGENT_SERVICE_TOKEN=agent-service-tokens:latest,AGENT_WEBHOOK_SECRET=agent-webhook-secret:latest,NEXT_PUBLIC_FIREBASE_API_KEY=NEXT_PUBLIC_FIREBASE_API_KEY:latest,NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:latest,NEXT_PUBLIC_FIREBASE_PROJECT_ID=NEXT_PUBLIC_FIREBASE_PROJECT_ID:latest,NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:latest,NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:latest,NEXT_PUBLIC_FIREBASE_APP_ID=NEXT_PUBLIC_FIREBASE_APP_ID:latest,AGENTS_REPO_GITHUB_TOKEN=github-token:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,OAUTH_STATE_SECRET=OAUTH_STATE_SECRET:latest,LINKEDIN_CLIENT_ID=LINKEDIN_CLIENT_ID:latest,LINKEDIN_CLIENT_SECRET=LINKEDIN_CLIENT_SECRET:latest,TWITTER_CLIENT_ID=TWITTER_CLIENT_ID:latest,TWITTER_CLIENT_SECRET=TWITTER_CLIENT_SECRET:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,TIKTOK_CLIENT_SECRET=TIKTOK_CLIENT_SECRET:latest,TIKTOK_CLIENT_KEY=TIKTOK_CLIENT_KEY:latest,TOKEN_ENCRYPTION_KEY=TOKEN_ENCRYPTION_KEY:latest,LINKEDIN_COMMUNITY_CLIENT_SECRET=LINKEDIN_COMMUNITY_CLIENT_SECRET:latest,LINKEDIN_COMMUNITY_CLIENT_ID=LINKEDIN_COMMUNITY_CLIENT_ID:latest
+      # GOOGLE_VERTEX_PROJECT / GOOGLE_VERTEX_LOCATION (T-B3 / SCRUM-246).
+      #
+      # @ai-sdk/google-vertex reads BOTH through loadSetting, which THROWS when
+      # the value is absent — there is no fallback to GOOGLE_CLOUD_PROJECT
+      # (verified against the installed 5.0.66 in node_modules, not assumed).
+      # googleVertex() resolves them synchronously at construction, unlike
+      # vertexAnthropic() which defers, so a missing value fails the request
+      # outright rather than degrading.
+      #
+      # Set here rather than by hand on the service because --set-env-vars
+      # below REPLACES the whole set on every deploy — the same hazard as the
+      # 2026-07-31 incident this file already documents. A value applied with
+      # 'gcloud run services update' would survive until exactly the next deploy.
+      #
+      # Prod resolves to karoscmo / europe-west1 — _GOOGLE_CLOUD_PROJECT's own
+      # default and the _REGION that promote-production.yml passes from PROD_REGION.
+      # Both pairs were verified with a real generateContent call against
+      # gemini-2.5-flash before being written here (HTTP 200, both).
+      - --set-env-vars=EMAIL_FROM=${_EMAIL_FROM},ADMIN_EMAIL=${_ADMIN_EMAIL},ADMIN_EMAILS=${_ADMIN_EMAILS},NODE_ENV=production,AGENT_SERVICE_URL=${_AGENT_SERVICE_URL},AGENT_SERVICE_AUDIENCE=${_AGENT_SERVICE_URL},AGENT_SERVICE_CALLBACK_URL=${_AGENT_SERVICE_CALLBACK_URL},APP_URL=${_APP_URL},RUNWAY_AUTOGEN_ENABLED=${_RUNWAY_AUTOGEN_ENABLED},RUNWAY_MAX_JOBS_PER_CLIENT=${_RUNWAY_MAX_JOBS_PER_CLIENT},TASKMAP_AUTOGEN_ENABLED=${_TASKMAP_AUTOGEN_ENABLED},TASKMAP_AUTOGEN_SWEEP_CAP=${_TASKMAP_AUTOGEN_SWEEP_CAP},CREDITS_PLAN_V2_ENABLED=${_CREDITS_PLAN_V2_ENABLED},ANALYTICS_LIVE_INGEST=${_ANALYTICS_LIVE_INGEST},GCS_MEDIA_BUCKET=${_GCS_MEDIA_BUCKET},FIRESTORE_DATABASE_ID=${_FIRESTORE_DATABASE_ID},AGENT_ENGINE_DISPATCH_ENABLED=${_AGENT_ENGINE_DISPATCH_ENABLED},AGENT_MIDDLEWARE_DISPATCH_ENABLED=${_AGENT_MIDDLEWARE_DISPATCH_ENABLED},AGENT_MIDDLEWARE_URL=${_AGENT_MIDDLEWARE_URL},AGENT_MIDDLEWARE_AUDIENCE=${_AGENT_MIDDLEWARE_AUDIENCE},AGENT_ENGINE_PUBSUB_TOPIC=${_AGENT_ENGINE_PUBSUB_TOPIC},AGENT_ENGINE_URL=${_AGENT_ENGINE_URL},AGENT_ENGINE_AUDIENCE=${_AGENT_ENGINE_AUDIENCE},AGENT_ENGINE_WORKSPACE_BUCKET=${_AGENT_ENGINE_WORKSPACE_BUCKET},GOOGLE_CLOUD_PROJECT=${_GOOGLE_CLOUD_PROJECT},GOOGLE_VERTEX_PROJECT=${_GOOGLE_CLOUD_PROJECT},GOOGLE_VERTEX_LOCATION=${_REGION}
     waitFor: [push-to-production]
 
 images:

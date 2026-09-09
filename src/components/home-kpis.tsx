@@ -1,0 +1,426 @@
+import Link from "next/link";
+import { Card, CardTitle } from "@/components/ui";
+import { Icon } from "@/components/icon";
+import { cn } from "@/lib/utils";
+import { TONE_COLORS } from "@/components/seo-geo/tones";
+import { THROUGHPUT_WINDOW_DAYS, type ContentThroughput } from "@/lib/content-throughput";
+import type { FollowerPoint } from "@/lib/follower-tracking";
+import type { ScoreView } from "@/components/seo-geo/presenter";
+
+/**
+ * A minimal inline sparkline — no charting dependency for a handful of points.
+ *
+ * STROKED IN --neon (round 6, Albert 2026-09-06). Round 6 briefly made it ink
+ * on the argument that it spent the screen's rationed colour on a trend line;
+ * the ruling is that the ration applies to CONTROLS, and a sparkline is data.
+ */
+function Sparkline({ counts }: { counts: number[] }) {
+  if (counts.length < 2) return null;
+  const width = 160;
+  const height = 36;
+  const min = Math.min(...counts);
+  const max = Math.max(...counts);
+  const span = max - min || 1;
+  const step = width / (counts.length - 1);
+  const points = counts
+    .map((c, i) => `${i * step},${height - ((c - min) / span) * height}`)
+    .join(" ");
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="h-9 w-full"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke="var(--neon)"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/**
+ * The published-content chart: one bar per day of the reported window (portal
+ * feedback round 5, 2026-09).
+ *
+ * IT REPLACES FOUR WEEKLY BARS, which the product owner read as decoration
+ * rather than a chart, and he was right on both counts: four bars cannot show a
+ * posting cadence (the only thing a client wants from this number), and they
+ * spanned 28 days beside a "last 30 days" figure, so the picture and the number
+ * above it were measuring different stretches of time. The bars now sum to the
+ * headline count by construction (see lib/content-throughput.ts).
+ *
+ * NO ACCENT. The orange is rationed to markers and hovers, and thirty bars of
+ * it is neither; the fill is the decorative grey the meter tracks already use.
+ * The one EMPHASIZED bar is the most recent day that actually has a post, in
+ * full ink, because "when did I last go out" is the second question this cell
+ * gets asked and the chart can answer it for free. Emphasizing the last COLUMN
+ * instead would have highlighted an empty day on most accounts.
+ *
+ * A DAY WITH NOTHING KEEPS ITS PLACE as a hairline on the baseline, so a gap
+ * reads as a measured zero rather than as missing data, and the run of days is
+ * continuous left to right.
+ */
+function DailyBars({ counts }: { counts: number[] }) {
+  const max = Math.max(...counts);
+  // Nothing at all is not a chart. Drawing thirty empty tracks under a zero
+  // would be a picture of no information; the empty state says so in words.
+  if (max === 0) {
+    return (
+      <div className="mt-2.5 flex h-9 items-center rounded-md border border-dashed border-border px-2.5">
+        <p className="text-[11px] leading-snug text-muted-2">
+          Nothing went live in the last {THROUGHPUT_WINDOW_DAYS} days.
+        </p>
+      </div>
+    );
+  }
+  const newest = counts.reduce((last, c, i) => (c > 0 ? i : last), -1);
+
+  return (
+    <>
+      <div
+        className="mt-2.5 flex h-9 items-end gap-px"
+        role="img"
+        aria-label={`Posts published each day over the last ${THROUGHPUT_WINDOW_DAYS} days, oldest first.`}
+      >
+        {counts.map((c, i) => (
+          <div key={i} className="flex h-full flex-1 items-end">
+            <div
+              className={cn(
+                "w-full rounded-[1px]",
+                c === 0 ? "bg-border" : i === newest ? "bg-foreground" : "bg-muted-3",
+              )}
+              // A day with one post out of a busiest day of six is still a day
+              // somebody posted, so the floor keeps it above a hairline.
+              style={{ height: c === 0 ? "1px" : `${Math.max(16, (c / max) * 100)}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex items-center justify-between text-[10px] leading-none text-muted-2">
+        <span>{THROUGHPUT_WINDOW_DAYS} days ago</span>
+        <span>Today</span>
+      </div>
+    </>
+  );
+}
+
+/**
+ * A signed percentage in the success/danger ink, with a small arrow, or the
+ * quiet reason there is no percentage to state.
+ *
+ * `text` is the already-formatted magnitude (the two callers round to different
+ * precisions), `note` the quiet basis clause after it, and `noBasis` the line to
+ * print instead when `pct` is null. Muted, not coloured, in that case: "we have
+ * nothing to compare this against" is not good news or bad news.
+ */
+function Delta({
+  pct,
+  text,
+  note,
+  noBasis,
+}: {
+  pct: number | null;
+  text: string;
+  note?: string;
+  noBasis?: string;
+}) {
+  if (pct == null) {
+    return noBasis ? <p className="mt-0.5 text-xs text-muted-2">{noBasis}</p> : null;
+  }
+  return (
+    <p className={`mt-0.5 text-xs ${pct >= 0 ? "text-success" : "text-danger"}`}>
+      <Icon name={pct >= 0 ? "ArrowUp" : "ArrowDown"} className="mr-1 inline h-3 w-3" />
+      <span className="tabular">
+        {pct >= 0 ? "+" : ""}
+        {text}
+      </span>
+      {note ? <span className="ml-1 text-muted-2">{note}</span> : null}
+    </p>
+  );
+}
+
+/**
+ * The shared shell of a KPI cell: an accented eyebrow glyph, a static chevron,
+ * then whatever the cell is.
+ *
+ * EVERY CELL IS A LINK (portal feedback round 5, 2026-09) — "all the KPIs
+ * should be interactive and clickable". So `href` is required rather than
+ * optional: a KPI with nowhere honest to go does not belong on this card at
+ * all, and making the prop optional is how the next cell quietly becomes the
+ * one dead number in a row of live ones. The whole cell is the hit target, it
+ * takes focus like any link, and `row-lift` is the app's own affordance for a
+ * navigating row.
+ */
+function Cell({
+  icon,
+  label,
+  href,
+  children,
+  className,
+}: {
+  icon: string;
+  label: string;
+  /** Somewhere that shows MORE about THIS number. See each call site. */
+  href: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "row-lift focus-ring block h-full rounded-md border border-border bg-surface-2 p-3.5",
+        className,
+      )}
+    >
+      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {/* Rule 1: ONE trailing chevron, static. It used to slide 2px on hover,
+            which is a second hover event on a surface whose hover is already the
+            fill step plus `row-lift`'s hairline. */}
+        <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+      </p>
+      {children}
+    </Link>
+  );
+}
+
+/**
+ * The visibility score as a headline + meter, built from the SAME ScoreView the
+ * full report renders (buildScoreViews), so this cell and Account Center's
+ * Reporting tab cannot quote different numbers for one snapshot.
+ *
+ * SHAPED LIKE ITS TWO NEIGHBOURS as of 2026-09 — big numeral, meter, caption —
+ * where it used to be a label/value row over a thin bar. Three cells side by
+ * side, one of them arranged differently, made the card read as two KPIs and an
+ * afterthought; the point of the row is that they are three readings of the same
+ * kind. The meter stays because it is what makes the number mean anything at
+ * this size: a bare 61 says nothing about whether 61 is good.
+ *
+ * The TRACK is the band's own colour at low alpha, not `surface-3`. In light
+ * mode surface-3 is #e9e7df on a surface-2 cell of #eceae2 — a three-point step,
+ * which is no step: the unfilled half of the meter simply disappeared and the
+ * bar had no readable length. Same device the SEO share meters use.
+ */
+function ScoreCell({ view }: { view: ScoreView }) {
+  const measured = view.value != null;
+  const color = TONE_COLORS[view.tone];
+  return (
+    <>
+      <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+        {measured ? view.value : "–"}
+        {measured && <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>}
+      </p>
+      <div
+        className="mt-2.5 h-2 overflow-hidden rounded-full"
+        style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
+      >
+        <div
+          className="h-full rounded-full transition-[width]"
+          style={{
+            width: `${measured ? Math.min(100, Math.max(0, view.value as number)) : 0}%`,
+            background: color,
+          }}
+        />
+      </div>
+      <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{view.label}</p>
+    </>
+  );
+}
+
+/**
+ * Home's KPI row (portal revamp, Surface 02; content settled by D6, the
+ * client-zero answer to the one question this page's own history left open).
+ *
+ * D6 — "KPIs that survive: total followers + growth chart, and the overall
+ * Google/AI visibility rank. Nothing else." This is a full reversal of the
+ * PRIOR ruling that lived here ("the first cell is not followers any more,
+ * and that is the point" — because no follower ingestion existed and the
+ * number was a seeded PRNG). That prior ruling is still honored on the one
+ * axis that matters: this cell renders ONLY from real stored snapshots
+ * (`audienceSeries`), same as before, and stays absent — never seeded, never
+ * badged — until an ingestion cron actually writes one. D6 changed WHICH
+ * measured thing gets the headline cell back, not the never-fabricate rule.
+ *
+ * The published-content stand-in that filled this slot in between
+ * (lib/content-output.ts) is deleted, not kept around unused — it was a
+ * stopgap for exactly the gap D6 now answers, and nothing else read it.
+ *
+ * "Nothing else" is also why this card no longer prints all three
+ * buildScoreViews meters (search score, AI readiness, AI visibility): the
+ * caller passes only the "visibility" one now — "the overall Google/AI
+ * visibility rank" is that score's own established label ("AI visibility
+ * today"), not a new metric invented for this card.
+ *
+ * ── THE CHANNELS CELL IS GONE (2026-09) ──────────────────────────────────
+ *
+ * It listed this client's channels one per row with a Connected/Reconnect
+ * badge each, and the analytics stack's "Connected channels" card listed the
+ * same channels with MORE detail (the account name on each, the same reconnect
+ * link). Two lists of one thing, the shorter one first. The product owner's
+ * instruction was to keep the detailed list in one place and spend the freed
+ * cell on a high-level metric, so:
+ *
+ *  • the detailed list stays in "Connected channels" (client-analytics.tsx),
+ *    which is Account Center's Reporting tab for a client and the Performance
+ *    section for staff, next to the Settings tab that actually fixes one;
+ *  • this cell becomes CONTENT PUBLISHED — live deliverables in the last 30
+ *    days, the change against the 30 before it, and four weekly bars.
+ *
+ * That cell's own note about the Channels decision ("locked separately from
+ * D6") is not being overruled quietly: D6 never covered Channels, and this
+ * change is not a D6 revision either. It is the de-duplication pass, and what
+ * it removes is the SECOND copy of a list, not the information.
+ *
+ * The one thing the removed cell said that the detailed card does not repeat
+ * on this page is "N need attention". That did not vanish either — it is an
+ * attention row in "Needs your attention" now, which is where a thing that
+ * asks the reader to act belongs.
+ *
+ * ── EVERY CELL NAVIGATES (portal feedback round 5, 2026-09) ───────────────
+ *
+ * "All the KPIs should be interactive and clickable, bringing them to the
+ * report", and the card-level "Full report" link is gone because it promised
+ * more about the number beside it and delivered a page about a different
+ * subject entirely.
+ *
+ * The rule that replaced it is per cell, not per card: a cell links to the
+ * screen that shows MORE ABOUT ITS OWN NUMBER, which is a different screen for
+ * each of the three. Followers open the channel list they are summed from;
+ * published content opens the posts themselves; the visibility score opens the
+ * report it is a headline of. Two of those are not "the report", and that is
+ * the point — sending all three there would be the same broken promise, made
+ * three times.
+ */
+export function HomeKpisWidget({
+  audienceTotal,
+  audienceGrowthPct,
+  audienceSeries,
+  throughput,
+  visibilityScore,
+  audienceHref,
+  contentHref,
+  visibilityHref,
+}: {
+  /**
+   * Real stored follower snapshots only — an empty (or absent) series hides the
+   * cell entirely.
+   *
+   * OPTIONAL SINCE THE REVIEW WAVE, 2026-09, and the reason is the same rule
+   * that keeps the cell hidden: nothing writes `clientFollowerSnapshots` today,
+   * so every caller was reading a collection that is empty for every client and
+   * threading four props into a cell that never rendered. The page stopped
+   * reading it; this component did NOT lose the ability to draw it, so the
+   * ingestion cron that lands the data re-enables the cell by passing these
+   * again rather than by rebuilding it.
+   */
+  audienceTotal?: number;
+  audienceGrowthPct?: number | null;
+  audienceSeries?: FollowerPoint[];
+  /** Live-deliverable throughput — see lib/content-throughput.ts. */
+  throughput: ContentThroughput;
+  /** The one ScoreView D6 kept — null when there is no snapshot to score yet. */
+  visibilityScore: ScoreView | null;
+  /**
+   * The channel list. This total is the SUM of the per-channel follower counts,
+   * and that list is the only screen in the product that breaks it back down,
+   * so it is where "more about this number" actually lives. The Reporting tab
+   * would have been the wrong answer for exactly the reason this whole revision
+   * exists: it holds nothing about followers.
+   *
+   * Optional with the three above, and required WITH them: no href, no cell.
+   */
+  audienceHref?: string;
+  /** The published deliverables themselves, filtered to what this cell counted. */
+  contentHref: string;
+  /** The Reporting tab, at its scores section — the working behind this meter. */
+  visibilityHref: string;
+}) {
+  // A single point is a reading, not a trend — the sparkline needs two. And a
+  // cell with nowhere to go is not a cell on this card (see `Cell`), so the
+  // href is part of the same test rather than a second one.
+  const series = audienceSeries ?? [];
+  const showAudience = series.length >= 2 && Boolean(audienceHref);
+
+  return (
+    <Card>
+      {/* NO CARD-LEVEL "Full report" LINK (portal feedback round 5, 2026-09).
+          It sat at the top right of a card whose headline number is posts
+          published and opened the Search & AI visibility report, which says
+          nothing about them: "there should not be a button on the right that
+          says See more when it will not show more about the posts published".
+          Every cell now carries its own destination instead, so the promise is
+          made three times, next to the number it is about, and each one is
+          kept. */}
+      <div className="mb-3">
+        {/* The orange chip stays (round 6, Albert 2026-09-06). Round 6 stripped
+            the three `bg-neon/10` heading chips on Home; the ruling restores
+            them — a heading glyph is decoration, and the accent ration is about
+            CONTROLS. */}
+        <CardTitle className="flex min-w-0 items-center gap-2">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
+            <Icon name="ChartColumn" className="h-3.5 w-3.5 text-neon" />
+          </span>
+          <span className="min-w-0 truncate">Your numbers</span>
+        </CardTitle>
+      </div>
+
+      {/* Container queries, not viewport breakpoints (2026-08). `sm:`/`lg:` ask
+          the window, and this card lives in a column the 288px rail has already
+          narrowed — so a 1024px window split it into cells too narrow for their
+          own labels. `@xl` is 36rem of THIS grid, measured where the cells
+          actually are. Three cells (with audience) go straight to three
+          columns AT `@xl` rather than stepping through two first — two
+          columns would leave the third cell alone in a half-empty second row
+          for the entire `@xl`–`@4xl` range, not just avoid it above `@4xl`. */}
+      <div className={cn("grid gap-4", showAudience ? "@xl:grid-cols-3" : "@xl:grid-cols-2")}>
+        {/* Audience — the D6 cell, real snapshots only; absent when there are none */}
+        {showAudience && (
+          <Cell icon="Users" label="Total followers" href={audienceHref as string}>
+            <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+              {(audienceTotal ?? 0).toLocaleString()}
+            </p>
+            <Delta
+              pct={audienceGrowthPct ?? null}
+              text={audienceGrowthPct == null ? "" : `${audienceGrowthPct.toFixed(1)}%`}
+            />
+            <div className="mt-2">
+              <Sparkline counts={series.map((p) => p.count)} />
+            </div>
+          </Cell>
+        )}
+
+        {/* Content published — the cell the duplicated channel list vacated */}
+        <Cell icon="Send" label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`} href={contentHref}>
+          <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+            {throughput.count.toLocaleString()}
+          </p>
+          <Delta
+            pct={throughput.deltaPct}
+            text={`${throughput.deltaPct}%`}
+            note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
+            noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
+          />
+          <DailyBars counts={throughput.daily} />
+        </Cell>
+
+        {/* AI visibility — the one score D6 kept, of the three buildScoreViews returns */}
+        <Cell icon="Radar" label="Visibility" href={visibilityHref}>
+          {visibilityScore ? (
+            <ScoreCell view={visibilityScore} />
+          ) : (
+            <p className="mt-2 text-sm text-muted-2">Not measured yet.</p>
+          )}
+        </Cell>
+      </div>
+    </Card>
+  );
+}

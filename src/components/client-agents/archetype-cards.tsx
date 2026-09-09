@@ -133,11 +133,15 @@ export function FinderIntakeCard({
           </p>
         )}
 
+        {/* A QUIET TEXT LINK (round 6, rule 2): it was orange with an
+            `ArrowRight` after it — the accent spent on an aside's link, plus one
+            of the three trailing glyphs the portal had for one meaning. Quiet
+            links hover muted to foreground with an underline. */}
         <Link
           href={href}
-          className="mt-2 inline-flex items-center gap-1 text-xs text-neon hover:underline"
+          className="focus-ring mt-2 inline-flex text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
         >
-          {ready ? "Review it" : "Set it up"} <Icon name="ArrowRight" className="h-3 w-3" />
+          {ready ? "Review it" : "Set it up"}
         </Link>
       </div>
     </section>
@@ -169,6 +173,6 @@ function ChipList({
 
 function SectionHeading({ title }: { title: string }) {
   return (
-    <h2 className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{title}</h2>
+    <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
   );
 }

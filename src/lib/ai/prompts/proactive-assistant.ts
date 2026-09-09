@@ -16,7 +16,34 @@ export interface AgentCatalogEntry {
   name: string;
   outputKind: string;
   description: string;
+  /**
+   * C4 (SCRUM-212) descriptor — capability TAGS this agent's runs can
+   * produce (see the taxonomy note on `ManagedProduct` in
+   * `agent-service/products.ts`: produce_text / produce_image /
+   * produce_carousel / produce_video / produce_webpage / produce_report).
+   * Always an array — empty means "not yet described", not "can do nothing";
+   * a custom agent reads empty until the S-A16/SCRUM-230 data-population
+   * pass (not yet landed) sets real values on its own `CustomAgent` record.
+   *
+   * ASSUMPTION, stated explicitly per EXEC-CONTEXT: no ratified C4 spec doc
+   * exists in this repo as of T-B6/SCRUM-250 (SCRUM-212's PR is still at Code
+   * Review). This field and its three siblings below are inferred from the
+   * ticket text's own vocabulary (`capabilities` × `platforms` ×
+   * `consumesMedia`, plus `requiredInputs`) — treat them as this batch's
+   * working contract, not a ratified shape. T-B7/SCRUM-251 builds its routing
+   * on these four fields by name, so keep them stable.
+   */
   capabilities: string[];
+  /** Canonical platform keys this agent targets (e.g. "instagram", "tiktok"); absent/empty ⇒ platform-agnostic. */
+  platforms?: string[];
+  /** Whether this agent's brief can incorporate uploaded image/video media. */
+  consumesMedia?: boolean;
+  /**
+   * Brief-field keys actually REQUIRED to run (the subset of `briefKeys`
+   * T-B7 prompts the user for when missing) — distinct from `briefKeys`,
+   * which is the full input surface whether required or not.
+   */
+  requiredInputs?: string[];
   /** Exact deliverables the agent produces (from the managed-product registry). */
   deliverables?: string[];
   /** Typical wall-clock runtime, e.g. "~10–15 min". */
@@ -94,10 +121,14 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
             : `**${a.name}** (productType: \`${a.id}\`)`;
           const lines = [
             `• ${ref} — ${a.description}`,
+            a.capabilities.length ? `  capabilities: ${a.capabilities.join(", ")}` : "",
+            a.platforms?.length ? `  platforms: ${a.platforms.join(", ")}` : "",
+            a.consumesMedia ? `  accepts uploaded image/video media as input` : "",
             a.deliverables?.length ? `  produces: ${a.deliverables.join("; ")}` : "",
             [
               a.estimate ? `runtime: ${a.estimate}` : "",
               a.briefKeys?.length ? `brief inputs: ${a.briefKeys.join(", ")}` : "",
+              a.requiredInputs?.length ? `required inputs: ${a.requiredInputs.join(", ")}` : "",
             ]
               .filter(Boolean)
               .map((s) => `  ${s}`)
@@ -134,9 +165,9 @@ ${unassignedCount > 0 ? `• ${unassignedCount} scheduled item${unassignedCount 
 ${expiredIntegrations.length > 0 ? `\n⚠ EXPIRED integrations needing re-authentication: ${expiredIntegrations.map((i) => i.platform).join(", ")} — create one client_managed "Re-authenticate <platform> connection" task each (priority: high, weight: 95). Do NOT create content tasks targeting an expired platform until it is reconnected.` : ""}
 
 GAP RULES:
-- A connected platform with NO scheduled content in the next 14 days is a critical gap → create a karos_managed task to fill it, linked to the right product: instagram/tiktok gaps → \`social_post\`; blog/website cadence gaps → \`blog_article\`; email cadence gaps → \`newsletter_issue\`.
+- A connected platform with NO scheduled content in the next 14 days is a critical gap → create a karos_managed task to fill it, linked to the right product: instagram/tiktok gaps → \`social_post\`; blog/website cadence gaps → \`blog_article\`. An EMAIL/newsletter cadence gap has no managed product — fill it by assigning the client's newsletter agent from AVAILABLE AI EXECUTION AGENTS by its \`agentId\`, and if they have none, do not invent a productType for it.
 - TikTok is video/short-form first: a TikTok content gap MUST be filled with a media-heavy \`social_post\` explicitly tailored for TikTok (short-form video / vertical clip concept, hook-led caption). Set \`platform: "tiktok"\`, name TikTok in the title, and give it a HIGH weight (≥75, priority high) — an empty TikTok calendar starves the client's highest-velocity channel.
-- For connected platforms the products don't post to natively (linkedin, facebook, twitter, youtube), fill gaps with \`blog_article\` / \`social_post\` source content the team repurposes — name the target platform in the title and set \`platform\`.
+- For connected platforms the products don't post to natively (linkedin, twitter, youtube), fill gaps with \`blog_article\` / \`social_post\` source content the team repurposes — name the target platform in the title and set \`platform\`.
 - A platform with a healthy pipeline needs nothing — never pad the board when the calendar is already covered.`;
 
   /* Historical performance benchmarks — the self-improving feedback loop.
@@ -323,7 +354,6 @@ Every \`karos_managed\` task title must use execution-dispatch language. Describ
   "Generate and queue 5 LinkedIn posts via [Agent Name]"
   "Repurpose top-performing blog content into Instagram carousel using [Agent Name]"
   "Distribute this week's newsletter across all linked social channels via [Agent Name]"
-  "Draft and schedule Facebook campaign copy using [Agent Name]"
   "Produce 7-day Instagram content calendar via [Agent Name]"
 
 ✗ Wrong (AI cannot execute these — consulting language):

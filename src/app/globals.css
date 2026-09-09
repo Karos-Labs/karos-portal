@@ -16,6 +16,25 @@
   Chip fills may also use bg-foreground/[0.04], which renders one step above
   its parent — visually equivalent to the ladder, never a new tone.
 */
+/*
+  Type — three faces, three jobs (§5):
+    --font-serif  Spectral       display: h1-h3, pull quotes
+    --font-sans   Hanken Grotesk body, UI, AND ALL NUMBERS
+    --font-mono   DM Mono        labels, eyebrows, ids, code — never numbers
+
+  NUMBERS ARE SANS. A figure is set in Hanken with tabular digits (the
+  .stat-number / .tabular helpers below), not in the mono. This is the rule
+  that changed in 2026-09: the visibility scores on the reporting cards were
+  mono while the same-sized figures on Home were sans, so two screens showing
+  the same kind of number disagreed about what a number looks like. Mono keeps
+  the jobs where monospacing is the point — an id you might copy, a code
+  block, a short uppercase label — and gives up numerals everywhere else.
+
+  The mono face itself moved from JetBrains Mono to DM Mono at the same time:
+  lighter, rounder, closer in colour to Hanken, and it reads as a label rather
+  than a terminal. It is also wider, so eyebrow tracking came down (see
+  .eyebrow).
+*/
 :root {
   --background: #1a1a1a;   /* warm charcoal ground */
   --surface: #242429;      /* raised surfaces, cards, panels */
@@ -55,6 +74,29 @@
   --info: #8ba1b7;
 
   --radius: 6px;           /* Ember squares things off */
+
+  /* THE focus colour (round 6). Ink, not orange, and one token for the whole
+     product: --neon measures 2.84:1 on paper, so an orange ring fails WCAG
+     1.4.11 in light mode, while --foreground passes in both. Written as a
+     reference rather than a literal so it reverses with the mode for free —
+     custom properties substitute where they are USED, so .light's --foreground
+     is what a light-mode ring resolves to. See .focus-ring below. */
+  --focus: var(--foreground);
+
+  /* Elevation (2026-09). NOT a fourth surface tone - the ladder above is still
+     three tones and these add no fill, only a cast shadow, so nothing here
+     competes with --surface-2/-3.
+
+     They exist because the two modes read depth by different means. On
+     charcoal, a card is already legible as raised: --surface is nine points
+     lighter than the ground and the eye reads that step as elevation. On paper
+     it is not - #ffffff on #f2f1ec is a five-point step with no shadow under
+     it, which is the "slightly flat" light mode the product owner reported. So
+     dark keeps a whisper (a shadow on charcoal is nearly invisible by
+     construction) and light carries the real one; the token names stay the
+     same so a component asks for elevation, not for a mode. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-2: 0 4px 6px -4px rgba(0, 0, 0, 0.3), 0 12px 28px -14px rgba(0, 0, 0, 0.5);
 }
 
 @theme inline {
@@ -80,7 +122,10 @@
   --color-warning: var(--warning);
   --color-info: var(--info);
   --font-sans: var(--font-hanken), system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  /* Swapping the mono face is THIS line plus the matching next/font/google
+     declaration in src/app/layout.tsx — nothing else in the app names a face.
+     Put JetBrains_Mono / --font-jetbrains back in both places to revert. */
+  --font-mono: var(--font-dm-mono), ui-monospace, monospace;
   --font-serif: var(--font-spectral), Georgia, "Times New Roman", serif;
 }
 
@@ -176,13 +221,35 @@ body {
 
 /* ── Utility helpers ──────────────────────────────────────────────────── */
 
-/* Mono eyebrow label (§5) */
+/* Mono eyebrow label (§5). 0.14em, down from the 0.18em JetBrains wanted —
+   DM Mono sets wider, and uppercase mono at 0.18em started to come apart into
+   separate letters at 12px. */
 .eyebrow {
   font-family: var(--font-mono);
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.14em;
   color: var(--neon);
+}
+
+/* ── Numbers (§5) ─────────────────────────────────────────────────────── */
+
+/* Digits that need to line up column-to-column or not jitter as they tick —
+   table cells, timers, counters, meter readouts. Sets nothing but the
+   numerals, so it composes with whatever type the element already has. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* THE big figure: a score, a count, a currency total — the number a card is
+   built around. Sans, not mono (see the type note at the top of this file),
+   with tabular digits so a 1 is as wide as an 8 and the figure does not shift
+   when it updates. Size and colour stay with the component; this class only
+   settles which face and which numerals. */
+.stat-number {
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 /* Warm keyline glow — replaces the old neon glow. One per screen, subtle. */
@@ -199,6 +266,44 @@ body {
    name stays so components don't churn, but it renders one tone). */
 .card-grad {
   background: var(--surface);
+}
+
+/* THE focus ring — one utility, every interactive element, inputs included
+   (round 6).
+
+   It replaces seven hand-rolled recipes. The portal had `ring-foreground/25`
+   (2.16:1 on charcoal, 1.70:1 on paper), `ring-neon` on Home's KPI cells,
+   `ring-neon/40` on a dialog close, three `focus-visible:ring-2` variants in
+   the reporting leaves, and forty-two elements that set `outline-none` and put
+   nothing back — WCAG 2.4.13 fails on all of them, and a keyboard reader could
+   not tell which input they were in.
+
+   ONE RULE, UNLAYERED, on purpose: unlayered CSS beats every Tailwind utility,
+   so `.focus-ring` cannot be silently cancelled by an `outline-none` that
+   arrives later in a class list. Scoped to :focus-visible so a mouse press
+   draws nothing; the outline (not a ring, i.e. not a box-shadow) is what keeps
+   it visible over a card's own shadow and outside an overflow-hidden parent.
+   Colour is --focus, which is ink in both modes. */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* An interactive ROW inside a card — an attention item, a status bar, a recent
+   deliverable. Its hairline lifts to the accent on hover, which §6 lists as a
+   sanctioned orange use ("markers, eyebrows, hovers, live signals").
+
+   ROWS ONLY, and that fence is the whole reason this is a class rather than a
+   change to <Card>. Tinting every card border on hover would spend the one
+   rationed colour on a mouse passing over a panel; tinting a row that actually
+   navigates spends it on an affordance. Pairs with a surface-3 fill so the
+   effect still reads for anyone who cannot separate the two hues. */
+.row-lift {
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.row-lift:hover {
+  border-color: color-mix(in srgb, var(--neon) 45%, transparent);
+  background-color: var(--surface-3);
 }
 
 /* Glass surface for dropdowns / overlays — combine with border */
@@ -246,6 +351,12 @@ body {
   --warning: #a8781e;
   --danger: #b04a43;
   --info: #5b7186;
+
+  /* Elevation carries the weight here - see the note on the dark values. Warm
+     charcoal rather than pure black in the shadow, so a card floats over paper
+     instead of over grey: rgba(26,26,26,...) is --foreground's own ink. */
+  --shadow-1: 0 1px 2px rgba(26, 26, 26, 0.05), 0 1px 3px rgba(26, 26, 26, 0.07);
+  --shadow-2: 0 2px 4px rgba(26, 26, 26, 0.06), 0 12px 26px -12px rgba(26, 26, 26, 0.22);
 }
 
 .light body {
@@ -342,5 +453,19 @@ body {
   .animate-slide-in-right,
   .animate-shimmer {
     animation: none;
+  }
+
+  /* TRANSITIONS TOO (round 6). The block above covered the seven keyframes and
+     nothing else, so a reader who asked the OS for less motion still got every
+     hover fade, every disclosure rotation and the dialog's fade-up transition.
+     Near-zero rather than `none` so `transitionend` still fires for anything
+     that waits on it. Duration ONLY: killing `animation-duration` here as well
+     would spin every animation this file does not name (Tailwind's own
+     `animate-spin`, `animate-pulse`) at one iteration per hundredth of a
+     millisecond, which is more motion than it started with. */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
   }
 }
