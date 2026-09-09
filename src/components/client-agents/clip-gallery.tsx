@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { assetImages, assetVideos } from "@/lib/asset-images";
-import { clientDeliveryStamp } from "@/lib/asset-visibility";
+import { deliverableStamp } from "@/lib/asset-visibility";
 import { relativeTime } from "@/lib/utils";
 import type { Asset } from "@/lib/types";
 
@@ -134,7 +134,7 @@ function ClipTile({
               keep the generation time - for them it is the fact worth
               knowing. */}
           <span className="text-[11px] text-muted-2">
-            {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}
+            {relativeTime(deliverableStamp(asset, viewerIsClient))}
           </span>
         </div>
       </div>

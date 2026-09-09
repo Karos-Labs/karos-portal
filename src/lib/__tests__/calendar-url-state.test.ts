@@ -98,7 +98,14 @@ describe("the day/week/month control holds only time ranges", () => {
     const src = code(CALENDAR);
     // The legend block is gated. Asserted by locating the gate immediately
     // before the legend's first chip rather than by counting braces.
-    const legendAt = src.indexOf("Scheduled run");
+    //
+    // ANCHORED ON THE RUN REGISTER'S MAP, not on the words. It used to look for
+    // the literal "Scheduled run", which left this test asserting the legend's
+    // position through a string the component no longer owns: the two run words
+    // moved into calendar-kind's register (SCRUM-422), and the anchor went with
+    // them. This one is structural, so it survives the next copy change and
+    // still fails loudly if the legend itself is removed.
+    const legendAt = src.indexOf("ALL_CALENDAR_RUN_LEGEND_KEYS.map(");
     expect(legendAt, "the legend is gone entirely — this negative proves nothing").toBeGreaterThan(-1);
     const before = src.slice(Math.max(0, legendAt - 400), legendAt);
     expect(before, "the legend renders unconditionally").toMatch(/viewMode !== "archive"/);

@@ -55,6 +55,7 @@ import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { validateScheduleTiming } from "@/lib/scheduling";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
+import { jobStatusLabel } from "@/lib/job-status-copy";
 import {
   type AgentBriefField,
   agentKeyMatchesClientSlug,
@@ -2763,9 +2764,31 @@ export function RunCustomAgentModal({
                 your Workspace.
               </>
             ) : (
+              // "the review queue" NAMED NOTHING. Grep the phrase: every other
+              // hit in this repo is a code comment describing an intention, and
+              // no route, component or label has ever carried it — so the one
+              // reader who went looking for it could not find it. Where these
+              // actually land is the staff Jobs list, and the chip that holds
+              // them there takes its word from the sanctioned register. This
+              // sentence now names the nav entry and ASKS that register for the
+              // state, rather than writing a third name for the same place.
+              //
+              // The client branch above still says "your Workspace". That is a
+              // different question and is deliberately left alone here: the word
+              // is this product's name for the client's content area and is used
+              // in a dozen other client-facing strings, so aligning it with the
+              // nav ("Calendar", "Account Center") is a vocabulary decision, not
+              // a copy fix, and it belongs in one change across all of them.
               <>
                 This usually takes {RUN_ESTIMATE_SENTENCE}. This page keeps itself up to date while
-                it runs, and the deliverables land in the review queue.
+                it runs, and the deliverables land in{" "}
+                <Link
+                  href="/jobs"
+                  className="focus-ring rounded-md text-muted underline underline-offset-2 transition-colors hover:text-foreground"
+                >
+                  Jobs
+                </Link>{" "}
+                under {jobStatusLabel("review")}.
               </>
             )}
           </p>

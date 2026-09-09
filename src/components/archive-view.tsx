@@ -12,7 +12,7 @@ import { assetImages, assetVideos } from "@/lib/asset-images";
 // ordering-hold message interpolated the RAW enum into a sentence a client
 // reads, and one map is the only way those two agree.
 import { CLIENT_ASSET_STATUS_LABEL, clientAssetStatusLabel } from "@/lib/asset-status-copy";
-import { clientDeliveryStamp } from "@/lib/asset-visibility";
+import { deliverableStamp } from "@/lib/asset-visibility";
 import { offeredStatesFor } from "@/lib/client-state-domain";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { cn, relativeTime } from "@/lib/utils";
@@ -259,7 +259,11 @@ export function ArchiveView({
     // reached them, not by when it was generated. Ordering by `createdAt` while
     // printing the delivery time would also leave the tiles visibly out of
     // sequence with their own timestamps.
-    const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.createdAt);
+    // `deliverableStamp` IS this rule, exported and documented. It was
+    // re-derived here (and once more below, and a third time in
+    // agent-detail-archetypes), which is how assets-view came to sort by a
+    // fourth thing nobody printed. One caller each now.
+    const stampOf = (a: Asset) => deliverableStamp(a, viewerIsClient);
     return [...byAgent.entries()]
       .map(([name, list]) => ({
         name,
@@ -334,8 +338,14 @@ export function ArchiveView({
     );
   }
 
+  // `space-y-6`, was `space-y-8` (SCRUM-425: "try removing blank spaces between
+  // widgets, there is a lot and it's unaesthetic"). 2rem between collapsible
+  // groups reads as a missing section rather than as a boundary, and every group
+  // already announces itself with an identity, a heading and a count. Taken off
+  // the scale rather than with per-section margins so the rhythm stays one
+  // number.
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Same control strip the staff assets list has had all along. */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 p-2">
         <span className="px-1 text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
@@ -407,11 +417,22 @@ export function ArchiveView({
           const hidden = group.assets.length - visible.length;
           return (
             <section key={group.name}>
+              {/* IT ALREADY TOGGLED, AND ALREADY ROTATED ITS CHEVRON, and it
+                  was still reported as hard to find (SCRUM-425: "expand and
+                  collapse button on each widget should be more visible"). The
+                  function was never the problem: a full-width button with no
+                  hover state, no focus ring and a `text-muted-2` glyph does not
+                  read as pressable, so the only reader who discovers it is one
+                  who clicks the heading on a hunch.
+
+                  `group` + `focus-ring` rather than a bespoke treatment, so the
+                  chevron below can respond to the row and keyboard focus lands
+                  the way it does everywhere else in this app. */}
               <button
                 type="button"
                 onClick={() => toggleGroup(group.name)}
                 aria-expanded={!isCollapsed}
-                className="mb-3 flex w-full items-center gap-3 text-left"
+                className="focus-ring group mb-3 -mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
               >
                 <AgentIdentity identity={group.name} size="sm" />
                 <h3 className="min-w-0 shrink-0 truncate text-base font-medium text-foreground">
@@ -443,7 +464,7 @@ export function ArchiveView({
                 <Icon
                   name="ChevronDown"
                   className={cn(
-                    "ml-auto h-4 w-4 shrink-0 text-muted-2 transition-transform",
+                    "ml-auto h-4 w-4 shrink-0 text-muted-2 transition-all group-hover:text-foreground",
                     isCollapsed && "-rotate-90",
                   )}
                 />
@@ -557,7 +578,7 @@ function ArchiveTile({
               the moment it was approved; staff keep the generation stamp,
               which for them is the fact worth knowing. */}
           <span className="text-[11px] text-muted-2">
-            {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}
+            {relativeTime(deliverableStamp(asset, viewerIsClient))}
           </span>
           <Badge tone={STATUS_TONE[asset.status]}>{clientAssetStatusLabel(asset.status)}</Badge>
         </div>

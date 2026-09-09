@@ -338,3 +338,49 @@ export function calendarFilterLabel(key: CalendarFilterKey, viewerIsClient: bool
   if (key === "published") return assetStatusLabel("published", viewerIsClient);
   return CALENDAR_FILTER_LABEL[key];
 }
+
+/* ────────────────── the RUN half of the same legend row ────────────────── */
+
+/**
+ * The two run states the calendar's legend names.
+ *
+ * WHY THEY MOVED HERE. They were two string literals in run-calendar.tsx,
+ * sitting in the same flex row as the filter chips above and at the same visual
+ * weight — which is exactly the arrangement that produced the report this
+ * register answers: nine words in one row, of which "Scheduled run" looked like
+ * a duplicate of "Scheduled" and "Completed run" looked like a duplicate of
+ * "Published". They are not duplicates. They describe a different OBJECT: a run
+ * is a job the agent performed, a post is a thing that job produced. One
+ * completed run can leave a post that is scheduled, waiting, or failed to
+ * publish, so neither pair can be collapsed without losing a real state.
+ *
+ * They belong in this module for the same reason `CALENDAR_FILTER_LABEL` does,
+ * and its own note says it: words that sat in a component "could not be asked
+ * for by anything else — including a test". These were the two left behind. Now
+ * that both halves are registers, `calendar-legend-registers.test.ts` can state
+ * the thing a reader actually needs true — that no run word and post word are
+ * confusable — instead of it being a matter of whoever last edited the JSX.
+ *
+ * The SWATCHES stay in the component. Presentation is its business, the same
+ * split this module already made when it took the words and left the colours.
+ */
+export type CalendarRunLegendKey = "scheduledRun" | "completedRun";
+
+const CALENDAR_RUN_LEGEND_LABEL: Record<CalendarRunLegendKey, string> = {
+  scheduledRun: "Scheduled run",
+  completedRun: "Completed run",
+};
+
+/**
+ * Every run legend key, in the order the row renders them. Derived from the
+ * record for the same reason `ALL_CALENDAR_FILTER_KEYS` is: an array can silently
+ * omit a member the legend then never draws.
+ */
+export const ALL_CALENDAR_RUN_LEGEND_KEYS = Object.keys(
+  CALENDAR_RUN_LEGEND_LABEL,
+) as CalendarRunLegendKey[];
+
+/** The run legend dot's label. Not viewer-aware: both readers see the same run. */
+export function calendarRunLegendLabel(key: CalendarRunLegendKey): string {
+  return CALENDAR_RUN_LEGEND_LABEL[key];
+}

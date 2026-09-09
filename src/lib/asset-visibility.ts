@@ -227,6 +227,25 @@ export function clientDeliveryStamp(
 }
 
 /**
+ * The stamp a deliverable row prints for this viewer.
+ *
+ * Client rows carry the DELIVERY moment, never the generation instant — a week
+ * of "daily" posts shares one `createdAt`, so printing it publishes the batch
+ * shape on every surface that lists deliverables.
+ *
+ * WHY IT LIVES HERE AND NOT BESIDE ITS CALLERS. It was in
+ * `agent-detail-archetypes`, whose first line is `import "server-only"` — so
+ * the three client components that list deliverables could not call it, and all
+ * three re-derived it by hand instead. Two of them matched; `assets-view` did
+ * not, and sorted a staff list by an instant its own cards do not print. This
+ * module is already the client-safe home of `clientDeliveryStamp`, which is
+ * half the rule; the other half belongs next to it.
+ */
+export function deliverableStamp(asset: Asset, viewerIsClient: boolean): number {
+  return viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt;
+}
+
+/**
  * Archive membership as ONE predicate — the four rules above, in one place.
  *
  * Every surface that wants to say "this is (or will be) in your archive" has to
