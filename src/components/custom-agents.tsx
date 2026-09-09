@@ -52,6 +52,8 @@ import {
 import { intakePageHref, type IntakeFamily } from "@/lib/agent-intake-links";
 import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
 import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
+import { useRunWatch } from "@/components/run-watch";
+import { runOutcomeSentence } from "@/lib/run-progress";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { validateScheduleTiming } from "@/lib/scheduling";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
@@ -2382,6 +2384,13 @@ export function RunCustomAgentModal({
   const [startedJobId, setStartedJobId] = useState<string | null>(null);
   /** How many runs this press produced — more than one when "Number of posts" was raised. */
   const [startedCount, setStartedCount] = useState(1);
+  /**
+   * SCRUM-416: the shell's run watch. The dialog does not poll and does not
+   * decide anything — it registers the run it just started and reads the same
+   * store the dock reads, so the panel below and the corner card cannot say two
+   * different things about one run.
+   */
+  const { runs: watchedRuns, watch: watchRun, outcomeOf } = useRunWatch();
   const intake = intakeFor(setup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
@@ -2718,6 +2727,20 @@ export function RunCustomAgentModal({
         if (result.jobId) setStartedJobId(result.jobId);
         setStartedCount(result.jobIds?.length ?? 1);
         setStarted(true);
+        // SCRUM-416: hand the run to the shell's dock so it stays visible after
+        // this dialog closes. The FIRST job of a batch, not all of them - a
+        // batch is N runs of one post each and they finish together, so three
+        // rows would be three copies of one answer. Staff get the /jobs link;
+        // a client gets none, because no client surface shows a deliverable
+        // still in review (see WatchedRun.href).
+        if (result.jobId) {
+          watchRun({
+            jobId: result.jobId,
+            agentName: agent.name,
+            noun: outputNoun,
+            ...(viewerIsClient ? {} : { href: `/jobs/${result.jobId}` }),
+          });
+        }
         router.refresh();
       } else if (result.jobId) {
         router.push(`/jobs/${result.jobId}`);
@@ -2726,72 +2749,94 @@ export function RunCustomAgentModal({
   }
 
   if (started) {
+    /**
+     * SCRUM-416. THIS PANEL USED TO BE A DEAD END: a green tick, the word
+     * "started", the thirty-minute estimate, a staff-only "Open the run" link
+     * and a Done button. Lola read it and asked the only question it could not
+     * answer - "how do I know where it goes, if it worked, etc." An estimate is
+     * a promise, and a promise with no progress beside it is the one piece of
+     * information a reader cannot check.
+     *
+     * It now shows the run's actual stage, from the shell's watch, refreshed by
+     * the one poller that owns it. The estimate stays as CONTEXT beside real
+     * progress rather than as the only thing there is.
+     *
+     * AND IT IS NOT THE PERSISTENT HALF. Nobody watches a modal for half an
+     * hour: the reader closes this and goes away, which is why the watch lives
+     * above the pages (run-watch.tsx) and the dock in the app shell keeps
+     * showing the run afterwards. This panel reads the same store, so the two
+     * cannot disagree, and the copy says out loud that closing it does not stop
+     * the run - the sentence a reader needs before they will believe it.
+     */
+    // Absent until the first tick lands. `queued` is what the run IS at that
+    // moment and what the ladder's first step already says, so the strip is
+    // honest rather than empty.
+    const watchedStatus = startedJobId
+      ? (watchedRuns.find((r) => r.jobId === startedJobId)?.status ?? "queued")
+      : "queued";
+    const outcome = startedJobId ? (outcomeOf(startedJobId) ?? "working") : "working";
     return (
       <Modal open onClose={onClose} title={agent.name}>
-        <div className="mt-4 space-y-3 text-center">
-          <Icon name="CircleCheck" className="mx-auto h-8 w-8 text-success" />
+        <div className="mt-4 space-y-3">
           {/* Round 6: the confirmation says what is happening to the thing the
               reader asked for, not that a "Run" has a status. "Your post is on
               its way" is the same noun the title and the button used, so the
-              three sentences the client reads across one press are one voice.
+              sentences the client reads across one press are one voice.
               COUNT is the one thing that noun cannot carry: a batch is N
               SEPARATE runs, one post each, and a reader who asked for four has
-              to see four acknowledged — so the plural line survives and the
-              singular one, which only announced that a "Run" had a status, does
-              not. */}
+              to see four acknowledged.
+
+              CENTRED TEXT IS GONE with the tick that anchored it: a progress
+              ladder and a stage sentence are read left to right. */}
           {startedCount > 1 && (
             <p className="text-sm text-foreground">{startedCount} runs started · one post each</p>
           )}
-          {/* Drafts no longer reach the client archive at all: F149 filters it
-              to approved, non-future items. phase3-design §3's sentence is for
-              run-FINISHED surfaces; this one fires the moment a run starts, so
-              it takes the future-tense "reviews it when it lands" form —
-              nobody is reviewing anything yet.
-
-              STAFF GET THEIR OWN SENTENCE (AF-9). This card is what a staff
-              member now sees instead of being redirected, and the client's line
-              tells the reader their Karos team will review it — which, to the
-              Karos team, is a machine telling them to wait for themselves. */}
           <p className="text-sm text-foreground">
             {viewerIsClient
               ? `Your ${outputNoun} is on its way.`
               : `The agent is working on this ${outputNoun}.`}
           </p>
-          <p className="text-xs text-muted">
-            {viewerIsClient ? (
-              <>
-                {sentenceStart(RUN_ESTIMATE_SENTENCE)}. Your Karos team reviews it, then it lands in
-                your Workspace.
-              </>
-            ) : (
-              // "the review queue" NAMED NOTHING. Grep the phrase: every other
-              // hit in this repo is a code comment describing an intention, and
-              // no route, component or label has ever carried it — so the one
-              // reader who went looking for it could not find it. Where these
-              // actually land is the staff Jobs list, and the chip that holds
-              // them there takes its word from the sanctioned register. This
-              // sentence now names the nav entry and ASKS that register for the
-              // state, rather than writing a third name for the same place.
-              //
-              // The client branch above still says "your Workspace". That is a
-              // different question and is deliberately left alone here: the word
-              // is this product's name for the client's content area and is used
-              // in a dozen other client-facing strings, so aligning it with the
-              // nav ("Calendar", "Account Center") is a vocabulary decision, not
-              // a copy fix, and it belongs in one change across all of them.
-              <>
-                This usually takes {RUN_ESTIMATE_SENTENCE}. This page keeps itself up to date while
-                it runs, and the deliverables land in{" "}
-                <Link
-                  href="/jobs"
-                  className="focus-ring rounded-md text-muted underline underline-offset-2 transition-colors hover:text-foreground"
-                >
-                  Jobs
-                </Link>{" "}
-                under {jobStatusLabel("review")}.
-              </>
-            )}
+
+          {/* The ladder, from the sanctioned register - not a fourth spelling
+              of "queued / running / in review". Same component the client's own
+              agent page mounts for an in-flight run. */}
+          <ManagedJobProgress
+            status={watchedStatus as JobStatus}
+            className="mb-0 mt-1"
+          />
+
+          <p className="text-xs leading-relaxed text-muted">
+            {runOutcomeSentence(outcome, viewerIsClient)}
+            {outcome === "working" ? ` It usually takes ${RUN_ESTIMATE_SENTENCE}.` : ""}
           </p>
+
+          {/* WHERE IT LANDS, for the reader who has somewhere to look (#415).
+              "the review queue" NAMED NOTHING: every other hit for that phrase
+              in this repo is a code comment describing an intention, and no
+              route, component or label has ever carried it - so the one reader
+              who went looking could not find it. Where these actually land is
+              the staff Jobs list, and the chip that holds them there takes its
+              word from the sanctioned register, which this sentence ASKS rather
+              than writing a third name for the same place.
+
+              STAFF ONLY, and the client's half is the reason this is a separate
+              sentence from the outcome one above: a client has nowhere to look
+              at a deliverable still in review (the archive holds APPROVED work
+              - F149), so naming a destination for them would be the phantom
+              again. Their sentence names the review step and stops there. */}
+          {!viewerIsClient && (
+            <p className="text-xs leading-relaxed text-muted">
+              The deliverables land in{" "}
+              <Link
+                href="/jobs"
+                className="focus-ring rounded-md text-muted underline underline-offset-2 transition-colors hover:text-foreground"
+              >
+                Jobs
+              </Link>{" "}
+              under {jobStatusLabel("review")}.
+            </p>
+          )}
+
           {/* Where the redirect used to go, as a choice. Staff only: /jobs is
               not a route a CLIENT_USER may open. */}
           {!viewerIsClient && startedJobId && (
@@ -2809,9 +2854,11 @@ export function RunCustomAgentModal({
               </Link>
             </span>
           )}
-          <Button variant="subtle" onClick={onClose}>
-            Done
-          </Button>
+          <div>
+            <Button variant="subtle" onClick={onClose}>
+              Done
+            </Button>
+          </div>
         </div>
       </Modal>
     );
