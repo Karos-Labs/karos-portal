@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { normalizeDashes } from "@/lib/text-utils";
 import { resolveAgentEngineGateAction } from "@/lib/actions";
 import type { AgentEngineStyleEdit } from "@/lib/agent-engine/types";
+import { CLIP_REVIEW_KEYS, describeBudgetPlan, formatClipDuration, formatUsd, readClipReview, summarisePlateSources } from "@/lib/agent-engine/clip-review";
 
 /**
  * The human-approval action for an agent-engine run paused at
@@ -323,6 +324,13 @@ export function AgentEngineGateApproval({
   const renderTokens = readRenderTokens(fields["renderTokens"]);
   const styleDirectiveOutcome = readStyleDirectiveOutcome(fields["styleDirectiveOutcome"]);
   const styleVariation = readStyleVariation(fields["styleVariation"]);
+  /**
+   * A short-video gate (tiktok-agent's `11-clip-review`): the clip itself,
+   * its cost against the ceiling, where its footage came from, and the
+   * visual QA's read. Until 2026-09-09 the reviewer got `videoUrl` as a bare
+   * link and `plateSources`/`visualQa`/`script` as collapsed JSON.
+   */
+  const clip = readClipReview(fields);
 
   /** A typed-but-invalid hex in the Design block — blocks every decision until fixed or reset, rather than silently dropping the pick server-side. */
   const hasInvalidDesignInput = DESIGN_ROLES.some(({ key }) => {
@@ -428,6 +436,7 @@ export function AgentEngineGateApproval({
   const structured: Array<[string, unknown]> = [];
   for (const [key, value] of Object.entries(fields)) {
     if (SUPPRESSED_KEYS.has(key) || value === null || value === undefined) continue;
+    if (clip !== undefined && CLIP_REVIEW_KEYS.has(key)) continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       facts.push([labelForKey(key), String(value)]);
     } else {
@@ -481,6 +490,78 @@ export function AgentEngineGateApproval({
                 ),
               )}
           </div>
+        </div>
+      )}
+
+      {/* A short-video gate: the clip, playable, first — the thing being
+          approved — then the facts a reviewer needs beside the play button:
+          what it cost against its ceiling and how the plan was kept under it,
+          which shots are real footage and which are generated stills, whether
+          there is a music bed, what the visual QA said, and the script. */}
+      {clip && (
+        <div className="space-y-2 rounded-md border border-border bg-surface p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Icon name="Video" className="h-4 w-4 shrink-0 text-muted" />
+            <span className="text-sm font-medium">{clip.format === "commentary-clip" ? "Commentary clip" : "Original short"}</span>
+            {clip.durationSeconds !== undefined && <Badge tone="neutral">{formatClipDuration(clip.durationSeconds)}</Badge>}
+            {clip.voiceover !== undefined && <Badge tone="neutral">{clip.voiceover ? "Voiceover" : "Silent"}</Badge>}
+            {clip.sourceTier && <Badge tone="neutral">{labelForKey(clip.sourceTier)}</Badge>}
+            {clip.flagged && <Badge tone="warning">Flagged by visual QA</Badge>}
+          </div>
+          {clip.videoUrl ? (
+            // A signed GCS URL, re-signed per run; played in place so the
+            // reviewer never approves a clip sight-unseen.
+            <video controls preload="metadata" src={clip.videoUrl} className="mx-auto max-h-[560px] w-auto rounded-md border border-border bg-black" />
+          ) : (
+            <p className="text-xs text-muted-2">
+              The clip could not be uploaded for preview on this deploy. Do not approve it unwatched: open the run&apos;s files first.
+            </p>
+          )}
+          {(clip.costSoFarUsd !== undefined || clip.maxCostUsd !== undefined) && (
+            <p className="text-xs text-muted">
+              Cost so far {clip.costSoFarUsd !== undefined ? formatUsd(clip.costSoFarUsd) : "unknown"}
+              {clip.estimatedCostUsd !== undefined ? ` · estimated ${formatUsd(clip.estimatedCostUsd)}` : ""}
+              {clip.maxCostUsd !== undefined ? ` · ceiling ${formatUsd(clip.maxCostUsd)}` : ""}
+              {describeBudgetPlan(clip) !== undefined ? ` · ${describeBudgetPlan(clip)}` : ""}
+            </p>
+          )}
+          {(clip.plateSources !== undefined || clip.music !== undefined) && (
+            <p className="text-xs text-muted">
+              {clip.plateSources !== undefined ? `Footage: ${summarisePlateSources(clip.plateSources)} (${clip.plateSources.length} shot${clip.plateSources.length === 1 ? "" : "s"})` : ""}
+              {clip.plateSources !== undefined && clip.music !== undefined ? " · " : ""}
+              {clip.music !== undefined ? (clip.music.applied ? "Music bed laid" : `No music${clip.music.note ? ` (${normalizeDashes(clip.music.note)})` : ""}`) : ""}
+            </p>
+          )}
+          {clip.visualQa && !clip.visualQa.passed && (
+            <details className="rounded-md border border-warning/40 bg-warning/5" open>
+              <summary className="cursor-pointer px-2.5 py-1.5 text-xs font-medium text-warning">
+                Visual QA: {normalizeDashes(clip.visualQa.reason ?? "did not pass")}
+              </summary>
+              <ul className="space-y-0.5 border-t border-warning/30 p-2.5 text-[11px] leading-relaxed text-muted">
+                {clip.visualQa.evidence.map((line, i) => (
+                  <li key={i}>{normalizeDashes(line)}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {clip.script && (
+            <details className="rounded-md border border-border/60 bg-surface-2/40">
+              <summary className="cursor-pointer px-2.5 py-1.5 text-xs font-medium text-muted">
+                Script · {clip.script.beats.length} beat{clip.script.beats.length === 1 ? "" : "s"}
+              </summary>
+              <ol className="space-y-1.5 border-t border-border/60 p-2.5 text-xs leading-relaxed">
+                {clip.script.beats.map((beat, i) => (
+                  <li key={i} className="grid grid-cols-[1.5rem_1fr] gap-1">
+                    <span className="text-muted-2">{i + 1}.</span>
+                    <span>
+                      <span className="text-foreground">{normalizeDashes(beat.narration)}</span>
+                      {beat.onScreenText && <span className="block text-muted-2">On screen: {normalizeDashes(beat.onScreenText)}</span>}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
         </div>
       )}
 
