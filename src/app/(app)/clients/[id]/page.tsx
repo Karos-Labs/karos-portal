@@ -741,8 +741,17 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   // buildScoreViews / buildPresence calls that page renders from, so this is
   // not a second copy of the report; it is the report's headline.
   const competitorsHref = `/clients/${id}/settings?tab=competitors`;
-  const standing = presence && hasStanding(presence) ? (
-    <HomeStandingWidget presence={presence} href={reportHref} competitorsHref={competitorsHref} />
+  // The score joins the client gate (SCRUM-418): it used to render on the KPI
+  // card, which has no `hasStanding` test, so gating the merged card on
+  // presence alone would drop a measured visibility score off a client's Home
+  // whenever the presence buckets happened to be empty.
+  const standing = (presence && hasStanding(presence)) || visibilityScore ? (
+    <HomeStandingWidget
+      presence={presence}
+      href={reportHref}
+      competitorsHref={competitorsHref}
+      visibilityScore={visibilityScore}
+    />
   ) : null;
 
   /**
@@ -793,32 +802,23 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   /**
    * Where each KPI cell goes (portal feedback round 5, 2026-09).
    *
-   * Every cell is a link now and the card-level "Full report" control is gone
-   * (see HomeKpisWidget's own note). Each destination is chosen to show MORE
-   * ABOUT THAT NUMBER rather than to be "the report":
+   * Every cell is a link and the card-level "Full report" control is gone (see
+   * HomeKpisWidget's own note). Each destination is chosen to show MORE ABOUT
+   * THAT NUMBER rather than to be "the report":
    *
    *  • PUBLISHED → `throughputHref`, the deliverables themselves, in a list that
    *    contains every row the cell counted.
-   *  • VISIBILITY → the Reporting tab AT ITS SCORES SECTION, when there is a
-   *    snapshot for that section to render. The anchor is written by
-   *    settings/page.tsx and it is written ONLY inside `seoGeo ? …`, so on an
-   *    unmeasured account the fragment names nothing and the browser leaves the
-   *    reader wherever the tab opens. The tab itself always renders (the panel's
-   *    own empty state is what they get), so the cell keeps a destination —
-   *    every cell on this card is a link by rule — and drops the anchor.
    *  • FOLLOWERS is not passed at all today; the cell hides itself. See the
    *    follower note above.
+   *
+   * VISIBILITY IS NO LONGER ONE OF THEM (SCRUM-418). It moved to
+   * `HomeStandingWidget`, beside the two shares it is the headline of, and
+   * `visibilityHref` went with it — that card has one link for all three
+   * metrics, so there is no per-cell destination left to build. The anchored
+   * form this used to take (`#visibility-scores`, written by settings/page.tsx
+   * only inside `seoGeo ? …`) is gone with it rather than left unused.
    */
-  const visibilityHref = seoGeo ? `${reportHref}#visibility-scores` : reportHref;
-
-  const kpis = (
-    <HomeKpisWidget
-      throughput={throughput}
-      visibilityScore={visibilityScore}
-      contentHref={throughputHref}
-      visibilityHref={visibilityHref}
-    />
-  );
+  const kpis = <HomeKpisWidget throughput={throughput} contentHref={throughputHref} />;
 
   /**
    * The retired five tiles, as one line (staff only — see HomeOpsStrip).
@@ -959,11 +959,12 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
      * and it is gated on `hasStanding` alone.
      */
     const staffStanding =
-      (presence && hasStanding(presence)) || regenerateFooter ? (
+      (presence && hasStanding(presence)) || visibilityScore || regenerateFooter ? (
         <HomeStandingWidget
           presence={presence}
           href={reportHref}
           competitorsHref={competitorsHref}
+          visibilityScore={visibilityScore}
           {...(regenerateFooter ? { footer: regenerateFooter } : {})}
         />
       ) : null;

@@ -195,22 +195,35 @@ describe("rule 7 · Home's one orange CONTROL is the ladder's button", () => {
 });
 
 describe("rule 1 · a link ends in one static chevron, and a static box is not a link", () => {
-  it("makes both SEO cells whole-cell links to the section that shows the working", () => {
+  it("keeps the three SEO readings inert, under the card's one link (SCRUM-418)", () => {
     const standing = code("components/home-standing.tsx");
-    // It was a `div` in the KPI cell's shell. Now: one Link, `row-lift`, one
-    // chevron, and an href per cell.
-    expect(standing).toMatch(/function ShareMeter\(/);
-    const at = standing.indexOf("function ShareMeter(");
-    const body = standing.slice(at, standing.indexOf("function", at + 10));
-    expect(body).toContain("<Link");
-    expect(body).toContain("row-lift");
-    expect(body.match(/name="ChevronRight"/g) ?? []).toHaveLength(1);
-    // The two anchors, and the panel that writes them.
-    expect(standing).toContain("#presence");
-    expect(standing).toContain("#share");
-    const panel = code("components/seo-geo-panel.tsx");
-    expect(panel).toContain('id="presence"');
-    expect(panel).toContain('id="share"');
+    // THIS ASSERTION IS THE INVERSE OF THE ONE IT REPLACES, and the reversal is
+    // the finding rather than a relaxation. Round 6 made each cell a whole-cell
+    // link because a static box beside three live KPI cells read as either dead
+    // or decorative. True — but the fix generalised the KPI card's rule ("a cell
+    // links to the screen that shows MORE ABOUT ITS OWN NUMBER, a different
+    // screen for each") past its own precondition. These three are readings of
+    // ONE snapshot and all three opened the same report, so per-cell links gave
+    // three controls that were one control. Lola read it back as noise. Same
+    // defect, opposite costume; the card now has one link and the tiles are
+    // recaps.
+    const at = standing.indexOf("function MeterTile(");
+    expect(at, "the shell the three readings share is gone").toBeGreaterThan(-1);
+    // Bounded by the next declaration, not by the next doc comment: `code()`
+    // strips comments, so a `/**` bound returns -1 and slices the whole file.
+    const shell = standing.slice(at, standing.indexOf("function ", at + 10));
+    expect(shell).not.toContain("<Link");
+    expect(shell).not.toContain("row-lift");
+    expect(shell).not.toContain("ChevronRight");
+
+    // EXACTLY TWO links in the file, and neither is a metric: the card's single
+    // header link, and the empty-roster prompt. That prompt is deliberately NOT
+    // stripped with the meters — it is the only route from Home to the
+    // Competitors tab, it goes somewhere no other control here goes, and
+    // without it its own copy ("Track a competitor and we'll measure your
+    // share") is an instruction with no way to follow it.
+    expect(standing.match(/<Link/g) ?? []).toHaveLength(2);
+    expect(standing).toContain("Open the full report");
   });
 
   it("does not slide the chevron on the KPI cells", () => {

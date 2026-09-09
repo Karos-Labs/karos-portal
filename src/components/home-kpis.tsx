@@ -2,10 +2,8 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { TONE_COLORS } from "@/components/seo-geo/tones";
 import { THROUGHPUT_WINDOW_DAYS, type ContentThroughput } from "@/lib/content-throughput";
 import type { FollowerPoint } from "@/lib/follower-tracking";
-import type { ScoreView } from "@/components/seo-geo/presenter";
 
 /**
  * A minimal inline sparkline — no charting dependency for a handful of points.
@@ -194,49 +192,6 @@ function Cell({
 }
 
 /**
- * The visibility score as a headline + meter, built from the SAME ScoreView the
- * full report renders (buildScoreViews), so this cell and Account Center's
- * Reporting tab cannot quote different numbers for one snapshot.
- *
- * SHAPED LIKE ITS TWO NEIGHBOURS as of 2026-09 — big numeral, meter, caption —
- * where it used to be a label/value row over a thin bar. Three cells side by
- * side, one of them arranged differently, made the card read as two KPIs and an
- * afterthought; the point of the row is that they are three readings of the same
- * kind. The meter stays because it is what makes the number mean anything at
- * this size: a bare 61 says nothing about whether 61 is good.
- *
- * The TRACK is the band's own colour at low alpha, not `surface-3`. In light
- * mode surface-3 is #e9e7df on a surface-2 cell of #eceae2 — a three-point step,
- * which is no step: the unfilled half of the meter simply disappeared and the
- * bar had no readable length. Same device the SEO share meters use.
- */
-function ScoreCell({ view }: { view: ScoreView }) {
-  const measured = view.value != null;
-  const color = TONE_COLORS[view.tone];
-  return (
-    <>
-      <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-        {measured ? view.value : "–"}
-        {measured && <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>}
-      </p>
-      <div
-        className="mt-2.5 h-2 overflow-hidden rounded-full"
-        style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
-      >
-        <div
-          className="h-full rounded-full transition-[width]"
-          style={{
-            width: `${measured ? Math.min(100, Math.max(0, view.value as number)) : 0}%`,
-            background: color,
-          }}
-        />
-      </div>
-      <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{view.label}</p>
-    </>
-  );
-}
-
-/**
  * Home's KPI row (portal revamp, Surface 02; content settled by D6, the
  * client-zero answer to the one question this page's own history left open).
  *
@@ -254,11 +209,13 @@ function ScoreCell({ view }: { view: ScoreView }) {
  * (lib/content-output.ts) is deleted, not kept around unused — it was a
  * stopgap for exactly the gap D6 now answers, and nothing else read it.
  *
- * "Nothing else" is also why this card no longer prints all three
- * buildScoreViews meters (search score, AI readiness, AI visibility): the
- * caller passes only the "visibility" one now — "the overall Google/AI
- * visibility rank" is that score's own established label ("AI visibility
- * today"), not a new metric invented for this card.
+ * "Nothing else" is also why this card stopped printing all three
+ * buildScoreViews meters (search score, AI readiness, AI visibility), keeping
+ * only "visibility". SCRUM-418 has since moved that last one off this card
+ * entirely, onto the SEO & AI visibility card where its own two components
+ * already were — see `home-standing.tsx`. D6's ruling is not overturned by
+ * that: the score still has a home on this page, and this card still holds the
+ * followers half of D6.
  *
  * ── THE CHANNELS CELL IS GONE (2026-09) ──────────────────────────────────
  *
@@ -294,21 +251,25 @@ function ScoreCell({ view }: { view: ScoreView }) {
  *
  * The rule that replaced it is per cell, not per card: a cell links to the
  * screen that shows MORE ABOUT ITS OWN NUMBER, which is a different screen for
- * each of the three. Followers open the channel list they are summed from;
- * published content opens the posts themselves; the visibility score opens the
- * report it is a headline of. Two of those are not "the report", and that is
- * the point — sending all three there would be the same broken promise, made
- * three times.
+ * each. Followers open the channel list they are summed from; published
+ * content opens the posts themselves. Neither of those is "the report", and
+ * that is the point — sending both there would be the same broken promise,
+ * made twice.
+ *
+ * THE RULE SURVIVED SCRUM-418 BECAUSE OF THAT CLAUSE. The visibility cell left
+ * this card for the SEO one, where the meters are deliberately NOT links; that
+ * is not this rule being reversed but its precondition failing there. Three
+ * readings of one snapshot had one destination between them, so per-cell links
+ * gave three controls that were one control. Here the two destinations really
+ * are two, and the cells stay live.
  */
 export function HomeKpisWidget({
   audienceTotal,
   audienceGrowthPct,
   audienceSeries,
   throughput,
-  visibilityScore,
   audienceHref,
   contentHref,
-  visibilityHref,
 }: {
   /**
    * Real stored follower snapshots only — an empty (or absent) series hides the
@@ -327,8 +288,6 @@ export function HomeKpisWidget({
   audienceSeries?: FollowerPoint[];
   /** Live-deliverable throughput — see lib/content-throughput.ts. */
   throughput: ContentThroughput;
-  /** The one ScoreView D6 kept — null when there is no snapshot to score yet. */
-  visibilityScore: ScoreView | null;
   /**
    * The channel list. This total is the SUM of the per-channel follower counts,
    * and that list is the only screen in the product that breaks it back down,
@@ -341,8 +300,6 @@ export function HomeKpisWidget({
   audienceHref?: string;
   /** The published deliverables themselves, filtered to what this cell counted. */
   contentHref: string;
-  /** The Reporting tab, at its scores section — the working behind this meter. */
-  visibilityHref: string;
 }) {
   // A single point is a reading, not a trend — the sparkline needs two. And a
   // cell with nowhere to go is not a cell on this card (see `Cell`), so the
@@ -377,11 +334,17 @@ export function HomeKpisWidget({
           the window, and this card lives in a column the 288px rail has already
           narrowed — so a 1024px window split it into cells too narrow for their
           own labels. `@xl` is 36rem of THIS grid, measured where the cells
-          actually are. Three cells (with audience) go straight to three
-          columns AT `@xl` rather than stepping through two first — two
-          columns would leave the third cell alone in a half-empty second row
-          for the entire `@xl`–`@4xl` range, not just avoid it above `@4xl`. */}
-      <div className={cn("grid gap-4", showAudience ? "@xl:grid-cols-3" : "@xl:grid-cols-2")}>
+          actually are. With the visibility cell gone (SCRUM-418) there are at
+          most two, so there is one step to make and no odd cell to strand in a
+          half-empty second row. */}
+      {/* TWO cells now, or one: the visibility meter left for the SEO card
+          (SCRUM-418). With follower ingestion still unwritten this renders a
+          single full-width "Published" cell on every account today, which is
+          honest but thin — the card is one number until that cron lands. Said
+          out loud here because the emptiness is a DATA gap, and the wrong
+          reaction to it would be to move a metric back onto this card to fill
+          the space. */}
+      <div className={cn("grid gap-4", showAudience && "@xl:grid-cols-2")}>
         {/* Audience — the D6 cell, real snapshots only; absent when there are none */}
         {showAudience && (
           <Cell icon="Users" label="Total followers" href={audienceHref as string}>
@@ -410,15 +373,6 @@ export function HomeKpisWidget({
             noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
           />
           <DailyBars counts={throughput.daily} />
-        </Cell>
-
-        {/* AI visibility — the one score D6 kept, of the three buildScoreViews returns */}
-        <Cell icon="Radar" label="Visibility" href={visibilityHref}>
-          {visibilityScore ? (
-            <ScoreCell view={visibilityScore} />
-          ) : (
-            <p className="mt-2 text-sm text-muted-2">Not measured yet.</p>
-          )}
         </Cell>
       </div>
     </Card>

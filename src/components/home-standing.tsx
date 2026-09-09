@@ -2,24 +2,37 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import type { PresenceView } from "@/components/seo-geo/presenter";
+import { TONE_COLORS } from "@/components/seo-geo/tones";
+import type { PresenceView, ScoreView } from "@/components/seo-geo/presenter";
 
 /**
- * One percentage as a headline + meter, AND A LINK TO THE SECTION THAT SHOWS
- * THE WORKING (round 6).
+ * The shell all three readings share: an accented eyebrow, then the reading.
  *
- * IT WAS A STATIC `div` IN THE KPI CELL'S EXACT SHELL — same border, same
- * `surface-2`, same eyebrow, same big figure — sitting one card below three
- * cells that light up and navigate. That is the finding the product owner
- * reported in his own words: the KPI cells light up and these do not. Two
- * readings: either these numbers are dead, or the affordance is decoration. So
- * the whole cell is the target now (rule 1), it hovers one fill step with
- * `row-lift`'s hairline, it ends in one static `ChevronRight`, and it carries
- * `.focus-ring` like every other interactive surface.
+ * NOT A LINK, AS OF SCRUM-418, and this is the second reversal of that
+ * question rather than a fresh opinion — so both halves are on the record.
  *
- * Deliberately not a `StatCard`: the bar is the whole point here, because both
- * numbers on this card are shares and a share without its remainder is just a
- * digit.
+ * Round 6 made each cell a link because the product owner reported that the
+ * KPI cells lit up and these did not, which left two readings: the numbers are
+ * dead, or the affordance is decoration. Correct finding. The fix generalised
+ * a rule that did not survive contact with the third metric.
+ *
+ * That rule (KPI card, round 5) is "a cell links to the screen that shows MORE
+ * ABOUT ITS OWN NUMBER, which is a different screen for each" — followers open
+ * the channel list, published opens the posts. It works because those
+ * destinations differ. These three do not: category presence, share of
+ * conversation and the visibility score are three readings of ONE snapshot and
+ * all three opened the same report. Lola read that back as noise — "they all
+ * lead to the same page, they should be in the same widget with one button at
+ * the top, they're just a recap" — and three controls that are one control is
+ * the same defect round 6 diagnosed, wearing the opposite costume.
+ *
+ * So the inconsistency round 6 found is resolved the other way: nothing here
+ * lights up, and the card's single header link is the one way to the working.
+ * The KPI card's per-cell rule is untouched and still correct — its two
+ * remaining cells still go to two different places.
+ *
+ * Deliberately not a `StatCard`: the bar is the whole point here, because two
+ * of these three are shares and a share without its remainder is just a digit.
  *
  * THE BAR IS ORANGE (round 6, Albert 2026-09-06). Round 6 briefly made it ink
  * on a grey track; the ruling put it back. The one-orange-per-screen rule is
@@ -29,37 +42,63 @@ import type { PresenceView } from "@/components/seo-geo/presenter";
  * matters most at the small values where an accent sliver on `surface-3` read
  * as an empty card.
  */
+function MeterTile({
+  icon,
+  label,
+  children,
+}: {
+  icon: string;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-surface-2 p-3.5">
+      {/* No trailing chevron: the eyebrow ends at the label now, because the
+          glyph that used to close it was the promise this tile stopped
+          making. */}
+      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+      </p>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * One percentage as a headline and a meter.
+ *
+ * THE BAR IS ORANGE (round 6, Albert 2026-09-06). Round 6 briefly made it ink
+ * on a grey track; the ruling put it back. The one-orange-per-screen rule is
+ * about CONTROLS — a meter fill is data, and data keeps its accent. Losing the
+ * link did not change that: this tile stopped being a control, which is
+ * precisely the category the ration governs, and the fill was never in it.
+ *
+ * The track is the same accent at low alpha: the filled part is the number, and
+ * the unfilled part is visibly the same measurement rather than background,
+ * which matters most at the small values where an accent sliver on `surface-3`
+ * read as an empty card.
+ */
 function ShareMeter({
   icon,
   label,
   caption,
   pct,
   emptyLine,
-  href,
 }: {
   icon: string;
   label: string;
   caption: string;
   pct: number | null;
   emptyLine: string;
-  /** The Reporting section this number is computed in. Required: see rule 1. */
-  href: string;
 }) {
   return (
-    <Link
-      href={href}
-      className="row-lift focus-ring block rounded-md border border-border bg-surface-2 p-3.5"
-    >
-      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-        <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-      </p>
+    <MeterTile icon={icon} label={label}>
       {pct == null ? (
         <p className="mt-2 text-sm text-muted-2">{emptyLine}</p>
       ) : (
         <>
-          <p className="mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+          <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
             {pct}
             <span className="ml-0.5 text-lg font-medium text-muted-2">%</span>
           </p>
@@ -72,7 +111,51 @@ function ShareMeter({
           <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{caption}</p>
         </>
       )}
-    </Link>
+    </MeterTile>
+  );
+}
+
+/**
+ * The visibility score, moved here from the KPI card by SCRUM-418.
+ *
+ * It is the same `ScoreView` the full report renders (`buildScoreViews`), so
+ * this tile and Account Center's Reporting tab cannot quote different numbers
+ * for one snapshot. It sits FIRST because it is the headline the two shares
+ * below it decompose — and because it was the third link to this card's
+ * destination, which is what made all three read as noise.
+ *
+ * ITS FILL KEEPS THE TONE SCALE while its two neighbours keep the orange, and
+ * that difference is the point rather than an oversight: a share is a
+ * measurement and takes the data accent, a score is a JUDGMENT and takes the
+ * success/warning/info ink the rest of the app judges with. Orange never
+ * signals status. The track is the band's own colour at low alpha for the
+ * reason the report's meters use it: in light mode `surface-3` is a
+ * three-point step off `surface-2`, which is no step, and the unfilled half of
+ * the bar simply disappeared.
+ */
+function ScoreMeter({ view }: { view: ScoreView }) {
+  const measured = view.value != null;
+  const color = TONE_COLORS[view.tone];
+  return (
+    <MeterTile icon="Radar" label="Visibility">
+      <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+        {measured ? view.value : "\u2013"}
+        {measured && <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>}
+      </p>
+      <div
+        className="mt-2.5 h-2 overflow-hidden rounded-full"
+        style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
+      >
+        <div
+          className="h-full rounded-full transition-[width]"
+          style={{
+            width: `${measured ? Math.min(100, Math.max(0, view.value as number)) : 0}%`,
+            background: color,
+          }}
+        />
+      </div>
+      <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{view.label}</p>
+    </MeterTile>
   );
 }
 
@@ -113,6 +196,7 @@ export function HomeStandingWidget({
   presence,
   href,
   competitorsHref,
+  visibilityScore = null,
   footer,
 }: {
   /**
@@ -124,13 +208,20 @@ export function HomeStandingWidget({
    */
   presence: PresenceView | null;
   /**
-   * The Reporting tab, un-anchored. THE CELLS APPEND THEIR OWN FRAGMENTS
-   * (round 6): `#presence` and `#share`, the two ids seo-geo-panel.tsx writes on
-   * the sections these numbers are computed in, by the same device
-   * `#visibility-scores` already used for the KPI card's visibility cell. Built
-   * here rather than threaded as two more props, because the fragment is a fact
-   * about the panel this card is a projection of, not a routing decision the
-   * caller makes.
+   * The full report, for the card's ONE header link.
+   *
+   * Un-anchored, and nothing appends a fragment to it any more. Round 6 had the
+   * cells deep-link to `#presence` and `#share` — the ids seo-geo-panel.tsx
+   * writes on the sections these numbers are computed in — which was the right
+   * shape while each cell was its own control. With one link for the card there
+   * is no per-metric section to aim at, and aiming the single link at one of
+   * the three metrics' sections would privilege that metric arbitrarily.
+   *
+   * WHAT IT ACTUALLY POINTS AT TODAY is Account Center's Reporting tab
+   * (`/clients/[id]/settings?tab=reporting`), not a standalone report page.
+   * Lola is right that this is a settings surface; there is no report route to
+   * send it to yet, so that is a dependency rather than something this card can
+   * fix by relabelling its own link.
    */
   href: string;
   /**
@@ -142,6 +233,16 @@ export function HomeStandingWidget({
    * to contact staff instead.
    */
   competitorsHref: string;
+  /**
+   * The overall visibility score, moved off the KPI card by SCRUM-418 — null
+   * when there is no snapshot to score yet.
+   *
+   * Optional so a caller that has not threaded it keeps rendering two meters
+   * rather than crashing, but every real caller has it: it comes from
+   * `buildScoreViews` on the same snapshot `buildPresence` reads, so a page
+   * that can build one can build the other.
+   */
+  visibilityScore?: ScoreView | null;
   /**
    * A control that acts on THIS data, plus the sentence saying what it does
    * (2026-09). Today that is the admin's "Regenerate", which was in the page
@@ -159,6 +260,11 @@ export function HomeStandingWidget({
   footer?: ReactNode;
 }) {
   const measured = presence != null && hasStanding(presence);
+  // Three readings, two of which are conditional, so the column count is
+  // counted rather than hardcoded: a `grid-cols-3` holding two tiles leaves a
+  // third of the card empty, and that gap reads as a metric that failed to
+  // load.
+  const tileCount = (visibilityScore ? 1 : 0) + (measured ? 2 : 0);
 
   return (
     <Card>
@@ -191,29 +297,52 @@ export function HomeStandingWidget({
       </p>
 
       {/* Container-driven for the same reason as the KPI card above. */}
-      {presence && measured ? (
-        <div className="grid gap-3 @2xl:grid-cols-2">
+      {tileCount > 0 ? (
+        <div
+          className={
+            tileCount >= 3
+              ? "grid gap-3 @2xl:grid-cols-3"
+              : tileCount === 2
+                ? "grid gap-3 @2xl:grid-cols-2"
+                : "grid gap-3"
+          }
+        >
+          {/* The score leads: it is the headline the two shares decompose. */}
+          {visibilityScore && <ScoreMeter view={visibilityScore} />}
+          {presence && measured && (
           <ShareMeter
             icon="Search"
             label="Named in category answers"
             caption={presence.category.caption}
             pct={presence.category.pct}
             emptyLine={presence.category.emptyLine ?? "Not measured yet."}
-            href={`${href}#presence`}
           />
-          {presence.rosterShare ? (
+          )}
+          {!(presence && measured) ? null : presence.rosterShare ? (
             <ShareMeter
               icon="ChartPie"
               label="Your share of the conversation"
               caption={presence.rosterShare.caption}
               pct={presence.rosterShare.pct}
               emptyLine="Not measured yet."
-              href={`${href}#share`}
             />
           ) : (
             /* No competitors tracked ⇒ there is no denominator, so this is a
                prompt to create one rather than a 100% that would be an artifact
-               of an empty roster. */
+               of an empty roster.
+ 
+               STILL A LINK, deliberately, on a card where the three meters
+               stopped being links. SCRUM-418 says to strip this one too, and
+               that would leave "Track a competitor and we'll measure your
+               share" as an instruction with no way to follow it — the only
+               route from Home to the Competitors tab, removed. It is also not
+               what Lola's argument covers: her complaint is three RECAPS that
+               all opened one report, and this is not a recap and does not go
+               there. It goes somewhere no other control on this card goes, and
+               it is the one thing here a client can act on.
+
+               It reads as a control on purpose and cannot be mistaken for a
+               fourth metric: dashed border, no figure, no bar. */
             <Link
               href={competitorsHref}
               className="row-lift focus-ring flex flex-col justify-center rounded-md border border-dashed border-border p-3"
