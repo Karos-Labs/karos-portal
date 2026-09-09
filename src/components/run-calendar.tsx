@@ -34,11 +34,14 @@ import {
 } from "@/components/pending-task-suggestions";
 import type { AssetImage } from "@/lib/asset-images";
 import {
+  ALL_CALENDAR_RUN_LEGEND_KEYS,
   calendarFilterKeyMatchable,
   calendarFilterLabel,
+  calendarRunLegendLabel,
   postKindLabel,
   type CalendarAssetKind,
   type CalendarFilterKey,
+  type CalendarRunLegendKey,
 } from "@/lib/calendar-kind";
 import type { Asset, AssetType, JobStatus, PlannedRunCadence } from "@/lib/types";
 
@@ -2536,9 +2539,38 @@ export function RunCalendar({
             R6): there is no grid there, so every chip in this row was a control
             that did nothing to what the reader was looking at. */}
         {viewMode !== "archive" && (
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-4 py-2">
-          <LegendDot className="border border-dashed border-foreground/40 bg-foreground/[0.03]" label="Scheduled run" />
-          <LegendDot className="bg-foreground/[0.07]" label="Completed run" />
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-border px-4 py-2">
+          {/* TWO REGISTERS, AND THE ROW NOW SAYS SO (SCRUM-422).
+
+              It was one flat row of nine words at one weight, and it was read
+              from outside as one taxonomy that repeated itself: "Scheduled run"
+              beside "Scheduled", "Completed run" beside "Published". They are
+              not repetitions — a run is a job the agent performed, a post is a
+              thing that job produced, and one completed run can leave a post
+              that is scheduled, waiting, or failed to publish. Deleting either
+              pair would have hidden a real state to fix a labelling problem.
+
+              So nothing is removed and the two halves are named instead. It
+              also fixes a second thing the flat row hid: the run dots are
+              LEGEND ONLY while the post words are FILTERS you can press, and at
+              equal weight in one row there was no way to tell that pressing
+              "Completed run" does nothing. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+              Runs
+            </span>
+            {ALL_CALENDAR_RUN_LEGEND_KEYS.map((key) => (
+              <LegendDot
+                key={key}
+                className={RUN_LEGEND_DOT_CLASS[key]}
+                label={calendarRunLegendLabel(key)}
+              />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+              Posts
+            </span>
           {(Object.keys(STATUS_FILTER_CHIP_CLASS) as CalendarFilterKey[])
             // A filter this viewer's calendar can never make dim anything is not
             // offered at all — see calendarFilterKeyMatchable for which those are
@@ -2562,6 +2594,7 @@ export function RunCalendar({
                 onClick={() => toggleStatus(key)}
               />
             ))}
+          </div>
         </div>
         )}
       </div>
@@ -2691,6 +2724,17 @@ export function RunCalendar({
     </div>
   );
 }
+
+/**
+ * The run legend's SWATCHES, beside the filter chips' own map for the same
+ * reason: calendar-kind owns the words, this file owns how they look. A Record
+ * so a new `CalendarRunLegendKey` is a compile error here rather than a key the
+ * legend silently stops drawing.
+ */
+const RUN_LEGEND_DOT_CLASS: Record<CalendarRunLegendKey, string> = {
+  scheduledRun: "border border-dashed border-foreground/40 bg-foreground/[0.03]",
+  completedRun: "bg-foreground/[0.07]",
+};
 
 function LegendDot({ className, label }: { className: string; label: string }) {
   return (
