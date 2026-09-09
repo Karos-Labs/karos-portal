@@ -12,7 +12,7 @@ import { assetImages, assetVideos } from "@/lib/asset-images";
 // ordering-hold message interpolated the RAW enum into a sentence a client
 // reads, and one map is the only way those two agree.
 import { CLIENT_ASSET_STATUS_LABEL, clientAssetStatusLabel } from "@/lib/asset-status-copy";
-import { clientDeliveryStamp } from "@/lib/asset-visibility";
+import { deliverableStamp } from "@/lib/asset-visibility";
 import { offeredStatesFor } from "@/lib/client-state-domain";
 import { agentLabelForAsset, templateForAsset } from "@/lib/post-chain";
 import { cn, relativeTime } from "@/lib/utils";
@@ -259,7 +259,11 @@ export function ArchiveView({
     // reached them, not by when it was generated. Ordering by `createdAt` while
     // printing the delivery time would also leave the tiles visibly out of
     // sequence with their own timestamps.
-    const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.createdAt);
+    // `deliverableStamp` IS this rule, exported and documented. It was
+    // re-derived here (and once more below, and a third time in
+    // agent-detail-archetypes), which is how assets-view came to sort by a
+    // fourth thing nobody printed. One caller each now.
+    const stampOf = (a: Asset) => deliverableStamp(a, viewerIsClient);
     return [...byAgent.entries()]
       .map(([name, list]) => ({
         name,
@@ -557,7 +561,7 @@ function ArchiveTile({
               the moment it was approved; staff keep the generation stamp,
               which for them is the fact worth knowing. */}
           <span className="text-[11px] text-muted-2">
-            {relativeTime(viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt)}
+            {relativeTime(deliverableStamp(asset, viewerIsClient))}
           </span>
           <Badge tone={STATUS_TONE[asset.status]}>{clientAssetStatusLabel(asset.status)}</Badge>
         </div>

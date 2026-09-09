@@ -6,7 +6,7 @@ import { projectRunOccurrences } from "@/lib/scheduled-runs";
 import { runtimeTimeZone } from "@/lib/run-cadence";
 import { resolveContentIdentity } from "@/lib/agent-identity-map";
 import {
-  clientDeliveryStamp,
+  deliverableStamp,
   getClientArchiveAssets,
   isLaunchDeliverable,
   isTestRunAsset,
@@ -633,15 +633,11 @@ export function agentUpcomingCalendarDays(args: {
 }
 
 /**
- * The stamp a deliverable row prints for this viewer.
- *
- * Client rows carry the DELIVERY moment, never the generation instant — a week
- * of "daily" posts shares one `createdAt`, so printing it publishes the batch
- * shape on every surface that lists deliverables.
+ * Re-exported, not defined here any more: this module is `server-only`, and the
+ * client components that list deliverables need the same rule. It lives beside
+ * `clientDeliveryStamp` in `asset-visibility`, which is the half it wraps.
  */
-export function deliverableStamp(asset: Asset, viewerIsClient: boolean): number {
-  return viewerIsClient ? clientDeliveryStamp(asset) : asset.createdAt;
-}
+export { deliverableStamp };
 
 /* ─────────────────── the template click-through (CD-K1) ────────────────── */
 
