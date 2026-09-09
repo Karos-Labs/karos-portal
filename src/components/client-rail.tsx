@@ -11,6 +11,7 @@ import { NotificationBell, useNotificationDismissals } from "@/components/notifi
 import { unreadNotificationCount, type TaskAlert } from "@/lib/notification-rows";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { ClientRailAgentsNav, type RailAgent } from "@/components/client-rail-agents-nav";
+import { ClientRailAccountNav } from "@/components/client-rail-account-nav";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { BrandColorsSection } from "@/components/client-context-sections";
 import { NavLink, type RailNavItem as NavItem } from "@/components/rail-nav-link";
@@ -190,6 +191,21 @@ export function ClientRail({
               {tabNav.slice(1).map((item) => (
                 <NavLink key={item.href} item={item} pathname={pathname} />
               ))}
+              {/* ACCOUNT CENTER WAS NOT ON THIS RAIL AT ALL (SCRUM-419).
+                  `settingsItem` fed the avatar dropdown, the credits
+                  pill's deep link and a row in the MOBILE company sheet
+                  below, and was never rendered here — so a client at desktop
+                  width had no navigation entry to their own profile,
+                  competitors, settings or credits, and the signposted ways in
+                  were an avatar menu and whatever a Home widget linked to. That
+                  is what made the metrics widgets the entry point, which is the
+                  complaint filed separately as SCRUM-418.
+
+                  Last rather than directly beneath the agents: it keeps the
+                  order the mobile sheet already uses (roster, then account), and
+                  "under the AI agents" in the report reads as the section below
+                  them, not as a row wedged in front of Calendar. */}
+              <ClientRailAccountNav home={home} />
             </nav>
           </div>
 
