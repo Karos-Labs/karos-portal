@@ -28,15 +28,19 @@ function ClientKeyCopy({ clientKeyId }: { clientKeyId: string }) {
 import {
   createTeamMemberAction,
   updateTeamMemberAction,
+  deleteTeamMemberAction,
   toggleGroupAdminAction,
+  updateSeatAssignmentAction,
   startImpersonationAction,
 } from "@/lib/actions";
 import { initials } from "@/lib/utils";
-import type { AppUser, Client, Role } from "@/lib/types";
+import type { AppUser, Client, ClientSeat, Role } from "@/lib/types";
 
 interface Props {
   users: AppUser[];
   clients: Client[];
+  /** That client's seat roster (the LinkedIn/X agents' per-person accounts), by clientId. */
+  seatsByClient: Record<string, ClientSeat[]>;
   currentUid: string;
   currentUserRole: Role;
   currentClientId?: string;
@@ -45,22 +49,30 @@ interface Props {
 function UserRow({
   u,
   clients,
+  seats,
   currentUid,
   currentUserRole,
   onRefresh,
 }: {
   u: AppUser;
   clients: Client[];
+  /** This user's own client's seat roster — empty for staff rows. */
+  seats: ClientSeat[];
   currentUid: string;
   currentUserRole: Role;
   onRefresh: () => void;
 }) {
   const [actionPending, startAction] = useTransition();
   const [impersonatePending, startImpersonate] = useTransition();
-  const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name ?? "—";
+  const [seatPending, startSeat] = useTransition();
+  const [deletePending, startDelete] = useTransition();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const clientName = (id?: string | null) => clients.find((c) => c.id === id)?.name ?? "-";
   const isSelf = u.uid === currentUid;
   const isAdmin = currentUserRole === "KAROS_ADMIN";
   const isGroupAdmin = currentUserRole === "CLIENT_USER";
+  const canEditSeat = u.role === "CLIENT_USER" && !isSelf && (isAdmin || isGroupAdmin);
 
   function act(fn: () => Promise<void>) {
     startAction(async () => {
@@ -69,9 +81,23 @@ function UserRow({
     });
   }
 
+  function confirmDeleteUser() {
+    setDeleteError(null);
+    startDelete(async () => {
+      try {
+        await deleteTeamMemberAction(u.uid);
+        setConfirmDelete(false);
+        onRefresh();
+      } catch (e) {
+        setDeleteError(e instanceof Error ? e.message : "Could not delete user");
+      }
+    });
+  }
+
   function impersonate() {
     startImpersonate(async () => {
       await startImpersonationAction(u.uid);
+      onRefresh();
     });
   }
 
@@ -97,6 +123,12 @@ function UserRow({
             {u.role === "KAROS_EMPLOYEE" && u.assignedClientIds?.length
               ? ` · ${u.assignedClientIds.length} client${u.assignedClientIds.length === 1 ? "" : "s"}`
               : ""}
+            {/* The seat this login represents - personal LinkedIn/X content is
+                restricted to its owning seat plus the client's group admins,
+                so this is the one line that says which employee this login IS. */}
+            {u.role === "CLIENT_USER" && u.seatId
+              ? ` · ${seats.find((s) => s.id === u.seatId)?.name ?? "seat"}`
+              : ""}
           </p>
         </div>
       </div>
@@ -104,17 +136,41 @@ function UserRow({
       <div className="flex flex-wrap items-center gap-2">
         {u.disabled && <Badge tone="warning">Disabled</Badge>}
 
-        {/* Group admin toggle — admin can toggle any client; group admin can toggle others in their group */}
+        {/* Group admin toggle - admin can toggle any client; group admin can toggle others in their group */}
         {u.role === "CLIENT_USER" && !isSelf && (isAdmin || isGroupAdmin) && (
           <button
             onClick={() => act(() => toggleGroupAdminAction(u.uid, !u.isGroupAdmin))}
             disabled={actionPending}
             title={u.isGroupAdmin ? "Remove group admin" : "Make group admin"}
-            className="flex items-center gap-1.5 rounded-[8px] border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-neon/40 hover:text-neon disabled:opacity-50"
           >
             <Icon name="ShieldCheck" className="h-3.5 w-3.5" />
             {u.isGroupAdmin ? "Group admin" : "Make admin"}
           </button>
+        )}
+
+        {/* Which seat this login represents — "— none —" is a shared/company
+            login, seeing general content only unless it's also a group admin. */}
+        {canEditSeat && seats.length > 0 && (
+          <Select
+            value={u.seatId ?? ""}
+            onChange={(e) =>
+              startSeat(async () => {
+                await updateSeatAssignmentAction(u.uid, e.target.value || null);
+                onRefresh();
+              })
+            }
+            disabled={seatPending}
+            className="h-8 w-40 text-xs"
+            title="Which seat this login represents"
+          >
+            <option value="">Shared login</option>
+            {seats.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
         )}
 
         {/* Admin-only controls */}
@@ -130,6 +186,45 @@ function UserRow({
               <option value="KAROS_EMPLOYEE">Employee</option>
               <option value="CLIENT_USER">Client</option>
             </Select>
+
+            {/* REASSIGNMENT, which had no control until now.
+                `canViewClient` fences an employee out of a client they are not
+                assigned to. The two writers of that assignment both ran ONCE —
+                account creation and registration approval — so an admin could
+                enforce the fence and had no screen able to change it after the
+                fact. The create form has had this picker all along; this is the
+                same picker on an existing member.
+
+                Admin-only, which is what keeps the fence closed: a fenced
+                employee cannot call updateTeamMemberAction (requireAdmin), so
+                granting is possible and self-granting is not. */}
+            {u.role === "KAROS_EMPLOYEE" && clients.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {clients.map((c) => {
+                  const on = (u.assignedClientIds ?? []).includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      disabled={actionPending}
+                      title={on ? `Unassign ${c.name}` : `Assign ${c.name}`}
+                      onClick={() =>
+                        act(() =>
+                          updateTeamMemberAction(u.uid, {
+                            assignedClientIds: on
+                              ? (u.assignedClientIds ?? []).filter((x) => x !== c.id)
+                              : [...(u.assignedClientIds ?? []), c.id],
+                          }),
+                        )
+                      }
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] transition-colors disabled:opacity-50 ${on ? "border-neon/40 bg-neon-soft text-neon" : "border-border text-muted"}`}
+                    >
+                      {c.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {!isSelf && (
               <Button
@@ -150,12 +245,44 @@ function UserRow({
                 disabled={impersonatePending}
               >
                 <Icon name="Eye" className="h-3.5 w-3.5" />
-                {impersonatePending ? "Loading..." : "View as"}
+                {impersonatePending ? "Loading..." : "Sign in as"}
               </Button>
+            )}
+
+            {!isSelf && (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                title="Delete user"
+                className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-2 transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50"
+              >
+                <Icon name="Trash2" className="h-3.5 w-3.5" />
+                Delete
+              </button>
             )}
           </>
         )}
       </div>
+
+      {isAdmin && (
+        <Modal
+          open={confirmDelete}
+          onClose={() => (deletePending ? null : setConfirmDelete(false))}
+          title={`Delete ${u.name}?`}
+          description="This permanently removes their login and Firestore account. There is no undo."
+        >
+          <div className="space-y-3">
+            {deleteError && <p className="text-xs text-danger">{deleteError}</p>}
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setConfirmDelete(false)} disabled={deletePending}>
+                Cancel
+              </Button>
+              <Button size="sm" variant="danger" onClick={confirmDeleteUser} loading={deletePending}>
+                Delete user
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </li>
   );
 }
@@ -166,6 +293,7 @@ function SectionCard({
   clientKeyId,
   users,
   clients,
+  seats,
   currentUid,
   currentUserRole,
   onRefresh,
@@ -175,6 +303,8 @@ function SectionCard({
   clientKeyId?: string;
   users: AppUser[];
   clients: Client[];
+  /** This section's client's seat roster — empty for the Staff section. */
+  seats: ClientSeat[];
   currentUid: string;
   currentUserRole: Role;
   onRefresh: () => void;
@@ -194,6 +324,7 @@ function SectionCard({
               key={u.uid}
               u={u}
               clients={clients}
+              seats={seats}
               currentUid={currentUid}
               currentUserRole={currentUserRole}
               onRefresh={onRefresh}
@@ -208,6 +339,7 @@ function SectionCard({
 export function TeamManager({
   users,
   clients,
+  seatsByClient,
   currentUid,
   currentUserRole,
   currentClientId,
@@ -223,6 +355,7 @@ export function TeamManager({
     role: Role;
     clientId: string;
     assigned: string[];
+    seatId: string;
   }>({
     name: "",
     email: "",
@@ -230,6 +363,7 @@ export function TeamManager({
     role: "KAROS_EMPLOYEE",
     clientId: clients[0]?.id ?? "",
     assigned: [],
+    seatId: "",
   });
 
   function refresh() {
@@ -250,9 +384,18 @@ export function TeamManager({
         role: form.role,
         clientId: form.role === "CLIENT_USER" ? form.clientId : undefined,
         assignedClientIds: form.role === "KAROS_EMPLOYEE" ? form.assigned : undefined,
+        seatId: form.role === "CLIENT_USER" ? form.seatId || null : undefined,
       });
       setOpen(false);
-      setForm({ name: "", email: "", password: "", role: "KAROS_EMPLOYEE", clientId: clients[0]?.id ?? "", assigned: [] });
+      setForm({
+        name: "",
+        email: "",
+        password: "",
+        role: "KAROS_EMPLOYEE",
+        clientId: clients[0]?.id ?? "",
+        assigned: [],
+        seatId: "",
+      });
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create user");
@@ -289,6 +432,7 @@ export function TeamManager({
             subtitle="Admins and employees"
             users={staff}
             clients={clients}
+            seats={[]}
             currentUid={currentUid}
             currentUserRole={currentUserRole}
             onRefresh={refresh}
@@ -302,6 +446,7 @@ export function TeamManager({
               clientKeyId={client.clientKeyId}
               users={groupUsers}
               clients={clients}
+              seats={seatsByClient[client.id] ?? []}
               currentUid={currentUid}
               currentUserRole={currentUserRole}
               onRefresh={refresh}
@@ -314,6 +459,7 @@ export function TeamManager({
               subtitle="Client users not yet linked to a client account"
               users={unassignedClients}
               clients={clients}
+              seats={[]}
               currentUid={currentUid}
               currentUserRole={currentUserRole}
               onRefresh={refresh}
@@ -354,12 +500,31 @@ export function TeamManager({
             {form.role === "CLIENT_USER" && (
               <div>
                 <Label>Belongs to client</Label>
-                <Select value={form.clientId} onChange={(e) => setForm((s) => ({ ...s, clientId: e.target.value }))}>
+                <Select
+                  value={form.clientId}
+                  onChange={(e) => setForm((s) => ({ ...s, clientId: e.target.value, seatId: "" }))}
+                >
                   {clients.length === 0 && <option value="">Create a client first</option>}
                   {clients.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </Select>
+              </div>
+            )}
+
+            {form.role === "CLIENT_USER" && (seatsByClient[form.clientId] ?? []).length > 0 && (
+              <div>
+                <Label>Seat (optional)</Label>
+                <Select value={form.seatId} onChange={(e) => setForm((s) => ({ ...s, seatId: e.target.value }))}>
+                  <option value="">Shared login</option>
+                  {(seatsByClient[form.clientId] ?? []).map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </Select>
+                <p className="mt-1 text-[11px] text-muted-2">
+                  Link this login to one person&apos;s seat so their own personal content stays theirs.
+                  Leave unset for a shared/company login.
+                </p>
               </div>
             )}
 
@@ -417,6 +582,7 @@ export function TeamManager({
               key={u.uid}
               u={u}
               clients={clients}
+              seats={currentClientId ? (seatsByClient[currentClientId] ?? []) : []}
               currentUid={currentUid}
               currentUserRole={currentUserRole}
               onRefresh={refresh}

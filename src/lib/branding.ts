@@ -1,7 +1,25 @@
 import "server-only";
 
-import { generateObject } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
+import { normalizeHex } from "@/lib/branding-hex";
+import {
+  observeSitePalette,
+  describeObservedPalette,
+  snapToObservedPalette,
+  mergePaintedPalette,
+  type ObservedColor,
+} from "@/lib/branding-site-palette";
+import { paletteFromPng, pngDimensions } from "@/lib/branding-image-palette";
+import {
+  isScrappycocoConfigured,
+  fetchSiteScreenshot,
+  fetchInstagramBrandAssets,
+  type InstagramBrandAssets,
+} from "@/lib/branding-scrappycoco";
+
+// Re-exported so this module stays the one import site callers already know.
+export { normalizeHex };
+
+import { generateObject, generateText, stepCountIs } from "ai";
 import { z } from "zod";
 import {
   getClient,
@@ -9,37 +27,246 @@ import {
   updateClient,
   upsertClientContextDoc,
 } from "@/lib/data";
-import type { BrandingGuidelines, Client } from "@/lib/types";
+import type { BrandColor, BrandingGuidelines, Client } from "@/lib/types";
+import { clientCategoryValue } from "@/lib/utils";
+import { logger, readWebSearchCount } from "@/services/logger";
+import { aiFor, usageFor } from "@/lib/ai/provider";
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Color helper
+   Palette helpers — new + legacy compat
    ──────────────────────────────────────────────────────────────────────── */
 
-/** Expand 3-digit hex to 6-digit, strip alpha from 8-digit. Returns null if invalid. */
-export function normalizeHex(raw: string): string | null {
-  const h = raw.trim().toLowerCase();
-  if (/^#[0-9a-f]{3}$/.test(h)) return "#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
-  if (/^#[0-9a-f]{6}$/.test(h)) return h;
-  if (/^#[0-9a-f]{8}$/.test(h)) return h.slice(0, 7);
-  return null;
+/**
+ * Returns the effective dominant colors for a BrandingGuidelines record.
+ * Prefers the new `dominantColors` array; synthesizes from legacy scalar
+ * fields if the array is absent (backward compat for pre-migration docs).
+ */
+export function effectiveDominantColors(g: BrandingGuidelines): BrandColor[] {
+  if (g.dominantColors?.length) return g.dominantColors;
+  const colors: BrandColor[] = [];
+  const add = (hex: string | undefined, rank: number) => {
+    if (hex) colors.push({ hex, dominanceRank: rank });
+  };
+  add(g.primaryAccent ?? g.primaryColor, 1);
+  add(g.secondaryAccent ?? g.secondaryColor, 2);
+  add(g.brandNeutralDark ?? g.uiBackground, 3);
+  add(g.brandNeutralLight ?? g.uiText, 4);
+  return colors;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Context-doc builders (used by saveBrandingGuidelinesAction too)
+   Role-based palette resolution (SCRUM-394 / IGSTYLE-9)
+
+   THE BUG. `dominantColors` is ordered strictly by VISUAL DOMINANCE
+   (`BrandingAISchema`'s own words: "No dark/light constraints — Colors 3
+   and 4 are simply the 3rd and 4th most dominant, whatever they are").
+   Every accessor below used to read that array POSITIONALLY —
+   `dominantColors[0]` as "the" primary accent, `[2]`/`[3]` as the two
+   neutrals — as if dominance rank and semantic role were the same axis.
+   They are not: a brand's most dominant color is usually its page ground,
+   not its accent. `dominantColors[].role` is free text the AI extraction
+   already writes, correctly, per color ("Page ground across the
+   storefront", "Primary CTA and interactive accent") — only the reader was
+   wrong. See TASK-INSTAGRAM-FEEDBACK-LOOP-AND-MEMORY.md's IGSTYLE-9 for
+   the four real clients this scrambled and the full account.
+
+   THE FIX. Classify each color's ROLE TEXT against two keyword sets, never
+   its array position:
+     - ground/surface/canvas/background, or ink/type/body/wordmark/heading
+       → neutral (page/text substrate — "ink" only classifies a COLOR's
+       role, e.g. "Ink — body copy", never a role string with an unrelated
+       meaning; a role field is always describing what a color IS FOR, so
+       this is unambiguous in practice).
+     - accent/CTA/highlight/badge/signature → accent (the color the brand
+       acts with).
+   `dominantColors` itself is NEVER re-sorted — it is correct, dominance-
+   ordered data; only how its entries are grouped into "accent" vs.
+   "neutral" changes. Within each group, still no invented data: multiple
+   accent-classified colors keep their existing dominance order (whichever
+   came first in the dominance-ordered array is `primaryAccent`); the two
+   neutral slots are told apart by MEASURED LUMINANCE, never role text or
+   position — a brand can legitimately call both of its neutrals "surface".
+
+   THE FALLBACK. When NO color's role text classifies at all (a legacy
+   record with bare hexes and no `role` field, or role text this
+   vocabulary doesn't recognize), every accessor falls back to exactly
+   today's positional behavior — `resolveDominantColorsByRole` returns
+   `resolvedByRole: false` and callers use the old `[0]`/`[1]`/`[2]`/`[3]`
+   reads unchanged. A record whose roles ALL classify as neutral yields NO
+   accent, deliberately (refuse-to-guess, the same posture
+   `deriveBrandRenderTokens` takes in agent-engine) — it does not fall back
+   to the positional reading just because one bucket came up empty.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/** The three outcomes a `dominantColors[].role` string can classify as. */
+export type ColorRoleClassification = "accent" | "neutral" | "unclassified";
+
+/** Checked first: role text naming what the brand ACTS with. */
+const ACCENT_ROLE_KEYWORDS = ["accent", "cta", "highlight", "badge", "signature"];
+/** Checked second: role text naming the page/text substrate. */
+const NEUTRAL_ROLE_KEYWORDS = ["ground", "surface", "canvas", "background", "ink", "type", "body", "wordmark", "heading"];
+
+/**
+ * Classifies one `BrandColor.role` string. Case-insensitive substring match
+ * against the two keyword lists above — deliberately not a strict word-
+ * boundary regex, since role text like "badges" or "highlights" (plural)
+ * should still match "badge"/"highlight".
+ *
+ * Accent keywords are checked before neutral ones: in practice a role
+ * string describing an accent color ("Primary CTA and interactive accent")
+ * never also contains a neutral keyword, but if a future role string ever
+ * did, "this is the color the brand acts with" is the more specific,
+ * higher-value signal to keep.
+ */
+export function classifyColorRole(role: string | undefined): ColorRoleClassification {
+  if (!role) return "unclassified";
+  const lower = role.toLowerCase();
+  if (ACCENT_ROLE_KEYWORDS.some((kw) => lower.includes(kw))) return "accent";
+  if (NEUTRAL_ROLE_KEYWORDS.some((kw) => lower.includes(kw))) return "neutral";
+  return "unclassified";
+}
+
+/**
+ * WCAG relative luminance, 0 (black) – 1 (white). The ONLY thing used to
+ * decide which of two neutral-classified colors is "dark" and which is
+ * "light" — never role text (a brand can call both "surface") and never
+ * array position (dominance order says nothing about lightness).
+ */
+function relativeLuminance(hex: string): number {
+  const normalized = normalizeHex(hex);
+  if (!normalized) return 0;
+  const channel = (c: number): number => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const r = parseInt(normalized.slice(1, 3), 16);
+  const g = parseInt(normalized.slice(3, 5), 16);
+  const b = parseInt(normalized.slice(5, 7), 16);
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+export interface RoleResolvedPalette {
+  primaryAccent?: string;
+  secondaryAccent?: string;
+  brandNeutralDark?: string;
+  brandNeutralLight?: string;
+  /**
+   * False means NOTHING in `dominantColors` classified — every field above
+   * is left undefined and the caller must use the positional fallback
+   * instead. True means at least one color classified, and every field
+   * above (including an undefined accent, when nothing classified as
+   * accent) is this function's real, final answer — never partially
+   * combined with a positional read.
+   */
+  resolvedByRole: boolean;
+}
+
+/**
+ * Groups a client's `dominantColors` by ROLE, not array position. See this
+ * module's own section header above for the full rationale.
+ */
+export function resolveDominantColorsByRole(colors: readonly BrandColor[]): RoleResolvedPalette {
+  const classified = colors.map((color) => ({ color, classification: classifyColorRole(color.role) }));
+  if (!classified.some((c) => c.classification !== "unclassified")) {
+    return { resolvedByRole: false };
+  }
+
+  // Dominance order preserved — filtering, never re-sorting `colors` itself.
+  const accents = classified.filter((c) => c.classification === "accent").map((c) => c.color);
+  const neutrals = classified.filter((c) => c.classification === "neutral").map((c) => c.color);
+
+  let brandNeutralDark: string | undefined;
+  let brandNeutralLight: string | undefined;
+  if (neutrals.length >= 2) {
+    const byLuminance = [...neutrals].sort((a, b) => relativeLuminance(a.hex) - relativeLuminance(b.hex));
+    brandNeutralDark = byLuminance[0]?.hex;
+    brandNeutralLight = byLuminance[byLuminance.length - 1]?.hex;
+  } else if (neutrals.length === 1) {
+    // Only one neutral-classified color — still measured, not defaulted to
+    // always-dark: whichever side of the midpoint it falls on decides which
+    // field it fills. The OTHER field stays undefined rather than inventing
+    // a second neutral that isn't in the palette.
+    const only = neutrals[0]!;
+    if (relativeLuminance(only.hex) < 0.5) brandNeutralDark = only.hex;
+    else brandNeutralLight = only.hex;
+  }
+
+  return {
+    primaryAccent: accents[0]?.hex,
+    secondaryAccent: accents[1]?.hex,
+    brandNeutralDark,
+    brandNeutralLight,
+    resolvedByRole: true,
+  };
+}
+
+/** `resolveDominantColorsByRole`'s result, or `undefined` when it should not be trusted (no colors, or none classified). */
+function roleResolvedPalette(g: BrandingGuidelines): RoleResolvedPalette | undefined {
+  if (!g.dominantColors?.length) return undefined;
+  const resolved = resolveDominantColorsByRole(g.dominantColors);
+  return resolved.resolvedByRole ? resolved : undefined;
+}
+
+/** Returns the effective primary accent — role-resolved first, positional/legacy fallback. */
+export function effectivePrimaryAccent(g: BrandingGuidelines): string | undefined {
+  const byRole = roleResolvedPalette(g);
+  if (byRole) return byRole.primaryAccent;
+  return g.dominantColors?.[0]?.hex ?? g.primaryAccent ?? g.primaryColor;
+}
+
+/** Returns the effective secondary accent — role-resolved first, positional/legacy fallback. */
+export function effectiveSecondaryAccent(g: BrandingGuidelines): string | undefined {
+  const byRole = roleResolvedPalette(g);
+  if (byRole) return byRole.secondaryAccent;
+  return g.dominantColors?.[1]?.hex ?? g.secondaryAccent ?? g.secondaryColor;
+}
+
+/** Returns the effective neutral dark — role-resolved (by luminance) first, positional/legacy fallback. */
+export function effectiveNeutralDark(g: BrandingGuidelines): string | undefined {
+  const byRole = roleResolvedPalette(g);
+  if (byRole) return byRole.brandNeutralDark;
+  return g.dominantColors?.[2]?.hex ?? g.brandNeutralDark ?? g.uiBackground ?? g.uiText;
+}
+
+/** Returns the effective neutral light — role-resolved (by luminance) first, positional/legacy fallback. */
+export function effectiveNeutralLight(g: BrandingGuidelines): string | undefined {
+  const byRole = roleResolvedPalette(g);
+  if (byRole) return byRole.brandNeutralLight;
+  return g.dominantColors?.[3]?.hex ?? g.brandNeutralLight ?? g.uiText ?? g.uiBackground;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Context-doc builders
    ──────────────────────────────────────────────────────────────────────── */
 
 export function brandingToContextDocContent(g: BrandingGuidelines, clientName: string): string {
   const today = new Date().toISOString().slice(0, 10);
-  const lines = [`# Branding Guidelines — ${clientName}`, `_Last updated: ${today}_`, ""];
+  const lines = [`# Branding Guidelines - ${clientName}`, `_Last updated: ${today}_`, ""];
   if (g.visualStyle) lines.push("## Visual Style", g.visualStyle, "");
-  if (g.primaryColor || g.secondaryColor || g.uiBackground || g.uiText) {
+
+  if (g.dominantColors?.length) {
     lines.push("## Color Palette");
-    if (g.primaryColor) lines.push(`- **Brand Accent:** ${g.primaryColor}`);
-    if (g.secondaryColor) lines.push(`- **Secondary:** ${g.secondaryColor}`);
-    if (g.uiBackground) lines.push(`- **UI Background:** ${g.uiBackground}`);
-    if (g.uiText) lines.push(`- **UI Text:** ${g.uiText}`);
+    g.dominantColors.forEach((c) => {
+      const label = c.role ? `Color ${c.dominanceRank} - ${c.role}` : `Color ${c.dominanceRank}`;
+      lines.push(`- **${label}:** ${c.hex}`);
+    });
     lines.push("");
+  } else {
+    // Legacy format — preserve field names so existing parsers continue to work
+    const pa = effectivePrimaryAccent(g);
+    const sa = effectiveSecondaryAccent(g);
+    const nd = g.brandNeutralDark ?? g.uiBackground;
+    const nl = g.brandNeutralLight ?? g.uiText;
+    if (pa || sa || nd || nl) {
+      lines.push("## Color Palette");
+      if (pa) lines.push(`- **Primary Accent:** ${pa}`);
+      if (sa) lines.push(`- **Secondary Accent:** ${sa}`);
+      if (nd) lines.push(`- **Neutral Dark:** ${nd}`);
+      if (nl) lines.push(`- **Neutral Light:** ${nl}`);
+      lines.push("");
+    }
   }
+
   if (g.fontHeading || g.fontBody) {
     lines.push("## Typography");
     if (g.fontHeading) lines.push(`- **Heading font:** ${g.fontHeading}`);
@@ -60,21 +287,54 @@ export function buildBrandVoiceSection(g: BrandingGuidelines): string {
     `## Visual & Tone Reference (auto-synced from guidelines · ${today})`,
   ];
   if (g.visualStyle) lines.push(`- **Visual Style:** ${g.visualStyle}`);
-  if (g.primaryColor) lines.push(`- **Brand Accent:** ${g.primaryColor}`);
-  if (g.uiBackground) lines.push(`- **UI Background:** ${g.uiBackground}`);
-  if (g.uiText) lines.push(`- **UI Text:** ${g.uiText}`);
-  if (g.secondaryColor) lines.push(`- **Secondary Color:** ${g.secondaryColor}`);
+
+  if (g.dominantColors?.length) {
+    g.dominantColors.forEach((c) => {
+      const label = c.role ? `Color ${c.dominanceRank} (${c.role})` : `Color ${c.dominanceRank}`;
+      lines.push(`- **${label}:** ${c.hex}`);
+    });
+  } else {
+    // Legacy fallback
+    const pa = effectivePrimaryAccent(g);
+    const sa = effectiveSecondaryAccent(g);
+    const nd = g.brandNeutralDark ?? g.uiBackground;
+    const nl = g.brandNeutralLight ?? g.uiText;
+    if (pa) lines.push(`- **Primary Accent:** ${pa}`);
+    if (sa) lines.push(`- **Secondary Accent:** ${sa}`);
+    if (nd) lines.push(`- **Neutral Dark:** ${nd}`);
+    if (nl) lines.push(`- **Neutral Light:** ${nl}`);
+  }
+
   if (g.fontHeading) lines.push(`- **Heading Font:** ${g.fontHeading}`);
   if (g.fontBody) lines.push(`- **Body Font:** ${g.fontBody}`);
   if (g.toneKeywords?.length) lines.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
+  // The "edit it in the guidelines UI instead" note is for whoever opens the
+  // stored document, not for the client reading it in the portal — so it goes
+  // inside a comment, which the renderers drop, rather than on the page as the
+  // italic line it used to be. The END sentinel keeps its exact text:
+  // injectBrandVoiceSection finds an already-stored block by that string, and a
+  // reworded one would append a second block instead of replacing the first.
   lines.push(
     "",
-    "_This section is auto-synced when branding guidelines are updated. Edit the guidelines UI to change it._",
+    "<!-- Auto-synced from the Branding Guidelines UI whenever guidelines change. Edits made here are overwritten on the next sync. -->",
     "<!-- BRAND_SYNC_END -->",
   );
   return lines.join("\n");
 }
 
+/**
+ * Insert (or refresh) the auto-synced block inside a stored context document.
+ *
+ * Landing point, in order: an existing block is replaced where it stands; else
+ * the block goes after the `# ` title; else after the YAML frontmatter; else at
+ * the top.
+ *
+ * The title step is the one that matters. Inserting between the frontmatter and
+ * the title put a `## ` heading ABOVE the title, and stripDocPreamble's title
+ * rule is anchored at the top of the document — so the title stopped being
+ * stripped, fell into the first section's body, and the client read it there
+ * with its hash mark. Below the title, the rule reaches it again.
+ */
 export function injectBrandVoiceSection(content: string, section: string): string {
   const START = "<!-- BRAND_SYNC_START -->";
   const END = "<!-- BRAND_SYNC_END -->";
@@ -82,6 +342,11 @@ export function injectBrandVoiceSection(content: string, section: string): strin
   const endIdx = content.indexOf(END);
   if (startIdx !== -1 && endIdx !== -1) {
     return content.slice(0, startIdx) + section + content.slice(endIdx + END.length);
+  }
+  const titleMatch = content.match(/^[\s\S]*?^#[ \t]+.+\r?\n/m);
+  if (titleMatch) {
+    const offset = titleMatch[0].length;
+    return content.slice(0, offset) + "\n" + section + "\n\n" + content.slice(offset);
   }
   const fmMatch = content.match(/^---[\s\S]*?---\n/);
   if (fmMatch) {
@@ -92,60 +357,310 @@ export function injectBrandVoiceSection(content: string, section: string): strin
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   AI Branding Engine — Pure Claude Haiku generation (no web scraping)
+   Logo vision helpers
    ──────────────────────────────────────────────────────────────────────── */
 
+type LogoContext =
+  | { kind: "vision"; imageBytes: Buffer; mimeType: "image/png" | "image/jpeg" }
+  | { kind: "svg"; colors: string[] }
+  | null;
+
+/** Extract unique hex color values from SVG XML source. */
+function extractColorsFromSvg(svgText: string): string[] {
+  const seen = new Set<string>();
+
+  for (const m of svgText.matchAll(/#([0-9a-fA-F]{3,8})\b/g)) {
+    const n = normalizeHex(`#${m[1]}`);
+    if (n && n !== "#000000" && n !== "#ffffff") seen.add(n);
+  }
+
+  for (const m of svgText.matchAll(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g)) {
+    const r = parseInt(m[1]).toString(16).padStart(2, "0");
+    const g = parseInt(m[2]).toString(16).padStart(2, "0");
+    const b = parseInt(m[3]).toString(16).padStart(2, "0");
+    const n = normalizeHex(`#${r}${g}${b}`);
+    if (n && n !== "#000000" && n !== "#ffffff") seen.add(n);
+  }
+
+  return [...seen].slice(0, 20);
+}
+
+/**
+ * Fetch the logo at the given URL and return a typed context object:
+ *   "vision" — PNG/JPEG bytes ready to pass to Claude as an image part
+ *   "svg"    — extracted hex colors from the SVG XML source
+ *   null     — fetch failed or unrecognised format (graceful no-op)
+ */
+async function prepareLogoContext(logoUrl: string): Promise<LogoContext> {
+  try {
+    const res = await fetch(logoUrl, {
+      headers: { Accept: "image/png,image/jpeg,image/svg+xml,image/*" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return null;
+
+    const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+
+    if (ct.includes("svg")) {
+      const text = await res.text();
+      const colors = extractColorsFromSvg(text);
+      return colors.length ? { kind: "svg", colors } : null;
+    }
+
+    if (ct.includes("png") || ct.includes("jpeg") || ct.includes("jpg")) {
+      const mimeType: "image/png" | "image/jpeg" = ct.includes("png") ? "image/png" : "image/jpeg";
+      const imageBytes = Buffer.from(await res.arrayBuffer());
+      return { kind: "vision", imageBytes, mimeType };
+    }
+
+    return null;
+  } catch (err) {
+    console.warn("[branding] Logo fetch failed:", err);
+    return null;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Multi-tier site access & intelligence layer
+   ──────────────────────────────────────────────────────────────────────── */
+
+type SiteAccessState = "accessible" | "blocked" | "unknown";
+
+const CHALLENGE_SIGNATURES = [
+  "just a moment",
+  "cf-browser-verification",
+  "challenge-platform",
+  "__cf_chl_opt",
+  "ddos-guard",
+  "verifying you are human",
+  "enable javascript and cookies",
+] as const;
+
+/**
+ * Lightweight HTTP probe — determines whether the site responds normally or is
+ * shielded by a bot-protection layer (Cloudflare, DDoS-Guard, etc.).
+ * Returns "unknown" on network errors (DNS failure, TLS mismatch, timeout).
+ */
+async function checkSiteAccess(url: string): Promise<SiteAccessState> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        Accept: "text/html,application/xhtml+xml,*/*;q=0.9",
+      },
+      signal: AbortSignal.timeout(6_000),
+      redirect: "follow",
+    });
+
+    if (res.status === 403 || res.status === 401 || res.status === 429 || res.status >= 500) {
+      return "blocked";
+    }
+    if (res.status !== 200) return "unknown";
+
+    const body = await res.text();
+    if (body.trim().length < 200) return "blocked";
+
+    const lower = body.toLowerCase();
+    if (CHALLENGE_SIGNATURES.some((sig) => lower.includes(sig))) return "blocked";
+
+    return "accessible";
+  } catch {
+    return "unknown";
+  }
+}
+
+const ANALYST_SYSTEM =
+  "You are a brand design intelligence agent. Extract a complete visual identity profile — typography AND colors — " +
+  "from a live website by reading its actual HTML and CSS. " +
+  "TYPOGRAPHY (highest value): Find font-family on h1, h2, body, p. " +
+  "Check <link> tags for fonts.googleapis.com URLs (font names are in the ?family= param). " +
+  "Look for @font-face rules and CSS custom properties like --font-heading, --font-sans, --font-body. " +
+  "COLORS BY FUNCTIONAL ROLE: Do not just list hex values — group by role: " +
+  "nav/header background, hero/page background, primary CTA button background, link/interactive color, " +
+  "brand CSS custom properties (--primary, --accent, --brand-*, --cta-*, --color-*). " +
+  "METHODOLOGY: Fetch homepage → find stylesheet <link> tags → fetch main stylesheet. " +
+  "Return a structured report using these exact labels: " +
+  "HEADING_FONT: / BODY_FONT: / FONT_SOURCE: / NAV_BG: / HERO_BG: / CTA_BUTTON_BG: / CTA_BUTTON_TEXT: / BRAND_CSS_VARS: / NOTES: " +
+  "Use 'not found' when a value is absent. Cite the source (CSS selector, property name, or URL) for each value.";
+
+/**
+ * Two-branch intelligence gathering using Claude's native tools:
+ *   • accessible → webFetch pulls HTML/CSS from the live site
+ *   • blocked    → webSearch finds brand guidelines / press kits / design systems
+ *   • unknown    → returns null; caller falls back to training-data-only prompt
+ */
+async function gatherSiteIntelligence(
+  domain: string,
+  clientName: string,
+  access: SiteAccessState,
+  clientId: string,
+): Promise<string | null> {
+  if (access === "unknown") return null;
+
+  // Which role covers THIS call, decided once and reused everywhere below
+  // (including the shared catch) — the "accessible" branch is a web_fetch-only
+  // call and the "blocked" branch is web_search-only, and they were previously
+  // both logged under "branding.search_brand" regardless of which ran. That
+  // mislabeling is itself an instance of AU70/SCRUM-370: a role whose logged
+  // vendor need not match the capability the request actually used. Resolving
+  // model, tools AND the logged role from the SAME role name closes it.
+  const role = access === "accessible" ? ("branding.fetch_site" as const) : ("branding.search_brand" as const);
+
+  try {
+    if (access === "accessible") {
+      const siteUrl = `https://${domain}`;
+      const siteAi = aiFor(role, { budgets: { web_fetch: {} } });
+      const { text, usage, providerMetadata } = await generateText({
+        model: siteAi.model,
+        stopWhen: stepCountIs(8),
+        tools: {
+          webFetch: siteAi.tools.web_fetch,
+        },
+        system: ANALYST_SYSTEM,
+        prompt:
+          `Extract the complete visual identity profile for ${siteUrl}. ` +
+          `Phase 1 — Fetch the homepage HTML. Look for: ` +
+          `(a) <link rel="stylesheet"> href values (save these URLs for Phase 2), ` +
+          `(b) <link> tags pointing to fonts.googleapis.com — copy the full URL, font names are in ?family= params, ` +
+          `(c) Inline style hex colors on <nav>, <header>, <button>, and prominent <a> elements. ` +
+          `Phase 2 — Fetch the main stylesheet URL. Scan for: ` +
+          `font-family on :root, body, h1, h2; ` +
+          `CSS custom properties: --primary-*, --brand-*, --color-*, --accent-*, --cta-*, --font-*; ` +
+          `background-color on selectors matching .btn, .button, [class*="cta"], [class*="hero"], nav, header. ` +
+          `Phase 3 — If a secondary stylesheet or Google Fonts CSS URL was found, fetch it to confirm font names. ` +
+          `Phase 4 — Return your structured report using EXACTLY these labels (one per line): ` +
+          `HEADING_FONT: <exact font-family string, or "not found"> ` +
+          `BODY_FONT: <exact font-family string, or "not found"> ` +
+          `FONT_SOURCE: <where found: google fonts URL / @font-face / CSS var / inline style> ` +
+          `NAV_BG: <hex or "not found"> ` +
+          `HERO_BG: <hex or "not found"> ` +
+          `CTA_BUTTON_BG: <hex of primary call-to-action button background, or "not found"> ` +
+          `CTA_BUTTON_TEXT: <hex of CTA button text/icon color, or "not found"> ` +
+          `BRAND_CSS_VARS: <list of --var-name: #hex pairs, or "none"> ` +
+          `NOTES: <any other brand-defining colors or patterns observed>`,
+      });
+      logger.logUsage({
+        clientId, agentId: null, agentName: "Branding · Site Intelligence",
+        ...usageFor(role), operation: "branding_extraction",
+        inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+        webSearchCount: readWebSearchCount(providerMetadata),
+      });
+      return text?.trim() || null;
+    }
+
+    // blocked — use web search to find public brand identity assets
+    const searchAi = aiFor(role, { budgets: { web_search: {} } });
+    const { text, usage, providerMetadata } = await generateText({
+      model: searchAi.model,
+      stopWhen: stepCountIs(5),
+      tools: {
+        webSearch: searchAi.tools.web_search,
+      },
+      system: ANALYST_SYSTEM,
+      prompt:
+        `Search for the brand visual identity of "${clientName}" (domain: ${domain}). ` +
+        `Look for: brand guidelines, design system docs, press kits, Figma community files, ` +
+        `Behance/Dribbble portfolios, or any official source listing their color palette. ` +
+        `Report specific hex codes and font names if found.`,
+    });
+    logger.logUsage({
+      clientId, agentId: null, agentName: "Branding · Site Intelligence",
+      ...usageFor(role), operation: "branding_extraction",
+      inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
+      webSearchCount: readWebSearchCount(providerMetadata),
+    });
+    return text?.trim() || null;
+  } catch (err) {
+    console.warn(`[branding] Site intelligence gathering failed for ${domain}:`, err);
+    logger.logGenerationFailure(
+      { clientId, agentId: null, agentName: "Branding · Site Intelligence", ...usageFor(role), operation: "branding_extraction" },
+      err,
+    );
+    return null;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   AI Branding Schema — dominance-ranked palette, no role constraints
+   ──────────────────────────────────────────────────────────────────────── */
+
+const BrandColorSchema = z.object({
+  hex: z
+    .string()
+    .describe(
+      "6-digit lowercase hex color code extracted from the brand's visual identity, e.g. #e91e8c. " +
+        "Normalize 3-digit shorthands (#abc → #aabbcc).",
+    ),
+  role: z
+    .string()
+    .describe(
+      "Optional semantic role — only include when unambiguous, e.g. 'Logo fill', " +
+        "'Primary CTA background', 'Nav bar'. Omit if unclear.",
+    ),
+});
+
 const BrandingAISchema = z.object({
-  brandAccent: z
-    .string()
+  dominantColors: z
+    .array(BrandColorSchema)
+    .min(1)
+    .max(4)
     .describe(
-      "Primary brand color as 6-digit lowercase hex. " +
-        "SOURCE PRIORITY: (1) the brand's actual color from its website/logo if you know it, " +
-        "(2) the company's known brand color, " +
-        "(3) industry-standard accent only if brand is completely unknown. " +
-        "Examples of real brand colors: Magenta #e91e8c for XO Digital, Crimson #ce2127 for ONE, " +
-        "Electric blue #0057ff for Wix, Orange #ff6600 for Cloudflare.",
-    ),
-  uiBackground: z
-    .string()
-    .describe(
-      "Canvas background color derived from the brand's actual website palette. " +
-        "Dark-mode brands (agencies, SaaS, tech, luxury, digital-first): #09090b or #0a0a0a. " +
-        "Light-mode brands (corporate, healthcare, e-commerce, retail): #ffffff or #f4f4f5. " +
-        "Match what the actual website uses, not what you assume the industry uses.",
-    ),
-  uiText: z
-    .string()
-    .describe(
-      "High-contrast readable text color paired with uiBackground. " +
-        "#09090b for light canvases, #fafafa for dark canvases.",
-    ),
-  secondaryColor: z
-    .string()
-    .optional()
-    .describe(
-      "Secondary accent from the brand's actual palette as 6-digit lowercase hex. Omit if unsure.",
+      "1–4 brand colors strictly ordered by visual dominance (Color 1 = most prominent). " +
+        "Color 1: The single most distinctive/signature color — the one that IS the brand (logo mark, primary CTA). " +
+        "Color 2: The second most prominent — supporting accent, secondary button, hover state. " +
+        "Color 3: Only if a genuine third brand color is confirmed — e.g. a CTA/button color from website CSS " +
+        "that is distinctly different in hue from Colors 1–2, a tertiary accent, or a highlight bar. " +
+        "Color 4: Only if a fourth distinct brand color exists in the identity system. " +
+        "CRITICAL RULES: " +
+        "(1) Never pad the array to reach 4 — if the brand uses 2 colors, return exactly 2. " +
+        "(2) No dark/light constraints — Colors 3 and 4 are simply the 3rd and 4th most dominant, whatever they are. " +
+        "(3) Never add generic #000000 or #ffffff unless they are the actual signature brand color. " +
+        "(4) Never substitute #2563eb (generic tech blue) for a brand with a known distinctive color. " +
+        "Examples: XO Digital → ['#e91e8c', '#1a1a2e']; Cloudflare → ['#f6821f', '#404040', '#fbad41']; " +
+        "Stripe → ['#6772e5', '#32325d', '#24b47e']; Twilio → ['#f22f46', '#0d122b', '#e1f2fd'].",
     ),
   fontHeading: z
     .string()
     .describe(
-      "The actual heading font the brand uses on its website, if known. " +
-        "Fallback by sector: Plus Jakarta Sans/Inter/Montserrat (tech/modern); " +
-        "Playfair Display/Cormorant Garamond (luxury/editorial); Nunito/Lato (healthcare/community).",
+      "The heading font this brand uses. " +
+        "PRIORITY ORDER: (1) If HEADING_FONT appears in the website CSS intelligence and is not 'not found', " +
+        "use that exact font-family string — this is CSS ground truth. " +
+        "(2) If a Google Fonts URL was found, read the font name from its ?family= parameter. " +
+        "(3) If neither is available, use training-data knowledge of this brand's documented typography. " +
+        "(4) Last resort archetype fallbacks: Space Grotesk/Syne (High-Tech/Dark Mode); " +
+        "Plus Jakarta Sans/Inter (tech Minimalist); Playfair Display/Cormorant Garamond (Luxury); " +
+        "Nunito/Lato (healthcare/community Corporate).",
     ),
   fontBody: z
     .string()
     .describe(
-      "The actual body font the brand uses, if known. Fallback: Inter, Open Sans, or Source Sans 3.",
+      "The body font this brand uses. " +
+        "PRIORITY ORDER: (1) BODY_FONT from website CSS intelligence if present and not 'not found'. " +
+        "(2) Training-data knowledge of this brand's documented typography. " +
+        "(3) Last resort fallback: Inter, Geist, Open Sans, or Source Sans 3 based on brand tone.",
     ),
   visualStyle: z
     .enum(["Dark Mode", "High-Tech", "Luxury", "Vibrant", "Corporate", "Minimalist"])
-    .describe("The most fitting visual archetype for this brand."),
+    .describe(
+      "Most fitting visual archetype. Must align with the extracted palette: " +
+        "Dark Mode → near-black background + vivid single accent; " +
+        "High-Tech → high contrast + electric/neon accent + monospace elements; " +
+        "Luxury → muted or deep neutrals + gold/silver/rich accent; " +
+        "Vibrant → saturated multi-hue palette with strong personality; " +
+        "Corporate → conservative neutrals + safe accent; " +
+        "Minimalist → near-white/near-black with one restrained accent.",
+    ),
   toneKeywords: z
     .array(z.string())
     .min(3)
     .max(5)
-    .describe("3–5 single-word brand personality descriptors (e.g. Bold, Innovative, Human, Crafted)."),
+    .describe(
+      "3–5 single-word brand personality descriptors aligned with visualStyle. " +
+        "High-Tech/Dark Mode → Disruptive, Precise, Innovative; " +
+        "Luxury → Refined, Exclusive, Elevated; Vibrant → Energetic, Bold, Playful. " +
+        "Never use generic descriptors like 'Professional' or 'Reliable' for dynamic brands.",
+    ),
   brandVoice: z
     .string()
     .describe(
@@ -165,20 +680,28 @@ const BrandingAISchema = z.object({
     .describe("3–5 concrete brand communication don'ts (e.g. 'Avoid corporate jargon and buzzwords')."),
 });
 
-// Hard limits prevent token bloat and narrow prompt-injection surface.
-// name: 100 chars — long enough for any real brand name.
-// description: 400 chars — one meaningful paragraph.
+/* ─────────────────────────────────────────────────────────────────────────
+   Prompt builders
+   ──────────────────────────────────────────────────────────────────────── */
+
 const MAX_NAME_LEN = 100;
 const MAX_DESC_LEN = 400;
+const MAX_INTEL_LEN = 3_000;
 
-function buildBrandingPrompt(
+export function buildBrandingPrompt(
   name: string,
   domain: string | null,
-  industry?: string,
+  category?: string,
   description?: string,
+  siteIntelligence?: string | null,
+  logoContext?: LogoContext,
+  observedPalette: readonly ObservedColor[] = [],
+  /** Labels for the images attached alongside this prompt, in order. */
+  visionSources: readonly string[] = [],
 ): string {
   const safeName = name.slice(0, MAX_NAME_LEN);
   const safeDesc = description?.slice(0, MAX_DESC_LEN);
+  const safeIntel = siteIntelligence?.slice(0, MAX_INTEL_LEN);
 
   const lines: string[] = [
     "You are an expert brand strategist and visual designer with deep knowledge of global and regional brands.",
@@ -187,31 +710,120 @@ function buildBrandingPrompt(
     `Company name: ${safeName}`,
   ];
   if (domain) lines.push(`Website: ${domain}`);
-  if (industry) lines.push(`Industry: ${industry}`);
+  if (category) lines.push(`Industry: ${category}`);
   if (safeDesc) lines.push(`Description: ${safeDesc}`);
+
+  // Logo — brand signature color seed
+  if (logoContext?.kind === "vision") {
+    lines.push(
+      "",
+      "## Source A — Logo (Brand Signature Colors)",
+      "The official brand logo image is attached above.",
+      "- Extract every distinct color visible in the logo mark and wordmark.",
+      "- Identify the most visually dominant colors by pixel area and visual weight.",
+      "- These logo colors are the core palette seed — anchor your dominantColors array with them.",
+    );
+  } else if (logoContext?.kind === "svg") {
+    lines.push(
+      "",
+      "## Source A — Logo (Brand Signature Colors, SVG-extracted)",
+      "Hex values extracted directly from the official SVG logo file:",
+      logoContext.colors.join(", "),
+      "These anchor the palette — use them ordered by visual prominence.",
+    );
+  }
+
+  // Website CSS intelligence — always a required input, not optional supplement
+  if (safeIntel) {
+    if (logoContext) {
+      lines.push(
+        "",
+        "## Source B — Website CSS Intelligence (Typography Truth + Functional Colors)",
+        "Data extracted directly from the live website's CSS and HTML:",
+        "",
+        safeIntel,
+        "",
+        "TYPOGRAPHY RULE — STRICT: If HEADING_FONT or BODY_FONT above is not 'not found', " +
+          "you MUST use those exact values for fontHeading/fontBody. " +
+          "CSS-extracted font names are ground truth. Never override them with training-data assumptions.",
+      );
+    } else {
+      lines.push(
+        "",
+        "## Website CSS Intelligence — PRIMARY SOURCE",
+        "Use these values directly. Fall back to training data only for values explicitly marked 'not found':",
+        "",
+        safeIntel,
+      );
+    }
+  }
+
+  // Synthesis rules — designer-level curation
+  if (logoContext) {
+    lines.push(
+      "",
+      "## Color Synthesis — Act Like a Senior Brand Designer",
+      "You have both the logo palette (Source A) and live website data (Source B). Combine them intelligently:",
+      "1. Seed: Start with the logo colors — these are the brand's core visual identity.",
+      "2. Extend: Check Source B for CTA_BUTTON_BG, link colors, or brand CSS vars. " +
+        "Ask: Is this color GENUINELY DISTINCT from all logo colors? " +
+        "(Distinct = different hue, not merely a lighter/darker tint of an existing logo color.)",
+      "   → YES, clearly distinct functional color: include it as Color 3 or 4 with a role like 'CTA button' or 'Interactive'.",
+      "   → NO, it's just a tint/shade of a logo color: use the logo version; do not add it.",
+      "3. Result: A 2-color brand that genuinely uses only 2 colors returns exactly 2 entries. " +
+        "Only reach Color 3–4 when the website confirms a real third/fourth brand color.",
+      "Never pad to fill 4 slots. Never add #000000 or #ffffff unless they are a documented brand signature.",
+    );
+  } else if (!safeIntel) {
+    lines.push(
+      "",
+      "## Extraction priority (no live assets available)",
+      `STEP 1 — Training-data recall: Examine ${domain ?? `"${name}"`}'s known logo/mark. Extract its most distinctive hex.`,
+      "STEP 2 — Primary website elements: Header nav fill, primary CTA button background.",
+      `STEP 3 — Brand name recall: What are "${safeName}"'s documented brand colors?`,
+      "STEP 4 — Industry inference: ONLY if steps 1–3 yield nothing specific.",
+    );
+  }
+
+  // Last, so it is the closest instruction to the answer, and unconditional on
+  // the branches above: whichever sources were available, a hex that is not on
+  // the site is wrong. See `branding-site-palette.ts` for what this costs and
+  // what it caught.
+  if (visionSources.length > 0) {
+    lines.push(
+      "",
+      "## Images attached to this message",
+      ...visionSources.map((label, i) => `${i + 1}. ${label}`),
+      "",
+      "How to read them. The rendered homepage is what a visitor actually sees, and it is the final word",
+      "on whether a colour is in use at all. The Instagram images show the brand ACTING: an avatar is",
+      "usually just the neutrals — a mark on a ground — while the POSTS are where a rationed accent",
+      "appears in use. A colour missing from the avatar is not thereby absent from the brand; check the",
+      "posts and the page before concluding anything is absent.",
+      "Read these for JUDGMENT — which colours matter, what each is for, how they are combined. Do NOT",
+      "read hex values off them; screens, compression and overlays all shift a colour by a few points.",
+      "Every hex you return still has to be copied from the verified list below.",
+    );
+  }
+
+  const verified = describeObservedPalette(observedPalette);
+  if (verified) lines.push("", verified);
 
   lines.push(
     "",
-    "## How to generate the brand profile",
-    "",
-    "STEP 1 — Website-first recall (highest priority):",
-    domain
-      ? `Recall everything you know about ${domain} from your training data. What are its actual brand colors? What fonts does it use? What is its visual style? Use this specific knowledge as your primary source.`
-      : "No website provided — skip to Step 2.",
-    "",
-    "STEP 2 — Company name recall:",
-    `If the website alone didn't surface clear visual details, recall what you know about "${name}" as a company or brand. Many brands are recognizable by name even without the domain.`,
-    "",
-    "STEP 3 — Industry inference (fallback only):",
-    "ONLY if Steps 1 and 2 yield no specific knowledge about this brand (it is genuinely unknown or too regional/niche), then apply industry-standard visual aesthetics appropriate for the sector.",
-    "",
-    "## Hard rules",
-    "- brandAccent must be the brand's real primary color when you recognize the brand. Never substitute a generic industry color for a known brand.",
-    "- uiBackground reflects the brand's actual canvas: dark for dark-mode brands (#09090b/#0a0a0a), light for light-mode brands (#ffffff/#f4f4f5).",
-    "- fontHeading/fontBody must be the actual fonts the brand uses if you know them, otherwise choose fonts that genuinely fit the sector.",
-    "- The three-part color schema (brandAccent, uiBackground, uiText) must be contrast-safe and cohesive.",
-    "- toneKeywords and brandVoice must reflect the specific brand's personality, not generic sector marketing language.",
-    "- Do's and Don'ts must be specific and actionable for content creators working on this brand.",
+    "## Palette rules (strictly enforced)",
+    ...(verified
+      ? [
+          "- EVERY hex in `dominantColors` must be copied exactly from Source C. No other value is acceptable.",
+          "- Choose which of those colours matter and what each one's role is — that judgment is yours. The hex digits are not.",
+        ]
+      : []),
+    "- Order colors by visual dominance — Color 1 must be the most visually prominent.",
+    "- No dark/light role constraints: Colors 3 and 4 are simply the 3rd/4th most dominant, regardless of lightness.",
+    "- Never include a color just to fill a slot. A 2-color brand gets exactly 2 colors.",
+    "- Never use generic placeholder colors (#2563eb, #22c55e) for brands with known distinctive palettes.",
+    "- fontHeading/fontBody: use actual brand fonts if known; archetype fallback only if unknown.",
+    "- visualStyle, toneKeywords, and brandVoice must be internally consistent — High-Tech must pair with Disruptive/Innovative tone.",
   );
 
   return lines.join("\n");
@@ -231,22 +843,51 @@ function buildGuidelinesMarkdown(obj: z.infer<typeof BrandingAISchema>): string 
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Core generator (no auth — call from actions.ts or intel pipeline)
+   Core generator — multi-tier extraction pipeline
    ──────────────────────────────────────────────────────────────────────── */
 
 export type BrandingGenResult = {
   source: "ai_generated";
-  primaryColor?: string;
-  secondaryColor?: string;
+  dominantColors?: BrandColor[];
   visualStyle?: string;
+  /* ── The rest of what this run WROTE (flow audit 2026-09, R14) ───────
+     This generator does not propose a palette, it applies a whole brand
+     profile: `updateClient(… brandingGuidelines: fullGuidelines)` below
+     persists the fonts, the tone keywords and the generated guidelines
+     markdown along with the colours. The result used to name only the
+     colours and the style, so a caller holding a form had no way to show
+     what had actually landed — and BrandingModal, which re-sends the whole
+     document on its next Save, sent the pre-generation voice back over the
+     top of it. These four are that write, reported. */
+  fontHeading?: string;
+  fontBody?: string;
+  toneKeywords?: string[];
+  /** The generated guidelines markdown (`buildGuidelinesMarkdown`). */
+  guidelines?: string;
+  /** @deprecated Read dominantColors[0].hex */
+  primaryAccent?: string;
+  /** @deprecated Read dominantColors[1].hex */
+  secondaryAccent?: string;
+  /** @deprecated Read dominantColors[2].hex */
+  brandNeutralDark?: string;
+  /** @deprecated Read dominantColors[3].hex */
+  brandNeutralLight?: string;
+  /** @deprecated Use primaryAccent */
+  primaryColor?: string;
+  /** @deprecated Use secondaryAccent */
+  secondaryColor?: string;
 };
 
 /**
- * Generate a complete brand profile using Claude Haiku's world knowledge.
- * Passes the domain name, client name, and industry directly — no web scraping.
- * Writes the client record and both context docs.
+ * Generate a complete brand profile using a three-tier extraction pipeline:
  *
- * No auth checks — the caller (server action or pipeline) is responsible for those.
+ * Tier 1 — Raw technical scrape: probe the site for accessibility.
+ * Tier 2 — Intelligent extraction:
+ *   • Accessible → Claude uses webFetch to pull CSS variables and logo colors directly.
+ *   • Blocked     → Claude uses webSearch to find public brand guidelines / press kits.
+ * Tier 3 — Training knowledge: generateObject with all gathered context.
+ *
+ * Writes the client record and both context docs. No auth — caller is responsible.
  */
 export async function applyBrandingForClient(
   clientId: string,
@@ -255,6 +896,7 @@ export async function applyBrandingForClient(
   const client = knownClient ?? (await getClient(clientId));
   if (!client) throw new Error(`Client not found: ${clientId}`);
 
+  // ── Resolve domain ───────────────────────────────────────────────
   let domain: string | null = null;
   const rawUrl = client.website?.trim();
   if (rawUrl) {
@@ -265,35 +907,229 @@ export async function applyBrandingForClient(
     }
   }
 
-  const { object } = await generateObject({
-    model: anthropic("claude-haiku-4-5-20251001"),
-    schema: BrandingAISchema,
-    prompt: buildBrandingPrompt(client.name, domain, client.industry, client.description),
+  const logoUrl = client.logoUrl ?? client.brandingGuidelines?.logoUrl;
+
+  // ── Tiers 1+2 (site intelligence), the verified palette, and the logo ─
+  const [siteIntelligence, declaredPalette, logoContext, screenshot, instagram] = await Promise.all([
+    (async (): Promise<string | null> => {
+      if (!domain) return null;
+      const access = await checkSiteAccess(`https://${domain}`);
+      console.info(`[branding] ${domain} — access: ${access}`);
+      const intel = await gatherSiteIntelligence(domain, client.name, access, clientId);
+      if (intel) {
+        console.info(`[branding] ${domain} — site intelligence gathered (${intel.length} chars)`);
+      }
+      return intel;
+    })(),
+    // Deterministic, and deliberately NOT part of `gatherSiteIntelligence`
+    // above: that is a model browsing the site and reporting what it saw, which
+    // is where `#6366f1` came from for a site whose CSS contains no such value.
+    // This reads the same site with a regex. Costs one page fetch plus up to
+    // four stylesheets, and gives the extraction below a list of hexes that
+    // provably exist.
+    domain ? observeSitePalette(domain) : Promise.resolve<ObservedColor[]>([]),
+    logoUrl ? prepareLogoContext(logoUrl) : Promise.resolve<LogoContext>(null),
+    // What the site PAINTS, as opposed to what it declares — the one question
+    // the two sources above cannot answer. See `branding-scrappycoco.ts`.
+    domain && isScrappycocoConfigured() ? fetchSiteScreenshot(domain) : Promise.resolve(null),
+    // The client's own Instagram mark and grid. Reachable only through a
+    // scraper: logged out, instagram.com serves a JavaScript shell with no
+    // profile data in it at all.
+    isScrappycocoConfigured()
+      ? fetchInstagramBrandAssets(client.socialLinks?.instagram)
+      : Promise.resolve<InstagramBrandAssets | null>(null),
+  ]);
+
+  // The screenshot's measured colours are folded into the declared palette, so
+  // every downstream reader sees one list in which each colour knows whether the
+  // page actually paints it.
+  const paintedColors = screenshot ? paletteFromPng(Buffer.from(screenshot.bytes)) : [];
+  const observedPalette = mergePaintedPalette(declaredPalette, paintedColors);
+
+  /**
+   * The screenshot the VISION model is shown, which is not always the one the
+   * palette was measured from.
+   *
+   * The palette wants the whole page — a first-screen render answers "is this
+   * colour above the fold", and reported Deel's yellow and purple as unused.
+   * Anthropic rejects any image whose longest side exceeds 8000px, which a
+   * full-page render of a long marketing site comfortably passes. So the tall
+   * render is decoded locally and, when it is too tall to send, a second
+   * first-screen render is fetched purely to be looked at.
+   */
+  const MAX_VISION_PIXELS = 8000;
+  const shotSize = screenshot ? pngDimensions(Buffer.from(screenshot.bytes)) : null;
+  const shotFitsVision = shotSize !== null && shotSize.width <= MAX_VISION_PIXELS && shotSize.height <= MAX_VISION_PIXELS;
+  const viewportShot =
+    screenshot && !shotFitsVision && domain && isScrappycocoConfigured() ? await fetchSiteScreenshot(domain, false) : null;
+  const screenshotForVision = shotFitsVision ? screenshot : viewportShot;
+
+  if (observedPalette.length > 0) {
+    const named = observedPalette.filter((c) => c.cssVars.length > 0).length;
+    console.info(`[branding] ${domain} — verified palette: ${observedPalette.length} colours (${named} named by CSS custom properties)`);
+  }
+  if (paintedColors.length > 0) {
+    const dead = observedPalette.filter((c) => c.paintedShare === 0 && c.cssVars.length > 0);
+    console.info(
+      `[branding] ${domain} — rendered screenshot: ${paintedColors.length} colours measured` +
+        (dead.length > 0 ? `; ${dead.length} declared colour(s) painted on nothing: ${dead.map((c) => c.hex).join(", ")}` : ""),
+    );
+  }
+  if (instagram) {
+    console.info(
+      `[branding] @${instagram.handle} — ${instagram.profileImage ? "profile picture" : "no profile picture"}` +
+        `, ${instagram.postImages.length} post image(s)`,
+    );
+  }
+
+  if (logoContext) {
+    console.info(`[branding] Logo loaded — kind: ${logoContext.kind}`);
+  }
+
+  /**
+   * Every image the model gets to look at, in the order it should read them.
+   *
+   * The rendered homepage comes first because it is the only picture of what a
+   * visitor actually sees. The Instagram grid follows: a brand's avatar is
+   * usually just its neutrals — karoslabs.com's is the charcoal and the cream,
+   * with no orange anywhere — so the POSTS are where a rationed accent shows up
+   * in use, and the avatar alone would quietly lose it.
+   */
+  const visionImages: Array<{ bytes: Uint8Array; mimeType: string; label: string }> = [
+    ...(screenshotForVision ? [screenshotForVision] : []),
+    ...(instagram?.profileImage ? [instagram.profileImage] : []),
+    ...(instagram?.postImages ?? []),
+  ];
+
+  // ── Tier 3: Structured extraction via generateObject ────────────
+  const promptText = buildBrandingPrompt(
+    client.name,
+    domain,
+    clientCategoryValue(client) ?? undefined,
+    client.description,
+    siteIntelligence,
+    logoContext,
+    observedPalette,
+    visionImages.map((image) => image.label),
+  );
+
+  const paletteUsageMeta = {
+    clientId, agentId: null, agentName: "Branding · Palette Extraction",
+    ...usageFor("branding.extract"), operation: "branding_extraction",
+  };
+
+  async function runPaletteExtraction() {
+    const logoPart =
+      logoContext?.kind === "vision"
+        ? [{ type: "image" as const, image: logoContext.imageBytes, mediaType: logoContext.mimeType }]
+        : [];
+
+    if (logoPart.length === 0 && visionImages.length === 0) {
+      // Text-only mode: SVG colors and/or site intelligence are embedded in the prompt text
+      return generateObject({
+        model: aiFor("branding.extract").model,
+        schema: BrandingAISchema,
+        prompt: promptText,
+      });
+    }
+
+    return generateObject({
+      model: aiFor("branding.extract").model,
+      schema: BrandingAISchema,
+      messages: [
+        {
+          role: "user",
+          content: [
+            ...logoPart,
+            ...visionImages.map((image) => ({
+              type: "image" as const,
+              image: image.bytes,
+              mediaType: image.mimeType,
+            })),
+            { type: "text", text: promptText },
+          ],
+        },
+      ],
+    });
+  }
+
+  let object: z.infer<typeof BrandingAISchema>;
+  let usage: { inputTokens?: number; outputTokens?: number };
+  try {
+    ({ object, usage } = await runPaletteExtraction());
+  } catch (err) {
+    logger.logGenerationFailure(paletteUsageMeta, err);
+    throw err;
+  }
+  logger.logUsage({
+    ...paletteUsageMeta,
+    inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0,
   });
 
-  const existing = client.brandingGuidelines;
+  // ── Normalize and assemble guidelines ───────────────────────────
+  const extracted: BrandColor[] = object.dominantColors.map((c, i) => ({
+    hex: normalizeHex(c.hex) ?? c.hex.toLowerCase(),
+    dominanceRank: i + 1,
+    role: c.role,
+  }));
+
+  // The last word on the VALUES, never on the roles or the ranking. A hex the
+  // site does not contain cannot be the brand's, whatever the model believed —
+  // this is what stops another `#6366f1` reaching a client's brand guidelines.
+  // With no observations it is a no-op; see `snapToObservedPalette`.
+  const dominantColors = snapToObservedPalette(extracted, observedPalette);
+  const repairs = extracted
+    .map((before, i) => ({ before: before.hex, after: dominantColors[i]!.hex }))
+    .filter((r) => r.before !== r.after);
+  if (repairs.length > 0) {
+    console.warn(
+      `[branding] ${domain ?? client.name} — ${repairs.length} extracted colour(s) absent from the live site, snapped to the nearest observed value: ` +
+        repairs.map((r) => `${r.before} -> ${r.after}`).join(", "),
+    );
+  }
+
   const now = Date.now();
 
-  // Preserve only logoUrl — always manually uploaded, never generated.
+  // SCRUM-394 (IGSTYLE-9): mirror into the legacy scalar fields via the SAME
+  // role-based resolver `effectivePrimaryAccent`/etc. use for reads — not by
+  // array position. A freshly-generated record is role-correct from the
+  // moment it's written, not only when later read through the accessors.
+  // Falls back to the old positional mirror only when the model returned no
+  // classifiable role text at all (see `resolveDominantColorsByRole`'s own
+  // doc comment for why that fallback exists and when it fires).
+  const roleResolved = resolveDominantColorsByRole(dominantColors);
+  const legacyScalars = roleResolved.resolvedByRole
+    ? roleResolved
+    : {
+        primaryAccent: dominantColors[0]?.hex,
+        secondaryAccent: dominantColors[1]?.hex,
+        brandNeutralDark: dominantColors[2]?.hex,
+        brandNeutralLight: dominantColors[3]?.hex,
+      };
+
   const fullGuidelines: BrandingGuidelines = {
-    primaryColor: normalizeHex(object.brandAccent) ?? object.brandAccent,
-    uiBackground: normalizeHex(object.uiBackground) ?? object.uiBackground,
-    uiText: normalizeHex(object.uiText) ?? object.uiText,
-    secondaryColor: object.secondaryColor
-      ? (normalizeHex(object.secondaryColor) ?? object.secondaryColor)
-      : undefined,
+    dominantColors,
+    // Mirror into legacy scalar fields for callers that haven't migrated yet
+    primaryAccent: legacyScalars.primaryAccent,
+    secondaryAccent: legacyScalars.secondaryAccent,
+    brandNeutralDark: legacyScalars.brandNeutralDark,
+    brandNeutralLight: legacyScalars.brandNeutralLight,
     fontHeading: object.fontHeading,
     fontBody: object.fontBody,
     visualStyle: object.visualStyle,
     toneKeywords: object.toneKeywords,
     guidelines: buildGuidelinesMarkdown(object),
-    logoUrl: existing?.logoUrl,
     updatedAt: now,
   };
 
+  // ── Context doc writes ───────────────────────────────────────────
+  // "internal" is the tier this write already declared as its default; naming it
+  // makes the target deterministic instead of "whichever row came back first".
+  // The internal copy is what condensation reads, so the client tier picks the
+  // change up on the next run.
   const [brandingDoc, voiceDoc] = await Promise.all([
-    getClientContextDoc(clientId, "branding-guidelines"),
-    getClientContextDoc(clientId, "brand-voice"),
+    getClientContextDoc(clientId, "branding-guidelines", "internal"),
+    getClientContextDoc(clientId, "brand-voice", "internal"),
   ]);
 
   await Promise.all([
@@ -324,8 +1160,19 @@ export async function applyBrandingForClient(
 
   return {
     source: "ai_generated",
-    primaryColor: fullGuidelines.primaryColor,
-    secondaryColor: fullGuidelines.secondaryColor,
+    dominantColors,
     visualStyle: fullGuidelines.visualStyle,
+    // Everything else this run just persisted — see the type's own note.
+    fontHeading: fullGuidelines.fontHeading,
+    fontBody: fullGuidelines.fontBody,
+    toneKeywords: fullGuidelines.toneKeywords,
+    guidelines: fullGuidelines.guidelines,
+    // Legacy aliases — kept for callers still reading old field names
+    primaryAccent: fullGuidelines.primaryAccent,
+    secondaryAccent: fullGuidelines.secondaryAccent,
+    brandNeutralDark: fullGuidelines.brandNeutralDark,
+    brandNeutralLight: fullGuidelines.brandNeutralLight,
+    primaryColor: fullGuidelines.primaryAccent,
+    secondaryColor: fullGuidelines.secondaryAccent,
   };
 }

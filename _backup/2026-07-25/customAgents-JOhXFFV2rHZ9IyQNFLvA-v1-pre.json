@@ -1,0 +1,18 @@
+{
+  "id": "JOhXFFV2rHZ9IyQNFLvA",
+  "key": "karos-linkedin-company-karoslabs",
+  "name": "LinkedIn Company Page — Karos Labs",
+  "description": "Draft-first LinkedIn company-page posts for Karos Labs (Path A). First-party only — reads brand voice, company updates, and the topic catalog; no external research, no auto-post.",
+  "icon": "Share2",
+  "color": "#A3E635",
+  "entrySkillDir": "clients/karoslabs/skills/linkedin-agent/company-page",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "instructions": "You are the LinkedIn company-page generator for Karos Labs (Path A — draft-first, no auto-post).\n\nRun the company-page skill at clients/karoslabs/skills/linkedin-agent/company-page end to end:\n- Read the client's first-party material only: profile/brand-voice.md, product-information.md, market-strategy.md, target-audience.md, and internal/linkedin-agent/company-updates.md (client drop + auto-pull cache).\n- Pick the next unused lane from the topic-catalog.yaml, draft ONE company-page LinkedIn post in the Karos brand voice with author = organization, then flip that catalog row to used and append the post to the shared clients/karoslabs/skills/_shared/linkedin-ledger.json for no-repeat continuity.\n- First-party only: no external research. Never fabricate a number.\n\nProduce the post as a single client-facing draft for human review. Do not publish — a human posts from the portal.",
+  "creditCost": null,
+  "enabled": true,
+  "source": null,
+  "createdBy": "seed:linkedin-hookup",
+  "createdAt": 1784039667126,
+  "updatedAt": 1784111075780
+}

@@ -1,0 +1,478 @@
+/** Client-safe Markdown → styled HTML helpers for rendering client context docs. */
+
+import { normalizeDashes } from "@/lib/text-utils";
+
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export interface DocSection {
+  heading: string;
+  body: string;
+}
+
+/**
+ * Markup the pipeline addresses to itself, removed before anything renders.
+ *
+ * `<!-- BRAND_SYNC_START -->` / `<!-- BRAND_SYNC_END -->` are written INTO the
+ * stored brand-voice document by the branding sync (`injectBrandVoiceSection`)
+ * so a re-sync can find and replace its own block. Every renderer here escapes
+ * before it formats — by design, so document text cannot inject markup — which
+ * turned the marker into `&lt;!-- BRAND_SYNC_START --&gt;`, a line the paragraph
+ * rule then wrapped in a `<p>` and a client read as part of their own document
+ * (photographed 2026-07-28). Escaping is what makes an HTML comment VISIBLE
+ * here rather than invisible, so it has to be dropped, not escaped.
+ *
+ * Written against the `<!-- … -->` form rather than the two marker strings:
+ * models emit comments of their own, and the next sentinel someone adds should
+ * not need a second fix. An unterminated opener is dropped only to end of line
+ * — a browser would eat the rest of the document, and truncated stored content
+ * is exactly when that happens.
+ *
+ * The control-byte clause is not cosmetic: `renderSectionBody` pairs \x02–\x06
+ * sentinels around list items, so a stray one arriving IN the content could
+ * pair with a generated one and swallow the text between them.
+ */
+export function stripPipelineMarkers(text: string): string {
+  return text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^[ \t]*<!--[^\n]*$/gm, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "");
+}
+
+/**
+ * Drop a literal "3. " / "3) " prefix from a section heading.
+ *
+ * Documents generated before the numbers came out of the templates have them
+ * baked into the text, where nothing can renumber them — and an auto-synced
+ * block inserted at the top shifted the sequence, so the first numbered heading
+ * a client read was "2.". Numbering is positional now; this strips the old one
+ * so a stored document cannot show two.
+ */
+export function stripHeadingNumber(heading: string): string {
+  return heading.replace(/^\s*\d+\s*[.)]\s+/, "");
+}
+
+/** Markdown inline link: `[label](target)`. */
+export const LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+
+/**
+ * Only web-ish schemes become anchors. Model-written document text is not a
+ * trusted source of URLs, and `javascript:` / `data:` in an href is a script
+ * sink that escaping alone does not close.
+ *
+ * A bare leading "/" is NOT enough to call a target same-origin: "//evil.com"
+ * is protocol-relative and "/\evil.com" is normalised the same way, so both
+ * resolve off-site while reading as an in-document reference. The second
+ * character has to be neither slash nor backslash. This matters because
+ * document text is reachable by client-authored corrections and by research
+ * findings fetched from competitor sites, and staff read the internal tier.
+ */
+export function isSafeHref(href: string): boolean {
+  const h = href.trim();
+  return /^(https?:\/\/|mailto:|#)/i.test(h) || /^\/(?![/\\])/.test(h);
+}
+
+const PLACEHOLDER_RE =
+  /\b(n\/a|unknown|not\s+provided|not\s+applicable|data\s+unavailable|tbd)\b/gi;
+
+/**
+ * Strip a leading YAML frontmatter block (module/client/version/status/etc.) and
+ * the H1 title. Tolerant of leading whitespace / BOM so the block never leaks
+ * into the rendered document.
+ *
+ * Pipeline markers go first, before the frontmatter and title rules: the brand
+ * sync block is injected BETWEEN the two, so with the comment still in place
+ * every caller downstream of this — the section index, the "does this document
+ * have a body" check, the lead-in — saw the marker as document text.
+ */
+export function stripDocPreamble(content: string): string {
+  return stripPipelineMarkers(content)
+    .replace(/^﻿/, "")
+    .replace(/^\s*---[\s\S]*?\n---[ \t]*\r?\n?/, "")
+    .replace(/^\s*#\s+.+\r?\n?/, "")
+    .trim();
+}
+
+/**
+ * Does this text carry Markdown structure worth rendering?
+ *
+ * Guard for surfaces that show arbitrary agent output (asset content) where
+ * most items are plain captions: a caption must keep its exact line breaks and
+ * must not be reflowed, but a structured deliverable must never reach a client
+ * with its hash marks, pipes and asterisks on screen. Deliberately narrow —
+ * block-level marks plus `**bold**`, tables and inline code. Single-asterisk
+ * emphasis is NOT a signal (captions use `*` as a literal character far more
+ * often than as markup).
+ */
+export function looksLikeMarkdown(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return (
+    /^#{1,6}\s+\S/m.test(text) || // headings
+    /^[-*+]\s+\S/m.test(text) || // bullet list
+    /^\d+\.\s+\S[\s\S]*?^\d+\.\s+\S/m.test(text) || // ordered list (2+ items: a
+    // lone "2026. What a year" opening a caption is not a list)
+    /^>\s+\S/m.test(text) || // blockquote
+    /^\|.*\|\s*$/m.test(text) || // table row
+    /^---+\s*$/m.test(text) || // horizontal rule / frontmatter fence
+    /\*\*[^\n*]+\*\*/.test(text) || // bold
+    /`[^\n`]+`/.test(text) // inline code
+  );
+}
+
+/**
+ * Lines that are the run record talking to itself, not to the reader: a
+ * `status:` / `job:` / `product:` key line, or any line carrying a database
+ * hash or a lab product code. Agent deliverables open with exactly this kind of
+ * header ("status: pending_review · product e13 · job e52ffe1e · draft-only").
+ *
+ * The key line tolerates the markdown the agent may have wrapped it in — a
+ * leading `#`, `-`, `>`, `|` or `**`, and `**Status:**`-style bold around the
+ * key itself — because the very same bookkeeping arrives as `- **Status:** …`,
+ * `> status: …`, `## status: …` and `| status | pending_review |` depending on
+ * which template wrote it. The separator set includes `·`, which is what a
+ * table row's pipes become once flattened.
+ */
+const INTERNAL_KEY_LINE_RE =
+  /^[\s>#*_\-+|·]*(status|state|product|job|run|task|id|uuid|hash|module|version|owner|source|slug|key|delivery_mode|mode)[\s*_]*[:=|·]/i;
+/**
+ * Deliberately fail-closed: the 8-hex-digit branch also matches a plain 8-digit
+ * number, which blanks a line that merely contains one. Dropping a line we
+ * were unsure about is the safe direction on a client surface — do not narrow
+ * this to "must contain a letter" without re-verifying the leak cases.
+ */
+const INTERNAL_TOKEN_RE =
+  /\b(?:[0-9a-f]{8,}|product[\s:*_-]*e\d+|job[\s:*_-]*[0-9a-f]{6,})\b/i;
+
+/**
+ * A line that a renderer here has already turned into a block element, and so
+ * must not be wrapped in a paragraph. Shared by both paragraph passes (this
+ * file and the print renderer) — keep the two in step.
+ *
+ * Block tags only. `<strong>`, `<em>`, `<code>` and `<a>` are inline and their
+ * lines DO need the wrapper.
+ */
+export const GENERATED_BLOCK_LINE_RE =
+  /^\s*(?:<\/|<(?:p|h[1-6]|ul|ol|li|hr|div|table|thead|tbody|tr|th|td|blockquote)\b)/;
+
+/**
+ * Is this line the record's own bookkeeping rather than prose for the reader?
+ *
+ * Exported for the deliverable PARSERS (x-drafts / li-drafts). They lift free
+ * text straight out of an agent's markdown — the italic account and lane notes
+ * — and that text is written by the same agent, in the same file, as the header
+ * this predicate exists to catch. See the note in either parser.
+ */
+export function isInternalLine(line: string): boolean {
+  return INTERNAL_KEY_LINE_RE.test(line) || INTERNAL_TOKEN_RE.test(line);
+}
+
+/**
+ * Strip inline Markdown marks from a single line, leaving readable text.
+ * Paired emphasis only — a lone `*` or `_` is a literal character in captions
+ * far more often than it is markup (same reasoning as looksLikeMarkdown).
+ */
+export function stripInlineMarkdown(line: string): string {
+  return stripPipelineMarkers(line)
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // images → alt text
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // links → label
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*(\S[^*]*?)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .trim();
+}
+
+/**
+ * A one-line, client-safe plain-text teaser for arbitrary agent output.
+ *
+ * Slicing raw content is what put "# Karos X — … status: pending_review ·
+ * product e13 · job e52ffe1e … **one post in every avenue**" on the calendar's
+ * day detail: four leak classes at once (markdown syntax, raw enum, internal
+ * product id, database hash). This drops the record's own bookkeeping lines and
+ * flattens what's left. Run at the SERVER boundary so the internal strings never
+ * reach a client's payload, not at render.
+ */
+export function toPlainSummary(text: string | null | undefined, maxChars = 240): string {
+  if (!text) return "";
+  const body = stripPipelineMarkers(text)
+    .replace(/^﻿/, "")
+    .replace(/```[a-zA-Z]*\r?\n([\s\S]*?)```/g, "$1") // keep fenced text, drop the fence
+    .replace(/^\s*---[\s\S]*?\n---[ \t]*\r?\n?/, ""); // YAML frontmatter
+
+  const parts: string[] = [];
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^[-*_]{3,}$/.test(line)) continue; // horizontal rule
+    if (/^\|[-:\s|]+\|$/.test(line)) continue; // table separator
+
+    const stripped = stripInlineMarkdown(
+      line
+        // Prefixes can nest ("- > status: …"), so run the set until it settles
+        // rather than once — a single pass leaves the inner marker in place and
+        // the internal-line test then misses the key behind it.
+        .replace(/^(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)+/, "")
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .replace(/\s*\|\s*/g, " · "), // table row → readable run
+    );
+    if (!stripped) continue;
+    // Tested on BOTH forms. The marks can hide the key from a raw-line test
+    // (`**Status:** pending_review`), and flattening can rearrange it (a table
+    // row's pipes become `·`), so neither test alone catches every shape.
+    if (isInternalLine(line) || isInternalLine(stripped)) continue;
+    parts.push(stripped);
+    if (parts.join(" ").length >= maxChars) break;
+  }
+
+  const flat = normalizeDashes(parts.join(" ").replace(/\s+/g, " ").trim());
+  if (flat.length <= maxChars) return flat;
+  const cut = flat.slice(0, maxChars);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > maxChars * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/** Split a context doc into `## heading` sections, dropping empty/placeholder ones. */
+export function parseDocSections(content: string): DocSection[] {
+  const clean = stripDocPreamble(content);
+
+  const parts = clean.split(/^##\s+/m);
+  const sections: DocSection[] = [];
+
+  for (const part of parts) {
+    if (!part.trim()) continue;
+    const nl = part.indexOf("\n");
+    const heading = nl > 0 ? part.slice(0, nl).trim() : part.trim();
+    const body = nl > 0 ? part.slice(nl + 1).trim() : "";
+    const stripped = body.replace(PLACEHOLDER_RE, "").replace(/[|\-\s]/g, "").trim();
+    if (!stripped || stripped.length < 8) continue;
+    sections.push({ heading, body });
+  }
+  return sections;
+}
+
+/** Render a single section body (no `##` headings expected inside) to HTML. */
+export function renderSectionBody(md: string): string {
+  // Pipeline markers come out BEFORE the escape: after it, `<!-- … -->` is
+  // `&lt;!-- … --&gt;` and no longer looks like a comment to any rule below.
+  //
+  // HTML-escape the raw Markdown before processing so any user-supplied < > & "
+  // in the source text cannot break out into the surrounding HTML structure.
+  // A horizontal rule is a real separator in agent output (it divides one draft
+  // from the next), so it renders rather than vanishing. The trailing `[ \t]*`
+  // is load-bearing — a trailing space is invisible in the source and used to
+  // leave a literal "---" on screen — and it is spaces/tabs rather than `\s`
+  // so the match cannot run past the end of its own line.
+  let out = esc(normalizeDashes(stripPipelineMarkers(md))).replace(
+    /^---+[ \t]*$/gm,
+    '<hr class="my-4 border-0 border-t border-border" />',
+  );
+
+  // Deeper headings FIRST: `^###\s` cannot match "#### Persona" (the fourth
+  // character is a hash, not a space), so without this rule the shipped Market
+  // Strategy template's persona headings fell through to the paragraph rule and
+  // the client read four literal hash marks.
+  out = out.replace(
+    /^#{4,6}\s+(.+)$/gm,
+    '<p class="mt-3 mb-1 text-xs font-semibold text-foreground">$1</p>',
+  );
+
+  out = out.replace(
+    /^###\s+(.+)$/gm,
+    '<p class="mt-4 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-2">$1</p>',
+  );
+
+  // `#` and `##` LAST of the heading rules, and they have to be here at all:
+  // renderBlocks consumes those two levels before it calls this function, but
+  // the drawer and the copilot do not go through renderBlocks. The drawer
+  // splits on `##` only, so a `#` title sitting mid-document (the brand sync
+  // block is injected ABOVE the title, which pushes the title into the first
+  // section's body) reached renderSectionBody, and the copilot hands over raw
+  // model text. Both printed the hash marks verbatim. Classes match the ones
+  // renderBlocks uses so a heading looks the same wherever it is rendered.
+  out = out
+    .replace(
+      /^##\s+(.+)$/gm,
+      '<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">$1</h2>',
+    )
+    .replace(/^#\s+(.+)$/gm, '<h2 class="text-lg font-semibold mt-6 mb-2.5 text-foreground">$1</h2>');
+
+  // Underscore emphasis, with word-boundary guards. `_Last updated: …_` is
+  // written by the branding context-doc builder and `_This section is
+  // auto-synced…_` by the brand sync, so the underscores were on screen in the
+  // client's own documents. The `(?<!\w)`/`(?!\w)` pair is what keeps the rule
+  // off ordinary snake_case (`pending_review`, `system_of_record`), which is
+  // the reason a lone underscore was left alone in the first place.
+  out = out
+    .replace(/(?<!\w)__([^_\n]+)__(?!\w)/g, "<strong>$1</strong>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<em>$1</em>")
+    .replace(
+      /`(.+?)`/g,
+      '<code class="rounded bg-surface-3 px-1 py-0.5 font-mono text-[10px]">$1</code>',
+    );
+
+  const tableBlockRe = /((?:^\|.+\|\n?){2,})/gm;
+  out = out.replace(tableBlockRe, (block) => {
+    const rawLines = block.trim().split("\n").map((l) => l.trim()).filter(Boolean);
+    const sepIdx = rawLines.findIndex((l) => /^\|[-:\s|]+\|$/.test(l));
+    const parseCells = (row: string, tag: "th" | "td") => {
+      const cells = row.split("|").slice(1, -1).map((c) => c.replace(/\*\*/g, "").trim());
+      const cls =
+        tag === "th"
+          ? "px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-2 border-b border-border"
+          : "px-3 py-2 text-xs text-muted align-top border-b border-border last:border-0";
+      return cells.map((c) => `<${tag} class="${cls}">${c}</${tag}>`).join("");
+    };
+    let thead = "";
+    let tbody = "";
+    if (sepIdx > 0) {
+      thead = `<thead class="bg-surface-3">${rawLines.slice(0, sepIdx).map((r) => `<tr>${parseCells(r, "th")}</tr>`).join("")}</thead>`;
+      tbody = `<tbody>${rawLines.slice(sepIdx + 1).map((r) => `<tr class="hover:bg-surface-2/50">${parseCells(r, "td")}</tr>`).join("")}</tbody>`;
+    } else {
+      tbody = `<tbody>${rawLines.filter((r) => !/^\|[-:\s|]+\|$/.test(r)).map((r) => `<tr class="hover:bg-surface-2/50">${parseCells(r, "td")}</tr>`).join("")}</tbody>`;
+    }
+    return `<div class="overflow-x-auto my-3 rounded-[8px] border border-border"><table class="w-full border-collapse">${thead}${tbody}</table></div>\n`;
+  });
+
+  // Bullet lists — sentinel bytes \x02/\x03 keep these items isolated from the ordered-list
+  // pass below. Without sentinels the second wrap regex re-matches the <li> elements already
+  // inside <ul>, producing invalid <ul><ol><li>…</li></ol></ul> that browsers parse by moving
+  // the <ol> out, leaving an empty <ul> and hiding all bullet content.
+  //
+  // Leading whitespace is allowed: a nested sub-bullet used to fail the rule and
+  // fall through to the paragraph pass, printing a bare dash outside the styled
+  // list at the wrong indentation. \x06 marks an indented item so it can keep
+  // its nesting without a second list level.
+  out = out.replace(/^([ \t]+)?[-*+]\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
+    indent ? `\x02\x06${text}\x03` : `\x02${text}\x03`,
+  );
+  // Each item's text is wrapped in ONE span. The `<li>` is a flex row so the
+  // ▸ marker can hang beside a wrapping paragraph — but a flex container makes
+  // every child its own flex item, including each contiguous run of bare text.
+  // So `- **Precise** — Every sentence carries weight` became TWO items, the
+  // bold word and the rest, with the row's gap wedged between them: the em dash
+  // opened a second column and read as a detached mark instead of punctuation
+  // inside the sentence. With the span, the row has exactly two items — marker
+  // and text — and everything inside the item stays inline.
+  out = out.replace(
+    /(\x02[\s\S]*?\x03\n?)+/g,
+    (block) => {
+      const items = block
+        .replace(/\x02\x06([\s\S]*?)\x03/g, '<li class="ml-4"><span class="min-w-0 flex-1">$1</span></li>')
+        .replace(/\x02([\s\S]*?)\x03/g, '<li><span class="min-w-0 flex-1">$1</span></li>');
+      return `<ul class="my-2 space-y-1.5 ml-0 [&>li]:flex [&>li]:gap-2 [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] [&>li]:before:content-['▸'] [&>li]:before:text-neon/50 [&>li]:before:text-[10px] [&>li]:before:mt-[3px] [&>li]:before:shrink-0">${items}</ul>\n`;
+    },
+  );
+
+  // Ordered lists — sentinel bytes \x04/\x05, distinct from the bullet sentinels above.
+  out = out.replace(/^([ \t]+)?\d+\.\s+(.+)$/gm, (_m, indent: string | undefined, text: string) =>
+    indent ? `\x04\x06${text}\x05` : `\x04${text}\x05`,
+  );
+  out = out.replace(
+    /(\x04[\s\S]*?\x05\n?)+/g,
+    (block) => {
+      const items = block
+        .replace(/\x04\x06([\s\S]*?)\x05/g, '<li class="ml-4">$1</li>')
+        .replace(/\x04([\s\S]*?)\x05/g, "<li>$1</li>");
+      return `<ol class="my-2 space-y-1.5 ml-4 list-decimal [&>li]:text-sm [&>li]:text-muted [&>li]:leading-[1.65] marker:text-neon/50">${items}</ol>\n`;
+    },
+  );
+
+  // Matches the ESCAPED marker: esc() above has already turned a leading ">"
+  // into "&gt;", so a `^>` rule here can never fire and every quoted line keeps
+  // its arrow on screen — which is exactly the raw-formatting symptom this
+  // renderer exists to prevent, and X/LinkedIn draft text is all blockquotes.
+  out = out.replace(
+    /^&gt;\s+(.+)$/gm,
+    '<blockquote class="border-l-2 border-border-strong pl-3 py-0.5 text-xs italic text-muted-2 my-2">$1</blockquote>',
+  );
+
+  // Paragraph wrapper. The skip test names the BLOCK tags this function
+  // generates, rather than "starts with any tag": the inline passes above run
+  // first, so `**Their positioning:** …` — every line of the Competitor
+  // Analysis deep dives, and every `_italic_` line — already began with
+  // `<strong>`/`<em>` by the time the old `<[a-zA-Z/]` lookahead saw it. Those
+  // lines fell out of the paragraph pass and rendered as bare unstyled text at
+  // the browser's default size, next to properly styled prose.
+  out = out.replace(/^(?!\s*$).+$/gm, (line) =>
+    GENERATED_BLOCK_LINE_RE.test(line)
+      ? line
+      : `<p class="text-sm text-muted leading-[1.7] my-1">${line}</p>`,
+  );
+
+  // Links, last: by now every block wrapper is in place, so a line that is only
+  // a link still sits inside its paragraph. Before this the renderer had no link
+  // rule at all and a source reference printed as bracket text followed by a raw
+  // address. The href is already escaped, and a non-web scheme (javascript:,
+  // data:) is refused and left as plain text.
+  out = out.replace(LINK_RE, (whole, text: string, href: string) =>
+    isSafeHref(href)
+      ? `<a href="${href}" target="_blank" rel="noopener noreferrer" class="text-neon underline underline-offset-2 hover:opacity-80">${text}</a>`
+      : whole,
+  );
+
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * Shared body renderer: `#` and `##` headings become labelled sections,
+ * everything between them goes through renderSectionBody. Takes text that has
+ * ALREADY had whatever preamble handling its caller wants — the two entry
+ * points below differ only in that.
+ */
+function renderBlocks(source: string): string {
+  // Also here, not only in renderSectionBody: heading text is escaped straight
+  // into the `<h2>` below without passing through the body renderer, so a
+  // marker sitting on a heading line would survive that path alone.
+  const clean = stripPipelineMarkers(source);
+  const headingRe = /^(#{1,2})\s+(.+)$/gm;
+  let out = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = headingRe.exec(clean)) !== null) {
+    // Body text before this heading
+    if (match.index > cursor) {
+      out += renderSectionBody(clean.slice(cursor, match.index));
+    }
+    out +=
+      match[1].length === 1
+        ? `<h2 class="text-lg font-semibold mt-6 mb-2.5 text-foreground">${esc(match[2])}</h2>`
+        : `<h2 class="text-base font-semibold mt-7 mb-2.5 text-neon/90">${esc(match[2])}</h2>`;
+    cursor = match.index + match[0].length;
+  }
+
+  // Remaining body after last heading (or the whole doc if no headings)
+  if (cursor < clean.length) {
+    out += renderSectionBody(clean.slice(cursor));
+  }
+
+  return out;
+}
+
+/**
+ * Full-document HTML for a stored context doc: the YAML frontmatter and the
+ * H1 title are dropped (the surrounding chrome prints the title separately).
+ */
+export function renderFullDoc(content: string): string {
+  return renderBlocks(stripDocPreamble(content));
+}
+
+/**
+ * Deliverable HTML for asset content — NOT the same job as renderFullDoc.
+ *
+ * An asset body is the agent's output, not a doc with a known preamble, so
+ * stripDocPreamble must not run over it. Two ways it destroys content here:
+ * the first line is usually the deliverable's OWN headline (the modal title is
+ * the job/agent title, not that headline), and a leading `---` — the rule
+ * agents put between drafts — is read as a frontmatter fence, silently eating
+ * every line up to the next `---`. So this entry point strips nothing: an H1
+ * renders as a heading and a rule renders as a rule.
+ */
+export function renderAssetBody(content: string): string {
+  return renderBlocks(content.replace(/^﻿/, "").trim());
+}

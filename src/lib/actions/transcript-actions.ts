@@ -4,13 +4,16 @@ import { revalidatePath } from "next/cache";
 import {
   updateTranscript,
   getTranscript,
-  getTranscriptByExternalId,
+  findDuplicateTranscript,
   getUser,
+  updateActionItem,
 } from "@/lib/data";
 import { getCurrentUser } from "@/lib/auth";
-import { ingestTranscript, appendMeetingSignalToContextDoc, buildActionItemsByOwner } from "@/lib/transcripts/ingest";
+import { ensureActionItemDoc, historyEntry } from "@/lib/action-items";
+import { ingestTranscript, appendMeetingSignalToContextDoc } from "@/lib/transcripts/ingest";
 import { listFirefliesTranscripts, fetchFirefliesTranscript } from "@/lib/transcripts/fireflies";
-import type { Transcript } from "@/lib/types";
+import { syncActionItemAssignmentToJira } from "@/lib/integrations/jira";
+import type { AppUser, Transcript } from "@/lib/types";
 import { requireStaff, requireAdmin } from "./_shared";
 
 /** Assign a transcript to a client, Karos Labs internal, or unassociated.
@@ -58,7 +61,8 @@ export async function ingestManualTranscriptAction(input: {
 /**
  * Bulk-sync recent Fireflies transcripts. The @karoslabs.com invariant is applied inside
  * listFirefliesTranscripts — only agency-attended meetings are ever processed.
- * Deduplicates by externalId; transcripts already in Firestore are skipped.
+ * Deduplicates by externalId only (same recording): same-title meetings
+ * (recurring "Weekly Sync" etc.) are always ingested as separate meetings.
  */
 export async function syncFirefliesAction(): Promise<{ synced: number; skipped: number }> {
   await requireStaff();
@@ -67,7 +71,11 @@ export async function syncFirefliesAction(): Promise<{ synced: number; skipped: 
   let skipped = 0;
 
   for (const h of headers) {
-    const existing = await getTranscriptByExternalId(h.externalId);
+    const existing = await findDuplicateTranscript({
+      externalId: h.externalId,
+      title: h.title,
+      meetingDate: h.date,
+    });
     if (existing) {
       skipped++;
       continue;
@@ -75,6 +83,7 @@ export async function syncFirefliesAction(): Promise<{ synced: number; skipped: 
     const t = await fetchFirefliesTranscript(h.externalId);
     if (!t) { skipped++; continue; }
     const result = await ingestTranscript(t, "fireflies");
+    if (result.duplicate) { skipped++; continue; }
     if (result.clientId) {
       const stored = await getTranscript(result.id);
       if (stored) {
@@ -157,40 +166,31 @@ export async function toggleActionItemCompletionAction(
   if (allDone) patch.archived = true;
 
   await updateTranscript(transcriptId, patch);
+
+  // Mirror onto the managed action-item doc (audit trail included). Non-fatal.
+  try {
+    const doc = await ensureActionItemDoc(t, itemIndex);
+    if (doc && (doc.status === "done") !== completed) {
+      const status = completed ? "done" : "open";
+      await updateActionItem(doc.id, {
+        status,
+        updatedAt: Date.now(),
+        history: [
+          ...doc.history,
+          historyEntry(
+            "status_changed",
+            `Marked ${completed ? "Done" : "Open"} by ${user.name}`,
+            { id: user.uid, name: user.name },
+          ),
+        ],
+      });
+    }
+  } catch { /* Non-fatal — transcript update already persisted */ }
+
   revalidatePath(`/transcripts/${transcriptId}`);
+  revalidatePath("/dashboard");
   if (allDone) revalidatePath("/transcripts");
   return { allDone };
-}
-
-/**
- * Reassign a single action item to a new owner name.
- * Rebuilds actionItemsByOwner snapshot from the updated owners array.
- */
-export async function setActionItemOwnerAction(
-  transcriptId: string,
-  itemIndex: number,
-  ownerName: string | null,
-): Promise<void> {
-  await requireStaff();
-  const t = await getTranscript(transcriptId);
-  if (!t) throw new Error("Transcript not found");
-
-  const total = t.actionItems?.length ?? 0;
-  const owners: (string | null)[] = t.actionItemOwners?.length === total
-    ? [...t.actionItemOwners]
-    : Array.from({ length: total }, (_, i) => {
-        if (!t.actionItemsByOwner) return null;
-        for (const [name, tasks] of Object.entries(t.actionItemsByOwner)) {
-          if (tasks.includes(t.actionItems?.[i] ?? "")) return name === "Unassigned" ? null : name;
-        }
-        return null;
-      });
-
-  if (itemIndex >= 0 && itemIndex < owners.length) owners[itemIndex] = ownerName;
-  const actionItemsByOwner = buildActionItemsByOwner(t.actionItems ?? [], owners);
-
-  await updateTranscript(transcriptId, { actionItemOwners: owners, actionItemsByOwner });
-  revalidatePath(`/transcripts/${transcriptId}`);
 }
 
 /**
@@ -221,11 +221,12 @@ export async function assignActionItemToUserAction(
   const newAssignedIds = [...(t.actionItemAssignedUserIds ?? Array<null>(len).fill(null))];
   while (newAssignedIds.length < len) newAssignedIds.push(null);
 
+  let target: AppUser | null = null;
   if (assignedUserId === null) {
     newOwners[itemIndex] = null;
     newAssignedIds[itemIndex] = null;
   } else {
-    const target = await getUser(assignedUserId);
+    target = await getUser(assignedUserId);
     newOwners[itemIndex] = target?.name ?? target?.email ?? null;
     newAssignedIds[itemIndex] = assignedUserId;
   }
@@ -238,7 +239,33 @@ export async function assignActionItemToUserAction(
     assignedUserIds,
   });
 
+  // Mirror onto the managed action-item doc (audit trail included). Non-fatal.
+  try {
+    const doc = await ensureActionItemDoc(t, itemIndex);
+    if (doc && (doc.assigneeUserId ?? null) !== assignedUserId) {
+      const newName = newOwners[itemIndex];
+      const detail = assignedUserId
+        ? doc.assigneeName
+          ? `Reassigned from ${doc.assigneeName} to ${newName} by ${viewer.name}`
+          : `Assigned to ${newName} by ${viewer.name}`
+        : `Unassigned by ${viewer.name}`;
+      const jira = target ? await syncActionItemAssignmentToJira(doc, assignedUserId, target.email) : null;
+      await updateActionItem(doc.id, {
+        assigneeUserId: assignedUserId,
+        assigneeName: assignedUserId ? newName : null,
+        updatedAt: Date.now(),
+        history: [
+          ...doc.history,
+          historyEntry("reassigned", detail, { id: viewer.uid, name: viewer.name }),
+          ...(jira ? [historyEntry("jira_linked", `Linked to Jira issue ${jira.jiraIssueKey}`, { id: "system", name: "Jira sync" })] : []),
+        ],
+        ...(jira ?? {}),
+      });
+    }
+  } catch { /* Non-fatal — transcript update already persisted */ }
+
   revalidatePath(`/transcripts/${transcriptId}`);
+  revalidatePath("/dashboard");
 }
 
 /**
@@ -262,4 +289,26 @@ export async function dismissAssignedActionItemAction(
   const completed = new Set(t.completedItems ?? []);
   completed.add(itemIndex);
   await updateTranscript(transcriptId, { completedItems: [...completed] });
+
+  // Mirror onto the managed action-item doc (audit trail included). Non-fatal.
+  try {
+    const doc = await ensureActionItemDoc(t, itemIndex);
+    if (doc && doc.status !== "done") {
+      await updateActionItem(doc.id, {
+        status: "done",
+        updatedAt: Date.now(),
+        history: [
+          ...doc.history,
+          historyEntry("status_changed", `Marked Done by ${viewer.name}`, { id: viewer.uid, name: viewer.name }),
+        ],
+      });
+    }
+  } catch { /* Non-fatal */ }
+  // The transcript page lists this item too, and it was the one surface this
+  // write left stale — the reassign action above already revalidates it. The
+  // bell that fired this call is chrome on EVERY page, so no path list can
+  // cover where the viewer is standing; its shell refreshes itself instead
+  // (useNotificationDismissals in components/notification-bell.tsx).
+  revalidatePath(`/transcripts/${transcriptId}`);
+  revalidatePath("/dashboard");
 }

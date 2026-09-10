@@ -30,15 +30,31 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+*.log
 
 # env files (can opt-in for committing if needed)
 .env*
-# .env.production holds only public NEXT_PUBLIC_FIREBASE_* config — safe to commit.
-!.env.production
+env.local
+env.*.local
+.env.production
+# templates hold no secrets — always committed
+!.env.example
 
-# vercel
-.vercel
+# local Codex connector configuration (may contain credentials)
+.codex/
+
+# one-off migration backups (contain client content — never commit)
+scripts/backups/
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local ops-import inbox — client data, never committed
+ops-inbox/
+
+# dynamic-agent
+_dynamic-agent-studio-delivery/*
+
+# scratch full-repo tarballs (contain .env secrets — never commit)
+_scratch_tar/

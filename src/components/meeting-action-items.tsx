@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 import {
@@ -24,8 +25,6 @@ interface Props {
   users?: AppUser[];
   /** UID of the currently logged-in user (for "Assign to me"). */
   currentUserId?: string;
-  /** Called after the meeting is auto-archived (all items done). */
-  onAutoArchived?: () => void;
 }
 
 export function MeetingActionItems({
@@ -37,8 +36,8 @@ export function MeetingActionItems({
   actionItemAssignedUserIds: initialAssignedIds = [],
   users = [],
   currentUserId,
-  onAutoArchived,
 }: Props) {
+  const router = useRouter();
   const [completed, setCompleted] = useState<Set<number>>(new Set(initialCompleted));
   // owners drives the visual grouping (display names)
   const [owners, setOwners] = useState<(string | null)[]>(actionItemOwners);
@@ -50,8 +49,10 @@ export function MeetingActionItems({
   });
   const [pendingToggle, setPendingToggle] = useState<Set<number>>(new Set());
   const [pendingAssign, setPendingAssign] = useState<Set<number>>(new Set());
+  // Per-item error, surfaced instead of silently reverting with no explanation.
+  const [errors, setErrors] = useState<Record<number, string>>({});
 
-  // Group item indices by owner name for display (must precede any early return — hooks must not be conditional)
+  // Group item indices by owner name for display (must precede any early return - hooks must not be conditional)
   const groups = useMemo(() => {
     const map = new Map<string, number[]>();
     owners.forEach((owner, i) => {
@@ -73,6 +74,7 @@ export function MeetingActionItems({
   async function handleToggle(index: number) {
     if (pendingToggle.has(index)) return;
     const nowDone = !completed.has(index);
+    setErrors((prev) => { const n = { ...prev }; delete n[index]; return n; });
     setCompleted((prev) => {
       const next = new Set(prev);
       if (nowDone) next.add(index); else next.delete(index);
@@ -81,13 +83,21 @@ export function MeetingActionItems({
     setPendingToggle((s) => new Set(s).add(index));
     try {
       const { allDone } = await toggleActionItemCompletionAction(transcriptId, index, nowDone);
-      if (allDone) onAutoArchived?.();
-    } catch {
+      // Ticking the last item archives the meeting server-side, and this page
+      // paints that (the Archived badge, and the archive button's own label), so
+      // the route has to be re-read. This used to call an `onAutoArchived?.()`
+      // prop that could not be delivered: the only mount is the transcript detail
+      // page, a SERVER component, which cannot pass a function at all — so the
+      // archive happened and nothing on screen moved. The refresh is the same
+      // remedy, from a place that can actually reach it.
+      if (allDone) router.refresh();
+    } catch (e) {
       setCompleted((prev) => {
         const r = new Set(prev);
         if (nowDone) r.delete(index); else r.add(index);
         return r;
       });
+      setErrors((prev) => ({ ...prev, [index]: e instanceof Error ? e.message : "Couldn't update. Try again." }));
     } finally {
       setPendingToggle((s) => { const n = new Set(s); n.delete(index); return n; });
     }
@@ -95,6 +105,7 @@ export function MeetingActionItems({
 
   async function handleAssign(index: number, userId: string | null) {
     if (pendingAssign.has(index)) return;
+    setErrors((prev) => { const n = { ...prev }; delete n[index]; return n; });
     // Optimistic update: resolve display name from users list
     const targetUser = userId ? users.find((u) => u.uid === userId) : null;
     const displayName = targetUser ? (targetUser.name ?? targetUser.email) : null;
@@ -103,10 +114,11 @@ export function MeetingActionItems({
     setPendingAssign((s) => new Set(s).add(index));
     try {
       await assignActionItemToUserAction(transcriptId, index, userId);
-    } catch {
+    } catch (e) {
       // Revert both pieces of state on failure
       setOwners((prev) => { const n = [...prev]; n[index] = actionItemOwners[index] ?? null; return n; });
       setAssignedIds((prev) => { const n = [...prev]; n[index] = initialAssignedIds[index] ?? null; return n; });
+      setErrors((prev) => ({ ...prev, [index]: e instanceof Error ? e.message : "Couldn't assign. Try again." }));
     } finally {
       setPendingAssign((s) => { const n = new Set(s); n.delete(index); return n; });
     }
@@ -144,6 +156,7 @@ export function MeetingActionItems({
           users={users}
           currentUserId={currentUserId}
           actionItemUserMap={actionItemUserMap}
+          errors={errors}
           onToggle={handleToggle}
           onAssign={handleAssign}
         />
@@ -157,13 +170,13 @@ function OwnerGroup({
   indices,
   actionItems,
   completed,
-  owners,
   assignedIds,
   pendingToggle,
   pendingAssign,
   users,
   currentUserId,
   actionItemUserMap,
+  errors,
   onToggle,
   onAssign,
 }: {
@@ -178,6 +191,7 @@ function OwnerGroup({
   users: AppUser[];
   currentUserId?: string;
   actionItemUserMap: Record<string, string>;
+  errors: Record<number, string>;
   onToggle: (i: number) => void;
   onAssign: (i: number, uid: string | null) => void;
 }) {
@@ -211,12 +225,14 @@ function OwnerGroup({
             key={i}
             index={i}
             text={actionItems[i]}
+            ownerName={ownerName !== "Unassigned" ? ownerName : null}
             assignedUserId={assignedIds[i]}
             done={completed.has(i)}
             pendingToggle={pendingToggle.has(i)}
             pendingAssign={pendingAssign.has(i)}
             users={users}
             currentUserId={currentUserId}
+            error={errors[i]}
             onToggle={onToggle}
             onAssign={onAssign}
           />
@@ -229,23 +245,29 @@ function OwnerGroup({
 function ActionItem({
   index,
   text,
+  ownerName,
   assignedUserId,
   done,
   pendingToggle,
   pendingAssign,
   users,
   currentUserId,
+  error,
   onToggle,
   onAssign,
 }: {
   index: number;
   text: string;
+  /** Participant this item was assigned to on the call - null when unassigned. */
+  ownerName: string | null;
   assignedUserId: string | null;
   done: boolean;
   pendingToggle: boolean;
   pendingAssign: boolean;
   users: AppUser[];
   currentUserId?: string;
+  /** Last toggle/assign failure for this item, if any - shown instead of silently reverting. */
+  error?: string;
   onToggle: (i: number) => void;
   onAssign: (i: number, uid: string | null) => void;
 }) {
@@ -255,60 +277,64 @@ function ActionItem({
   const showDropdown = users.length > 0 || !!currentUserId;
 
   return (
-    <li className="flex min-w-0 items-start gap-2 text-sm">
-      {/* Checkbox */}
-      <button
-        onClick={() => onToggle(index)}
-        disabled={pendingToggle}
-        className="mt-0.5 shrink-0 disabled:opacity-50"
-        aria-label={done ? "Mark incomplete" : "Mark complete"}
-      >
-        <Icon
-          name={pendingToggle ? "Loader" : done ? "SquareCheck" : "Square"}
-          className={cn(
-            "h-4 w-4 transition-colors",
-            pendingToggle && "animate-spin",
-            done ? "text-neon" : "text-muted-2",
-          )}
-        />
-      </button>
-
-      {/* Task text */}
-      <span
-        className={cn(
-          "min-w-0 flex-1 break-words text-muted transition-opacity select-none",
-          done && "line-through opacity-50",
-        )}
-      >
-        {text}
-      </span>
-
-      {/* Assignee dropdown — visible when there are users to choose from */}
-      {showDropdown && (
-        <select
-          value={assignedUserId ?? ""}
-          onChange={(e) => onAssign(index, e.target.value || null)}
-          disabled={pendingAssign || done}
-          className={cn(
-            "ml-1 h-6 max-w-[130px] shrink-0 truncate rounded-[6px] border border-border",
-            "bg-surface-2 px-1.5 text-[11px] text-muted outline-none",
-            "focus:border-neon/50 disabled:opacity-50",
-            assignedUserId && "border-neon/30 text-neon",
-          )}
-          aria-label="Assign to user"
+    <li>
+      <div className="flex min-w-0 items-start gap-2 text-sm">
+        {/* Checkbox */}
+        <button
+          onClick={() => onToggle(index)}
+          disabled={pendingToggle}
+          className="mt-0.5 shrink-0 disabled:opacity-50"
+          aria-label={done ? "Mark incomplete" : "Mark complete"}
         >
-          <option value="">Unassigned</option>
-          {/* "Assign to me" shortcut when current user is not in the list */}
-          {currentUserId && !options.find((u) => u.uid === currentUserId) && (
-            <option value={currentUserId}>Assign to me</option>
+          <Icon
+            name={pendingToggle ? "Loader" : done ? "SquareCheck" : "Square"}
+            className={cn(
+              "h-4 w-4 transition-colors",
+              pendingToggle && "animate-spin",
+              done ? "text-neon" : "text-muted-2",
+            )}
+          />
+        </button>
+
+        {/* Task text */}
+        <span
+          className={cn(
+            "min-w-0 flex-1 break-words text-muted transition-opacity select-none",
+            done && "line-through opacity-50",
           )}
-          {options.map((u) => (
-            <option key={u.uid} value={u.uid}>
-              {u.uid === currentUserId ? `Me (${u.name ?? u.email})` : (u.name ?? u.email)}
-            </option>
-          ))}
-        </select>
-      )}
+        >
+          {ownerName && <span className="font-medium text-foreground">{ownerName}: </span>}
+          {text}
+        </span>
+
+        {/* Assignee dropdown - visible when there are users to choose from */}
+        {showDropdown && (
+          <select
+            value={assignedUserId ?? ""}
+            onChange={(e) => onAssign(index, e.target.value || null)}
+            disabled={pendingAssign || done}
+            className={cn(
+              "ml-1 h-6 max-w-[130px] shrink-0 truncate rounded-[6px] border border-border",
+              "bg-surface-2 px-1.5 text-[11px] text-muted outline-none",
+              "focus:border-neon/50 disabled:opacity-50",
+              assignedUserId && "border-neon/30 text-neon",
+            )}
+            aria-label="Assign to user"
+          >
+            <option value="">Unassigned</option>
+            {/* "Assign to me" shortcut when current user is not in the list */}
+            {currentUserId && !options.find((u) => u.uid === currentUserId) && (
+              <option value={currentUserId}>Assign to me</option>
+            )}
+            {options.map((u) => (
+              <option key={u.uid} value={u.uid}>
+                {u.uid === currentUserId ? `Me (${u.name ?? u.email})` : (u.name ?? u.email)}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+      {error && <p className="ml-6 mt-0.5 text-xs text-red-400">{error}</p>}
     </li>
   );
 }

@@ -1,10 +1,16 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { listClients, listLoginLogs } from "@/lib/data";
+import { listClients, listLoginLogs, listFeedbacks, getClientCredits } from "@/lib/data";
+import { listAllClientAgentFeedback, listClientAgents } from "@/lib/data-client-agents";
+import { availableCredits } from "@/lib/credits";
+import { LOW_CREDIT_THRESHOLD } from "@/lib/constants";
 import {
   getGlobalSnapshot,
   getClientSnapshot,
   getRangeStats,
+  getAllTimeAgentStats,
+  getAgentDrilldown,
   listRecentErrors,
   extractModelStats,
   fmtCost,
@@ -17,18 +23,47 @@ import {
 } from "@/lib/data-analytics";
 import { Card, CardTitle, Badge, EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { AnalyticsFilters } from "@/components/analytics-dashboard";
-import { relativeTime } from "@/lib/utils";
+import { AgentFeedbackHistoryTable, AnalyticsFilters, FeedbackTable } from "@/components/analytics-dashboard";
+import { relativeTime, cn } from "@/lib/utils";
+import type { ClientAgentFeedback } from "@/lib/types";
+
+interface LowCreditClient {
+  id: string;
+  name: string;
+  spendable: number;
+}
+
+/**
+ * Clients at or below LOW_CREDIT_THRESHOLD, lowest first. The client-facing
+ * wall says "ask your Karos team for a top-up" and the copilot repeats it under
+ * 20 - but the Karos team had no queue, notification or dashboard telling them
+ * who was asking (QA F117). SPENDABLE credits, so a client blocked by a weekly
+ * cap shows up too, not just an empty balance.
+ */
+async function lowCreditClients(
+  clients: Awaited<ReturnType<typeof listClients>>,
+): Promise<LowCreditClient[]> {
+  const rows = await Promise.all(
+    clients.map(async (c) => ({
+      id: c.id,
+      name: c.name,
+      spendable: availableCredits(await getClientCredits(c.id)),
+    })),
+  );
+  return rows
+    .filter((r) => r.spendable <= LOW_CREDIT_THRESHOLD)
+    .sort((a, b) => a.spendable - b.spendable);
+}
 
 export default async function AnalyticsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ clientId?: string; range?: string }>;
+  searchParams: Promise<{ clientId?: string; range?: string; agentKey?: string }>;
 }) {
   const user = await requireUser();
   if (user.role !== "KAROS_ADMIN") redirect("/dashboard");
 
-  const { clientId, range: rawRange } = await searchParams;
+  const { clientId, range: rawRange, agentKey } = await searchParams;
   const range = isValidRange(rawRange) ? rawRange : undefined;
   const since = range ? rangeToSince(range) : 0;
 
@@ -42,13 +77,24 @@ export default async function AnalyticsPage({
   let totalRuns = 0, totalErrors = 0;
   let modelStats: ModelStat[] = [];
   let agentStats: AgentStat[] = [];
+  let agentDisplayName: string | undefined;
+  // Two flags, not one: the all-time KPIs come from the O(1) snapshot doc and
+  // are EXACT, while the leaderboard beside them is always a capped scan. One
+  // shared flag would print "partial" over numbers that are complete, which is
+  // the same lie as printing nothing over numbers that aren't.
+  let kpisTruncated = false;
+  let leaderboardTruncated = false;
 
   if (range) {
-    const [rs, errs, clients, loginLogs] = await Promise.all([
+    const [rs, errs, clients, loginLogs, feedbacks, drilldown, agentFeedbackRows, umbrellas] = await Promise.all([
       getRangeStats({ since, clientId }),
       listRecentErrors({ clientId, since, limit: 20 }),
       listClients(),
       clientId ? Promise.resolve([]) : listLoginLogs({ since, limit: 500 }),
+      listFeedbacks(),
+      agentKey ? getAgentDrilldown({ agentKey, since, clientId }) : Promise.resolve(null),
+      listAllClientAgentFeedback(),
+      listClientAgents(),
     ]);
 
     totalCostUsd      = rs.totalCostUsd;
@@ -58,27 +104,54 @@ export default async function AnalyticsPage({
     totalErrors       = rs.totalErrors;
     modelStats        = rs.modelStats;
     agentStats        = rs.agentStats;
+    // Inside a range every figure on the page comes from the capped scan.
+    kpisTruncated = leaderboardTruncated = rs.truncated;
+
+    // Filter-on-click: the selected agent's own totals + model breakdown
+    // replace the headline KPIs/model table, while the leaderboard itself
+    // keeps showing every agent so the user can compare or switch.
+    if (agentKey && drilldown) {
+      totalCostUsd      = drilldown.totalCostUsd;
+      totalInputTokens  = drilldown.totalInputTokens;
+      totalOutputTokens = drilldown.totalOutputTokens;
+      totalRuns         = drilldown.totalRuns;
+      modelStats        = drilldown.modelStats;
+      agentDisplayName  = drilldown.agentDisplayName;
+      kpisTruncated     = drilldown.truncated;
+    } else if (agentKey) {
+      totalCostUsd = totalInputTokens = totalOutputTokens = totalRuns = 0;
+      modelStats = [];
+      agentDisplayName = agentStats.find((a) => a.agentKey === agentKey)?.agentDisplayName ?? "Selected agent";
+    }
 
     return renderPage({
-      rangeLabel, range, clientId, clients,
+      rangeLabel, range, clientId, clients, agentKey, agentDisplayName,
       totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
       modelStats, agentStats,
+    kpisTruncated, leaderboardTruncated,
       errors: errs,
       loginCount: loginLogs.length,
+      feedbacks,
+      agentFeedbackRows,
+      agentNames: Object.fromEntries(umbrellas.map((u) => [u.id, u.displayName])),
+      lowCredits: await lowCreditClients(clients),
     });
   }
 
-  // All-time: use O(1) snapshot + recent logs for leaderboard
-  const [snapshot, errors, usageLogs, clients, loginLogs] = await Promise.all([
-    clientId ? getClientSnapshot(clientId) : getGlobalSnapshot(),
-    listRecentErrors({ clientId, limit: 20 }),
-    // For leaderboard in all-time mode we still need recent usage logs
-    import("@/lib/data-analytics").then((m) =>
-      m.listRecentUsageLogs({ clientId, limit: 200 }),
-    ),
-    listClients(),
-    clientId ? Promise.resolve([]) : listLoginLogs({ limit: 500 }),
-  ]);
+  // All-time: use O(1) snapshot for global KPIs + a bounded raw-log scan for
+  // the agent leaderboard (the snapshot has no per-agent breakdown).
+  const [snapshot, errors, clients, loginLogs, feedbacks, allTimeAgentStats, drilldown, agentFeedbackRows, umbrellas] =
+    await Promise.all([
+      clientId ? getClientSnapshot(clientId) : getGlobalSnapshot(),
+      listRecentErrors({ clientId, limit: 20 }),
+      listClients(),
+      clientId ? Promise.resolve([]) : listLoginLogs({ limit: 500 }),
+      listFeedbacks(),
+      getAllTimeAgentStats({ clientId }),
+      agentKey ? getAgentDrilldown({ agentKey, since: 0, clientId }) : Promise.resolve(null),
+      listAllClientAgentFeedback(),
+      listClientAgents(),
+    ]);
 
   totalCostUsd      = snapshot.totalCostUsd;
   totalInputTokens  = snapshot.totalInputTokens;
@@ -86,23 +159,37 @@ export default async function AnalyticsPage({
   totalRuns         = snapshot.totalRuns;
   totalErrors       = snapshot.totalErrors;
   modelStats        = extractModelStats(snapshot);
+  agentStats        = allTimeAgentStats.stats;
+  // The snapshot is a real running aggregate, so the KPIs above are exact here;
+  // only the leaderboard's raw-log scan is bounded.
+  leaderboardTruncated = allTimeAgentStats.truncated;
 
-  // Build agent leaderboard from recent usage logs
-  const agentRunMap = new Map<string, AgentStat>();
-  for (const log of usageLogs) {
-    if (!log.agentId) continue;
-    const e = agentRunMap.get(log.agentId);
-    if (e) { e.runs++; e.costUsd += log.estimatedCostUsd; }
-    else agentRunMap.set(log.agentId, { agentId: log.agentId, agentName: log.agentName, runs: 1, costUsd: log.estimatedCostUsd });
+  if (agentKey && drilldown) {
+    totalCostUsd      = drilldown.totalCostUsd;
+    totalInputTokens  = drilldown.totalInputTokens;
+    totalOutputTokens = drilldown.totalOutputTokens;
+    totalRuns         = drilldown.totalRuns;
+    modelStats        = drilldown.modelStats;
+    agentDisplayName  = drilldown.agentDisplayName;
+    // Selecting an agent swaps the exact snapshot KPIs for capped scan figures.
+    kpisTruncated     = drilldown.truncated;
+  } else if (agentKey) {
+    totalCostUsd = totalInputTokens = totalOutputTokens = totalRuns = 0;
+    modelStats = [];
+    agentDisplayName = agentStats.find((a) => a.agentKey === agentKey)?.agentDisplayName ?? "Selected agent";
   }
-  agentStats = [...agentRunMap.values()].sort((a, b) => b.runs - a.runs);
 
   return renderPage({
-    rangeLabel, range, clientId, clients,
+    rangeLabel, range, clientId, clients, agentKey, agentDisplayName,
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
     modelStats, agentStats,
+    kpisTruncated, leaderboardTruncated,
     errors,
     loginCount: loginLogs.length,
+    feedbacks,
+    agentFeedbackRows,
+    agentNames: Object.fromEntries(umbrellas.map((u) => [u.id, u.displayName])),
+    lowCredits: await lowCreditClients(clients),
   });
 }
 
@@ -113,6 +200,8 @@ function renderPage(p: {
   range?: string;
   clientId?: string;
   clients: Awaited<ReturnType<typeof listClients>>;
+  agentKey?: string;
+  agentDisplayName?: string;
   totalCostUsd: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -120,14 +209,41 @@ function renderPage(p: {
   totalErrors: number;
   modelStats: ModelStat[];
   agentStats: AgentStat[];
+  /** The headline KPI figures are floors, not totals — their scan hit its cap. */
+  kpisTruncated: boolean;
+  /** The agent leaderboard ranks a partial scan. */
+  leaderboardTruncated: boolean;
   errors: Awaited<ReturnType<typeof listRecentErrors>>;
   loginCount: number;
+  feedbacks: Awaited<ReturnType<typeof listFeedbacks>>;
+  agentFeedbackRows: ClientAgentFeedback[];
+  /** clientAgentId → the umbrella's display name. */
+  agentNames: Record<string, string>;
+  lowCredits: LowCreditClient[];
 }) {
   const {
-    rangeLabel, range, clientId, clients,
+    rangeLabel, range, clientId, clients, agentKey, agentDisplayName,
     totalCostUsd, totalInputTokens, totalOutputTokens, totalRuns, totalErrors,
-    modelStats, agentStats, errors, loginCount,
+    modelStats, agentStats, kpisTruncated, leaderboardTruncated,
+    errors, loginCount, feedbacks, agentFeedbackRows, agentNames, lowCredits,
   } = p;
+
+  /** Build an /admin/analytics href preserving clientId/range, overriding agentKey. */
+  function analyticsHref(nextAgentKey?: string): string {
+    const params = new URLSearchParams();
+    if (clientId) params.set("clientId", clientId);
+    if (range) params.set("range", range);
+    if (nextAgentKey) params.set("agentKey", nextAgentKey);
+    const qs = params.toString();
+    return `/admin/analytics${qs ? `?${qs}` : ""}`;
+  }
+
+  const displayFeedbacks = clientId
+    ? feedbacks.filter((f) => f.clientId === clientId)
+    : feedbacks;
+  const displayAgentFeedbackRows = clientId
+    ? agentFeedbackRows.filter((r) => r.clientId === clientId)
+    : agentFeedbackRows;
 
   const errorRate =
     totalRuns > 0
@@ -168,7 +284,7 @@ function renderPage(p: {
         ]),
   ];
 
-  const maxAgentRuns = agentStats[0]?.runs ?? 1;
+  const maxAgentCost = Math.max(agentStats[0]?.costUsd ?? 0, 0.000001);
 
   return (
     <div className="space-y-8">
@@ -185,8 +301,24 @@ function renderPage(p: {
           clients={clients}
           currentClientId={clientId}
           currentRange={range}
+          currentAgentKey={agentKey}
         />
       </div>
+
+      {/* Active agent filter chip */}
+      {agentKey && (
+        <div className="flex items-center gap-1.5 rounded-full border border-neon/30 bg-neon-soft px-3 py-1 text-xs font-medium text-neon w-fit">
+          <Icon name="Bot" className="h-3.5 w-3.5" />
+          <span>Filtering by: {agentDisplayName ?? agentKey}</span>
+          <Link
+            href={analyticsHref(undefined)}
+            aria-label="Clear agent filter"
+            className="ml-1 rounded-full p-0.5 transition-colors hover:bg-neon/20"
+          >
+            <Icon name="X" className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+      )}
 
       {/* KPI cards */}
       <div className={`grid gap-4 sm:grid-cols-2 ${kpis.length === 5 ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
@@ -195,22 +327,74 @@ function renderPage(p: {
             <p className="text-xs font-medium uppercase tracking-widest text-muted">
               {k.label}
             </p>
-            <p className="font-mono text-3xl font-semibold tabular-nums">{k.value}</p>
+            {/* .stat-number: sans with tabular digits. DM Mono ships 400/500 only, so
+                font-semibold here was synthesising a bold the face does not have —
+                and a KPI figure is a number, which the type rule sets in Hanken
+                (globals.css §5). */}
+            <p className="stat-number text-3xl font-medium">{k.value}</p>
             <p className="text-xs text-muted-2">{k.sub}</p>
           </Card>
         ))}
       </div>
 
+      {/* A capped read that renders as a total is indistinguishable from a real
+          one, so say it out loud rather than quietly under-reporting spend. */}
+      {kpisTruncated && (
+        <p className="-mt-4 flex items-start gap-1.5 text-xs text-muted-2">
+          <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0 text-neon" />
+          <span>
+            Partial window. This range holds more logs than one read returns, so every
+            figure above is a lower bound, not a total.
+            {clientId
+              ? " A per-client range is cut from the newest logs across ALL clients before this client's are picked out, so their slice here can be far smaller than the cap suggests."
+              : " Pick a narrower range for exact figures."}
+          </span>
+        </p>
+      )}
+
+      {/* Clients low on credits - the agency's queue for the top-up the
+          client-facing wall tells them to ask for (QA F117). */}
+      {lowCredits.length > 0 && (
+        <Card>
+          <CardTitle className="mb-1">Clients low on credits</CardTitle>
+          <p className="mb-4 text-xs text-muted">
+            At or below {LOW_CREDIT_THRESHOLD} spendable credits. The point where the portal
+            starts telling them to ask you for a top-up.
+          </p>
+          <ul className="divide-y divide-border">
+            {lowCredits.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-3 py-2">
+                <Link
+                  href={`/clients/${c.id}/settings?tab=credits`}
+                  className="min-w-0 flex-1 truncate text-sm text-foreground transition-colors hover:text-neon"
+                >
+                  {c.name}
+                </Link>
+                <Badge tone={c.spendable === 0 ? "danger" : "warning"}>
+                  {c.spendable === 0 ? "Out of credits" : `${c.spendable} left`}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       {/* Two-column: model breakdown + agent leaderboard */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Model breakdown */}
         <Card>
-          <CardTitle className="mb-4">Model breakdown</CardTitle>
+          <CardTitle className="mb-4">
+            {agentKey ? `Model breakdown · ${agentDisplayName ?? "selected agent"}` : "Model breakdown"}
+          </CardTitle>
           {modelStats.length === 0 ? (
             <EmptyState
-              icon={<Icon name="BarChart2" className="h-5 w-5" />}
+              icon={<Icon name="ChartNoAxesColumn" className="h-5 w-5" />}
               title="No model usage"
-              description="No runs recorded in this period."
+              description={
+                agentKey
+                  ? "No runs recorded for this agent in this period."
+                  : "No runs recorded in this period."
+              }
             />
           ) : (
             <div className="overflow-x-auto">
@@ -254,7 +438,16 @@ function renderPage(p: {
 
         {/* Agent leaderboard */}
         <Card>
-          <CardTitle className="mb-4">Agent leaderboard</CardTitle>
+          <CardTitle className={leaderboardTruncated ? "mb-1" : "mb-4"}>Agent leaderboard</CardTitle>
+          {/* Ranking a partial scan doesn't just lower the numbers, it can
+              reorder them — an agent whose spend sits outside the window loses
+              more of its history than a noisier one inside it. */}
+          {leaderboardTruncated && (
+            <p className="mb-4 flex items-start gap-1.5 text-xs text-muted-2">
+              <Icon name="TriangleAlert" className="mt-px h-3.5 w-3.5 shrink-0 text-neon" />
+              <span>Ranked from the most recent logs only. Older spend is outside this scan, so the order can be off, not just the totals.</span>
+            </p>
+          )}
           {agentStats.length === 0 ? (
             <EmptyState
               icon={<Icon name="Bot" className="h-5 w-5" />}
@@ -262,30 +455,61 @@ function renderPage(p: {
               description="No agent executions recorded in this period."
             />
           ) : (
-            <ul className="space-y-3">
-              {agentStats.slice(0, 10).map((a, i) => (
-                <li key={a.agentId}>
-                  <div className="mb-1 flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-2">
-                      <span className="w-4 text-right text-muted-2">{i + 1}.</span>
-                      <span className="font-medium">{a.agentName}</span>
-                    </span>
-                    <span className="font-mono tabular-nums text-muted-2">
-                      {a.runs} run{a.runs === 1 ? "" : "s"} · {fmtCost(a.costUsd)}
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-                    <div
-                      className="h-full rounded-full bg-neon"
-                      style={{ width: `${(a.runs / maxAgentRuns) * 100}%` }}
-                    />
-                  </div>
-                </li>
-              ))}
+            <ul className="space-y-1.5">
+              {agentStats.slice(0, 10).map((a, i) => {
+                const isSelected = a.agentKey === agentKey;
+                return (
+                  <li key={a.agentKey}>
+                    <Link
+                      href={analyticsHref(isSelected ? undefined : a.agentKey)}
+                      className={cn(
+                        "block rounded-lg border px-2 py-1.5 transition-colors",
+                        isSelected
+                          ? "border-neon/40 bg-neon-soft"
+                          : "border-transparent hover:border-border hover:bg-surface-2/40",
+                      )}
+                    >
+                      <div className="mb-1 flex items-center justify-between text-xs">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="w-4 shrink-0 text-right text-muted-2">{i + 1}.</span>
+                          <span className={cn("truncate font-medium", isSelected && "text-neon")}>
+                            {a.agentDisplayName}
+                          </span>
+                        </span>
+                        <span className="shrink-0 font-mono tabular-nums text-muted-2">
+                          {a.runs} run{a.runs === 1 ? "" : "s"} · {fmtTokens(a.inputTokens + a.outputTokens)} · {fmtCost(a.costUsd)}
+                          {a.failedRuns > 0 && (
+                            <span className="ml-1.5 text-danger">
+                              · {a.failedRuns} failed{a.failedCostUsd > 0 ? ` · ${fmtCost(a.failedCostUsd)}` : ""}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+                        <div
+                          className="h-full rounded-full bg-neon"
+                          style={{ width: `${(a.costUsd / maxAgentCost) * 100}%` }}
+                        />
+                      </div>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Card>
       </div>
+
+      {/* Agent feedback (doc-correction log) */}
+      <Card>
+        <FeedbackTable feedbacks={displayFeedbacks} clients={clients} />
+      </Card>
+
+      {/* Agent feedback history (Phase 3 two-level client-agent feedback) -
+          distinct collection from the doc-correction table above. */}
+      <Card>
+        <AgentFeedbackHistoryTable rows={displayAgentFeedbackRows} clients={clients} agentNames={agentNames} />
+      </Card>
 
       {/* Error log feed */}
       <Card>
@@ -294,7 +518,7 @@ function renderPage(p: {
           <EmptyState
             icon={<Icon name="ShieldCheck" className="h-5 w-5" />}
             title="No errors recorded"
-            description="Clean run — no errors in this period."
+            description="Clean run, no errors in this period."
           />
         ) : (
           <ul className="divide-y divide-border">

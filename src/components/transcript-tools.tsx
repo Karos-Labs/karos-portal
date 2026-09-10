@@ -105,11 +105,11 @@ export function ManualIngestButton() {
         open={open}
         onClose={() => { setOpen(false); reset(); }}
         title="Ingest a transcript"
-        description="Paste a meeting transcript or import a Fireflies JSON export. Karos will summarise it and auto-route it to the matching client."
+        description="Paste a meeting transcript or import a Fireflies JSON export. Karos will summarize it and auto-route it to the matching client."
       >
         <div className="space-y-3">
           {/* Mode toggle */}
-          <div className="flex rounded-[8px] border border-border bg-surface-2 p-0.5">
+          <div className="flex rounded-md border border-border bg-surface-2 p-0.5">
             {(["text", "json"] as const).map((m) => (
               <button
                 key={m}
@@ -130,7 +130,7 @@ export function ManualIngestButton() {
                 <Input
                   value={form.title}
                   onChange={(e) => setForm((s) => ({ ...s, title: e.target.value }))}
-                  placeholder="Acme — kickoff call"
+                  placeholder="Acme: kickoff call"
                 />
               </div>
               <div>
@@ -164,7 +164,7 @@ export function ManualIngestButton() {
                 {jsonError && <p className="mt-1 text-xs text-danger">{jsonError}</p>}
               </div>
               {form.rawText && (
-                <div className="rounded-[8px] border border-neon/20 bg-neon-soft/20 p-3 text-xs text-muted">
+                <div className="rounded-md border border-neon/20 bg-neon-soft/20 p-3 text-xs text-muted">
                   <p className="font-medium text-neon">Parsed successfully</p>
                   {form.title && <p>Title: {form.title}</p>}
                   {form.participants && <p>Participants: {form.participants}</p>}
@@ -176,7 +176,7 @@ export function ManualIngestButton() {
 
           {error && <p className="text-xs text-danger">{error}</p>}
           <Button className="w-full" loading={loading} onClick={submit}>
-            {loading ? "Analysing…" : "Ingest & analyse"}
+            {loading ? "Analyzing…" : "Ingest & analyze"}
           </Button>
         </div>
       </Modal>
@@ -271,8 +271,8 @@ export function HideFromClientToggle({
     <button
       onClick={toggle}
       disabled={saving}
-      title={hidden ? "Currently hidden from clients — click to make visible" : "Visible to clients — click to hide"}
-      className={`flex h-9 items-center gap-2 rounded-[8px] border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
+      title={hidden ? "Currently hidden from clients. Click to make visible" : "Visible to clients. Click to hide"}
+      className={`flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-medium transition-colors disabled:opacity-50 ${
         hidden
           ? "border-warning/40 bg-warning/10 text-warning hover:bg-warning/20"
           : "border-border bg-surface-2 text-muted hover:border-neon/40 hover:text-foreground"
@@ -315,7 +315,7 @@ export function TranscriptSignalButton({
   if (done) {
     return (
       <div className="flex items-center gap-1.5 text-xs text-neon">
-        <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+        <Icon name="CircleCheck" className="h-3.5 w-3.5" />
         Sent to Intel
       </div>
     );

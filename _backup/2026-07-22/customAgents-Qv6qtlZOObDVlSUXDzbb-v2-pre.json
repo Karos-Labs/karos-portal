@@ -1,0 +1,22 @@
+{
+  "id": "Qv6qtlZOObDVlSUXDzbb",
+  "key": "karos-x-agent",
+  "name": "X Agent",
+  "description": "Per-client X Agent (client-facing name; same engine architecture as the LinkedIn Agent). Run once per client: it reverse-engineers the client's X AUDIENCE (who is listening, which accounts already win their attention, where the conversations happen), builds a VOICE PROFILE per managed account (founder or brand handle: earned claims, sampled diction, what this account can credibly say), derives 2-3 ORGANIC X post formats from the menu (single posts, threads, reply/quote engagement), and then EMITS per-client generator sub-skills (one per format) that draft on a schedule with full context of eve",
+  "icon": "Zap",
+  "color": "#A3E635",
+  "entrySkillDir": "products/live/x-agent",
+  "skillRoots": [],
+  "includeClientSkills": true,
+  "creditCost": null,
+  "enabled": true,
+  "source": {
+    "path": "products/live/x-agent",
+    "status": "ready",
+    "repoSha": "68ba5d4b795d5216a7dcbe51cd7b7262c8082153"
+  },
+  "createdBy": "7dhklKotGudLQgcyHHVrYKuKvEn2",
+  "createdAt": 1784290543686,
+  "instructions": "Run the X agent (products/live/x-agent/SKILL.md) as the PRODUCTION drafting\nengine for this client. Only fall back to the run-once setup flow if no client\nX foundation exists yet under clients/<slug>/skills/x-agent/.\n\nRead first, in this order:\n1. client_context/brief.md and every file in client_context/files/. The files\n   x-portal-intake.md, whats-new.json and takes--*.json are the portal's LIVE\n   client data (intake forms, drop boxes, per-account learning logs) and\n   OVERRIDE any older copies inside the repo (clients/<slug>/internal/x-agent/,\n   config.json x block) on any disagreement.\n2. The client's onboarding profile (clients/<slug>/profile/) and their emitted\n   X sub-skills (clients/<slug>/skills/x-agent/) — prefer emitted sub-skills\n   for production drafting.\n\nWhat to produce (default run = the full batch): on-voice DRAFTS across the\navenues for each account in the intake — the company page (build-in-public,\nknowledge/explainer, news-reaction, quote-comment, reply) and each seat (POV\nsingle, POV thread, news-reaction, quote-comment, reply). If the client request\nnames one account or a subset of avenues, produce exactly that subset. Every\nreactive post cites a real, current source, linked in the first reply. Pull\nlive X signal with the engine's xAI tools when XAI_API_KEY is present;\notherwise use WebSearch and record the degradation in internal/RUN.md.\n\nHard rules: draft-only — nothing posts and no posting credential exists.\nRespect each account's off-limits from the intake. A seat whose handle is\npending still drafts but cannot post or self-sample. Voice, pillars and cadence\nare built from the onboarding profile and each account's learning log — never\nask the client for them. Anti-duplication: no idea or phrasing reused across\naccounts, within the batch, or against the shared ledger.\n\nDeliverables under clients/<slug>/outputs/x-agent/<run-folder>/ with the\nclient/ vs internal/ split: client/DRAFTS.md (all drafts in per-account\nsections, sources linked, char counts) and internal/RUN.md (method, live\nsignal, gate checks, ledger notes).",
+  "updatedAt": 1784716053493
+}

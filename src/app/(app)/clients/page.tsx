@@ -1,15 +1,52 @@
-import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { listClients, listAssets, listJobs } from "@/lib/data";
-import { Card, Badge, EmptyState, PageHeader } from "@/components/ui";
+import { listClients, countAssetsForClients, listJobs, getClientCredits } from "@/lib/data";
+import { availableCredits } from "@/lib/credits";
+import { EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { CreateClientButton } from "@/components/create-client";
-import { initials } from "@/lib/utils";
+import { ClientsGrid, type ClientCardCounts } from "@/components/clients-grid";
 
 export default async function ClientsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const clients = await listClients(user.role === "KAROS_EMPLOYEE" ? { employeeId: user.uid } : undefined);
-  const [assets, jobs] = await Promise.all([listAssets(), listJobs()]);
+  const visibleClientIds = new Set(clients.map((c) => c.id));
+  const [assetCounts, jobs, creditsByClient] = await Promise.all([
+    // ONE aggregation per visible client, not every asset document in the
+    // database (review, 2026-09). Assets are the largest collection in the
+    // store and this page printed one number per card from a full scan of it.
+    countAssetsForClients([...visibleClientIds]),
+    listJobs(),
+    // Every credit denial tells the client to "ask your Karos team", but no
+    // staff surface showed a balance - the only credits control in the product
+    // was buried in one client's Settings page (QA F117). SPENDABLE, not raw
+    // balance: it is the number the charge transaction actually honours.
+    Promise.all(
+      clients.map(async (c) => [c.id, availableCredits(await getClientCredits(c.id))] as const),
+    ).then((entries) => Object.fromEntries(entries) as Record<string, number>),
+  ]);
+
+  // Reduced HERE, not in the browser: the grid used to receive every asset and
+  // every job in the database, serialized into the RSC payload, to print two
+  // numbers per card. lastRunAt backs the "most recent run" sort.
+  //
+  // Fenced to the VISIBLE clients, the same skip /jobs does (QA F37). The asset
+  // half is now a per-client count() (above); the job half still walks the jobs
+  // collection because `lastRunAt` needs each client's newest `createdAt`, and
+  // an ordered per-client query would need a composite index this project does
+  // not manage in code. Jobs are the smaller collection by an order of
+  // magnitude, so that is the scan worth keeping.
+  const counts: Record<string, ClientCardCounts> = {};
+  const bump = (clientId: string): ClientCardCounts =>
+    (counts[clientId] ??= { assets: 0, jobs: 0, lastRunAt: 0 });
+  for (const [clientId, assets] of Object.entries(assetCounts)) {
+    if (assets > 0) bump(clientId).assets = assets;
+  }
+  for (const job of jobs) {
+    if (!visibleClientIds.has(job.clientId)) continue;
+    const entry = bump(job.clientId);
+    entry.jobs++;
+    if (job.createdAt > entry.lastRunAt) entry.lastRunAt = job.createdAt;
+  }
 
   return (
     <>
@@ -23,41 +60,7 @@ export default async function ClientsPage() {
           action={<CreateClientButton />}
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {clients.map((c) => {
-            const assetCount = assets.filter((a) => a.clientId === c.id).length;
-            const jobCount = jobs.filter((j) => j.clientId === c.id).length;
-            return (
-              <Link key={c.id} href={`/clients/${c.id}`}>
-                <Card className="h-full hover:border-border-strong">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="flex h-11 w-11 items-center justify-center rounded-[12px] text-sm font-semibold"
-                        style={{ background: (c.accentColor ?? "#2dff9e") + "1f", color: c.accentColor ?? "#2dff9e" }}
-                      >
-                        {initials(c.name)}
-                      </div>
-                      <div>
-                        <p className="font-semibold">{c.name}</p>
-                        <p className="text-xs text-muted-2">{c.industry || c.website || "—"}</p>
-                      </div>
-                    </div>
-                    <Badge tone={c.status === "active" ? "neon" : "neutral"}>{c.status}</Badge>
-                  </div>
-                  <div className="mt-4 flex gap-4 text-xs text-muted">
-                    <span className="flex items-center gap-1">
-                      <Icon name="FolderOpen" className="h-3.5 w-3.5" /> {assetCount} assets
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Icon name="ListChecks" className="h-3.5 w-3.5" /> {jobCount} jobs
-                    </span>
-                  </div>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
+        <ClientsGrid clients={clients} counts={counts} credits={creditsByClient} />
       )}
     </>
   );

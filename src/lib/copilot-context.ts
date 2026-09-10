@@ -1,42 +1,54 @@
 import "server-only";
 
-import type { Agent, Asset, Client, ClientCompetitor, ClientContextDoc, ClientReport, Job } from "@/lib/types";
+import type { Asset, Client, ClientCompetitor, ClientContextDoc, ClientReport, Job } from "@/lib/types";
+import { effectiveDominantColors } from "@/lib/branding";
+import { assetTypeLabel } from "@/lib/asset-type-copy";
+import { contextDocLabel } from "@/lib/context-doc-copy";
+import { jobStatusLabel } from "@/lib/job-status-copy";
+import { clientCategoryValue } from "@/lib/utils";
 
 /* ── Shared helpers ──────────────────────────────────────────────────── */
 
-function roughAge(ts: number): string {
-  const secs = Math.floor((Date.now() - ts) / 1000);
-  if (secs < 60) return "just now";
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-const DONE_STATUSES = new Set<Asset["status"]>(["approved", "delivered", "published"]);
-
-const DOC_TYPE_LABELS: Record<string, string> = {
-  "brand-voice": "Brand Voice",
-  "market-strategy": "Market Strategy",
-  "competitor-analysis": "Competitor Analysis",
-  "product-information": "Product Information",
-  "branding-guidelines": "Branding Guidelines",
-  "client-guidelines": "Client Guidelines",
-  "action-plan": "Action Plan",
-};
+/*
+ * The doc-type name map used to be a private copy here, spelled in Title Case.
+ * It now comes from context-doc-copy.ts, because the same map is needed in
+ * PROSE a client reads (activity titles, credit-ledger reasons) and a second
+ * copy is how the two come apart. The names arrive sentence case, which is what
+ * the heading below wanted anyway: this text is read by the model, and the model
+ * paraphrases whatever case it is handed straight back to the client.
+ */
 
 export function buildCopilotSystemPrompt(
   client: Client,
   report: ClientReport | null,
   competitors: ClientCompetitor[],
-  agents: Agent[],
   jobs: Job[],
   assets: Asset[],
   contextDocs: ClientContextDoc[] = [],
+  /**
+   * `canUpdateBranding` mirrors the tool registry the route actually hands to the
+   * model. The branding tool is staff-only (copilot-tool-access.ts), and
+   * describing a tool a client session does not have just teaches the model to
+   * promise it.
+   *
+   * `viewerIsClient` is WHOSE VOCABULARY THIS PROMPT IS WRITTEN IN, and it is a
+   * separate question from capability on purpose.
+   *
+   * THE SYSTEM PROMPT IS PAYLOAD, NOT PLUMBING. Everything below is text the
+   * model reads and paraphrases back into the dock, so an interpolated enum here
+   * reaches a client as prose exactly the way an interpolated `asset.status` in a
+   * tool result did — one indirection further out, and with no render to gate.
+   * The block above literally instructs the model "Never show the client raw
+   * field names, database ids, or internal status codes" and then handed it
+   * `paused`, `review` and `instagram_post` to work from; an instruction the
+   * prompt itself breaks is the weakest kind of guarantee there is.
+   *
+   * Defaults to the SAFE answer (client) so a caller that forgets the flag
+   * withholds internal vocabulary rather than leaking it.
+   */
+  opts: { canUpdateBranding?: boolean; viewerIsClient?: boolean } = {},
 ): string {
+  const viewerIsClient = opts.viewerIsClient !== false;
   const today = new Date().toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
@@ -44,9 +56,34 @@ export function buildCopilotSystemPrompt(
   });
 
   const parts: string[] = [
-    `You are the AI Copilot for **${client.name}** — an intelligent account manager embedded in the Karos CMO platform.`,
+    // IDENTITY. Without this the model answers the question "what are you?"
+    // from its own pretraining and says "Claude" (or, on the Fast option,
+    // "Gemini") — which names Karos's vendor to a client and changes answer
+    // depending on which model happened to serve the turn. T-B3 made that a
+    // live inconsistency rather than a cosmetic one: the same product now
+    // runs on two vendors.
+    //
+    // Deliberately scoped to BRANDING, not to deception. It withholds the
+    // vendor; it does not instruct the model to deny being an AI, to claim to
+    // be a person, or to assert anything untrue about what it is. A client
+    // asking "am I talking to a human?" must still get a straight no.
+    `You are **karosAI**, the AI copilot built by Karos Labs, working as the embedded account manager for **${client.name}** inside the Karos CMO platform.`,
+    `Your name is karosAI. If someone asks who or what you are, say you are karosAI, Karos Labs' AI copilot for this account — do not name the underlying model, vendor, or provider that runs you, and do not answer with any other assistant's name. If pressed on which model powers you, say that is Karos Labs' infrastructure detail and offer to help with the account instead.`,
+    `Never claim to be a human being. If asked directly whether you are a person or an AI, say plainly that you are an AI. Withholding which vendor's model runs you is a branding decision; pretending not to be software is not, and is never acceptable.`,
     `You have complete visibility into this client's brand profile, competitor landscape, content history, and strategy documents.`,
     `Be concise, strategic, and specific. Never hallucinate data — only reference what is listed below. Today is ${today}.`,
+    "",
+    // The panel renders replies through the portal's document renderer, which
+    // supports exactly the marks listed here. Anything outside that set reached
+    // the client as literal characters — hash marks, table pipes, stray
+    // asterisks (QA F89) — and this prompt being written in Markdown is what
+    // taught the model to answer in it.
+    "## HOW TO WRITE YOUR REPLIES",
+    "Your replies are rendered in a narrow chat panel that supports only: **bold**, *italics*, `code`, hyphen bullets, numbered lists, and > blockquotes.",
+    "- Do NOT use ## or ### headings. For a multi-section answer, open each section with a short **bold label** on its own line.",
+    "- Do NOT use tables — a table is unreadable at this width. Use bullets instead.",
+    "- Sentence case, no title case. Keep paragraphs to two or three sentences.",
+    "- Never show the client raw field names, database ids, or internal status codes.",
     "",
   ];
 
@@ -54,10 +91,33 @@ export function buildCopilotSystemPrompt(
   parts.push("## CLIENT PROFILE");
   parts.push(`- **Name:** ${client.name}`);
   if (client.website) parts.push(`- **Website:** ${client.website}`);
-  if (client.industry) parts.push(`- **Industry:** ${client.industry}`);
+  // THE FIELD THE CLIENT CAN SEE AND CHANGE. This line used to read `industry`,
+  // which only staff could edit, so a client who set their own category watched
+  // the copilot brief itself on a value they had no way to reach. One field, one
+  // reader — the label stays "Industry" because that is the word the model
+  // reasons in, not a field name it is being shown.
+  const category = clientCategoryValue(client);
+  if (category) parts.push(`- **Industry:** ${category}`);
   if (client.description) parts.push(`- **Description:** ${client.description}`);
   if (client.contactEmail) parts.push(`- **Contact:** ${client.contactEmail}`);
-  parts.push(`- **Status:** ${client.status}`);
+  // DROPPED for a client session rather than relabelled, and that is the fix.
+  //
+  // `Client.status` is `"active" | "paused" | "archived"` — the ACCOUNT's
+  // lifecycle in our books, not a property of the client's marketing. There is
+  // no client-facing register for it and there should not be one: "paused" and
+  // "archived" are commercial states a client learns from their account manager,
+  // not from a chatbot that would relay them on request ("what's my account
+  // status?"), and "active" tells them nothing they cannot see by being logged
+  // in. Inventing a euphemism would only make the copilot fluent about something
+  // it has no business discussing.
+  //
+  // NOTE this is NOT the asset-status question. `assetStatusLabel` would be the
+  // wrong home for this union — different key domain, different reader, and the
+  // words do not overlap.
+  //
+  // Staff keep the real value: for them it is operational context, and the staff
+  // dock is where "why is this account paused" is a legitimate question.
+  if (!viewerIsClient) parts.push(`- **Status:** ${client.status}`);
   parts.push("");
 
   // Context documents (new pipeline — primary source of truth)
@@ -71,12 +131,21 @@ export function buildCopilotSystemPrompt(
       "Generated by the multi-agent research pipeline. These are the primary source of brand and strategy intelligence.",
       "",
     );
-    // Deduplicate: prefer internal tier when both exist for same docType
-    const seen = new Set<string>();
+    // Deduplicate per docType, actually preferring the internal tier. The old
+    // pass only claimed to: it kept the FIRST row seen, so which tier won was
+    // whatever order the data layer happened to return (QA F81). Callers may
+    // pre-filter by tier — the chat route hands a CLIENT_USER client-tier docs
+    // only — but this must be right on its own rather than lean on a filter in
+    // another file.
+    const byDocType = new Map<string, ClientContextDoc>();
     for (const doc of priorityDocs) {
-      if (seen.has(doc.docType)) continue;
-      seen.add(doc.docType);
-      const label = DOC_TYPE_LABELS[doc.docType] ?? doc.docType;
+      const kept = byDocType.get(doc.docType);
+      if (!kept || (kept.tier !== "internal" && doc.tier === "internal")) {
+        byDocType.set(doc.docType, doc);
+      }
+    }
+    for (const doc of byDocType.values()) {
+      const label = contextDocLabel(doc.docType);
       const tierLabel = doc.tier === "internal" ? "Internal" : "Client-facing";
       parts.push(`### ${label} [${tierLabel} · v${doc.version}]`);
       // Include up to 800 chars of content per doc (strip frontmatter)
@@ -125,19 +194,23 @@ export function buildCopilotSystemPrompt(
       if (c.overlap) meta.push(`overlap: ${c.overlap}`);
       if (c.url) meta.push(c.url);
       parts.push(`- ${meta.join(" · ")}`);
-      if (c.keyStrengths) parts.push(`  Strengths: ${c.keyStrengths}`);
-      if (c.keyWeaknesses) parts.push(`  Weaknesses: ${c.keyWeaknesses}`);
+      if (c.keyStrengths?.length) parts.push(`  Strengths: ${c.keyStrengths.join(", ")}`);
+      if (c.keyWeaknesses?.length) parts.push(`  Weaknesses: ${c.keyWeaknesses.join(", ")}`);
       if (c.positioning) parts.push(`  Positioning: ${c.positioning}`);
     }
     parts.push("");
   }
 
-  // Branding
+  // Branding — always use effectiveDominantColors() to support both legacy scalar fields
+  // and the new dominantColors[] array. Never read g.primaryAccent etc. directly here.
   const g = client.brandingGuidelines;
   if (g) {
     parts.push("## BRANDING GUIDELINES (Agent-Active)");
-    if (g.primaryColor) parts.push(`- **Primary Color:** ${g.primaryColor}`);
-    if (g.secondaryColor) parts.push(`- **Secondary/Accent Color:** ${g.secondaryColor}`);
+    const colors = effectiveDominantColors(g);
+    colors.forEach((c) => {
+      const label = c.role ? `Color ${c.dominanceRank} (${c.role})` : `Color ${c.dominanceRank}`;
+      parts.push(`- **${label}:** ${c.hex}`);
+    });
     if (g.fontHeading) parts.push(`- **Heading Font:** ${g.fontHeading}`);
     if (g.fontBody) parts.push(`- **Body Font:** ${g.fontBody}`);
     if (g.toneKeywords?.length) parts.push(`- **Tone Keywords:** ${g.toneKeywords.join(", ")}`);
@@ -145,22 +218,20 @@ export function buildCopilotSystemPrompt(
     parts.push("");
   }
 
-  // Active agents
-  const activeAgents = agents.filter((a) => a.isActive && !a.isSystem);
-  if (activeAgents.length > 0) {
-    parts.push("## ACTIVE AI AGENTS");
-    for (const a of activeAgents) {
-      const caps = a.capabilities?.length ? ` [${a.capabilities.join(", ")}]` : "";
-      parts.push(`- **${a.name}**: ${a.description ?? ""}${caps}`);
-    }
-    parts.push("");
-  }
-
   // Recent jobs
   if (jobs.length > 0) {
     parts.push("## RECENT JOB HISTORY");
     for (const j of jobs.slice(0, 10)) {
-      parts.push(`- ${j.agentName}: "${j.title}" — **${j.status}**`);
+      // RELABELLED, not dropped: run state is something a client legitimately
+      // reads — the same words JobStatusBadge already paints for them on the
+      // dashboard and every intake surface — so the content belongs here and only
+      // the vocabulary was wrong. `job-status-copy` is the register those badges
+      // read, asked here so the dock and the badge cannot say different words
+      // about the same run ("review" vs "In review").
+      //
+      // Not viewer-split, because that register is not: unlike a deliverable's
+      // publish status, a run's state reads the same to whoever is watching it.
+      parts.push(`- ${j.agentName}: "${j.title}" — **${jobStatusLabel(j.status)}**`);
     }
     parts.push("");
   }
@@ -171,142 +242,34 @@ export function buildCopilotSystemPrompt(
       acc[a.type] = (acc[a.type] ?? 0) + 1;
       return acc;
     }, {});
-    parts.push("## GENERATED ASSETS");
+    // RELABELLED: a client knowing they have twelve Instagram posts on file is
+    // the point of the block; being handed `instagram_post` is not. The register
+    // is the one client-home-overview's deliverable cards already read, so the
+    // dock and the cards name a kind of post the same way.
+    //
+    // The NOUN is viewer-split even though the type label is not: "asset" is
+    // internal vocabulary (staff say it, the §3 tools say "output" to clients),
+    // and this heading is prose the model paraphrases.
+    parts.push(viewerIsClient ? "## OUTPUTS PRODUCED SO FAR" : "## GENERATED ASSETS");
+    const noun = viewerIsClient ? "output" : "asset";
     for (const [type, count] of Object.entries(byType)) {
-      parts.push(`- ${type}: ${count} asset${count !== 1 ? "s" : ""}`);
+      parts.push(`- ${assetTypeLabel(type)}: ${count} ${noun}${count !== 1 ? "s" : ""}`);
     }
     parts.push("");
   }
 
-  parts.push(
-    "## TOOLS",
-    "You have two tools:",
-    "- **update_branding_guidelines** — updates brand colors, fonts, or tone keywords. Confirm the specific change with the user before calling.",
-    "- **send_support_email** — escalates issues to the Karos Labs team. Use when the user reports a problem.",
-  );
-
-  return parts.join("\n");
-}
-
-/* ── Agent-specific copilot prompt ──────────────────────────────────── */
-
-/**
- * Builds the system prompt for agent-mode chat: adopts the agent's persona,
- * injects numbered draft assets (referenced by ID for edit_draft targeting),
- * lists published outputs, recent runs, and describes all 4 available tools.
- */
-export function buildAgentCopilotSystemPrompt(
-  agent: Agent,
-  client: Client,
-  agentJobs: Job[],
-  agentAssets: Asset[],
-  contextDocs: ClientContextDoc[] = [],
-): string {
-  const today = new Date().toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-
-  const draftAssets = agentAssets.filter((a) => a.status === "draft");
-  const doneAssets = agentAssets.filter((a) => DONE_STATUSES.has(a.status));
-
-  const parts: string[] = [
-    `You are the AI Copilot for the **${agent.name}** agent — managing the content pipeline for **${client.name}**.`,
-    `Today is ${today}. Be concise, specific, and action-oriented. Never hallucinate content not listed below.`,
-    "",
-    "## AGENT PERSONA",
-    agent.systemPrompt,
-    "",
-    "## YOUR COPILOT CAPABILITIES",
-    "- Discuss, review, and improve existing drafts",
-    "- Trigger new content generation runs on request (/run, 'create new', 'generate', etc.)",
-    "- Edit a specific draft's content or status inline — confirm with the user before applying",
-    "- Answer questions about this agent's performance and output history",
-    "",
-  ];
-
-  // Input fields — model needs these to collect inputs before calling run_agent
-  if (agent.fields?.length > 0) {
-    parts.push("## INPUT FIELDS (collect before triggering a run)");
-    for (const f of agent.fields) {
-      const req = f.required ? " [required]" : " [optional]";
-      const def = f.defaultValue ? ` · default: "${f.defaultValue}"` : "";
-      const hint = f.placeholder ? ` · hint: ${f.placeholder}` : "";
-      parts.push(`- **${f.label}** (key: \`${f.key}\`)${req}${def}${hint}`);
-    }
-    parts.push("");
-  }
-
-  // Client context snapshot
-  parts.push(`## CLIENT: ${client.name}`);
-  if (client.website) parts.push(`Website: ${client.website}`);
-  if (client.industry) parts.push(`Industry: ${client.industry}`);
-  if (client.description) parts.push(`About: ${client.description}`);
-  const g = client.brandingGuidelines;
-  if (g) {
-    const bits: string[] = [];
-    if (g.primaryColor) bits.push(`Primary: ${g.primaryColor}`);
-    if (g.secondaryColor) bits.push(`Accent: ${g.secondaryColor}`);
-    if (g.toneKeywords?.length) bits.push(`Tone: ${g.toneKeywords.join(", ")}`);
-    if (bits.length) parts.push(`Brand: ${bits.join(" · ")}`);
-  }
-  parts.push("");
-
-  // Brand + product context docs (most relevant to content agents)
-  const relevantDocs = contextDocs
-    .filter((d) => ["brand-voice", "product-information", "branding-guidelines"].includes(d.docType))
-    .slice(0, 2);
-  for (const doc of relevantDocs) {
-    const label = DOC_TYPE_LABELS[doc.docType] ?? doc.docType;
-    const stripped = doc.content.replace(/^---[\s\S]*?---\n?/, "").trim();
-    parts.push(`### ${label}`);
-    parts.push(stripped.slice(0, 500) + (stripped.length > 500 ? "\n[…truncated]" : ""));
-    parts.push("");
-  }
-
-  // Draft assets — numbered so the user can say "fix draft #2"
-  parts.push(`## ACTIVE DRAFTS — ${draftAssets.length} AWAITING REVIEW`);
-  if (draftAssets.length === 0) {
-    parts.push("No drafts currently pending.");
+  parts.push("## TOOLS");
+  if (opts.canUpdateBranding) {
+    parts.push(
+      "- **update_branding_guidelines** — updates brand colors, fonts, or tone keywords. Confirm the specific change with the user before calling.",
+    );
   } else {
-    for (let i = 0; i < draftAssets.length; i++) {
-      const a = draftAssets[i];
-      const excerpt = a.content.slice(0, 300);
-      parts.push(
-        `\n**Draft #${i + 1}** — asset ID: \`${a.id}\``,
-        `Title: ${a.title}`,
-        `Content: ${excerpt}${a.content.length > 300 ? "…" : ""}`,
-        `Created: ${roughAge(a.createdAt)}`,
-      );
-    }
+    parts.push(
+      "- You cannot change this client's branding guidelines yourself. If they ask, point them at the brand panel in the left rail (the pencil beside Brand colors), or offer to escalate.",
+    );
   }
-  parts.push("");
-
-  // Published / done assets (read-only history)
-  if (doneAssets.length > 0) {
-    parts.push(`## PUBLISHED OUTPUTS (${doneAssets.length} total)`);
-    for (const a of doneAssets.slice(0, 5)) {
-      parts.push(`- [${a.status}] ${a.title} — ${roughAge(a.createdAt)}`);
-    }
-    parts.push("");
-  }
-
-  // Recent runs
-  if (agentJobs.length > 0) {
-    parts.push(`## RECENT RUNS (${agentJobs.length} total)`);
-    for (const j of agentJobs.slice(0, 5)) {
-      parts.push(`- ${j.title} — **${j.status}** (${roughAge(j.createdAt)})`);
-    }
-    parts.push("");
-  }
-
   parts.push(
-    "## TOOLS",
-    "- **run_agent** — start a new generation run. Collect required field values from the user first; apply defaults for optional fields. Confirm before launching.",
-    "- **edit_draft** — update a draft's content or status. Reference drafts by their asset ID above. Always confirm the exact change with the user before calling.",
-    "- **update_branding_guidelines** — update brand colors, fonts, or tone keywords. Confirm before calling.",
-    "- **send_support_email** — escalate issues to the Karos Labs team.",
+    "- **send_support_email** — escalates issues to the Karos Labs team. Use when the user reports a problem.",
   );
 
   return parts.join("\n");

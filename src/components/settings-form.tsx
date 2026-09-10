@@ -4,9 +4,29 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardTitle, Button, Input, Label, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { cn, initials } from "@/lib/utils";
+import { AvatarUploader } from "@/components/avatar-uploader";
+import { ResumeUploader } from "@/components/resume-uploader";
 import { updateUserProfileAction, updatePasswordAction } from "@/lib/actions";
 import type { AppUser, Role } from "@/lib/types";
+
+/**
+ * THE TWO ACCOUNT PANELS (AF-2).
+ *
+ * These used to be halves of a `SettingsForm` that owned its own page, its own
+ * identity header and its own tab switcher — the second tab strip in a product
+ * with one settings page. Both are now mounted as ordinary tabs by whichever
+ * settings surface belongs to the viewer (see lib/account-settings-tabs.ts), so
+ * what is left here is the panels themselves and nothing about where they sit.
+ *
+ * The identity header went with the wrapper rather than moving into a panel: it
+ * was an avatar, a name and an email stacked directly above the avatar
+ * uploader, the name field and the email field that say the same three things
+ * and can also edit them.
+ *
+ * `max-w-2xl` without `mx-auto` — these are forms, they want a readable column,
+ * and centring one under a left-aligned tab strip reads as a layout bug.
+ */
+const PANEL = "max-w-2xl space-y-5";
 
 /* ── Inline brand SVGs (no external deps needed) ─────────────────────── */
 
@@ -21,14 +41,6 @@ function GoogleMark() {
   );
 }
 
-function AppleMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="shrink-0 text-foreground">
-      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701z" />
-    </svg>
-  );
-}
-
 /* ── Shared helpers ───────────────────────────────────────────────────── */
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -37,42 +49,9 @@ const ROLE_LABEL: Record<Role, string> = {
   CLIENT_USER: "Client",
 };
 
-type Tab = "profile" | "security";
+/* ── Profile information panel ────────────────────────────────────────── */
 
-function Avatar({
-  photoURL,
-  name,
-  size = "lg",
-}: {
-  photoURL?: string | null;
-  name: string;
-  size?: "sm" | "lg";
-}) {
-  const dim = size === "lg" ? "h-20 w-20 text-2xl" : "h-14 w-14 text-lg";
-  if (photoURL) {
-    return (
-      <img
-        src={photoURL}
-        alt={name}
-        className={cn("rounded-full object-cover ring-2 ring-border", dim)}
-      />
-    );
-  }
-  return (
-    <div
-      className={cn(
-        "flex shrink-0 items-center justify-center rounded-full bg-surface-3 font-semibold text-neon ring-2 ring-border",
-        dim,
-      )}
-    >
-      {initials(name)}
-    </div>
-  );
-}
-
-/* ── Profile tab ──────────────────────────────────────────────────────── */
-
-function ProfileTab({
+export function AccountProfilePanel({
   user,
   clientName,
 }: {
@@ -82,11 +61,16 @@ function ProfileTab({
   const router = useRouter();
   const [name, setName] = useState(user.name);
   const [savedName, setSavedName] = useState(user.name);
+  const [phone, setPhone] = useState(user.phone ?? "");
+  const [savedPhone, setSavedPhone] = useState(user.phone ?? "");
+  const [photoURL, setPhotoURL] = useState<string | null>(user.photoURL ?? null);
+  const [resumeUrl, setResumeUrl] = useState<string | null>(user.resumeUrl ?? null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [isPending, startTransition] = useTransition();
 
-  const dirty = name.trim() !== savedName.trim() && name.trim().length > 0;
+  const dirty =
+    (name.trim() !== savedName.trim() && name.trim().length > 0) || phone.trim() !== savedPhone.trim();
 
   function save(e: React.FormEvent) {
     e.preventDefault();
@@ -94,8 +78,9 @@ function ProfileTab({
     setSuccess(false);
     startTransition(async () => {
       try {
-        await updateUserProfileAction(name);
+        await updateUserProfileAction(name, phone);
         setSavedName(name.trim());
+        setSavedPhone(phone.trim());
         setSuccess(true);
         router.refresh();
         setTimeout(() => setSuccess(false), 3500);
@@ -106,42 +91,46 @@ function ProfileTab({
   }
 
   return (
-    <div className="space-y-5">
+    <div className={PANEL}>
       {/* Avatar card */}
       <Card>
-        <CardTitle className="mb-4">Profile Picture</CardTitle>
-        <div className="flex items-center gap-5">
-          <Avatar photoURL={user.photoURL} name={user.name} size="lg" />
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-foreground">{savedName}</p>
-            <p className="text-xs text-muted-2">{user.email}</p>
-            {user.photoURL ? (
-              <p className="mt-2 text-[11px] text-muted-2">
-                Synced from your sign-in provider.
-              </p>
-            ) : (
-              <p className="mt-2 text-[11px] text-muted-2">
-                Avatar shows your initials.
-              </p>
-            )}
-          </div>
-        </div>
+        <CardTitle className="mb-4">Profile picture</CardTitle>
+        <AvatarUploader
+          name={savedName}
+          value={photoURL}
+          onChange={(url) => {
+            setPhotoURL(url);
+            router.refresh();
+          }}
+        />
       </Card>
 
       {/* Editable fields */}
       <Card>
-        <CardTitle className="mb-4">Personal Information</CardTitle>
+        <CardTitle className="mb-4">Personal information</CardTitle>
         <form onSubmit={save} className="space-y-4">
-          <div>
-            <Label htmlFor="settings-name">Full name</Label>
-            <Input
-              id="settings-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Your name"
-              autoComplete="name"
-              required
-            />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="settings-name">Full name</Label>
+              <Input
+                id="settings-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your name"
+                autoComplete="name"
+                required
+              />
+            </div>
+            <div>
+              <Label htmlFor="settings-phone">Phone (optional)</Label>
+              <Input
+                id="settings-phone"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+1 555 000 0000"
+                autoComplete="tel"
+              />
+            </div>
           </div>
           <div>
             <Label htmlFor="settings-email">Email address</Label>
@@ -160,7 +149,7 @@ function ProfileTab({
           {error && <p className="text-xs text-danger">{error}</p>}
           {success && (
             <p className="flex items-center gap-1.5 text-xs text-neon">
-              <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+              <Icon name="CircleCheck" className="h-3.5 w-3.5" />
               Profile updated.
             </p>
           )}
@@ -175,9 +164,18 @@ function ProfileTab({
         </form>
       </Card>
 
-      {/* Account metadata — read-only */}
+      {/* Resume / CV - powers the LinkedIn advocacy voice */}
       <Card>
-        <CardTitle className="mb-4">Account Details</CardTitle>
+        <CardTitle className="mb-1">Resume / CV</CardTitle>
+        <p className="mb-3 text-xs text-muted-2">
+          Stored for your Karos team. They use it when writing your LinkedIn advocacy posts.
+        </p>
+        <ResumeUploader value={resumeUrl} onChange={setResumeUrl} />
+      </Card>
+
+      {/* Account metadata - read-only */}
+      <Card>
+        <CardTitle className="mb-4">Account details</CardTitle>
         <dl className="space-y-3">
           <div className="flex items-center justify-between">
             <dt className="text-sm text-muted">Role</dt>
@@ -208,22 +206,39 @@ function ProfileTab({
   );
 }
 
-/* ── Security tab ─────────────────────────────────────────────────────── */
+/* ── Account security panel ───────────────────────────────────────────── */
 
-const PROVIDER_META: Record<string, { label: string; sub: string; mark: React.ReactNode }> = {
+/**
+ * `sub` is a NODE rather than a string since the flow audit (2026-09, R17):
+ * this row is the whole of what a Google-only account is told about changing
+ * its password, and it named `myaccount.google.com` as plain text — the one
+ * remedy the panel offers, spelled out for the reader to retype. It is a link
+ * now. `rel="noopener noreferrer"` because it opens a credential surface in a
+ * new tab, and `target="_blank"` because losing the portal's own page mid-way
+ * through an account change is not an improvement.
+ */
+const PROVIDER_META: Record<string, { label: string; sub: React.ReactNode; mark: React.ReactNode }> = {
   "google.com": {
     label: "Signed in via Google",
-    sub: "Your credentials are managed by Google. Visit myaccount.google.com to change your password.",
+    sub: (
+      <>
+        Your credentials are managed by Google. Visit{" "}
+        <a
+          href="https://myaccount.google.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline hover:text-foreground"
+        >
+          myaccount.google.com
+        </a>{" "}
+        to change your password.
+      </>
+    ),
     mark: <GoogleMark />,
-  },
-  "apple.com": {
-    label: "Signed in via Apple",
-    sub: "Your credentials are managed by Apple ID. Manage them in your Apple account settings.",
-    mark: <AppleMark />,
   },
 };
 
-function SecurityTab({ providers }: { providers: string[] }) {
+export function AccountSecurityPanel({ providers }: { providers: string[] }) {
   const hasPassword = providers.includes("password");
   const socialProviders = providers.filter((p) => p !== "password");
 
@@ -261,10 +276,10 @@ function SecurityTab({ providers }: { providers: string[] }) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className={PANEL}>
       {/* Auth method overview */}
       <Card>
-        <CardTitle className="mb-4">Authentication Method</CardTitle>
+        <CardTitle className="mb-4">Authentication method</CardTitle>
         <div className="space-y-3">
           {socialProviders.map((pid) => {
             const meta = PROVIDER_META[pid];
@@ -272,7 +287,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
             return (
               <div
                 key={pid}
-                className="flex items-center gap-4 rounded-[10px] border border-border bg-surface-2 px-4 py-3"
+                className="flex items-center gap-4 rounded-md border border-border bg-surface-2 px-4 py-3"
               >
                 {meta.mark}
                 <div className="min-w-0 flex-1">
@@ -285,7 +300,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
           })}
 
           {hasPassword && (
-            <div className="flex items-center gap-4 rounded-[10px] border border-border bg-surface-2 px-4 py-3">
+            <div className="flex items-center gap-4 rounded-md border border-border bg-surface-2 px-4 py-3">
               <Icon name="Mail" className="h-5 w-5 shrink-0 text-muted" />
               <div>
                 <p className="text-sm font-medium text-foreground">Email &amp; password</p>
@@ -296,10 +311,10 @@ function SecurityTab({ providers }: { providers: string[] }) {
         </div>
       </Card>
 
-      {/* Password change — only for email/password accounts */}
+      {/* Password change - only for email/password accounts */}
       {hasPassword && (
         <Card>
-          <CardTitle className="mb-4">Change Password</CardTitle>
+          <CardTitle className="mb-4">Change password</CardTitle>
           <form onSubmit={savePassword} className="space-y-4">
             <div>
               <Label htmlFor="pw-current">Current password</Label>
@@ -342,7 +357,7 @@ function SecurityTab({ providers }: { providers: string[] }) {
             {error && <p className="text-xs text-danger">{error}</p>}
             {success && (
               <p className="flex items-center gap-1.5 text-xs text-neon">
-                <Icon name="CheckCircle" className="h-3.5 w-3.5" />
+                <Icon name="CircleCheck" className="h-3.5 w-3.5" />
                 Password updated successfully.
               </p>
             )}
@@ -357,57 +372,3 @@ function SecurityTab({ providers }: { providers: string[] }) {
   );
 }
 
-/* ── Root export ──────────────────────────────────────────────────────── */
-
-export function SettingsForm({
-  user,
-  providers,
-  clientName,
-}: {
-  user: AppUser;
-  providers: string[];
-  clientName: string | null;
-}) {
-  const [tab, setTab] = useState<Tab>("profile");
-
-  return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      {/* Page header */}
-      <div className="flex items-center gap-4">
-        <Avatar photoURL={user.photoURL} name={user.name} size="sm" />
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{user.name}</h1>
-          <p className="text-sm text-muted">{user.email}</p>
-        </div>
-      </div>
-
-      {/* Tab switcher */}
-      <div className="flex gap-1 rounded-[12px] border border-border bg-surface-2 p-1">
-        {(
-          [
-            { id: "profile", label: "Profile Information", icon: "User" },
-            { id: "security", label: "Account Security", icon: "Shield" },
-          ] as { id: Tab; label: string; icon: string }[]
-        ).map(({ id, label, icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={cn(
-              "flex flex-1 items-center justify-center gap-2 rounded-[8px] py-2.5 text-sm font-medium transition-colors",
-              tab === id
-                ? "bg-surface text-foreground shadow-sm"
-                : "text-muted hover:text-foreground",
-            )}
-          >
-            <Icon name={icon} className="h-4 w-4" />
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === "profile" && <ProfileTab user={user} clientName={clientName} />}
-      {tab === "security" && <SecurityTab providers={providers} />}
-    </div>
-  );
-}

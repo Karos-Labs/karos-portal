@@ -1,16 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
-  getRedirectResult,
+  sendEmailVerification,
+  GoogleAuthProvider,
 } from "firebase/auth";
-import { auth, googleProvider, appleProvider } from "@/lib/firebase/client";
+import { auth, googleAuthProvider } from "@/lib/firebase/client";
+import { saveGoogleOAuthTokenAction } from "@/lib/actions";
 import { Button, Input, Label } from "@/components/ui";
-import { Icon } from "@/components/icon";
 
 /* ── SVG brand logos ─────────────────────────────────────────────── */
 
@@ -25,14 +25,6 @@ function GoogleLogo() {
   );
 }
 
-function AppleLogo() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="shrink-0">
-      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701z" />
-    </svg>
-  );
-}
-
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
 function routeAfterAuth(role: string | null, clientId: string | null): string {
@@ -43,14 +35,16 @@ function routeAfterAuth(role: string | null, clientId: string | null): string {
 function friendly(err: unknown): string {
   const code = (err as { code?: string })?.code ?? "";
   const map: Record<string, string> = {
-    "auth/invalid-credential":      "Incorrect email or password.",
-    "auth/user-not-found":          "No account with that email.",
-    "auth/wrong-password":          "Incorrect password.",
-    "auth/too-many-requests":       "Too many attempts — wait a moment and try again.",
-    "auth/popup-closed-by-user":    "Sign-in cancelled.",
-    "auth/popup-blocked":           "Popup blocked — allow popups for this site and try again.",
-    "auth/cancelled-popup-request": "",
-    "auth/invalid-api-key":         "Firebase isn't configured. Add your keys to .env.local.",
+    "auth/invalid-credential":                   "Incorrect email or password.",
+    "auth/user-not-found":                       "No account with that email.",
+    "auth/wrong-password":                       "Incorrect password.",
+    "auth/too-many-requests":                    "Too many attempts. Wait a moment and try again.",
+    "auth/popup-closed-by-user":                 "Sign-in cancelled.",
+    "auth/popup-blocked":                        "Popup blocked. Allow popups for this site and try again.",
+    "auth/cancelled-popup-request":              "",
+    "auth/invalid-api-key":                      "Firebase isn't configured. Add your keys to .env.local.",
+    "auth/unauthorized-domain":                  "This domain isn't authorised for Google sign-in. Add it to Firebase Console → Authentication → Authorised Domains.",
+    "auth/account-exists-with-different-credential": "An account with this email already exists. Try signing in with email and password.",
   };
   return map[code] ?? (err instanceof Error ? err.message : "Something went wrong.");
 }
@@ -58,48 +52,57 @@ function friendly(err: unknown): string {
 /* ── Page ────────────────────────────────────────────────────────── */
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<"email" | "google" | "apple" | null>(null);
+  const [loading, setLoading] = useState<"email" | "google" | null>(null);
+  // Set when the account exists but its email is unverified. The account stays
+  // signed in on the client (no server session cookie is minted) so we can offer
+  // a "resend verification" action.
+  const [needsVerify, setNeedsVerify] = useState(false);
+  const [resent, setResent] = useState(false);
 
-  // Catch redirect-based auth results (e.g. Apple on some browsers/platforms).
-  useEffect(() => {
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result) establishSession();
-      })
-      .catch((err) => {
-        const msg = friendly(err);
-        if (msg) setError(msg);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  type SessionResult =
+    | { needsEmailVerification: true }
+    | { needsEmailVerification: false; role: string; clientId: string | null; disabled: boolean };
 
-  async function establishSession() {
+  // Posts the Firebase ID token to the session endpoint. Returns the server's
+  // decision: the account needs email verification, or the session was accepted
+  // with a role/clientId. Does NOT navigate - callers decide when.
+  async function establishSession(): Promise<SessionResult> {
     const idToken = await auth.currentUser!.getIdToken(true);
     const res = await fetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ idToken }), // no intent = login flow
+      body: JSON.stringify({ idToken }),
     });
-    if (!res.ok) {
-      const j = await res.json().catch(() => ({}));
-      throw new Error(j.error || "Could not establish session.");
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403 && data.needsEmailVerification) {
+      return { needsEmailVerification: true };
     }
-    const { role, clientId, disabled } = await res.json();
-    router.push(disabled ? "/pending" : routeAfterAuth(role, clientId));
-    router.refresh();
+    if (!res.ok) {
+      throw new Error(data.error || "Could not establish session.");
+    }
+    return { needsEmailVerification: false, ...data };
   }
 
   async function handleEmail(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setNeedsVerify(false);
     setLoading("email");
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      await establishSession();
+      const result = await establishSession();
+      if (result.needsEmailVerification) {
+        setNeedsVerify(true);
+        setError("Please verify your email before logging in.");
+        setLoading(null);
+        return;
+      }
+      window.location.replace(
+        result.disabled ? "/pending" : routeAfterAuth(result.role, result.clientId),
+      );
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
@@ -107,16 +110,58 @@ export default function LoginPage() {
     }
   }
 
-  async function handleSocial(provider: "google" | "apple") {
+  async function handleGoogle() {
     setError(null);
-    setLoading(provider);
+    setNeedsVerify(false);
+    setLoading("google");
     try {
-      await signInWithPopup(auth, provider === "google" ? googleProvider : appleProvider);
-      await establishSession();
+      // googleAuthProvider uses the standard implicit-grant flow (no offline access,
+      // no Gmail scope). This is intentional: access_type:"offline" forces a code-grant
+      // response that Firebase's popup handler cannot process, causing a silent hang.
+      const result = await signInWithPopup(auth, googleAuthProvider);
+      const googleAccessToken =
+        GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? null;
+
+      const session = await establishSession();
+      if (session.needsEmailVerification) {
+        setNeedsVerify(true);
+        setError("Please verify your email before logging in.");
+        return;
+      }
+
+      // Save the Google access token before navigating - if the browser navigates
+      // first, the in-flight server-action fetch can be aborted.
+      if (googleAccessToken) {
+        // Non-blocking: a failed token save shouldn't block login, but it must
+        // not vanish silently - otherwise Google-gated features appear "not
+        // connected" with no clue why. Log it so it's diagnosable.
+        const saved = await saveGoogleOAuthTokenAction(googleAccessToken).catch(
+          (e) => ({ ok: false as const, error: e instanceof Error ? e.message : "save failed" }),
+        );
+        if (!saved.ok) {
+          console.warn("[login] Google token save failed:", saved.error);
+        }
+      }
+
+      window.location.replace(
+        session.disabled ? "/pending" : routeAfterAuth(session.role, session.clientId),
+      );
     } catch (err) {
       const msg = friendly(err);
       if (msg) setError(msg);
+    } finally {
       setLoading(null);
+    }
+  }
+
+  async function handleResend() {
+    if (!auth.currentUser) return;
+    try {
+      await sendEmailVerification(auth.currentUser);
+      setResent(true);
+    } catch (err) {
+      const msg = friendly(err);
+      if (msg) setError(msg);
     }
   }
 
@@ -126,15 +171,17 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm animate-fade-up">
 
-        {/* Logo mark */}
+        {/* Wordmark lockup - head disc + Spectral (brand §2.2) */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-neon-soft neon-glow">
-            <Icon name="Sparkles" className="h-6 w-6 text-neon" />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Karos<span className="neon-text">CMO</span>
-          </h1>
-          <p className="mt-1 text-sm text-muted">Welcome back.</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/kairos-head-disc-dark.svg"
+            alt=""
+            className="mx-auto mb-4 h-12 w-12 rounded-full shadow-[inset_0_0_0_1px_var(--border)]"
+          />
+          <p className="eyebrow mb-2">Your AI CMO</p>
+          <h1 className="text-2xl">Karos Labs</h1>
+          <p className="mt-1.5 text-sm text-muted">Welcome back.</p>
         </div>
 
         <div className="card-grad rounded-[var(--radius)] border border-border p-6 space-y-4">
@@ -189,28 +236,34 @@ export default function LoginPage() {
             <Button
               variant="subtle"
               className="w-full"
-              onClick={() => handleSocial("google")}
+              onClick={handleGoogle}
               loading={loading === "google"}
               disabled={busy}
             >
               <GoogleLogo />
               Sign in with Google
             </Button>
-
-            <div title="Apple Sign-In coming soon">
-              <Button
-                variant="subtle"
-                className="w-full opacity-50 cursor-not-allowed"
-                disabled
-              >
-                <AppleLogo />
-                Sign in with Apple
-                <span className="ml-auto text-[10px] font-normal tracking-wide text-muted-2">
-                  Soon
-                </span>
-              </Button>
-            </div>
           </div>
+
+          {/* Unverified email - offer to resend the verification link */}
+          {needsVerify && (
+            <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-center">
+              <p className="text-[11px] text-muted">
+                We sent a verification link to your inbox. Verify your email, then sign in again.
+              </p>
+              {resent ? (
+                <p className="mt-1.5 text-[11px] text-neon">Verification email sent.</p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  className="mt-1.5 text-[11px] text-neon underline-offset-2 hover:underline"
+                >
+                  Resend verification email
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <p className="mt-5 text-center text-[11px] text-muted-2">

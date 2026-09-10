@@ -2,16 +2,16 @@ import { describe, it, expect } from "vitest";
 import { formatDate, formatDateTime, relativeTime, initials, domainFromEmail } from "../utils";
 
 describe("formatDate", () => {
-  it("returns em-dash for null", () => {
-    expect(formatDate(null)).toBe("—");
+  it("returns a dash for null", () => {
+    expect(formatDate(null)).toBe("-");
   });
 
-  it("returns em-dash for undefined", () => {
-    expect(formatDate(undefined)).toBe("—");
+  it("returns a dash for undefined", () => {
+    expect(formatDate(undefined)).toBe("-");
   });
 
-  it("returns em-dash for an invalid date string", () => {
-    expect(formatDate("not-a-date")).toBe("—");
+  it("returns a dash for an invalid date string", () => {
+    expect(formatDate("not-a-date")).toBe("-");
   });
 
   it("formats a valid epoch millis timestamp", () => {
@@ -34,16 +34,16 @@ describe("formatDate", () => {
 });
 
 describe("formatDateTime", () => {
-  it("returns em-dash for null", () => {
-    expect(formatDateTime(null)).toBe("—");
+  it("returns a dash for null", () => {
+    expect(formatDateTime(null)).toBe("-");
   });
 
-  it("returns em-dash for undefined", () => {
-    expect(formatDateTime(undefined)).toBe("—");
+  it("returns a dash for undefined", () => {
+    expect(formatDateTime(undefined)).toBe("-");
   });
 
-  it("returns em-dash for NaN date", () => {
-    expect(formatDateTime("garbage")).toBe("—");
+  it("returns a dash for NaN date", () => {
+    expect(formatDateTime("garbage")).toBe("-");
   });
 
   it("includes month and time components for a valid timestamp", () => {
@@ -54,16 +54,16 @@ describe("formatDateTime", () => {
 });
 
 describe("relativeTime", () => {
-  it("returns em-dash for null", () => {
-    expect(relativeTime(null)).toBe("—");
+  it("returns a dash for null", () => {
+    expect(relativeTime(null)).toBe("-");
   });
 
-  it("returns em-dash for undefined", () => {
-    expect(relativeTime(undefined)).toBe("—");
+  it("returns a dash for undefined", () => {
+    expect(relativeTime(undefined)).toBe("-");
   });
 
-  it("returns em-dash for invalid date", () => {
-    expect(relativeTime("not-a-date")).toBe("—");
+  it("returns a dash for invalid date", () => {
+    expect(relativeTime("not-a-date")).toBe("-");
   });
 
   it("returns 'just now' for timestamps less than 30 seconds old", () => {
@@ -92,6 +92,40 @@ describe("relativeTime", () => {
     // Should NOT be a relative string — should be a month-based date
     expect(result).not.toMatch(/ago/);
     expect(result).toMatch(/\d{4}/); // contains a year
+  });
+
+  /**
+   * round 6 review (E1): MOVED HERE from `client-agent-rows.test.ts`, where it
+   * pinned `rosterRelativeStamp` — a second copy of this exact unit ladder whose
+   * only difference was that it took the clock as an argument. The copy is gone
+   * and the argument is optional here, so the coverage follows the behaviour.
+   *
+   * The reason a server component needs it is unchanged: every other answer on
+   * a roster render (the delivered-work join, the refusal window, the upcoming
+   * predicate) is resolved against the page's own `now`, and a stamp that read
+   * the wall clock would be reporting a different moment from the status word
+   * beside it.
+   */
+  describe("with an injected clock", () => {
+    const NOW = Date.UTC(2026, 8, 4, 12, 0, 0);
+    const MINUTE = 60_000;
+
+    it("steps through the units against the clock it is given", () => {
+      expect(relativeTime(NOW, NOW)).toBe("just now");
+      expect(relativeTime(NOW - 5 * MINUTE, NOW)).toBe("5m ago");
+      expect(relativeTime(NOW - 3 * 60 * MINUTE, NOW)).toBe("3h ago");
+      expect(relativeTime(NOW - 2 * 24 * 60 * MINUTE, NOW)).toBe("2d ago");
+    });
+
+    it("prints a date once the relative form stops being useful", () => {
+      // Past a month "47d ago" is arithmetic the reader has to do; a date is not.
+      expect(relativeTime(NOW - 60 * 24 * 60 * MINUTE, NOW)).toMatch(/2026$/);
+    });
+
+    it("reads that clock and not the wall clock", () => {
+      const later = NOW + 5 * 24 * 60 * MINUTE;
+      expect(relativeTime(NOW, later)).toBe("5d ago");
+    });
   });
 });
 

@@ -2,18 +2,27 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getTranscript, listClients, listUsers } from "@/lib/data";
-import { Card, CardTitle, Badge, Button } from "@/components/ui";
+import { Card, CardTitle, Badge } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { TranscriptAssign, TranscriptSignalButton, HideFromClientToggle } from "@/components/transcript-tools";
 import { MeetingActionItems } from "@/components/meeting-action-items";
 import { ArchiveButton } from "@/components/archive-button";
 import { formatDateTime } from "@/lib/utils";
 import { deriveActionItemOwners } from "@/lib/transcripts/ingest";
+import { normalizeDashes } from "@/lib/text-utils";
+import { isSafeInternalPath } from "@/lib/safe-internal-path";
 import type { AppUser } from "@/lib/types";
 
-export default async function TranscriptDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TranscriptDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string }>;
+}) {
   const user = await requireUser();
   const { id } = await params;
+  const { from } = await searchParams;
   const t = await getTranscript(id);
   if (!t) notFound();
   // Client guard: hidden meetings and meetings belonging to other clients are invisible
@@ -23,14 +32,36 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
   const isStaff = user.role !== "CLIENT_USER";
   const isAdmin = user.role === "KAROS_ADMIN";
 
+  // Where "back" goes: the page that linked here, when it told us (`from`); a
+  // client's only route to this page is the Meetings section of their own
+  // settings, so a client with no `from` falls back there rather than to
+  // /transcripts, which isn't in their nav at all.
+  //
+  // `?tab=settings#meetings` since portal feedback round 2 (2026-09): Meetings
+  // stopped being a tab of its own and became the last sub-section of the
+  // Settings tab ("Meetings can be a sub-section in, like, account settings").
+  //
+  // `isSafeInternalPath`, not `startsWith("/")` (review wave, 2026-09): this
+  // value comes off the query string, so it is an attacker's string as much as
+  // ours, and a bare leading slash also opens `//evil.com` and `/\evil.com` —
+  // both of which navigate a signed-in reader off the portal from a link that
+  // says "Back". See that helper for the whole rule.
+  const backHref =
+    isSafeInternalPath(from)
+      ? from
+      : !isStaff && user.clientId
+        ? `/clients/${user.clientId}/settings?tab=settings#meetings`
+        : "/transcripts";
+  const backLabel = backHref === "/transcripts" ? "All meetings" : "Back";
+
   const [clients, allUsers] = await Promise.all([
     isStaff ? listClients() : Promise.resolve([]),
     isStaff ? listUsers() : Promise.resolve([]),
   ]);
 
   // Scope the users shown in action-item assignment dropdowns based on the meeting's client association.
-  // Scenario A — meeting is associated with a client: admins + employees + that client's users.
-  // Scenario B — unassociated or Karos Internal: admins + employees only.
+  // Scenario A - meeting is associated with a client: admins + employees + that client's users.
+  // Scenario B - unassociated or Karos Internal: admins + employees only.
   const users: AppUser[] = isStaff
     ? t.clientId && !t.isKarosInternal
       ? allUsers.filter(
@@ -54,8 +85,8 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
 
   return (
     <>
-      <Link href="/transcripts" className="mb-4 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground">
-        <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> All meetings
+      <Link href={backHref} className="mb-4 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground">
+        <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> {backLabel}
       </Link>
 
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
@@ -78,7 +109,7 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
           {isStaff && t.clientId && !t.contextDocSignalAt && (
             <TranscriptSignalButton transcriptId={t.id} clientId={t.clientId} />
           )}
-          {/* Hide-from-client toggle — admin only */}
+          {/* Hide-from-client toggle - admin only */}
           {isAdmin && (
             <HideFromClientToggle transcriptId={t.id} hiddenFromClient={!!t.hiddenFromClient} />
           )}
@@ -96,11 +127,11 @@ export default async function TranscriptDetailPage({ params }: { params: Promise
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-6">
           <Card>
             <CardTitle className="mb-2">Summary</CardTitle>
-            <p className="whitespace-pre-wrap text-sm text-muted">{t.summary || "No summary available."}</p>
+            <p className="whitespace-pre-wrap text-sm text-muted">{t.summary ? normalizeDashes(t.summary) : "No summary available."}</p>
           </Card>
           <Card>
             <CardTitle className="mb-2">Transcript</CardTitle>

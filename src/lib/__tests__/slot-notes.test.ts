@@ -1,0 +1,83 @@
+import { describe, expect, it } from "vitest";
+import {
+  MAX_SLOT_NOTE_CHARS,
+  canNoteSlot,
+  clampSlotNote,
+  slotNoteEcho,
+} from "@/lib/slot-notes";
+
+/**
+ * §4.3 / CD-A3. A note is about ONE day and has a shelf life — the rules that
+ * matter are which days can still take one, and that the copy never promises a
+ * consumption path that is not wired.
+ */
+
+describe("clampSlotNote", () => {
+  it("caps at the documented length", () => {
+    expect(clampSlotNote("x".repeat(900))).toHaveLength(MAX_SLOT_NOTE_CHARS);
+  });
+
+  it("strips control characters that would reappear inside the agent's file", () => {
+    // Escapes, not literal bytes. The control characters ARE the thing under
+    // test, and "\u0000" is the same string to JS — but a literal 0x00 makes
+    // this whole file binary to grep, so it silently drops out of every recon
+    // sweep while looking clean. Same assertion, greppable source.
+    expect(clampSlotNote("no\u0000nulls\u0007here")).toBe("nonullshere");
+  });
+
+  it("normalizes line endings and collapses runaway blank lines", () => {
+    expect(clampSlotNote("a\r\n\n\n\n b ")).toBe("a\n\n b");
+  });
+
+  it("returns empty for whitespace — which the action reads as 'clear it'", () => {
+    expect(clampSlotNote("   \n  ")).toBe("");
+  });
+});
+
+describe("canNoteSlot", () => {
+  const today = "2026-07-28";
+
+  it("allows a future day", () => {
+    expect(canNoteSlot({ dateKey: "2026-07-30", status: "planned" }, today)).toEqual({ ok: true });
+  });
+
+  it("allows TODAY — the post has not gone out yet", () => {
+    expect(canNoteSlot({ dateKey: today, status: "planned" }, today)).toEqual({ ok: true });
+  });
+
+  it("refuses a day that has passed rather than accepting a silent no-op", () => {
+    const gate = canNoteSlot({ dateKey: "2026-07-27", status: "planned" }, today);
+    expect(gate).toMatchObject({ ok: false, code: "past_day" });
+  });
+
+  it("refuses a day already posted", () => {
+    const gate = canNoteSlot({ dateKey: "2026-07-30", status: "posted" }, today);
+    expect(gate).toMatchObject({ ok: false, code: "slot_posted" });
+  });
+
+  it("refuses a day removed from the plan", () => {
+    const gate = canNoteSlot({ dateKey: "2026-07-30", status: "skipped" }, today);
+    expect(gate).toMatchObject({ ok: false, code: "slot_skipped" });
+  });
+
+  it("still allows a day whose content already exists — the note is for the human", () => {
+    // "generated" must not block: today's reality is pre-generated content, and
+    // a note on it is exactly what staff apply before it goes out.
+    expect(canNoteSlot({ dateKey: "2026-07-30", status: "generated" }, today)).toEqual({
+      ok: true,
+    });
+  });
+});
+
+describe("slotNoteEcho", () => {
+  it("promises a human, not the agent, while nothing consumes notes automatically", () => {
+    const echo = slotNoteEcho(null);
+    expect(echo).toMatch(/Karos team/);
+    // Must not claim the agent has read it — no consumption path is wired.
+    expect(echo).not.toMatch(/agent (has )?(read|received|applied)/i);
+  });
+
+  it("switches to a receipt once a human has applied it", () => {
+    expect(slotNoteEcho({ consumedAt: 1_000 })).toMatch(/applied/i);
+  });
+});

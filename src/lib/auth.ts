@@ -1,10 +1,13 @@
 import "server-only";
 
+import { cache } from "react";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import type { DecodedIdToken } from "firebase-admin/auth";
 import { adminAuth } from "@/lib/firebase/admin";
-import { getUser, upsertUser, countUsers, getClientByKeyId } from "@/lib/data";
-import type { AppUser, Role } from "@/lib/types";
+import { getUser, upsertUser, countUsers, getClient, getClientByKeyId } from "@/lib/data";
+import { canViewClient } from "@/lib/client-visibility";
+import type { AppUser, Client, Role } from "@/lib/types";
 
 export const SESSION_COOKIE = "karos_session";
 export const IMPERSONATE_COOKIE = "karos_impersonate";
@@ -21,6 +24,25 @@ export interface SignupIntent {
   requestedRole?: "KAROS_EMPLOYEE" | "CLIENT_USER";
   /** Raw invitation key entered by the user — validated server-side. */
   invitationKey?: string;
+}
+
+/**
+ * Mandatory email verification for native (email/password) self-registration.
+ *
+ * A password account whose email is not yet verified must NOT be granted a
+ * session. Social identities (Google) arrive pre-verified from the provider,
+ * and admin-created accounts are minted with `emailVerified: true`
+ * (see createTeamMemberAction) — both pass this gate. So the check is scoped
+ * strictly to the `password` sign-in provider: only self-signups can be caught
+ * here, which is exactly the population the verification mandate targets.
+ */
+export function isEmailUnverified(decoded: DecodedIdToken): boolean {
+  return decoded.firebase?.sign_in_provider === "password" && decoded.email_verified !== true;
+}
+
+/** Verify a Firebase ID token and return its decoded claims. */
+export function verifyIdToken(idToken: string): Promise<DecodedIdToken> {
+  return adminAuth().verifyIdToken(idToken);
 }
 
 /**
@@ -77,7 +99,7 @@ async function ensureUserDoc(
   if (intent?.requestedRole === "KAROS_EMPLOYEE") {
     const staffKey = process.env.KAROS_STAFF_KEY;
     const validKey = !!(staffKey && key === staffKey);
-    const isCompanyAlias = email === "hello@karoslabs.com";
+    const isCompanyAlias = email === (process.env.KAROS_COMPANY_ALIAS ?? "hello@karoslabs.com");
     const role: Role = validKey && isCompanyAlias ? "KAROS_ADMIN" : "KAROS_EMPLOYEE";
     const user: AppUser = {
       uid: claims.uid,
@@ -113,6 +135,9 @@ async function ensureUserDoc(
         approvedAt: Date.now(),
         createdAt: Date.now(),
         lastLoginAt: Date.now(),
+        // Fresh client account — send them through the personal profile +
+        // workspace setup wizard on first login.
+        hasCompletedOnboarding: false,
       };
       await upsertUser(user);
       return user;
@@ -156,13 +181,16 @@ async function ensureUserDoc(
 }
 
 /** Exchange a Firebase ID token for a long-lived session cookie. */
-export async function createSession(idToken: string): Promise<void> {
+export async function createSession(idToken: string, secure?: boolean): Promise<void> {
   const expiresIn = SESSION_MAX_AGE * 1000;
   const sessionCookie = await adminAuth().createSessionCookie(idToken, { expiresIn });
+  // Use caller-supplied flag when available (derived from x-forwarded-proto so
+  // HTTP deployments don't silently drop the cookie). Fall back to NODE_ENV.
+  const useSecure = secure ?? (process.env.NODE_ENV === "production");
   const store = await cookies();
   store.set(SESSION_COOKIE, sessionCookie, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: useSecure,
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE,
@@ -180,8 +208,7 @@ export async function clearSession(): Promise<void> {
  * Returns the resulting AppUser so the session route can tell the client
  * the final role for routing decisions.
  */
-export async function provisionFromSignup(idToken: string, intent: SignupIntent): Promise<AppUser> {
-  const decoded = await adminAuth().verifyIdToken(idToken);
+export async function provisionFromSignup(decoded: DecodedIdToken, intent: SignupIntent): Promise<AppUser> {
   return await ensureUserDoc(
     {
       uid: decoded.uid,
@@ -202,17 +229,41 @@ export async function provisionFromSignup(idToken: string, intent: SignupIntent)
  * creates docs is ensureUserDoc, called exclusively from provisionFromSignup
  * (the /signup flow) and getSessionUser (for already-provisioned sessions).
  */
-export async function getUserFromToken(idToken: string): Promise<AppUser | null> {
-  const decoded = await adminAuth().verifyIdToken(idToken);
+export async function getUserFromToken(decoded: DecodedIdToken): Promise<AppUser | null> {
   return await getUser(decoded.uid);
 }
 
-async function getSessionUser(): Promise<AppUser | null> {
+/**
+ * Resolve the signed-in identity behind the session cookie — ONCE PER REQUEST.
+ *
+ * React-`cache`d for a correctness reason, not a speed one. Resolving a session
+ * is not a read: `ensureUserDoc` UPSERTS the user document when the address on
+ * the Firebase identity has drifted from the stored one, and it can mint a doc
+ * outright. Meanwhile `logActivity` resolves the session on every row that
+ * claims a client acted (to catch impersonation), and eight of its callers fire
+ * it and forget it — so a request could run several independent
+ * `verifySessionCookie` + upsert cycles, and an activity log could be the thing
+ * that triggered a write to a user record. Sharing one resolution per request
+ * means the log can only ever observe the write the request was already making.
+ *
+ * Same idiom as `getClient` in data.ts. React's cache is per-request, so no
+ * identity is ever shared between two requests; callers get a shallow copy so a
+ * caller that mutates its user cannot reach into another's.
+ *
+ * NOT a substitute for re-reading after a cookie change: nothing in this app
+ * mints or swaps a session and then re-reads it inside the same request (the
+ * session route responds immediately, and both impersonation actions redirect),
+ * which is what makes the caching safe.
+ */
+const resolveSessionUser = cache(async (): Promise<AppUser | null> => {
   const store = await cookies();
   const cookie = store.get(SESSION_COOKIE)?.value;
   if (!cookie) return null;
   try {
     const decoded = await adminAuth().verifySessionCookie(cookie, true);
+    // Defence in depth: an unverified password account should never hold a
+    // session cookie (the session route refuses to mint one), but never trust it.
+    if (isEmailUnverified(decoded)) return null;
     return await ensureUserDoc({
       uid: decoded.uid,
       email: decoded.email,
@@ -222,6 +273,21 @@ async function getSessionUser(): Promise<AppUser | null> {
   } catch {
     return null;
   }
+});
+
+/**
+ * The "View as Client" target, read once per request. `getCurrentUser` runs
+ * many times in one request (the layout, the page, every action and every
+ * `logActivity` row), and under impersonation each call re-read the target's
+ * user document. Same idiom as `resolveSessionUser` above; the same
+ * per-request lifetime keeps it correct — `startImpersonation` sets the cookie
+ * and redirects, so no request both changes the target and re-reads it.
+ */
+const impersonationTarget = cache(async (uid: string): Promise<AppUser | null> => getUser(uid));
+
+async function getSessionUser(): Promise<AppUser | null> {
+  const user = await resolveSessionUser();
+  return user ? { ...user } : null;
 }
 
 export async function getCurrentUser(): Promise<AppUser | null> {
@@ -232,8 +298,10 @@ export async function getCurrentUser(): Promise<AppUser | null> {
     const store = await cookies();
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
-      const target = await getUser(impUid);
-      if (target && !target.disabled) return target;
+      const target = await impersonationTarget(impUid);
+      // impersonatedBy is transient — it marks the session so credit charges
+      // and other client-billed actions know a staff member is behind it.
+      if (target && !target.disabled) return { ...target, impersonatedBy: realUser.uid };
       store.delete(IMPERSONATE_COOKIE);
     }
   }
@@ -246,32 +314,27 @@ export async function getViewingContext(): Promise<{
   isImpersonating: boolean;
   realAdmin?: AppUser;
 }> {
-  const store = await cookies();
-  const cookie = store.get(SESSION_COOKIE)?.value;
-  if (!cookie) redirect("/login");
-
-  let realUser: AppUser | null = null;
-  try {
-    const decoded = await adminAuth().verifySessionCookie(cookie, true);
-    realUser = await ensureUserDoc({
-      uid: decoded.uid,
-      email: decoded.email,
-      name: (decoded.name as string) || undefined,
-      picture: (decoded.picture as string) || undefined,
-    });
-  } catch {
-    redirect("/login");
-  }
-
+  // Through the shared resolver rather than a second inline copy of it: this
+  // runs in the app layout on every page, so the duplicate was a second
+  // verifySessionCookie plus a second ensureUserDoc (which can write) on every
+  // request that also called getCurrentUser. Every arm of the old try/catch —
+  // no cookie, a bad cookie, an unverified address, a throw from Firestore —
+  // redirected to /login, and every one of them is a null from the resolver.
+  const realUser = await getSessionUser();
   if (!realUser) redirect("/login");
   if (realUser.disabled) redirect("/pending");
 
+  const store = await cookies();
   if (realUser.role === "KAROS_ADMIN") {
     const impUid = store.get(IMPERSONATE_COOKIE)?.value;
     if (impUid) {
-      const target = await getUser(impUid);
+      const target = await impersonationTarget(impUid);
       if (target && !target.disabled) {
-        return { user: target, isImpersonating: true, realAdmin: realUser };
+        return {
+          user: { ...target, impersonatedBy: realUser.uid },
+          isImpersonating: true,
+          realAdmin: realUser,
+        };
       }
       store.delete(IMPERSONATE_COOKIE);
     }
@@ -306,6 +369,40 @@ export async function requireUser(roles?: Role[]): Promise<AppUser> {
   if (user.disabled) redirect("/pending");
   if (roles && !roles.includes(user.role)) redirect("/dashboard");
   return user;
+}
+
+/**
+ * Load the client behind a `/clients/[id]` route, or refuse — THE server-side
+ * half of the assignment fence (see canViewClient for why the fence is a
+ * permission and not a sort order).
+ *
+ * Replaces the `getClient(id); if (!client) notFound()` pair every one of those
+ * routes was doing, so "does it exist" and "may you open it" are answered
+ * together and a new route under `/clients/[id]` cannot get one without the
+ * other. `getClient` is React-`cache`d, so the nested layout and the page it
+ * wraps still make one Firestore read between them.
+ *
+ * ONE response for "no such client" and "not yours", deliberately: a distinct
+ * 403 would turn the route into an oracle for which client ids exist. Same
+ * idiom `requireTaskAccess` uses for foreign task ids.
+ *
+ * The layout checks too, and the PAGE's check is the one that counts. A layout
+ * is not re-rendered on navigation (next/dist/docs — file-conventions/layout.md
+ * and the glossary's "Layout" entry; instant-navigation.md spells out that a
+ * client transition only re-renders BELOW the layout the two routes share), so
+ * a guard placed only in the layout is skipped on every client-side move
+ * between two `/clients/[id]/…` pages. The layout's copy exists for the other
+ * reason: it BUILDS a payload (the staff rail), and a payload has to be
+ * authorised where it is built.
+ *
+ * `notFound()` rather than Next's `forbidden()` on purpose — beyond the oracle
+ * point above, `forbidden()` needs the `authInterrupts` experimental flag,
+ * which this app does not set.
+ */
+export async function requireVisibleClient(user: AppUser, clientId: string): Promise<Client> {
+  const client = await getClient(clientId);
+  if (!client || !canViewClient(user, client)) notFound();
+  return client;
 }
 
 export function isAdmin(user: AppUser | null) {

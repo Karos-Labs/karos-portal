@@ -3,15 +3,34 @@
 import { randomBytes } from "crypto";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createClient, updateClient, getClientByKeyId } from "@/lib/data";
+import {
+  createClient,
+  getClient,
+  getCustomAgent,
+  updateClient,
+  deleteClientCascade,
+  getClientByKeyId,
+  getClientOwnerEmail,
+  tryAcquireAiProcessingLock,
+  releaseAiProcessingLock,
+} from "@/lib/data";
 import { applyBrandingForClient } from "@/lib/branding";
-import type { Client } from "@/lib/types";
-import { requireStaff } from "./_shared";
+import { requireUser } from "@/lib/auth";
+import { canViewClient } from "@/lib/client-visibility";
+import { agentKeyMatchesClientSlug } from "@/lib/custom-agent-launch";
+import type { Client, SocialLinks } from "@/lib/types";
+import { clampClientCategoryValue } from "@/lib/utils";
+import { toStoredPace } from "@/lib/daily-pace";
+import { isValidTimeZone } from "@/lib/run-cadence";
+import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
+import { parseForbiddenTopics, validateForbiddenTopics } from "@/lib/dynamic-agent-guardrails";
+import { requireStaff, logGenerationFailure } from "./_shared";
 
 export async function createClientAction(input: {
   name: string;
   website?: string;
-  industry?: string;
+  /** The client's category. `industry` is its legacy spelling and is never written. */
+  category?: string;
   contactEmail?: string;
   domains?: string;
   description?: string;
@@ -24,7 +43,9 @@ export async function createClientAction(input: {
   const id = await createClient({
     name: input.name.trim(),
     website: input.website?.trim() || "",
-    industry: input.industry?.trim() || "",
+    // The same ceiling every other category editor is held to — a new client's
+    // category renders in the same chip as everybody else's on day one.
+    category: clampClientCategoryValue(input.category),
     contactEmail: input.contactEmail?.trim().toLowerCase() || "",
     domains: (input.domains ?? "")
       .split(",")
@@ -40,47 +61,410 @@ export async function createClientAction(input: {
     createdBy: user.uid,
   });
 
+  // Onboarding trigger: fires immediately after the client record (with its
+  // initial details/parameters) is persisted. runIntelReportPipeline re-fetches
+  // the client from Firestore at execution time, so the Intel Report Agent
+  // always operates on the live, current client state — never a captured copy.
   after(async () => {
-    await updateClient(id, { onboardingStatus: "running" });
-    const { runIntelReportPipeline } = await import("@/lib/intel-report");
-    const [brandingResult, intelResult] = await Promise.allSettled([
-      applyBrandingForClient(id),
-      runIntelReportPipeline(id),
-    ]);
-    if (brandingResult.status === "rejected") {
-      console.error("[onboard] Branding generation failed (non-fatal):", brandingResult.reason);
+    // Guards against overlapping this pipeline with a manual Regenerate /
+    // Refresh Task Map click (or the client's own onboarding-completion run) —
+    // released in the finally below regardless of outcome.
+    if (!(await tryAcquireAiProcessingLock(id))) return;
+    let failure: string | undefined;
+    try {
+      await updateClient(id, { onboardingStatus: "running", onboardingError: "" });
+      const { runIntelReportPipeline } = await import("@/lib/intel");
+      const [brandingResult, intelResult] = await Promise.allSettled([
+        applyBrandingForClient(id),
+        runIntelReportPipeline(id),
+      ]);
+      if (brandingResult.status === "rejected") {
+        console.error("[onboard] Branding generation failed (non-fatal):", brandingResult.reason);
+      }
+      if (intelResult.status === "rejected") {
+        console.error("[onboard] Intel Report generation failed:", intelResult.reason);
+      }
+      const anyFailed = brandingResult.status === "rejected" || intelResult.status === "rejected";
+      // Persist WHY the run failed so the UI can surface it — a silent "failed"
+      // badge with the reason buried in server logs is exactly what we're avoiding.
+      const failureReasons = [
+        brandingResult.status === "rejected" ? `branding: ${String((brandingResult.reason as Error)?.message ?? brandingResult.reason)}` : "",
+        intelResult.status === "rejected" ? `intel: ${String((intelResult.reason as Error)?.message ?? intelResult.reason)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | ")
+        .slice(0, 500);
+      if (anyFailed) failure = failureReasons;
+      await updateClient(id, {
+        onboardingStatus: anyFailed ? "failed" : "done",
+        onboardingError: anyFailed ? failureReasons : "",
+        ...(intelResult.status === "fulfilled" ? { lastIntelReportAt: Date.now() } : {}),
+      });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+      console.error("[onboard] Pipeline crashed unexpectedly:", e);
+    } finally {
+      await releaseAiProcessingLock(id, failure);
+      await logGenerationFailure(id, failure);
     }
-    if (intelResult.status === "rejected") {
-      console.error("[onboard] Intel Report generation failed (non-fatal):", intelResult.reason);
-    }
-    const anyFailed = brandingResult.status === "rejected" || intelResult.status === "rejected";
-    await updateClient(id, { onboardingStatus: anyFailed ? "failed" : "done" });
   });
 
   revalidatePath("/clients");
   return { id };
 }
 
-/** Regenerate the clientKeyId for a client. Invalidates any previous join links. */
+/**
+ * Regenerate the clientKeyId for a client. Invalidates any previous join links.
+ *
+ * Staff, plus the workspace's OWN group admin: a valid client key auto-approves
+ * any signup straight into that workspace, so the person who can hand it out
+ * must also be able to rotate it after a leak (QA F56 — there was no
+ * remediation path on screen at all). Ordinary client users may do neither.
+ */
 export async function regenerateClientKeyAction(clientId: string): Promise<{ clientKeyId: string }> {
-  await requireStaff();
+  // Guard the id first: without it a group admin whose clientId is null would
+  // satisfy `null === null` against an empty argument.
+  if (!clientId) throw new Error("clientId required");
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  const isOwnGroupAdmin =
+    user.role === "CLIENT_USER" && user.isGroupAdmin === true && user.clientId === clientId;
+  if (!isStaff && !isOwnGroupAdmin) throw new Error("Forbidden");
   const clientKeyId = `ck_${randomBytes(16).toString("base64url")}`;
   await updateClient(clientId, { clientKeyId });
   revalidatePath(`/clients/${clientId}`);
   return { clientKeyId };
 }
 
-export async function updateClientAction(id: string, input: Partial<Client> & { domainsCsv?: string }) {
-  await requireStaff();
-  const patch: Partial<Client> = { ...input };
-  if (input.domainsCsv !== undefined) {
-    patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
-    delete (patch as { domainsCsv?: string }).domainsCsv;
+/**
+ * The client's own address book, and the whole of it.
+ *
+ * Same authorization as `updateClientProfileAction` below, because it answers a
+ * question about the same record: staff, or a member of this client's own
+ * workspace. Anyone else gets an empty string rather than a refusal — the caller
+ * is a prefill, and a modal that opens with an error banner because a stale tab
+ * asked about the wrong workspace is worse than one that opens with an empty
+ * field.
+ *
+ * No prose in either branch on purpose: this crosses to a client's browser, and
+ * the only thing it can say is an address the caller already has a right to.
+ */
+export async function clientOwnerEmailAction(clientId: string): Promise<{ email: string }> {
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
+    return { email: "" };
   }
-  if (patch.contactEmail) patch.contactEmail = patch.contactEmail.toLowerCase();
+  return { email: await getClientOwnerEmail(clientId) };
+}
+
+/**
+ * The text fields a staff editor may write on a client record, by NAME.
+ *
+ * NOT exported: this is a `"use server"` module, and every runtime export of
+ * one has to be an async function. Pinned by `server-action-input-shape-sweep.test.ts`
+ * (the list exists and the patch is built from it, never spread from the input)
+ * and by `settings-nav.test.ts` (the legacy `industry` key is not on it).
+ */
+const CLIENT_EDITABLE_TEXT_FIELDS = [
+  "name",
+  "contactEmail",
+  "website",
+  "category",
+  "description",
+  "brandVoice",
+  "agentsRepoSlug",
+  "timeZone",
+] as const;
+
+/**
+ * Client-editable profile fields (self-service). A CLIENT_USER may update their
+ * own client's category / team size / social links / contact email / website /
+ * short description; staff may update any client. Deliberately narrow — no
+ * access to keys, employees, status, etc.
+ *
+ * THREE FIELDS LEFT THIS ACTION WITH THE UI THAT SENT THEM (CD-L P1/P2), and
+ * dropping them from the signature is the point rather than housekeeping — an
+ * input this action still accepts is an input a crafted request can still write,
+ * whatever the form on screen offers:
+ *
+ *  • `domainsCsv` decided which Fireflies transcripts auto-assign to a client.
+ *    A client user could set it, which is a routing control with somebody else's
+ *    meetings on the other end of it. It is staff-only now, through
+ *    `updateClientAction`, which is where the Edit dialog already wrote it.
+ *  • `brandVoice` duplicated the Brand Voice DOCUMENT. The field and the doc are
+ *    untouched; nothing writes to the field from the portal any more.
+ *  • `industry` was the second editor for the tag chip's idea. `category` is the
+ *    one that stays, and it is the one the chip renders.
+ */
+export async function updateClientProfileAction(
+  id: string,
+  input: {
+    category?: string;
+    teamSize?: string;
+    description?: string;
+    socialLinks?: SocialLinks;
+    // Brand profile fields — editable by the client's own users as well as staff.
+    contactEmail?: string;
+    website?: string;
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === id)) {
+    return { ok: false, error: "Not authorized to edit this profile." };
+  }
+
+  const clean = (v?: string) => (typeof v === "string" ? v.trim() : undefined);
+  const patch: Partial<Client> = {};
+  // The cap the input already enforces, enforced again where it counts: the
+  // chip's one-line contract is a property of the STORED value, so a request
+  // that did not come from that input cannot re-open the wrapping this closed.
+  if (input.category !== undefined) patch.category = clampClientCategoryValue(input.category);
+  if (input.teamSize !== undefined) patch.teamSize = clean(input.teamSize);
+  if (input.description !== undefined) patch.description = clean(input.description);
+  if (input.contactEmail !== undefined) patch.contactEmail = clean(input.contactEmail)?.toLowerCase();
+  if (input.website !== undefined) patch.website = clean(input.website);
+  if (input.socialLinks !== undefined) {
+    const links: SocialLinks = {};
+    for (const [k, val] of Object.entries(input.socialLinks)) {
+      const c = clean(val);
+      if (c) (links as Record<string, string>)[k] = c;
+    }
+    patch.socialLinks = links;
+  }
+
+  await updateClient(id, patch);
+  revalidatePath(`/clients/${id}`);
+  return { ok: true };
+}
+
+/**
+ * How many agents one client may pin. See the ceiling's own note inside
+ * `toggleStarredAgentAction` for why an unbounded array was the problem.
+ *
+ * NOT exported: this is a `"use server"` module, and every export of one has to
+ * be an async function.
+ */
+const MAX_STARRED_AGENTS = 24;
+
+/**
+ * Pin or unpin an agent above the client rail's "AI agents" dropdown
+ * (Surface 01, portal revamp). Same self-service rule as
+ * `updateClientProfileAction`: a CLIENT_USER may star their own client's
+ * agents; staff may star for a client they can VIEW (`canViewClient` - an
+ * admin, or an employee assigned to it), including from client context at
+ * onboarding. Any-staff-any-client was the old rule, and it became reachable
+ * from every client page once the staff rail mounted the real star buttons
+ * (parity pass 2026-09). `starred: true` appends to the end of the pinned order;
+ * `false` removes it — the dropdown itself decides display order from the
+ * stored array, so no explicit position argument is needed.
+ */
+export async function toggleStarredAgentAction(
+  clientId: string,
+  agentId: string,
+  starred: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const user = await requireUser();
+  const isStaff = user.role === "KAROS_ADMIN" || user.role === "KAROS_EMPLOYEE";
+  if (!isStaff && !(user.role === "CLIENT_USER" && user.clientId === clientId)) {
+    return { ok: false, error: "Not authorized to edit this client's starred agents." };
+  }
+
+  const client = await getClient(clientId);
+  if (!client) return { ok: false, error: "Client not found." };
+
+  // ANY-STAFF-ANY-CLIENT was too wide, and the parity pass 2026-09 is what made
+  // it reachable: the staff shell's client-context rail now mounts the client's
+  // real ClientRailAgentsNav, star buttons and all, so an unassigned employee
+  // who opened a client page had a working write into that client's record.
+  // `canViewClient` is the one fence every other /clients/[id] surface asks
+  // (requireVisibleClient resolves through it), so this asks the same question
+  // rather than inventing a second answer. Stars stay LIVE for staff who do
+  // pass it — Karos sets a client's first stars at onboarding, from exactly
+  // this control.
+  if (isStaff && !canViewClient(user, client)) {
+    return { ok: false, error: "You are not assigned to this client." };
+  }
+
+  const current = client.starredAgentIds ?? [];
+
+  // WHAT IS BEING PINNED, asked before it is written (review wave, 2026-09).
+  //
+  // The action authorized the WRITER and then took the `agentId` on trust, so
+  // any authorized caller could put an arbitrary string into
+  // `Client.starredAgentIds` — a retired agent, another client's per-client
+  // instance, a typo, a value from a stale tab. Nothing crashed, because
+  // `railAgentsForClient` re-applies these same fences on read and simply drops
+  // what does not pass; the ids just accumulated silently in the document,
+  // unpaintable and unremovable through the UI (a row that never renders has no
+  // star to click). The rail's own read rule is therefore the write rule.
+  //
+  // UNPINNING SKIPS ALL OF IT, deliberately: `starred: false` only ever removes
+  // an id, and refusing to remove a pin because the agent behind it was
+  // disabled or retired is exactly how a document gets stuck with one.
+  if (starred) {
+    const agent = await getCustomAgent(agentId);
+    // The same three clauses railAgentsForClient applies, in the same order:
+    // the agent exists, it is enabled, and it is not another client's
+    // per-client instance (an entry skill baked under ONE lab folder, #132).
+    if (!agent || !agent.enabled || !agentKeyMatchesClientSlug(agent.key, client.agentsRepoSlug)) {
+      return { ok: false, error: "That agent is not available for this client." };
+    }
+    // A LENGTH CEILING, because this array is unbounded input into a document
+    // that is read on every page of both shells. The rail's own cap is on the
+    // UNSTARRED group (UNSTARRED_AGENT_CAP = 6) and pinned rows are deliberately
+    // never capped there — a client curates that set — so nothing downstream
+    // bounds it. 24 is comfortably past any real roster (the catalog runs past
+    // 20) and well short of a document a script could inflate.
+    if (!current.includes(agentId) && current.length >= MAX_STARRED_AGENTS) {
+      return {
+        ok: false,
+        error: `You can pin up to ${MAX_STARRED_AGENTS} agents. Unpin one to add another.`,
+      };
+    }
+  }
+
+  const next = starred
+    ? current.includes(agentId)
+      ? current
+      : [...current, agentId]
+    : current.filter((id) => id !== agentId);
+
+  await updateClient(clientId, { starredAgentIds: next });
+  // Server-side revalidation here is belt-and-suspenders, not the mechanism
+  // this depends on for the tab that just clicked — that tab calls
+  // `router.refresh()` itself right after this action resolves (see
+  // ClientRailAgentsNav and AgentStarButton), which is unambiguous per
+  // Next's own docs regardless of route-group path resolution. This call is
+  // only for a DIFFERENT tab/session revisiting later, so it uses the one
+  // path the docs confirm outright rather than a guessed route-group
+  // segment: `/` + "layout" is documented as "purge the Client Cache, and
+  // invalidate all cached data" — the ClientRail data this needs to reach
+  // lives in the ROOT `(app)/layout.tsx`, which sits one level under `/`.
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function updateClientAction(
+  id: string,
+  input: {
+    name?: string;
+    contactEmail?: string;
+    website?: string;
+    category?: string;
+    description?: string;
+    brandVoice?: string;
+    agentsRepoSlug?: string;
+    timeZone?: string;
+    dailyDigestEnabled?: boolean;
+    /** The forbidden-topics list, when a caller already has it as an array. */
+    forbiddenTopics?: string[];
+    domainsCsv?: string;
+    /** As typed in the Edit dialog. Blank/unusable ⇒ that lane has no ceiling set. */
+    clipsPerDay?: string;
+    postsPerDay?: string;
+    /** The forbidden-topics box, one topic per line. See dynamic-agent-guardrails.ts. */
+    forbiddenTopicsText?: string;
+  },
+) {
+  await requireStaff();
+
+  // ALLOWLISTED, FIELD BY FIELD — never `{ ...input }`.
+  //
+  // This action used to take a whole `Partial<Client>` and spread it into the
+  // patch, then `delete` the seven keys it knew were dangerous (clientKeyId,
+  // createdAt, createdBy, lastDigestSentDay, assignedEmployeeIds, industry, and
+  // the form-only helpers). A denylist over a wire payload is a list of the
+  // holes somebody has already found: a server action's parameter type is a
+  // compile-time claim about THIS repo's callers, not a check on the POST body,
+  // so every other `Client` key — `customAgentIds` (which agents a client is
+  // granted), `status`, `onboardingStatus`, `isAiProcessing`, `linkedinSeatLimit`,
+  // `setupLadderOrder`, `logoStoragePath`, and every field added since — could
+  // be written by any staff session that called the action directly, and a new
+  // field was writable the day it was added to the type. The only two callers
+  // (`ClientEditor` and the Clients-page Edit dialog) send exactly the fields
+  // below, so nothing loses a capability; what changes is that the API now says
+  // what it accepts instead of what it refuses. `updateAssetAction` made the
+  // same move for the same reason (see its "BUILT FIELD BY FIELD" note).
+  const patch: Partial<Client> = {};
+  const text = (v: unknown): string | undefined => (typeof v === "string" ? v.trim() : undefined);
+  for (const key of CLIENT_EDITABLE_TEXT_FIELDS) {
+    const value = text(input[key]);
+    if (value !== undefined) patch[key] = value;
+  }
+  // A blank name is not an edit, it is a record nobody can find again.
+  if (input.name !== undefined && !patch.name) return { ok: false as const, error: "Client name is required." };
+  if (patch.contactEmail !== undefined) patch.contactEmail = patch.contactEmail.toLowerCase();
+  // The same ceiling the client's own form is held to. A category typed by staff
+  // renders in the same chip, in the same rail, at the same width. (`industry`
+  // IS `category`, CD-L; the legacy key is simply not on the list above, so a
+  // stale caller sending it writes nothing rather than re-opening the split.)
+  if (patch.category !== undefined) patch.category = clampClientCategoryValue(patch.category);
+  // Store just the client folder slug even if a full repo URL/path was pasted.
+  if (patch.agentsRepoSlug !== undefined) patch.agentsRepoSlug = normalizeLabSlug(patch.agentsRepoSlug);
+  // An unresolvable zone is stored as empty rather than kept: `clientTimeZone`
+  // would fall back to the runtime's anyway, and a box that keeps showing a
+  // typo the product is ignoring is worse than one that clears.
+  if (patch.timeZone !== undefined) patch.timeZone = isValidTimeZone(patch.timeZone) ? patch.timeZone : "";
+  if (input.dailyDigestEnabled !== undefined) patch.dailyDigestEnabled = input.dailyDigestEnabled === true;
+
+  // Topic guardrails (docs/dynamic-agent-guardrails.md). Parsed here rather
+  // than in the browser for the same reason the pace boxes are: the parse has
+  // to happen on the write side to be true of the API and not just of the one
+  // form that calls it.
+  //
+  // An empty box stores `[]`, not a dropped key — updateClient merges, so an
+  // absent key would leave the previous list in force and clearing the box
+  // would silently do nothing.
+  if (input.forbiddenTopicsText !== undefined) {
+    const topics = parseForbiddenTopics(input.forbiddenTopicsText);
+    const error = validateForbiddenTopics(topics);
+    if (error) return { ok: false as const, error };
+    patch.forbiddenTopics = topics;
+  } else if (Array.isArray(input.forbiddenTopics)) {
+    // A caller that sent the array directly is held to the same limits.
+    const topics = parseForbiddenTopics(input.forbiddenTopics.filter((t) => typeof t === "string").join("\n"));
+    const error = validateForbiddenTopics(topics);
+    if (error) return { ok: false as const, error };
+    patch.forbiddenTopics = topics;
+  }
+  if (typeof input.domainsCsv === "string") {
+    patch.domains = input.domainsCsv.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean);
+  }
+  // THE PACE, from the two typed boxes. Sent as strings and resolved here, not
+  // in the browser: these are ceilings a day planner walks, and a 0 or a NaN
+  // reaching storage is a cursor that never finds a free day (see clampPerDay).
+  // Both blank ⇒ `null`, which CLEARS the field and puts the client back on the
+  // single item a day. `null` rather than a dropped key because updateClient
+  // merges, so an absent key would leave the previous pace in place and
+  // clearing the boxes would appear to do nothing.
+  if (input.clipsPerDay !== undefined || input.postsPerDay !== undefined) {
+    patch.dailyPace =
+      toStoredPace({
+        clipsPerDay: Number(input.clipsPerDay),
+        postsPerDay: Number(input.postsPerDay),
+      }) ?? null;
+  }
+
   await updateClient(id, patch);
   revalidatePath(`/clients/${id}`);
   revalidatePath("/clients");
+  return { ok: true as const };
+}
+
+/**
+ * Permanently delete a client and every scoped sub-document (tasks, assets,
+ * jobs, docs, competitors, activity, …) via deleteClientCascade — orphaned
+ * rows used to linger and resurface in cross-client staff views (task board,
+ * assets, calendar) as phantom "spillage" from deleted clients.
+ * Staff-only — admin or employee access required.
+ */
+export async function deleteClientAction(clientId: string): Promise<void> {
+  await requireStaff();
+  await deleteClientCascade(clientId);
+  revalidatePath("/clients");
+  revalidatePath(`/clients/${clientId}`);
 }
 
 /**

@@ -1,256 +1,45 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { listScheduledAssets, listClientIntegrations, updateAsset, markIntegrationExpired } from "@/lib/data";
-import type { Asset, ClientIntegration } from "@/lib/types";
-
-/* ── Token expiry sentinel ───────────────────────────────────────────── */
+import { listScheduledAssets, listAssets, listClientIntegrations, updateAsset, markAssetPublished, markIntegrationExpired, claimAssetForPublish, releaseAssetPublishClaim } from "@/lib/data";
+import { publishHoldMessage } from "@/lib/asset-status-copy";
+import { isInClientArchive } from "@/lib/asset-visibility";
+import { blockingPredecessor } from "@/lib/post-chain";
+import {
+  TokenExpiredError,
+  inferPlatform,
+  publishAssetToPlatform,
+} from "@/lib/integrations/publishers";
+import { requireCronSecret } from "@/lib/cron-auth";
+import { integrationIsUsable } from "@/lib/integration-status";
 
 /**
- * Thrown by a platform publisher when the API returns HTTP 401 or 403.
- * The cron handler catches this specifically to mark the integration expired
- * rather than retrying indefinitely with a dead token.
+ * Auto-publish cron (tier "auto" of the three-tier publishing flow).
+ *
+ * Every tick it drains scheduled assets whose time has passed and whose
+ * publishMode is "auto" (or absent — legacy assets). Manual-push and
+ * placeholder items are never touched here: manual goes out via the
+ * publishAssetNowAction server action, placeholders never leave the calendar.
+ *
+ * Per-integration gate: an integration with autoPublish === false is treated
+ * as unavailable for auto-posting even though it stays fully usable for
+ * "Publish Now".
+ *
+ * Ordering gate: a due post whose series predecessor hasn't gone out yet is HELD
+ * (see blockingPredecessor) rather than published, so a numbered series can't
+ * start at no. 2 because no. 1 was still in drafts. Held posts keep their
+ * status and are retried every tick, so the hold resolves itself as soon as the
+ * predecessor publishes. /api/analytics/sync applies the same gate — without it
+ * that cron's reconciler would flip a held post to "published" behind our back.
  */
-class TokenExpiredError extends Error {
-  constructor(platform: string, httpStatus: number) {
-    super(`${platform} token expired or revoked (HTTP ${httpStatus})`);
-    this.name = "TokenExpiredError";
-  }
-}
-
-/* ── Platform → asset type mapping ──────────────────────────────────── */
-
-const ASSET_TYPE_TO_PLATFORM: Record<string, string[]> = {
-  instagram_post: ["instagram"],
-  social_post: ["twitter", "linkedin", "facebook"],
-  article: ["linkedin"],
-  email: [],
-  note: [],
-};
-
-function inferPlatform(assetType: string, connectedPlatforms: string[]): string | null {
-  const candidates = ASSET_TYPE_TO_PLATFORM[assetType] ?? [];
-  return candidates.find((p) => connectedPlatforms.includes(p)) ?? null;
-}
-
-/* ── Instagram ───────────────────────────────────────────────────────── */
-
-async function publishToInstagram(
-  credentials: Record<string, string>,
-  asset: Asset,
-): Promise<void> {
-  const token = credentials.accessToken;
-  if (!token) throw new Error("No access token");
-  if (!asset.imageUrl) throw new Error("Instagram posts require an image");
-
-  // Get pages and their connected IG business accounts
-  const pagesRes = await fetch(
-    `https://graph.facebook.com/v20.0/me/accounts?access_token=${encodeURIComponent(token)}`,
-  );
-  if (pagesRes.status === 401 || pagesRes.status === 403) throw new TokenExpiredError("instagram", pagesRes.status);
-  if (!pagesRes.ok) throw new Error(`Failed to fetch pages: ${pagesRes.status}`);
-  const pagesData = (await pagesRes.json()) as { data: Array<{ id: string; access_token: string }> };
-  if (!pagesData.data?.length) throw new Error("No Facebook pages found on this account");
-
-  let igUserId: string | null = null;
-  let pageToken: string | null = null;
-
-  for (const page of pagesData.data) {
-    const igRes = await fetch(
-      `https://graph.facebook.com/v20.0/${page.id}?fields=instagram_business_account&access_token=${encodeURIComponent(page.access_token)}`,
-    );
-    if (!igRes.ok) continue;
-    const igData = (await igRes.json()) as { instagram_business_account?: { id: string } };
-    if (igData.instagram_business_account?.id) {
-      igUserId = igData.instagram_business_account.id;
-      pageToken = page.access_token;
-      break;
-    }
-  }
-
-  if (!igUserId || !pageToken) throw new Error("No Instagram Business Account linked to any page");
-
-  // Create media container
-  const containerParams = new URLSearchParams({
-    image_url: asset.imageUrl,
-    caption: asset.content,
-    access_token: pageToken,
-  });
-  const containerRes = await fetch(
-    `https://graph.facebook.com/v20.0/${igUserId}/media`,
-    { method: "POST", body: containerParams },
-  );
-  if (containerRes.status === 401 || containerRes.status === 403) throw new TokenExpiredError("instagram", containerRes.status);
-  if (!containerRes.ok) {
-    const err = (await containerRes.json()) as { error?: { message?: string } };
-    throw new Error(`Media container failed: ${err.error?.message ?? containerRes.status}`);
-  }
-  const { id: creationId } = (await containerRes.json()) as { id: string };
-
-  // Publish
-  const publishParams = new URLSearchParams({ creation_id: creationId, access_token: pageToken });
-  const publishRes = await fetch(
-    `https://graph.facebook.com/v20.0/${igUserId}/media_publish`,
-    { method: "POST", body: publishParams },
-  );
-  if (publishRes.status === 401 || publishRes.status === 403) throw new TokenExpiredError("instagram", publishRes.status);
-  if (!publishRes.ok) {
-    const err = (await publishRes.json()) as { error?: { message?: string } };
-    throw new Error(`Publish failed: ${err.error?.message ?? publishRes.status}`);
-  }
-}
-
-/* ── Facebook ────────────────────────────────────────────────────────── */
-
-async function publishToFacebook(
-  credentials: Record<string, string>,
-  asset: Asset,
-): Promise<void> {
-  const token = credentials.accessToken;
-  if (!token) throw new Error("No access token");
-
-  const pagesRes = await fetch(
-    `https://graph.facebook.com/v20.0/me/accounts?access_token=${encodeURIComponent(token)}`,
-  );
-  if (pagesRes.status === 401 || pagesRes.status === 403) throw new TokenExpiredError("facebook", pagesRes.status);
-  if (!pagesRes.ok) throw new Error(`Failed to fetch pages: ${pagesRes.status}`);
-  const pagesData = (await pagesRes.json()) as {
-    data: Array<{ id: string; access_token: string; name: string }>;
-  };
-  if (!pagesData.data?.length) throw new Error("No Facebook pages found");
-
-  const page = pagesData.data[0];
-  const params = new URLSearchParams({ message: asset.content, access_token: page.access_token });
-  if (asset.imageUrl) params.set("url", asset.imageUrl);
-
-  const postRes = await fetch(
-    `https://graph.facebook.com/v20.0/${page.id}/feed`,
-    { method: "POST", body: params },
-  );
-  if (postRes.status === 401 || postRes.status === 403) throw new TokenExpiredError("facebook", postRes.status);
-  if (!postRes.ok) {
-    const err = (await postRes.json()) as { error?: { message?: string } };
-    throw new Error(`Post failed: ${err.error?.message ?? postRes.status}`);
-  }
-}
-
-/* ── LinkedIn ────────────────────────────────────────────────────────── */
-
-async function publishToLinkedIn(
-  credentials: Record<string, string>,
-  asset: Asset,
-): Promise<void> {
-  const token = credentials.accessToken;
-  if (!token) throw new Error("No access token");
-
-  // Get person URN from OpenID userinfo
-  const infoRes = await fetch("https://api.linkedin.com/v2/userinfo", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (infoRes.status === 401 || infoRes.status === 403) throw new TokenExpiredError("linkedin", infoRes.status);
-  if (!infoRes.ok) throw new Error(`Failed to fetch LinkedIn profile: ${infoRes.status}`);
-  const info = (await infoRes.json()) as { sub?: string };
-  const personUrn = info.sub ?? "";
-  if (!personUrn) throw new Error("Could not determine LinkedIn person URN");
-
-  // Truncate to 3000 chars (LinkedIn limit)
-  const text = asset.content.slice(0, 3000);
-
-  const body = {
-    author: personUrn.startsWith("urn:") ? personUrn : `urn:li:person:${personUrn}`,
-    lifecycleState: "PUBLISHED",
-    specificContent: {
-      "com.linkedin.ugc.ShareContent": {
-        shareCommentary: { text },
-        shareMediaCategory: "NONE",
-      },
-    },
-    visibility: {
-      "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
-    },
-  };
-
-  const postRes = await fetch("https://api.linkedin.com/v2/ugcPosts", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-Restli-Protocol-Version": "2.0.0",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (postRes.status === 401 || postRes.status === 403) throw new TokenExpiredError("linkedin", postRes.status);
-  if (!postRes.ok) {
-    const err = (await postRes.json()) as { message?: string };
-    throw new Error(`LinkedIn post failed: ${err.message ?? postRes.status}`);
-  }
-}
-
-/* ── Twitter / X ─────────────────────────────────────────────────────── */
-
-async function publishToTwitter(
-  credentials: Record<string, string>,
-  asset: Asset,
-): Promise<void> {
-  const token = credentials.accessToken;
-  if (!token) throw new Error("No access token");
-
-  // 280-char hard limit
-  const text = asset.content.slice(0, 280);
-
-  const postRes = await fetch("https://api.twitter.com/2/tweets", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ text }),
-  });
-
-  if (postRes.status === 401 || postRes.status === 403) throw new TokenExpiredError("twitter", postRes.status);
-  if (!postRes.ok) {
-    const err = (await postRes.json()) as { detail?: string; title?: string };
-    throw new Error(`Tweet failed: ${err.detail ?? err.title ?? postRes.status}`);
-  }
-}
-
-/* ── Dispatcher ──────────────────────────────────────────────────────── */
-
-async function publishAsset(
-  platform: string,
-  integration: ClientIntegration,
-  asset: Asset,
-): Promise<void> {
-  switch (platform) {
-    case "instagram":
-      return publishToInstagram(integration.credentials, asset);
-    case "facebook":
-      return publishToFacebook(integration.credentials, asset);
-    case "linkedin":
-      return publishToLinkedIn(integration.credentials, asset);
-    case "twitter":
-      return publishToTwitter(integration.credentials, asset);
-    default:
-      throw new Error(`Publisher not implemented for platform: ${platform}`);
-  }
-}
-
-/* ── Cron handler ────────────────────────────────────────────────────── */
-
 export async function GET(req: NextRequest) {
-  // Auth: Vercel Cron sends Authorization: Bearer <CRON_SECRET>
-  // In dev, CRON_SECRET can be any value or omitted entirely
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const authHeader = req.headers.get("Authorization");
-    if (authHeader !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+  // Auth: Cloud Scheduler sends Authorization: Bearer <CRON_SECRET>. Fails closed
+  // in production if CRON_SECRET is unset; open only for local dev convenience.
+  const denied = requireCronSecret(req);
+  if (denied) return denied;
 
   const now = Date.now();
   // Limit to 50 assets per cron tick — prevents timeouts on large backlogs.
   // Older-scheduled assets are processed first (sorted by scheduledAt asc).
-  const dueAssets = await listScheduledAssets({ before: now, limit: 50 });
+  const dueAssets = await listScheduledAssets({ before: now, limit: 50, autoOnly: true });
 
   if (dueAssets.length === 0) {
     return NextResponse.json({ processed: 0, results: [] });
@@ -268,10 +57,23 @@ export async function GET(req: NextRequest) {
     ),
   );
 
+  // The ordering gate needs each client's WHOLE library, not just the due
+  // assets: the blocker we're looking for is precisely the post that ISN'T due
+  // (it's still a draft), so anything narrower can't see it. Same one-read-per-
+  // client shape as the integrations above.
+  const assetsByClient = new Map(
+    await Promise.all(
+      uniqueClientIds.map(async (clientId) => {
+        const assets = await listAssets({ clientId });
+        return [clientId, assets] as const;
+      }),
+    ),
+  );
+
   type PublishResult = {
     assetId: string;
     platform: string;
-    status: "published" | "failed" | "skipped" | "expired";
+    status: "published" | "failed" | "skipped" | "expired" | "held";
     error?: string;
   };
 
@@ -279,10 +81,38 @@ export async function GET(req: NextRequest) {
   // prevents other assets from being processed in the same cron tick.
   const settled = await Promise.allSettled(
     dueAssets.map(async (asset): Promise<PublishResult> => {
+      // Ordering gate — first, before any platform work: a post whose
+      // predecessor is still unpublished must not go out, and there's no point
+      // resolving an integration for it. The hold clears by itself on the next
+      // tick once the predecessor publishes (or is unscheduled), so this both
+      // waits AND flags without anyone having to intervene in the common case.
+      const blocker = blockingPredecessor(asset, assetsByClient.get(asset.clientId) ?? []);
+      if (blocker) {
+        // Client copy, composed in one place (lib/asset-status-copy): this
+        // string is stored on the asset and read by the client on four
+        // surfaces, so it may not carry a spaced hyphen or the raw Firestore
+        // status enum, and it is the one publishError that clientSafePublishError
+        // allowlists through to them verbatim.
+        //
+        // Whether the sentence may NAME the blocker is a visibility question,
+        // and isInClientArchive is the predicate that already answers it — the
+        // blocker is usually the draft behind this post, and no client surface
+        // lists a draft. Asked here rather than inside the copy helper so that
+        // helper stays dependency-free and client-bundle-safe.
+        const message = publishHoldMessage(blocker, {
+          clientCanSeeBlocker: isInClientArchive(blocker, now),
+        });
+        await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
+        return { assetId: asset.id, platform: asset.scheduledPlatform ?? "none", status: "held", error: message };
+      }
+
       const integrations = integrationsByClient.get(asset.clientId) ?? [];
-      const connectedPlatforms = integrations
-        .filter((i) => i.status !== "expired")
-        .map((i) => i.platform);
+      // Auto-eligible = valid token AND the client hasn't turned off auto-publish
+      // for that platform (absent flag = enabled, for pre-toggle integrations).
+      const autoEligible = integrations.filter(
+        (i) => integrationIsUsable(i) && i.autoPublish !== false,
+      );
+      const connectedPlatforms = autoEligible.map((i) => i.platform);
 
       const platform =
         asset.scheduledPlatform ??
@@ -297,21 +127,38 @@ export async function GET(req: NextRequest) {
         };
       }
 
-      const integration = integrations.find((i) => i.platform === platform);
+      const integration = autoEligible.find((i) => i.platform === platform);
       if (!integration) {
+        const exists = integrations.some((i) => i.platform === platform);
         return {
           assetId: asset.id,
           platform,
           status: "skipped",
-          error: `Integration for ${platform} not found`,
+          error: exists
+            ? `Auto-publish is disabled or the token expired for ${platform} - use Publish Now or re-connect`
+            : `Integration for ${platform} not found`,
+        };
+      }
+
+      // Atomically claim the asset so a manual "Publish Now" or an overlapping
+      // cron tick can't publish the same asset in parallel (→ duplicate post).
+      const claimed = await claimAssetForPublish(asset.id);
+      if (!claimed) {
+        return {
+          assetId: asset.id,
+          platform,
+          status: "skipped",
+          error: "Skipped - already claimed by a concurrent publish",
         };
       }
 
       try {
-        await publishAsset(platform, integration, asset);
-        await updateAsset(asset.id, { status: "published", updatedAt: Date.now() });
+        const { postId } = await publishAssetToPlatform(platform, integration, asset);
+        await markAssetPublished(asset.id, postId);
         return { assetId: asset.id, platform, status: "published" };
       } catch (e) {
+        // Release the claim so a later attempt can retry this asset.
+        await releaseAssetPublishClaim(asset.id).catch(() => {});
         if (e instanceof TokenExpiredError) {
           // Mark the integration expired so the UI surfaces it and the next
           // cron tick skips the dead token rather than retrying indefinitely.
@@ -323,12 +170,25 @@ export async function GET(req: NextRequest) {
             error: e.message,
           };
         }
-        // Transient error — leave as "scheduled" so the next cron tick retries.
+        // Transient error — leave as "scheduled" so the next cron tick retries,
+        // but record the failure so the asset card can surface it.
+        //
+        // STORED RAW, ON PURPOSE — the same decision `publishAssetNowAction`
+        // records at its own catch, and the reason is worth having at both
+        // writers rather than at neither. This is the platform SDK's exception
+        // and the only thing that names which integration broke; staff read the
+        // asset un-projected. A client never reads this string: both client
+        // asset projections collapse it through `clientSafePublishError`
+        // (lib/asset-visibility) before it can cross the RSC boundary. The hold
+        // above is the one publishError composed AS client copy, which is why
+        // that branch builds a sentence and this one does not.
+        const message = e instanceof Error ? e.message : "Unknown error";
+        await updateAsset(asset.id, { publishError: message, updatedAt: Date.now() }).catch(() => {});
         return {
           assetId: asset.id,
           platform,
           status: "failed",
-          error: e instanceof Error ? e.message : "Unknown error",
+          error: message,
         };
       }
     }),
@@ -345,6 +205,7 @@ export async function GET(req: NextRequest) {
     published: results.filter((r) => r.status === "published").length,
     failed: results.filter((r) => r.status === "failed").length,
     expired: results.filter((r) => r.status === "expired").length,
+    held: results.filter((r) => r.status === "held").length,
     results,
   });
 }

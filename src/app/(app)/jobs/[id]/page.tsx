@@ -1,29 +1,84 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { getJob, getClient, getAsset } from "@/lib/data";
-import { Card, CardTitle, Badge } from "@/components/ui";
+import { Card, CardTitle, Badge, Spinner } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { JobStatusBadge } from "@/components/job-status";
 import { AssetCard } from "@/components/asset-card";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { ManagedJobCancelButton } from "@/components/managed-job-cancel";
+import { ManagedJobProgress } from "@/components/managed-job-progress";
+import { DynamicAgentStepProgress } from "@/components/dynamic-agent-step-progress";
+import { DynamicAgentGuardrailReportCard } from "@/components/dynamic-agent-guardrail-report";
+import { getDynamicAgentSpec } from "@/lib/data";
+import { JobDeleteButton } from "@/components/job-delete";
+import { JobRetryButton } from "@/components/job-retry";
+import { JobResumeButton } from "@/components/job-resume";
+import { JobStepCostTable } from "@/components/job-step-cost-table";
+import { JobTranscript, TranscriptCount } from "@/components/job-transcript";
+import { fetchJobTranscript } from "@/lib/agent-service/transcript";
+import { AgentEngineRunPanel } from "@/components/agent-engine-run-panel";
+import { readAgentEngineRun } from "@/lib/agent-engine/read-run";
+import { isJobInProgress, scheduleAgentEngineJobStatusSync } from "@/lib/agent-engine/reconcile";
+import { pushablePlatformsByClient } from "@/lib/publish-targets";
+import { classifyJobError } from "@/lib/job-error-taxonomy";
+import { normalizeDashes } from "@/lib/text-utils";
+import type { Job } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 
 export default async function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
+  const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
   const { id } = await params;
-  const job = await getJob(id);
+  let job = await getJob(id);
   if (!job) notFound();
+
+  // A job dispatched through agent-engine (Task 2/3) has no reverse-webhook completion path
+  // — this view (and the periodic sweep at /api/agent-engine/reconcile) IS the completion
+  // channel. Reads agentEngineRuns/{runId} once and, if it's reached a real terminal state,
+  // reflects job.status/error/heldReason in THIS render immediately (SCRUM-265 item 4: the
+  // actual Firestore write is scheduled via after() instead of blocking here — see
+  // scheduleAgentEngineJobStatusSync's own doc comment in reconcile.ts).
+  const agentEngineView = job.agentEngineRunId ? await readAgentEngineRun(job.agentEngineRunId) : undefined;
+  if (agentEngineView) {
+    job = scheduleAgentEngineJobStatusSync(job, agentEngineView);
+  }
+
   const [client, ...assets] = await Promise.all([
     getClient(job.clientId),
     ...job.assetIds.map((aid) => getAsset(aid)),
   ]);
-  const realAssets = assets.filter(Boolean);
-  const inProgress = job.status === "running" || job.status === "queued";
+  const realAssets = assets.filter((a) => !!a);
+  const classifiedError = classifyJobError(job.error);
+
+  const inProgress = isJobInProgress(job, agentEngineView);
+
+  // F107 - without this the deliverables here rendered with no connectedPlatforms,
+  // so Publish Now never appeared on the job page even for an approved post whose
+  // client has a usable integration. Same helper /assets uses, so the "pushable"
+  // predicate cannot drift; this page is already staff-only, and what crosses to
+  // the client component is platform ids, never integration records.
+  const connectedPlatforms = (await pushablePlatformsByClient(realAssets))?.[job.clientId];
+
+  // The spec snapshot's step list, so the bar can also show steps a failed run
+  // never reached — and, for an IN-FLIGHT run, every step at all (there is no
+  // `dynamicRun` yet to fall back to). Best-effort: a spec deleted since the
+  // run still renders whatever the live/executed data has, just without the
+  // not-reached tail.
+  let plannedSteps: Array<{ id: string; label: string; type: "ai" | "code" }> | undefined;
+  if (job.dynamicAgentSpecId) {
+    const spec = await getDynamicAgentSpec(job.dynamicAgentSpecId);
+    if (spec && (!job.dynamicRun || spec.version === job.dynamicRun.specVersion)) {
+      plannedSteps = [...spec.steps]
+        .sort((a, b) => a.order - b.order)
+        .map((step) => ({ id: step.id, label: step.label, type: step.type }));
+    }
+  }
 
   return (
     <>
-      {inProgress && <AutoRefresh />}
+      {inProgress && <AutoRefresh statusUrl={`/api/jobs/${job.id}/status`} />}
       <Link href="/jobs" className="mb-4 inline-flex items-center gap-1 text-xs text-muted hover:text-foreground">
         <Icon name="ArrowLeft" className="h-3.5 w-3.5" /> All jobs
       </Link>
@@ -32,20 +87,69 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{job.agentName}</h1>
           <p className="text-sm text-muted">
-            {client?.name ?? "—"} · {formatDateTime(job.createdAt)}
+            {client?.name ?? "-"} · {formatDateTime(job.createdAt)}
             {job.emailedTo && <span className="text-neon-dim"> · emailed to {job.emailedTo}</span>}
           </p>
         </div>
-        <JobStatusBadge status={job.status} />
+        <div className="flex items-center gap-3">
+          {job.external && inProgress && <ManagedJobCancelButton jobId={job.id} />}
+          {job.status === "failed" && job.customAgentId && <JobRetryButton jobId={job.id} />}
+          {job.status === "failed" && job.dynamicAgentSpecId && <JobResumeButton jobId={job.id} />}
+          {user.role === "KAROS_ADMIN" && <JobDeleteButton jobId={job.id} />}
+          <JobStatusBadge status={job.status} />
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+      {/* A Dynamic Agent Studio run gets a per-step bar from its own recorded
+          trace instead of the fixed 3-phase managed strip — one row per step of
+          the spec's pipeline, the same shape CampaignStepProgress uses for a
+          campaign's tasks. Mounted as soon as the job IS a dynamic-agent run
+          (job.dynamicAgentSpecId), not only once it has a completed report
+          (job.dynamicRun) — otherwise the live currentStepId/completedStepIds
+          channel below has nothing to render into until the run is already
+          over, which defeats the point of a live indicator. Also mounted for
+          a hardcoded job that got a write-checkpoint estimate (job.stepBreakdown
+          alone, no dynamicRun/dynamicAgentSpecId) — see this component's own
+          doc comment for that third shape. */}
+      {job.dynamicRun || job.dynamicAgentSpecId || (job.stepBreakdown && job.stepBreakdown.length > 0) ? (
+        <DynamicAgentStepProgress
+          jobStatus={job.status}
+          currentStepId={job.currentStepId}
+          {...(job.dynamicRun ? { report: job.dynamicRun } : {})}
+          {...(job.completedStepIds ? { completedStepIds: job.completedStepIds } : {})}
+          {...(plannedSteps ? { plannedSteps } : {})}
+          {...(job.stepBreakdown ? { stepBreakdown: job.stepBreakdown } : {})}
+        />
+      ) : (
+        job.external && <ManagedJobProgress status={job.status} />
+      )}
+
+      {agentEngineView && <AgentEngineRunPanel jobId={job.id} view={agentEngineView} />}
+
+      {/* Topic-guardrail and repetition findings for a dynamic run. Staff-only
+          material (it names a restricted topic and quotes the draft), and this
+          page is staff-only. Renders nothing when neither check was active. */}
+      {job.dynamicRun ? (
+        <DynamicAgentGuardrailReportCard
+          {...(job.dynamicRun.guardrail ? { guardrail: job.dynamicRun.guardrail } : {})}
+          {...(job.dynamicRun.dedupe ? { dedupe: job.dynamicRun.dedupe } : {})}
+        />
+      ) : null}
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">
           {realAssets.length > 0 && (
             <div>
               <CardTitle className="mb-3">Deliverables</CardTitle>
               <div className="space-y-3">
-                {realAssets.map((a) => a && <AssetCard key={a.id} asset={a} canApprove />)}
+                {realAssets.map((a) => (
+                  <AssetCard
+                    key={a.id}
+                    asset={a}
+                    canApprove
+                    {...(connectedPlatforms ? { connectedPlatforms } : {})}
+                  />
+                ))}
               </div>
             </div>
           )}
@@ -53,26 +157,121 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           {job.error && (
             <Card className="border-danger/30 bg-danger/5">
               <CardTitle className="mb-1 text-danger">Error</CardTitle>
+              {/* Best-effort classification over the raw text below - see
+                  job-error-taxonomy.ts's doc comment. Not shown when it can't
+                  do better than restate the raw string. */}
+              {classifiedError && classifiedError.label !== "Unexpected error" && (
+                <p className="mb-1 text-sm font-medium text-danger">{classifiedError.label}</p>
+              )}
               <p className="text-sm text-muted">{job.error}</p>
+            </Card>
+          )}
+
+          {/* A held run: finished, produced nothing, and nothing broke. Its own
+              card rather than the danger one above, because this text is a
+              product rule speaking ("engagement lane daily cap reached",
+              "topics catalog floor breached") and reading it in red told staff a
+              working guardrail was an outage. No error taxonomy is run over it
+              either — `classifyJobError` classifies FAILURES, and there is
+              nothing here to classify. */}
+          {job.status === "held" && (
+            <Card>
+              <CardTitle className="mb-1">Held — nothing to deliver</CardTitle>
+              <p className="text-sm text-muted">
+                {job.heldReason ?? "This run stopped before producing a deliverable. Nothing failed."}
+              </p>
             </Card>
           )}
 
           {job.rawOutput && (
             <Card>
               <CardTitle className="mb-2">Raw model output</CardTitle>
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-3 text-xs text-muted">{job.rawOutput}</pre>
+              <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-2 p-3 text-xs text-muted">{normalizeDashes(job.rawOutput)}</pre>
             </Card>
+          )}
+
+          {job.external?.transcriptUrl && (
+            <Suspense
+              fallback={
+                <Card>
+                  <CardTitle className="mb-2">Agent transcript</CardTitle>
+                  <p className="flex items-center gap-2 text-sm text-muted-2">
+                    <Spinner className="h-3.5 w-3.5" /> Loading the run transcript…
+                  </p>
+                </Card>
+              }
+            >
+              <TranscriptSection job={job} />
+            </Suspense>
           )}
         </div>
 
         <div className="space-y-6">
+          {job.external && (
+            <Card>
+              <CardTitle className="mb-3">Agent run</CardTitle>
+              <dl className="space-y-2 text-sm">
+                {job.external.totalCostUsd !== undefined && (
+                  <div className="flex justify-between">
+                    <dt className="text-xs text-muted-2">Cost (estimate)</dt>
+                    <dd>${job.external.totalCostUsd.toFixed(4)}</dd>
+                  </div>
+                )}
+                {job.external.inputTokens !== undefined && (
+                  <div className="flex justify-between">
+                    <dt className="text-xs text-muted-2">Tokens in / out</dt>
+                    <dd>
+                      {job.external.inputTokens.toLocaleString()} / {job.external.outputTokens?.toLocaleString() ?? 0}
+                    </dd>
+                  </div>
+                )}
+                {job.external.model && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-xs text-muted-2">Model</dt>
+                    <dd className="truncate text-xs">{job.external.model}</dd>
+                  </div>
+                )}
+                {job.external.agentsRepoSha && (
+                  <div className="flex justify-between">
+                    <dt className="text-xs text-muted-2">Agents repo</dt>
+                    <dd className="font-mono text-xs">{job.external.agentsRepoSha.slice(0, 10)}</dd>
+                  </div>
+                )}
+              </dl>
+              {(job.external.artifacts?.length ?? 0) > 0 && (
+                <div className="mt-4">
+                  <p className="mb-1.5 text-xs text-muted-2">Artifacts</p>
+                  <ul className="space-y-1">
+                    {job.external.artifacts!.map((a) => (
+                      <li key={a.path} className="flex items-center gap-1.5 text-xs">
+                        <Icon name={a.clientFacing ? "FileCheck" : "FileLock"} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                        {a.url ? (
+                          <a href={a.url} target="_blank" rel="noreferrer" className="truncate hover:text-neon">
+                            {a.name}
+                          </a>
+                        ) : (
+                          <span className="truncate">{a.name}</span>
+                        )}
+                        {!a.clientFacing && <Badge tone="neutral">internal</Badge>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {job.stepBreakdown && job.stepBreakdown.length > 0 && (
+            <JobStepCostTable steps={job.stepBreakdown} />
+          )}
+
           <Card>
             <CardTitle className="mb-3">Inputs</CardTitle>
-            {Object.entries(job.input).filter(([, v]) => v).length === 0 ? (
+            {Object.entries(job.input).filter(([k, v]) => v && k !== "inputs").length === 0 ? (
               <p className="text-sm text-muted-2">No inputs.</p>
             ) : (
               <dl className="space-y-2">
-                {Object.entries(job.input).filter(([, v]) => v).map(([k, v]) => (
+                {Object.entries(job.input).filter(([k, v]) => v && k !== "inputs").map(([k, v]) => (
                   <div key={k}>
                     <dt className="text-xs text-muted-2">{k}</dt>
                     <dd className="text-sm">{v}</dd>
@@ -102,5 +301,36 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
         </div>
       </div>
     </>
+  );
+}
+
+/** Async island: fetches + parses the SDK run transcript without blocking the page. */
+async function TranscriptSection({ job }: { job: Job }) {
+  const result = await fetchJobTranscript(job);
+  return (
+    <Card>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <CardTitle>Agent transcript</CardTitle>
+        {result.ok && result.turns.length > 0 && <TranscriptCount turns={result.turns} />}
+      </div>
+      <p className="mb-4 text-xs text-muted-2">What the agent reasoned and the tools it ran to produce the deliverables.</p>
+      {result.ok ? (
+        <JobTranscript turns={result.turns} truncated={result.truncated} />
+      ) : (
+        <div className="space-y-2 text-sm text-muted-2">
+          <p>{result.reason}</p>
+          {result.rawUrl && (
+            <a
+              href={result.rawUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-neon-dim hover:text-neon"
+            >
+              <Icon name="ExternalLink" className="h-3.5 w-3.5" /> Open raw transcript
+            </a>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }

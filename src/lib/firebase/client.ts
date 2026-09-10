@@ -1,8 +1,7 @@
 "use client";
 
 import { initializeApp, getApps, getApp, type FirebaseOptions } from "firebase/app";
-import { getAuth, GoogleAuthProvider, OAuthProvider } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 
 // Fallbacks keep module init from throwing during static prerender when env
@@ -18,10 +17,14 @@ const firebaseConfig: FirebaseOptions = {
 
 export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
 export const storage = getStorage(firebaseApp);
-export const googleProvider = new GoogleAuthProvider();
+// Auth-only provider: standard implicit-grant flow — no extra scopes, no offline.
+// access_type:"offline" forces the code-grant flow which Firebase's redirect handler
+// cannot process, causing signInWithRedirect to return null and signInWithPopup to hang.
+export const googleAuthProvider = new GoogleAuthProvider();
 
-export const appleProvider = new OAuthProvider("apple.com");
-appleProvider.addScope("email");
-appleProvider.addScope("name");
+// Gmail-scoped provider: used by the post-login OAuth integration flow to request
+// inbox read access and a refresh token. NOT for initial sign-in.
+export const googleProvider = new GoogleAuthProvider();
+googleProvider.addScope("https://www.googleapis.com/auth/gmail.readonly");
+googleProvider.setCustomParameters({ access_type: "offline", prompt: "consent" });

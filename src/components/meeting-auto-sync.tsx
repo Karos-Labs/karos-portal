@@ -35,7 +35,7 @@ export function MeetingAutoSync() {
         setTimeout(() => { if (!cancelled) setState("idle"); }, 4000);
       })
       .catch(() => {
-        if (!cancelled) setState("idle"); // Silent failure — manual button remains
+        if (!cancelled) setState("idle"); // Silent failure - manual button remains
       });
 
     return () => { cancelled = true; };

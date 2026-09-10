@@ -10,20 +10,31 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.85",
-    "@modelcontextprotocol/sdk": "^1.26.0",
-    "ai": "^6.0.208",
+    "@ai-sdk/anthropic": "^4.0.44",
+    "@ai-sdk/google-vertex": "^5.0.66",
+    "@google-cloud/bigquery": "^9.0.2",
+    "@google-cloud/pubsub": "^6.0.1",
+    "@google-cloud/storage": "^7.16.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.221.0",
+    "@opentelemetry/resource-detector-gcp": "^0.56.0",
+    "@opentelemetry/resources": "^2.10.0",
+    "@opentelemetry/sdk-node": "^0.221.0",
+    "@opentelemetry/sdk-trace-node": "^2.10.0",
+    "@opentelemetry/semantic-conventions": "^1.43.0",
+    "ai": "^7.0.83",
     "clsx": "^2.1.1",
     "firebase": "^12.15.0",
     "firebase-admin": "^14.0.0",
+    "google-auth-library": "^11.0.2",
+    "jszip": "^3.10.1",
     "lucide-react": "^1.21.0",
-    "mcp-handler": "^1.1.0",
-    "nanoid": "^5.1.11",
     "next": "16.2.9",
     "next-themes": "^0.4.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.14.0",
+    "server-only": "^0.0.1",
     "tailwind-merge": "^3.6.0",
     "zod": "^4.4.3"
   },
@@ -37,7 +48,6 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^5",
-    "vitest": "^4.1.9",
-    "yaml": "^2.9.0"
+    "vitest": "^4.1.9"
   }
 }

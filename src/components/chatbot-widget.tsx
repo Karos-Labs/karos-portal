@@ -2,35 +2,464 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Icon } from "@/components/icon";
+import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
-import type { Agent } from "@/lib/types";
+import { ingestCustomUserTaskAction } from "@/lib/actions";
+import { renderSectionBody } from "@/lib/doc-render";
+import { readChatStream, type ChatStreamEvent } from "@/lib/chat/client-stream";
+import type { Asset, ClientReport } from "@/lib/types";
+import { CHAT_MODEL_KEYS, CHAT_MODEL_OPTIONS, type ChatModelKey } from "@/lib/ai/chat-models";
+import { RunAttachments, type RunAttachment } from "@/components/agents/run-attachments";
+import { AssetDetailModal } from "@/components/asset-detail-modal";
 
 /* ── Types ───────────────────────────────────────────────────────────── */
+
+/**
+ * T-B18: the payload of one `data-feedback` part (stream-protocol.ts /
+ * client-stream.ts), as recorded against the assistant turn that wrote it.
+ */
+type FeedbackNote = Extract<ChatStreamEvent, { type: "feedback" }>["feedback"];
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /**
+   * What the transcript shows in place of `content`. An action chip's hidden
+   * instruction used to be rendered in the user bubble, so the client was
+   * shown words they never wrote - including an order aimed at the model
+   * ("Start by asking me…") and internal product vocabulary (QA F15).
+   * `content` is still what goes to the API.
+   */
+  display?: string;
+  /**
+   * Filenames/URIs of files sent WITH this message (T-B5), shown as a small
+   * chip row under the user bubble. Display-only - the actual `MediaAsset`
+   * objects the turn carried are never persisted here (`isPersistedMessage`
+   * only re-hydrates strings), so reloading a restored transcript shows a
+   * message was attached without re-attaching the files it named.
+   */
+  attachmentLabels?: string[];
+  /**
+   * `provide_feedback` calls this turn recorded, structurally — not just the
+   * confirmation sentence in `content` (T-B18). Rendered as a chip under the
+   * reply; a persisted transcript keeps these across a reload exactly like it
+   * keeps `content` (isPersistedMessage below validates the shape on restore).
+   */
+  feedbackNotes?: FeedbackNote[];
+  /**
+   * Deliverables this turn's tool calls resolved to (flow audit 2026-09, R12).
+   *
+   * The copilot had exactly ONE link out of itself — the feedback chip — so a
+   * client who asked it to find, edit or reschedule an output was handed a
+   * description of a deliverable and no way to open it, while the product has a
+   * perfectly good `AssetDetailModal` with eight other openers. These are the
+   * ids the tools already name (see `deliverableFromToolCall`), rendered as the
+   * chip that opens that same modal.
+   */
+  deliverables?: Deliverable[];
 }
 
-type CopilotMode =
-  | { type: "general" }
-  | { type: "agent"; agent: Agent };
+/** One asset a turn's tools touched: the id, and the best name we were given for it. */
+interface Deliverable {
+  assetId: string;
+  title?: string;
+}
+
+/** One of this client's LIVE agents, offered in the `@mention` dropdown. */
+interface MentionableAgent {
+  id: string;
+  displayName: string;
+  icon: string;
+  /**
+   * Which platform this agent posts to (AF-20), resolved by the route through
+   * lib/content-platform and sent as a token. Null for the agents that target
+   * none (Landing Builder), and those keep their stored lucide icon.
+   */
+  platform: SocialPlatform | null;
+}
+
+/**
+ * A focused-agent chip set by picking `@AgentName` - biases, not locks, the chat.
+ *
+ * Deliberately NOT carrying a platform of its own, even though the chip draws
+ * one: focus is set from two places, and only one of them holds a roster row.
+ * The other is the copilot's own `set_agent_focus` marker, which names an agent
+ * in prose mid-stream from inside a hook that never sees the mention list. A
+ * field here would be filled on one path and empty on the other, so the same
+ * chip would wear a logo or not depending on how the user got to it. The chip
+ * looks the id up in the roster at render instead - one answer, both paths.
+ */
+interface FocusAgent {
+  id: string;
+  name: string;
+}
+
+/**
+ * The asset one finished tool call resolved to, or null (flow audit 2026-09, R12).
+ *
+ * NOTHING NEW IS ASKED OF THE SERVER. Three of the copilot's tools already name
+ * an asset by id, and this reads the id from wherever that tool happens to put
+ * it:
+ *  · `find_output` prints `id: <id>` on its own line, under a `**Title**` line
+ *    (chat/route.ts's findOutputTool) — the whole point of the tool is to hand
+ *    back an exact id, so it is in the RESULT.
+ *  · `edit_output` and `reschedule_output` take `{ assetId }` as their INPUT
+ *    and answer with prose ("Saved.", "Moved to …"), so the id is in the call,
+ *    which `client-stream.ts` now carries through with the result.
+ *
+ * Both are matched conservatively: an unrecognised tool, a multi-match
+ * `find_output` ("Found 4 matching outputs…", which prints several ids and
+ * therefore resolves to no single deliverable) and a refusal string all return
+ * null, so the chip appears only where there is exactly one thing to open.
+ */
+function deliverableFromToolCall(evt: {
+  toolName: string;
+  output: unknown;
+  input?: unknown;
+}): Deliverable | null {
+  const input = (evt.input ?? {}) as Record<string, unknown>;
+  if (evt.toolName === "edit_output" || evt.toolName === "reschedule_output") {
+    // A refusal is still a tool result; only a save/move actually landed on an
+    // asset the reader can be sent to.
+    const output = typeof evt.output === "string" ? evt.output : "";
+    const landed = /^(Saved\.|Moved to )/.test(output.trim());
+    if (!landed) return null;
+    const assetId = typeof input.assetId === "string" ? input.assetId : null;
+    if (!assetId) return null;
+    const title = typeof input.newTitle === "string" ? input.newTitle : undefined;
+    return { assetId, ...(title ? { title } : {}) };
+  }
+  if (evt.toolName !== "find_output" || typeof evt.output !== "string") return null;
+  const ids = [...evt.output.matchAll(/^id: (\S+)$/gm)].map((m) => m[1]!);
+  // The multi-match branch lists `· id: …` inline on several lines and never on
+  // its own; a single confident answer is the only one with exactly one.
+  if (ids.length !== 1) return null;
+  const title = /^\*\*(.+?)\*\*/m.exec(evt.output)?.[1];
+  return { assetId: ids[0]!, ...(title && title !== "Untitled" ? { title } : {}) };
+}
+
+/* ── Transcript persistence ──────────────────────────────────────────── */
+
+/**
+ * Per-client sessionStorage key for the copilot transcript. Every message is
+ * charged to the client, so a hard reload must not silently destroy a paid
+ * conversation (QA F88). sessionStorage (not local) keeps it to the tab.
+ */
+const THREAD_KEY_PREFIX = "karos.copilot.thread.";
+/** Cap what we write back - a long thread is not worth a quota error. */
+const MAX_PERSISTED_MESSAGES = 40;
+
+/** One persisted `feedbackNotes` entry — validated field-by-field, same reasoning as `isPersistedMessage`. */
+function isPersistedFeedbackNote(v: unknown): v is FeedbackNote {
+  if (!v || typeof v !== "object") return false;
+  const n = v as Record<string, unknown>;
+  return (
+    typeof n.agentName === "string" &&
+    typeof n.agentId === "string" &&
+    (n.scope === "agent" || n.scope === "template") &&
+    (n.templateKey === undefined || typeof n.templateKey === "string") &&
+    (n.category === undefined || typeof n.category === "string")
+  );
+}
+
+/** One persisted `deliverables` entry — same field-by-field rule as the notes above. */
+function isPersistedDeliverable(v: unknown): v is Deliverable {
+  if (!v || typeof v !== "object") return false;
+  const d = v as Record<string, unknown>;
+  return typeof d.assetId === "string" && (d.title === undefined || typeof d.title === "string");
+}
+
+function isPersistedMessage(v: unknown): v is Message {
+  if (!v || typeof v !== "object") return false;
+  const m = v as Record<string, unknown>;
+  return (
+    typeof m.id === "string" &&
+    (m.role === "user" || m.role === "assistant") &&
+    typeof m.content === "string" &&
+    (m.display === undefined || typeof m.display === "string") &&
+    (m.attachmentLabels === undefined ||
+      (Array.isArray(m.attachmentLabels) && m.attachmentLabels.every((x) => typeof x === "string"))) &&
+    // sessionStorage is this tab's own prior write, but still untrusted shape
+    // as far as this type guard is concerned - a corrupted/older-shape entry
+    // (or one written by a pre-T-B18 build in the same session) is dropped
+    // rather than handed to render as a malformed chip.
+    (m.feedbackNotes === undefined ||
+      (Array.isArray(m.feedbackNotes) && m.feedbackNotes.every(isPersistedFeedbackNote))) &&
+    (m.deliverables === undefined ||
+      (Array.isArray(m.deliverables) && m.deliverables.every(isPersistedDeliverable)))
+  );
+}
+
+/* ── Proactive action chip definitions ───────────────────────────────── */
+
+interface ProactiveAction {
+  id: string;
+  icon: string;
+  label: string;
+  sublabel: string;
+  /** Chat message this chip sends. */
+  trigger: string;
+  color: string;
+  /**
+   * Opts into Sonnet instead of the copilot's default Haiku model - this is a
+   * plain chatbot, so most turns (including a focused-agent conversation) run
+   * cheap. These three run multi-step tool orchestration over a full strategy
+   * write-up, not a quick Q&A turn, so they ask for the stronger model.
+   */
+  deep?: boolean;
+}
+
+function buildProactiveActions(): ProactiveAction[] {
+  return [
+    {
+      // The copilot has no web search and no page fetch - the only competitor
+      // intelligence it holds is the tracked competitor list already stored on
+      // the account. Asking for a URL promised a page visit that never happens
+      // (QA F87), so both the sublabel and the trigger name the real source.
+      id: "competitor_research",
+      icon: "TrendingUp",
+      label: "Competitor Deep-Dive",
+      sublabel: "Brief on a tracked competitor + counter-strategy tasks",
+      trigger:
+        "Give me an intel brief on one of the competitors in our tracker, built from the tracked competitor data you already hold. Start by asking me which tracked competitor to focus on.",
+      color: "var(--info)",
+      deep: true,
+    },
+    {
+      id: "brand_audit",
+      icon: "Search",
+      label: "Brand Visibility Audit",
+      sublabel: "Surface presence gaps and push optimization tasks",
+      trigger:
+        "Run a brand visibility and market presence audit. Identify gaps in our brand positioning and generate specific optimization action items.",
+      color: "var(--warning)",
+      deep: true,
+    },
+    {
+      // "Queue" claimed an execution step this path never performs: the only
+      // write is pending task cards, and a run starts when a human later moves
+      // a card into In Progress (QA F91).
+      //
+      // "Dispatch" was the same mistake one layer up (A3): it named the
+      // machinery - a batch being sent somewhere - on a chip a client presses.
+      // The label says what the client ends up with. Same rename as the board
+      // chip in tasks-board.tsx; neither surface branches by role, so there is
+      // no staff naming to preserve here.
+      //
+      // The trigger names no specific product: it used to hardcode "social
+      // posts, newsletter, blog article, landing page", which is only the
+      // managed-product half of the roster and ignores whatever custom agents
+      // this account has been granted (agent-roster.ts unifies both into one
+      // catalog for exactly this reason). Naming the four here would re-narrow
+      // the model back to them regardless of what the system prompt's live
+      // AVAILABLE AGENTS registry actually lists for this client.
+      id: "content_dispatch",
+      icon: "Zap",
+      label: "Content Plan",
+      sublabel: "Propose this week's content plan as ready-to-run tasks",
+      trigger:
+        "Propose a content plan for this week using the AI agents actually available on this account, and suggest a concrete plan I can turn into tasks.",
+      color: "var(--danger)",
+      deep: true,
+    },
+  ];
+}
+
+/**
+ * The `/` command palette. Each entry either inserts a scaffold sentence into
+ * the input - the same idiom the action chips' `trigger` strings already use,
+ * so completing it and sending is an ordinary chat turn the new capability-
+ * matrix tools (find_output/edit_output/run_agent_now/reschedule_output/
+ * provide_feedback, chat/route.ts) answer - or, for `/add-task`, is handled
+ * entirely client-side (see `sendAddTask`) to keep the cheap, deterministic
+ * Haiku-routed path `QuickTaskForm` used to front, now reached from the main
+ * input instead of a separate card.
+ */
+interface SlashCommand {
+  id: string;
+  label: string;
+  hint: string;
+  /** Absent only for `add-task`, which is special-cased in handleSubmit. */
+  scaffold?: string;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { id: "add-task", label: "/add-task", hint: "Quickly add a task to your board" },
+  {
+    id: "edit-output",
+    label: "/edit-output",
+    hint: "Revise a post or asset you already have",
+    scaffold: "I'd like to revise one of my generated posts. Here's what to change: ",
+  },
+  {
+    id: "schedule-run",
+    label: "/schedule-run",
+    hint: "Run one of your agents right now",
+    scaffold: "Please run ",
+  },
+  {
+    id: "reschedule-post",
+    label: "/reschedule-post",
+    hint: "Move a scheduled post to a new date/time",
+    scaffold: "I'd like to move the publish date for ",
+  },
+  {
+    id: "inspect-job",
+    label: "/inspect-job",
+    hint: "Check the status of a specific output",
+    scaffold: "What's the status of ",
+  },
+  {
+    id: "provide-feedback",
+    label: "/provide-feedback",
+    hint: "Give standing feedback on one of your agents",
+    scaffold: "I want to give feedback on ",
+  },
+];
+
+/**
+ * What the transcript says after `/add-task`.
+ *
+ * USED TO CARRY A "[View]" LINK TO THE TASK, KEYED ON ITS ID (#122, F65) —
+ * REVERSED 2026-08. That link opened the Workspace board straight to the
+ * ticket, deliberately keyed on `?task=` rather than a guessed `?owner=` tab so
+ * the reader always landed on the card just named. The board is gone entirely
+ * now, and nothing replaced it as a screen that shows one task by id — Home's
+ * own attention rows hit the identical wall and went the same way
+ * (client-home-overview.tsx's `taskBoardHref` removal; notification-bell.tsx's
+ * `TaskAlertRow`), so this reply now drops the link rather than naming a
+ * destination the reader cannot reach.
+ */
+export function addTaskReply(
+  result: Pick<
+    Awaited<ReturnType<typeof ingestCustomUserTaskAction>>,
+    "ok" | "title" | "taskId" | "error" | "duplicate"
+  >,
+): string {
+  if (!result.ok) {
+    return result.duplicate
+      ? (result.error ?? "That's already on your task board.")
+      : (result.error ?? "Couldn't add that task. Try again.");
+  }
+  return `Added${result.title ? ` "${result.title}"` : ""} to your task board.`;
+}
 
 /* ── Copilot hook ────────────────────────────────────────────────────── */
 
 function useCopilot(
   clientId: string,
-  agentId: string | null,
+  viewerUid: string,
   onBrandingChange: () => void,
-  onJobStarted: () => void,
+  onTasksCreated: () => void,
 ) {
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set by picking `@AgentName` - sent as `focusAgentId` on every turn until cleared. */
+  const [focusAgent, setFocusAgent] = useState<FocusAgent | null>(null);
+  /**
+   * Manual model-picker override (T-B3/SCRUM-246). `null` means "Auto" - the
+   * route's own cost-based routing (cheap Gemini by default, Haiku for a
+   * `deep` proactive action) decides. A picked key is sent as `model` on
+   * every turn until cleared, taking priority over `deep` server-side
+   * (`resolveChatModel`, lib/ai/chat-models.ts) - picking "Fast" even
+   * overrides one of the three proactive actions' own `deep: true`. Session-
+   * only by design, unlike `focusAgent`: a cost preference from a prior visit
+   * silently carrying into a new one is a worse default than just asking
+   * again, and this is a plain UI convenience, not billed state worth a
+   * client-visible receipt.
+   */
+  const [preferredModel, setPreferredModel] = useState<ChatModelKey | null>(null);
+  /**
+   * T-B5: files uploaded (browser → GCS, real `gs://` URIs - see
+   * `RunAttachments`) and staged for the NEXT message only. Not persisted
+   * (unlike `focusAgent`/the transcript): a signed-URL upload is a live GCS
+   * object either way, and re-offering a stale pending attachment across a
+   * reload is a worse default than just asking the user to attach again.
+   */
+  const [attachments, setAttachments] = useState<RunAttachment[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  // Scoped to viewer AND client: sessionStorage survives sign-out in the same
+  // tab, and StaffCopilotDock writes under this prefix too - an unscoped key
+  // let the next signed-in user restore the previous one's transcript, which
+  // for a staff→client handover means internal-tier context in a client's pane.
+  const storageKey = `${THREAD_KEY_PREFIX}${viewerUid || "anon"}.${clientId}`;
+  /** Separate key, same scoping - the focus survives independently of clearing the transcript. */
+  const focusStorageKey = `${THREAD_KEY_PREFIX}focus.${viewerUid || "anon"}.${clientId}`;
+  /** Blocks the write-back below until the restore pass has run. */
+  const hydratedRef = useRef(false);
+
+  // Restore the transcript AND the focused agent for this client. Runs after
+  // mount rather than in a lazy initializer so the server-rendered (empty)
+  // markup and the first client render still agree. The two live in the same
+  // effect so `hydratedRef` gates both write-backs from the same instant -
+  // a client who picked an agent expects it to survive a reload exactly like
+  // the transcript already does, not silently reset to the general copilot.
+  useEffect(() => {
+    hydratedRef.current = false;
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(parsed)) {
+        const restored = parsed.filter(isPersistedMessage);
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring persisted state on mount is the point
+        if (restored.length > 0) setMessages(restored);
+      }
+    } catch {
+      /* unreadable / disabled storage - start clean */
+    }
+    try {
+      const rawFocus = sessionStorage.getItem(focusStorageKey);
+      const parsedFocus: unknown = rawFocus ? JSON.parse(rawFocus) : null;
+      if (
+        parsedFocus &&
+        typeof parsedFocus === "object" &&
+        typeof (parsedFocus as Record<string, unknown>).id === "string" &&
+        typeof (parsedFocus as Record<string, unknown>).name === "string"
+      ) {
+        setFocusAgent(parsedFocus as FocusAgent);
+      }
+    } catch {
+      /* unreadable / disabled storage - starts unfocused */
+    }
+    hydratedRef.current = true;
+  }, [storageKey, focusStorageKey]);
+
+  // Write the focus back on every change once hydrated - unlike the transcript,
+  // an explicit clear (null) DOES get persisted here: there is no dual-mount
+  // "empty means not-yet-restored" ambiguity for a single id, only ever a
+  // deliberate pick, a deliberate clear, or the restore pass itself.
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    try {
+      if (focusAgent) sessionStorage.setItem(focusStorageKey, JSON.stringify(focusAgent));
+      else sessionStorage.removeItem(focusStorageKey);
+    } catch {
+      /* quota or private mode - focus stays in memory for this session only */
+    }
+  }, [focusAgent, focusStorageKey]);
+
+  // Write back once a turn settles. Skipped mid-stream so a long answer isn't
+  // serialized on every chunk.
+  useEffect(() => {
+    if (!hydratedRef.current || streaming) return;
+    try {
+      // Never clear on empty. CopilotDock mounts TWO widgets (mobile sheet +
+      // desktop rail) against this same key; the hidden one can render with an
+      // empty list and would otherwise wipe the thread the visible one just
+      // restored. reset() clears the key explicitly, which is the only path
+      // that should.
+      if (messages.length === 0) return;
+      sessionStorage.setItem(storageKey, JSON.stringify(messages.slice(-MAX_PERSISTED_MESSAGES)));
+    } catch {
+      /* quota or private mode - the in-memory thread still works */
+    }
+  }, [messages, streaming, storageKey]);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -38,18 +467,44 @@ function useCopilot(
     setInput("");
     setError(null);
     setStreaming(false);
-  }, []);
+    setAttachments([]);
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch {
+      /* nothing to clear */
+    }
+  }, [storageKey]);
 
   const send = useCallback(
-    async (text: string) => {
+    /**
+     * @param display Shown in the user bubble instead of `text` - used by the
+     * action chips, whose trigger is an instruction to the model, not a
+     * sentence the client typed (QA F15). `text` is what the API receives.
+     * @param deep Opts this one turn into Sonnet - the 3 substantive proactive
+     * actions set it; everything else runs on the copilot's default cheap model.
+     */
+    async (text: string, display?: string, deep?: boolean) => {
       const trimmed = text.trim();
       if (!trimmed || streaming) return;
 
-      const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: trimmed };
+      // Captured before any state update below clears it - this message's
+      // attachments, not whatever is pending by the time the fetch resolves.
+      const turnAttachments = attachments;
+
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: trimmed,
+        ...(display ? { display } : {}),
+        ...(turnAttachments.length > 0
+          ? { attachmentLabels: turnAttachments.map((a) => a.label ?? a.uri) }
+          : {}),
+      };
       const assistantId = crypto.randomUUID();
 
       setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
       setInput("");
+      setAttachments([]);
       setStreaming(true);
       setError(null);
 
@@ -62,7 +517,22 @@ function useCopilot(
         const response = await fetch(`/api/clients/${clientId}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history, agentId }),
+          body: JSON.stringify({
+            messages: history,
+            ...(focusAgent ? { focusAgentId: focusAgent.id } : {}),
+            ...(deep ? { deep: true } : {}),
+            // Sent as one of CHAT_MODEL_OPTIONS's keys, never a raw model id -
+            // the route treats this exactly as untrusted as any other request
+            // body field and validates it against its own server-side copy of
+            // the same allowlist (resolveChatModel, lib/ai/chat-models.ts).
+            ...(preferredModel ? { model: preferredModel } : {}),
+            // T-B5: already-uploaded `MediaAsset`-shaped attachments for this
+            // turn - real `gs://` URIs from RunAttachments' signed-URL upload,
+            // not a form field. UNTRUSTED like everything else in this body;
+            // the route re-validates every field (parseChatAttachments),
+            // including tying each `gs://` path back to THIS client.
+            ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
+          }),
           signal: controller.signal,
         });
 
@@ -71,26 +541,98 @@ function useCopilot(
           throw new Error((errBody as { error?: string }).error ?? `HTTP ${response.status}`);
         }
 
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
+        // T-B4: the route now returns a real UI-message stream (typed data
+        // parts, tool-call/tool-result parts) instead of a bare text body.
+        // `readChatStream` decodes it into the events this handler reacts to.
         let accumulated = "";
         let brandingUpdated = false;
-        let jobStarted = false;
+        let tasksCreated = false;
+        let sawErrorPart = false;
+        // T-B18: every `data-feedback` part this turn wrote (normally one -
+        // provide_feedback is one call - but not assumed to be, same as
+        // stream-protocol.ts's own comment on the `job` part above it).
+        const feedbackNotes: FeedbackNote[] = [];
+        // R12: the deliverables this turn's tools resolved to, deduped — a
+        // find-then-edit sequence names the same asset twice and is still one
+        // thing to open.
+        const deliverables: Deliverable[] = [];
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          if (chunk.includes("Branding guidelines updated")) brandingUpdated = true;
-          if (chunk.includes("Run started successfully")) jobStarted = true;
-          accumulated += chunk;
+        for await (const evt of readChatStream(response)) {
+          switch (evt.type) {
+            case "text-delta":
+              accumulated += evt.delta;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
+              );
+              break;
+            case "agent-focus":
+              // Replaces the old COPILOT_FOCUS HTML-comment sniff: a typed
+              // data part instead of text regexed out of the raw stream.
+              setFocusAgent(evt.focusAgent);
+              break;
+            case "tool-result":
+              // Replaces sniffing the model's own PROSE for magic substrings
+              // ("Branding guidelines updated", "Created ... task") - these
+              // are the tool's actual name and return value, not a guess
+              // about how the model chose to phrase its answer.
+              if (evt.toolName === "update_branding_guidelines") brandingUpdated = true;
+              if (evt.toolName === "create_tasks" && typeof evt.output === "string" && evt.output.startsWith("Created ")) {
+                tasksCreated = true;
+              }
+              {
+                const deliverable = deliverableFromToolCall(evt);
+                if (deliverable && !deliverables.some((d) => d.assetId === deliverable.assetId)) {
+                  deliverables.push(deliverable);
+                }
+              }
+              break;
+            case "feedback":
+              // Structural confirmation that standing feedback was recorded -
+              // rendered as a chip on this assistant message below, not just
+              // read off the model's own confirmation sentence in `content`.
+              feedbackNotes.push(evt.feedback);
+              break;
+            case "error":
+              sawErrorPart = true;
+              break;
+          }
+        }
+
+        if (feedbackNotes.length > 0) {
           setMessages((prev) =>
-            prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m)),
+            prev.map((m) => (m.id === assistantId ? { ...m, feedbackNotes } : m)),
           );
         }
 
+        if (deliverables.length > 0) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantId ? { ...m, deliverables } : m)),
+          );
+        }
+
+        // A provider failure mid-stream (token depletion, a 5xx) now arrives
+        // as a real `error` protocol part (T-B4) - detected directly, rather
+        // than inferred from "the turn produced no visible text at all" the
+        // way the old text-only protocol forced this to be. The no-visible-
+        // text check stays as a backstop for any other empty-completion case.
+        const visibleContent = accumulated.trim();
+        if (sawErrorPart || !visibleContent) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: "A temporary error occurred. Sending an error report to the Karos team." }
+                : m,
+            ),
+          );
+          router.refresh();
+          return;
+        }
+
         if (brandingUpdated) onBrandingChange();
-        if (jobStarted) onJobStarted();
+        if (tasksCreated) onTasksCreated();
+        // Chat messages charge credits - refresh so the rail's balance pill
+        // reflects the new balance.
+        router.refresh();
       } catch (e) {
         if ((e as Error).name === "AbortError") {
           setMessages((prev) => prev.filter((m) => m.id !== assistantId));
@@ -102,10 +644,123 @@ function useCopilot(
         setStreaming(false);
       }
     },
-    [clientId, agentId, messages, streaming, onBrandingChange, onJobStarted],
+    [clientId, messages, streaming, focusAgent, preferredModel, attachments, onBrandingChange, onTasksCreated, router],
   );
 
-  return { messages, input, setInput, send, streaming, error, reset };
+  /**
+   * `/add-task` - the fast path `QuickTaskForm` used to front, reached from
+   * the main input instead of a separate card. Deliberately NOT a chat turn:
+   * it calls `ingestCustomUserTaskAction` directly (its own cheap Haiku
+   * routing + dedup, its own `task_assist` credit charge), so folding task
+   * creation into the main input doesn't also fold it into the pricier,
+   * slower `chat_message` path. The transcript still shows it as a turn -
+   * the user's literal command, then the routed result - so the two ways of
+   * adding a task don't read as two different features.
+   */
+  const sendAddTask = useCallback(
+    async (taskText: string) => {
+      const trimmed = taskText.trim();
+      if (!trimmed || streaming) return;
+
+      const userMsg: Message = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: `/add-task ${trimmed}`,
+      };
+      const assistantId = crypto.randomUUID();
+      setMessages((prev) => [...prev, userMsg, { id: assistantId, role: "assistant", content: "" }]);
+      setInput("");
+      setStreaming(true);
+      setError(null);
+
+      try {
+        const result = await ingestCustomUserTaskAction(clientId, trimmed);
+        const reply = addTaskReply(result);
+        setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: reply } : m)));
+        if (result.ok) onTasksCreated();
+      } catch {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, content: "Couldn't add that task. Try again." } : m,
+          ),
+        );
+      } finally {
+        setStreaming(false);
+      }
+    },
+    [clientId, streaming, onTasksCreated],
+  );
+
+  return {
+    messages, input, setInput, send, sendAddTask, streaming, error, reset,
+    focusAgent, setFocusAgent, preferredModel, setPreferredModel,
+    attachments, setAttachments,
+  };
+}
+
+/* ── Manual model picker ─────────────────────────────────────────────── */
+
+/**
+ * T-B3/SCRUM-246's manual override. "Auto" (the default, `value === null`)
+ * defers to the route's own cost-based routing; the other two pills force a
+ * specific allowlisted model for every turn until changed back. Rendered
+ * from `CHAT_MODEL_KEYS`/`CHAT_MODEL_OPTIONS` rather than a hardcoded copy of
+ * the label pair, so this can never drift from the actual server-side
+ * allowlist it is choosing keys out of.
+ */
+function ModelPicker({
+  value,
+  onChange,
+}: {
+  value: ChatModelKey | null;
+  onChange: (key: ChatModelKey | null) => void;
+}) {
+  /* One segmented control on the composer's footer line (QA 2026-09). It used
+     to be its own bordered band above the input - a `border-t` of its own
+     stacked on the form's `border-t`, three loose text pills and a "Model"
+     word, sitting in the panel like a second toolbar. Now the input row is
+     the composer and this is one quiet line under it: label left, a single
+     track with three segments right. Active segment is paper on the surface
+     ladder, not orange - the accent is rationed to the send button. */
+  const options: { key: ChatModelKey | null; label: string; description: string }[] = [
+    { key: null, label: "Auto", description: "Picks the model per message, by cost." },
+    ...CHAT_MODEL_KEYS.map((key) => ({
+      key,
+      label: CHAT_MODEL_OPTIONS[key].label,
+      description: CHAT_MODEL_OPTIONS[key].description,
+    })),
+  ];
+  return (
+    <div className="mt-2 flex items-center justify-between gap-3">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">Model</span>
+      <div
+        role="group"
+        aria-label="Copilot model"
+        className="flex items-center gap-0.5 rounded-md border border-border bg-surface-2 p-0.5"
+      >
+        {options.map((o) => {
+          const active = value === o.key;
+          return (
+            <button
+              key={o.key ?? "auto"}
+              type="button"
+              onClick={() => onChange(o.key === null ? null : value === o.key ? null : o.key)}
+              aria-pressed={active}
+              title={o.description}
+              className={cn(
+                "rounded-[4px] px-2.5 py-1 text-[11px] leading-none transition-colors",
+                active
+                  ? "bg-background text-foreground shadow-[inset_0_0_0_1px_var(--border)]"
+                  : "text-muted-2 hover:text-foreground",
+              )}
+            >
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 /* ── Typing dots ─────────────────────────────────────────────────────── */
@@ -124,115 +779,206 @@ function TypingDots() {
   );
 }
 
-/* ── Mode selector ───────────────────────────────────────────────────── */
+/* ── Feedback chip (T-B18) ───────────────────────────────────────────── */
 
-function ModeSelector({
-  mode,
-  agents,
-  onChange,
-}: {
-  mode: CopilotMode;
-  agents: Agent[];
-  onChange: (mode: CopilotMode) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+/** Human copy for a feedback note's scope - same two values `provideFeedbackTool`'s confirmation prose uses. */
+function feedbackScopeLabel(note: FeedbackNote): string {
+  return note.scope === "template" && note.templateKey
+    ? `"${note.templateKey}" format`
+    : `everything ${note.agentName} makes`;
+}
 
-  useEffect(() => {
-    if (!open) return;
-    function onDown(e: PointerEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [open]);
-
-  const isAgent = mode.type === "agent";
-  const agentColor = isAgent ? (mode.agent.color ?? "#2dff9e") : null;
-  const label = isAgent ? mode.agent.name : "General Client Assistant";
-
+/**
+ * Structural confirmation that a `provide_feedback` call recorded a standing
+ * note - the client-facing surface this data-feedback part exists for (T-B18;
+ * see stream-protocol.ts's `ChatDataParts.feedback` doc comment). `self-start`
+ * keeps it from stretching to the bubble's width above it (its flex-col parent
+ * defaults every child to stretch) - it reads as a chip, not a second bubble.
+ *
+ * Links to the SAME feedback surface the context-doc "Correct Info" pattern's
+ * shape inspired this loop from: the agent's own detail page, where
+ * `ClientAgentFeedbackModal` already lists, edits and withdraws every open
+ * note (agent-detail-panel.tsx) - this chip is a shortcut into that existing
+ * management surface, not a second one.
+ */
+function FeedbackChip({ clientId, note }: { clientId: string; note: FeedbackNote }) {
   return (
-    <div ref={ref} className="relative shrink-0 border-b border-border">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-surface-2"
-      >
-        {/* Mode icon */}
-        {isAgent ? (
-          <span
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px]"
-            style={{ background: agentColor! + "1f", color: agentColor! }}
-          >
-            <Icon name={mode.agent.icon} className="h-3 w-3" />
-          </span>
-        ) : (
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] bg-neon-soft">
-            <Icon name="Bot" className="h-3 w-3 text-neon" />
-          </span>
-        )}
+    <Link
+      href={`/clients/${clientId}/agents/${note.agentId}`}
+      className="group flex w-fit max-w-full items-center gap-1.5 self-start rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-border-strong hover:bg-surface-3 hover:text-foreground"
+    >
+      <Icon name="MessageSquareQuote" className="h-3 w-3 shrink-0 text-muted-2 group-hover:text-foreground" />
+      <span className="truncate">
+        Feedback saved &middot; shapes {feedbackScopeLabel(note)}
+      </span>
+      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
+        Manage
+      </span>
+    </Link>
+  );
+}
 
-        <span className="flex-1 truncate text-xs font-medium text-muted">{label}</span>
+/**
+ * The copilot's way OUT (flow audit 2026-09, R12).
+ *
+ * Same shape as `FeedbackChip` above — this is deliberately one visual family,
+ * not a second one — but it opens `AssetDetailModal`, the product's one
+ * deliverable viewer, rather than navigating. The audit's complaint was that
+ * `/edit-output`, `/inspect-job`, `/reschedule-post` and `find_output` all
+ * terminate as prose in the transcript: the client is handed a description of
+ * their post with nothing to press.
+ */
+function DeliverableChip({
+  deliverable,
+  onOpen,
+}: {
+  deliverable: Deliverable;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group flex w-fit max-w-full items-center gap-1.5 self-start rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-border-strong hover:bg-surface-3 hover:text-foreground"
+    >
+      <Icon name="FileText" className="h-3 w-3 shrink-0 text-muted-2 group-hover:text-foreground" />
+      <span className="truncate">{deliverable.title ?? "This output"}</span>
+      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
+        Open
+      </span>
+    </button>
+  );
+}
 
-        <span className="text-[10px] text-muted-2 shrink-0 mr-1">Mode</span>
-        <Icon
-          name="ChevronDown"
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform duration-200",
-            open && "rotate-180",
-          )}
-        />
-      </button>
+/* ── Action chips ────────────────────────────────────────────────────── */
 
-      {/* Dropdown — opens into the messages area; z-50 so it overlays */}
-      {open && (
-        <div className="absolute left-0 right-0 top-full z-50 border-b border-border bg-surface shadow-xl animate-fade-up">
-          {/* General */}
+/**
+ * The three AI actions. Extracted from the welcome column so the same list can
+ * render in the strip above the input bar once a transcript exists (QA F88).
+ *
+ * The Refresh Task Map chip that used to live here moved to the Task Map itself
+ * (RefreshTaskMapButton, mounted from progress-view.tsx) - it acts on the task
+ * board, not the chat, and reads oddly homed in a general-purpose assistant.
+ */
+export function ActionChips({
+  onRun,
+}: {
+  /** Sends the action's chat trigger; `display` is what the transcript shows (QA F15). */
+  onRun: (trigger: string, display: string, deep?: boolean) => void;
+}) {
+  return (
+    // Two-by-two below lg so all three land above the fold in the mobile sheet;
+    // one column in the desktop rail, which is only 380px wide (QA F94).
+    <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-col">
+      {buildProactiveActions().map((action) => {
+        return (
           <button
-            className={cn(
-              "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-xs transition-colors hover:bg-surface-2",
-              mode.type === "general" && "text-neon",
-            )}
-            onClick={() => { onChange({ type: "general" }); setOpen(false); }}
+            key={action.id}
+            onClick={() => onRun(action.trigger, action.label, action.deep)}
+            className="group flex flex-col items-start gap-2 rounded-md border border-border bg-surface-2 px-3.5 py-3 text-left transition-all duration-150 hover:border-border-strong hover:bg-surface-3 active:scale-[0.98] lg:flex-row lg:items-center lg:gap-3"
           >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] bg-neon-soft">
-              <Icon name="Bot" className="h-3 w-3 text-neon" />
-            </span>
-            <span className="flex-1">General Client Assistant</span>
-            {mode.type === "general" && <Icon name="Check" className="h-3 w-3 shrink-0 text-neon" />}
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/70 transition-all duration-150">
+              <Icon name={action.icon} className="h-4 w-4" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-foreground">{action.label}</p>
+              {/* Two lines, not `truncate`: the longest sublabels clipped
+                  mid-phrase on a single line (QA F88). */}
+              <p className="line-clamp-2 text-[11px] text-muted">{action.sublabel}</p>
+            </div>
+            <Icon
+              name="ArrowRight"
+              className="hidden h-3.5 w-3.5 shrink-0 text-muted-2 opacity-0 transition-opacity group-hover:opacity-100 lg:block"
+            />
           </button>
-
-          {/* Agent options */}
-          {agents.length > 0 && <div className="mx-3 h-px bg-border" />}
-          {agents.map((agent) => {
-            const color = agent.color ?? "#2dff9e";
-            const selected = mode.type === "agent" && mode.agent.id === agent.id;
-            return (
-              <button
-                key={agent.id}
-                className={cn(
-                  "flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-xs transition-colors hover:bg-surface-2",
-                  selected && "text-neon",
-                )}
-                onClick={() => { onChange({ type: "agent", agent }); setOpen(false); }}
-              >
-                <span
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px]"
-                  style={{ background: color + "1f", color }}
-                >
-                  <Icon name={agent.icon} className="h-3 w-3" />
-                </span>
-                <span className="flex-1 truncate">{agent.name}</span>
-                {selected && <Icon name="Check" className="h-3 w-3 shrink-0 text-neon" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 }
 
-/* ── Empty state ─────────────────────────────────────────────────────── */
+/* ── Proactive welcome (CLIENT_USER initial view) ────────────────────── */
+
+function ProactiveWelcome({
+  clientName,
+  userName,
+  hasGoogleIntegration,
+  send,
+}: {
+  clientName: string;
+  userName?: string;
+  hasGoogleIntegration: boolean;
+  send: (t: string, display?: string) => void;
+}) {
+  // Kept on the prop chain (layout → dock → widget) - a Google connection used
+  // to change an action chip's icon to a globe, but nothing in any remaining
+  // action ever looked outside the account (QA F50).
+  void hasGoogleIntegration;
+  const greeting = userName ? `Hi ${userName.split(" ")[0]}!` : `Welcome back!`;
+
+  return (
+    // `grow` (flex: 1 1 auto), not `flex-1` (flex: 1 1 0%). The bottom sheet is
+    // now capped rather than fixed at 70dvh (CD-G8), so this region's container
+    // can have an INDEFINITE height - and a zero flex-basis is exactly the case
+    // where engines disagree about what an auto-height column flex container
+    // should size to. Chrome resolves it to the max-content contribution (so
+    // both spellings measure identically there), but `auto` states the intent
+    // outright and does not depend on that rule. Behaviour in the fixed-height
+    // desktop rail is unchanged: this is still the only growing item, so it
+    // takes all the free space and scrolls once it runs out.
+    <div className="flex grow flex-col gap-4 overflow-y-auto p-4">
+      {/* Greeting */}
+      <div className="flex items-start gap-3">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
+          <Icon name="Sparkles" className="h-4 w-4" />
+        </div>
+        {/* One line: the greeting used to run to two paragraphs, which on a
+            phone filled the sheet on its own (QA F94). */}
+        <div className="rounded-md border border-border bg-surface-2 px-3.5 py-2.5 text-sm leading-relaxed text-foreground">
+          <p className="font-medium">{greeting} I&apos;m your AI Copilot for <strong>{clientName}</strong>.</p>
+          {/* Describing a task no longer needs its own card - the main input
+              below does it, either conversationally or via /add-task (QA CD-L1). */}
+          <p className="mt-1 text-xs text-muted">
+            Describe a task, type <code className="rounded bg-surface-3 px-1 py-0.5 font-mono text-[10px]">/</code> for
+            commands, or <code className="rounded bg-surface-3 px-1 py-0.5 font-mono text-[10px]">@</code> to focus on
+            one of your agents.
+          </p>
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div className="flex items-center gap-2 px-1">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-[10px] text-muted-2">or run an AI action</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+
+      <ActionChips onRun={send} />
+
+      {/* Quick text suggestions */}
+      <div className="flex items-center gap-2 px-1">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-[10px] text-muted-2">or ask anything</span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {["What's our brand positioning?", "Show recent drafts", "Who are our competitors?"].map(
+          (prompt) => (
+            <button
+              key={prompt}
+              onClick={() => send(prompt)}
+              className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-foreground/30 hover:text-foreground"
+            >
+              {prompt}
+            </button>
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Standard empty state (non-proactive) ────────────────────────────── */
 
 const GENERAL_SUGGESTIONS = [
   "What's our brand positioning?",
@@ -240,51 +986,31 @@ const GENERAL_SUGGESTIONS = [
   "Update our primary color",
 ];
 
-const AGENT_SUGGESTIONS = [
-  "Show pending drafts",
-  "/run new generation",
-  "Rewrite draft #1 caption",
-];
-
 function ChatEmptyState({
-  mode,
   clientName,
   send,
 }: {
-  mode: CopilotMode;
   clientName: string;
   send: (t: string) => void;
 }) {
-  const isAgent = mode.type === "agent";
-  const agentColor = isAgent ? (mode.agent.color ?? "#2dff9e") : null;
-  const title = isAgent ? `${mode.agent.name} Copilot` : "Ask me anything";
-  const desc = isAgent
-    ? `I can show drafts, trigger new runs, and help you edit content for the ${mode.agent.name} pipeline.`
-    : `I have full context on ${clientName}'s brand, competitors, strategy documents, and content history.`;
-  const suggestions = isAgent ? AGENT_SUGGESTIONS : GENERAL_SUGGESTIONS;
-
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 py-8 text-center">
-      <div
-        className="flex h-12 w-12 items-center justify-center rounded-full"
-        style={
-          agentColor
-            ? { background: agentColor + "1f", color: agentColor }
-            : { background: "var(--neon-soft)", color: "var(--neon)" }
-        }
-      >
-        <Icon name={isAgent ? mode.agent.icon : "Sparkles"} className="h-6 w-6" />
+    // `grow` for the same reason as ProactiveWelcome - see the note there.
+    <div className="flex grow flex-col items-center justify-center gap-3 px-4 py-8 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full border border-foreground/10 bg-foreground/[0.04] text-foreground/70">
+        <Icon name="Sparkles" className="h-6 w-6" />
       </div>
       <div>
-        <p className="text-sm font-medium">{title}</p>
-        <p className="mt-1 text-xs text-muted-2">{desc}</p>
+        <p className="text-sm font-medium">Ask me anything</p>
+        <p className="mt-1 text-xs text-muted-2">
+          I have full context on {clientName}&apos;s brand, competitors, strategy documents, and content history.
+        </p>
       </div>
       <div className="mt-1 flex flex-wrap justify-center gap-1.5">
-        {suggestions.map((prompt) => (
+        {GENERAL_SUGGESTIONS.map((prompt) => (
           <button
             key={prompt}
             onClick={() => send(prompt)}
-            className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-neon/40 hover:text-foreground"
+            className="rounded-full border border-border bg-surface-2 px-2.5 py-1 text-[11px] text-muted transition-colors hover:border-foreground/30 hover:text-foreground"
           >
             {prompt}
           </button>
@@ -298,197 +1024,675 @@ function ChatEmptyState({
 
 interface Props {
   clientId: string;
+  /** Signed-in viewer. Scopes the persisted transcript so a shared tab cannot
+   *  hand one user's conversation to the next (staff→client leaks internal text). */
+  viewerUid: string;
   clientName: string;
-  /** Active, non-system agents — shown as selectable modes in the dropdown. */
-  agents: Agent[];
+  /** When true the chat panel opens automatically on mount (CLIENT_USER login). */
+  defaultOpen?: boolean;
+  /** Display name of the currently logged-in user (for personalised greeting). */
+  userName?: string;
+  /** Whether this client has an active Google integration (shows Gmail chip). */
+  hasGoogleIntegration?: boolean;
+  /** Latest intel report headline data for greeting context. */
+  report?: Pick<ClientReport, "overallGrade" | "overallScore"> | null;
+  /** Render as an always-open panel filling its container (right rail) instead of a floating popup. */
+  docked?: boolean;
+  /** When provided (docked mode), shows a collapse control in the header. */
+  onCollapse?: () => void;
+  /**
+   * Docked mode only: whether the dock's surface is actually OPEN right now —
+   * the lg+ rail expanded, or the narrow-viewport sheet showing.
+   *
+   * Docked mode is permanently `panelOpen`, and neither dock surface unmounts
+   * this widget when it closes (the rail clips it, the sheet hides it with
+   * `display:none`), so the focus pass below fired once on mount and never
+   * again. Re-opening the sheet or expanding the rail left the reader with no
+   * caret and no way to type without reaching for the mouse. Defaults to `true`
+   * so the floating (non-docked) mount is unaffected.
+   */
+  active?: boolean;
+  /** Position classes for the floating bubble + panel (non-docked mode). */
+  floatingPosition?: string;
 }
 
-export function ChatbotWidget({ clientId, clientName, agents }: Props) {
+/**
+ * Why the deliverable fetch failed, in the one bit the reader's message depends
+ * on: a 403 is the day-not-arrived gate and has its own sentence; everything
+ * else is a fault and gets the retry line. A `.catch` sees only a rejection, so
+ * the distinction has to be carried on the error itself.
+ */
+class AssetOpenError extends Error {
+  constructor(readonly notAllowed: boolean) {
+    super(notAllowed ? "forbidden" : "unavailable");
+    this.name = "AssetOpenError";
+  }
+}
+
+export function ChatbotWidget({
+  clientId,
+  viewerUid,
+  clientName,
+  defaultOpen = false,
+  userName,
+  hasGoogleIntegration = false,
+  docked = false,
+  onCollapse,
+  active = true,
+  floatingPosition = "bottom-6 right-6",
+}: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<CopilotMode>({ type: "general" });
+  const [open, setOpen] = useState(defaultOpen);
+  // The AI actions strip above the input bar, once a transcript exists. Starts
+  // collapsed so it never crowds the answers (QA F88).
+  const [actionsOpen, setActionsOpen] = useState(false);
+  // Docked mode is permanently open and never shows the floating bubble.
+  const panelOpen = docked || open;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const onBrandingChange = useCallback(() => router.refresh(), [router]);
-  const onJobStarted = useCallback(() => router.refresh(), [router]);
+  const onTasksCreated = useCallback(() => router.refresh(), [router]);
 
-  const agentId = mode.type === "agent" ? mode.agent.id : null;
-  const agentColor = mode.type === "agent" ? (mode.agent.color ?? "#2dff9e") : null;
+  const {
+    messages, input, setInput, send, sendAddTask, streaming, error, reset,
+    focusAgent, setFocusAgent, preferredModel, setPreferredModel,
+    attachments, setAttachments,
+  } = useCopilot(clientId, viewerUid, onBrandingChange, onTasksCreated);
 
-  const { messages, input, setInput, send, streaming, error, reset } = useCopilot(
-    clientId,
-    agentId,
-    onBrandingChange,
-    onJobStarted,
-  );
-
-  function handleModeChange(newMode: CopilotMode) {
-    reset();
-    setMode(newMode);
-  }
+  // Whether to show the proactive welcome instead of the standard empty state
+  const showProactiveWelcome = defaultOpen && messages.length === 0;
 
   // Auto-scroll
   useEffect(() => {
-    if (open) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open]);
+    if (panelOpen) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, panelOpen]);
 
-  // Focus input on open
+  // Focus the input when the panel OPENS — on the rising edge of "is this chat
+  // actually on screen", which is `panelOpen` for the floating mount and
+  // `active` for a docked one (the dock never unmounts this widget, so
+  // `panelOpen` is a constant `true` there and this effect fired only on mount;
+  // review wave, 2026-09, L5). Both conditions are ANDed so neither surface can
+  // steal focus while it is hidden.
+  const visible = panelOpen && active;
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 50);
-  }, [open]);
+    if (!visible) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [visible]);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  /* ── The deliverable a chip opened (flow audit 2026-09, R12) ───────── */
+  // The dock is mounted by the (app) layout with a clientId and nothing else,
+  // so unlike the modal's eight other openers it has no asset in hand — only
+  // the id its own tools named. `/api/assets/[id]` answers with the asset the
+  // SERVER says this viewer may read, already redacted, plus which register to
+  // speak in; the modal is mounted from that and from nothing else.
+  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
+  const [openAsset, setOpenAsset] = useState<{ asset: Asset; viewerIsClient: boolean } | null>(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  /**
+   * Every press gets its own attempt.
+   *
+   * `openAssetId` alone is not enough to key the fetch: after a failure the id
+   * stays set, so pressing the SAME chip again set state to the value it
+   * already had, React bailed out, and the effect never re-ran — the chip went
+   * dead for the rest of the session over one dropped request. The nonce
+   * changes on every press, so a retry is always a new effect run.
+   */
+  const [assetRequest, setAssetRequest] = useState(0);
+  const openDeliverable = useCallback((assetId: string) => {
+    setAssetError(null);
+    setOpenAssetId(assetId);
+    setAssetRequest((n) => n + 1);
+  }, []);
+  useEffect(() => {
+    if (!openAssetId) return;
+    let cancelled = false;
+    fetch(`/api/assets/${encodeURIComponent(openAssetId)}`)
+      .then(async (r) => {
+        // ONE MESSAGE PER CAUSE (review wave, 2026-09). Every failure used to
+        // land on "isn't available to open yet", which is the sentence for a
+        // 403 — a post whose day has not arrived, withheld from a client by the
+        // same gate the download route uses. A dropped connection, a 500 or a
+        // deleted asset got that same line, and it tells the reader to wait for
+        // a day that will never make any difference. `notAllowed` carries the
+        // distinction out of the fetch, since a rejection is all a `.catch` sees.
+        if (!r.ok) throw new AssetOpenError(r.status === 403);
+        return (await r.json()) as { asset: Asset; viewerIsClient: boolean };
+      })
+      .then((data) => {
+        if (!cancelled) setOpenAsset({ asset: data.asset, viewerIsClient: data.viewerIsClient });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setAssetError(
+          err instanceof AssetOpenError && err.notAllowed
+            ? "That output isn't available to open yet."
+            : "Couldn't open this output. Try again.",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `assetRequest` is the retry key — see openDeliverable.
+  }, [openAssetId, assetRequest]);
+
+  /* ── @mention roster ──────────────────────────────────────────────── */
+  // Fetched independently of a chat turn - the `@` dropdown has to be ready
+  // the moment the client starts typing, not after their first message lands.
+  const [mentionableAgents, setMentionableAgents] = useState<MentionableAgent[]>([]);
+  // The focused chip's mark, resolved from the roster rather than stored on the
+  // focus itself, so both ways of setting focus reach the same answer.
+  const focusAgentPlatform: SocialPlatform | null = focusAgent
+    ? mentionableAgents.find((a) => a.id === focusAgent.id)?.platform ?? null
+    : null;
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/clients/${clientId}/agents/mentionable`)
+      .then((r) => (r.ok ? r.json() : { agents: [] }))
+      .then((data: { agents?: MentionableAgent[] }) => {
+        if (!cancelled) setMentionableAgents(data.agents ?? []);
+      })
+      .catch(() => {
+        /* dropdown just stays empty - chat itself still works */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  /* ── `@` / `/` dispatch ───────────────────────────────────────────── */
+  // Single-line input, so both triggers are read off the END of the current
+  // value - the same simplification most single-line mention comboboxes make.
+  // `@` fires on the trailing word anywhere; `/` only when it is the WHOLE
+  // input so far, since a command is something typed first, not mid-sentence.
+  const mentionQuery = /(?:^|\s)@(\S*)$/.exec(input)?.[1];
+  const commandQuery = /^\/(\S*)$/.exec(input)?.[1];
+  const mentionMatches =
+    mentionQuery !== undefined
+      ? mentionableAgents.filter((a) => a.displayName.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
+      : [];
+  const commandMatches =
+    commandQuery !== undefined
+      ? SLASH_COMMANDS.filter((c) => c.id.replace(/-/g, "").includes(commandQuery.toLowerCase().replace(/\//g, ""))).slice(0, 6)
+      : [];
+  // True autocomplete, not just a click-only list: which row Tab/Enter commits.
+  // Reset to 0 on every keystroke (the input's onChange) since the filtered
+  // list itself changes underneath whatever was highlighted.
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const activeMatches = mentionMatches.length > 0 ? mentionMatches : commandMatches;
+  const clampedIndex = activeMatches.length > 0 ? highlightedIndex % activeMatches.length : 0;
+
+  function pickMention(agent: MentionableAgent) {
+    setFocusAgent({ id: agent.id, name: agent.displayName });
+    // Strip the trailing "@query" the user was typing - the chip carries the
+    // focus from here, so the literal "@" text would otherwise double it up.
+    setInput((prev) => prev.replace(/(?:^|\s)@\S*$/, (m) => (m.startsWith(" ") ? " " : "")));
+    setHighlightedIndex(0);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  function pickCommand(cmd: SlashCommand) {
+    setInput(cmd.scaffold ?? "/add-task ");
+    setHighlightedIndex(0);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  function submitCurrentInput() {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith("/add-task ")) {
+      sendAddTask(trimmed.slice("/add-task ".length));
+      return;
+    }
+    if (trimmed === "/add-task") return; // nothing to route yet
     send(input);
   }
 
+  // Shared by both the form's submit and the input's Enter key - kept as one
+  // function taking no event so it isn't tied to either handler's event type.
+  // Commits whichever row is HIGHLIGHTED, not always the top one - arrow keys
+  // (handleKeyDown) move `highlightedIndex` before this ever fires.
+  function submitOrDispatch() {
+    // A dropdown open commits the highlighted suggestion rather than sending
+    // half-typed "@" or "/" text as a literal message.
+    if (mentionMatches.length > 0) return pickMention(mentionMatches[clampedIndex]);
+    if (commandMatches.length > 0) return pickCommand(commandMatches[clampedIndex]);
+    submitCurrentInput();
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    submitOrDispatch();
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // Arrow/Tab only apply while a dropdown is actually open - otherwise
+    // Tab should do its normal browser thing (move focus to the next control).
+    if (activeMatches.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlightedIndex((i) => (i + 1) % activeMatches.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlightedIndex((i) => (i - 1 + activeMatches.length) % activeMatches.length);
+        return;
+      }
+      if (e.key === "Tab") {
+        // Tab commits without sending - lets the client keep typing to
+        // complete the sentence (an @mention leaves the input empty to type
+        // into; a /command's scaffold ends mid-sentence on purpose).
+        e.preventDefault();
+        submitOrDispatch();
+        return;
+      }
+    }
+    if (e.key === "Escape" && (mentionQuery !== undefined || commandQuery !== undefined)) {
+      // Drop the trigger character so re-pressing Escape doesn't just reopen it.
+      setInput((prev) => prev.replace(/(?:^|\s)@\S*$/, "").replace(/^\/\S*$/, ""));
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      send(input);
+      submitOrDispatch();
     }
   }
 
   return (
     <>
-      {/* Floating bubble */}
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          "fixed bottom-6 right-6 z-[9999] pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 active:scale-95",
-          open
-            ? "bg-surface-2 shadow-black/30 ring-1 ring-border"
-            : !agentColor
-              ? "bg-neon shadow-neon/30"
-              : "",
-        )}
-        style={
-          !open && agentColor
-            ? { background: agentColor, boxShadow: `0 0 20px ${agentColor}4d` }
-            : undefined
-        }
-        aria-label={open ? "Close AI Copilot" : "Open AI Copilot"}
-      >
-        <Icon
-          name={open ? "X" : mode.type === "agent" ? mode.agent.icon : "MessageCircle"}
-          className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-black")}
-        />
-      </button>
+      {/* Floating bubble - hidden in docked mode */}
+      {!docked && (
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className={cn(
+            "fixed z-[9999] pointer-events-auto flex h-14 w-14 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 active:scale-95",
+            floatingPosition,
+            open ? "bg-surface-2 shadow-black/30 ring-1 ring-border" : "bg-primary",
+          )}
+          aria-label={open ? "Close AI Copilot" : "Open AI Copilot"}
+        >
+          <Icon
+            name={open ? "X" : "MessageCircle"}
+            className={cn("h-6 w-6 transition-colors", open ? "text-foreground" : "text-primary-foreground")}
+          />
+        </button>
+      )}
 
       {/* Chat panel */}
-      {open && (
-        <div className="fixed bottom-6 right-6 z-[9998] flex h-[580px] w-[360px] flex-col overflow-hidden rounded-[20px] border border-border bg-surface shadow-2xl">
+      {panelOpen && (
+        <div
+          className={cn(
+            "flex flex-col overflow-hidden",
+            docked
+              ? "h-full w-full bg-background"
+              : cn(
+                  "fixed z-[9998] h-[600px] max-h-[calc(100vh-6rem)] w-[380px] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-surface shadow-2xl",
+                  floatingPosition,
+                ),
+          )}
+        >
 
-          {/* Header */}
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface-2 px-4 py-3">
-            <div className="flex items-center gap-2.5">
-              <div
-                className="flex h-8 w-8 items-center justify-center rounded-full transition-colors"
-                style={
-                  agentColor
-                    ? { background: agentColor + "1f", color: agentColor }
-                    : { background: "var(--neon-soft)", color: "var(--neon)" }
-                }
-              >
-                <Icon name={mode.type === "agent" ? mode.agent.icon : "Bot"} className="h-4 w-4" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold leading-none">AI Copilot</p>
-                <p className="mt-0.5 text-[10px] leading-none text-muted-2">
-                  {clientName} · Powered by Claude
-                </p>
-              </div>
+          {/* Header - single title; hairline divider, no fill (surface ladder).
+              Sizes to its own content. This used to be pinned to h-[53px] to
+              match the border-box height of the page header the rail sat beside,
+              so the two border-b hairlines read as one continuous line; that
+              header no longer exists, which left the number aligned to nothing.
+              py-3 around the two-line title block (16px + mt-1 + 9px, all
+              leading-none) lands within a pixel of the old height anyway, and
+              the 28px controls opposite it are shorter, so they never drive it. */}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <div className="min-w-0">
+              <p className="font-serif text-base leading-none">AI Copilot</p>
+              <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">
+                {clientName} · KarosAI
+              </p>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="flex h-7 w-7 items-center justify-center rounded-full text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
-              aria-label="Close"
-            >
-              <Icon name="X" className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              {messages.length > 0 && (
+                <button
+                  onClick={() => reset()}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+                  aria-label="Clear conversation"
+                  title="Clear conversation"
+                >
+                  <Icon name="RotateCcw" className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {onCollapse && (
+                <button
+                  onClick={onCollapse}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+                  aria-label="Collapse copilot"
+                  title="Collapse"
+                >
+                  <Icon name="ChevronDown" className="h-4 w-4" />
+                </button>
+              )}
+              {!docked && (
+                <button
+                  onClick={() => setOpen(false)}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-2 transition-colors hover:bg-surface-3 hover:text-foreground"
+                  aria-label="Close"
+                >
+                  <Icon name="X" className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Mode selector bar */}
-          <ModeSelector mode={mode} agents={agents} onChange={handleModeChange} />
-
-          {/* Messages */}
-          <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
-            {messages.length === 0 ? (
-              <ChatEmptyState mode={mode} clientName={clientName} send={send} />
+          {/* Messages / Welcome */}
+          {messages.length === 0 ? (
+            showProactiveWelcome ? (
+              <ProactiveWelcome
+                clientName={clientName}
+                userName={userName}
+                hasGoogleIntegration={hasGoogleIntegration}
+                send={send}
+              />
             ) : (
-              messages.map((msg) => (
+              <ChatEmptyState clientName={clientName} send={send} />
+            )
+          ) : (
+            /* `grow` for the same reason as ProactiveWelcome - see the note there. */
+            <div className="flex grow flex-col gap-3 overflow-y-auto p-4">
+              {messages.map((msg) => (
                 <div
                   key={msg.id}
                   className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}
                 >
-                  <div
-                    className={cn(
-                      "max-w-[88%] rounded-[14px] px-3.5 py-2.5 text-sm leading-relaxed",
-                      msg.role === "user"
-                        ? "text-black"
-                        : "border border-border bg-surface-2 text-foreground",
+                  {/* Single flex child of the row above, so `justify-end`/
+                      `justify-start` still positions the whole stack - the
+                      bubble and (T-B18) its feedback chip render as a COLUMN
+                      inside it rather than two items competing for the row. */}
+                  <div className="flex max-w-[88%] flex-col gap-1.5">
+                    <div
+                      className={cn(
+                        "rounded-md px-3.5 py-2.5 text-sm leading-relaxed",
+                        msg.role === "user"
+                          ? "bg-primary text-primary-foreground"
+                          : "border border-border bg-surface-2 text-foreground",
+                      )}
+                    >
+                      {msg.content ? (
+                        msg.role === "assistant" ? (
+                          // The model writes markdown - the system prompt is itself
+                          // authored in it and the flagship actions ask for
+                          // multi-section deliverables - so a pre-wrapped span put
+                          // asterisks, hash marks and table pipes on screen (QA F89).
+                          // renderSectionBody escapes before formatting, so model
+                          // output cannot inject markup; it is the same renderer the
+                          // documents view uses.
+                          <div dangerouslySetInnerHTML={{ __html: renderSectionBody(msg.content) }} />
+                        ) : (
+                          // `display` is the action's own label when the chip's
+                          // hidden trigger is what was actually sent (QA F15).
+                          <span style={{ whiteSpace: "pre-wrap" }}>{msg.display ?? msg.content}</span>
+                        )
+                      ) : (
+                        <TypingDots />
+                      )}
+                      {/* T-B5: what was attached to THIS message, not a
+                          generic "files" line - a client scanning back through
+                          the transcript should see which message a photo rode
+                          in on. */}
+                      {msg.attachmentLabels && msg.attachmentLabels.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {msg.attachmentLabels.map((label, i) => (
+                            <span
+                              key={`${msg.id}-attachment-${i}`}
+                              className="inline-flex items-center gap-1 rounded bg-black/10 px-1.5 py-0.5 text-[10px] text-primary-foreground/80"
+                            >
+                              <Icon name="Paperclip" className="h-2.5 w-2.5" />
+                              <span className="max-w-[160px] truncate">{label}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {/* T-B18: structural confirmation of what provide_feedback
+                        recorded - not just the model's prose. One chip per
+                        data-feedback part this turn wrote. Links into the
+                        agent's own feedback panel (agent-detail-panel.tsx's
+                        ClientAgentFeedbackModal) - the place a client can
+                        already see, edit or withdraw the note this chip is
+                        confirming. */}
+                    {msg.role === "assistant" && msg.feedbackNotes && msg.feedbackNotes.length > 0 && (
+                      <>
+                        {msg.feedbackNotes.map((note, i) => (
+                          <FeedbackChip key={i} clientId={clientId} note={note} />
+                        ))}
+                      </>
                     )}
-                    style={
-                      msg.role === "user"
-                        ? { background: agentColor ?? "var(--neon)" }
-                        : undefined
-                    }
-                  >
-                    {msg.content ? (
-                      <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
-                    ) : (
-                      <TypingDots />
+                    {/* R12: one chip per deliverable this turn's tools resolved
+                        to, opening the same modal the calendar, the archive and
+                        the agent pages open. */}
+                    {msg.role === "assistant" && msg.deliverables && msg.deliverables.length > 0 && (
+                      <>
+                        {msg.deliverables.map((deliverable) => (
+                          <DeliverableChip
+                            key={deliverable.assetId}
+                            deliverable={deliverable}
+                            onOpen={() => openDeliverable(deliverable.assetId)}
+                          />
+                        ))}
+                      </>
                     )}
                   </div>
                 </div>
-              ))
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Error banner */}
-          {error && (
-            <div className="mx-3 mb-2 flex items-center gap-2 rounded-[8px] border border-red-500/30 bg-red-500/10 px-3 py-2">
-              <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-red-400" />
-              <p className="text-xs text-red-400">{error}</p>
+              ))}
+              <div ref={messagesEndRef} />
             </div>
           )}
 
-          {/* Input bar */}
-          <form
-            onSubmit={handleSubmit}
-            className="flex shrink-0 items-center gap-2 border-t border-border px-3 py-3"
-          >
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                mode.type === "agent"
-                  ? "Ask about drafts, type /run to generate…"
-                  : "Ask about performance, brand, competitors…"
-              }
-              disabled={streaming}
-              className="flex-1 rounded-[10px] border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-neon/50 focus:ring-1 focus:ring-neon/30 disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || streaming}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-black transition-opacity disabled:opacity-40"
-              style={{ background: agentColor ?? "var(--neon)" }}
-              aria-label="Send"
-            >
-              {streaming ? (
-                <Icon name="Loader" className="h-4 w-4 animate-spin" />
-              ) : (
-                <Icon name="Send" className="h-4 w-4" />
+          {/* AI actions strip - the four actions and the quick-add form used to
+              exist only while the transcript was empty, so the panel's whole
+              action surface was a zero-state and the only way back to it was
+              the header's reset, which destroys a paid thread (QA F88). */}
+          {defaultOpen && messages.length > 0 && (
+            <div className="shrink-0 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setActionsOpen((v) => !v)}
+                aria-expanded={actionsOpen}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2"
+              >
+                <Icon name="Sparkles" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                <span className="flex-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-2">
+                  AI actions
+                </span>
+                <Icon
+                  name={actionsOpen ? "ChevronDown" : "ChevronUp"}
+                  className="h-3.5 w-3.5 shrink-0 text-muted-2"
+                />
+              </button>
+              {actionsOpen && (
+                <div className="flex max-h-[45dvh] flex-col gap-3 overflow-y-auto border-t border-border px-3 py-3">
+                  <ActionChips onRun={send} />
+                </div>
               )}
-            </button>
-          </form>
+            </div>
+          )}
+
+          {/* Error banner */}
+          {error && (
+            <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-2">
+              <Icon name="TriangleAlert" className="h-3.5 w-3.5 shrink-0 text-danger" />
+              <p className="text-xs text-danger">{error}</p>
+            </div>
+          )}
+
+          {/* R12: a chip that resolved to something this reader may not open
+              (a post whose day has not arrived) says so, rather than being a
+              control that does nothing when pressed. */}
+          {assetError && (
+            <div className="mx-3 mb-2 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2">
+              <Icon name="Lock" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+              <p className="text-xs text-muted">{assetError}</p>
+            </div>
+          )}
+
+          {/* Focused-agent chip - a bias, not a lock (chat/route.ts's FOCUSED
+              AGENT block still answers anything else asked). Persists across
+              turns AND reloads (sessionStorage) until cleared here, by picking
+              a different @mention, or by telling the copilot in plain text to
+              switch agents / go back to general (set_agent_focus). */}
+          {focusAgent && (
+            <div className="mx-3 mb-2 flex w-fit items-center gap-1.5 rounded-full border border-neon/30 bg-neon-soft px-2.5 py-1 text-[11px] text-neon">
+              {/* The same mark the picker row wore, looked up rather than
+                  carried - see FocusAgent. The @ stays when the agent targets
+                  no platform, and when focus was set by the copilot naming an
+                  agent that is not on this client's roster. */}
+              {focusAgentPlatform ? (
+                <SocialPlatformMark platform={focusAgentPlatform} className="h-3 w-3" />
+              ) : (
+                <Icon name="AtSign" className="h-3 w-3" />
+              )}
+              Focused on {focusAgent.name}
+              <button
+                type="button"
+                onClick={() => setFocusAgent(null)}
+                aria-label="Clear focused agent"
+                className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-neon/20"
+              >
+                <Icon name="X" className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          {/* Input bar - `relative` hosts the @mention / /command dropdown,
+              which floats ABOVE the bar (bottom-full) since the bar itself
+              sits at the very bottom of the panel. */}
+          <div className="relative shrink-0">
+            {(mentionMatches.length > 0 || commandMatches.length > 0) && (
+              <div
+                role="listbox"
+                className="absolute bottom-full left-3 right-3 z-10 mb-1 max-h-56 overflow-y-auto rounded-md border border-border bg-surface shadow-lg"
+              >
+                {mentionQuery !== undefined &&
+                  mentionMatches.map((a, i) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => pickMention(a)}
+                      onMouseEnter={() => setHighlightedIndex(i)}
+                      className={cn(
+                        "flex w-full items-center gap-2 px-3 py-2 text-left transition-colors",
+                        i === clampedIndex ? "bg-surface-2" : "hover:bg-surface-2",
+                      )}
+                    >
+                      {/* AF-20: the platform this agent posts to, so tagging
+                          one says what you are about to get. An agent that
+                          targets no platform (Landing Builder) keeps the stored
+                          icon it has always had - the route sends null rather
+                          than a nearest guess. */}
+                      {a.platform ? (
+                        <SocialPlatformMark platform={a.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      ) : (
+                        <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                      )}
+                      <span className="flex-1 truncate text-xs text-foreground">{a.displayName}</span>
+                    </button>
+                  ))}
+                {commandQuery !== undefined &&
+                  commandMatches.map((c, i) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => pickCommand(c)}
+                      onMouseEnter={() => setHighlightedIndex(i)}
+                      className={cn(
+                        "flex w-full flex-col items-start px-3 py-2 text-left transition-colors",
+                        i === clampedIndex ? "bg-surface-2" : "hover:bg-surface-2",
+                      )}
+                    >
+                      <span className="font-mono text-xs text-foreground">{c.label}</span>
+                      <span className="text-[11px] text-muted-2">{c.hint}</span>
+                    </button>
+                  ))}
+              </div>
+            )}
+            {/* THE ATTACH CONTROL IS ON THE INPUT LINE (2026-09).
+                
+                T-B5 gave the chat a real upload surface — the same signed-URL
+                path RunAttachments already does for the admin agent card, so a
+                chat attachment is a real `gs://` MediaAsset the moment the file
+                finishes uploading, before the message is even sent. That part
+                is unchanged and is the whole reason this reuses that component
+                rather than growing a second uploader.
+
+                What changed is WHERE it sits. It was its own bordered strip
+                above the model picker: a full-width band carrying a labelled
+                "Attach a file" button and a sentence explaining what
+                attachments are for, permanently, on a panel where most messages
+                attach nothing. The product owner's read was that it felt clunky
+                and out of place, and the honest description of it is that a
+                rarely-used control was given more room than the message box.
+
+                `layout="composer"` puts a `+` on the input line beside the send
+                button, moves the sentence into that button's tooltip and
+                accessible name, and shows the staged files above the line only
+                when there are some. The text input and the send button are its
+                children so the three share one row — see that component's
+                `AttachmentLayout`. */}
+            <form onSubmit={handleSubmit} className="border-t border-border px-3 py-3">
+              <RunAttachments
+                clientId={clientId}
+                attachments={attachments}
+                onChange={setAttachments}
+                disabled={streaming}
+                mode="chat"
+                layout="composer"
+              >
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    setHighlightedIndex(0);
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    showProactiveWelcome
+                      ? "Describe a task, or ask a question…"
+                      : "Ask about performance, brand, competitors…"
+                  }
+                  disabled={streaming}
+                  className="min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-2 outline-none focus:border-foreground/25 disabled:opacity-50"
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim() || streaming}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
+                  aria-label="Send"
+                >
+                  {streaming ? (
+                    <Icon name="Loader" className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Icon name="ArrowUp" className="h-4 w-4" />
+                  )}
+                </button>
+              </RunAttachments>
+              {/* Footer line of the same composer - see ModelPicker. */}
+              <ModelPicker value={preferredModel} onChange={setPreferredModel} />
+            </form>
+          </div>
         </div>
       )}
+
+      {/* R12: the copilot's one way into a deliverable. The SAME component the
+          calendar, the archive and the agent pages open — mounted once here,
+          not a second viewer written for the chat. */}
+      <AssetDetailModal
+        asset={openAsset?.asset ?? null}
+        open={openAsset != null}
+        onClose={() => {
+          setOpenAssetId(null);
+          setOpenAsset(null);
+        }}
+        viewerIsClient={openAsset?.viewerIsClient ?? true}
+      />
 
       <style>{`
         @keyframes bounce {

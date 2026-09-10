@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchFirefliesTranscript } from "@/lib/transcripts/fireflies";
 import { ingestTranscript, appendMeetingSignalToContextDoc } from "@/lib/transcripts/ingest";
 import { getTranscript } from "@/lib/data";
+import { checkWebhookSecret } from "@/lib/cron-auth";
 
 export const maxDuration = 120;
 
@@ -16,17 +17,13 @@ const KAROS_DOMAIN = "@karoslabs.com";
  *
  * @karoslabs.com invariant: transcripts with no agency participant are dropped silently.
  *
- * Secure it by setting FIREFLIES_WEBHOOK_SECRET and configuring the webhook URL as
- *   /api/ingest/fireflies?secret=YOUR_SECRET
+ * Secure it by setting FIREFLIES_WEBHOOK_SECRET and configuring the webhook with an
+ *   x-webhook-secret: YOUR_SECRET header (query-string secrets leak into access logs).
  */
 export async function POST(req: NextRequest) {
-  const secret = process.env.FIREFLIES_WEBHOOK_SECRET;
-  if (secret) {
-    const provided = req.nextUrl.searchParams.get("secret") || req.headers.get("x-webhook-secret");
-    if (provided !== secret) {
-      return NextResponse.json({ error: "Invalid secret" }, { status: 401 });
-    }
-  }
+  const provided = req.headers.get("x-webhook-secret");
+  const denied = checkWebhookSecret({ envVar: "FIREFLIES_WEBHOOK_SECRET", provided });
+  if (denied) return denied;
 
   let body: Record<string, unknown> = {};
   try {
@@ -55,6 +52,14 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await ingestTranscript(transcript, "fireflies");
+    if (result.duplicate) {
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: "Duplicate — same recording (externalId) already ingested",
+        id: result.id,
+      });
+    }
 
     // Append meeting signal to the matched client's intel context docs
     if (result.clientId) {
