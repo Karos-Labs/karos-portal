@@ -534,6 +534,15 @@ export function AgentEngineGateApproval({
               {clip.music !== undefined ? (clip.music.applied ? "Music bed laid" : `No music${clip.music.note ? ` (${normalizeDashes(clip.music.note)})` : ""}`) : ""}
             </p>
           )}
+          {/* What the engine already did about footage the QA disliked: which
+              beats it re-sourced and whether the re-render scored clean, so the
+              reviewer knows the swap happened and does not ask for it again. */}
+          {clip.repick !== undefined && (
+            <p className="text-xs text-muted">
+              {clip.repick.beats.length > 0 ? `Footage re-sourced after QA (beat ${clip.repick.beats.join(", ")}): ` : "Footage re-source after QA: "}
+              {normalizeDashes(clip.repick.note)}
+            </p>
+          )}
           {/* Beats whose footage the QA model said does not fit the line said
               over it: the one thing a reviewer can act on with "request changes"
               (name the beat), shown whether or not the clip passed overall. */}
