@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHmac, randomBytes, createHash, timingSafeEqual } from "crypto";
+import { appLinkBase } from "@/lib/app-origin";
 
 /**
  * HMAC key for the OAuth `state` token. Falls back to a dev-only constant, but
@@ -18,9 +19,12 @@ function getStateSecret(): string {
   return "dev-oauth-secret-change-in-prod";
 }
 
-const APP_URL = (
-  process.env.APP_URL ?? "http://localhost:3000"
-).replace(/\/$/, "");
+/**
+ * SCRUM-332 (AU49) follow-up: one of five hand-written copies. This one
+ * stripped a single trailing slash where the others stripped all of them, so
+ * an APP_URL ending in "//" built a double-slashed OAuth callback path here.
+ */
+const APP_URL = appLinkBase();
 
 /* ── URL helpers ─────────────────────────────────────────────────────── */
 

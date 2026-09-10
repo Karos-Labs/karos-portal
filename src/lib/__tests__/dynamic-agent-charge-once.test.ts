@@ -38,7 +38,10 @@ vi.mock("@/lib/agent-service/client", () => ({
   cancelAgentServiceJob: vi.fn().mockResolvedValue({ status: "cancelled" }),
 }));
 
-process.env.NEXT_PUBLIC_APP_URL = "https://portal.test";
+// SCRUM-332 (AU49) follow-up: was `NEXT_PUBLIC_APP_URL`, a name no deploy
+// config wires. See submit-dynamic-agent.test.ts's note - two suites set it,
+// and between them they were the only setters in the repo.
+process.env.APP_URL = "https://portal.test";
 
 const CLIENT_USER = {
   uid: "u-client",

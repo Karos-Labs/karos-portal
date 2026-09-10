@@ -11,6 +11,7 @@ import {
   digestDateLabel,
   digestIsEmpty,
 } from "@/lib/daily-digest";
+import { appLinkBase } from "@/lib/app-origin";
 
 /**
  * Daily digest cron (AF-19).
@@ -60,7 +61,7 @@ interface ClientResult {
 }
 
 function calendarUrl(): string {
-  const base = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+  const base = appLinkBase();
   return `${base}/calendar`;
 }
 
