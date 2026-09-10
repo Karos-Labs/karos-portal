@@ -54,6 +54,8 @@ export interface ClipReview {
   music?: { applied: boolean; note?: string };
   /** Beats whose footage the engine re-sourced after the visual QA scored it under 5, and how the re-render fared (engine `repick`, 2026-09-10). */
   repick?: { beats: number[]; note: string };
+  /** Why the footage is stock and not the client's own: what each higher source tier said (engine `sourceNotes`, 2026-09-10). */
+  sourceNotes?: string[];
   visualQa?: ClipVisualQa;
   /** The engine flagged the clip (the visual QA failed); the human decides. */
   flagged: boolean;
@@ -77,6 +79,7 @@ export const CLIP_REVIEW_KEYS: ReadonlySet<string> = new Set([
   "plateSources",
   "music",
   "repick",
+  "sourceNotes",
   "visualQa",
   "flagged",
   "script",
@@ -136,6 +139,8 @@ export function readClipReview(payload: unknown): ClipReview | undefined {
 
   const plateSources = Array.isArray(payload["plateSources"]) ? payload["plateSources"].filter((p): p is string => typeof p === "string") : undefined;
 
+  const sourceNotes = Array.isArray(payload["sourceNotes"]) ? payload["sourceNotes"].filter((n): n is string => typeof n === "string" && n.length > 0) : undefined;
+
   const repickRaw = payload["repick"];
   const repick =
     isRecord(repickRaw) && Array.isArray(repickRaw["beats"]) && str(repickRaw["note"]) !== undefined
@@ -176,6 +181,7 @@ export function readClipReview(payload: unknown): ClipReview | undefined {
     ...(plateSources !== undefined && plateSources.length > 0 ? { plateSources } : {}),
     ...(music !== undefined ? { music } : {}),
     ...(repick !== undefined ? { repick } : {}),
+    ...(sourceNotes !== undefined && sourceNotes.length > 0 ? { sourceNotes } : {}),
     ...(visualQa !== undefined ? { visualQa } : {}),
     flagged: payload["flagged"] === true || (visualQa !== undefined && !visualQa.passed),
     ...(script !== undefined && script.beats.length > 0 ? { script } : {}),
