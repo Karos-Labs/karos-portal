@@ -596,10 +596,31 @@ export function AgentEngineGateApproval({
                     <span>
                       <span className="text-foreground">{normalizeDashes(beat.narration)}</span>
                       {beat.onScreenText && <span className="block text-muted-2">On screen: {normalizeDashes(beat.onScreenText)}</span>}
+                      {/* One click writes the footage-only note the engine
+                          understands (agent-engine PR #98): the approved words
+                          stay, only this beat's clip is re-sourced. */}
+                      {clip.format === "original-short" && clip.script?.format !== "text-led" && (
+                        <button
+                          type="button"
+                          className="mt-0.5 block text-[11px] text-muted-2 underline disabled:opacity-50"
+                          disabled={pending}
+                          onClick={() => {
+                            const line = `Beat ${i + 1}'s footage does not fit the line.`;
+                            setNotes((n) => (n.includes(line) ? n : [n.trim(), line].filter((part) => part.length > 0).join(" ")));
+                          }}
+                        >
+                          Swap this beat&apos;s footage
+                        </button>
+                      )}
                     </span>
                   </li>
                 ))}
               </ol>
+              {clip.format === "original-short" && clip.script?.format !== "text-led" && (
+                <p className="border-t border-border/60 px-2.5 py-1.5 text-[11px] text-muted-2">
+                  A note that is only about footage keeps the approved words and re-sources the clips. Anything about the words goes back to the writer.
+                </p>
+              )}
             </details>
           )}
         </div>
