@@ -171,7 +171,6 @@ export function LegacyAgentPanel({
             // AF-9: this panel IS the agent's page, for both readers.
             stayOnPage
             inline
-            onClose={() => {}}
           />
         </section>
       ) : (

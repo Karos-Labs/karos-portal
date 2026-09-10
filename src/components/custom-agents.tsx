@@ -1313,8 +1313,9 @@ export function StaffAgentControls({
   lastRunAt?: number;
   viewer?: { name: string; email: string };
 }) {
-  const [runOpen, setRunOpen] = useState(false);
-  const [runIntakeFirst, setRunIntakeFirst] = useState(false);
+  // The agent-data dialog: the data chip, and "Set schedule" before the data
+  // exists. It no longer opens on a run — there is no "Run now" here.
+  const [dataOpen, setDataOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const intake = intakeFor(setup);
@@ -1329,11 +1330,6 @@ export function StaffAgentControls({
   // pausing it must never be blocked.
   const scheduleNeedsData =
     Boolean(intake) && (!companyOnFile(intake) || !standUpDone(intake!)) && !schedule;
-
-  function openRun(intakeFirst = false) {
-    setRunIntakeFirst(intakeFirst);
-    setRunOpen(true);
-  }
 
   return (
     <section className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
@@ -1356,7 +1352,7 @@ export function StaffAgentControls({
             <Badge tone="warning">Setup needed</Badge>
           </a>
         ) : intake && intakeComplete(intake) ? (
-          <AgentDataButton kind={intake.kind} ready onOpen={() => openRun(true)} />
+          <AgentDataButton kind={intake.kind} ready onOpen={() => setDataOpen(true)} />
         ) : null}
       </div>
 
@@ -1415,21 +1411,13 @@ export function StaffAgentControls({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <Button
-          size="sm"
-          variant="ghost"
-          // F131: a control the server would refuse is never left enabled.
-          // Missing intake is exactly such a refusal, so the chip above is the
-          // way in, not this button.
-          disabled={Boolean(blockedSetup)}
-          onClick={() => openRun()}
-        >
-          <Icon name="Play" className="h-3.5 w-3.5" /> Run now
-        </Button>
+        {/* NO "Run now" (Albert, 2026-09-10). The agent's page draws the run
+            form itself in every state that can run, so a second way to run
+            from the Control Room was a popup doing what the page does. */}
         <Button
           size="sm"
           variant="subtle"
-          onClick={() => (scheduleNeedsData ? openRun(true) : setScheduleOpen(true))}
+          onClick={() => (scheduleNeedsData ? setDataOpen(true) : setScheduleOpen(true))}
         >
           <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
           {schedule ? "Manage schedule" : "Set schedule"}
@@ -1445,14 +1433,6 @@ export function StaffAgentControls({
         )}
       </div>
 
-      {/* Why a control is off, PAINTED - the Button primitive sets
-          disabled:pointer-events-none, so a title on a disabled button can
-          never be shown. */}
-      {blockedSetup && (
-        <p className="mt-2 border-t border-border/60 pt-2 text-[11px] text-warning">
-          Run now needs the {blockedSetup.label}. This agent drafts from it.
-        </p>
-      )}
       {scheduleNeedsData && intake && !blockedSetup && (
         <p className="mt-2 text-[11px] text-muted-2">
           Add the {INTAKE_LABEL[intake.kind]} agent data before setting a schedule. Every
@@ -1460,7 +1440,7 @@ export function StaffAgentControls({
         </p>
       )}
 
-      {runOpen && (
+      {dataOpen && (
         <RunCustomAgentModal
           agent={agent}
           clientId={clientId}
@@ -1468,13 +1448,13 @@ export function StaffAgentControls({
           contextItems={contextItems}
           viewerIsClient={false}
           {...(setup ? { setup } : {})}
-          {...(runIntakeFirst ? { initialPane: "data" as const } : {})}
+          initialPane="data"
           // AF-9. These controls only ever render inside the Control Room on an
           // agent's own detail page, and that page is what the operator came to
           // read — a redirect to the raw job record threw away the tab they had
           // open and everything else on the agent with it.
           stayOnPage
-          onClose={() => setRunOpen(false)}
+          onClose={() => setDataOpen(false)}
         />
       )}
       {scheduleOpen && (
@@ -1488,7 +1468,7 @@ export function StaffAgentControls({
                   kind: intake.kind,
                   onOpenData: () => {
                     setScheduleOpen(false);
-                    openRun(true);
+                    setDataOpen(true);
                   },
                 },
               }
@@ -2295,7 +2275,7 @@ export function RunCustomAgentModal({
   initialPane,
   stayOnPage,
   inline = false,
-  onClose,
+  onClose = () => {},
 }: {
   agent: RunnableAgentSummary;
   /** Fixed client (client-page flow) … */
@@ -2350,7 +2330,8 @@ export function RunCustomAgentModal({
    * paints into changes (see `InlinePanel`).
    */
   inline?: boolean;
-  onClose: () => void;
+  /** Optional: only a dialog mount has something to close. */
+  onClose?: () => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();

@@ -42,6 +42,7 @@ import { platformLabel } from "@/lib/integrations/platforms";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
 import { LegacyAgentPanel, SchedulePaceControl } from "@/components/client-agents/legacy-agent-panel";
+import { RunCustomAgentModal } from "@/components/custom-agents";
 import { AgentSetupHero } from "@/components/client-agents/agent-setup-hero";
 import { AgentStarButton } from "@/components/client-agents/agent-star-button";
 import { ClientAgentRunHistory } from "@/components/client-agents/client-agent-run-history";
@@ -1414,6 +1415,23 @@ export default async function ClientAgentDetailPage({
                form. So when it is mounted it owns the state, and the hero says
                nothing rather than a second, staler version of it. */
             null
+          ) : isStaff ? (
+            /* A generic imported agent that has never run: no umbrella, no
+               schedule, nothing delivered. The Control Room's "Run now" used to
+               be staff's only way to run it; that button is gone (Albert,
+               2026-09-10), so the form is here, in the page, like every other
+               agent's. A client still gets the empty state below — standing an
+               agent up is Karos's job. */
+            <RunCustomAgentModal
+              agent={summary}
+              clientId={id}
+              engineDispatch={engineDispatch}
+              contextItems={contextItems}
+              viewerIsClient={false}
+              {...(setup ? { setup } : {})}
+              stayOnPage
+              inline
+            />
           ) : (
             /* R9 (round 6): NOT A DEAD END, and no promise no code keeps. It
                said "They will let you know when it is ready" — there is no

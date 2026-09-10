@@ -79,10 +79,6 @@ export function AgentSetupHero({
         initialPane="data"
         stayOnPage
         inline
-        // Nothing to close: the form is part of the page. The component still
-        // calls this after a save that finishes the setup, and a refresh is
-        // what moves the page on to the next state from here.
-        onClose={() => {}}
       />
     </div>
   );
