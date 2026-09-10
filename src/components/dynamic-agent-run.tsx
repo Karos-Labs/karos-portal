@@ -9,7 +9,6 @@ import { DynamicAgentIntakeForm } from "@/components/dynamic-agent-intake-form";
 import { INTAKE_ACTION_FAILED, intakeSave } from "@/lib/intake-save";
 import { IntakeRunError } from "@/components/intake-run-error";
 import { clientArchiveLink } from "@/lib/agent-intake-links";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 /**
  * The one explicit "Run" button a client can press in the portal, and until the
@@ -112,12 +111,11 @@ export function DynamicAgentRun({
         <p className="mt-1 flex items-start gap-2 text-sm text-muted">
           <Icon name="CircleCheck" className="mt-0.5 h-4 w-4 shrink-0 text-success" />
           <span>
-            The agent is working. This takes {RUN_ESTIMATE_SENTENCE}, and the finished work appears
-            in{" "}
+            The agent is working. The finished work will appear in{" "}
             <a href={archive.href} className="underline hover:text-foreground">
               {archive.label}
             </a>{" "}
-            once your Karos team has approved it. You can close this page; the run keeps going.
+            . You can close this page; the run keeps going.
           </span>
         </p>
         {/* The way back to a second run, since the form is gone. It resets this

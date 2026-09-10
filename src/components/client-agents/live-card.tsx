@@ -19,6 +19,7 @@ import {
 import type { ClientAgentTemplate } from "@/lib/types";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
 import { cn } from "@/lib/utils";
+import { CLIENT_ARCHIVE_NAME } from "@/lib/agent-intake-links";
 
 /**
  * The parts of the LIVE client agent surface (Phase 3 §7.1 cards 4 and 5).
@@ -196,7 +197,7 @@ export function TemplateRows({
                   {detail && detail.postCount > 0 && (
                     <span className="text-[11px] text-muted-2">
                       {viewerIsClient
-                        ? `${detail.postCount} in your Workspace`
+                        ? `${detail.postCount} in ${CLIENT_ARCHIVE_NAME}`
                         : `${detail.postCount} post${detail.postCount === 1 ? "" : "s"}`}
                     </span>
                   )}
@@ -333,7 +334,7 @@ export function TemplateRows({
                 <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
                   {detail.postCount === 0
                     ? "Nothing under this format yet"
-                    : `${viewerIsClient ? "In your Workspace under this format" : "What it has made in this format"}${
+                    : `${viewerIsClient ? `In ${CLIENT_ARCHIVE_NAME} under this format` : "What it has made in this format"}${
                         detail.postCount > detail.posts.length
                           ? ` · newest ${detail.posts.length} of ${detail.postCount}`
                           : ""
@@ -341,7 +342,7 @@ export function TemplateRows({
                 </p>
                 {detail.posts.length === 0 ? (
                   <p className="text-[11px] text-muted-2">
-                    Finished work appears here once your Karos team has approved it.
+                    Finished work appears here.
                   </p>
                 ) : (
                   <ul className="space-y-1">
@@ -374,7 +375,7 @@ export function TemplateRows({
                     href={`/clients/${agent.clientId}/assets`}
                     className="focus-ring inline-flex rounded-md text-[11px] text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
                   >
-                    See all in your Workspace
+                    See all in {CLIENT_ARCHIVE_NAME}
                   </a>
                 )}
                 <p className="text-[11px] text-muted-2">
@@ -424,7 +425,7 @@ export function OptionsRow() {
       <p className="text-sm text-foreground">Today&rsquo;s post</p>
       <p className="mt-0.5 text-[11px] text-muted-2">
         This agent writes one post a day for you. Use Give feedback to steer what it makes, and
-        approved posts appear in your Workspace.
+        finished posts appear in {CLIENT_ARCHIVE_NAME}.
       </p>
     </div>
   );

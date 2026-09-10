@@ -105,11 +105,14 @@ describe("the widget's words", () => {
     GENERATED_TODAY_EMPTY_HINT,
   ];
 
-  it("carries the one-line explanation Lola asked for, and it names both steps", () => {
-    // "after that it goes into the calendar (little explanation)". The review
-    // step has to be named too or the sentence is false: nothing reaches a
-    // client's calendar until a person has approved it.
-    expect(GENERATED_TODAY_EXPLAINER).toMatch(/review/i);
+  it("carries the one-line explanation Lola asked for, without naming review", () => {
+    // "after that it goes into the calendar (little explanation)". It used to
+    // name the review step so the sentence stayed true (nothing reaches the
+    // calendar until approved). Albert kept the SOW rule on 2026-09-10 — a
+    // client is never told about review — so "once it has a date" carries that
+    // truth instead: it does not claim the post goes there straight away.
+    expect(GENERATED_TODAY_EXPLAINER).not.toMatch(/review|approv/i);
+    expect(GENERATED_TODAY_EXPLAINER).toMatch(/Once it has a date/);
     expect(GENERATED_TODAY_EXPLAINER).toMatch(/Calendar/);
   });
 

@@ -79,7 +79,6 @@ import {
 } from "@/lib/client-agent-feedback";
 import type { Asset, BrandingGuidelines, TaskOwner, TaskSource, TaskPriority } from "@/lib/types";
 import { MAX_ACTIVE_TASKS } from "@/lib/constants";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 import { aiFor, usageFor } from "@/lib/ai/provider";
 import { createChatStreamResponse, type ChatStreamWriter } from "@/lib/chat/stream-protocol";
 import { resolveChatModel } from "@/lib/ai/chat-models";
@@ -1492,7 +1491,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
       return requestedScheduledAt != null
         ? `Started a run of **${match.name}** (job \`${result.jobId}\`), set to publish ${new Date(requestedScheduledAt).toISOString()} once it's ready.${attachmentNote}`
-        : `Started a run of **${match.name}** (job \`${result.jobId}\`). It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews the result before it reaches your Workspace.${attachmentNote}`;
+        : viewerIsClient
+          ? `Started a run of **${match.name}**. It will appear on your Home page when it's done.${attachmentNote}`
+          : `Started a run of **${match.name}** (job \`${result.jobId}\`).${attachmentNote}`;
     },
   });
 

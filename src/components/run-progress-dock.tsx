@@ -15,12 +15,9 @@
  * navigation in the tab and a reload (see run-watch.tsx). The dialog shows the
  * same watch while it is open, from the same store, so the two cannot disagree.
  *
- * IT ASSEMBLES, it does not invent. The ladder is `ManagedJobProgress`, already
- * mounted on a client's own agent page, which takes its words from the
- * sanctioned `jobStatusLabel` register. The sentences are `runOutcomeSentence`.
- * The estimate is the same `RUN_ESTIMATE_SENTENCE` constant every other surface
- * quotes, kept as CONTEXT beside real progress rather than as the only
- * information there is.
+ * IT ASSEMBLES, it does not invent. The bar is `AgentRunProgress`, the same one
+ * the in-page run form turns into, and the sentences are `runOutcomeSentence`.
+ * It quotes no duration: the moving bar answers "how long".
  *
  * WHAT IT DOES NOT DO. It does not cancel (`CancelRunControl` lives on the
  * agent page, where the refund rules are already painted), and it does not

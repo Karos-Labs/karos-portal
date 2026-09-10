@@ -14,7 +14,6 @@ import { noRunnableTemplateReason, visibleTemplates } from "@/lib/client-agent-r
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
 import { OUTPUT_NOUN, type AgentArchetype } from "@/lib/agent-archetype";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 
 /**
@@ -152,9 +151,8 @@ export function AgentDetailPanel({
               aria-hidden="true"
             />
             <p className="text-xs text-info">
-              Making your {agent.activeRun.templateName ?? "next"} {noun} now. This takes{" "}
-              {RUN_ESTIMATE_SENTENCE}. Your Karos team reviews it when it lands, and finished work
-              appears in your Workspace once approved.
+              Making your {agent.activeRun.templateName ?? "next"} {noun} now. You can leave this
+              page; it keeps going.
             </p>
           </div>
           {/* F30, restored. The cancel used to ride the generic run rows, and
@@ -177,7 +175,7 @@ export function AgentDetailPanel({
             <p className="text-sm text-foreground">Create a new {noun}</p>
             <p className="mt-0.5 text-xs text-muted-2">
               {runnableTemplate
-                ? `Makes one ${runnableTemplate.name} ${noun} now. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
+                ? `Makes one ${runnableTemplate.name} ${noun} now.`
                 : `Making a ${noun} now is not available yet.`}
             </p>
             {/* Portal revamp, Surface 03: the cost is a step on the page, never

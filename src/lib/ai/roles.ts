@@ -228,13 +228,13 @@ export const AI_ROLES = {
     // any one branch.
     // Shifted 187 → 188 by the credits rework (2026-09), which added one import
     // above it. Re-pinned against the real file, per the rule above.
-    sites: ["src/app/api/clients/[id]/chat/route.ts:188"],
+    sites: ["src/app/api/clients/[id]/chat/route.ts:187"],
   },
   "chat.followups": {
     tier: "HAIKU",
     // Shifted 825 → 834 by the credits rework's copy change to the copilot's
     // price appendix, which sits above this call.
-    sites: ["src/app/api/clients/[id]/chat/route.ts:834"],
+    sites: ["src/app/api/clients/[id]/chat/route.ts:833"],
   },
   "insights.summary": {
     tier: "HAIKU",

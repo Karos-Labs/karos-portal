@@ -77,7 +77,7 @@ export function generatedToday<T extends Pick<Asset, "createdAt">>(
  * from both shells, and Calendar is what the rail actually says.
  */
 export const GENERATED_TODAY_EXPLAINER =
-  "Everything your agents made today shows up here. Your Karos team reviews it, and once it has a date it lives in your Calendar.";
+  "Everything your agents made today shows up here. Once it has a date, it lives in your Calendar.";
 
 /** The heading, in one place, because two surfaces render it. */
 export const GENERATED_TODAY_TITLE = "Generated today";

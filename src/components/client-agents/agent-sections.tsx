@@ -5,7 +5,6 @@ import { formatDate, relativeTime } from "@/lib/utils";
 import { intakeRowHref } from "@/lib/agent-intake-links";
 import type { AgentInputsView, AgentSetupFact } from "@/lib/agent-detail-sections";
 import type { RosterStatus } from "@/lib/client-agents";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 /**
  * The dated, categorized bands of an agent's page (CD-K1).
@@ -155,7 +154,7 @@ export function AgentStatusLine({
       {running && (
         <p className="flex items-center gap-1.5 text-xs text-muted-2">
           <Icon name="LoaderCircle" className="h-3 w-3 animate-spin-slow" aria-hidden="true" />
-          Working on your next {noun}. This takes {RUN_ESTIMATE_SENTENCE}. You can leave this page.
+          Working on your next {noun}. You can leave this page.
         </p>
       )}
       {/* The operational truth beside the client-facing word. It sits UNDER the

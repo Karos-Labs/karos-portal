@@ -487,6 +487,16 @@ function offences(shape: string, opts: { payload?: boolean; jsx?: boolean } = {}
   // The en dash is untouched and still wanted: "3–4 posts", "~10–25 min",
   // "1–10" are ranges, not punctuation between clauses.
   if (text.includes("—")) out.push("em dash — use a comma, a period or ·");
+  // SCRUM-431 (Albert, 2026-09-10): a sentence saying work "lands in your
+  // Workspace" named no place work lands. The only thing labelled Workspace is
+  // Account Center's side-nav GROUP holding Settings and Credits, so it pointed
+  // a client at their credits. Name where work really lands instead
+  // (CLIENT_ARCHIVE_NAME in agent-intake-links.ts, or Calendar / Home). The
+  // destination phrase only: the nav group's own label, "Google Workspace" and
+  // the generic lowercase word are different things.
+  if (/\b(?:your|the) Workspace\b/.test(text)) {
+    out.push("\"your Workspace\" names no place work lands — use the nav's word");
+  }
   if (IS_PROSE.test(text) || opts.payload) {
     for (const token of STORED_ENUM_TOKENS) {
       if (new RegExp(`(^|[^A-Za-z0-9_])${token}([^A-Za-z0-9_]|$)`).test(text)) {

@@ -139,9 +139,6 @@ export function clientLaunchPhase(
 /** Halfway through the quoted launch window — where the client narrative turns. */
 export const LAUNCH_STAGE_SPLIT_MS = 12 * 60 * 1000;
 
-/** ~How long a setup run takes, in the client's words. */
-export const LAUNCH_ESTIMATE = "~20–40 min";
-
 /**
  * Past this, a launch still sitting in `launching` is more likely stuck than
  * slow — the webhook never arrived, the service dropped the job, a deploy ate

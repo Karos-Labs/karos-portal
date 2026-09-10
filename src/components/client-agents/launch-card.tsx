@@ -9,7 +9,6 @@ import { AgentIdentity } from "@/components/agent-identity";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import {
   CLIENT_LAUNCH_PHASE_COPY,
-  LAUNCH_ESTIMATE,
   LAUNCH_STUCK_MS,
   clientLaunchPhase,
   type ClientLaunchPhase,
@@ -135,8 +134,8 @@ export function ClientAgentLaunchCard({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-2">
               {agent.launchCost != null
-                ? `${agent.launchCost} credits, one time · ${LAUNCH_ESTIMATE}`
-                : `One-time setup · ${LAUNCH_ESTIMATE}`}
+                ? `${agent.launchCost} credits, one time`
+                : "One-time setup"}
             </p>
             <div className="flex gap-1.5">
               {!viewerIsClient && failed && (
@@ -321,7 +320,7 @@ function LaunchProgress({
         );
       })}
       <p className="pt-1 text-[11px] text-muted-2">
-        This takes {LAUNCH_ESTIMATE}. You can leave this page. It keeps running.
+        You can leave this page. It keeps running.
       </p>
     </div>
   );

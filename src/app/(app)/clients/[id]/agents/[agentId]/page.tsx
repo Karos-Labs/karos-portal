@@ -898,7 +898,7 @@ export default async function ClientAgentDetailPage({
       ? [{ text: `Last delivered ${relativeTime(lastDelivered)}` }]
       : []),
     ...(produced.length > 0
-      ? [{ text: `${produced.length} in your Workspace`, href: archive.href }]
+      ? [{ text: `${produced.length} in ${archive.label}`, href: archive.href }]
       : []),
   ];
 
@@ -1260,7 +1260,7 @@ export default async function ClientAgentDetailPage({
                 emptyHint={
                   sourceFiles.length === 0
                     ? "This agent cuts from footage you provide. Once your Karos team has your source video, finished clips land here for you to download and post."
-                    : "Your footage is on file. Finished clips land here once your Karos team has reviewed them."
+                    : "Your footage is on file. Finished clips land here."
                 }
               />
             </section>
@@ -1501,10 +1501,10 @@ export default async function ClientAgentDetailPage({
             {archiveRows.length === 0 ? (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-4 py-3 text-xs text-muted-2">
                 {archetype === "template_calendar"
-                  ? "Nothing yet. Finished work appears here once your Karos team has approved it."
+                  ? "Nothing yet. Finished work appears here."
                   : hasAnythingAbove
                     ? "Nothing else yet. Everything this agent has made is above."
-                    : "Nothing yet. Finished work appears here once your Karos team has approved it."}
+                    : "Nothing yet. Finished work appears here."}
               </p>
             ) : (
               /* Each row now carries its own way in — a neon-outline
@@ -1614,7 +1614,7 @@ export default async function ClientAgentDetailPage({
               </div>
             ) : (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
-                This agent writes from your brand profile and the documents in your Workspace.
+                This agent writes from your brand profile and the documents you have shared with us.
               </p>
             )}
           </section>
@@ -1637,7 +1637,7 @@ export default async function ClientAgentDetailPage({
                     familyPlatforms took the whole section away above, so the
                     generic "No accounts connected yet" fallback that used to
                     sit here had no reachable case left to serve. */}
-                {`No ${platformLabel(familyPlatforms[0]!)} account connected yet. Posts are delivered to your Workspace for you to publish.`}
+                {`No ${platformLabel(familyPlatforms[0]!)} account connected yet. Posts are delivered to ${archive.label} for you to publish.`}
               </p>
             ) : (
               <ul className="space-y-1.5">
