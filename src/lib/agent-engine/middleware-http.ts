@@ -1,5 +1,7 @@
 import "server-only";
 
+import { mintIdToken, resetIdTokenCacheForTests } from "@/lib/gcp-id-token";
+
 /**
  * The one HTTP/auth layer for `agent-middleware`, shared by the dispatch path
  * (`middleware-client.ts`) and the admin path (`middleware-admin.ts`).
@@ -10,8 +12,6 @@ import "server-only";
  * prompts and templates makes several calls per render.
  */
 
-const METADATA_URL =
-  "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
 
 /** Admin calls are plain Firestore reads/writes behind the API — much quicker than a dispatch. */
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -21,11 +21,28 @@ export function middlewareBaseUrl(env: Record<string, string | undefined> = proc
   return url && url.length > 0 ? url.replace(/\/$/, "") : undefined;
 }
 
-let idTokenCache: { audience: string; token: string; expiresAt: number } | null = null;
+/**
+ * Thrown when the middleware is IAM-protected (`AGENT_MIDDLEWARE_AUDIENCE` is
+ * set) but this process could not mint an ID token for it.
+ *
+ * A SEPARATE TYPE from `MiddlewareRequestError` because the two mean different
+ * things to the dispatch path: an unreachable control plane is recoverable and
+ * falls back to direct Pub/Sub, and so is a credential problem - dispatch
+ * already treats a 401 that way, with the note "no/expired identity token — a
+ * config problem, not the job's fault". Naming it lets `dispatchViaMiddleware`
+ * make that same call for a mint that failed BEFORE the request, instead of
+ * letting a raw throw escape and orphan a client's job.
+ */
+export class MiddlewareCredentialError extends Error {
+  constructor(reason: string) {
+    super(`agent middleware is IAM-protected but no ID token could be minted: ${reason}`);
+    this.name = "MiddlewareCredentialError";
+  }
+}
 
-/** Exposed for tests; production code has no reason to call this. */
+/** Test seam: the shared token cache would otherwise leak between cases. */
 export function __resetMiddlewareTokenCache(): void {
-  idTokenCache = null;
+  resetIdTokenCacheForTests();
 }
 
 /**
@@ -40,29 +57,19 @@ export function __resetMiddlewareTokenCache(): void {
  * issues a valid signed token to every account for every audience, so that
  * claim is the only thing binding a token to this service — a mismatch is a
  * 403, not a warning.
+ *
+ * IT USED TO FAIL OPEN (SCRUM-330 / AU47, second pass). Three `return
+ * undefined` paths meant the request went out with no `Authorization` header at
+ * all. That ticket named `agent-engine/client.ts` and was fixed there; this was
+ * the third copy of the same function and had no ticket of its own. The logic
+ * is shared now — see lib/gcp-id-token.ts.
  */
 export async function middlewareIdToken(): Promise<string | undefined> {
-  const audience = process.env.AGENT_MIDDLEWARE_AUDIENCE;
-  if (!audience) return undefined;
-
-  const now = Date.now();
-  if (idTokenCache && idTokenCache.audience === audience && idTokenCache.expiresAt > now + 60_000) {
-    return idTokenCache.token;
-  }
-  try {
-    const res = await fetch(`${METADATA_URL}?audience=${encodeURIComponent(audience)}`, {
-      headers: { "Metadata-Flavor": "Google" },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return undefined;
-    const token = (await res.text()).trim();
-    if (!token) return undefined;
-    // Google mints these with a 1h life; refresh a little early.
-    idTokenCache = { audience, token, expiresAt: now + 55 * 60 * 1000 };
-    return token;
-  } catch {
-    return undefined;
-  }
+  return mintIdToken({
+    audience: process.env.AGENT_MIDDLEWARE_AUDIENCE,
+    service: "agent-middleware",
+    credentialError: (reason) => new MiddlewareCredentialError(reason),
+  });
 }
 
 /**
