@@ -534,6 +534,20 @@ export function AgentEngineGateApproval({
               {clip.music !== undefined ? (clip.music.applied ? "Music bed laid" : `No music${clip.music.note ? ` (${normalizeDashes(clip.music.note)})` : ""}`) : ""}
             </p>
           )}
+          {/* Why this short is stock footage and not the client's own: what the
+              attached-media, owned-footage and web-harvest tiers each said. A
+              sourcePool naming a show that does not exist where the harvester
+              searches shows up here instead of as a silent fall to stock. */}
+          {clip.sourceNotes && clip.sourceNotes.length > 0 && (
+            <details className="text-xs text-muted">
+              <summary className="cursor-pointer">Why stock footage, not the client&apos;s own</summary>
+              <ul className="mt-1 space-y-0.5 pl-4">
+                {clip.sourceNotes.map((n) => (
+                  <li key={n}>{normalizeDashes(n)}</li>
+                ))}
+              </ul>
+            </details>
+          )}
           {/* What the engine already did about footage the QA disliked: which
               beats it re-sourced and whether the re-render scored clean, so the
               reviewer knows the swap happened and does not ask for it again. */}

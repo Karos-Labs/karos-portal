@@ -31,6 +31,7 @@ const PAYLOAD = {
   replans: 1,
   music: { applied: false, note: "no musicTrackUri in the client's tiktokClips config" },
   repick: { beats: [2], note: "beat 2 re-sourced after the visual QA scored the footage under 5; the re-render still names beat 2" },
+  sourceNotes: ["user-asset: no media attached to this run", "web-harvest: content_fail (no allowed source yielded a usable video)", 7],
   script: {
     hook: "We give our winner $1,000,000. But that's the least important part of the prize.",
     format: "text-led",
@@ -58,6 +59,7 @@ describe("readClipReview", () => {
     expect(review.plateSources).toEqual(["stock", "stock", "still", "stock", "stock"]);
     expect(review.music).toEqual({ applied: false, note: "no musicTrackUri in the client's tiktokClips config" });
     expect(review.repick).toEqual({ beats: [2], note: "beat 2 re-sourced after the visual QA scored the footage under 5; the re-render still names beat 2" });
+    expect(review.sourceNotes).toEqual(["user-asset: no media attached to this run", "web-harvest: content_fail (no allowed source yielded a usable video)"]);
     expect(review.visualQa).toEqual({
       passed: false,
       reason: "overall score 4 is below the minimum 7",
@@ -94,7 +96,7 @@ describe("readClipReview", () => {
   });
 
   it("names every key the block renders itself, so the generic fact grid does not repeat them", () => {
-    for (const key of ["videoUrl", "gcsUri", "clipPath", "durationSeconds", "costSoFarUsd", "estimatedCostUsd", "maxCostUsd", "budgetPlan", "replans", "plateSources", "music", "repick", "visualQa", "flagged", "script", "format", "sourceTier", "voiceover"]) {
+    for (const key of ["videoUrl", "gcsUri", "clipPath", "durationSeconds", "costSoFarUsd", "estimatedCostUsd", "maxCostUsd", "budgetPlan", "replans", "plateSources", "music", "repick", "sourceNotes", "visualQa", "flagged", "script", "format", "sourceTier", "voiceover"]) {
       expect(CLIP_REVIEW_KEYS.has(key), key).toBe(true);
     }
     // The topic stays a generic fact: it is the run's subject, shown for every gate.
