@@ -64,6 +64,14 @@ export default async function AssetsPage({
   const user = await requireUser();
   const { clientId: viewClientId, status: statusParam } = await searchParams;
   const initialStatus = statusFilterFromParam(statusParam);
+  /* The SERVER's clock, read once here rather than inside AssetsView: that is
+     a "use client" component, so a Date.now() there would let the browser's
+     timezone decide which day "today" is, while runDayKey - the helper its
+     selector shares with Home's "Generated today" widget - is a server-local
+     calendar day. Two surfaces answering "today" from two clocks is exactly the
+     drift the shared selector exists to stop. */
+  // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
+  const now = Date.now();
 
   // The client Library merged into Account Center's Archive tab (2026-07) -
   // client users land there; this route stays the staff review surface. The
@@ -145,6 +153,7 @@ export default async function AssetsPage({
           assets={clientAssets}
           canApprove
           initialStatus={initialStatus}
+          now={now}
           {...(clientPlatforms ? { connectedPlatformsByClient: clientPlatforms } : {})}
         />
       </>
@@ -181,6 +190,7 @@ export default async function AssetsPage({
           assets={assets}
           canApprove
           initialStatus={initialStatus}
+          now={now}
           clientNames={Object.fromEntries(clients.map((client) => [client.id, client.name]))}
           {...(connectedPlatformsByClient ? { connectedPlatformsByClient } : {})}
         />

@@ -22,10 +22,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Textarea } from "@/components/ui";
 import { SavedFormCard } from "@/components/saved-form-card";
-import { JobStatusBadge } from "@/components/job-status";
-import { formatDate, relativeTime } from "@/lib/utils";
 import type { JobStatus } from "@/lib/types";
-import { IntakeNoRuns } from "@/components/intake-no-runs";
 import { clientArchiveLink, intakeAnchorId } from "@/lib/agent-intake-links";
 import { intakeSave } from "@/lib/intake-save";
 import { AutoRefresh } from "@/components/auto-refresh";
@@ -37,6 +34,8 @@ import {
   runBlogSetupAction,
   saveBlogCompanyIntakeAction,
 } from "@/lib/actions/blog-agent-actions";
+import { fieldError } from "@/components/intake-field";
+import { IntakeRunRows } from "@/components/intake-run-rows";
 
 /* ── client-safe props (serialized server-side) ── */
 
@@ -54,10 +53,6 @@ export interface BlogRunRowView {
   status: JobStatus;
   createdAt: number;
   href?: string;
-}
-
-function fieldError(error: string | null) {
-  return error ? <p className="mt-2 text-xs text-red-400">{error}</p> : null;
 }
 
 /* ─────────────────────── the setup band ─────────────────────── */
@@ -333,7 +328,15 @@ function DetailsForm({ clientId, intake }: { clientId: string; intake: BlogIntak
 
 /* ─────────────────────────── feedback ─────────────────────────── */
 
-function FeedbackBox({
+/**
+ * NOT a feedback box, despite what this was called until SCRUM-412. It renders
+ * "Your articles" and its own comment below says "NO FEEDBACK BOX HERE" - the
+ * blog family has no feedback capture yet, on purpose. Two other intake files
+ * declared a `FeedbackBox` that was the same component written twice, so a
+ * name that meant something different here was a trap for exactly the person
+ * consolidating them.
+ */
+function YourArticlesCard({
   clientId,
   runs,
   isStaff,
@@ -365,40 +368,7 @@ function FeedbackBox({
         with everything you need to publish it: the page, a version that pastes into your editor,
         and the title and description details your platform asks for.
       </p>
-      {runs.length > 0 ? (
-        <ul className="mt-3 space-y-1.5">
-          {runs.slice(0, 4).map((r) => {
-            /* C2 (parity pass 2026-09). The CLIENT'S sentence is the primary
-               text for BOTH roles. Staff used to read `Run <date>` in its
-               place, so one row said two different things and a staff preview
-               of this page could not be compared with what the client gets.
-               They lose nothing: the exact generation instant they debug with
-               is appended as a muted secondary suffix, and the /jobs link -
-               staff-only, staff-guarded, and outside the client workspace -
-               rides on that suffix behind an Internal marker. The per-day
-               collapse for clients still happens server-side (toRunRowViews). */
-            const label = `Worked on your content · ${relativeTime(r.createdAt)}`;
-            const stamp = `Run ${formatDate(r.createdAt)}`;
-            return (
-              <li key={r.id} className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                <span>{label}</span>
-                {isStaff &&
-                  (r.href ? (
-                    <a href={r.href} className="text-muted-2 underline hover:text-foreground">
-                      {stamp}
-                    </a>
-                  ) : (
-                    <span className="text-muted-2">{stamp}</span>
-                  ))}
-                {isStaff && r.href && <Badge tone="neutral">Internal</Badge>}
-                <JobStatusBadge status={r.status} />
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <IntakeNoRuns clientId={clientId} noun="articles" />
-      )}
+      <IntakeRunRows clientId={clientId} family="blog" runs={runs} isStaff={isStaff} />
     </Card>
   );
 }
@@ -436,7 +406,7 @@ export function BlogAgentIntake({
   setupCost: number;
   /** `isBillableClientActor()` — decides whose money the quote names, not the figure. */
   viewerIsBilled?: boolean;
-  /** Whose vocabulary the run rows are written in — see FeedbackBox. */
+  /** Whose vocabulary the run rows are written in - see IntakeRunRows. */
   isStaff: boolean;
 }) {
   return (
@@ -456,7 +426,7 @@ export function BlogAgentIntake({
       <div id={intakeAnchorId("company")} className="scroll-mt-24">
         <DetailsForm clientId={clientId} intake={company} />
       </div>
-      <FeedbackBox clientId={clientId} runs={runs} isStaff={isStaff} />
+      <YourArticlesCard clientId={clientId} runs={runs} isStaff={isStaff} />
     </div>
   );
 }
