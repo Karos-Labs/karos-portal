@@ -2500,32 +2500,7 @@ export function RunCustomAgentModal({
     .filter((part): part is string => Boolean(part));
   const runLabel = runActionLabel(agent);
   const [moreOpen, setMoreOpen] = useState(false);
-  // "Change" opens the disclosure AND lands the reader on its first control:
-  // opening a panel and leaving them to hunt for the thing they asked to change
-  // is half a gesture. A hidden element cannot take focus, so an open from
-  // collapsed raises this ref and the effect below spends it on the next render,
-  // once the panel is really visible. A ref rather than state deliberately: the
-  // flag is a message to the next effect, and nothing renders differently for it.
-  const pendingMoreFocus = useRef(false);
-  const moreOptionsRef = useRef<HTMLDivElement>(null);
   const moreOptionsId = useId();
-  useEffect(() => {
-    if (!moreOpen || !pendingMoreFocus.current) return;
-    pendingMoreFocus.current = false;
-    moreOptionsRef.current
-      ?.querySelector<HTMLElement>("input, select, textarea")
-      ?.focus({ preventScroll: true });
-  }, [moreOpen]);
-  function openMoreOptions() {
-    if (moreOpen) {
-      moreOptionsRef.current
-        ?.querySelector<HTMLElement>("input, select, textarea")
-        ?.focus({ preventScroll: true });
-      return;
-    }
-    pendingMoreFocus.current = true;
-    setMoreOpen(true);
-  }
   // A server-side setup gate can still fire when this dialog's `ready` was
   // stale, so the message needs its own way back to the data.
   const setupErrorKind: IntakeKind | null = !error
@@ -3235,17 +3210,14 @@ export function RunCustomAgentModal({
             picker), which is why they always get the row. */}
         {(moreFields.length > 0 || !viewerIsClient) && (
           <div className="space-y-2">
+            {/* NO "Change" BUTTON (SCRUM-410). Lola: "the change button and More
+                options button do the exact same thing — remove change." She was
+                exactly right: "Change" called the same setter the disclosure below
+                toggles, plus a focus hop. Two controls for one panel. The defaults
+                stay here as TEXT — seeing "The company page · 1 post" is worth
+                something on its own — and "More options" is the one way in. */}
             {summaryParts.length > 0 && (
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <p className="text-xs text-muted-2">{summaryParts.join(" · ")}</p>
-                <button
-                  type="button"
-                  onClick={openMoreOptions}
-                  className="focus-ring rounded-md text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
-                >
-                  Change
-                </button>
-              </div>
+              <p className="text-xs text-muted-2">{summaryParts.join(" · ")}</p>
             )}
             <div>
               <button
@@ -3273,7 +3245,7 @@ export function RunCustomAgentModal({
                   element - a `grid` class would beat the browser's own
                   [hidden] rule and the panel would never close. */}
               <div id={moreOptionsId} hidden={!moreOpen}>
-                <div ref={moreOptionsRef} className="grid gap-4 pt-3 sm:grid-cols-2">
+                <div className="grid gap-4 pt-3 sm:grid-cols-2">
                   {moreFields.map((field) => briefFieldControl(field))}
                 </div>
                 {/* ADDITIVE AND MARKED (parity ruling 1). The run type is an
