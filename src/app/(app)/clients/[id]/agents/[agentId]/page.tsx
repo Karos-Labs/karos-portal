@@ -1587,7 +1587,7 @@ export default async function ClientAgentDetailPage({
           {archetype === "clip_maker" ? (
             <SourceMaterialCard
               files={sourceFiles}
-              hint={launchProfileFor({ key: agent.key, name: agent.name }).attachments.hint}
+              hint={launchProfileFor({ key: agent.key, name: agent.name }).attachments?.hint ?? ""}
             />
           ) : archetype === "daily_finder" && setup && !(inputs && !inputs.ready) ? (
             /* Kept even though the inputs band lists the same document: this

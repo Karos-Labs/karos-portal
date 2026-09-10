@@ -71,7 +71,13 @@ export interface AgentLaunchProfile {
   quickStarts: string[];
   deliverables: string[];
   estimate: string;
-  attachments: AgentAttachmentProfile;
+  /**
+   * The run's file slot. OPTIONAL since SCRUM-413 (2026-09-10): the reputation
+   * runner has none, because its only case — a screenshot of a review on a
+   * surface we do not watch — belongs in the roster, not in one run. An agent
+   * with no attachments renders no file box and has no file requirement.
+   */
+  attachments?: AgentAttachmentProfile;
 }
 
 type AgentIdentity = { key: string; name: string };
@@ -1049,11 +1055,14 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       fields: [
         {
           key: "request",
-          label: "Direction for this pulse (optional)",
+          // SCRUM-413 (Lola, decided by Albert 2026-09-10): the same words as
+          // every other agent's per-run steer. "Pulse" is what we call a
+          // reputation run internally; to a client it is one more word to
+          // learn for a field that works exactly like its siblings.
+          label: STEER_RUN_LABEL,
           type: "textarea",
           placeholder: "A surface to prioritise, a complaint you already know about, a week you care about.",
-          helper:
-            "Leave it empty and we cover every surface on your roster since the last pulse.",
+          helper: "Leave it empty and we cover every surface on your roster since the last run.",
         },
       ],
       quickStarts: [
@@ -1067,11 +1076,11 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "What we chose not to answer, and why",
       ],
       estimate: RUN_ESTIMATE,
-      attachments: {
-        label: "Extra context (optional)",
-        hint: "A screenshot of a review that is not on a surface we watch, or a note about an incident in progress.",
-        accept: DOCUMENTS_AND_IMAGES,
-      },
+      // NO "Extra context" UPLOAD (SCRUM-413). Lola: remove the second box. It
+      // took a screenshot of a review on a surface we do not watch — a real
+      // but rare case, and a second box on a form she found cluttered. A
+      // review we should be watching belongs in the roster (the intake page),
+      // not in one run.
     },
   },
   {

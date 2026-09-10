@@ -2562,8 +2562,8 @@ export function RunCustomAgentModal({
     // for them however the schema spells it (see `fieldLabel`).
     const standsInForFiles =
       viewerIsClient &&
-      Boolean(profile.attachments.required) &&
-      field.key === profile.attachments.satisfyWithFieldKey;
+      Boolean(profile.attachments?.required) &&
+      field.key === profile.attachments?.satisfyWithFieldKey;
     if (field.type === "media") {
       // The engine's `mediaAssets`, uploaded browser → GCS through the signed
       // route and kept in the brief as JSON so the submit carries it like any
@@ -2647,9 +2647,10 @@ export function RunCustomAgentModal({
       setError("Attach the media this run should use, or switch \"Media for this run\" back to letting Karos source the visuals.");
       return;
     }
-    const attachmentAlternative = profile.attachments.satisfyWithFieldKey;
+    const attachments = profile.attachments;
+    const attachmentAlternative = attachments?.satisfyWithFieldKey;
     if (
-      profile.attachments.required &&
+      attachments?.required &&
       selectedFiles.length === 0 &&
       !(attachmentAlternative && fields[attachmentAlternative]?.trim())
     ) {
@@ -2663,7 +2664,7 @@ export function RunCustomAgentModal({
       setError(
         viewerIsClient && alternative
           ? `Add the ${alternative.label.toLowerCase()} under More options so the agent has something to work from.`
-          : `Add ${profile.attachments.label.toLowerCase()} or provide the source link above.`,
+          : `Add ${attachments.label.toLowerCase()} or provide the source link above.`,
       );
       return;
     }
@@ -3261,6 +3262,9 @@ export function RunCustomAgentModal({
                         {staffOnlyFields.map((field) => briefFieldControl(field))}
                       </div>
                     )}
+                    {/* An agent with no file slot (the reputation runner,
+                        SCRUM-413) gets no file box, not an empty one. */}
+                    {profile.attachments && (
                     <AgentInputFiles
                       key={`${selectedClientId}-${agent.id}`}
                       clientId={selectedClientId}
@@ -3274,6 +3278,7 @@ export function RunCustomAgentModal({
                       profile={profile.attachments}
                       canUpload
                     />
+                    )}
                   </StaffOnlySection>
                 )}
               </div>
