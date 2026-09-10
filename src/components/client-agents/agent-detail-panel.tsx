@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { AgentScheduleModal, CancelRunControl } from "@/components/custom-agents";
+import { AgentRunProgress } from "@/components/client-agents/run-progress";
+import { useRunWatch } from "@/components/run-watch";
 import { ClientAgentFeedbackModal } from "./feedback-modal";
 import { OptionsRow, StaffSlotNotes, TemplateRows, WeekStrip } from "./live-card";
 import { SlotNoteModal } from "./slot-note-modal";
@@ -122,6 +124,9 @@ export function AgentDetailPanel({
     firstBlock?.reason ??
     noRunnableTemplateReason({ optionsMode: agent.optionsMode, hasTemplates: templates.length > 0 });
 
+  const pathname = usePathname();
+  const { watch: watchRun } = useRunWatch();
+
   function createPost() {
     if (!runnableTemplate) return;
     setError(null);
@@ -133,8 +138,23 @@ export function AgentDetailPanel({
         templateKey: runnableTemplate.key,
       });
       setRunning(false);
-      if (result.error) setError(result.error);
-      else router.refresh();
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      // Into the same watch the run form uses, so the corner dock carries it
+      // once the reader leaves. `origin` keeps the dock off THIS page, where the
+      // banner below already shows it.
+      if (result.jobId) {
+        watchRun({
+          jobId: result.jobId,
+          agentName: agent.displayName,
+          noun,
+          href: viewerIsClient ? `/clients/${agent.clientId}` : `/jobs/${result.jobId}`,
+          origin: pathname,
+        });
+      }
+      router.refresh();
     });
   }
 
@@ -144,17 +164,13 @@ export function AgentDetailPanel({
           fires stay invisible - a "ran 2 hours ago · 7 drafts" line beside a
           week of daily slots is the tell that the days are a batch (§4.1). */}
       {agent.activeRun && (
-        <div className="rounded-[var(--radius)] border border-info/30 bg-info/10">
-          <div className="flex items-start gap-2 px-4 py-3">
-            <span
-              className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-info animate-pulse-neon"
-              aria-hidden="true"
-            />
-            <p className="text-xs text-info">
-              Making your {agent.activeRun.templateName ?? "next"} {noun} now. You can leave this
-              page; it keeps going.
-            </p>
-          </div>
+        <div className="space-y-2">
+          {/* The same bar every run surface uses, so a run looks the same
+              wherever it is watched. */}
+          <AgentRunProgress
+            headline={`Making your ${agent.activeRun.templateName ?? "next"} ${noun}`}
+            working
+          />
           {/* F30, restored. The cancel used to ride the generic run rows, and
               CD-G1 removed those from the client's branch - leaving a client
               who mis-fired a billable twenty-minute run with no way to stop it
@@ -213,7 +229,6 @@ export function AgentDetailPanel({
             loading={running}
             onClick={createPost}
           >
-            <Icon name="Sparkles" className="h-4 w-4" />
             {/* THE LABEL NAMES THE FORMAT (flow audit 2026-09, R15). Two
                 controls start a run on this page — this one and each format
                 row's "Run now" — and this one used to read "Create new post"
