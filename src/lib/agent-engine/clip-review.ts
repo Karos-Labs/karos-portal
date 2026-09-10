@@ -52,6 +52,8 @@ export interface ClipReview {
   /** Per shot, `stock` (a real library clip) or `still` (a generated photograph with a push-in). */
   plateSources?: string[];
   music?: { applied: boolean; note?: string };
+  /** Beats whose footage the engine re-sourced after the visual QA scored it under 5, and how the re-render fared (engine `repick`, 2026-09-10). */
+  repick?: { beats: number[]; note: string };
   visualQa?: ClipVisualQa;
   /** The engine flagged the clip (the visual QA failed); the human decides. */
   flagged: boolean;
@@ -74,6 +76,7 @@ export const CLIP_REVIEW_KEYS: ReadonlySet<string> = new Set([
   "replans",
   "plateSources",
   "music",
+  "repick",
   "visualQa",
   "flagged",
   "script",
@@ -133,6 +136,12 @@ export function readClipReview(payload: unknown): ClipReview | undefined {
 
   const plateSources = Array.isArray(payload["plateSources"]) ? payload["plateSources"].filter((p): p is string => typeof p === "string") : undefined;
 
+  const repickRaw = payload["repick"];
+  const repick =
+    isRecord(repickRaw) && Array.isArray(repickRaw["beats"]) && str(repickRaw["note"]) !== undefined
+      ? { beats: repickRaw["beats"].filter((b): b is number => typeof b === "number"), note: str(repickRaw["note"])! }
+      : undefined;
+
   const scriptRaw = payload["script"];
   const script =
     isRecord(scriptRaw) && Array.isArray(scriptRaw["beats"])
@@ -166,6 +175,7 @@ export function readClipReview(payload: unknown): ClipReview | undefined {
     ...(num(payload["replans"]) !== undefined ? { replans: num(payload["replans"])! } : {}),
     ...(plateSources !== undefined && plateSources.length > 0 ? { plateSources } : {}),
     ...(music !== undefined ? { music } : {}),
+    ...(repick !== undefined ? { repick } : {}),
     ...(visualQa !== undefined ? { visualQa } : {}),
     flagged: payload["flagged"] === true || (visualQa !== undefined && !visualQa.passed),
     ...(script !== undefined && script.beats.length > 0 ? { script } : {}),
