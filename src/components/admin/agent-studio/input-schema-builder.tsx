@@ -84,7 +84,7 @@ export function InputSchemaBuilder({
             return (
               <div key={index} className="rounded-md border border-border bg-surface-2 p-3">
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                  <span className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                     Field {index + 1}
                   </span>
                   <div className="flex items-center gap-1">

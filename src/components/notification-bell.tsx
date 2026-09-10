@@ -360,7 +360,7 @@ export function NotificationBell({
                   {reviewPendingRows.length > 0 && (
                     <>
                       <div className="bg-warning/5 px-4 py-1.5">
-                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-warning">
+                        <p className="text-[10px] font-label font-medium uppercase tracking-[0.14em] text-warning">
                           Ready for review ({reviewPendingRows.length})
                         </p>
                       </div>
@@ -374,7 +374,7 @@ export function NotificationBell({
                   {pendingRows.length > 0 && (
                     <>
                       <div className="bg-surface-2 px-4 py-1.5">
-                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">
+                        <p className="text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted">
                           Pending tasks ({pendingRows.length})
                         </p>
                       </div>

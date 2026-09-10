@@ -229,7 +229,7 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
         <button
           onClick={() => setSheetOpen(true)}
           className={cn(
-            "fixed z-40 flex items-center justify-center gap-2 border-t border-border bg-background/95 py-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-foreground backdrop-blur-sm transition-colors hover:bg-surface-2",
+            "fixed z-40 flex items-center justify-center gap-2 border-t border-border bg-background/95 py-2.5 font-label text-[11px] uppercase tracking-[0.14em] text-foreground backdrop-blur-sm transition-colors hover:bg-surface-2",
             anchor,
             sheetOpen && "hidden",
           )}
@@ -326,7 +326,7 @@ export function CopilotDock({ clientId, viewerUid, clientName, userName, hasGoog
               {/* .eyebrow's tracking (0.14em), not a one-off 0.18em: DM Mono
                   is wider than the face this figure was set for, and this was
                   the last surface in the app still carrying the old value. */}
-              <span className="font-mono text-[10px] uppercase tracking-[0.14em] [writing-mode:vertical-rl]">
+              <span className="font-label text-[10px] uppercase tracking-[0.14em] [writing-mode:vertical-rl]">
                 AI Copilot
               </span>
             </button>

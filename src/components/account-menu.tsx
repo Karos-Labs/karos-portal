@@ -184,7 +184,7 @@ export function AccountMenu({
             {/* Staff extras — fenced and captioned, never interleaved. */}
             {staffExtras && (
               <div className="border-t border-border p-1">
-                <p className="px-3 pb-1 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
+                <p className="px-3 pb-1 pt-1 font-label text-[9px] uppercase tracking-[0.14em] text-muted-2">
                   Staff
                 </p>
                 {staffExtras}

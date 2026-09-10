@@ -29,7 +29,7 @@ export function ThemeSwitch() {
       onClick={toggle}
       className="flex w-full items-center justify-between rounded-md px-3 py-2 text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
     >
-      <span className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.14em]">
+      <span className="flex items-center gap-3 font-label text-[11px] uppercase tracking-[0.14em]">
         <Icon name={isDark ? "Moon" : "Sun"} className="h-4 w-4 text-muted-2" />
         {isDark ? "Dark mode" : "Light mode"}
       </span>

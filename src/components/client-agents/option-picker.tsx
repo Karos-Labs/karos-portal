@@ -71,7 +71,7 @@ export function OptionPicker({
   return (
     <div>
       <div className="mb-3">
-        <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">
+        <h2 className="font-label text-sm uppercase tracking-[0.1em] text-muted">
           Today&rsquo;s post
         </h2>
         {/* The count is a variable and a one-option day is expected, so the

@@ -129,7 +129,7 @@ export function AudienceSimulation({
                 {price}
                 {!viewerIsClient && (
                   <span
-                    className="ml-1 font-mono text-[9px] uppercase tracking-[0.1em]"
+                    className="ml-1 font-label text-[9px] uppercase tracking-[0.1em]"
                     title="What the client is charged · staff runs are free"
                   >
                     client
@@ -222,7 +222,7 @@ function PersonaCard({ result }: { result: PersonaSimulationResult }) {
             <Icon name={sent.icon} className="h-3 w-3" />
             {sentiment}
           </Badge>
-          <span className="font-mono text-[10px] uppercase tracking-[0.08em]" style={{ color: band.color }}>
+          <span className="font-label text-[10px] uppercase tracking-[0.08em]" style={{ color: band.color }}>
             {band.label}
           </span>
         </div>
@@ -232,7 +232,7 @@ function PersonaCard({ result }: { result: PersonaSimulationResult }) {
       <p className="text-xs leading-relaxed text-muted">{critique}</p>
       {result.painPoints.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-muted-2">Pain points</p>
+          <p className="text-[10px] font-label uppercase tracking-[0.08em] text-muted-2">Pain points</p>
           <ul className="space-y-1 text-xs text-muted">
             {result.painPoints.slice(0, 3).map((pain) => (
               <li key={pain} className="flex items-start gap-1.5">
@@ -244,7 +244,7 @@ function PersonaCard({ result }: { result: PersonaSimulationResult }) {
         </div>
       )}
       <div className="rounded-md border border-border bg-surface-3/60 p-2">
-        <p className="text-[10px] font-mono uppercase tracking-[0.08em] text-muted-2">Actionable next step</p>
+        <p className="text-[10px] font-label uppercase tracking-[0.08em] text-muted-2">Actionable next step</p>
         <p className="mt-1 text-xs text-foreground/90">{actionableSuggestion}</p>
       </div>
     </div>

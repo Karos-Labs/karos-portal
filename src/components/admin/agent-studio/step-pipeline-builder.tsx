@@ -153,7 +153,7 @@ export function StepPipelineBuilder({
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Badge tone={step.type === "ai" ? "info" : "warning"}>{step.type === "ai" ? "AI step" : "Code step"}</Badge>
-                <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">Step {index + 1}</span>
+                <span className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">Step {index + 1}</span>
               </div>
               <div className="flex items-center gap-1">
                 <Button type="button" size="icon" variant="ghost" disabled={index === 0} onClick={() => move(index, -1)} aria-label="Move up">

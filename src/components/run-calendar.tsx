@@ -834,7 +834,7 @@ function PausedScheduleStrip({
   if (schedules.length === 0) return null;
   return (
     <div className="rounded-[var(--radius)] border border-border bg-surface-2/30 px-4 py-3">
-      <p className="mb-2 text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+      <p className="mb-2 text-[11px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
         Paused schedules
       </p>
       <ul className="space-y-2">
@@ -2333,7 +2333,7 @@ export function RunCalendar({
         {/* Day-of-week header - seven columns need width to mean anything */}
         <div className="hidden grid-cols-7 border-b border-border sm:grid">
           {DAY_LABELS.map((d) => (
-            <div key={d} className="py-1.5 text-center text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">{d}</div>
+            <div key={d} className="py-1.5 text-center text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">{d}</div>
           ))}
         </div>
 
@@ -2587,7 +2587,7 @@ export function RunCalendar({
               equal weight in one row there was no way to tell that pressing
               "Completed run" does nothing. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+            <span className="text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">
               Runs
             </span>
             {ALL_CALENDAR_RUN_LEGEND_KEYS.map((key) => (
@@ -2599,7 +2599,7 @@ export function RunCalendar({
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+            <span className="text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">
               Posts
             </span>
           {(Object.keys(STATUS_FILTER_CHIP_CLASS) as CalendarFilterKey[])

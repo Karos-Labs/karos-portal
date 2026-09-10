@@ -209,7 +209,7 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">
+        <h2 className="font-label text-sm uppercase tracking-[0.1em] text-muted">
           What it runs on
         </h2>
         <Badge tone={view.ready ? "success" : "warning"}>
@@ -358,7 +358,7 @@ export function AgentSetupSection({ facts }: { facts: AgentSetupFact[] }) {
   if (facts.length === 0) return null;
   return (
     <section>
-      <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">
+      <h2 className="mb-3 font-label text-sm uppercase tracking-[0.1em] text-muted">
         How it&rsquo;s set up
       </h2>
       <dl className="grid gap-x-4 gap-y-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 sm:grid-cols-2">

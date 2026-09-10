@@ -133,7 +133,7 @@ export function ApprovePanel({
 
   return (
     <div className="mt-3 space-y-2.5 rounded-md border border-border bg-surface-2 p-3">
-      <p className="text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+      <p className="text-[11px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
         Approve &amp; add to content calendar
       </p>
 

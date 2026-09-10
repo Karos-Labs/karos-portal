@@ -265,7 +265,7 @@ function ClientContextPicker({
           {activeClient && (
             <span
               aria-hidden="true"
-              className="shrink-0 rounded border border-border px-1 font-mono text-[9px] uppercase leading-[1.4] tracking-[0.12em] text-muted-2"
+              className="shrink-0 rounded border border-border px-1 font-label text-[9px] uppercase leading-[1.4] tracking-[0.12em] text-muted-2"
             >
               Internal
             </span>
@@ -1060,7 +1060,7 @@ export function Sidebar({
                   the top of the page, which scrolls away. The caption is the
                   same mono "STAFF" the desktop group wears, so the rows read
                   as internal here too (alignment review, parity pass 2026-09). */}
-              <p className="mt-2 border-t border-border px-2 pb-1 pt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">
+              <p className="mt-2 border-t border-border px-2 pb-1 pt-3 font-label text-[10px] uppercase tracking-[0.12em] text-muted-2">
                 Staff
               </p>
               <Link

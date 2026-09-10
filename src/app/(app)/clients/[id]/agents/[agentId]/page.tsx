@@ -1712,6 +1712,6 @@ export default async function ClientAgentDetailPage({
 
 function SectionHeading({ title }: { title: string }) {
   return (
-    <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
+    <h2 className="mb-3 font-label text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
   );
 }

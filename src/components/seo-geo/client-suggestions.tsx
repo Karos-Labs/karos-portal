@@ -62,7 +62,7 @@ export function ClientSuggestions({
   // finds nothing reads as a section that failed to load.
   return (
     <section className="space-y-3">
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">
         Things only you can do
       </p>
       <Card>

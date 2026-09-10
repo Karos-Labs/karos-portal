@@ -134,7 +134,7 @@ export function GetSetUpWidget({
     <Card>
       <div className="mb-3 flex items-center justify-between gap-2">
         <CardTitle className="min-w-0 truncate">Get set up</CardTitle>
-        <span className="shrink-0 whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+        <span className="shrink-0 whitespace-nowrap font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
           {doneCount} of {total}
         </span>
       </div>

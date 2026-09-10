@@ -985,7 +985,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         />
         <div className="space-y-8">
           <section className="space-y-3">
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+            <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">
               Overview
             </p>
             {/* `@container` on an inner div, NOT on the section - same nesting
@@ -1056,7 +1056,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           <StaffOnlySection>
             <HomeOpsStrip stats={opsStats} />
             <div className="space-y-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">
                 Performance
               </p>
               {/* Built HERE, not above (review wave, 2026-09). The element
@@ -1090,7 +1090,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
               />
             </div>
             <div className="space-y-3">
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">
                 AI Insights
               </p>
               {/* Staff branch — agency overhead, never billed, so no price is
@@ -1130,7 +1130,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         />
       <div className="space-y-8">
         <section className="space-y-3">
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
+          <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">Overview</p>
           {/* Portal revamp, Surface 02: the old Published/Scheduled/Channels/
               Deliverables tile row is gone — "Approved, Posted and Draft are
               deleted" (locked decision). Scheduled becomes the Calendar

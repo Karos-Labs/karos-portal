@@ -237,7 +237,7 @@ export function TemplateRows({
                       </span>
                     )}
                     <span className="min-w-0 flex-1">
-                      <span className="block font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                      <span className="block font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                         Example
                       </span>
                       <span className="block truncate text-[11px] text-foreground">
@@ -331,7 +331,7 @@ export function TemplateRows({
                 {detail.rationale && (
                   <p className="text-[11px] leading-relaxed text-muted">{detail.rationale}</p>
                 )}
-                <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                   {detail.postCount === 0
                     ? "Nothing under this format yet"
                     : `${viewerIsClient ? `In ${CLIENT_ARCHIVE_NAME} under this format` : "What it has made in this format"}${
@@ -467,7 +467,7 @@ export function WeekStrip({
   const platform = identity ? platformForAgentIdentity(null, identity) : null;
   return (
     <div className="mt-4">
-      <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <p className="mb-1.5 font-label text-[10px] uppercase tracking-[0.08em] text-muted">
         Coming up
       </p>
       <ul className="flex flex-wrap gap-1.5">
@@ -567,7 +567,7 @@ export function StaffSlotNotes({
 
   return (
     <div className="mt-4 rounded-md border border-neon/25 bg-neon-soft/20 p-3">
-      <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <p className="mb-2 flex items-center gap-1.5 font-label text-[10px] uppercase tracking-[0.08em] text-muted">
         <Icon name="MessageSquare" className="h-3.5 w-3.5" />
         Client notes on specific days
       </p>

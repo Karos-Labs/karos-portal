@@ -187,7 +187,7 @@ export function SettingsTabs({ tabs, initialTab }: { tabs: SettingsTab[]; initia
         {groups.map((g, gi) => (
           <div key={g.name ?? `group-${gi}`} className={cn(gi > 0 && "mt-5")}>
             {g.name && (
-              <p className="mb-1.5 px-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">
+              <p className="mb-1.5 px-3 font-label text-[10px] uppercase tracking-[0.12em] text-muted-2">
                 {g.name}
               </p>
             )}

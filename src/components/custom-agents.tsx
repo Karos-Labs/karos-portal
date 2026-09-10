@@ -1019,7 +1019,7 @@ export function CustomAgentsHub({
               <div className="flex items-start gap-3">
                 <AgentChip agent={agent} />
                 <div className="min-w-0 flex-1">
-                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">AI agent</p>
+                  <p className="mb-1 font-label text-[9px] uppercase tracking-[0.14em] text-muted-2">AI agent</p>
                   <p className="truncate text-base font-medium">{agent.name}</p>
                   <p className="mt-0.5 truncate font-mono text-[10px] text-muted-2">
                     {agent.entrySkillDir}
@@ -1193,7 +1193,7 @@ export function CustomAgentsHub({
                   nests here with no change to this file. */}
               {children.length > 0 && (
                 <div className="mt-4">
-                  <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
+                  <p className="font-label text-[9px] uppercase tracking-[0.14em] text-muted-2">
                     Steps of this agent
                   </p>
                   <div className="mt-1">
@@ -1334,7 +1334,7 @@ export function StaffAgentControls({
   return (
     <section className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="mr-auto font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+        <h2 className="mr-auto font-label text-[10px] uppercase tracking-[0.08em] text-muted">
           Staff controls
         </h2>
         <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
@@ -1611,7 +1611,7 @@ export function AgentRunHistory({
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">{heading}</p>
+        <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">{heading}</p>
         <div className="flex items-center gap-2.5 text-[11px] text-muted-2">
           {stateCounts.queued > 0 && <span>{stateCounts.queued} queued</span>}
           {stateCounts.running > 0 && <span>{stateCounts.running} running</span>}

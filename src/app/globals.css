@@ -20,7 +20,8 @@
   Type — three faces, three jobs (§5):
     --font-serif  Spectral       display: h1-h3, pull quotes
     --font-sans   Hanken Grotesk body, UI, AND ALL NUMBERS
-    --font-mono   DM Mono        labels, eyebrows, ids, code — never numbers
+    --font-label  Hanken Grotesk labels and eyebrows, set in small caps (SCRUM-414)
+    --font-mono   DM Mono        ids, code, hashes — never numbers, never labels
 
   NUMBERS ARE SANS. A figure is set in Hanken with tabular digits (the
   .stat-number / .tabular helpers below), not in the mono. This is the rule
@@ -125,6 +126,11 @@
   /* Swapping the mono face is THIS line plus the matching next/font/google
      declaration in src/app/layout.tsx — nothing else in the app names a face.
      Put JetBrains_Mono / --font-jetbrains back in both places to revert. */
+  /* Labels and eyebrows (SCRUM-414, Albert 2026-09-10). They were DM Mono,
+     which read as code on every agent page — part of the look he called slop.
+     Their own token, NOT a retarget of --font-mono: mono still does real work
+     for ids, commit hashes and code, where monospacing is the point. */
+  --font-label: var(--font-hanken), system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-dm-mono), ui-monospace, monospace;
   --font-serif: var(--font-spectral), Georgia, "Times New Roman", serif;
 }
@@ -225,10 +231,11 @@ body {
    DM Mono sets wider, and uppercase mono at 0.18em started to come apart into
    separate letters at 12px. */
 .eyebrow {
-  font-family: var(--font-mono);
+  font-family: var(--font-label);
   font-size: 12px;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   color: var(--neon);
 }
 

@@ -106,13 +106,13 @@ function AnswerGrid({ view }: { view: AnswerGridView }) {
         <table className="w-full min-w-[420px] border-collapse text-xs">
           <thead>
             <tr>
-              <th className="py-1.5 pr-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2">
+              <th className="py-1.5 pr-3 text-left font-label text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2">
                 Question
               </th>
               {view.engines.map((e) => (
                 <th
                   key={e.engine}
-                  className="px-2 py-1.5 text-center font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
+                  className="px-2 py-1.5 text-center font-label text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
                 >
                   {e.name}
                 </th>
@@ -127,7 +127,7 @@ function AnswerGrid({ view }: { view: AnswerGridView }) {
               <tr>
                 <th
                   colSpan={view.engines.length + 1}
-                  className="border-t border-border pb-1 pt-3 text-left font-mono text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
+                  className="border-t border-border pb-1 pt-3 text-left font-label text-[10px] font-normal uppercase tracking-[0.08em] text-muted-2"
                 >
                   {group.intentLabel}
                   {/* CD-J1 bounce 2c: which side of the plan this block sits on.
@@ -202,7 +202,7 @@ function ScoreTile({ view }: { view: ScoreView }) {
   return (
     <Card className="min-w-0">
       <div className="flex items-center gap-1.5">
-        <p className="font-mono text-[10px] uppercase leading-snug tracking-[0.08em] text-muted [overflow-wrap:anywhere]">
+        <p className="font-label text-[10px] uppercase leading-snug tracking-[0.08em] text-muted [overflow-wrap:anywhere]">
           {view.label}
         </p>
         <InfoTip text={view.explainer} />
@@ -363,7 +363,7 @@ function EngineCard({ view }: { view: EngineView }) {
         ))}
       </div>
       {view.ghost && (
-        <div className="mt-2 inline-flex items-center gap-1 rounded-[4px] border border-warning/30 bg-warning/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-warning">
+        <div className="mt-2 inline-flex items-center gap-1 rounded-[4px] border border-warning/30 bg-warning/10 px-2 py-1 font-label text-[10px] uppercase tracking-[0.08em] text-warning">
           {view.ghost.label}
           <InfoTip text={view.ghost.explainer} />
         </div>
@@ -748,7 +748,7 @@ export function SeoGeoPanel({
         {presence.rosterShare && (
           <div id="share" className="mt-4 scroll-mt-24 border-t border-border pt-3">
             <div className="flex items-center gap-1.5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">
                 Your share of the conversation
               </p>
               {/* Basis stated in the caption below and in this explainer: category
@@ -865,7 +865,7 @@ export function SeoGeoPanel({
               {promptGroups.map((group, gi) => (
                 <div key={group.intentLabel || `g-${gi}`}>
                   {group.intentLabel && (
-                    <p className="mb-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                    <p className="mb-1 font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                       {group.intentLabel}
                       {group.basisLabel && (
                         <span className="ml-1.5 normal-case text-muted-3">· {group.basisLabel}</span>
@@ -877,7 +877,7 @@ export function SeoGeoPanel({
                       <li key={`q-${gi}-${i}`} className="flex items-center justify-between gap-2 text-xs">
                         <span className="text-muted">{formatPrompt(p.text)}</span>
                         {p.tagLabel && (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-[4px] border border-border bg-surface-3 px-1.5 py-0.5 font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                             {p.tagLabel}
                             {p.tagExplainer && <InfoTip text={p.tagExplainer} />}
                           </span>

@@ -403,7 +403,7 @@ export function AgentDetailPanel({
 function SectionHeading({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="mb-3">
-      <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
+      <h2 className="font-label text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
       {hint && <p className="mt-1 text-xs text-muted-2">{hint}</p>}
     </div>
   );

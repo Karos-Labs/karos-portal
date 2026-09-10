@@ -218,11 +218,11 @@ export function StrategyWarRoom({
           </span>
           {/* Mono stays — this is a label, which is the face's job — but at 500,
               the heaviest weight DM Mono actually ships. */}
-          <h2 className="font-mono text-sm font-medium uppercase tracking-[0.14em] text-foreground">
+          <h2 className="font-label text-sm font-medium uppercase tracking-[0.14em] text-foreground">
             The Strategy War Room
           </h2>
           {status === "running" && progress && (
-            <span className="ml-auto shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">
+            <span className="ml-auto shrink-0 font-label text-[10px] uppercase tracking-[0.12em] text-muted-2">
               Round {progress.round} / {progress.total}
             </span>
           )}

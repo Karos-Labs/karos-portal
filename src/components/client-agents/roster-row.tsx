@@ -168,7 +168,7 @@ export function ClientAgentRosterRow({
           // operator is least likely to already know. Same treatment
           // jobs-list.tsx gives its truncated error and hold reasons.
           <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-2" title={note}>
-            <span className="mr-1.5 font-mono text-[9px] uppercase tracking-[0.08em] text-muted-2">
+            <span className="mr-1.5 font-label text-[9px] uppercase tracking-[0.08em] text-muted-2">
               Internal
             </span>
             {note}
