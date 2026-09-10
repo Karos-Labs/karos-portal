@@ -1419,11 +1419,24 @@ function WeekView({
           const dayPosts = postsByDay.get(key) ?? [];
           const daySuggestions = suggestionsByDay.get(key) ?? [];
           const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
+          // SCRUM-421: the row selects the day and opens its detail. It said so
+          // nowhere — no selected look, and the detail opened below the whole
+          // calendar — so the arrow read as a dropdown that did nothing. The
+          // row now shows it is the open day, in the grid's own selected style.
+          const isSelected = key === selectedKey;
           return (
-            <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+            <li
+              key={key}
+              className={cn(
+                "px-3 py-2.5",
+                isToday && "bg-foreground/[0.04]",
+                isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
+              )}
+            >
               <button
                 type="button"
                 onClick={() => onSelectDay(key)}
+                aria-pressed={isSelected}
                 className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
               >
                 <span className="text-xs font-semibold">{DAY_LABELS[d.getDay()]} {d.getDate()}</span>
@@ -1705,6 +1718,14 @@ export function RunCalendar({
   const [weekAnchor, setWeekAnchor] = useState(() => startOfWeek(anchorDay));
   const [dayAnchor, setDayAnchor] = useState(() => startOfDay(anchorDay));
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Opening a day shows its detail BELOW the calendar, often off-screen, which
+  // is how pressing a day row came to look like nothing happened (SCRUM-421).
+  const dayDetailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedKey) return;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    dayDetailRef.current?.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+  }, [selectedKey]);
   /**
    * The archive's three filters, HELD HERE (review wave, 2026-09).
    *
@@ -2421,11 +2442,21 @@ export function RunCalendar({
             agendaDays.map(({ key, day, runs: dayRuns, posts: dayPosts, suggestions: daySuggestions }) => {
               const isToday = isCurrentMonth && day === today.getDate();
               const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
+              // Same as the week list (SCRUM-421): the open day looks open.
+              const isSelected = key === selectedKey;
               return (
-                <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+                <li
+                  key={key}
+                  className={cn(
+                    "px-3 py-2.5",
+                    isToday && "bg-foreground/[0.04]",
+                    isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
+                  )}
+                >
                   <button
                     type="button"
                     onClick={() => setSelectedKey(key)}
+                    aria-pressed={isSelected}
                     className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
                   >
                     <span className="text-xs font-semibold">
@@ -2601,7 +2632,7 @@ export function RunCalendar({
 
       {/* Day detail */}
       {selectedKey && (
-        <div className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
+        <div ref={dayDetailRef} className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold">{selectedLabel}</h3>
             <button onClick={() => setSelectedKey(null)} className="rounded-md p-1 text-muted-2 hover:bg-surface-2 hover:text-foreground" aria-label="Close">
