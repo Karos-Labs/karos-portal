@@ -39,7 +39,6 @@
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
-import type { PhaseProgress } from "@/lib/agent-run-phases";
 import {
   runOutcome,
   runProgressUrl,
@@ -65,14 +64,10 @@ export interface WatchedRun {
   href?: string;
   /** Set once the poller has an answer; absent until the first tick lands. */
   status?: string;
-  /**
-   * What the agent is doing, when the endpoint says (see RunProgressView.phase).
-   * NEVER PERSISTED — `load()` drops it. It is a four-second-old observation,
-   * and one read back from sessionStorage after a reload could be minutes
-   * stale; the first tick repopulates it, and "Starting the run" is honest in
-   * the meantime.
-   */
-  phase?: PhaseProgress;
+  /** What the agent is doing now (RunProgressView.headline). Not persisted: the next tick refills it. */
+  headline?: string;
+  /** The agent's part is done and the run is parked (RunProgressView.agentDone). */
+  agentDone?: boolean;
 }
 
 const KEY = "karos.watchedRuns.v1";
@@ -107,10 +102,7 @@ function load(): WatchedRun[] {
         // field stops being checked.
         ((r as WatchedRun).href === undefined || typeof (r as WatchedRun).href === "string"),
     );
-    if (rows.length === 0) return EMPTY;
-    // Strip the phase: see WatchedRun.phase. Also means a malformed one from an
-    // older build can never reach a renderer.
-    return rows.slice(0, MAX_WATCHED).map(({ phase: _phase, ...rest }) => rest);
+    return rows.length === 0 ? EMPTY : rows.slice(0, MAX_WATCHED).map(({ headline: _h, ...rest }) => rest);
   } catch {
     return EMPTY;
   }
@@ -171,8 +163,10 @@ function dropWatch(jobId: string) {
 }
 
 /** Which runs still need asking about. */
+// A run whose agent is done (parked at a gate) needs no more polling: nothing
+// changes for this reader until it shows up, which can be an hour away.
 const stillWorking = (runs: WatchedRun[]) =>
-  runs.filter((r) => r.status === undefined || runOutcome(r.status) === "working");
+  runs.filter((r) => !r.agentDone && (r.status === undefined || runOutcome(r.status) === "working"));
 
 /* ───────────────────────────────── the poller ──────────────────────────────── */
 
@@ -197,7 +191,7 @@ async function pollOnce() {
         if (res.status === 404) return { jobId, gone: true as const };
         if (!res.ok) return null; // transient - ask again next tick
         const data = (await res.json()) as RunProgressView;
-        return { jobId, status: data.status, ...(data.phase ? { phase: data.phase } : {}) };
+        return { jobId, status: data.status, headline: data.headline, agentDone: data.agentDone === true };
       } catch {
         return null; // network hiccup, same as a non-OK response
       }
@@ -212,17 +206,18 @@ async function pollOnce() {
     .map((r) => {
       const hit = answered.find((a) => a.jobId === r.jobId && "status" in a);
       if (!hit || !("status" in hit)) return r;
-      // A PHASE CHANGE IS A CHANGE. The status stays `running` while the agent
-      // moves from writing the copy to making the visuals, so comparing the
-      // status alone would drop every step the reader came here to watch. The
-      // headline and the count identify a phase; comparing the objects would
-      // re-render on every tick, because each response is a fresh object.
-      const nextPhase = "phase" in hit ? hit.phase : undefined;
-      const phaseMoved =
-        nextPhase?.headline !== r.phase?.headline || nextPhase?.done !== r.phase?.done;
-      if (hit.status === r.status && !phaseMoved) return r;
-      const { phase: _stale, ...base } = r;
-      return { ...base, status: hit.status, ...(nextPhase ? { phase: nextPhase } : {}) };
+      // The headline changes while the status stays `running` (writing, then
+      // visuals), so it counts as a change too.
+      if (hit.status === r.status && hit.headline === r.headline && hit.agentDone === Boolean(r.agentDone)) {
+        return r;
+      }
+      const { headline: _h, agentDone: _d, ...base } = r;
+      return {
+        ...base,
+        status: hit.status,
+        ...(hit.headline ? { headline: hit.headline } : {}),
+        ...(hit.agentDone ? { agentDone: true } : {}),
+      };
     });
   // Reference equality is what stops a tick that learned nothing from
   // re-rendering every reader.
@@ -273,6 +268,7 @@ export function useRunWatch(): RunWatchApi {
       forget,
       outcomeOf: (jobId) => {
         const run = runs.find((r) => r.jobId === jobId);
+        if (run?.agentDone) return "landed";
         return run?.status === undefined ? undefined : runOutcome(run.status);
       },
     }),

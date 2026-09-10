@@ -43,8 +43,6 @@ import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
 import { LegacyAgentPanel, SchedulePaceControl } from "@/components/client-agents/legacy-agent-panel";
 import { AgentSetupHero } from "@/components/client-agents/agent-setup-hero";
-import { readAgentEngineRunProgress } from "@/lib/agent-engine/read-run";
-import { phaseProgress } from "@/lib/agent-run-phases";
 import { AgentStarButton } from "@/components/client-agents/agent-star-button";
 import { ClientAgentRunHistory } from "@/components/client-agents/client-agent-run-history";
 import { AgentArchiveRows } from "@/components/client-agents/agent-archive-rows";
@@ -756,29 +754,6 @@ export default async function ClientAgentDetailPage({
         )
         .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null);
 
-  // WHAT THAT RUN IS DOING, for the bar that replaced "this takes about 30
-  // minutes" (2026-09-10). agent-engine writes the current step live, so the
-  // page can say "Writing the copy" instead of quoting a duration nobody
-  // measured. Only for a job with an engine run behind it; a legacy
-  // agent-service run keeps the coarse strip.
-  //
-  // A FAILED READ IS NOT A FAILED PAGE. This is decoration on a run that is
-  // already happening, so a missing run doc (Pub/Sub has not landed it yet) or
-  // a Firestore hiccup falls back to the strip rather than taking down the one
-  // page that lets the reader cancel the run.
-  const legacyRunProgress = legacyRun?.agentEngineRunId
-    ? await readAgentEngineRunProgress(legacyRun.agentEngineRunId)
-        .then((view) =>
-          view
-            ? phaseProgress({
-                currentStepId: view.currentStepId,
-                currentStepKind: view.currentStepKind,
-                recordedStepIds: view.recordedStepIds,
-              })
-            : null,
-        )
-        .catch(() => null)
-    : null;
 
   // ── THE SECTIONED LAYOUT (CD-K1) ──
   // Albert: "under each agent, everything Daniel created is there, WITH DATES,
@@ -1410,7 +1385,6 @@ export default async function ClientAgentDetailPage({
                       // is resolved only for a billable actor, so it IS the
                       // "was this viewer charged" answer, already computed.
                       refunds: spendable !== undefined,
-                      progress: legacyRunProgress,
                     }
                   : null
               }

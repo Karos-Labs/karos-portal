@@ -21,7 +21,6 @@
  * error here rather than a status that silently reads as "working" forever.
  */
 
-import type { PhaseProgress } from "@/lib/agent-run-phases";
 import type { JobStatus } from "@/lib/types";
 
 /** What the reader should do about this run, which is not the same as its status. */
@@ -70,17 +69,19 @@ export interface RunProgressView {
   /** The run has not reached a terminal state. Computed server-side. */
   inProgress: boolean;
   /**
-   * WHAT THE AGENT IS DOING, when an engine run says (2026-09-10). The ladder
-   * above answers queued / running / in review; this answers "writing the
-   * copy", from the step agent-engine is executing right now — the six phases
-   * in `lib/agent-run-phases.ts`, already resolved server-side, so the client
-   * never sees an engine step id.
-   *
-   * Omitted when there is no engine run (a legacy agent-service job) and when
-   * the run STOPPED: a failed run has no honest "phase", and the outcome
-   * sentence already says what to do instead.
+   * What the agent is doing right now ("Writing the copy"), resolved
+   * server-side from the engine's current step by `stepHeadline`, so no engine
+   * step id reaches a browser. Only while it is working, and only for a job
+   * with an engine run behind it.
    */
-  phase?: PhaseProgress;
+  headline?: string;
+  /**
+   * The agent's own work is finished and the run is parked at a gate. The job
+   * status still reads `running` then (agent-engine does not treat a gate as
+   * terminal), so without this the bar would keep "working" through a wait
+   * that can run past an hour. Readers show it as landed.
+   */
+  agentDone?: boolean;
 }
 
 /** The endpoint one run's progress is polled from. One spelling, two readers. */
@@ -109,7 +110,11 @@ const RUN_OUTCOME_COPY: Record<RunOutcome, { client: string; staff: string }> = 
     // SENTENCE that named a place would have to name a different one for each
     // reader and each moment. The link says where; the sentence says what
     // happens next, which is the same for everybody.
-    client: "It landed. Your Karos team reviews it next.",
+    // No review (the SOW rule Albert kept on 2026-09-10), no time (the old
+    // "30 minutes"), and no place it is not yet: the archive holds approved
+    // work only, and while a run waits at a gate nothing is materialized. Home's
+    // "Generated today" is where it appears first, hence the future tense.
+    client: "It will appear on your Home page.",
     staff: "It landed. The deliverables are on the run.",
   },
   stopped: {

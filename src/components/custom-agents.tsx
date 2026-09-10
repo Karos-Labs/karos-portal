@@ -52,7 +52,6 @@ import {
 } from "@/lib/credits";
 import { intakePageHref, type IntakeFamily } from "@/lib/agent-intake-links";
 import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 import { useRunWatch } from "@/components/run-watch";
 import { runOutcomeSentence } from "@/lib/run-progress";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
@@ -2765,16 +2764,8 @@ export function RunCustomAgentModal({
      * cannot disagree, and the copy says out loud that closing it does not stop
      * the run - the sentence a reader needs before they will believe it.
      */
-    // Absent until the first tick lands. `queued` is what the run IS at that
-    // moment and what the ladder's first step already says, so the strip is
-    // honest rather than empty.
-    const watchedStatus = startedJobId
-      ? (watchedRuns.find((r) => r.jobId === startedJobId)?.status ?? "queued")
-      : "queued";
     const outcome = startedJobId ? (outcomeOf(startedJobId) ?? "working") : "working";
-    const phase = startedJobId
-      ? watchedRuns.find((r) => r.jobId === startedJobId)?.phase
-      : undefined;
+    const watched = startedJobId ? watchedRuns.find((r) => r.jobId === startedJobId) : undefined;
     return (
       <Shell open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
@@ -2797,31 +2788,19 @@ export function RunCustomAgentModal({
               : `The agent is working on this ${outputNoun}.`}
           </p>
 
-          {/* WHAT THE AGENT IS DOING, when the engine has said (2026-09-10) —
-              "Writing the copy", "Making the visuals", "Waiting for your Karos
-              team to review" — from the same poll that answers the ladder, so
-              the two can never disagree. The ladder stays for a run with no
-              engine behind it (a legacy agent-service job), which has no step
-              to report; it answers queued / running / in review from the
-              sanctioned register rather than a fourth spelling of those. */}
-          {phase ? (
+          {/* The press turns into the run: what it is doing while it works
+              (the engine's current step, in client words), a full bar once the
+              agent's part is done, and no bar for a run that stopped. No
+              duration anywhere: the bar answers "how long" by moving. */}
+          {outcome !== "stopped" && (
             <AgentRunProgress
-              steps={phase.phases.map((p) => ({ id: p.id, label: p.label, state: p.state }))}
-              headline={phase.headline}
-              done={phase.done}
-              total={phase.total}
-              finished={outcome !== "working" && phase.done === phase.total}
+              headline={outcome === "working" ? (watched?.headline ?? "Starting the run") : "Done"}
+              working={outcome === "working"}
             />
-          ) : (
-            <ManagedJobProgress status={watchedStatus as JobStatus} className="mb-0 mt-1" />
           )}
 
           <p className="text-xs leading-relaxed text-muted">
             {runOutcomeSentence(outcome, viewerIsClient)}
-            {/* The estimate is CONTEXT for a bar that cannot say where the run
-                is. Beside a phase that names the step, it is a number standing
-                next to the thing it was guessing at — so it goes. */}
-            {outcome === "working" && !phase ? ` It usually takes ${RUN_ESTIMATE_SENTENCE}.` : ""}
           </p>
 
           {/* WHERE IT LANDS, for the reader who has somewhere to look (#415).

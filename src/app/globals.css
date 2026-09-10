@@ -443,14 +443,8 @@ body {
   animation: shimmer 1.8s ease-in-out infinite;
 }
 
-/* The INDETERMINATE run bar. A run whose total step count we do not know still
-   has to look like it is moving, and the honest way to say "working, length
-   unknown" is a sweep that never claims a percentage — as opposed to a
-   determinate fill, which is a number and must therefore be true.
-
-   Sized by the caller (the track is the positioned parent); this animates a
-   segment across it. Paired with `.animate-run-bar-track` so the unfilled part
-   is visibly the same measurement rather than background. */
+/* The run bar's "working" state (run-progress.tsx): a segment sweeping across
+   its track, which says working without claiming a percentage. */
 @keyframes run-bar-sweep {
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(400%); }
@@ -466,9 +460,6 @@ body {
   .animate-fade-in,
   .animate-slide-in-right,
   .animate-shimmer,
-  /* The sweep stops, and the caller's static fallback fill is what remains —
-     see run-progress.tsx, which paints a quarter-width segment underneath so
-     the bar is still legible as a bar when this animation is off. */
   .animate-run-bar-sweep {
     animation: none;
   }

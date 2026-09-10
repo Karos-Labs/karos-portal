@@ -113,7 +113,9 @@ describe("the sentence under the strip", () => {
     // them to an empty page.
     const landed = runOutcomeSentence("landed", true);
     expect(landed).not.toMatch(/archive|Workspace|Assets|Jobs|calendar/i);
-    expect(landed).toMatch(/review/i);
+    // And no review (Albert, 2026-09-10: the SOW rule stands — a client is never
+    // told about the review step). This assertion used to REQUIRE the word.
+    expect(landed).not.toMatch(/review|approv/i);
   });
 
   it("names no stored status and reads as client copy", () => {
@@ -170,15 +172,17 @@ describe("the run dialog's started panel", () => {
   });
 
   it("is no longer a dead end: it shows the ladder and the outcome sentence", () => {
-    expect(panel).toContain("<ManagedJobProgress");
+    expect(panel).toContain("<AgentRunProgress");
     expect(panel).toContain("runOutcomeSentence(outcome, viewerIsClient)");
     // The tick that WAS the whole panel, and the centred layout it anchored.
     expect(panel).not.toContain("CircleCheck");
     expect(panel).not.toContain("text-center");
   });
 
-  it("keeps the estimate as context beside progress, not as the only answer", () => {
-    expect(panel).toMatch(/It usually takes \$\{RUN_ESTIMATE_SENTENCE\}/);
+  it("promises no duration: the moving bar answers how long", () => {
+    // It kept "It usually takes …" as context beside the ladder. Albert,
+    // 2026-09-10: every "ready in X minutes" is untrue — so none, anywhere here.
+    expect(panel).not.toMatch(/RUN_ESTIMATE|usually takes|minutes/);
   });
 
   it("registers the run with the shell's watch rather than polling itself", () => {

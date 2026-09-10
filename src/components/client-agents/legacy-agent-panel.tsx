@@ -3,9 +3,7 @@
 import { useState } from "react";
 import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
-import { ManagedJobProgress } from "@/components/managed-job-progress";
 import { AgentRunProgress } from "@/components/client-agents/run-progress";
-import type { PhaseProgress } from "@/lib/agent-run-phases";
 import {
   AgentScheduleModal,
   CancelRunControl,
@@ -111,21 +109,7 @@ export function LegacyAgentPanel({
    * the client's own jobs, and deliberately just an id and a phase - the strip
    * says a run is happening, never what it will contain.
    */
-  activeRun?: {
-    id: string;
-    status: "queued" | "running";
-    refunds: boolean;
-    /**
-     * What the run is doing, when the engine has told us (2026-09-10). Read by
-     * the page off `agentEngineRuns/{id}` through `readAgentEngineRunProgress`
-     * and already turned into phases — a client component cannot read that
-     * collection, and the phase words are the only part of it a client needs.
-     * Absent for a job with no engine run behind it (a legacy agent-service
-     * run, or one whose run doc has not landed yet); the coarse three-step
-     * strip stands in for those.
-     */
-    progress?: PhaseProgress | null;
-  } | null;
+  activeRun?: { id: string; status: "queued" | "running"; refunds: boolean } | null;
   /**
    * The page has ALREADY said runs are paused, in its own banner.
    *
@@ -146,26 +130,12 @@ export function LegacyAgentPanel({
     <div className="space-y-6">
       {activeRun && (
         <div className="space-y-2">
-          {/* THE RUN, AS IT HAPPENS. This banner said "Making your next post
-              now. This takes about 30 minutes" over a three-dot strip that knew
-              only queued / running / review. The number was never measured
-              (lib/run-estimate.ts has what a run actually takes), and the strip
-              could not say what the agent was doing — though agent-engine
-              writes exactly that, live, on every step. */}
-          {activeRun.progress ? (
-            <AgentRunProgress
-              steps={activeRun.progress.phases.map((p) => ({
-                id: p.id,
-                label: p.label,
-                state: p.state,
-              }))}
-              headline={activeRun.progress.headline}
-              done={activeRun.progress.done}
-              total={activeRun.progress.total}
-            />
-          ) : (
-            <ManagedJobProgress status={activeRun.status} className="mb-0" />
-          )}
+          {/* The run, as it happens: the same bar the run form turns into, not
+              the old "This takes about 30 minutes" over a three-step strip.
+              Only legacy agent-service runs reach this banner (`legacyRun`
+              filters on `external.taskType`), and those report no step, so the
+              line names the output rather than a stage. */}
+          <AgentRunProgress headline={`Making your next ${noun}`} working />
           <CancelRunControl runId={activeRun.id} refunds={activeRun.refunds} />
         </div>
       )}
