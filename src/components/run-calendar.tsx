@@ -2321,8 +2321,11 @@ export function RunCalendar({
             >
               <Icon name="Archive" className="h-3.5 w-3.5" />
               Archive
+              {/* SCRUM-426: for staff, Archive is "what the client sees" — the
+                  work queue with every status is Assets. A client reads the
+                  sentence that describes it from their side. */}
               <span className="hidden text-[11px] font-normal text-muted-2 sm:inline">
-                · everything we&apos;ve delivered
+                {viewerIsClient ? "· everything we've delivered" : "· what the client sees"}
               </span>
             </button>
           )}

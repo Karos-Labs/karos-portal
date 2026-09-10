@@ -130,7 +130,9 @@ export default async function AssetsPage({
           // Not "Content library and delivery calendar": the calendar moved to
           // the /calendar route (see the AssetsView docstring) and this page has
           // not carried one since.
-          description="Everything delivered for this client. Approve what is ready, or add media by hand."
+          // SCRUM-426: the staff work queue, stated as one — every status — and
+          // how it differs from what the client sees.
+          description="Every deliverable for this client, in every status. The client sees only approved work, in their archive. Approve what is ready, or add media by hand."
           action={
             <div className="flex items-center gap-3">
               {/* #107: the second home. Media upload is a manual upload of
