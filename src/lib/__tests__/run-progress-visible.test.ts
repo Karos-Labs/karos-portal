@@ -220,7 +220,9 @@ describe("the dock", () => {
 
   it("renders nothing when there is nothing in flight", () => {
     // A client with no run must not pay for an empty widget or a poll.
-    expect(dock).toContain("if (runs.length === 0) return null;");
+    // `shown`, not `runs`: a run whose own page is on screen is drawn there by
+    // the run form, so the dock renders nothing for it either.
+    expect(dock).toContain("if (shown.length === 0) return null;");
   });
 
   it("sits under a modal, so re-opening the dialog is not covered by it", () => {

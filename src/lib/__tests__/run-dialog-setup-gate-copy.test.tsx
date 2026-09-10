@@ -44,7 +44,7 @@ vi.mock("@/lib/actions/external-job-actions", () => ({
   refreshJobStatusAction: vi.fn(),
   retryJobAction: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 // `Modal` portals into `document.body` and this suite runs in node. The subject
 // is the gate's own copy and its link, so the chrome around it is replaced by a
 // passthrough rather than the runner being given a DOM for one file — the

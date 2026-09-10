@@ -2,7 +2,7 @@
 
 import { type ComponentProps, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Badge, Button, buttonClass, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
 import {
@@ -2353,6 +2353,7 @@ export function RunCustomAgentModal({
   onClose: () => void;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const Shell = inline ? InlinePanel : Modal;
   const [pending, startTransition] = useTransition();
   const [selectedClientId, setSelectedClientId] = useState(clientId ?? clients?.[0]?.id ?? "");
@@ -2735,6 +2736,9 @@ export function RunCustomAgentModal({
             href: viewerIsClient
               ? `/clients/${selectedClientId}`
               : `/jobs/${result.jobId}`,
+            // In the page, this form becomes the run's progress, so the dock
+            // stays out of it until the reader leaves (see WatchedRun.origin).
+            ...(inline ? { origin: pathname } : {}),
           });
         }
         router.refresh();
@@ -2853,7 +2857,17 @@ export function RunCustomAgentModal({
               resetting the form. */}
           <div>
             {inline ? (
-              <Button variant="subtle" onClick={() => setStarted(false)}>
+              <Button
+                variant="subtle"
+                onClick={() => {
+                  // A CLEAN form. Keeping the last brief filled in made a second
+                  // press re-run (and re-charge) the same request by accident.
+                  setFields(initialAgentBrief(profile));
+                  setSelectedFiles([]);
+                  setBriefTouched(false);
+                  setStarted(false);
+                }}
+              >
                 Start another
               </Button>
             ) : (

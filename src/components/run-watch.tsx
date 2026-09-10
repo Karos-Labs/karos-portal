@@ -64,6 +64,14 @@ export interface WatchedRun {
   href?: string;
   /** Set once the poller has an answer; absent until the first tick lands. */
   status?: string;
+  /**
+   * The page a run was started ON, when it was started from a form drawn in
+   * the page. The dock skips a run while the reader is still on that page,
+   * because the form has already turned into the same progress in place; it
+   * shows it once they leave. Not persisted, so after a reload (the in-page
+   * view is gone) the dock shows it again.
+   */
+  origin?: string;
   /** What the agent is doing now (RunProgressView.headline). Not persisted: the next tick refills it. */
   headline?: string;
   /** The agent's part is done and the run is parked (RunProgressView.agentDone). */
@@ -102,7 +110,9 @@ function load(): WatchedRun[] {
         // field stops being checked.
         ((r as WatchedRun).href === undefined || typeof (r as WatchedRun).href === "string"),
     );
-    return rows.length === 0 ? EMPTY : rows.slice(0, MAX_WATCHED).map(({ headline: _h, ...rest }) => rest);
+    return rows.length === 0
+      ? EMPTY
+      : rows.slice(0, MAX_WATCHED).map(({ headline: _h, origin: _o, ...rest }) => rest);
   } catch {
     return EMPTY;
   }

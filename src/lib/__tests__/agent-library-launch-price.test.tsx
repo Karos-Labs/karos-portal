@@ -42,7 +42,7 @@ vi.mock("@/lib/actions/external-job-actions", () => ({
   refreshJobStatusAction: vi.fn(),
   retryJobAction: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 import { CREDIT_COSTS, creditsLabel } from "@/lib/credits";
 import { CustomAgentsHub } from "@/components/custom-agents";

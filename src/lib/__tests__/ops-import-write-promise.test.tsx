@@ -33,7 +33,7 @@ vi.mock("@/lib/actions", () => ({
   scanLabForUpdatesAction: vi.fn(),
 }));
 vi.mock("@/lib/actions/lab-import-actions", () => ({ importLabRunAction: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), usePathname: () => "/" }));
 
 import type { PlanSummary } from "@/lib/actions/ops-import-actions";
 import { OpsImport, OutcomePanel, WriteManifest } from "@/components/ops-import";

@@ -23,7 +23,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/actions/control-plane-actions", () => ({
   dispatchControlPlaneAgentAction: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 import { EngineAgentCard } from "@/components/agents/engine-agent-card";
 import { mediaSourceHint } from "@/lib/custom-agent-launch";

@@ -30,6 +30,7 @@
  */
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { Icon } from "@/components/icon";
 import { AgentRunProgress } from "@/components/client-agents/run-progress";
@@ -126,8 +127,12 @@ export function RunProgressDock({ viewerIsClient }: { viewerIsClient: boolean })
   // `watch()` is the only other thing that starts one and is not called again
   // on that path.
   useRestoreRunPolling(runs.length);
+  // Polling counts every run above; only the DRAWING skips a run whose own page
+  // is on screen, where the run form has already turned into its progress.
+  const pathname = usePathname();
+  const shown = runs.filter((run) => run.origin !== pathname);
 
-  if (runs.length === 0) return null;
+  if (shown.length === 0) return null;
 
   return (
     <div
@@ -137,7 +142,7 @@ export function RunProgressDock({ viewerIsClient }: { viewerIsClient: boolean })
       className="pointer-events-none fixed bottom-24 right-4 z-40 flex w-[min(20rem,calc(100vw-2rem))] flex-col gap-2 md:bottom-6"
       aria-live="polite"
     >
-      {runs.map((run) => (
+      {shown.map((run) => (
         <div key={run.jobId} className="pointer-events-auto">
           <DockRow
             run={run}
