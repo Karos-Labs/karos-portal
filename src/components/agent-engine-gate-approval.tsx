@@ -540,7 +540,7 @@ export function AgentEngineGateApproval({
               searches shows up here instead of as a silent fall to stock. */}
           {clip.sourceNotes && clip.sourceNotes.length > 0 && (
             <details className="text-xs text-muted">
-              <summary className="cursor-pointer">Why stock footage, not the client's own</summary>
+              <summary className="cursor-pointer">Why stock footage, not the client&apos;s own</summary>
               <ul className="mt-1 space-y-0.5 pl-4">
                 {clip.sourceNotes.map((n) => (
                   <li key={n}>{normalizeDashes(n)}</li>
