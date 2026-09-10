@@ -607,10 +607,12 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
   });
 
   it("keeps the href gate for a setup with no prefetched form", () => {
-    // The client detail route ships href-only states, so the dialog must still
-    // have its way out — and it must not offer an empty pane instead.
+    // An agent with no intake pane still arrives href-only, so the form must
+    // still have its way out — and it must not offer an empty pane instead.
+    // (Intake-driven agents now get their pane on the client route too, since
+    // 2026-09-10, so they no longer reach this gate there.)
     expect(ui).toContain("if (setup && !setup.ready && !intake)");
-    expect(ui).toContain("Set up {setup.label}");
+    expect(ui).toContain("Set up ${setup.label}");
     expect(ui).toContain("href={setup.href}");
   });
 });

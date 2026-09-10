@@ -138,16 +138,22 @@ import type { Job } from "@/lib/types";
 async function agentIntakePane(
   clientId: string,
   agent: { key: string },
-  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
+  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string; viewerIsBilled: boolean },
 ): Promise<AgentIntakePanes> {
+  // Whose credits the pane's metered controls quote. Explicit rather than the
+  // builders' `!isStaff` default, which reads a staff member using View as
+  // Client as billed when they are not — the same answer each agent's full
+  // intake page already passes.
+  const billed = { viewerIsBilled: opts.viewerIsBilled };
   if (isXAgentIdentity(agent.key)) {
-    return { x: await buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) };
+    return { x: await buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs, ...billed }) };
   }
   if (isLinkedInAgentIdentity(agent.key)) {
     return {
       linkedin: await buildLinkedInAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
+        ...billed,
         ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
       }),
     };
@@ -165,6 +171,7 @@ async function agentIntakePane(
       newsletter: await buildNewsletterAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
+        ...billed,
       }),
     };
   }
@@ -173,6 +180,7 @@ async function agentIntakePane(
       blog: await buildBlogAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
+        ...billed,
       }),
     };
   }
@@ -181,6 +189,7 @@ async function agentIntakePane(
       reputation: await buildReputationAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
+        ...billed,
       }),
     };
   }
@@ -388,23 +397,26 @@ export default async function ClientAgentDetailPage({
       ? { [agent.id]: creditBlockReason(credits, runCost, now) }
       : {};
 
-  // Ruling 7: the inline pane rides the setup state, keyed by agent. Staff get
-  // the form (their run dialog collects it in place); a client's own route
-  // reaches the same form through AgentSetupState.href, which is the CD-E1
-  // model and stays a full page.
+  // Ruling 7: the inline pane rides the setup state, keyed by agent — for
+  // CLIENTS too since 2026-09-10. It used to be staff-only (CD-E1: a client
+  // reached the same form as a separate full page through
+  // AgentSetupState.href), so the setup section on a client's agent page was a
+  // link out. Albert: "each agent should know what input is needed, and they
+  // should be able to just type it into the page". The builders are the ones
+  // each agent's full intake page already calls for clients, so this shows a
+  // client exactly what that page did; the form's own client branch
+  // (`viewerIsClient ? <IntakeForm />`) was already there waiting for it.
   //
   // The intake DOCUMENTS ride alongside, not after: the inputs band (CD-K1)
-  // wants a dated index of the same collections the panes are built from, and
-  // making it wait for the panes would add a serial round trip to every staff
-  // page load for data neither call needs from the other.
+  // wants a dated index of the same collections, and making it wait for the
+  // panes would add a serial round trip to every page load.
   const [panes, inputDocs] = await Promise.all([
-    isStaff
-      ? agentIntakePane(id, agent, {
-          isStaff,
-          jobs,
-          ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
-        })
-      : Promise.resolve(undefined),
+    agentIntakePane(id, agent, {
+      isStaff,
+      jobs,
+      viewerIsBilled: isBillableClientActor(user),
+      ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
+    }),
     readAgentInputDocs(id, agent.key, client.name),
   ]);
   const agentSetup = await buildAgentSetup(id, [summary], panes);

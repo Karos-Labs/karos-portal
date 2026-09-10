@@ -27,6 +27,17 @@ const withoutComments = (src: string) =>
 const HERO = withoutComments(read("src/components/client-agents/agent-setup-hero.tsx"));
 const RUN = withoutComments(read("src/components/custom-agents.tsx"));
 
+describe("a client's setup form", () => {
+  it("is loaded for every viewer, not staff only", () => {
+    // CD-E1 kept it staff-only, so the setup section on a CLIENT's agent page
+    // was a link to a separate page. The loader must not gate on the role.
+    const PAGE = withoutComments(read("src/app/(app)/clients/[id]/agents/[agentId]/page.tsx"));
+    const call = PAGE.slice(PAGE.indexOf("const [panes, inputDocs]"), PAGE.indexOf("readAgentInputDocs("));
+    expect(call).toContain("agentIntakePane(");
+    expect(call).not.toMatch(/isStaff\s*\?/);
+  });
+});
+
 describe("an agent that is not set up yet", () => {
   it("shows its fields on the page instead of a button that opens them", () => {
     expect(HERO, "the setup form is drawn in the page").toMatch(/<RunCustomAgentModal[\s\S]*?\binline\b/);

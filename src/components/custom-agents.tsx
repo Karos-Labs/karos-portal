@@ -2911,10 +2911,14 @@ export function RunCustomAgentModal({
     return (
       <Shell open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
-          <p className="text-sm text-foreground">Set up the {setup.label} first.</p>
+          {/* A client reads the page by ITS client name ("Your X details"),
+              the one every other client surface uses; "agent data" is ours. */}
+          <p className="text-sm text-foreground">
+            {viewerIsClient ? `${setup.clientLabel} are needed first.` : `Set up the ${setup.label} first.`}
+          </p>
           <p className="text-xs leading-relaxed text-muted">
-            This agent drafts from what is saved on the {setup.label} page, and it will not
-            run until that is there. It takes a few minutes to fill in, once.
+            This agent drafts from them, and it will not run until they are there. It takes a few
+            minutes to fill in, once.
           </p>
           <div className="flex items-center gap-2 pt-1">
             {/* Round 6, rule 3: no glyph after a button's label.
@@ -2924,7 +2928,7 @@ export function RunCustomAgentModal({
                 (h-10) is what the "Not now" button beside it already is, so the
                 pair now matches instead of missing by a pixel. */}
             <a href={setup.href} className={buttonClass({ variant: "primary" })}>
-              Set up {setup.label}
+              {viewerIsClient ? setup.clientLabel : `Set up ${setup.label}`}
             </a>
             {/* In the page there is nothing to dismiss, and a "Not now" that does
                 nothing is worse than no button at all. */}
