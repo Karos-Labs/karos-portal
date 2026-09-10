@@ -256,12 +256,7 @@ function Cell({
  * that is the point — sending both there would be the same broken promise,
  * made twice.
  *
- * THE RULE SURVIVED SCRUM-418 BECAUSE OF THAT CLAUSE. The visibility cell left
- * this card for the SEO one, where the meters are deliberately NOT links; that
- * is not this rule being reversed but its precondition failing there. Three
- * readings of one snapshot had one destination between them, so per-cell links
- * gave three controls that were one control. Here the two destinations really
- * are two, and the cells stay live.
+ * (Visibility left this card for the SEO one in SCRUM-418; see home-standing.)
  */
 export function HomeKpisWidget({
   audienceTotal,
@@ -334,16 +329,9 @@ export function HomeKpisWidget({
           the window, and this card lives in a column the 288px rail has already
           narrowed — so a 1024px window split it into cells too narrow for their
           own labels. `@xl` is 36rem of THIS grid, measured where the cells
-          actually are. With the visibility cell gone (SCRUM-418) there are at
-          most two, so there is one step to make and no odd cell to strand in a
-          half-empty second row. */}
-      {/* TWO cells now, or one: the visibility meter left for the SEO card
-          (SCRUM-418). With follower ingestion still unwritten this renders a
-          single full-width "Published" cell on every account today, which is
-          honest but thin — the card is one number until that cron lands. Said
-          out loud here because the emptiness is a DATA gap, and the wrong
-          reaction to it would be to move a metric back onto this card to fill
-          the space. */}
+          actually are. At most two cells now (SCRUM-418), so one step. With
+          follower ingestion still unwritten that is a single "Published" cell
+          today: a data gap, not a reason to move a metric back here. */}
       <div className={cn("grid gap-4", showAudience && "@xl:grid-cols-2")}>
         {/* Audience — the D6 cell, real snapshots only; absent when there are none */}
         {showAudience && (

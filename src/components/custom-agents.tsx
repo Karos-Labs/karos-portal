@@ -386,10 +386,9 @@ function agentLaunchCost(agent: Pick<CustomAgent, "launchCreditCost">): number |
  * payload it cannot tell which of the three agents it is looking at, so all it
  * can offer is `label` and `href` — the name of the form and the way to it. A
  * surface that mounts the run dialog for a state with `ready: false` and NO
- * `kind` should therefore refuse before opening it, which is what all three
- * mounts do today (the library disables Run, StaffAgentControls paints "Run now
- * needs the {label}" beside the agent's own href, and LegacyAgentPanel disables
- * the run on `evaluateLegacyRunGate`'s `setup_missing` rung and links the form).
+ * `kind` should therefore refuse before opening it, which is what the mounts
+ * do (LegacyAgentPanel shows the form only when `evaluateLegacyRunGate` allows a
+ * run, and states the refusal with its link otherwise).
  * That is why the dialog's own href gate is a backstop rather than a route.
  */
 export type AgentSetupState = {
@@ -1278,10 +1277,11 @@ function refusalNamesSetup(refusal: string): boolean {
  * The staff all-in-one card grid is retired: staff now click an agent on the
  * roster and open the same full page a client opens, which is the second half
  * of Albert's directive. That move is only honest if nothing staff could do
- * before becomes unreachable, so this band carries the four capabilities that
- * lived on the retired card - run now, set/manage the schedule, reach the
- * agent's data, and read why a schedule is refusing - and the detail page
- * mounts the curation pane and the economics card beside it.
+ * before becomes unreachable, so this band carries what lived on the retired
+ * card - set/manage the schedule, reach the agent's data, read why a schedule is
+ * refusing - and the detail page mounts the curation pane and the economics card
+ * beside it. Running is the page's own form now, in every state that can run
+ * (2026-09-10), so the band's old "Run now" is gone.
  *
  * STAFF ONLY, and simpler for it: staff runs are free (isBillableClientActor),
  * so there is no credit rung here at all. The client's own run gesture lives in
@@ -2690,7 +2690,8 @@ export function RunCustomAgentModal({
         setError(result.error);
         return;
       }
-      if (viewerIsClient || stayOnPage) {
+      // `inline` implies it: a form drawn in the page never navigates away.
+      if (viewerIsClient || stayOnPage || inline) {
         // The page behind this dialog is the one that narrates the run now, so
         // the refresh is what makes it start doing so — the in-flight mark and
         // the poller both key off a job that only exists after this await.

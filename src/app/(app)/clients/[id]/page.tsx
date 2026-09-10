@@ -811,12 +811,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
    *  • FOLLOWERS is not passed at all today; the cell hides itself. See the
    *    follower note above.
    *
-   * VISIBILITY IS NO LONGER ONE OF THEM (SCRUM-418). It moved to
-   * `HomeStandingWidget`, beside the two shares it is the headline of, and
-   * `visibilityHref` went with it — that card has one link for all three
-   * metrics, so there is no per-cell destination left to build. The anchored
-   * form this used to take (`#visibility-scores`, written by settings/page.tsx
-   * only inside `seoGeo ? …`) is gone with it rather than left unused.
+   * (Visibility moved to the SEO card in SCRUM-418, with its own link.)
    */
   const kpis = <HomeKpisWidget throughput={throughput} contentHref={throughputHref} />;
 

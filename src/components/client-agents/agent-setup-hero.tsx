@@ -77,7 +77,6 @@ export function AgentSetupHero({
         viewerIsClient={viewerIsClient}
         setup={setup}
         initialPane="data"
-        stayOnPage
         inline
       />
     </div>

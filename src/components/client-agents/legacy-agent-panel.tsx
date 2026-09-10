@@ -168,8 +168,6 @@ export function LegacyAgentPanel({
             contextItems={contextItems}
             viewerIsClient={viewerIsClient}
             {...(setup ? { setup } : {})}
-            // AF-9: this panel IS the agent's page, for both readers.
-            stayOnPage
             inline
           />
         </section>

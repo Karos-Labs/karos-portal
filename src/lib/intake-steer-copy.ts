@@ -88,15 +88,14 @@ export const STEER_RUN_LABEL = "Direction for this run (optional)";
  *
  * It still says what the field does NOT do - Kind of post chooses the shape -
  * because that is SCRUM-409's correction and it is a fact about the engine
- * rather than about the other boxes.
+ * rather than about the other boxes. What it no longer does is tell the reader
+ * that another box is the real one. A field whose own helper says that has
+ * admitted it is a duplicate, and it is most of what "clashing" meant.
  *
  * NOT "above" (2026-09-10). The launch profile DECLARES Kind of post before this
- * field, but the form paints the primary field first and folds the rest into the
- * summary row's "Change" disclosure underneath, so on screen Kind of post is
- * below this helper and hidden until opened. A direction word the reader can
- * check and find wrong costs the sentence its credibility for the true part. What it no longer does is tell the reader that another
- * box is the real one. A field whose own helper says that has admitted it is a
- * duplicate, and it is most of what "clashing" meant.
+ * field, but the form paints the primary field first and folds the rest into
+ * "More options" underneath, so on screen Kind of post is below this helper and
+ * hidden until opened.
  */
 export const STEER_RUN_HELPER_WITH_KIND =
   "Steers this run only. Kind of post still decides the shape.";

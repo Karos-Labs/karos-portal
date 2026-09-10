@@ -197,16 +197,7 @@ describe("rule 7 · Home's one orange CONTROL is the ladder's button", () => {
 describe("rule 1 · a link ends in one static chevron, and a static box is not a link", () => {
   it("keeps the three SEO readings inert, under the card's one link (SCRUM-418)", () => {
     const standing = code("components/home-standing.tsx");
-    // THIS ASSERTION IS THE INVERSE OF THE ONE IT REPLACES, and the reversal is
-    // the finding rather than a relaxation. Round 6 made each cell a whole-cell
-    // link because a static box beside three live KPI cells read as either dead
-    // or decorative. True — but the fix generalised the KPI card's rule ("a cell
-    // links to the screen that shows MORE ABOUT ITS OWN NUMBER, a different
-    // screen for each") past its own precondition. These three are readings of
-    // ONE snapshot and all three opened the same report, so per-cell links gave
-    // three controls that were one control. Lola read it back as noise. Same
-    // defect, opposite costume; the card now has one link and the tiles are
-    // recaps.
+    // Inverse of the round-6 assertion it replaced: see MeterTile's own note.
     const at = standing.indexOf("function MeterTile(");
     expect(at, "the shell the three readings share is gone").toBeGreaterThan(-1);
     // Bounded by the next declaration, not by the next doc comment: `code()`

@@ -72,16 +72,19 @@ describe("roster row: the identity column is never starved by its own furniture"
     // width. The three fixed columns are declared; the rest are measured
     // constants from the rendered row, named so a future change to any of them
     // shows up here as a number rather than as a screenshot.
-    const lastMade = W(36); // `w-36`, widening to w-48 only further up
-    const next = W(20); // `w-20`
-    const verbCol = W(28); // `w-28`
-    const badge = 128; // "Runs on request", the widest status word
+    // The fixed columns' widths, READ OFF THE ROW: every `hidden w-N shrink-0`
+    // column that the breakpoint reveals. Hard-coding them here would let a
+    // widened column slip past the one check that exists to catch it.
+    const fixed = [...ROW.matchAll(/"hidden w-(\d+) shrink-0/g)].map((m) => W(Number(m[1])));
+    expect(fixed.length, "the row's fixed columns moved").toBeGreaterThanOrEqual(3);
+    const columns = fixed.reduce((sum, w) => sum + w, 0);
+    const badge = 128; // "Runs on request", the widest status word (measured)
     const mark = 36; // AgentIdentity size="sm"
     const chevron = 16;
     const gaps = 6 * 16; // gap-4 between seven children
     const padding = 2 * 16; // px-4
 
-    const furniture = lastMade + next + verbCol + badge + mark + chevron + gaps + padding;
+    const furniture = columns + badge + mark + chevron + gaps + padding;
     expect(
       bp! - furniture,
       `at ${bp}px the five-column layout leaves the identity column ${bp! - furniture}px`,

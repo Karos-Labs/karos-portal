@@ -77,49 +77,36 @@ describe("an agent that IS set up", () => {
 });
 
 describe("the run form, drawn in the page", () => {
-  it("chooses its frame with one switch, so the run logic is shared", () => {
-    expect(RUN).toContain("const Shell = inline ? InlinePanel : Modal");
-    // Every frame inside the run component goes through that switch — a bare
-    // <Modal> left behind would pop a dialog out of the in-page form.
-    const at = RUN.indexOf("export function RunCustomAgentModal(");
-    const end = RUN.indexOf("function AgentEditorModal(", at);
-    const body = RUN.slice(at, end);
+  const at = RUN.indexOf("export function RunCustomAgentModal(");
+  const body = RUN.slice(at, RUN.indexOf("function AgentEditorModal(", at));
+
+  it("never opens a dialog of its own", () => {
+    // Every frame goes through the shell switch; a bare <Modal> left in here
+    // would pop a dialog out of the in-page form.
     expect(body).not.toMatch(/<Modal\b/);
   });
 
-  it("offers no dismiss button that does nothing in the page", () => {
-    // "Cancel", "Not now" and "Close" close a dialog. In the page they would be
-    // controls with no effect, which is worse than no control.
-    const at = RUN.indexOf("export function RunCustomAgentModal(");
-    const body = RUN.slice(at, RUN.indexOf("function AgentEditorModal(", at));
-    for (const label of ["Cancel", "Not now"]) {
-      const i = body.indexOf(`>\n                    ${label}`) >= 0 ? body.indexOf(label) : body.indexOf(label);
-      if (i < 0) continue;
-      const before = body.slice(Math.max(0, i - 260), i);
-      expect(before, `"${label}" is not gated off the in-page form`).toMatch(/!inline &&/);
+  it("has no dismiss button that does nothing in the page", () => {
+    // Cancel, Not now, Close and Done close a dialog. In the page each must be
+    // gated off (`!inline &&`) or replaced (`inline ? … :`).
+    const closers = [...body.matchAll(/onClick=\{onClose\}/g)].map((m) => m.index!);
+    expect(closers.length).toBeGreaterThanOrEqual(4);
+    for (const i of closers) {
+      const before = body.slice(Math.max(0, i - 900), i);
+      expect(before, `an ungated dismiss at offset ${i}`).toMatch(/!inline &&|inline \?/);
     }
   });
 
-  it("has ONE started state, drawn through the same shell, driven by the watch", () => {
-    // The dialog that said "your post is on its way, ready in N minutes" was a
-    // dead end. SCRUM-416 (Shlomi) replaced its content with the run's live
-    // status from the shell-level watch; this branch then gave it an in-page
-    // frame. What must not happen is a SECOND renderer for the same state — a
-    // separate in-page branch did exist briefly, and two answers to "is my run
-    // working" is the drift this file keeps paying for.
+  it("has one started state, driven by the watch", () => {
     expect(RUN.match(/if \(started\b/g) ?? []).toHaveLength(1);
-    const at = RUN.indexOf("if (started) {");
-    const branch = RUN.slice(at, RUN.indexOf("\n  }\n", at));
-    expect(branch).toContain("<Shell");
-    expect(branch).toContain("outcomeOf(");
-    // In the page there is no dialog to close, so its next gesture is another run.
-    expect(branch).toMatch(/inline \?[\s\S]*?Start another/);
+    const branch = RUN.slice(RUN.indexOf("if (started) {"));
+    expect(branch.slice(0, 4000)).toContain("outcomeOf(");
   });
 
-  it("promises no readiness time before the run starts", () => {
-    // A run goes to review before it reaches anyone, so it is not READY when
-    // the agent finishes, at any number of minutes.
-    expect(RUN).not.toMatch(/`ready in \$\{RUN_ESTIMATE_SENTENCE\}`/);
+  it("quotes no run duration", () => {
+    // (The setup gate's "a few minutes to fill in" is the client's own typing
+    // time, not a promise about the run, and stays.)
+    expect(body).not.toMatch(/RUN_ESTIMATE|ready in|usually takes|takes about/);
   });
 });
 

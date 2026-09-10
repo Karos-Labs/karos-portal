@@ -8,39 +8,12 @@ import type { PresenceView, ScoreView } from "@/components/seo-geo/presenter";
 /**
  * The shell all three readings share: an accented eyebrow, then the reading.
  *
- * NOT A LINK, AS OF SCRUM-418, and this is the second reversal of that
- * question rather than a fresh opinion — so both halves are on the record.
- *
- * Round 6 made each cell a link because the product owner reported that the
- * KPI cells lit up and these did not, which left two readings: the numbers are
- * dead, or the affordance is decoration. Correct finding. The fix generalised
- * a rule that did not survive contact with the third metric.
- *
- * That rule (KPI card, round 5) is "a cell links to the screen that shows MORE
- * ABOUT ITS OWN NUMBER, which is a different screen for each" — followers open
- * the channel list, published opens the posts. It works because those
- * destinations differ. These three do not: category presence, share of
- * conversation and the visibility score are three readings of ONE snapshot and
- * all three opened the same report. Lola read that back as noise — "they all
- * lead to the same page, they should be in the same widget with one button at
- * the top, they're just a recap" — and three controls that are one control is
- * the same defect round 6 diagnosed, wearing the opposite costume.
- *
- * So the inconsistency round 6 found is resolved the other way: nothing here
- * lights up, and the card's single header link is the one way to the working.
- * The KPI card's per-cell rule is untouched and still correct — its two
- * remaining cells still go to two different places.
- *
- * Deliberately not a `StatCard`: the bar is the whole point here, because two
- * of these three are shares and a share without its remainder is just a digit.
- *
- * THE BAR IS ORANGE (round 6, Albert 2026-09-06). Round 6 briefly made it ink
- * on a grey track; the ruling put it back. The one-orange-per-screen rule is
- * about CONTROLS — a meter fill is data, and data keeps its accent. The track
- * is the same accent at low alpha: the filled part is the number, and the
- * unfilled part is visibly the same measurement rather than background, which
- * matters most at the small values where an accent sliver on `surface-3` read
- * as an empty card.
+ * NOT A LINK (SCRUM-418, Albert 2026-09-10). Round 6 made each tile a link
+ * because the KPI cells lit up and these did not. But these three are readings
+ * of one snapshot that all opened the same report, so per-tile links were three
+ * controls doing one job; the card's single header link is the way in now. The
+ * KPI card keeps per-cell links, because its cells really do go to different
+ * places.
  */
 function MeterTile({
   icon,
@@ -196,7 +169,7 @@ export function HomeStandingWidget({
   presence,
   href,
   competitorsHref,
-  visibilityScore = null,
+  visibilityScore,
   footer,
 }: {
   /**
@@ -233,16 +206,8 @@ export function HomeStandingWidget({
    * to contact staff instead.
    */
   competitorsHref: string;
-  /**
-   * The overall visibility score, moved off the KPI card by SCRUM-418 — null
-   * when there is no snapshot to score yet.
-   *
-   * Optional so a caller that has not threaded it keeps rendering two meters
-   * rather than crashing, but every real caller has it: it comes from
-   * `buildScoreViews` on the same snapshot `buildPresence` reads, so a page
-   * that can build one can build the other.
-   */
-  visibilityScore?: ScoreView | null;
+  /** The overall visibility score (SCRUM-418); null when nothing is scored yet. */
+  visibilityScore: ScoreView | null;
   /**
    * A control that acts on THIS data, plus the sentence saying what it does
    * (2026-09). Today that is the admin's "Regenerate", which was in the page

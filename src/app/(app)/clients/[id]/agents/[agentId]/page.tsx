@@ -1429,7 +1429,6 @@ export default async function ClientAgentDetailPage({
               contextItems={contextItems}
               viewerIsClient={false}
               {...(setup ? { setup } : {})}
-              stayOnPage
               inline
             />
           ) : (

@@ -29,10 +29,6 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(__dirname, "..", "..", "..");
 const KPIS = readFileSync(join(ROOT, "src/components/home-kpis.tsx"), "utf8");
 const CLIENT_PAGE = readFileSync(join(ROOT, "src/app/(app)/clients/[id]/page.tsx"), "utf8");
-const SETTINGS_PAGE = readFileSync(
-  join(ROOT, "src/app/(app)/clients/[id]/settings/page.tsx"),
-  "utf8",
-);
 
 /**
  * Source with its comments taken out. Load-bearing for the header check below:
@@ -126,19 +122,7 @@ describe("where the client page sends each cell", () => {
     expect(value, "the published cell went back to a status filter").not.toContain("status=");
   });
 
-  /*
-   * TWO TESTS STOOD HERE — "anchors the visibility cell at a section the
-   * Reporting tab really renders" and "drops the anchor when there is no
-   * snapshot for the section to render". Both are gone with the cell
-   * (SCRUM-418): the KPI card no longer holds a visibility score, so there is
-   * no `#visibility-scores` fragment for this page to build or to drop, and
-   * asserting on one would pin a link that nothing renders.
-   *
-   * What they were really protecting — that this card cannot grow a third link
-   * to the report — is now "does not take the visibility score back" above.
-   * The merged SEO card has one un-anchored link for all three of its
-   * readings, which is `interaction-primitives.test.ts`'s to guard.
-   */
+  // The two visibility-anchor tests went with the cell (SCRUM-418).
 
   it("mounts the widget once, so staff context and the client portal cannot diverge", () => {
     // Both branches of this page render the SAME `kpis` element; a second

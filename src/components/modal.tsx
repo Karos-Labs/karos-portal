@@ -186,28 +186,12 @@ export function Modal({
 }
 
 /**
- * The same four slots as `Modal` — title, description, body, footer — drawn IN
- * THE PAGE instead of over it.
- *
- * WHY THIS EXISTS. An agent's page used to open with one giant button whose
- * only job was to open a dialog holding the fields that agent needs. Albert,
- * 2026-09-10: "a huge ai button and then a pop up once you click it". The
- * fields were always known in advance — `custom-agent-launch.ts` declares every
- * agent's inputs as data — so the button was a gate in front of a form that
- * could simply have been on the page, and the dialog was a second place to look
- * for something the page was already about.
- *
- * SAME PROPS AS `Modal`, INCLUDING THE ONES IT IGNORES, on purpose. The run
- * dialog is ~900 lines of real logic (engine routing, credit quotes, intake
- * readiness, submission) and it draws through `Modal` in three places. Taking
- * an identical interface means the caller chooses a shell with one line —
- * `const Shell = inline ? InlinePanel : Modal` — and none of that logic is
- * rewritten, re-tested or put at risk to move where it paints.
- *
- * What a page does not need from a dialog is dropped rather than imitated: no
- * portal, no backdrop, no focus trap, no body scroll lock, no ✕. A form that is
- * part of the page is closed by scrolling past it. `open: false` still renders
- * nothing, so a caller that toggles it behaves the same in both shells.
+ * `Modal`'s four slots (title, description, body, footer) drawn IN the page —
+ * so an agent's fields can be its page instead of sitting behind a button and
+ * a dialog (Albert, 2026-09-10). Same props as `Modal`, including the ones it
+ * ignores, so the run form picks its frame with one line
+ * (`const Shell = inline ? InlinePanel : Modal`) and none of its logic moves.
+ * No portal, backdrop, focus trap, scroll lock or ✕: a page section needs none.
  */
 export function InlinePanel({
   open = true,
@@ -218,25 +202,17 @@ export function InlinePanel({
   scrollRef,
 }: {
   open?: boolean;
-  /** Accepted for parity with `Modal`; an in-page panel has nothing to close. */
+  /** Ignored: an in-page panel has nothing to close. */
   onClose?: () => void;
   title?: string;
   description?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  /**
-   * Accepted and IGNORED: the dialog passes `max-w-2xl`/`max-w-3xl`, which is
-   * right for a floating panel and wrong in a page column, where the form
-   * should take the column's width like every other section on it.
-   */
+  /** Ignored: a dialog's max-width is wrong in a page column. */
   className?: string;
-  /** Accepted for parity with `Modal`. */
+  /** Ignored: there is no backdrop. */
   closeOnBackdrop?: boolean;
-  /**
-   * Still attached, to the body. The dialog scrolls this to the top when it
-   * swaps panes; on an element that does not scroll that is a harmless no-op,
-   * which is exactly right — the page's own scroll is not this panel's to move.
-   */
+  /** Attached to the body; the form's scroll-to-top is a no-op on a page section. */
   scrollRef?: React.RefObject<HTMLDivElement | null>;
 }) {
   if (!open) return null;
