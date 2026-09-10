@@ -163,7 +163,10 @@ describe("the run dialog's started panel", () => {
 
   it("was sliced, so the assertions below are reading the right panel", () => {
     expect(panel.length).toBeGreaterThan(500);
-    expect(panel).toContain("<Modal open onClose={onClose}");
+    // `<Shell`, not `<Modal`: the same panel is drawn in the page when the run
+    // form is (`const Shell = inline ? InlinePanel : Modal`). This line is the
+    // marker that the slice found the started panel, and it still is one.
+    expect(panel).toContain("<Shell open onClose={onClose}");
   });
 
   it("is no longer a dead end: it shows the ladder and the outcome sentence", () => {

@@ -1,8 +1,5 @@
 "use client";
 
-import { useState } from "react";
-import { Button, Card } from "@/components/ui";
-import { Icon } from "@/components/icon";
 import {
   RunCustomAgentModal,
   type AgentSetupState,
@@ -12,18 +9,38 @@ import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import type { ContextItem } from "@/lib/types";
 
 /**
- * Surface 03, State 1 — "Not set up shows a Setup button and nothing else."
+ * Surface 03, State 1 — an intake-driven agent that is not set up yet.
+ *
+ * ── IT WAS A BUTTON THAT OPENED A FORM ───────────────────────────────────────
+ *
+ * This rendered one sentence ("Save what LinkedIn Agent needs to know, and it
+ * starts producing for you") over a large accent button with a Sparkles glyph,
+ * and the button's only job was to open `RunCustomAgentModal` on its data
+ * pane. Albert, 2026-09-10: "still looks like slop. a huge ai button and then a
+ * pop up once you click it."
+ *
+ * Both halves of that were earned:
+ *
+ *  • THE BUTTON GATED A KNOWN FORM. Which fields an agent needs is not
+ *    discovered on click — `custom-agent-launch.ts` declares every agent's
+ *    inputs as data, and the page already prefetches the intake. So the press
+ *    revealed something the page could simply have shown, and cost the reader a
+ *    click and a context switch to reach it.
+ *  • THE GLYPH SAID "AI" INSTEAD OF SAYING WHAT HAPPENS. A sparkle on the
+ *    primary control is the generic signifier for "machine does magic here",
+ *    and on a page that is entirely about a machine it carries no information —
+ *    only the tone Albert named. The run verbs elsewhere on this page are plain
+ *    words, and this is now one of them.
+ *
+ * So the fields are the section. Same component, same logic, same save path —
+ * `inline` only moves where it paints (see `InlinePanel`). What used to be the
+ * page's biggest object is now the thing the reader came to do.
  *
  * Scoped to intake-driven agents (X/LinkedIn/Reddit/Newsletter/Blog/
  * Reputation/Carousel — the ones `AgentSetupState` can answer readiness for).
- * The umbrella-launch-card system (a live/non-live bound agent) is a
- * different, older product model with its own multi-state flow and is
- * untouched — this component only replaces what an intake-driven agent shows
- * BEFORE `setup.ready && setup.standUpDone` are both true. Once they are, the
- * page's existing legacyShape/LegacyAgentPanel render takes over unchanged.
- *
- * "Clicking Setup opens the fields this agent needs, and only those" — reuses
- * RunCustomAgentModal with `initialPane="data"` rather than a second form.
+ * The umbrella-launch-card system is a different, older product model with its
+ * own flow and is untouched. Once `setup.ready && setup.standUpDone` are both
+ * true the page's legacy panel takes over, unchanged.
  */
 export function AgentSetupHero({
   agent,
@@ -36,55 +53,37 @@ export function AgentSetupHero({
 }: {
   agent: RunnableAgentSummary;
   clientId: string;
-  /** Forwarded to the run dialog — see `EngineDispatchMap` (T-B21). */
+  /** Forwarded to the run form — see `EngineDispatchMap` (T-B21). */
   engineDispatch: EngineDispatchMap;
   contextItems: ContextItem[];
   viewerIsClient: boolean;
   setup: AgentSetupState;
   previewVideoUrl?: string | null;
 }) {
-  const [settingUp, setSettingUp] = useState(false);
-
   return (
-    <Card>
-      {/* NO PLACEHOLDER FRAME (round 6, think-agents §4). An empty 16:9 box
-          reading "A preview of what this agent does is coming soon" was the
-          largest thing on the first screen a client ever sees of an agent, and
-          it promised a video nothing in the product produces. The frame returns
-          only when there is a video in it. */}
+    <div className="space-y-4">
+      {/* NO PLACEHOLDER FRAME (round 6, think-agents §4): the frame returns only
+          when there is a video in it. */}
       {previewVideoUrl && (
-        <div className="mb-4 overflow-hidden rounded-[var(--radius)] border border-border bg-surface-2">
+        <div className="overflow-hidden rounded-[var(--radius)] border border-border bg-surface-2">
           <video src={previewVideoUrl} controls className="aspect-video w-full bg-black" />
         </div>
       )}
-
-      <div className="flex flex-col items-center gap-2 text-center">
-        <p className="text-sm text-muted-2">
-          Save what {agent.name} needs to know, and it starts producing for you.
-        </p>
-        {/* KEEPS `accent` (round 6 risk review B2). Zero orange is not the rule,
-            one is: the setup hero, the launch card and the run panel are
-            mutually exclusive states of this page, so exactly one of them
-            renders, and this is the control that moves the client forward. */}
-        <Button variant="accent" size="lg" onClick={() => setSettingUp(true)}>
-          <Icon name="Sparkles" className="h-4 w-4" />
-          Set up this agent
-        </Button>
-      </div>
-
-      {settingUp && (
-        <RunCustomAgentModal
-          agent={agent}
-          clientId={clientId}
-          engineDispatch={engineDispatch}
-          contextItems={contextItems}
-          viewerIsClient={viewerIsClient}
-          setup={setup}
-          initialPane="data"
-          stayOnPage
-          onClose={() => setSettingUp(false)}
-        />
-      )}
-    </Card>
+      <RunCustomAgentModal
+        agent={agent}
+        clientId={clientId}
+        engineDispatch={engineDispatch}
+        contextItems={contextItems}
+        viewerIsClient={viewerIsClient}
+        setup={setup}
+        initialPane="data"
+        stayOnPage
+        inline
+        // Nothing to close: the form is part of the page. The component still
+        // calls this after a save that finishes the setup, and a refresh is
+        // what moves the page on to the next state from here.
+        onClose={() => {}}
+      />
+    </div>
   );
 }

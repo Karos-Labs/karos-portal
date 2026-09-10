@@ -718,9 +718,14 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       fields: [
         {
           key: "request",
-          label: "Anything to steer this run?",
+          // Same name as every other per-run steer (SCRUM-411, and the shared
+          // constant in lib/intake-steer-copy.ts). This was a fourth spelling of
+          // the one field — "Anything to steer this run?" — and the only one
+          // without "(optional)", which is why its helper had to open by saying
+          // so. The helper stays Reddit's own: a Reddit run picks a THREAD.
+          label: STEER_RUN_LABEL,
           type: "textarea",
-          helper: "Optional. The agent picks the thread from the stored Reddit agent data either way.",
+          helper: "The agent picks the thread from the stored Reddit agent data either way.",
           placeholder: "A subreddit to prioritise, a question type to look for.",
         },
       ],
@@ -1044,7 +1049,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       fields: [
         {
           key: "request",
-          label: "Anything to steer this pulse? (optional)",
+          label: "Direction for this pulse (optional)",
           type: "textarea",
           placeholder: "A surface to prioritise, a complaint you already know about, a week you care about.",
           helper:

@@ -18,7 +18,7 @@ import { LinkedInAgentIntake } from "@/components/linkedin-agent-intake";
 import { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 import { XAgentIntake } from "@/components/x-agent-intake";
-import { Modal } from "@/components/modal";
+import { InlinePanel, Modal } from "@/components/modal";
 import { StaffOnlySection } from "@/components/staff-only-section";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
@@ -2294,6 +2294,7 @@ export function RunCustomAgentModal({
   setup,
   initialPane,
   stayOnPage,
+  inline = false,
   onClose,
 }: {
   agent: RunnableAgentSummary;
@@ -2339,9 +2340,20 @@ export function RunCustomAgentModal({
    * following the link is a decision rather than a redirect.
    */
   stayOnPage?: boolean;
+  /**
+   * Draw IN THE PAGE rather than over it (Albert, 2026-09-10: "a huge ai button
+   * and then a pop up once you click it").
+   *
+   * Every agent's inputs are declared as data in `custom-agent-launch.ts`, so
+   * there was never a reason to hide them behind a press: the page can simply
+   * show them. The logic below is identical in both shells — only the frame it
+   * paints into changes (see `InlinePanel`).
+   */
+  inline?: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
+  const Shell = inline ? InlinePanel : Modal;
   const [pending, startTransition] = useTransition();
   const [selectedClientId, setSelectedClientId] = useState(clientId ?? clients?.[0]?.id ?? "");
   // "Post as" is the one field whose options are this client's own records
@@ -2784,7 +2796,7 @@ export function RunCustomAgentModal({
       : "queued";
     const outcome = startedJobId ? (outcomeOf(startedJobId) ?? "working") : "working";
     return (
-      <Modal open onClose={onClose} title={agent.name}>
+      <Shell open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
           {/* Round 6: the confirmation says what is happening to the thing the
               reader asked for, not that a "Run" has a status. "Your post is on
@@ -2862,13 +2874,23 @@ export function RunCustomAgentModal({
               </Link>
             </span>
           )}
+          {/* "Done" closes a dialog. In the page there is no dialog, so the one
+              useful next gesture is another run — and the global dock (run-watch)
+              keeps this one on screen either way, so nothing is lost by
+              resetting the form. */}
           <div>
-            <Button variant="subtle" onClick={onClose}>
-              Done
-            </Button>
+            {inline ? (
+              <Button variant="subtle" onClick={() => setStarted(false)}>
+                Start another
+              </Button>
+            ) : (
+              <Button variant="subtle" onClick={onClose}>
+                Done
+              </Button>
+            )}
           </div>
         </div>
-      </Modal>
+      </Shell>
     );
   }
 
@@ -2900,7 +2922,7 @@ export function RunCustomAgentModal({
   // way out rather than the submit core's refusal after writing a brief.
   if (setup && !setup.ready && !intake) {
     return (
-      <Modal open onClose={onClose} title={agent.name}>
+      <Shell open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
           <p className="text-sm text-foreground">Set up the {setup.label} first.</p>
           <p className="text-xs leading-relaxed text-muted">
@@ -2917,12 +2939,16 @@ export function RunCustomAgentModal({
             <a href={setup.href} className={buttonClass({ variant: "primary" })}>
               Set up {setup.label}
             </a>
-            <Button variant="ghost" onClick={onClose}>
-              Not now
-            </Button>
+            {/* In the page there is nothing to dismiss, and a "Not now" that does
+                nothing is worse than no button at all. */}
+            {!inline && (
+              <Button variant="ghost" onClick={onClose}>
+                Not now
+              </Button>
+            )}
           </div>
         </div>
-      </Modal>
+      </Shell>
     );
   }
 
@@ -2938,7 +2964,7 @@ export function RunCustomAgentModal({
     // deliverables box was worth to a client: what a run hands back. The blurb
     // that used to open the body is gone with it - a client who pressed a button
     // on this agent's own page does not need the agent re-introduced.
-    <Modal
+    <Shell
       open
       onClose={onClose}
       title={showData && intake ? `${INTAKE_LABEL[intake.kind]} agent data` : runLabel}
@@ -2982,15 +3008,23 @@ export function RunCustomAgentModal({
                       ...(viewerIsClient
                         ? [briefQuoteLabel(agent, visibleBriefValues)]
                         : []),
-                      `ready in ${RUN_ESTIMATE_SENTENCE}`,
+                      // NO "ready in …" (2026-09-10). It said "ready in about 30
+                      // minutes" and was never measured; at "a few minutes" it
+                      // is closer on the agent's time and still wrong on the
+                      // word: a run goes to review before it reaches anyone, so
+                      // it is not READY when the agent finishes. The run's own
+                      // progress names that step once it starts, which is where
+                      // the reader can see it being true.
                       "you can leave this page",
                     ].join(" · "),
                   )}
                 </p>
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" onClick={onClose}>
-                    Cancel
-                  </Button>
+                  {!inline && (
+                    <Button variant="ghost" onClick={onClose}>
+                      Cancel
+                    </Button>
+                  )}
                   {/* Paper, not orange (B2): the page's one accent belongs to
                       the control that OPENED this dialog. */}
                   <Button variant="primary" onClick={submit} loading={pending}>
@@ -3056,11 +3090,15 @@ export function RunCustomAgentModal({
               <IntakeForm intake={intake} />
             </StaffOnlySection>
           )}
-          <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
-            <Button variant="ghost" onClick={onClose}>
-              {openedForSetup ? "Cancel run" : "Close"}
-            </Button>
-          </div>
+          {/* The dialog's way out. In the page there is none to offer: the form
+              is the section, and the reader leaves it by scrolling on. */}
+          {!inline && (
+            <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
+              <Button variant="ghost" onClick={onClose}>
+                {openedForSetup ? "Cancel run" : "Close"}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -3289,7 +3327,7 @@ export function RunCustomAgentModal({
         )}
 
       </div>
-    </Modal>
+    </Shell>
   );
 }
 
