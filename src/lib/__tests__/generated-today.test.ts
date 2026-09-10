@@ -144,13 +144,15 @@ describe("the widget's words", () => {
 describe("the home card", () => {
   const home = code("components/client-home-overview.tsx");
 
-  it("is what a CLIENT gets in that slot, and staff keep Recent activity", () => {
+  it("is what a CLIENT gets in that slot, and staff keep their own list", () => {
     // Replacing it for both readers would have been a product change nobody
     // asked for: the staff set is every asset stamped at generation, which is
     // the useful staff read, and no staff complaint exists.
     expect(home).toContain("<GeneratedTodayCard");
     expect(home).toMatch(/viewerIsClient \? \(\s*<GeneratedTodayCard/);
-    expect(home).toContain("Recent activity");
+    // The staff card is still there. Named "Recently generated" since
+    // SCRUM-429 - see that ticket for why "Recent activity" was not a title.
+    expect(home).toContain("Recently generated");
   });
 
   it("occupies ONE slot rather than adding a second list of assets", () => {
