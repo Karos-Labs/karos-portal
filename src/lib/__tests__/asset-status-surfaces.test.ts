@@ -245,7 +245,17 @@ function asset(overrides: Partial<Asset> = {}): Asset {
     title: TITLE,
     content: "Body",
     createdBy: "staff-1",
-    createdAt: NOW - 10 * DAY,
+    /**
+     * TODAY, since SCRUM-417. The client's slot on Home is now "Generated
+     * today" - `Recent activity` is what STAFF get there - and that card
+     * selects on `createdAt` being the current calendar day. At `NOW - 10 * DAY`
+     * the client-viewer tests below rendered an empty card, and the
+     * `toContain(TITLE)` non-vacuity line each of them carries is what said so
+     * rather than letting their negatives pass against nothing. The delivery
+     * fields stay ten days back, because the archive-window and
+     * delivery-stamp behaviour they exercise is a different question.
+     */
+    createdAt: NOW,
     updatedAt: NOW - 2 * DAY,
     status: "published",
     type: "social_post",
@@ -263,7 +273,13 @@ function overview(assets: Asset[], viewerIsClient: boolean): string {
   );
 }
 
-describe("the client portal's Recent activity badge", () => {
+/**
+ * SCRUM-417 renamed this describe. It said "Recent activity badge", and that
+ * card is now what STAFF get in Home's second slot - a client gets "Generated
+ * today". The claim is unchanged and applies to both: the badge on a home asset
+ * row prints its viewer's register word, never the stored enum.
+ */
+describe("the client portal's home asset badge", () => {
   it("prints the client register's word, and no raw status enum", () => {
     const html = overview([asset({ status: "published" })], true);
 

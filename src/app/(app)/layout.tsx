@@ -31,6 +31,7 @@ import { ClientRail } from "@/components/client-rail";
 import { CopilotDock } from "@/components/copilot-dock";
 import { ImpersonationBanner } from "@/components/impersonation-banner";
 import { AiProcessingBanner } from "@/components/ai-processing-banner";
+import { RunProgressDock } from "@/components/run-progress-dock";
 import { ClientContextBar } from "@/components/client-context-bar";
 import { StaffCopilotDock } from "@/components/staff-chatbot-widget";
 import { StaffShellMain } from "@/components/staff-shell-main";
@@ -269,6 +270,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               </main>
             </div>
 
+            {/* SCRUM-416: a run the reader started stays visible here across
+                every navigation in the tab, so the thirty-minute estimate is no
+                longer the only thing they were given. Renders nothing, and
+                polls nothing, when there is no run in flight. */}
+            <RunProgressDock viewerIsClient />
+
             <CopilotDock
               clientId={client.id}
               viewerUid={user.uid}
@@ -318,6 +325,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <div className="@container mx-auto w-full max-w-6xl animate-fade-up">{children}</div>
           </StaffShellMain>
         </div>
+        {/* SCRUM-416, staff side. Same watch, different sentences and a /jobs
+            link: a staff member who fires a run from the agent detail page used
+            to be handed a modal and nothing else once they closed it. */}
+        <RunProgressDock viewerIsClient={false} />
+
         {/* Docked copilot right-rail - visible when admin selects a client via "View as Client" */}
         <StaffCopilotDock userName={user.name} viewerUid={user.uid} />
       </div>

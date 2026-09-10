@@ -11,21 +11,19 @@
  */
 
 import { useRef, useState, useTransition } from "react";
-import { JobStatusBadge } from "@/components/job-status";
-import type { JobStatus } from "@/lib/types";
-import { formatDate, relativeTime } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, CardTitle, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { CompanyNewsBox, type CompanyNewsRowView } from "@/components/company-news-box";
 import { SavedFormCard } from "@/components/saved-form-card";
 import { ClientSeatRemove } from "@/components/client-seat-remove";
-import { IntakeNoRuns } from "@/components/intake-no-runs";
+import { RequiredMark, fieldError } from "@/components/intake-field";
 import {
-  clientArchiveLink,
-  intakeAnchorId,
-  intakeSeatAnchorId,
-} from "@/lib/agent-intake-links";
+  IntakeFeedbackBox,
+  type IntakeFeedbackRowView,
+  type IntakeRunRowView,
+} from "@/components/intake-feedback-box";
+import { intakeAnchorId, intakeSeatAnchorId } from "@/lib/agent-intake-links";
 import { INTAKE_UPLOAD_FAILED, intakeSave } from "@/lib/intake-save";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { useSetupFireWindow } from "@/components/setup-fire-window";
@@ -70,26 +68,15 @@ export interface LiSeatView {
   voiceReady?: boolean;
 }
 
-export interface LiFeedbackRowView {
-  id: string;
-  account: string;
-  action: string;
-  /**
-   * The lane this row was written against, humanised server-side
-   * (agent-intake-views' draftLabelOf). Absent when the stored ref names no
-   * lane; the raw ref never crosses — it is the log's join key, not copy.
-   */
-  draftLabel?: string;
-  createdAt: number;
-}
-
-export interface LiRunRowView {
-  id: string;
-  /** Typed so the row renders through JobStatusBadge, never the raw word. */
-  status: JobStatus;
-  createdAt: number;
-  href?: string;
-}
+/**
+ * The feedback and run row shapes are the SHARED ones (SCRUM-412). They were
+ * declared here and in x-agent-intake.tsx, byte for byte identical, which is
+ * what let one 135-line component be written out twice. These aliases keep the
+ * `Li…` names their readers already import (agent-intake-views.ts) while there
+ * is exactly one definition.
+ */
+export type LiFeedbackRowView = IntakeFeedbackRowView;
+export type LiRunRowView = IntakeRunRowView;
 
 /**
  * One "what should we cover next" row — the v2 live section's Section A0. The
@@ -581,19 +568,6 @@ function SeatSetup({
       )}
     </div>
   );
-}
-
-/**
- * The marker for a field the server refuses to save empty. The seat forms
- * rejected a blank "must never post" answer while marking nothing required, so
- * the only way to learn the rule was to fail the save.
- */
-function RequiredMark() {
-  return <span className="ml-1 text-danger">*</span>;
-}
-
-function fieldError(error: string | null) {
-  return error ? <p className="mt-2 text-xs text-danger">{error}</p> : null;
 }
 
 /**
@@ -1239,142 +1213,6 @@ function AddSeatForm({
   );
 }
 
-/* ──────────────── feedback box (free-form, per account) ─────────────── */
-
-function FeedbackBox({
-  clientId,
-  seats,
-  runs,
-  recent,
-  isStaff,
-}: {
-  clientId: string;
-  seats: LiSeatView[];
-  runs: LiRunRowView[];
-  recent: LiFeedbackRowView[];
-  isStaff: boolean;
-}) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState(false);
-  const [account, setAccount] = useState("program");
-  const [note, setNote] = useState("");
-
-  const accountName = (id: string) =>
-    id === "company" ? "Company page" : id === "program" ? "Everything" : (seats.find((s) => s.id === id)?.name ?? "Seat");
-  // #90: `?tab=archive` is read only by ProgressView, and a staff viewer at the
-  // flat /tasks never gets one. The destination and its label move together.
-  const archive = clientArchiveLink({ clientId, isStaff });
-
-  function submit() {
-    setError(null);
-    setSent(false);
-    start(async () => {
-      const result = await intakeSave(() =>
-        addLiDraftFeedbackAction({ clientId, account, action: "note", reason: note }),
-      );
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      setNote("");
-      setSent(true);
-      router.refresh();
-    });
-  }
-
-  return (
-    <Card className="p-5">
-      <CardTitle>Feedback</CardTitle>
-      <p className="mt-1 text-sm text-muted">
-        Tell us what is working and what is not. In your own words, as much detail as you like.
-        It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
-        picking, editing and skipping happens on the drafts themselves, in{" "}
-        <a href={archive.href} className="underline hover:text-foreground">
-          {archive.label}
-        </a>
-        , and each of those choices reaches the agent too.
-      </p>
-      {runs.length > 0 ? (
-        /* The run's state through the app's own mapper - these used to print the
-           raw database word ("review", "queued", "failed") into client-facing
-           copy, beside a machine date, on a line with nothing to click. */
-        <ul className="mt-3 space-y-1.5">
-          {runs.slice(0, 4).map((r) => {
-            /* C2 (parity pass 2026-09). The CLIENT'S sentence is the primary
-               text for BOTH roles. Staff used to read `Run <date>` in its
-               place, so one row said two different things and a staff preview
-               of this page could not be compared with what the client gets.
-               They lose nothing: the exact generation instant they debug with
-               is appended as a muted secondary suffix, and the /jobs link -
-               staff-only, staff-guarded, and outside the client workspace -
-               rides on that suffix behind an Internal marker. The per-day
-               collapse for clients still happens server-side (toRunRowViews). */
-            const label = `Worked on your content · ${relativeTime(r.createdAt)}`;
-            const stamp = `Run ${formatDate(r.createdAt)}`;
-            return (
-              <li key={r.id} className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                <span>{label}</span>
-                {isStaff &&
-                  (r.href ? (
-                    <a href={r.href} className="text-muted-2 underline hover:text-foreground">
-                      {stamp}
-                    </a>
-                  ) : (
-                    <span className="text-muted-2">{stamp}</span>
-                  ))}
-                {isStaff && r.href && <Badge tone="neutral">Internal</Badge>}
-                <JobStatusBadge status={r.status} />
-              </li>
-            );
-          })}
-        </ul>
-      ) : (
-        <IntakeNoRuns clientId={clientId} noun="posts" />
-      )}
-      <div className="mt-4 space-y-3">
-        <div className="max-w-xs">
-          <Label htmlFor="lf-account">This is about</Label>
-          <Select id="lf-account" value={account} onChange={(e) => setAccount(e.target.value)}>
-            <option value="program">Everything</option>
-            <option value="company">Company page</option>
-            {seats.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <Textarea
-          rows={5}
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder="Explain the problem or the win. Too corporate? Wrong topics? A draft style you want more of? Write it like you would to a teammate."
-        />
-        {fieldError(error)}
-        <div className="flex items-center gap-3">
-          <Button onClick={submit} disabled={pending || !note.trim()}>
-            {pending ? "Sending…" : "Send feedback"}
-          </Button>
-          {sent ? <span className="text-xs text-muted">Sent. It feeds the next run.</span> : null}
-        </div>
-      </div>
-      {recent.length > 0 ? (
-        <ul className="mt-4 space-y-2 border-t border-border pt-4">
-          {recent.slice(0, 6).map((f) => (
-            <li key={f.id} className="text-xs text-muted">
-              <span className="text-foreground">{accountName(f.account)}</span> ·{" "}
-              {f.action === "note" ? "feedback" : f.action.replace(/_/g, " ")}
-              {f.draftLabel ? ` · ${f.draftLabel}` : ""} · {relativeTime(f.createdAt)}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </Card>
-  );
-}
-
 /* ────────────────────────── the page body ───────────────────────── */
 
 export function LinkedInAgentIntake({
@@ -1437,7 +1275,7 @@ export function LinkedInAgentIntake({
   /** `isBillableClientActor()` — decides whose money the quote names, not the figure. */
   viewerIsBilled?: boolean;
   pageUrlSuggestion?: string;
-  /** Whose vocabulary the run rows are written in - see FeedbackBox. */
+  /** Whose vocabulary the run rows are written in - see IntakeFeedbackBox. */
   isStaff: boolean;
 }) {
   return (
@@ -1491,12 +1329,14 @@ export function LinkedInAgentIntake({
       <div id={intakeAnchorId("news")} className="scroll-mt-24">
         <CompanyNewsBox clientId={clientId} rows={news} />
       </div>
-      <FeedbackBox
+      <IntakeFeedbackBox
         clientId={clientId}
+        family="linkedin"
         seats={seats}
         runs={runs}
         recent={feedback}
         isStaff={isStaff}
+        sendNote={addLiDraftFeedbackAction}
       />
     </div>
   );

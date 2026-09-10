@@ -12,7 +12,7 @@ import {
   type AgentEngineRunRecord,
   type AgentEngineRunView,
 } from "./read-run";
-import type { Job } from "@/lib/types";
+import type { Job, JobStatus } from "@/lib/types";
 
 /**
  * What this run cost Karos, in USD, or undefined when the engine reported
@@ -166,6 +166,32 @@ export function isJobInProgress(job: Job, agentEngineView?: AgentEngineRunView):
     return agentEngineView === undefined || terminalJobUpdate(agentEngineView.run, job.agentEngineProductId) === undefined;
   }
   return job.status === "running" || job.status === "queued";
+}
+
+/**
+ * The status a reader should be SHOWN for this job, which is not always the one
+ * on the document.
+ *
+ * `job.status` for an agent-engine run only changes when something persists the
+ * reverse-completion update, and the two places that do (the staff Job page and
+ * the reconcile sweep) both write. A read-only poller therefore sees a job that
+ * says `running` for as long as nobody has been looking - which is exactly the
+ * window a client watching their own run is in. Pairing the stale word with
+ * `isJobInProgress`'s honest `false` would put a "still working" sentence under
+ * a stopped spinner.
+ *
+ * So this is the same question `isJobInProgress` asks, answered as a WORD
+ * rather than a boolean, through the same `terminalJobUpdate` mapping - one
+ * table, three readers, and no second list of which engine statuses are
+ * terminal. It persists nothing: a caller that wants the document brought up to
+ * date calls `scheduleAgentEngineJobStatusSync` instead, and this deliberately
+ * does not, because a poll must not be a write path.
+ */
+export function reconciledJobStatus(job: Job, agentEngineView?: AgentEngineRunView): JobStatus {
+  if (!job.agentEngineRunId || agentEngineView === undefined) return job.status;
+  return (
+    terminalJobUpdate(agentEngineView.run, job.agentEngineProductId)?.status ?? job.status
+  );
 }
 
 /**

@@ -53,6 +53,22 @@ const read = (rel: string) => readFileSync(path.join(REPO, rel), "utf8");
 /** The component that owns one family's intake surface — named by the family. */
 const surfaceOf = (family: AgentIntake["agent"]) => `src/components/${family}-agent-intake.tsx`;
 
+/**
+ * The archive link a surface renders, wherever it lives.
+ *
+ * SCRUM-412: LinkedIn's and X's feedback card moved into the shared
+ * `intake-feedback-box.tsx`, and the archive anchor moved with it. Reading only
+ * the family's own file would report the link as GONE from those two pages,
+ * which is the opposite of true - so read the family's file plus the shared
+ * section it mounts. Named by the mount, so a surface that stops mounting it
+ * has to answer for the link itself again.
+ */
+const FEEDBACK_BOX = "src/components/intake-feedback-box.tsx";
+const surfaceClosure = (family: AgentIntake["agent"]) => {
+  const own = read(surfaceOf(family));
+  return own.includes("<IntakeFeedbackBox") ? `${own}\n${read(FEEDBACK_BOX)}` : own;
+};
+
 const NOW = Date.UTC(2026, 7, 1, 12, 0, 0);
 
 function makeSeat(overrides: Partial<ClientSeat> = {}): ClientSeat {
@@ -425,7 +441,7 @@ describe("#90 — the archive link resolves for the viewer who is reading it", (
 
   it("leaves no hard-coded client-shaped archive URL on the three surfaces", () => {
     for (const family of ["x", "linkedin", "reddit"] as const) {
-      const code = stripComments(read(surfaceOf(family)));
+      const code = stripComments(surfaceClosure(family));
       expect(code, surfaceOf(family)).not.toContain('"/tasks?tab=archive"');
       expect(code, surfaceOf(family)).toContain("clientArchiveLink({ clientId, isStaff })");
     }
@@ -439,7 +455,7 @@ describe("#90 — the archive link resolves for the viewer who is reading it", (
     // returning with the URL left correct.
     for (const family of ["x", "linkedin", "reddit"] as const) {
       const rel = surfaceOf(family);
-      const links = anchorsRendering(stripComments(read(rel)), "{archive.label}");
+      const links = anchorsRendering(stripComments(surfaceClosure(family)), "{archive.label}");
       expect(links.length, `${rel}: nothing renders {archive.label}`).toBeGreaterThan(0);
       for (const link of links) {
         expect(link, `${rel}: {archive.label} is rendered outside any <a>`).not.toBeNull();

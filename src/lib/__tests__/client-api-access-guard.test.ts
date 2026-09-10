@@ -642,6 +642,11 @@ describe("every route file under /api/clients/[id] calls the fence once per hand
  *             acts on arrives proven rather than asserted by the caller
  *   self    → MUST NOT read a client id out of the request at all; the check is
  *             mechanical, so mis-filing a client-scoped route here is a failure
+ *   resource → reads NO client id off the request either, and fences on the one
+ *             it found INSIDE the document it loaded, through
+ *             `requireClientAccess`. Both halves are checked: the `self` test
+ *             above plus the named call, because "it loads a document first" is
+ *             only a fence if something then asks about it
  *
  * The `self` bucket is the load-bearing one and the reason this can be trusted:
  * an exemption justified by a human sentence would have admitted all four of the
@@ -650,7 +655,7 @@ describe("every route file under /api/clients/[id] calls the fence once per hand
 describe("every API route that takes a client id asks the fence", () => {
   const API_ROOT = join(process.cwd(), "src/app/api");
 
-  const CLASSIFIED: Record<string, "fenced" | "cron" | "signed" | "self"> = {
+  const CLASSIFIED: Record<string, "fenced" | "cron" | "signed" | "self" | "resource"> = {
     "agent-engine/reconcile": "cron",
     // Signs a PUT into `clients/<id>/run-attachments/`, so the id arrives
     // asserted by the caller and the fence is the only thing between a guessed
@@ -699,6 +704,15 @@ describe("every API route that takes a client id asks the fence", () => {
     mcp: "signed",
     publish: "cron",
     "run-scheduled": "cron",
+    /**
+     * SCRUM-416. The `self` bucket would have passed it mechanically - it reads
+     * no client id off the request - but that would undersell what it does:
+     * it loads the job, takes the client id OFF THAT DOCUMENT, and hands it to
+     * `requireClientAccess`. `jobs/[id]/status` beside it answers the same
+     * question for staff only and needs no fence at all; this one is reachable
+     * by a CLIENT_USER, so the fence is the whole point of the route.
+     */
+    "runs/[id]/progress": "resource",
     runway: "cron",
     scheduler: "cron",
     "tasks/auto-generate": "cron",
@@ -790,6 +804,19 @@ describe("every API route that takes a client id asks the fence", () => {
           /\bBearer\b/.test(src),
         "filed as signed but verifies no signature, state or bearer token",
       ).toBe(true);
+    }
+
+    if (bucket === "resource") {
+      // The CALL, not the mention: an import line carries the identifier too.
+      expect(src, "filed as resource-fenced but never calls requireClientAccess")
+        .toMatch(/\brequireClientAccess\s*\(/);
+      // And the id it fences on must come off a loaded document, not the
+      // request - the same mechanical check `self` gets, for the same reason.
+      const reads = FROM_REQUEST.filter((re) => re.test(src));
+      expect(
+        reads.length,
+        `filed as resource-fenced but takes a client id from the request (${reads.length} pattern(s) matched)`,
+      ).toBe(0);
     }
 
     if (bucket === "self") {

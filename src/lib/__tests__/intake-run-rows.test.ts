@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { collapseRunsPerDay, runDayKey } from "@/lib/client-run-rows";
+import { ALL_INTAKE_FAMILIES, intakeRunNoun } from "@/lib/intake-run-noun";
 
 /**
  * The run history on the X, LinkedIn and Reddit intake cards.
@@ -77,6 +78,10 @@ const SURFACES = [
   "src/components/reputation-agent-intake.tsx",
 ] as const;
 
+/** The one component that renders the row, and the one section that wraps it. */
+const ROWS = "src/components/intake-run-rows.tsx";
+const BOX = "src/components/intake-feedback-box.tsx";
+
 describe("the intake cards' run rows", () => {
   it("collapse a client's runs on the server, before the payload", () => {
     const views = readFileSync(join(process.cwd(), "src/lib/agent-intake-views.ts"), "utf8");
@@ -92,33 +97,65 @@ describe("the intake cards' run rows", () => {
   it("print the same primary sentence to both roles, with the instant appended for staff", () => {
     // PARITY PASS (2026-09). This used to assert the OPPOSITE: that the row's
     // one label SPLIT on the viewer, `Run <date>` for staff and the relative
-    // sentence for a client. That is the divergence the parity ruling removed —
+    // sentence for a client. That is the divergence the parity ruling removed -
     // a staff member previewing an intake page read a different row from the
     // one the client gets, on a card that is otherwise identical. The client's
     // sentence is now the primary text for both, the instant staff debug with
     // is a secondary suffix, and the /jobs link on it carries an Internal
     // marker because it leaves the client workspace.
+    //
+    // SCRUM-412: this block used to ask all six intake files the same four
+    // questions, because the row was written out six times. It is now ONE
+    // component, so the four questions are asked once - and the sixfold claim
+    // becomes the mount check below, which is a stronger thing to know.
+    const src = readFileSync(join(process.cwd(), ROWS), "utf8");
+    expect(src, "the shared rows do not use the relative sentence").toMatch(
+      /const label = `Worked on your content · \$\{relativeTime\(r\.createdAt\)\}`/,
+    );
+    // The split label, gone.
+    expect(src, "the shared rows still split the run stamp by viewer").not.toMatch(
+      /isStaff\s*\?\s*`Run \$\{formatDate\(r\.createdAt\)\}`/,
+    );
+    // Staff keep the instant - additively, and gated.
+    expect(src, "the shared rows drop the staff stamp").toMatch(
+      /const stamp = `Run \$\{formatDate\(r\.createdAt\)\}`/,
+    );
+    expect(src, "the shared rows show the staff stamp to everyone").toMatch(
+      /\{isStaff &&\s*\(r\.href \?/,
+    );
+    // The staff-only route out is marked as one.
+    expect(src, "the shared rows do not mark the /jobs link as internal").toMatch(
+      /\{isStaff && r\.href && <Badge tone="neutral">Internal<\/Badge>\}/,
+    );
+    // The oldest form, still gone: an exact generation date to whoever asked.
+    expect(src).not.toMatch(/<span>Run \{formatDate\(r\.createdAt\)\}<\/span>/);
+  });
+
+  it("are rendered by that one component on every surface, and re-spelled on none", () => {
+    // The claim the six-file loop used to make, said properly. A surface that
+    // hand-rolls the row again fails here even if it copies it perfectly.
     for (const rel of SURFACES) {
       const src = readFileSync(join(process.cwd(), rel), "utf8");
-      expect(src, `${rel} does not use the shared relative sentence`).toMatch(
-        /const label = `Worked on your content · \$\{relativeTime\(r\.createdAt\)\}`/,
+      const reach = src.includes("<IntakeRunRows") || src.includes("<IntakeFeedbackBox");
+      expect(reach, `${rel} mounts neither IntakeRunRows nor the box that holds it`).toBe(true);
+      expect(src, `${rel} spells the run row itself`).not.toMatch(
+        /const label = `Worked on your content/,
       );
-      // The split label, gone.
-      expect(src, `${rel} still splits the run stamp by viewer`).not.toMatch(
-        /isStaff\s*\?\s*`Run \$\{formatDate\(r\.createdAt\)\}`/,
+      expect(src, `${rel} hand-spells its own empty-state noun`).not.toMatch(
+        /<IntakeNoRuns/,
       );
-      // Staff keep the instant — additively, and gated.
-      expect(src, `${rel} drops the staff stamp`).toMatch(
-        /const stamp = `Run \$\{formatDate\(r\.createdAt\)\}`/,
-      );
-      expect(src, `${rel} shows the staff stamp to everyone`).toMatch(/\{isStaff &&\s*\(r\.href \?/);
-      // The staff-only route out is marked as one.
-      expect(src, `${rel} does not mark the /jobs link as internal`).toMatch(
-        /\{isStaff && r\.href && <Badge tone="neutral">Internal<\/Badge>\}/,
-      );
-      // The oldest form, still gone: an exact generation date to whoever asked.
-      expect(src).not.toMatch(/<span>Run \{formatDate\(r\.createdAt\)\}<\/span>/);
     }
+  });
+
+  it("take the empty state's noun from the one register, for every family", () => {
+    // Five spellings for six surfaces, hand-typed at each mount, with two
+    // families saying "replies" by coincidence rather than by rule.
+    expect(ALL_INTAKE_FAMILIES).toHaveLength(SURFACES.length);
+    const nouns = ALL_INTAKE_FAMILIES.map(intakeRunNoun);
+    for (const n of nouns) expect(n).toMatch(/^[a-z]+s$/); // plural, after "your"
+    expect(intakeRunNoun("newsletter")).toBe("issues");
+    expect(intakeRunNoun("blog")).toBe("articles");
+    expect(intakeRunNoun("linkedin")).toBe(intakeRunNoun("x"));
   });
 
   it("never tells a client their work arrives in batches", () => {
@@ -126,7 +163,13 @@ describe("the intake cards' run rows", () => {
     // team approves a batch"). The approval step stays named — clients need to
     // know a human sees it first — but the shipping unit is not their business.
     for (const rel of SURFACES) {
-      const src = readFileSync(join(process.cwd(), rel), "utf8");
+      // SCRUM-412: LinkedIn's and X's feedback copy moved into the shared box,
+      // so the text a client reads on those two pages is their own file PLUS
+      // that module. Read the closure, not the file, or this stops asking.
+      const own = readFileSync(join(process.cwd(), rel), "utf8");
+      const src = own.includes("<IntakeFeedbackBox")
+        ? own + readFileSync(join(process.cwd(), BOX), "utf8")
+        : own;
       const rendered = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
       expect(rendered, `${rel} still says "batch" to the client`).not.toMatch(/\bbatch\b/i);
       // The newsletter's noun is singular because one run prepares ONE issue —
