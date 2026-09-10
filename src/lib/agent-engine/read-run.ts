@@ -150,6 +150,8 @@ export async function readAgentEngineRun(runId: string): Promise<AgentEngineRunV
  */
 export async function readAgentEngineRunProgress(runId: string): Promise<
   | {
+      /** The run doc itself — enough for `isJobInProgress` / `reconciledJobStatus`. */
+      run: AgentEngineRunRecord;
       status: AgentEngineRunRecord["status"];
       currentStepId: string | null;
       currentStepKind: AgentEngineStepRecord["kind"] | null;
@@ -174,6 +176,7 @@ export async function readAgentEngineRunProgress(runId: string): Promise<
   const currentStepId = run.currentStepId ?? null;
   const current = currentStepId ? steps.find((s) => s.stepId === currentStepId) : undefined;
   return {
+    run,
     status: run.status,
     currentStepId,
     currentStepKind: current?.kind ?? null,

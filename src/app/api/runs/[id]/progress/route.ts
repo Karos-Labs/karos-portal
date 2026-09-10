@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 
 import { requireClientAccess } from "@/lib/actions/_shared";
-import { readAgentEngineRun } from "@/lib/agent-engine/read-run";
+import { readAgentEngineRunProgress } from "@/lib/agent-engine/read-run";
 import { isJobInProgress, reconciledJobStatus } from "@/lib/agent-engine/reconcile";
+import { phaseProgress } from "@/lib/agent-run-phases";
 import { getJob } from "@/lib/data";
-import type { RunProgressView } from "@/lib/run-progress";
+import { runOutcome, type RunProgressView } from "@/lib/run-progress";
 
 /**
  * The narrow "how is my run doing" endpoint, for the reader who started it.
@@ -37,7 +38,17 @@ import type { RunProgressView } from "@/lib/run-progress";
  *
  * WHAT CROSSES is `RunProgressView` and nothing else. Not `job.error` (an
  * internal string, and the client copy for a stopped run says what to do
- * instead), not the engine run id, not the deliverable ids.
+ * instead), not the engine run id, not the deliverable ids — and not the
+ * engine's step ids either: the phase is resolved HERE into the six client
+ * words, so `07d-dedupe-check-attempt-1` never reaches a browser.
+ *
+ * THE LEAN READ (2026-09-10). This polled `readAgentEngineRun`, which reads
+ * every step's `output` — the step's actual product, sometimes large — and the
+ * gate payload, to answer a question that only ever needed the run doc: both
+ * reconcile predicates read `view.run` and nothing else. An Instagram run
+ * records 29 steps, and this route is hit every four seconds per watched run.
+ * `readAgentEngineRunProgress` selects the three step fields the phase needs
+ * and returns the run doc for the predicates.
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -50,13 +61,31 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
-  const view = job.agentEngineRunId ? await readAgentEngineRun(job.agentEngineRunId) : undefined;
+  const progress = job.agentEngineRunId
+    ? await readAgentEngineRunProgress(job.agentEngineRunId)
+    : undefined;
+  const view = progress ? { run: progress.run } : undefined;
   // The WORD and the BOOLEAN come from the same mapping, so a run whose
   // `jobs` document has not caught up yet cannot be reported as still working
   // under a stopped spinner. See reconciledJobStatus.
+  const status = reconciledJobStatus(job, view);
+  const outcome = runOutcome(status);
   const body: RunProgressView = {
-    status: reconciledJobStatus(job, view),
+    status,
     inProgress: isJobInProgress(job, view),
+    // The phase rides with the SAME answer, so "Writing the copy" can never sit
+    // beside a ladder that says the run is in review. A stopped run gets none:
+    // there is no honest phase for work that did not happen.
+    ...(progress && outcome !== "stopped"
+      ? {
+          phase: phaseProgress({
+            currentStepId: progress.currentStepId,
+            currentStepKind: progress.currentStepKind,
+            recordedStepIds: progress.recordedStepIds,
+            finished: progress.run.status === "completed",
+          }),
+        }
+      : {}),
   };
   return NextResponse.json(body);
 }

@@ -19,6 +19,7 @@ import { NewsletterAgentIntake } from "@/components/newsletter-agent-intake";
 import { RedditAgentIntake } from "@/components/reddit-agent-intake";
 import { XAgentIntake } from "@/components/x-agent-intake";
 import { InlinePanel, Modal } from "@/components/modal";
+import { AgentRunProgress } from "@/components/client-agents/run-progress";
 import { StaffOnlySection } from "@/components/staff-only-section";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
@@ -2795,6 +2796,9 @@ export function RunCustomAgentModal({
       ? (watchedRuns.find((r) => r.jobId === startedJobId)?.status ?? "queued")
       : "queued";
     const outcome = startedJobId ? (outcomeOf(startedJobId) ?? "working") : "working";
+    const phase = startedJobId
+      ? watchedRuns.find((r) => r.jobId === startedJobId)?.phase
+      : undefined;
     return (
       <Shell open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
@@ -2817,17 +2821,31 @@ export function RunCustomAgentModal({
               : `The agent is working on this ${outputNoun}.`}
           </p>
 
-          {/* The ladder, from the sanctioned register - not a fourth spelling
-              of "queued / running / in review". Same component the client's own
-              agent page mounts for an in-flight run. */}
-          <ManagedJobProgress
-            status={watchedStatus as JobStatus}
-            className="mb-0 mt-1"
-          />
+          {/* WHAT THE AGENT IS DOING, when the engine has said (2026-09-10) —
+              "Writing the copy", "Making the visuals", "Waiting for your Karos
+              team to review" — from the same poll that answers the ladder, so
+              the two can never disagree. The ladder stays for a run with no
+              engine behind it (a legacy agent-service job), which has no step
+              to report; it answers queued / running / in review from the
+              sanctioned register rather than a fourth spelling of those. */}
+          {phase ? (
+            <AgentRunProgress
+              steps={phase.phases.map((p) => ({ id: p.id, label: p.label, state: p.state }))}
+              headline={phase.headline}
+              done={phase.done}
+              total={phase.total}
+              finished={outcome !== "working" && phase.done === phase.total}
+            />
+          ) : (
+            <ManagedJobProgress status={watchedStatus as JobStatus} className="mb-0 mt-1" />
+          )}
 
           <p className="text-xs leading-relaxed text-muted">
             {runOutcomeSentence(outcome, viewerIsClient)}
-            {outcome === "working" ? ` It usually takes ${RUN_ESTIMATE_SENTENCE}.` : ""}
+            {/* The estimate is CONTEXT for a bar that cannot say where the run
+                is. Beside a phase that names the step, it is a number standing
+                next to the thing it was guessing at — so it goes. */}
+            {outcome === "working" && !phase ? ` It usually takes ${RUN_ESTIMATE_SENTENCE}.` : ""}
           </p>
 
           {/* WHERE IT LANDS, for the reader who has somewhere to look (#415).

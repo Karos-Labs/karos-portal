@@ -33,6 +33,7 @@ import Link from "next/link";
 
 import { Icon } from "@/components/icon";
 import { ManagedJobProgress } from "@/components/managed-job-progress";
+import { AgentRunProgress } from "@/components/client-agents/run-progress";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { useRestoreRunPolling, useRunWatch, type WatchedRun } from "@/components/run-watch";
 import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
@@ -77,14 +78,30 @@ function DockRow({
         </button>
       </div>
 
-      <ManagedJobProgress
-        status={status}
-        className="mb-0 mt-2 rounded-md px-2.5 py-2"
-      />
+      {/* The bar and the step it is on, WITHOUT the six-row list: this is a
+          20rem card that sits over whatever page the reader went to next, and
+          the list would make it as tall as the thing it is covering. The
+          started panel carries the list. A run with no engine behind it keeps
+          the ladder — it has no step to report. */}
+      {run.phase ? (
+        <div className="mt-2">
+          <AgentRunProgress
+            steps={[]}
+            headline={run.phase.headline}
+            done={run.phase.done}
+            total={run.phase.total}
+            finished={outcome !== "working" && run.phase.done === run.phase.total}
+          />
+        </div>
+      ) : (
+        <ManagedJobProgress status={status} className="mb-0 mt-2 rounded-md px-2.5 py-2" />
+      )}
 
       <p className="mt-2 text-xs leading-relaxed text-muted">
         {runOutcomeSentence(outcome, viewerIsClient)}
-        {outcome === "working" ? ` It usually takes ${RUN_ESTIMATE_SENTENCE}.` : ""}
+        {/* Only beside the ladder, which cannot say where the run is. Beside a
+            named step the estimate is a guess standing next to the answer. */}
+        {outcome === "working" && !run.phase ? ` It usually takes ${RUN_ESTIMATE_SENTENCE}.` : ""}
       </p>
 
       {outcome === "landed" && run.href && (

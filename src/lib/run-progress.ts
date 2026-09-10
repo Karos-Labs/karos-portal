@@ -21,6 +21,7 @@
  * error here rather than a status that silently reads as "working" forever.
  */
 
+import type { PhaseProgress } from "@/lib/agent-run-phases";
 import type { JobStatus } from "@/lib/types";
 
 /** What the reader should do about this run, which is not the same as its status. */
@@ -68,6 +69,18 @@ export interface RunProgressView {
   status: string;
   /** The run has not reached a terminal state. Computed server-side. */
   inProgress: boolean;
+  /**
+   * WHAT THE AGENT IS DOING, when an engine run says (2026-09-10). The ladder
+   * above answers queued / running / in review; this answers "writing the
+   * copy", from the step agent-engine is executing right now — the six phases
+   * in `lib/agent-run-phases.ts`, already resolved server-side, so the client
+   * never sees an engine step id.
+   *
+   * Omitted when there is no engine run (a legacy agent-service job) and when
+   * the run STOPPED: a failed run has no honest "phase", and the outcome
+   * sentence already says what to do instead.
+   */
+  phase?: PhaseProgress;
 }
 
 /** The endpoint one run's progress is polled from. One spelling, two readers. */

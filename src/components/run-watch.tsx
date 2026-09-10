@@ -39,6 +39,7 @@
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
+import type { PhaseProgress } from "@/lib/agent-run-phases";
 import {
   runOutcome,
   runProgressUrl,
@@ -64,6 +65,14 @@ export interface WatchedRun {
   href?: string;
   /** Set once the poller has an answer; absent until the first tick lands. */
   status?: string;
+  /**
+   * What the agent is doing, when the endpoint says (see RunProgressView.phase).
+   * NEVER PERSISTED — `load()` drops it. It is a four-second-old observation,
+   * and one read back from sessionStorage after a reload could be minutes
+   * stale; the first tick repopulates it, and "Starting the run" is honest in
+   * the meantime.
+   */
+  phase?: PhaseProgress;
 }
 
 const KEY = "karos.watchedRuns.v1";
@@ -98,7 +107,10 @@ function load(): WatchedRun[] {
         // field stops being checked.
         ((r as WatchedRun).href === undefined || typeof (r as WatchedRun).href === "string"),
     );
-    return rows.length === 0 ? EMPTY : rows.slice(0, MAX_WATCHED);
+    if (rows.length === 0) return EMPTY;
+    // Strip the phase: see WatchedRun.phase. Also means a malformed one from an
+    // older build can never reach a renderer.
+    return rows.slice(0, MAX_WATCHED).map(({ phase: _phase, ...rest }) => rest);
   } catch {
     return EMPTY;
   }
@@ -185,7 +197,7 @@ async function pollOnce() {
         if (res.status === 404) return { jobId, gone: true as const };
         if (!res.ok) return null; // transient - ask again next tick
         const data = (await res.json()) as RunProgressView;
-        return { jobId, status: data.status };
+        return { jobId, status: data.status, ...(data.phase ? { phase: data.phase } : {}) };
       } catch {
         return null; // network hiccup, same as a non-OK response
       }
@@ -199,7 +211,18 @@ async function pollOnce() {
     .filter((r) => !answered.some((a) => a.jobId === r.jobId && "gone" in a))
     .map((r) => {
       const hit = answered.find((a) => a.jobId === r.jobId && "status" in a);
-      return hit && "status" in hit && hit.status !== r.status ? { ...r, status: hit.status } : r;
+      if (!hit || !("status" in hit)) return r;
+      // A PHASE CHANGE IS A CHANGE. The status stays `running` while the agent
+      // moves from writing the copy to making the visuals, so comparing the
+      // status alone would drop every step the reader came here to watch. The
+      // headline and the count identify a phase; comparing the objects would
+      // re-render on every tick, because each response is a fresh object.
+      const nextPhase = "phase" in hit ? hit.phase : undefined;
+      const phaseMoved =
+        nextPhase?.headline !== r.phase?.headline || nextPhase?.done !== r.phase?.done;
+      if (hit.status === r.status && !phaseMoved) return r;
+      const { phase: _stale, ...base } = r;
+      return { ...base, status: hit.status, ...(nextPhase ? { phase: nextPhase } : {}) };
     });
   // Reference equality is what stops a tick that learned nothing from
   // re-rendering every reader.
