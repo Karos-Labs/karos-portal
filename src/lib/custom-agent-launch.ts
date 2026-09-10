@@ -13,6 +13,11 @@ import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import type { CustomAgent } from "@/lib/types";
 import { RUN_ESTIMATE } from "@/lib/run-estimate";
+import {
+  STEER_RUN_HELPER,
+  STEER_RUN_HELPER_WITH_KIND,
+  STEER_RUN_LABEL,
+} from "@/lib/intake-steer-copy";
 import { ENGINE_PRODUCTS_READING_MEDIA_ASSETS } from "@/lib/agent-engine/product-mapping";
 
 /**
@@ -438,7 +443,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         },
         {
           key: "request",
-          label: "Anything to lean into this run?",
+          label: STEER_RUN_LABEL,
           type: "textarea",
           // WAS "it wins over everything else this run" — a precedence the
           // engine does not implement for this product. engine-field-contract
@@ -457,8 +462,15 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           // honest thing ("The agent works from the stored X agent data either
           // way"), as does the other LinkedIn profile in this file. This now
           // matches its own siblings rather than describing an intention.
-          helper:
-            "Optional, and it steers this run only. Kind of post above still decides the shape. For a standing steer, use \"What should we cover next?\" in your LinkedIn agent data instead.",
+          // THE REDIRECT IS GONE (SCRUM-411). It sent the reader to "What
+          // should we cover next?" for a standing steer - which is true, and
+          // was also the sentence that made this field read as a duplicate of
+          // that box: a field whose own helper names another box as the real
+          // one has admitted it. Both boxes now state their own scope where the
+          // reader is (see lib/intake-steer-copy.ts), so there is nothing to
+          // point at. The "Kind of post decides the shape" half stays: that is
+          // SCRUM-409's correction and it is a fact about the engine.
+          helper: STEER_RUN_HELPER_WITH_KIND,
           placeholder: "A launch to build up to, a topic to hit.",
         },
       ],
@@ -531,9 +543,9 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
       fields: [
         {
           key: "request",
-          label: "Anything to lean into this run?",
+          label: STEER_RUN_LABEL,
           type: "textarea",
-          helper: "Optional. The agent works from the stored LinkedIn agent data either way.",
+          helper: STEER_RUN_HELPER,
           placeholder: "A launch to feature, a topic to hit.",
         },
       ],
@@ -670,9 +682,9 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         },
         {
           key: "request",
-          label: "Anything to lean into this run?",
+          label: STEER_RUN_LABEL,
           type: "textarea",
-          helper: "Optional. The agent works from the stored X agent data either way.",
+          helper: STEER_RUN_HELPER,
           placeholder: "A launch to feature, a topic to hit, a seat to focus on.",
         },
       ],

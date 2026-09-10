@@ -25,6 +25,7 @@ import {
 } from "@/components/intake-feedback-box";
 import { intakeAnchorId, intakeSeatAnchorId } from "@/lib/agent-intake-links";
 import { INTAKE_UPLOAD_FAILED, intakeSave } from "@/lib/intake-save";
+import { STEER_STANDING_BODY } from "@/lib/intake-steer-copy";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { useSetupFireWindow } from "@/components/setup-fire-window";
 import { CreditPriceNote } from "@/components/credit-price-note";
@@ -156,11 +157,12 @@ function DirectionRequestsBox({
   return (
     <Card className="p-5">
       <CardTitle>What should we cover next?</CardTitle>
-      <p className="mt-1 text-sm text-muted">
-        This is the steering wheel. Add a line any day: a subject you want covered, information to
-        work in, or just what you want next. The next post starts from what is open here. Leave it
-        empty and the agent picks the subject itself.
-      </p>
+      {/* SCRUM-411: this paragraph used to invite "information to work in",
+          which is the news box's job, while the news box offered to "turn it
+          into the post", which is this box's. Each claimed the other's, a few
+          hundred pixels apart. Both now come from one register so they cannot
+          drift back into describing each other. */}
+      <p className="mt-1 text-sm text-muted">{STEER_STANDING_BODY}</p>
       <div className="mt-4 space-y-3">
         <Textarea
           rows={2}

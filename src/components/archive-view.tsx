@@ -2,10 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AgentIdentity } from "@/components/agent-identity";
+import {
+  archiveGroupFor,
+  archiveGroupLogoSlug,
+  orderArchiveGroups,
+} from "@/lib/archive-grouping";
 import { AssetDetailModal } from "@/components/asset-detail-modal";
 import { Badge, EmptyState } from "@/components/ui";
-import { Icon } from "@/components/icon";
+import { Icon, PlatformLogo } from "@/components/icon";
 import { assetImages, assetVideos } from "@/lib/asset-images";
 // The client's vocabulary for a stored status ("published" reads as "Posted")
 // used to be a local const here. It is shared now because the publish cron's
@@ -26,8 +30,16 @@ const STATUS_TONE: Record<Asset["status"], "neutral" | "success" | "warning" | "
   delivered: "success",
 };
 
+/**
+ * One archive section. Keyed by PLATFORM since SCRUM-428 - see
+ * lib/archive-grouping.ts for why it used to be keyed by agent and what that
+ * cost. The name is kept generic rather than renamed to `platform` because one
+ * section is deliberately not a platform: the "Other content" pile.
+ */
 interface AgentGroup {
   name: string;
+  /** `PlatformLogo` slug for the heading, or null for the not-a-platform pile. */
+  logoSlug: string | null;
   assets: Asset[];
   latestAt: number;
   /** Distinct template streams in this group, most-used first (F148). */
@@ -247,13 +259,27 @@ export function ArchiveView({
 
   const groups = useMemo<AgentGroup[]>(() => {
     const query = search.trim().toLowerCase();
-    const byAgent = new Map<string, Asset[]>();
+    // BY PLATFORM, not by agent (SCRUM-428). The key comes from
+    // `archiveGroupFor`, which asks the same `platformForAsset` the asset
+    // card's platform badge asks - so this page and the Assets page cannot
+    // come to disagree about what platform a post is for, which is the bug
+    // this one would otherwise turn into.
+    //
+    // THE AGENT DID NOT DISAPPEAR. It is still the secondary filter below and
+    // it is now printed on every tile, which is the trade this makes: the
+    // reader gets one Instagram section, and the agent that produced each post
+    // is a fact on the row rather than the name of a pile.
+    const byPlatform = new Map<string, Asset[]>();
     for (const asset of assets) {
       if (status !== "all" && asset.status !== status) continue;
       if (query && !asset.title.toLowerCase().includes(query)) continue;
-      const name = agentNameFor(asset);
-      if (agent !== "all" && name !== agent) continue;
-      (byAgent.get(name) ?? byAgent.set(name, []).get(name)!).push(asset);
+      // The agent filter now narrows WITHIN the platform sections rather than
+      // choosing them. It reads `agentNameFor`, which is what its own option
+      // list is built from - keying it off the group name would have silently
+      // stopped matching the moment the group stopped being the agent.
+      if (agent !== "all" && agentNameFor(asset) !== agent) continue;
+      const name = archiveGroupFor(asset);
+      (byPlatform.get(name) ?? byPlatform.set(name, []).get(name)!).push(asset);
     }
     // A3/A4: a client's rows are ordered - and stamped - by when the work
     // reached them, not by when it was generated. Ordering by `createdAt` while
@@ -264,14 +290,18 @@ export function ArchiveView({
     // agent-detail-archetypes), which is how assets-view came to sort by a
     // fourth thing nobody printed. One caller each now.
     const stampOf = (a: Asset) => deliverableStamp(a, viewerIsClient);
-    return [...byAgent.entries()]
-      .map(([name, list]) => ({
+    return orderArchiveGroups(
+      [...byPlatform.entries()].map(([name, list]) => ({
         name,
+        // Off the first asset in the section: every asset in it resolved to the
+        // same platform, so any of them answers, and the pile with no platform
+        // answers null - which is the heading that draws no mark.
+        logoSlug: archiveGroupLogoSlug(list[0]!),
         assets: [...list].sort((a, b) => stampOf(b) - stampOf(a)),
         latestAt: Math.max(...list.map(stampOf)),
         templates: templatesOf(list),
-      }))
-      .sort((a, b) => b.latestAt - a.latestAt);
+      })),
+    );
   }, [agent, agentNameFor, assets, search, status, viewerIsClient]);
 
   function toggleGroup(name: string) {
@@ -434,7 +464,21 @@ export function ArchiveView({
                 aria-expanded={!isCollapsed}
                 className="focus-ring group mb-3 -mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-2"
               >
-                <AgentIdentity identity={group.name} size="sm" />
+                {/* THE PLATFORM'S OWN MARK, not an agent avatar (SCRUM-428).
+                    `PlatformLogo` keys off a slug prefix, so the pile with no
+                    platform falls back to a neutral glyph rather than drawing
+                    somebody else's logo. */}
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-surface-2">
+                  {group.logoSlug ? (
+                    <PlatformLogo
+                      slug={group.logoSlug}
+                      className="h-3.5 w-3.5"
+                      fallback={<Icon name="FileText" className="h-3.5 w-3.5 text-muted-2" />}
+                    />
+                  ) : (
+                    <Icon name="FileText" className="h-3.5 w-3.5 text-muted-2" />
+                  )}
+                </span>
                 <h3 className="min-w-0 shrink-0 truncate text-base font-medium text-foreground">
                   {group.name}
                 </h3>
@@ -476,6 +520,7 @@ export function ArchiveView({
                       <ArchiveTile
                         key={asset.id}
                         asset={asset}
+                        agentName={agentNameFor(asset)}
                         viewerIsClient={viewerIsClient}
                         onOpen={() => handleOpenAsset(asset.id)}
                       />
@@ -530,10 +575,19 @@ export function ArchiveView({
 
 function ArchiveTile({
   asset,
+  agentName,
   viewerIsClient,
   onOpen,
 }: {
   asset: Asset;
+  /**
+   * Which agent produced this, printed on the tile since SCRUM-428.
+   *
+   * It used to be the section heading. Grouping moved to the platform, so
+   * without this the agent that made a post would be visible nowhere on the
+   * page - and it is the fact a client asks about when a post reads oddly.
+   */
+  agentName: string;
   /** Drives which moment the tile's timestamp names. */
   viewerIsClient: boolean;
   onOpen: () => void;
@@ -570,6 +624,7 @@ function ArchiveTile({
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-3">
         <p className="truncate text-sm font-medium text-foreground">{asset.title}</p>
+        <p className="truncate text-[11px] text-muted-2">{agentName}</p>
         <div className="mt-auto flex items-center justify-between gap-2">
           {/* `createdAt` is the GENERATION instant, and a whole week of
               "daily" posts shares one - so a client's archive printed five

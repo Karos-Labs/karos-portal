@@ -4,7 +4,7 @@ import { Icon } from "@/components/icon";
 import { relativeTime } from "@/lib/utils";
 import { assetStatusLabel } from "@/lib/asset-status-copy";
 import { ASSET_TYPE_LABEL } from "@/lib/asset-type-copy";
-import { clientDeliveryStamp, isInClientArchive } from "@/lib/asset-visibility";
+import { deliverableStamp, isInClientArchive } from "@/lib/asset-visibility";
 import {
   GENERATED_TODAY_EMPTY_HINT,
   GENERATED_TODAY_EMPTY_TITLE,
@@ -360,7 +360,23 @@ export function ClientHomeOverview({
 
   const [primary, ...rest] = items;
 
-  const stampOf = (a: Asset) => (viewerIsClient ? clientDeliveryStamp(a) : a.updatedAt ?? a.createdAt);
+  /**
+   * SCRUM-429. This was the FOURTH hand-derivation of the deliverable stamp,
+   * and the one that disagreed. `deliverableStamp`'s own docstring records the
+   * cleanup meant to end them - "three client components ... all three
+   * re-derived it by hand; two matched, assets-view did not" - and it missed
+   * this file, because this is a SERVER component and that sweep was looking at
+   * the client ones. It could have called the helper all along: asset-visibility
+   * is client-safe by design.
+   *
+   * The client branch matched. The STAFF branch did not: `updatedAt ??
+   * createdAt` here against `createdAt` in archive-view, assets-view and the
+   * agent detail page. So one asset read "2 days ago" on Home and "1 month ago"
+   * in Assets, to the same staff member about the same post - the defect
+   * SCRUM-424 fixed one surface over. The comment below already said "staff
+   * keep every asset, stamped at generation"; the code did not.
+   */
+  const stampOf = (a: Asset) => deliverableStamp(a, viewerIsClient);
   // A3/A4, the treatment its siblings already carry (archive-view, the agent
   // detail page). Two things were wrong with this list for a client.
   //
@@ -469,10 +485,12 @@ export function ClientHomeOverview({
           archive one screen over, and it was standing where the reader's actual
           question goes.
 
-          STAFF KEEP "Recent activity" unchanged. Their set is every asset
-          stamped at generation, which is genuinely the useful staff read, and no
-          staff complaint exists. Replacing it for both readers would have been a
-          product change nobody asked for.
+          STAFF KEEP THE SAME LIST, under the name it earns (SCRUM-429):
+          "Recently generated". Their set is every asset, stamped at generation,
+          which is genuinely the useful staff read and why it was not replaced
+          for both readers - that would have been a product change nobody asked
+          for. What changed for them is the title and the sort, both of which
+          used to describe something else.
 
           ONE SLOT, not two cards side by side: Lola's word for this page was
           "overwhelming", and two lists of assets that mostly disagree is how it
@@ -496,7 +514,14 @@ export function ClientHomeOverview({
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-neon/10">
                 <Icon name="Activity" className="h-3.5 w-3.5 text-neon" />
               </span>
-              Recent activity
+              {/* SCRUM-429: "what is the point of this widget? It's unclear if
+                  it is showing recent posts or recent generations." For a
+                  client the answer was to replace it (SCRUM-417); for STAFF the
+                  honest answer is the title. This list is every asset, newest
+                  generation first, stamped at generation - so it says that.
+                  "Recent activity" is what a list is called when nobody has
+                  decided what it shows, and it was read exactly that way. */}
+              Recently generated
             </CardTitle>
           </div>
 

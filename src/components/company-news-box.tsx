@@ -13,6 +13,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, CardTitle, Input, Select, Textarea } from "@/components/ui";
 import { intakeSave } from "@/lib/intake-save";
+import { STEER_NEWS_BODY } from "@/lib/intake-steer-copy";
 import { addXNewsUpdateAction } from "@/lib/actions/x-agent-actions";
 
 export interface CompanyNewsRowView {
@@ -80,11 +81,11 @@ export function CompanyNewsBox({ clientId, rows }: { clientId: string; rows: Com
   return (
     <Card className="p-5">
       <CardTitle>What happened this week</CardTitle>
-      <p className="mt-1 text-sm text-muted">
-        One or two lines on what is new. We turn it into the post, you do not write it. You type it
-        once and every agent that posts news picks it up. Empty weeks are fine; the agents keep
-        posting their regular content either way.
-      </p>
+      {/* SCRUM-411: see STEER_NEWS_BODY. It opened with "we turn it into the
+          post", which reads as a request for coverage rather than a place to
+          file what is true - the job of the box above it on the LinkedIn
+          intake. */}
+      <p className="mt-1 text-sm text-muted">{STEER_NEWS_BODY}</p>
       <div className="mt-4 space-y-3">
         <Textarea
           rows={2}
