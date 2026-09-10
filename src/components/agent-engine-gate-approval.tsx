@@ -502,7 +502,9 @@ export function AgentEngineGateApproval({
         <div className="space-y-2 rounded-md border border-border bg-surface p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Icon name="Video" className="h-4 w-4 shrink-0 text-muted" />
-            <span className="text-sm font-medium">{clip.format === "commentary-clip" ? "Commentary clip" : "Original short"}</span>
+            <span className="text-sm font-medium">
+              {clip.format === "commentary-clip" ? "Commentary clip" : clip.script?.format === "text-led" ? "Original short · text-led" : "Original short"}
+            </span>
             {clip.durationSeconds !== undefined && <Badge tone="neutral">{formatClipDuration(clip.durationSeconds)}</Badge>}
             {clip.voiceover !== undefined && <Badge tone="neutral">{clip.voiceover ? "Voiceover" : "Silent"}</Badge>}
             {clip.sourceTier && <Badge tone="neutral">{labelForKey(clip.sourceTier)}</Badge>}
@@ -531,6 +533,21 @@ export function AgentEngineGateApproval({
               {clip.plateSources !== undefined && clip.music !== undefined ? " · " : ""}
               {clip.music !== undefined ? (clip.music.applied ? "Music bed laid" : `No music${clip.music.note ? ` (${normalizeDashes(clip.music.note)})` : ""}`) : ""}
             </p>
+          )}
+          {/* Beats whose footage the QA model said does not fit the line said
+              over it: the one thing a reviewer can act on with "request changes"
+              (name the beat), shown whether or not the clip passed overall. */}
+          {clip.visualQa?.weakBeats && clip.visualQa.weakBeats.length > 0 && (
+            <div className="rounded-md border border-warning/40 bg-warning/5 px-2.5 py-1.5 text-xs">
+              <p className="font-medium text-warning">Footage that does not fit its line</p>
+              <ul className="mt-0.5 space-y-0.5 text-muted">
+                {clip.visualQa.weakBeats.map((b) => (
+                  <li key={b.index}>
+                    Beat {b.index} · {b.relevance}/10{b.note ? `: ${normalizeDashes(b.note)}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {clip.visualQa && !clip.visualQa.passed && (
             <details className="rounded-md border border-warning/40 bg-warning/5" open>
