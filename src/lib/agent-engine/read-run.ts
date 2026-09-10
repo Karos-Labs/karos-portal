@@ -131,3 +131,52 @@ export async function readAgentEngineRun(runId: string): Promise<AgentEngineRunV
 
   return { run, steps, ...(pendingGate ? { pendingGate } : {}) };
 }
+
+/**
+ * Just enough of a run to say what it is doing — for the CLIENT's progress bar,
+ * which re-reads this on every refresh of an in-flight agent page.
+ *
+ * NOT `readAgentEngineRun`, deliberately. That one reads each step's `output`,
+ * which is the step's real (possibly-summarized) product and can be large, and
+ * it also resolves the pending gate's payload — both right for the staff Jobs
+ * page, which renders them, and both waste for a bar that needs four fields. An
+ * Instagram run records 29 steps; pulling 29 outputs every few seconds to
+ * learn which one is running would be the most expensive way to draw a line.
+ *
+ * `select()` keeps the read to the fields below. Returns `undefined` for a run
+ * that has not landed yet — a job just dispatched through Pub/Sub may exist
+ * before its run doc does, and the bar's own "Starting the run" state covers
+ * exactly that gap.
+ */
+export async function readAgentEngineRunProgress(runId: string): Promise<
+  | {
+      status: AgentEngineRunRecord["status"];
+      currentStepId: string | null;
+      currentStepKind: AgentEngineStepRecord["kind"] | null;
+      recordedStepIds: string[];
+    }
+  | undefined
+> {
+  const runSnap = await adminDb().collection("agentEngineRuns").doc(runId).get();
+  if (!runSnap.exists) return undefined;
+  const run = runSnap.data() as AgentEngineRunRecord;
+
+  const stepsSnap = await adminDb()
+    .collection("agentEngineRuns")
+    .doc(runId)
+    .collection("steps")
+    .select("stepId", "kind", "startedAt")
+    .get();
+  const steps = stepsSnap.docs
+    .map((doc) => doc.data() as Pick<AgentEngineStepRecord, "stepId" | "kind" | "startedAt">)
+    .sort((a, b) => a.startedAt - b.startedAt);
+
+  const currentStepId = run.currentStepId ?? null;
+  const current = currentStepId ? steps.find((s) => s.stepId === currentStepId) : undefined;
+  return {
+    status: run.status,
+    currentStepId,
+    currentStepKind: current?.kind ?? null,
+    recordedStepIds: steps.map((s) => s.stepId),
+  };
+}

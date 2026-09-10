@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { ManagedJobProgress } from "@/components/managed-job-progress";
+import { AgentRunProgress } from "@/components/client-agents/run-progress";
+import type { PhaseProgress } from "@/lib/agent-run-phases";
 import {
   AgentScheduleModal,
   CancelRunControl,
@@ -17,7 +18,6 @@ import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import type { ContextItem } from "@/lib/types";
 
 import type { LegacyRunGateResult } from "@/lib/client-agent-runs";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 /**
  * An agent that is genuinely producing but has no umbrella doc (CD-H8).
@@ -111,7 +111,21 @@ export function LegacyAgentPanel({
    * the client's own jobs, and deliberately just an id and a phase - the strip
    * says a run is happening, never what it will contain.
    */
-  activeRun?: { id: string; status: "queued" | "running"; refunds: boolean } | null;
+  activeRun?: {
+    id: string;
+    status: "queued" | "running";
+    refunds: boolean;
+    /**
+     * What the run is doing, when the engine has told us (2026-09-10). Read by
+     * the page off `agentEngineRuns/{id}` through `readAgentEngineRunProgress`
+     * and already turned into phases — a client component cannot read that
+     * collection, and the phase words are the only part of it a client needs.
+     * Absent for a job with no engine run behind it (a legacy agent-service
+     * run, or one whose run doc has not landed yet); the coarse three-step
+     * strip stands in for those.
+     */
+    progress?: PhaseProgress | null;
+  } | null;
   /**
    * The page has ALREADY said runs are paused, in its own banner.
    *
@@ -128,87 +142,77 @@ export function LegacyAgentPanel({
   viewerIsClient: boolean;
   viewer?: { name: string; email: string };
 }) {
-  const [running, setRunning] = useState(false);
-
   return (
     <div className="space-y-6">
       {activeRun && (
-        <div className="rounded-[var(--radius)] border border-info/30 bg-info/10">
-          <div className="flex items-start gap-2 px-4 py-3">
-            <span
-              className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-info animate-pulse-neon"
-              aria-hidden="true"
+        <div className="space-y-2">
+          {/* THE RUN, AS IT HAPPENS. This banner said "Making your next post
+              now. This takes about 30 minutes" over a three-dot strip that knew
+              only queued / running / review. The number was never measured
+              (lib/run-estimate.ts has what a run actually takes), and the strip
+              could not say what the agent was doing — though agent-engine
+              writes exactly that, live, on every step. */}
+          {activeRun.progress ? (
+            <AgentRunProgress
+              steps={activeRun.progress.phases.map((p) => ({
+                id: p.id,
+                label: p.label,
+                state: p.state,
+              }))}
+              headline={activeRun.progress.headline}
+              done={activeRun.progress.done}
+              total={activeRun.progress.total}
             />
-            <p className="text-xs text-info">
-              Making your next {noun} now. This takes {RUN_ESTIMATE_SENTENCE}. Your Karos team reviews
-              it when it lands, and finished work appears in your Workspace once approved.
-            </p>
-          </div>
-          <ManagedJobProgress
-            status={activeRun.status}
-            className="mb-0 rounded-none border-0 border-t border-info/20 bg-transparent px-4 py-2"
-          />
+          ) : (
+            <ManagedJobProgress status={activeRun.status} className="mb-0" />
+          )}
           <CancelRunControl runId={activeRun.id} refunds={activeRun.refunds} />
         </div>
       )}
 
-      <section>
-        <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2/50 p-4">
-          {/* `basis-56 grow`, not `flex-1`: flex-1 is basis-0, so in a narrow
-              column the label had no preferred width at all and shrank to
-              about 30px - "Create a new post" wrapped one word per line and the
-              button rode over it. A basis wide enough for the sentence means
-              the row wraps the BUTTON to its own line instead, which is what
-              flex-wrap is on this container for. */}
-          <div className="min-w-0 basis-56 grow">
+      {/* NO BUTTON THAT OPENS A FORM (2026-09-10). This was a row reading
+          "Create a new post — makes one post now, it takes about 30 minutes"
+          beside an accent button with a Sparkles glyph, and the button's only
+          job was to open the run dialog. Albert: "I don't think it should be a
+          button on the page that says run the agent and then a pop-up comes up.
+          Each agent should know what input is needed, and they should be able
+          to just type it into the page and then run it." The fields were always
+          known — the launch profile declares them — so they are the section
+          now, and the form's own button is the run. */}
+      {gate.allowed ? (
+        <section className="space-y-2">
+          {/* A staff run is not charged to the person pressing it, so theirs
+              says whose credits move. A client's price is on the form's own
+              footer, beside the button it describes. */}
+          {!viewerIsClient && cost != null && (
+            <p className="flex items-center gap-1 text-xs text-muted-2">
+              <Icon name="Coins" className="h-3 w-3 text-muted-2" />
+              {agent.priceIsEstimate ? "About" : "Costs"} {cost} credit
+              {cost === 1 ? "" : "s"} · billed to the client
+            </p>
+          )}
+          <RunCustomAgentModal
+            agent={agent}
+            clientId={clientId}
+            engineDispatch={engineDispatch}
+            contextItems={contextItems}
+            viewerIsClient={viewerIsClient}
+            {...(setup ? { setup } : {})}
+            // AF-9: this panel IS the agent's page, for both readers.
+            stayOnPage
+            inline
+            onClose={() => {}}
+          />
+        </section>
+      ) : (
+        !(outageAnnounced && gate.code === "service_down") && (
+          <section className="rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3">
             <p className="text-sm text-foreground">
-              {batchSize > 1 ? "Create new drafts" : `Create a new ${noun}`}
+              {batchSize > 1
+                ? "Drafting a batch now is not available yet."
+                : `Making a ${noun} now is not available yet.`}
             </p>
-            <p className="mt-0.5 text-xs text-muted-2">
-              {gate.allowed
-                ? batchSize > 1
-                  ? `Drafts a batch of ${batchSize} posts for you to pick from. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
-                  : `Makes one ${noun} now. It takes ${RUN_ESTIMATE_SENTENCE}, and your Karos team reviews it before it reaches your Workspace.`
-                : batchSize > 1
-                  ? "Drafting a batch now is not available yet."
-                  : `Making a ${noun} now is not available yet.`}
-            </p>
-            {/* Portal revamp, Surface 03: the cost is a step on the page, never
-                on the button — moved off the label into its own line, right
-                where the rest of what-this-run-does copy already lives.
-
-                B5 (parity pass 2026-09): the line exists for BOTH readers, so
-                the card is the same height and says the same thing in the same
-                slot. Only the register differs — a staff run is not charged to
-                the person pressing it, so theirs names whose credits move.
-
-                round 6 (ruling 2): the coin was `text-neon` for a client, which
-                put a second orange on a page whose one accent is the run
-                control. Icon chips are ink or grey, for both readers. */}
-            {cost != null && (
-              <p className="mt-1 flex items-center gap-1 text-xs text-muted-2">
-                <Icon name="Coins" className="h-3 w-3 text-muted-2" />
-                {/* "About" only when the price is a hold that settles to real
-                    usage — the flag rides on the agent summary because a client
-                    component cannot read it (credits rework, 2026-09). */}
-                {agent.priceIsEstimate ? "About" : "Costs"} {cost} credit
-                {cost === 1 ? "" : "s"}
-                {!viewerIsClient && " · billed to the client"}
-              </p>
-            )}
-          </div>
-          <Button
-            variant="accent"
-            disabled={!gate.allowed || running}
-            onClick={() => setRunning(true)}
-          >
-            <Icon name="Sparkles" className="h-4 w-4" />
-            {batchSize > 1 ? "Create new drafts" : `Create a new ${noun}`}
-          </Button>
-        </div>
-        {!gate.allowed && gate.reason && !(outageAnnounced && gate.code === "service_down") && (
-          <div className="mt-2 rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-2.5">
-            <p className="text-xs text-warning">{gate.reason}</p>
+            {gate.reason && <p className="mt-1 text-xs text-warning">{gate.reason}</p>}
             {gate.href && gate.hrefLabel && (
               // A quiet text link, and no arrow character after the label
               // (round 6 rule 3).
@@ -224,25 +228,8 @@ export function LegacyAgentPanel({
                 <ContactUsButton variant="row" userName={viewer.name} userEmail={viewer.email} />
               </div>
             )}
-          </div>
-        )}
-      </section>
-
-      {running && (
-        <RunCustomAgentModal
-          agent={agent}
-          clientId={clientId}
-          engineDispatch={engineDispatch}
-          contextItems={contextItems}
-          viewerIsClient={viewerIsClient}
-          {...(setup ? { setup } : {})}
-          // AF-9: this panel IS the agent's page, for both readers. A client
-          // already stayed here; a staff member was redirected to /jobs/<id>,
-          // away from the run banner and the cancel control this very panel
-          // mounts for the run they just started.
-          stayOnPage
-          onClose={() => setRunning(false)}
-        />
+          </section>
+        )
       )}
     </div>
   );

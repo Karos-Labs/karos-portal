@@ -43,6 +43,28 @@ describe("an agent that is not set up yet", () => {
   });
 });
 
+describe("an agent that IS set up", () => {
+  // The same gate lived one screen later: a "Create a new post" row with an
+  // accent Sparkles button whose only job was to open the run dialog. Fixing the
+  // not-set-up page alone would have moved the complaint, not answered it.
+  const PANEL = withoutComments(read("src/components/client-agents/legacy-agent-panel.tsx"));
+
+  it("draws the run form in the page, gated by the server's verdict", () => {
+    expect(PANEL).toMatch(/<RunCustomAgentModal[\s\S]*?\binline\b/);
+    expect(PANEL).toMatch(/gate\.allowed \?/);
+    expect(PANEL).not.toMatch(/setRunning|onClick=\{\(\) => setRunning/);
+  });
+
+  it("has no sparkle and no quoted duration", () => {
+    expect(PANEL).not.toContain("Sparkles");
+    expect(PANEL).not.toContain("RUN_ESTIMATE_SENTENCE");
+  });
+
+  it("shows what the run is doing when the engine has said", () => {
+    expect(PANEL).toContain("<AgentRunProgress");
+  });
+});
+
 describe("the run form, drawn in the page", () => {
   it("chooses its frame with one switch, so the run logic is shared", () => {
     expect(RUN).toContain("const Shell = inline ? InlinePanel : Modal");
