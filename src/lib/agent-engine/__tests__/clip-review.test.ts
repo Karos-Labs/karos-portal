@@ -16,7 +16,12 @@ const PAYLOAD = {
   revision: 0,
   videoUrl: "https://storage.googleapis.com/bucket/tiktok/acme/pubsub-1/clip.mp4?X-Goog-Signature=abc",
   gcsUri: "gs://bucket/tiktok/acme/pubsub-1/clip.mp4",
-  visualQa: { passed: false, reason: "overall score 4 is below the minimum 7", evidence: ["overallScore: 4", "captions.present: true"] },
+  visualQa: {
+    passed: false,
+    reason: "overall score 4 is below the minimum 7",
+    evidence: ["overallScore: 4", "captions.present: true"],
+    weakBeats: [{ index: 2, relevance: 3, note: "a concert under a line about a boardroom" }, { index: "x" }],
+  },
   flagged: true,
   plateSources: ["stock", "stock", "still", "stock", "stock"],
   costSoFarUsd: 0.163075,
@@ -27,6 +32,7 @@ const PAYLOAD = {
   music: { applied: false, note: "no musicTrackUri in the client's tiktokClips config" },
   script: {
     hook: "We give our winner $1,000,000. But that's the least important part of the prize.",
+    format: "text-led",
     beats: [
       { narration: "We give our winner one million dollars.", onScreenText: "The money is not the prize.", visualBrief: "…", seconds: 6 },
       { narration: "What opens the next door is a signal.", onScreenText: "Belief is rationed right now.", visualBrief: "…", seconds: 8 },
@@ -50,7 +56,13 @@ describe("readClipReview", () => {
     expect(review.replans).toBe(1);
     expect(review.plateSources).toEqual(["stock", "stock", "still", "stock", "stock"]);
     expect(review.music).toEqual({ applied: false, note: "no musicTrackUri in the client's tiktokClips config" });
-    expect(review.visualQa).toEqual({ passed: false, reason: "overall score 4 is below the minimum 7", evidence: ["overallScore: 4", "captions.present: true"] });
+    expect(review.visualQa).toEqual({
+      passed: false,
+      reason: "overall score 4 is below the minimum 7",
+      evidence: ["overallScore: 4", "captions.present: true"],
+      weakBeats: [{ index: 2, relevance: 3, note: "a concert under a line about a boardroom" }],
+    });
+    expect(review.script?.format).toBe("text-led");
     expect(review.flagged).toBe(true);
     expect(review.script?.beats).toHaveLength(2);
     expect(review.script?.beats[0]).toEqual({ narration: "We give our winner one million dollars.", onScreenText: "The money is not the prize.", seconds: 6 });

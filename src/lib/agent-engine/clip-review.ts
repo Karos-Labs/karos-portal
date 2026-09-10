@@ -13,10 +13,18 @@
 
 export type ClipBudgetPlan = "original" | "replan" | "stock-only" | "stock-only-silent";
 
+export interface ClipWeakBeat {
+  index: number;
+  relevance: number;
+  note?: string;
+}
+
 export interface ClipVisualQa {
   passed: boolean;
   reason?: string;
   evidence: string[];
+  /** Beats whose footage the QA model scored as not fitting the line said over it (engine `visualQa.weakBeats`, 2026-09-10). */
+  weakBeats?: ClipWeakBeat[];
 }
 
 export interface ClipScriptBeat {
@@ -47,7 +55,7 @@ export interface ClipReview {
   visualQa?: ClipVisualQa;
   /** The engine flagged the clip (the visual QA failed); the human decides. */
   flagged: boolean;
-  script?: { hook?: string; beats: ClipScriptBeat[] };
+  script?: { hook?: string; format?: "footage" | "text-led"; beats: ClipScriptBeat[] };
 }
 
 /** The payload keys the clip block renders itself, so the generic fact grid does not repeat them. */
@@ -111,6 +119,15 @@ export function readClipReview(payload: unknown): ClipReview | undefined {
           passed: qaRaw["passed"],
           ...(str(qaRaw["reason"]) !== undefined ? { reason: str(qaRaw["reason"])! } : {}),
           evidence: Array.isArray(qaRaw["evidence"]) ? qaRaw["evidence"].filter((e): e is string => typeof e === "string") : [],
+          ...(() => {
+            const raw = qaRaw["weakBeats"];
+            if (!Array.isArray(raw)) return {};
+            const weakBeats = raw.flatMap((b): ClipWeakBeat[] => {
+              if (!isRecord(b) || num(b["index"]) === undefined || num(b["relevance"]) === undefined) return [];
+              return [{ index: num(b["index"])!, relevance: num(b["relevance"])!, ...(str(b["note"]) !== undefined ? { note: str(b["note"])! } : {}) }];
+            });
+            return weakBeats.length > 0 ? { weakBeats } : {};
+          })(),
         }
       : undefined;
 
@@ -121,6 +138,7 @@ export function readClipReview(payload: unknown): ClipReview | undefined {
     isRecord(scriptRaw) && Array.isArray(scriptRaw["beats"])
       ? {
           ...(str(scriptRaw["hook"]) !== undefined ? { hook: str(scriptRaw["hook"])! } : {}),
+          ...(scriptRaw["format"] === "footage" || scriptRaw["format"] === "text-led" ? { format: scriptRaw["format"] as "footage" | "text-led" } : {}),
           beats: scriptRaw["beats"].flatMap((b): ClipScriptBeat[] => {
             if (!isRecord(b) || str(b["narration"]) === undefined) return [];
             return [
