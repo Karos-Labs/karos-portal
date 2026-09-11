@@ -84,7 +84,9 @@ import {
   X_SETUP_REQUIRED_PREFIX,
   BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
+  launchProfileFor,
   perClientAgentSlug,
+  requestSteersRun,
 } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { estimateAgentRunCredits } from "@/lib/credit-estimate";
@@ -845,7 +847,12 @@ export async function submitCustomAgentJob(
       // fix is that the page and the server must agree on it — otherwise the
       // dialog paints a field the server builds its input without. Pinned by
       // the page/server consistency sweep in product-mapping.test.ts.
-      inputs: { ...toEngineRunInput(engineBriefValues, engineProductId), ...engineExtraInputs },
+      inputs: {
+        ...toEngineRunInput(engineBriefValues, engineProductId, {
+          requestSteersRun: requestSteersRun(launchProfileFor(agent)),
+        }),
+        ...engineExtraInputs,
+      },
       createdBy: user.uid,
     });
     if ("error" in dispatched) {

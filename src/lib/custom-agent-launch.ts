@@ -1491,6 +1491,20 @@ export function agentEngineProductAcceptsMediaAssets(engineProductId: string | u
 }
 
 /**
+ * Is this profile's own `request` box the run's direction (the optional
+ * "Direction for this run" steer), rather than a topic it asks for?
+ *
+ * Such a profile shows ONE direction box (Albert, 2026-09-10). It used to get
+ * the engine's `customPrompt` box too, under the same label, so the form asked
+ * the same question twice. What is typed in the one box is sent as both the
+ * requested topic and the direction (`toEngineRunInput`'s `requestSteersRun`),
+ * so neither field the two boxes used to fill goes empty.
+ */
+export function requestSteersRun(profile: AgentLaunchProfile): boolean {
+  return profile.fields.some((f) => f.key === "request" && f.label === STEER_RUN_LABEL);
+}
+
+/**
  * Adds the two run-scoped inputs agent-engine understands from any agent: a
  * free-text direction, and — for the media products — the source asset.
  *
@@ -1511,7 +1525,7 @@ export function withEngineRunFields(
   if (!engineProductId) return profile;
 
   const extra: AgentBriefField[] = [];
-  if (!profile.fields.some((f) => f.key === CUSTOM_PROMPT_FIELD_KEY)) {
+  if (!requestSteersRun(profile) && !profile.fields.some((f) => f.key === CUSTOM_PROMPT_FIELD_KEY)) {
     extra.push({
       key: CUSTOM_PROMPT_FIELD_KEY,
       label: "Direction for this run (optional)",

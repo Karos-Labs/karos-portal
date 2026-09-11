@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { launchProfileFor, withEngineRunFields, BATCH_SIZE_FIELD_KEY } from "@/lib/custom-agent-launch";
+import {
+  ALL_LAUNCH_PROFILES,
+  BATCH_SIZE_FIELD_KEY,
+  launchProfileFor,
+  requestSteersRun,
+  withEngineRunFields,
+} from "@/lib/custom-agent-launch";
 import {
   KNOWN_ENGINE_PRODUCT_IDS,
   resolveAgentEngineProductId,
@@ -291,10 +297,10 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   productId: string;
   visibleFields: readonly string[];
 }> = [
-  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "customPrompt", "media_source", "mediaAssets"] },
-  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "customPrompt", "media_source", "mediaAssets"] },
+  { key: "karos-x-agent-v2", name: "X Agent", productId: "x-agent", visibleFields: ["run_scope", "requestedMode", "batch_size", "request", "media_source", "mediaAssets"] },
+  { key: "karos-linkedin-writer-v2", name: "LinkedIn Writer", productId: "linkedin-agent", visibleFields: ["li_identity", "requestedMode", "batch_size", "request", "media_source", "mediaAssets"] },
   { key: "karos-linkedin-setup-v2", name: "LinkedIn Setup", productId: "linkedin-agent", visibleFields: ["li_identity", "request", "customPrompt", "media_source", "mediaAssets"] },
-  { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request", "customPrompt"] },
+  { key: "karos-reddit-runner", name: "Reddit Runner", productId: "reddit-agent", visibleFields: ["request"] },
   { key: "karos-reddit-setup", name: "Reddit Setup", productId: "reddit-agent", visibleFields: ["request", "audience", "success_criteria", "customPrompt"] },
   { key: "karos-instagram-agent", name: "Instagram Agent", productId: "instagram-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
   { key: "karos-tiktok-agent", name: "TikTok Agent", productId: "tiktok-agent", visibleFields: ["run_mode", "request", "platform", "requestedFormat", "batch_size", "audience", "must_include", "customPrompt", "media_source", "mediaAssets"] },
@@ -302,7 +308,7 @@ const ENGINE_ROUTED_DIALOGS: ReadonlyArray<{
   { key: "landing-builder", name: "Landing Page Builder", productId: "landing-builder-agent", visibleFields: ["request", "offer", "audience", "cta", "proof", "references", "customPrompt"] },
   { key: "karos-blog-writer-v2", name: "Blog Writer", productId: "blog-agent", visibleFields: ["run_mode", "request", "audience", "keywords", "point_of_view", "sources", "customPrompt"] },
   { key: "karos-newsletter-writer-v2", name: "Newsletter Writer", productId: "newsletter-agent", visibleFields: ["request", "audience", "must_include", "cta", "tone", "customPrompt"] },
-  { key: "karos-reputation-runner", name: "Reputation Runner", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
+  { key: "karos-reputation-runner", name: "Reputation Runner", productId: "reputation-agent", visibleFields: ["request"] },
   { key: "karos-reputation-setup", name: "Reputation Setup", productId: "reputation-agent", visibleFields: ["request", "customPrompt"] },
   { key: "seo-geo-agent-v2", name: "SEO GEO Agent", productId: "seo-geo-agent", visibleFields: ["website", "scope", "request", "market", "competitors", "customPrompt"] },
   // The generic profile: the campaign has no bespoke dialog, and its three
@@ -338,7 +344,9 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
       const answers = Object.fromEntries(
         profile.fields.filter((f) => !f.hidden).map((f) => [f.key, answerFor(f.key)]),
       );
-      const full = JSON.stringify(toEngineRunInput(answers, pageProductId));
+      // And the server's call exactly: the same profile answers `requestSteersRun`.
+      const opts = { requestSteersRun: requestSteersRun(launchProfileFor(dialog)) };
+      const full = JSON.stringify(toEngineRunInput(answers, pageProductId, opts));
 
       // Coverage stated so it cannot be faked by a substring match: dropping
       // ANY visible answer must change what the engine is sent. A field that
@@ -352,7 +360,7 @@ describe("toEngineRunInput — every visible dialog field reaches the engine (C3
         const without = { ...answers };
         delete without[field];
         expect(
-          JSON.stringify(toEngineRunInput(without, pageProductId)),
+          JSON.stringify(toEngineRunInput(without, pageProductId, opts)),
           `${dialog.key}: "${field}" is rendered in the run dialog but changes nothing in the engine input`,
         ).not.toBe(full);
       }
@@ -526,6 +534,38 @@ describe("toEngineRunInput — the C3 wire shape", () => {
   });
 });
 
+describe("one direction box per run form (Albert, 2026-09-10)", () => {
+  it("never asks the same question twice on any agent's form", () => {
+    // X, LinkedIn, Reddit and Reputation showed their own "Direction for this
+    // run (optional)" box and then the engine's, under the same label.
+    for (const profile of ALL_LAUNCH_PROFILES) {
+      for (const product of [undefined, ...KNOWN_ENGINE_PRODUCT_IDS]) {
+        const labels = withEngineRunFields(profile, product).fields.map((f) => f.label);
+        const repeated = labels.filter((label, i) => labels.indexOf(label) !== i);
+        expect(repeated, `${profile.eyebrow} on ${product ?? "the legacy path"}`).toEqual([]);
+      }
+    }
+  });
+
+  it("sends that one box as the topic AND the direction", () => {
+    const steer = { requestSteersRun: true };
+    expect(toEngineRunInput({ request: "our new hire" }, "linkedin-agent", steer)).toEqual({
+      requestedTopic: "our new hire",
+      customPrompt: "our new hire",
+    });
+    // A direction typed in the old second box (a saved schedule) still leads.
+    expect(toEngineRunInput({ customPrompt: "keep it short", request: "our new hire" }, "x-agent", steer)).toEqual({
+      requestedTopic: "our new hire",
+      customPrompt: "keep it short\n\nour new hire",
+    });
+    expect(toEngineRunInput({ customPrompt: "same", request: "same" }, "x-agent", steer).customPrompt).toBe("same");
+    // A profile whose box asks for a TOPIC keeps sending only the topic.
+    expect(toEngineRunInput({ request: "a topic" }, "blog-agent")).toEqual({ requestedTopic: "a topic" });
+    // Blank sends nothing, so a scheduled run follows the saved strategy.
+    expect(toEngineRunInput({ request: "  " }, "x-agent", steer)).toEqual({});
+  });
+});
+
 describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => {
   it("the server hands toEngineRunInput the same id the page built the dialog from", () => {
     // A source pin rather than a convention: submit-custom.ts resolves
@@ -552,7 +592,10 @@ describe("page/server engineProductId consistency (C3 mandatory fix #2)", () => 
     expect(submitCustomSource).toContain(
       "resolveDispatchedAgentEngineProductId(agent.key, client.agentsRepoSlug)",
     );
-    expect(submitCustomSource).toContain("toEngineRunInput(engineBriefValues, engineProductId)");
+    const flat = submitCustomSource.replace(/\s+/g, " ");
+    expect(flat).toContain("toEngineRunInput(engineBriefValues, engineProductId, {");
+    // And the one-direction-box answer comes off the same profile the page uses.
+    expect(flat).toContain("requestSteersRun: requestSteersRun(launchProfileFor(agent))");
 
     const healthSource = readFileSync(resolve(__dirname, "../health.ts"), "utf8");
     expect(healthSource).toContain("resolveAgentEngineProductIdForCustomAgent(agentKey)");
