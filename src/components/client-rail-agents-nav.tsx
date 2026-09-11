@@ -220,7 +220,7 @@ export function ClientRailAgentsNav({
               <button
                 type="button"
                 onClick={() => setShowAllAgents((s) => !s)}
-                className="focus-ring rounded-md px-3 py-1.5 text-left font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2 transition-colors hover:text-foreground"
+                className="focus-ring rounded-md px-3 py-1.5 text-left font-label text-[10px] uppercase tracking-[0.08em] text-muted-2 transition-colors hover:text-foreground"
               >
                 {/* The number this control actually reveals — the UNPINNED
                     group, which is the only one the cap applies to. It counted

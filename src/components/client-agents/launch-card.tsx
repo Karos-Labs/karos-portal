@@ -9,7 +9,6 @@ import { AgentIdentity } from "@/components/agent-identity";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import {
   CLIENT_LAUNCH_PHASE_COPY,
-  LAUNCH_ESTIMATE,
   LAUNCH_STUCK_MS,
   clientLaunchPhase,
   type ClientLaunchPhase,
@@ -82,7 +81,7 @@ export function ClientAgentLaunchCard({
       <div className="flex items-start gap-3">
         <AgentIdentity identity={agent.identity} icon={agent.icon} />
         <div className="min-w-0 flex-1">
-          <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
+          <p className="mb-1 font-label text-[9px] uppercase tracking-[0.14em] text-muted-2">
             AI agent
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -135,8 +134,8 @@ export function ClientAgentLaunchCard({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-2">
               {agent.launchCost != null
-                ? `${agent.launchCost} credits, one time · ${LAUNCH_ESTIMATE}`
-                : `One-time setup · ${LAUNCH_ESTIMATE}`}
+                ? `${agent.launchCost} credits, one time`
+                : "One-time setup"}
             </p>
             <div className="flex gap-1.5">
               {!viewerIsClient && failed && (
@@ -254,7 +253,7 @@ function WhatLaunchDoes() {
       {[
         "We research your brand, your audience, and your market.",
         "Then we design the set of post formats this agent will produce for you.",
-        "Your Karos team confirms them, and the agent starts posting to its schedule.",
+        "Once they are set, the agent starts posting to its schedule.",
       ].map((line) => (
         <li key={line} className="flex gap-2">
           <Icon name="Check" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
@@ -321,7 +320,7 @@ function LaunchProgress({
         );
       })}
       <p className="pt-1 text-[11px] text-muted-2">
-        This takes {LAUNCH_ESTIMATE}. You can leave this page. It keeps running.
+        You can leave this page. It keeps running.
       </p>
     </div>
   );

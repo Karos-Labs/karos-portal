@@ -1088,8 +1088,9 @@ describe("the copilot system prompt", () => {
     // Non-vacuity on the allowlist itself: an empty list would make every call
     // an offender, which reads as a passing sweep only by accident.
     expect(LABEL_CALLEES.length, "found no label accessors to allow").toBeGreaterThan(2);
+    // An optional second argument, the viewer flag the register takes.
     const THROUGH_A_CALL = new RegExp(
-      `\\b(?:${LABEL_CALLEES.join("|")})\\(\\s*[A-Za-z_$][\\w$.]*\\s*\\)`,
+      `\\b(?:${LABEL_CALLEES.join("|")})\\(\\s*[A-Za-z_$][\\w$.]*\\s*(?:,\\s*[A-Za-z_$][\\w$]*\\s*)?\\)`,
     );
     const staffOnly = staffOnlyRanges(prompt);
     const offenders: string[] = [];
@@ -1202,7 +1203,9 @@ describe("the copilot system prompt", () => {
     // job is bound to (`j`) is the loop's business, and reformatting the call is
     // not a behaviour change. What has to hold is that the field goes through that
     // register.
-    expect(prompt).toMatch(/jobStatusLabel\(\s*\w+\.status\s*\)/);
+    // With the viewer, so a client session gets the client's word ("Done")
+    // rather than "In review".
+    expect(prompt).toMatch(/jobStatusLabel\(\s*\w+\.status\s*,\s*viewerIsClient\s*\)/);
     expect(prompt).toContain('from "@/lib/job-status-copy"');
     // asset.type: RELABELLED through the register the deliverable cards read. The
     // argument is a bare local because the type arrives via `Object.entries`, so

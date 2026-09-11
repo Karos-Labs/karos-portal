@@ -2,6 +2,7 @@
 
 import { EmptyState } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { CLIENT_ARCHIVE_NAME } from "@/lib/agent-intake-links";
 
 /**
  * "No runs yet", on an intake page — flow audit 2026-09, R9 · NN/g *Designing
@@ -37,7 +38,7 @@ export function IntakeNoRuns({
       <EmptyState
         icon={<Icon name="Clock" className="h-6 w-6" />}
         title="No runs yet"
-        description={`Nothing has run for you yet. When it does, the run shows up here and your ${noun} land in your archive.`}
+        description={`Nothing has run for you yet. When it does, the run shows up here and your ${noun} land in ${CLIENT_ARCHIVE_NAME}.`}
         action={
           <a
             href={`/clients/${clientId}/agents`}

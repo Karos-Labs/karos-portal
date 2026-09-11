@@ -1013,7 +1013,7 @@ function Section({
 }) {
   return (
     <div>
-      <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">{title}</p>
+      <p className="mb-1.5 font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">{title}</p>
       {empty ? <p className="text-xs text-muted-2">{empty}</p> : <div className="space-y-1">{children}</div>}
     </div>
   );

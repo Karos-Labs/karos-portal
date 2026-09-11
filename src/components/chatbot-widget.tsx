@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
-import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
+import { AgentMark, SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
 import { renderSectionBody } from "@/lib/doc-render";
@@ -732,7 +732,7 @@ function ModelPicker({
   ];
   return (
     <div className="mt-2 flex items-center justify-between gap-3">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-2">Model</span>
+      <span className="font-label text-[10px] uppercase tracking-[0.12em] text-muted-2">Model</span>
       <div
         role="group"
         aria-label="Copilot model"
@@ -811,7 +811,7 @@ function FeedbackChip({ clientId, note }: { clientId: string; note: FeedbackNote
       <span className="truncate">
         Feedback saved &middot; shapes {feedbackScopeLabel(note)}
       </span>
-      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
+      <span className="shrink-0 font-label text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
         Manage
       </span>
     </Link>
@@ -843,7 +843,7 @@ function DeliverableChip({
     >
       <Icon name="FileText" className="h-3 w-3 shrink-0 text-muted-2 group-hover:text-foreground" />
       <span className="truncate">{deliverable.title ?? "This output"}</span>
-      <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
+      <span className="shrink-0 font-label text-[9px] uppercase tracking-[0.1em] text-muted-2 group-hover:text-foreground">
         Open
       </span>
     </button>
@@ -1345,7 +1345,7 @@ export function ChatbotWidget({
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <p className="font-serif text-base leading-none">AI Copilot</p>
-              <p className="mt-1 truncate font-mono text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">
+              <p className="mt-1 truncate font-label text-[9px] uppercase leading-none tracking-[0.12em] text-muted-2">
                 {clientName} · KarosAI
               </p>
             </div>
@@ -1499,7 +1499,7 @@ export function ChatbotWidget({
                 className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2"
               >
                 <Icon name="Sparkles" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
-                <span className="flex-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-2">
+                <span className="flex-1 font-label text-[10px] uppercase tracking-[0.14em] text-muted-2">
                   AI actions
                 </span>
                 <Icon
@@ -1545,7 +1545,7 @@ export function ChatbotWidget({
                   no platform, and when focus was set by the copilot naming an
                   agent that is not on this client's roster. */}
               {focusAgentPlatform ? (
-                <SocialPlatformMark platform={focusAgentPlatform} className="h-3 w-3" />
+                <SocialPlatformMark platform={focusAgentPlatform} className="h-3 w-3" tone="brand" />
               ) : (
                 <Icon name="AtSign" className="h-3 w-3" />
               )}
@@ -1583,14 +1583,15 @@ export function ChatbotWidget({
                       )}
                     >
                       {/* AF-20: the platform this agent posts to, so tagging
-                          one says what you are about to get. An agent that
-                          targets no platform (Landing Builder) keeps the stored
-                          icon it has always had - the route sends null rather
-                          than a nearest guess. */}
+                          one says what you are about to get, in the agent's own
+                          colour like everywhere else. An agent that targets no
+                          platform (Landing Builder) gets its own mark from
+                          AgentMark - the route sends null rather than a nearest
+                          guess. */}
                       {a.platform ? (
-                        <SocialPlatformMark platform={a.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                        <SocialPlatformMark platform={a.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" tone="brand" />
                       ) : (
-                        <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                        <AgentMark identity={a.displayName} icon={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
                       )}
                       <span className="flex-1 truncate text-xs text-foreground">{a.displayName}</span>
                     </button>

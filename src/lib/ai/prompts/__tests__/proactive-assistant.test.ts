@@ -24,6 +24,7 @@ import {
 
 const baseCtx: Omit<ProactiveSystemContext, "agents"> = {
   linkedSocialPlatforms: [],
+  servedPlatforms: [],
   integrations: [],
   scheduledNext14ByPlatform: {},
   hasGmailIntegration: false,

@@ -106,7 +106,9 @@ describe("the wiring that has to agree across modules (engine path)", () => {
     // ...and the intake gate is asked BEFORE the branch, on both paths.
     expect(core.indexOf("hasReputationAgentIntake(input.clientId)")).toBeLessThan(core.indexOf("toReputationEngineRunInput("));
     // Merged after the dialog fields, so a dialog key wins over an intake key.
-    expect(core).toContain("inputs: { ...toEngineRunInput(engineBriefValues, engineProductId), ...engineExtraInputs }");
+    expect(core.replace(/\s+/g, " ")).toMatch(
+      /inputs: \{ \.\.\.toEngineRunInput\(engineBriefValues, engineProductId, \{.*?\}\), \.\.\.engineExtraInputs, \}/,
+    );
   });
 
   it("reads 'ready' and 'set up' off the same predicate in the rows and the intake view", () => {

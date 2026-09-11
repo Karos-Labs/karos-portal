@@ -19,6 +19,8 @@ import {
 import type { ClientAgentTemplate } from "@/lib/types";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
 import { cn } from "@/lib/utils";
+import { CLIENT_ARCHIVE_NAME, clientArchiveLink } from "@/lib/agent-intake-links";
+import { STAFF_RUN_PRICE_NOTE } from "@/lib/credits";
 
 /**
  * The parts of the LIVE client agent surface (Phase 3 §7.1 cards 4 and 5).
@@ -57,6 +59,7 @@ export function TemplateRows({
   viewerIsClient,
   onFeedback,
   onError,
+  onRunStarted,
 }: {
   agent: ClientAgentCardRow;
   templates: ClientAgentTemplate[];
@@ -70,13 +73,15 @@ export function TemplateRows({
   viewer?: { name: string; email: string };
   /**
    * A client's `postCount` is the archive set, which drops published work past
-   * its window - the same reason the page labels its own count "In your
-   * Workspace" rather than a lifetime total. The copy below must make the same
+   * its window - the same reason the page labels its own count "in your
+   * archive" rather than a lifetime total. The copy below must make the same
    * disclosure, so the two numbers never claim to be different things.
    */
   viewerIsClient?: boolean;
   onFeedback: (template: ClientAgentTemplate) => void;
   onError: (message: string | null) => void;
+  /** A format's "Run now" started a run: the page hands it to the run watch. */
+  onRunStarted?: (jobId: string) => void;
 }) {
   const router = useRouter();
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -107,8 +112,12 @@ export function TemplateRows({
         templateKey: template.key,
       });
       setBusyKey(null);
-      if (result.error) onError(result.error);
-      else router.refresh();
+      if (result.error) {
+        onError(result.error);
+        return;
+      }
+      if (result.jobId) onRunStarted?.(result.jobId);
+      router.refresh();
     });
   }
 
@@ -196,7 +205,7 @@ export function TemplateRows({
                   {detail && detail.postCount > 0 && (
                     <span className="text-[11px] text-muted-2">
                       {viewerIsClient
-                        ? `${detail.postCount} in your Workspace`
+                        ? `${detail.postCount} in ${CLIENT_ARCHIVE_NAME}`
                         : `${detail.postCount} post${detail.postCount === 1 ? "" : "s"}`}
                     </span>
                   )}
@@ -236,7 +245,7 @@ export function TemplateRows({
                       </span>
                     )}
                     <span className="min-w-0 flex-1">
-                      <span className="block font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                      <span className="block font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                         Example
                       </span>
                       <span className="block truncate text-[11px] text-foreground">
@@ -306,7 +315,7 @@ export function TemplateRows({
                   <Icon name="Coins" className="h-3 w-3 text-muted-2" />
                   {agent.runCostIsEstimate ? "about " : ""}
                   {agent.runCost} credit{agent.runCost === 1 ? "" : "s"}
-                  {!viewerIsClient && " · billed to the client"}
+                  {!viewerIsClient && STAFF_RUN_PRICE_NOTE}
                 </span>
               )}
               <Button size="sm" variant="ghost" onClick={() => onFeedback(template)}>
@@ -330,10 +339,10 @@ export function TemplateRows({
                 {detail.rationale && (
                   <p className="text-[11px] leading-relaxed text-muted">{detail.rationale}</p>
                 )}
-                <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">
+                <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">
                   {detail.postCount === 0
                     ? "Nothing under this format yet"
-                    : `${viewerIsClient ? "In your Workspace under this format" : "What it has made in this format"}${
+                    : `${viewerIsClient ? `In ${CLIENT_ARCHIVE_NAME} under this format` : "What it has made in this format"}${
                         detail.postCount > detail.posts.length
                           ? ` · newest ${detail.posts.length} of ${detail.postCount}`
                           : ""
@@ -341,7 +350,7 @@ export function TemplateRows({
                 </p>
                 {detail.posts.length === 0 ? (
                   <p className="text-[11px] text-muted-2">
-                    Finished work appears here once your Karos team has approved it.
+                    Finished work appears here.
                   </p>
                 ) : (
                   <ul className="space-y-1">
@@ -362,19 +371,23 @@ export function TemplateRows({
                 )}
                 {/* The cap is deliberate - this is a peek at a stream, not the
                     archive - but "newest 6 of 23" with no way to reach the
-                    other 17 is a dead end. The Workspace is where all of them
-                    already live, and it is the same href the page's archive
-                    section links, so the two cannot drift apart. */}
+                    other 17 is a dead end. A client's count is their archive
+                    set, so they go to their archive; staff count everything,
+                    drafts included, which only Assets lists. */}
                 {detail.postCount > detail.posts.length && (
                   /* round 6 (rule 3 + Ember): a quiet link, and no glyph after
                      the label. It was orange with a trailing ArrowRight - the
                      accent spent on an aside, and an arrow where the rule
                      allows only a row's own ChevronRight. */
                   <a
-                    href={`/clients/${agent.clientId}/assets`}
+                    href={
+                      viewerIsClient
+                        ? clientArchiveLink({ clientId: agent.clientId, isStaff: false }).href
+                        : `/clients/${agent.clientId}/assets`
+                    }
                     className="focus-ring inline-flex rounded-md text-[11px] text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
                   >
-                    See all in your Workspace
+                    See all in {viewerIsClient ? CLIENT_ARCHIVE_NAME : "Assets"}
                   </a>
                 )}
                 <p className="text-[11px] text-muted-2">
@@ -414,7 +427,7 @@ export function TemplateRows({
  * like, edit it if you want, and post it", which describes three controls that
  * do not exist anywhere in the portal yet. A client who read it would go
  * looking for them. It now names only what is real - the feedback button on
- * this card, and the Workspace where approved posts land - and makes no promise
+ * this card, and the archive where finished posts land - and makes no promise
  * about a future release, since a promise dated "soon" is the same defect one
  * release later.
  */
@@ -424,7 +437,7 @@ export function OptionsRow() {
       <p className="text-sm text-foreground">Today&rsquo;s post</p>
       <p className="mt-0.5 text-[11px] text-muted-2">
         This agent writes one post a day for you. Use Give feedback to steer what it makes, and
-        approved posts appear in your Workspace.
+        finished posts appear in {CLIENT_ARCHIVE_NAME}.
       </p>
     </div>
   );
@@ -466,7 +479,7 @@ export function WeekStrip({
   const platform = identity ? platformForAgentIdentity(null, identity) : null;
   return (
     <div className="mt-4">
-      <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <p className="mb-1.5 font-label text-[10px] uppercase tracking-[0.08em] text-muted">
         Coming up
       </p>
       <ul className="flex flex-wrap gap-1.5">
@@ -566,7 +579,7 @@ export function StaffSlotNotes({
 
   return (
     <div className="mt-4 rounded-md border border-neon/25 bg-neon-soft/20 p-3">
-      <p className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <p className="mb-2 flex items-center gap-1.5 font-label text-[10px] uppercase tracking-[0.08em] text-muted">
         <Icon name="MessageSquare" className="h-3.5 w-3.5" />
         Client notes on specific days
       </p>

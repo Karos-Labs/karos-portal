@@ -367,7 +367,7 @@ export function AssetDetailModal({
             else gets the caption with a copy button. */}
         {liBatch ? (
           <div>
-            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
             <LiDraftsBatch
               clientId={asset.clientId}
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
@@ -378,7 +378,7 @@ export function AssetDetailModal({
           </div>
         ) : redditBatch ? (
           <div>
-            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
             <RedditDraftsBatch
               clientId={asset.clientId}
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
@@ -391,7 +391,7 @@ export function AssetDetailModal({
           </div>
         ) : xBatch ? (
           <div>
-            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Drafts</p>
             <XDraftsBatch
               clientId={asset.clientId}
               {...(asset.jobId ? { jobId: asset.jobId } : {})}
@@ -401,7 +401,7 @@ export function AssetDetailModal({
           </div>
         ) : emailHtml ? (
           <div>
-            <p className="mb-1.5 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Edition</p>
+            <p className="mb-1.5 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Edition</p>
             {/* A newsletter's deliverable is the email, not the markdown: the
                 engine renders every approved edition to email-safe HTML in both
                 themes (asset.meta.html / htmlDark) and this shows that render,
@@ -422,7 +422,7 @@ export function AssetDetailModal({
         ) : (
           <div>
             <div className="mb-1.5 flex items-center justify-between gap-2">
-              <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Content</p>
+              <p className="text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Content</p>
               {/* Posting happens by hand from a phone, and this modal is the
                   phone's way into a post - so copy is a primary action here, not
                   the card's hover-revealed icon. */}
@@ -469,7 +469,7 @@ export function AssetDetailModal({
             button itself and the card's inline link. */}
         {downloads.length > 0 && (
           <div className="border-t border-border pt-3">
-            <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Download</p>
+            <p className="mb-2 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Download</p>
             <AssetDownloadButtons asset={asset} />
           </div>
         )}
@@ -614,7 +614,7 @@ function ApproveRow({
         />
       ) : (
         <>
-          <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+          <p className="mb-2 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
             Ready to approve?
           </p>
           <button
@@ -665,7 +665,7 @@ function UnscheduleRow({ asset, canApprove }: { asset: Asset; canApprove: boolea
 
   return (
     <div className="border-t border-border pt-3">
-      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+      <p className="mb-2 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
         Change of plans?
       </p>
       <button
@@ -736,7 +736,7 @@ function PublishNowRow({
 
   return (
     <div className="border-t border-border pt-3">
-      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+      <p className="mb-2 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
         Manual push
       </p>
       <button

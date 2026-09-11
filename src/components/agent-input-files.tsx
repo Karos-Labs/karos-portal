@@ -202,7 +202,7 @@ export function AgentInputFiles({
                   <span className="text-foreground">{item.name}</span>
                   {item.note ? <span className="text-muted-2"> · {item.note}</span> : null}
                 </span>
-                <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.06em] text-muted-2">
+                <span className="shrink-0 font-label text-[9px] uppercase tracking-[0.06em] text-muted-2">
                   {formatBytes(item.sizeBytes)}
                 </span>
               </label>

@@ -317,12 +317,13 @@ function FeedbackBox({
       <CardTitle>Feedback</CardTitle>
       {/* F28: the archive holds APPROVED work (F149 filters it to approved,
           non-future items), so a fresh batch is not there yet and a client sent
-          looking for one finds an empty page. Name the approval step, and link
-          the archive rather than describing where it might be. */}
+          looking for one finds an empty page. "Once it is in" says it arrives
+          later without naming the approval step, which a client is never told
+          about (the SOW rule Albert kept on 2026-09-10). */}
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not, in your own words. It goes straight into the
-        agent&apos;s next run. Once your Karos team has approved the replies, saying whether you posted a
-        reply happens on the reply itself, in{" "}
+        agent&apos;s next run. Saying whether you posted a reply happens on the reply itself once it
+        is in{" "}
         <a href={archive.href} className="underline hover:text-foreground">
           {archive.label}
         </a>

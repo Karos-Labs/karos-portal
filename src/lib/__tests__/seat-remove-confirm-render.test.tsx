@@ -22,7 +22,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  * conditional.
  */
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), usePathname: () => "/" }));
 vi.mock("@/lib/actions/client-seat-actions", () => ({ removeClientSeatAction: vi.fn() }));
 vi.mock("server-only", () => ({}));
 

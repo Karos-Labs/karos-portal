@@ -46,8 +46,8 @@ describe("custom agent launch profiles", () => {
     expect(linkedin.fields.map((field) => field.key)).toEqual(
       expect.arrayContaining(["executive", "request", "proof"]),
     );
-    expect(shorts.attachments.required).toBe(true);
-    expect(shorts.attachments.satisfyWithFieldKey).toBe("source_url");
+    expect(shorts.attachments?.required).toBe(true);
+    expect(shorts.attachments?.satisfyWithFieldKey).toBe("source_url");
     // The X agent is intake-driven (its agent data holds handles, off-limits,
     // rosters, takes) — the launch brief only scopes the run. It must never
     // ask for things the agent BUILDS (audience, themes, cadence) or already
@@ -108,7 +108,7 @@ describe("custom agent launch profiles", () => {
     const profile = launchProfileFor({ key: "future-agent", name: "Future Agent" });
     expect(profile.fields.find((field) => field.key === "request")?.required).toBe(true);
     expect(profile.fields.map((field) => field.key)).toContain("success_criteria");
-    expect(profile.attachments.label).toBe("Reference files");
+    expect(profile.attachments?.label).toBe("Reference files");
   });
 
   it("does not let broad words route specialized agents to the wrong brief", () => {
@@ -132,11 +132,10 @@ describe("custom agent launch profiles", () => {
       const strings = [
         profile.eyebrow,
         profile.intro,
-        profile.estimate,
-        ...profile.quickStarts,
         ...profile.deliverables,
-        profile.attachments.label,
-        profile.attachments.hint,
+        // Optional since SCRUM-413: the reputation runner has no file slot.
+        profile.attachments?.label ?? "",
+        profile.attachments?.hint ?? "",
         ...profile.fields.flatMap((field) => [
           field.label,
           field.placeholder,
@@ -275,7 +274,7 @@ describe("custom agent launch profiles", () => {
       );
       // The footer must not go back to `runPriceLabel`, which knows only about
       // settlement.
-      expect(src).toContain("[briefQuoteLabel(agent, visibleBriefValues)]");
+      expect(src).toContain("sentenceStart(briefQuoteLabel(agent, visibleBriefValues))");
       const at = src.indexOf("function briefQuoteLabel");
       expect(at, "the footer's label helper moved").toBeGreaterThan(-1);
       const body = src.slice(at, at + 500);
@@ -606,10 +605,12 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
   });
 
   it("keeps the href gate for a setup with no prefetched form", () => {
-    // The client detail route ships href-only states, so the dialog must still
-    // have its way out — and it must not offer an empty pane instead.
+    // An agent with no intake pane still arrives href-only, so the form must
+    // still have its way out — and it must not offer an empty pane instead.
+    // (Intake-driven agents now get their pane on the client route too, since
+    // 2026-09-10, so they no longer reach this gate there.)
     expect(ui).toContain("if (setup && !setup.ready && !intake)");
-    expect(ui).toContain("Set up {setup.label}");
+    expect(ui).toContain("Set up ${setup.label}");
     expect(ui).toContain("href={setup.href}");
   });
 });

@@ -226,21 +226,24 @@ export const AI_ROLES = {
     // the same call and T-B23 prices off it — three tickets moved this line, so
     // it is recomputed against the merged file rather than carried over from
     // any one branch.
-    // Shifted 187 → 188 by the credits rework (2026-09), which added one import
-    // above it. Re-pinned against the real file, per the rule above.
-    sites: ["src/app/api/clients/[id]/chat/route.ts:188"],
+    // Shifted 187 → 188 by the credits rework (2026-09), back to 187 when the
+    // run-estimate import went, and to 194 with the served-platforms import
+    // (2026-09-11). Re-pinned against the real file, per the rule above.
+    sites: ["src/app/api/clients/[id]/chat/route.ts:194"],
   },
   "chat.followups": {
     tier: "HAIKU",
     // Shifted 825 → 834 by the credits rework's copy change to the copilot's
-    // price appendix, which sits above this call.
-    sites: ["src/app/api/clients/[id]/chat/route.ts:834"],
+    // price appendix, which sits above this call, to 833 when the run-estimate
+    // import went, and to 844 with the served-platforms import and the
+    // create_tasks channel rule (2026-09-11).
+    sites: ["src/app/api/clients/[id]/chat/route.ts:844"],
   },
   "insights.summary": {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/insights/route.ts:25"],
   },
-  "agent_swarm.step": { tier: "HAIKU", sites: ["src/lib/agent-swarm.ts:284"] },
+  "agent_swarm.step": { tier: "HAIKU", sites: ["src/lib/agent-swarm.ts:294"] },
   "asset.title": { tier: "HAIKU", sites: ["src/lib/asset-titles.ts:51"] },
   "campaign.plan": { tier: "SONNET", sites: ["src/lib/campaign-engine.ts:266"] },
   "dynamic_agent.generate": {

@@ -112,7 +112,7 @@ export function PostManagementRow({
 
   return (
     <div className="border-t border-border pt-3">
-      <p className="mb-2 text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+      <p className="mb-2 text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
         Manage this post
       </p>
       <div className="flex gap-2">

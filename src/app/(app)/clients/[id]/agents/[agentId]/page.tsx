@@ -42,6 +42,7 @@ import { platformLabel } from "@/lib/integrations/platforms";
 import { ClientAgentLaunchCard } from "@/components/client-agents/launch-card";
 import { AgentDetailPanel } from "@/components/client-agents/agent-detail-panel";
 import { LegacyAgentPanel, SchedulePaceControl } from "@/components/client-agents/legacy-agent-panel";
+import { RunCustomAgentModal } from "@/components/custom-agents";
 import { AgentSetupHero } from "@/components/client-agents/agent-setup-hero";
 import { AgentStarButton } from "@/components/client-agents/agent-star-button";
 import { ClientAgentRunHistory } from "@/components/client-agents/client-agent-run-history";
@@ -138,16 +139,22 @@ import type { Job } from "@/lib/types";
 async function agentIntakePane(
   clientId: string,
   agent: { key: string },
-  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string },
+  opts: { isStaff: boolean; jobs: Job[]; linkedinPageUrl?: string; viewerIsBilled: boolean },
 ): Promise<AgentIntakePanes> {
+  // Whose credits the pane's metered controls quote. Explicit rather than the
+  // builders' `!isStaff` default, which reads a staff member using View as
+  // Client as billed when they are not — the same answer each agent's full
+  // intake page already passes.
+  const billed = { viewerIsBilled: opts.viewerIsBilled };
   if (isXAgentIdentity(agent.key)) {
-    return { x: await buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs }) };
+    return { x: await buildXAgentIntakeView(clientId, { isStaff: opts.isStaff, jobs: opts.jobs, ...billed }) };
   }
   if (isLinkedInAgentIdentity(agent.key)) {
     return {
       linkedin: await buildLinkedInAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
+        ...billed,
         ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
       }),
     };
@@ -165,6 +172,7 @@ async function agentIntakePane(
       newsletter: await buildNewsletterAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
+        ...billed,
       }),
     };
   }
@@ -173,6 +181,7 @@ async function agentIntakePane(
       blog: await buildBlogAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
+        ...billed,
       }),
     };
   }
@@ -181,6 +190,7 @@ async function agentIntakePane(
       reputation: await buildReputationAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
         jobs: opts.jobs,
+        ...billed,
       }),
     };
   }
@@ -388,23 +398,26 @@ export default async function ClientAgentDetailPage({
       ? { [agent.id]: creditBlockReason(credits, runCost, now) }
       : {};
 
-  // Ruling 7: the inline pane rides the setup state, keyed by agent. Staff get
-  // the form (their run dialog collects it in place); a client's own route
-  // reaches the same form through AgentSetupState.href, which is the CD-E1
-  // model and stays a full page.
+  // Ruling 7: the inline pane rides the setup state, keyed by agent — for
+  // CLIENTS too since 2026-09-10. It used to be staff-only (CD-E1: a client
+  // reached the same form as a separate full page through
+  // AgentSetupState.href), so the setup section on a client's agent page was a
+  // link out. Albert: "each agent should know what input is needed, and they
+  // should be able to just type it into the page". The builders are the ones
+  // each agent's full intake page already calls for clients, so this shows a
+  // client exactly what that page did; the form's own client branch
+  // (`viewerIsClient ? <IntakeForm />`) was already there waiting for it.
   //
   // The intake DOCUMENTS ride alongside, not after: the inputs band (CD-K1)
-  // wants a dated index of the same collections the panes are built from, and
-  // making it wait for the panes would add a serial round trip to every staff
-  // page load for data neither call needs from the other.
+  // wants a dated index of the same collections, and making it wait for the
+  // panes would add a serial round trip to every page load.
   const [panes, inputDocs] = await Promise.all([
-    isStaff
-      ? agentIntakePane(id, agent, {
-          isStaff,
-          jobs,
-          ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
-        })
-      : Promise.resolve(undefined),
+    agentIntakePane(id, agent, {
+      isStaff,
+      jobs,
+      viewerIsBilled: isBillableClientActor(user),
+      ...(client.socialLinks?.linkedin ? { linkedinPageUrl: client.socialLinks.linkedin } : {}),
+    }),
     readAgentInputDocs(id, agent.key, client.name),
   ]);
   const agentSetup = await buildAgentSetup(id, [summary], panes);
@@ -754,6 +767,7 @@ export default async function ClientAgentDetailPage({
         )
         .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null);
 
+
   // ── THE SECTIONED LAYOUT (CD-K1) ──
   // Albert: "under each agent, everything Daniel created is there, WITH DATES,
   // categorized in sections - all inputs, all outputs, all settings." Outputs
@@ -897,7 +911,7 @@ export default async function ClientAgentDetailPage({
       ? [{ text: `Last delivered ${relativeTime(lastDelivered)}` }]
       : []),
     ...(produced.length > 0
-      ? [{ text: `${produced.length} in your Workspace`, href: archive.href }]
+      ? [{ text: `${produced.length} in ${archive.label}`, href: archive.href }]
       : []),
   ];
 
@@ -1259,7 +1273,7 @@ export default async function ClientAgentDetailPage({
                 emptyHint={
                   sourceFiles.length === 0
                     ? "This agent cuts from footage you provide. Once your Karos team has your source video, finished clips land here for you to download and post."
-                    : "Your footage is on file. Finished clips land here once your Karos team has reviewed them."
+                    : "Your footage is on file. Finished clips land here."
                 }
               />
             </section>
@@ -1360,12 +1374,6 @@ export default async function ClientAgentDetailPage({
               agent={summary}
               engineDispatch={engineDispatch}
               noun={outputNoun}
-              // B5 (parity pass 2026-09): passed for BOTH readers now. It was
-              // `spendable !== undefined ? runCost : null`, i.e. billable
-              // client actors only, so the staff copy of this card was one line
-              // shorter than the client's and the band's height did not match.
-              // The panel renders the staff register of the same fact.
-              cost={runCost}
               batchSize={runBatchSize}
               gate={legacyGate}
               // The banner above already made the outage statement; the gate's
@@ -1379,7 +1387,6 @@ export default async function ClientAgentDetailPage({
                 legacyRun
                   ? {
                       id: legacyRun.id,
-                      status: legacyRun.status === "running" ? "running" : "queued",
                       // Whether stopping it actually returns credits. `spendable`
                       // is resolved only for a billable actor, so it IS the
                       // "was this viewer charged" answer, already computed.
@@ -1401,6 +1408,22 @@ export default async function ClientAgentDetailPage({
                form. So when it is mounted it owns the state, and the hero says
                nothing rather than a second, staler version of it. */
             null
+          ) : isStaff ? (
+            /* A generic imported agent that has never run: no umbrella, no
+               schedule, nothing delivered. The Control Room's "Run now" used to
+               be staff's only way to run it; that button is gone (Albert,
+               2026-09-10), so the form is here, in the page, like every other
+               agent's. A client still gets the empty state below — standing an
+               agent up is Karos's job. */
+            <RunCustomAgentModal
+              agent={summary}
+              clientId={id}
+              engineDispatch={engineDispatch}
+              contextItems={contextItems}
+              viewerIsClient={false}
+              {...(setup ? { setup } : {})}
+              inline
+            />
           ) : (
             /* R9 (round 6): NOT A DEAD END, and no promise no code keeps. It
                said "They will let you know when it is ready" — there is no
@@ -1467,10 +1490,8 @@ export default async function ClientAgentDetailPage({
                 nextRunLabel={nextRunLabel}
                 clientId={id}
                 agent={summary}
-                engineDispatch={engineDispatch}
                 {...(schedule ? { schedule } : {})}
                 {...(setup ? { setup } : {})}
-                contextItems={contextItems}
                 reviewCount={reviewCount}
                 reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
                 {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}
@@ -1500,10 +1521,10 @@ export default async function ClientAgentDetailPage({
             {archiveRows.length === 0 ? (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-4 py-3 text-xs text-muted-2">
                 {archetype === "template_calendar"
-                  ? "Nothing yet. Finished work appears here once your Karos team has approved it."
+                  ? "Nothing yet. Finished work appears here."
                   : hasAnythingAbove
                     ? "Nothing else yet. Everything this agent has made is above."
-                    : "Nothing yet. Finished work appears here once your Karos team has approved it."}
+                    : "Nothing yet. Finished work appears here."}
               </p>
             ) : (
               /* Each row now carries its own way in — a neon-outline
@@ -1560,7 +1581,7 @@ export default async function ClientAgentDetailPage({
           {archetype === "clip_maker" ? (
             <SourceMaterialCard
               files={sourceFiles}
-              hint={launchProfileFor({ key: agent.key, name: agent.name }).attachments.hint}
+              hint={launchProfileFor({ key: agent.key, name: agent.name }).attachments?.hint ?? ""}
             />
           ) : archetype === "daily_finder" && setup && !(inputs && !inputs.ready) ? (
             /* Kept even though the inputs band lists the same document: this
@@ -1613,7 +1634,7 @@ export default async function ClientAgentDetailPage({
               </div>
             ) : (
               <p className="rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 text-[11px] text-muted-2">
-                This agent writes from your brand profile and the documents in your Workspace.
+                This agent writes from your brand profile and the documents you have shared with us.
               </p>
             )}
           </section>
@@ -1636,7 +1657,7 @@ export default async function ClientAgentDetailPage({
                     familyPlatforms took the whole section away above, so the
                     generic "No accounts connected yet" fallback that used to
                     sit here had no reachable case left to serve. */}
-                {`No ${platformLabel(familyPlatforms[0]!)} account connected yet. Posts are delivered to your Workspace for you to publish.`}
+                {`No ${platformLabel(familyPlatforms[0]!)} account connected yet. Posts are delivered to ${archive.label} for you to publish.`}
               </p>
             ) : (
               <ul className="space-y-1.5">
@@ -1681,6 +1702,6 @@ export default async function ClientAgentDetailPage({
 
 function SectionHeading({ title }: { title: string }) {
   return (
-    <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
+    <h2 className="mb-3 font-label text-sm uppercase tracking-[0.1em] text-muted">{title}</h2>
   );
 }

@@ -94,7 +94,7 @@ export function RefreshTaskMapButton({
                 marker in the parity pass a touch device cannot see. */}
             · {clientPrice}
             {!viewerIsBilled && (
-              <span className="ml-1 font-mono text-[9px] uppercase tracking-[0.1em]">client</span>
+              <span className="ml-1 font-label text-[9px] uppercase tracking-[0.1em]">client</span>
             )}
           </span>
         )}

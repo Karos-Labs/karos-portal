@@ -217,7 +217,7 @@ export async function clientRescheduleAssetAction(
   if (asset.status !== "approved" && asset.status !== "scheduled") {
     return {
       ok: false,
-      error: "Only an already-approved or scheduled post can be moved. This one is still in review.",
+      error: "Only a post that is waiting to go out can be moved.",
     };
   }
   if (newScheduledAt <= Date.now()) {

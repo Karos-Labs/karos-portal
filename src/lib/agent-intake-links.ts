@@ -59,6 +59,17 @@ export function intakeRowHref(pageHref: string, rowId: string): string {
 /* ────────────────── the archive link inside the feedback box ────────────── */
 
 /**
+ * What a client's delivered work is called in client copy (SCRUM-431). It was
+ * "your Workspace" in 14 places, a surface neither shell has had since the
+ * Board was retired. The Archive is a real, labelled view of the client's
+ * Calendar, so every sentence that says where work lands now names somewhere a
+ * client can click. The client-copy sweep (client-copy-boundary.test.ts)
+ * forbids the old word coming back. "the", not "your": the flow audit's one
+ * noun for this place (R7, below).
+ */
+export const CLIENT_ARCHIVE_NAME = "the archive";
+
+/**
  * The archive a reader of an intake page can actually reach.
  *
  * THE ARCHIVE IS A CALENDAR VIEW (portal feedback round 2, 2026-09): "Archive
@@ -93,6 +104,7 @@ export function intakeRowHref(pageHref: string, rowId: string): string {
  *    "your archive" is gone with the rest of the spellings; only the staff/
  *    client scoping split survives, because that is about whose archive it is.
  */
+
 export function clientArchiveLink(args: { clientId: string; isStaff: boolean }): {
   href: string;
   label: string;
@@ -100,7 +112,7 @@ export function clientArchiveLink(args: { clientId: string; isStaff: boolean }):
 } {
   return {
     href: args.isStaff ? `/clients/${args.clientId}/calendar?view=archive` : "/calendar?view=archive",
-    label: args.isStaff ? "this client's archive" : "the archive",
+    label: args.isStaff ? "this client's archive" : CLIENT_ARCHIVE_NAME,
     linkLabel: "Open archive",
   };
 }

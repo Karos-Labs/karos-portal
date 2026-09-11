@@ -72,7 +72,7 @@ export function docsPipelineState(opts: {
  */
 export function docListEmptyLine(state: DocsPipelineState): string {
   if (state === "running") {
-    return "Karos Agents are writing your documents now — this takes a few minutes.";
+    return "Karos Agents are writing your documents now. They appear here when they are ready.";
   }
   if (state === "failed") return "Generation stopped early. Your Karos team is on it.";
   return "Your brand and strategy documents will appear here once onboarding completes.";

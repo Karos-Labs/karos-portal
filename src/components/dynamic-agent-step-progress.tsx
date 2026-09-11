@@ -206,7 +206,7 @@ export function DynamicAgentStepProgress({
               <p className="truncate text-sm font-medium text-foreground">{row.label}</p>
               <span
                 className={cn(
-                  "shrink-0 rounded-[4px] border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em]",
+                  "shrink-0 rounded-[4px] border px-1.5 py-0.5 font-label text-[10px] uppercase tracking-[0.08em]",
                   TONE_CHIP[row.tone],
                 )}
               >

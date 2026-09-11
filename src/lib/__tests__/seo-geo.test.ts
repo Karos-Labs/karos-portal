@@ -916,12 +916,12 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
       title: "Indexable: pages return 200, no noindex/nosnippet",
       description: "something else",
     });
-    expect(asLabel.title).toBe("A technical finding your team is reviewing");
+    expect(asLabel.title).toBe("A technical finding we are still mapping");
 
     const echoed = resolveRecCopy("MODEL-INVENTED-2", { title: "LCP p75 ≤ 2.5s", description: "LCP p75 ≤ 2.5s" });
-    expect(echoed.title).toBe("A technical finding your team is reviewing");
+    expect(echoed.title).toBe("A technical finding we are still mapping");
 
-    expect(resolveRecCopy("MODEL-INVENTED-3", {}).title).toBe("A technical finding your team is reviewing");
+    expect(resolveRecCopy("MODEL-INVENTED-3", {}).title).toBe("A technical finding we are still mapping");
   });
 
   it("keeps genuinely plain stored copy for an unknown id", () => {
@@ -987,7 +987,7 @@ describe("client-facing recommendations (dev-handoff §3b/§4)", () => {
     const [rec] = buildRecommendations(computeCheckGaps(GEO_READINESS_CHECKS, invented, "GEO"));
     expect(rec.title).not.toContain("Vibes");
     expect(rec.description).not.toContain("Vibes");
-    expect(rec.title).toBe("A technical finding your team is reviewing");
+    expect(rec.title).toBe("A technical finding we are still mapping");
   });
 });
 

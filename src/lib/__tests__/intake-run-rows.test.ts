@@ -160,8 +160,9 @@ describe("the intake cards' run rows", () => {
 
   it("never tells a client their work arrives in batches", () => {
     // The mechanics wording the feedback copy used to name ("once your Karos
-    // team approves a batch"). The approval step stays named — clients need to
-    // know a human sees it first — but the shipping unit is not their business.
+    // team approves a batch"). Neither the shipping unit nor the approval step
+    // is the client's business (the SOW rule Albert kept on 2026-09-10), but
+    // the copy still says the work reaches the archive LATER (F28).
     for (const rel of SURFACES) {
       // SCRUM-412: LinkedIn's and X's feedback copy moved into the shared box,
       // so the text a client reads on those two pages is their own file PLUS
@@ -175,9 +176,8 @@ describe("the intake cards' run rows", () => {
       // The newsletter's noun is singular because one run prepares ONE issue —
       // "the issues" would describe a batch, which is the very thing this test
       // is here to keep out of client copy.
-      expect(rendered).toMatch(
-        /Once your Karos team has approved (the drafts|the replies|an issue|an article|a reply),/,
-      );
+      expect(rendered).not.toMatch(/Karos team (has approved|approves)/);
+      expect(rendered.replace(/\s+/g, " ")).toMatch(/once (they are|it is) in|as they are finished/);
     }
   });
 });

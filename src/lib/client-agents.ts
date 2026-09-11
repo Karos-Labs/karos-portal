@@ -139,9 +139,6 @@ export function clientLaunchPhase(
 /** Halfway through the quoted launch window — where the client narrative turns. */
 export const LAUNCH_STAGE_SPLIT_MS = 12 * 60 * 1000;
 
-/** ~How long a setup run takes, in the client's words. */
-export const LAUNCH_ESTIMATE = "~20–40 min";
-
 /**
  * Past this, a launch still sitting in `launching` is more likely stuck than
  * slow — the webhook never arrived, the service dropped the job, a deploy ate
@@ -746,8 +743,7 @@ export const IMPORTED_CONTENT_STAFF_NOTE =
  * Operator voice, like its sibling above: the reader is the person who would
  * otherwise open a ticket about a green badge over a failed run.
  */
-export const LAST_RUN_FAILED_STAFF_NOTE =
-  "Last run failed. The client-facing status is unchanged, because a failure on our side is not theirs to attend to.";
+export const LAST_RUN_FAILED_STAFF_NOTE = "Last run failed. The client does not see this.";
 
 /**
  * Whether a stored schedule refusal is recent enough to still be the client's

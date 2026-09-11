@@ -1361,12 +1361,13 @@ export const REC_COPY: Record<string, { title: string; description: string }> = 
 /**
  * Last-resort client copy for an id in neither registry nor REC_COPY (the audit model
  * occasionally invents one). Deliberately says nothing specific rather than echoing the
- * model's own label into a client-facing card title (QA F3c / F9).
+ * model's own label into a client-facing card title (QA F3c / F9). It does not say
+ * anyone is reviewing it: a client is never told about a review (Albert, 2026-09-10).
  */
 const REC_FALLBACK = {
-  title: "A technical finding your team is reviewing",
+  title: "A technical finding we are still mapping",
   description:
-    "Our audit flagged something on your site that doesn't map to a standard check yet. Your Karos team reviews it and turns it into a plain-English action on your next refresh.",
+    "Our audit flagged something on your site that doesn't map to a standard check yet. We turn it into a plain-English action once it does.",
 } as const;
 
 /** Every internal registry label, for detecting one that was frozen into a snapshot. */

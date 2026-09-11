@@ -161,7 +161,11 @@ function terminalJobUpdate(run: AgentEngineRunRecord, productId?: string): Termi
  * in progress — it hasn't reached a terminal state, it just hasn't reached
  * ANY state this reader can see.
  */
-export function isJobInProgress(job: Job, agentEngineView?: AgentEngineRunView): boolean {
+// `Pick<…, "run">` rather than the whole view (2026-09-10): both predicates
+// read `agentEngineView.run` and nothing else, and the progress route polls
+// every four seconds — demanding the full view made it fetch every step's
+// `output` to answer a question about the run doc alone.
+export function isJobInProgress(job: Job, agentEngineView?: Pick<AgentEngineRunView, "run">): boolean {
   if (job.agentEngineRunId) {
     return agentEngineView === undefined || terminalJobUpdate(agentEngineView.run, job.agentEngineProductId) === undefined;
   }
@@ -187,7 +191,10 @@ export function isJobInProgress(job: Job, agentEngineView?: AgentEngineRunView):
  * date calls `scheduleAgentEngineJobStatusSync` instead, and this deliberately
  * does not, because a poll must not be a write path.
  */
-export function reconciledJobStatus(job: Job, agentEngineView?: AgentEngineRunView): JobStatus {
+export function reconciledJobStatus(
+  job: Job,
+  agentEngineView?: Pick<AgentEngineRunView, "run">,
+): JobStatus {
   if (!job.agentEngineRunId || agentEngineView === undefined) return job.status;
   return (
     terminalJobUpdate(agentEngineView.run, job.agentEngineProductId)?.status ?? job.status

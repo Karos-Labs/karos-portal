@@ -229,7 +229,7 @@ describe("resolveSetupLadder", () => {
     expect(reviewing.action).toBeUndefined();
     expect(reviewing.waiting).toBe(true);
     expect(reviewing.why).toBe(
-      "Your Karos team is reviewing your first X post. It lands in your Workspace once approved.",
+      "Your first X post is on its way. It will appear on your Home page.",
     );
     // A waiting row never takes the accent control, so the ladder cannot point
     // a client at a screen with nothing on it.
@@ -942,13 +942,13 @@ describe("step 5: opened, or aged out of the archive", () => {
       resultReady: false,
     });
     expect(reviewing.waiting).toBe(true);
-    expect(reviewing.why).toContain("is reviewing your first");
+    expect(reviewing.why).toContain("is on its way");
 
     // With something aged out, the same empty archive is NOT a review queue —
     // it is a window that has closed — so the row must not invent one.
     const aged = result({ resultOpened: false, agedOutDeliverable: true, resultReady: false });
     expect(aged.waiting).toBeUndefined();
-    expect(aged.why).not.toContain("is reviewing your first");
+    expect(aged.why).not.toContain("is on its way");
   });
 
   it("does not tick before a run has produced anything", () => {

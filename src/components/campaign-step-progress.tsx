@@ -90,7 +90,7 @@ export function CampaignStepProgress({ tasks }: { tasks: ClientTask[] }) {
                 <p className="truncate text-sm font-medium text-foreground">{task.title}</p>
                 <span
                   className={cn(
-                    "shrink-0 rounded-[4px] border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em]",
+                    "shrink-0 rounded-[4px] border px-1.5 py-0.5 font-label text-[10px] uppercase tracking-[0.08em]",
                     TONE_CHIP[tone],
                   )}
                 >

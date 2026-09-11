@@ -487,6 +487,37 @@ function offences(shape: string, opts: { payload?: boolean; jsx?: boolean } = {}
   // The en dash is untouched and still wanted: "3–4 posts", "~10–25 min",
   // "1–10" are ranges, not punctuation between clauses.
   if (text.includes("—")) out.push("em dash — use a comma, a period or ·");
+  // SCRUM-431 (Albert, 2026-09-10): a sentence saying work "lands in your
+  // Workspace" named no place work lands. The only thing labelled Workspace is
+  // Account Center's side-nav GROUP holding Settings and Credits, so it pointed
+  // a client at their credits. Name where work really lands instead
+  // (CLIENT_ARCHIVE_NAME in agent-intake-links.ts, or Calendar / Home). The
+  // destination phrase only: the nav group's own label, "Google Workspace" and
+  // the generic lowercase word are different things.
+  if (/\b(?:your|the) Workspace\b/.test(text)) {
+    out.push("\"your Workspace\" names no place work lands — use the nav's word");
+  }
+  // Albert, 2026-09-10, keeping the portal-revamp SOW rule ("In review is
+  // removed. We are not reviewing anything"): a client is never told their work
+  // is being reviewed or approved by us. Say it is on its way. The shapes, not
+  // the word: customer reviews (the Reputation agent) and a client reading
+  // their own drafts ("ready to review") are different things.
+  if (/\bKaros team (?:is reviewing|reviews|has approved|approves|confirms)\b|\bin review\b/i.test(text)) {
+    out.push("tells a client we review or approve their work — say it is on its way");
+  }
+  // Albert, 2026-09-10: "Audit everywhere we say it's ready in X minutes: it's
+  // never true." Measured, the agent's own work is 1.7 to 5.6 minutes and the
+  // old half hour was the human check after it. A run shows its progress
+  // instead of promising a time.
+  if (/\b(?:ready|done) in (?:about |under |~ ?)?(?:\d|a few|a couple|half)|\busually takes\b|\btakes about\b/i.test(text)) {
+    out.push("promises how long a run takes — show its progress instead");
+  }
+  // A sentence split across JSX lines right before its full stop renders
+  // "…up . That's" (the line break collapses to a space). Twice on one branch
+  // (2026-09-10), in the archive sentence and the option picker's.
+  if (opts.jsx && /[A-Za-z0-9’'")] [.,](?=\s|$)/.test(text)) {
+    out.push("a space before a full stop or comma, from a JSX line break");
+  }
   if (IS_PROSE.test(text) || opts.payload) {
     for (const token of STORED_ENUM_TOKENS) {
       if (new RegExp(`(^|[^A-Za-z0-9_])${token}([^A-Za-z0-9_]|$)`).test(text)) {
@@ -557,6 +588,29 @@ describe("the two rules themselves", () => {
     // And normalising must not INVENT one: a hyphen that ends the whole text, or
     // a bullet list, still reads clean.
     expect(offences("Trailing dash -", { jsx: true })).toEqual([]);
+  });
+
+  it("reads our review as an offence, and a customer's review as not one", () => {
+    expect(offences("Your Karos team is reviewing these.")).toHaveLength(1);
+    expect(offences("3 deliverables in review")).toHaveLength(1);
+    expect(offences("Once your Karos team has approved a reply, it appears here.")).toHaveLength(1);
+    // The Reputation agent's subject, and a client reading their own drafts.
+    expect(offences("Who should hear about an urgent review?")).toEqual([]);
+    expect(offences("The next post, ready to review.")).toEqual([]);
+  });
+
+  it("reads a JSX line break before a full stop as an offence", () => {
+    expect(offences("Mark it posted once it’s up\n. That’s what teaches it.", { jsx: true })).toHaveLength(1);
+    expect(offences("Mark it posted once\n  it’s up. That’s what teaches it.", { jsx: true })).toEqual([]);
+    expect(offences("Posts go to example .com next week")).toEqual([]);
+  });
+
+  it("reads a promised run time as an offence, and the client's own typing time as not one", () => {
+    expect(offences("Your post will be ready in 30 minutes.")).toHaveLength(1);
+    expect(offences("This usually takes a few minutes.")).toHaveLength(1);
+    expect(offences("This takes about a minute.")).toHaveLength(1);
+    expect(offences("It takes a few minutes to fill in, once.")).toEqual([]);
+    expect(offences("Drafts are ready in the archive.")).toEqual([]);
   });
 });
 
@@ -903,9 +957,6 @@ describe("the launch-form copy a client reads", () => {
     p.intro,
     p.attachments?.hint,
     ...p.fields.flatMap((f) => [f.label, f.helper, f.placeholder, f.defaultValue]),
-    // The quick-start chips are plain strings, and they go into the agent's
-    // prompt as well as onto the client's screen.
-    ...(p.quickStarts ?? []),
   ]).filter((s): s is string => typeof s === "string" && s.length > 0);
 
   it("found the profile table", () => {

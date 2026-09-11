@@ -70,7 +70,8 @@ describe("clientAgentBlurb", () => {
   it("falls back to a line that promises nothing specific for an unknown agent", () => {
     const blurb = clientAgentBlurb({ key: "karos-mystery-agent", name: "Mystery Agent" });
     expect(blurb).toContain("Mystery Agent");
-    expect(blurb).toMatch(/reviews/);
+    // No review step in client copy (the SOW rule Albert kept, 2026-09-10).
+    expect(blurb).not.toMatch(/review|approv/i);
   });
 });
 

@@ -524,6 +524,8 @@ function normalizeTargetDate(raw: string): string | undefined {
 export function toEngineRunInput(
   briefValues: Record<string, string> | undefined,
   engineProductId?: string,
+  /** The agent's `request` box is its run direction (`requestSteersRun`, custom-agent-launch). */
+  opts: { requestSteersRun?: boolean } = {},
 ): Record<string, unknown> {
   if (!briefValues) return {};
 
@@ -545,6 +547,9 @@ export function toEngineRunInput(
       promptParts.push(`Business goal or question\n${request}`);
     } else {
       input.requestedTopic = request;
+      // One box on screen, both fields on the wire: a run's steer can be a
+      // topic or a direction, so the engine gets it as both.
+      if (opts.requestSteersRun && request !== base) promptParts.push(request);
     }
   }
 

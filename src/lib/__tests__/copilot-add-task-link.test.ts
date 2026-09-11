@@ -23,7 +23,7 @@ import { stripComments } from "./source-scan";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/actions", () => ({ ingestCustomUserTaskAction: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 const { addTaskReply } = await import("@/components/chatbot-widget");
 const { renderSectionBody } = await import("@/lib/doc-render");

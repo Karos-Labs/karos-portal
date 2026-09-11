@@ -106,7 +106,7 @@ describe("healRecommendations collapses rows that heal to identical copy", () =>
     expect(out).toHaveLength(1);
     // Not vacuous: these really are the fallback, not two rows that happened to
     // share a blank title.
-    expect(out[0].title).toBe("A technical finding your team is reviewing");
+    expect(out[0].title).toBe("A technical finding we are still mapping");
   });
 
   it("does not collapse two findings that actually say different things", () => {

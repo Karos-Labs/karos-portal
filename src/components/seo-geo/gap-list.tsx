@@ -67,18 +67,18 @@ function GapCard({ gap }: { gap: GapView }) {
       {open && (
         <div id={panelId} className="space-y-2.5 border-t border-border px-3 py-2.5">
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">What we found</p>
+            <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">What we found</p>
             <p className="mt-0.5 text-xs text-muted">{gap.foundLine}</p>
             {gap.evidence && <p className="mt-0.5 text-xs text-muted-2">{gap.evidence}</p>}
           </div>
           {gap.goalLine && (
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">What good looks like</p>
+              <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">What good looks like</p>
               <p className="mt-0.5 text-xs text-muted">{gap.goalLine}</p>
             </div>
           )}
           <div>
-            <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">How it gets fixed</p>
+            <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">How it gets fixed</p>
             {gap.fixArea && (
               <p className="mt-0.5 text-xs text-muted">
                 <span className="text-foreground">{gap.fixArea.label}</span>

@@ -342,7 +342,7 @@ export function ArchiveView({
         title={viewerIsClient ? "Nothing here yet" : "Nothing archived yet"}
         description={
           viewerIsClient
-            ? "Work your Karos team has approved shows up here, and stays for 30 days after you mark it posted."
+            ? "Finished work shows up here, and stays for 30 days after you mark it posted."
             : "Everything the agents produce lands here, organized per agent."
         }
         // R9: an empty region should offer the control that starts the task
@@ -378,7 +378,7 @@ export function ArchiveView({
     <div className="space-y-6">
       {/* Same control strip the staff assets list has had all along. */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 p-2">
-        <span className="px-1 text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+        <span className="px-1 text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">
           Filter
         </span>
         <select

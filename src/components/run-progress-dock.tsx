@@ -15,12 +15,9 @@
  * navigation in the tab and a reload (see run-watch.tsx). The dialog shows the
  * same watch while it is open, from the same store, so the two cannot disagree.
  *
- * IT ASSEMBLES, it does not invent. The ladder is `ManagedJobProgress`, already
- * mounted on a client's own agent page, which takes its words from the
- * sanctioned `jobStatusLabel` register. The sentences are `runOutcomeSentence`.
- * The estimate is the same `RUN_ESTIMATE_SENTENCE` constant every other surface
- * quotes, kept as CONTEXT beside real progress rather than as the only
- * information there is.
+ * IT ASSEMBLES, it does not invent. The bar is `AgentRunProgress`, the same one
+ * the in-page run form turns into, and the sentences are `runOutcomeSentence`.
+ * It quotes no duration: the moving bar answers "how long".
  *
  * WHAT IT DOES NOT DO. It does not cancel (`CancelRunControl` lives on the
  * agent page, where the refund rules are already painted), and it does not
@@ -32,10 +29,9 @@
 import Link from "next/link";
 
 import { Icon } from "@/components/icon";
-import { ManagedJobProgress } from "@/components/managed-job-progress";
+import { AgentRunProgress } from "@/components/client-agents/run-progress";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { useRestoreRunPolling, useRunWatch, type WatchedRun } from "@/components/run-watch";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 import { runOutcome, runOutcomeSentence } from "@/lib/run-progress";
 import type { JobStatus } from "@/lib/types";
 
@@ -52,7 +48,7 @@ function DockRow({
   // at that moment and what the ladder's first step already says, so the strip
   // is honest rather than empty.
   const status = (run.status ?? "queued") as JobStatus;
-  const outcome = runOutcome(status);
+  const outcome = run.agentDone ? "landed" : runOutcome(status);
 
   return (
     <div className="rounded-[var(--radius)] border border-border bg-surface p-3 shadow-lg">
@@ -77,14 +73,16 @@ function DockRow({
         </button>
       </div>
 
-      <ManagedJobProgress
-        status={status}
-        className="mb-0 mt-2 rounded-md px-2.5 py-2"
-      />
+      {/* The same bar as the run form, compact: what it is doing while it
+          works, full once the agent is done, none for a run that stopped. */}
+      {outcome !== "stopped" && (
+        <div className="mt-2">
+          <AgentRunProgress outcome={outcome} {...(run.headline ? { headline: run.headline } : {})} />
+        </div>
+      )}
 
       <p className="mt-2 text-xs leading-relaxed text-muted">
         {runOutcomeSentence(outcome, viewerIsClient)}
-        {outcome === "working" ? ` It usually takes ${RUN_ESTIMATE_SENTENCE}.` : ""}
       </p>
 
       {outcome === "landed" && run.href && (
@@ -122,8 +120,11 @@ export function RunProgressDock({ viewerIsClient }: { viewerIsClient: boolean })
   // `watch()` is the only other thing that starts one and is not called again
   // on that path.
   useRestoreRunPolling(runs.length);
+  // Polling counts every run above; only the DRAWING skips a run that a view
+  // on this page is showing right now (see WatchedRun.shownInPage).
+  const shown = runs.filter((run) => !run.shownInPage);
 
-  if (runs.length === 0) return null;
+  if (shown.length === 0) return null;
 
   return (
     <div
@@ -133,7 +134,7 @@ export function RunProgressDock({ viewerIsClient }: { viewerIsClient: boolean })
       className="pointer-events-none fixed bottom-24 right-4 z-40 flex w-[min(20rem,calc(100vw-2rem))] flex-col gap-2 md:bottom-6"
       aria-live="polite"
     >
-      {runs.map((run) => (
+      {shown.map((run) => (
         <div key={run.jobId} className="pointer-events-auto">
           <DockRow
             run={run}
