@@ -50,11 +50,10 @@ const SETUP = {
 } as unknown as AgentSetupState;
 
 describe("the Control Room's agent data chip", () => {
-  it("links the agent's data page, and opens no run form", () => {
+  it("links the agent's data page", () => {
     const html = renderToStaticMarkup(
       <StaffAgentControls clientId="c1" agent={AGENT} setup={SETUP} reviewHref="/clients/c1/assets" />,
     );
     expect(html).toMatch(/<a [^>]*href="\/clients\/c1\/x-agent"[^>]*>[\s\S]*?X agent data/);
-    expect(html).not.toContain('role="dialog"');
   });
 });

@@ -63,7 +63,9 @@ describe("an agent that IS set up", () => {
   it("draws the run form in the page", () => {
     // Which verdicts draw it is asserted on the render, in
     // legacy-panel-setup-in-page.test.tsx.
-    expect(PANEL).toMatch(/<RunCustomAgentModal[\s\S]*?\binline\b/);
+    // The `inline` PROP, on its own line before the tag closes: a looser match
+    // was satisfied by the `inline-block` class further down the file.
+    expect(PANEL).toMatch(/<RunCustomAgentModal\b[^<]*?\n\s*inline\n\s*\/>/);
     expect(PANEL).not.toMatch(/setRunning|onClick=\{\(\) => setRunning/);
   });
 

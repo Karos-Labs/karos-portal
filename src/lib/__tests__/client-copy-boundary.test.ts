@@ -945,9 +945,9 @@ describe("the launch-form copy a client reads", () => {
     p.intro,
     p.attachments?.hint,
     ...p.fields.flatMap((f) => [f.label, f.helper, f.placeholder, f.defaultValue]),
-    // The quick-start chips are plain strings, and they go into the agent's
-    // prompt as well as onto the client's screen.
-    ...(p.quickStarts ?? []),
+    // Not on screen since the "Try:" chips went (2026-09-10), but it is what an
+    // untouched form sends, so it is still words the agent writes from.
+    p.defaultRequest,
   ]).filter((s): s is string => typeof s === "string" && s.length > 0);
 
   it("found the profile table", () => {

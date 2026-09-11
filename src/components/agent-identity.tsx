@@ -5,9 +5,10 @@ import { cn } from "@/lib/utils";
 export type SocialPlatform = "instagram" | "x" | "tiktok" | "linkedin" | "reddit" | "facebook" | "youtube";
 
 /**
- * Real platform logos (simple-icons paths, 24x24, currentColor) - the same
- * marks the karos-labs landing page hero uses, so an agent carries one
- * identity from the marketing site through the whole app.
+ * Real platform logos (simple-icons paths, 24x24) - the same marks the
+ * karos-labs landing page hero uses, so an agent carries one identity from the
+ * marketing site through the whole app. Drawn in currentColor unless asked for
+ * the platform's own colour (see PLATFORM_BRAND).
  */
 const PLATFORM_PATHS: Record<SocialPlatform, string> = {
   instagram:
@@ -95,11 +96,17 @@ const FAMILY_MARKS: ReadonlyArray<{ match: RegExp; icon: string; color: string }
   { match: /short|video|clip/, icon: "Video", color: "#F87171" },
 ];
 
-/** Staying in the ink is for a logo drawn ON a platform-coloured button. */
+/**
+ * `brand` is for an AGENT's icon (AgentMark, AgentIdentity, a run card's tile).
+ * The default stays the ink, because a platform logo elsewhere carries its
+ * surface's own colour: a calendar chip tints its logo by the post's status
+ * (published green, failed red), and a connect button draws it white on the
+ * platform's fill.
+ */
 export function SocialPlatformMark({
   platform,
   className,
-  tone = "brand",
+  tone = "ink",
 }: {
   platform: SocialPlatform;
   className?: string;
@@ -127,14 +134,29 @@ export function SocialPlatformMark({
  * platform logo when the agent is a social agent, its family's glyph and
  * colour for the other channels, and the stored lucide icon as the fallback.
  */
-export function AgentMark({ identity, icon, className }: { identity: string; icon?: string; className?: string }) {
+export function AgentMark({
+  identity,
+  icon,
+  className,
+  tone = "brand",
+}: {
+  identity: string;
+  icon?: string;
+  className?: string;
+  /** "ink" only where the surface tints the mark itself (ContentPlatformMark's chips). */
+  tone?: "brand" | "ink";
+}) {
   const platform = socialPlatformsFor(identity)[0];
-  if (platform) return <SocialPlatformMark platform={platform} className={className} />;
+  if (platform) return <SocialPlatformMark platform={platform} className={className} tone={tone} />;
   const value = identity.toLowerCase();
   const family = FAMILY_MARKS.find((f) => f.match.test(value));
-  // A heavier stroke than the app's 1.5: these sit beside filled logos.
-  if (family) return <Icon name={family.icon} className={className} strokeWidth={2} style={{ color: family.color }} />;
-  return <Icon name={icon ?? "Sparkles"} className={className} />;
+  if (!family) return <Icon name={icon ?? "Sparkles"} className={className} />;
+  // A heavier stroke than the app's 1.5 in colour: these sit beside filled logos.
+  return tone === "brand" ? (
+    <Icon name={family.icon} className={className} strokeWidth={2} style={{ color: family.color }} />
+  ) : (
+    <Icon name={family.icon} className={className} />
+  );
 }
 
 /**
@@ -153,14 +175,17 @@ export function ContentPlatformMark({
   identity,
   icon,
   className,
+  tone = "ink",
 }: {
   platform?: SocialPlatform | null;
   identity: string;
   icon?: string;
   className?: string;
+  /** "brand" on a run card's tile, which is the agent's icon; chips keep their tint. */
+  tone?: "brand" | "ink";
 }) {
-  if (platform) return <SocialPlatformMark platform={platform} className={className} />;
-  return <AgentMark identity={identity} icon={icon} className={className} />;
+  if (platform) return <SocialPlatformMark platform={platform} className={className} tone={tone} />;
+  return <AgentMark identity={identity} icon={icon} className={className} tone={tone} />;
 }
 
 /**
@@ -198,7 +223,7 @@ export function AgentIdentity({
               key={platform}
               className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-surface bg-surface-2 text-foreground/80"
             >
-              <SocialPlatformMark platform={platform} className="h-3 w-3" />
+              <SocialPlatformMark platform={platform} className="h-3 w-3" tone="brand" />
             </span>
           ))}
         </div>
@@ -216,7 +241,7 @@ export function AgentPlatformBadges({ identity }: { identity: string }) {
     <div className="flex flex-wrap gap-1.5" aria-label={`Platforms: ${platforms.map((p) => PLATFORM_LABEL[p]).join(", ")}`}>
       {platforms.map((platform) => (
         <span key={platform} className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 text-[10px] font-medium text-muted">
-          <SocialPlatformMark platform={platform} className="h-3 w-3" />
+          <SocialPlatformMark platform={platform} className="h-3 w-3" tone="brand" />
           {PLATFORM_LABEL[platform]}
         </span>
       ))}

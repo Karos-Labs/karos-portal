@@ -4,13 +4,8 @@ import { type ComponentProps, useEffect, useId, useMemo, useRef, useState, useTr
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Badge, Button, buttonClass, Input, Label, Select, Textarea } from "@/components/ui";
-import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
-import {
-  AgentIdentity,
-  AgentMark,
-  AgentPlatformBadges,
-  SocialPlatformMark,
-} from "@/components/agent-identity";
+import { Icon } from "@/components/icon";
+import { AgentIdentity, AgentMark, AgentPlatformBadges } from "@/components/agent-identity";
 import { AgentInputFiles } from "@/components/agent-input-files";
 import { BlogAgentIntake } from "@/components/blog-agent-intake";
 import { ReputationAgentIntake } from "@/components/reputation-agent-intake";
@@ -199,7 +194,7 @@ function fieldLabel(field: AgentBriefField, effectivelyRequired = false): string
   return /\(optional\)/i.test(field.label) ? field.label : `${field.label} (optional)`;
 }
 
-/** "About 25 credits · ready in …" - the footer line starts a sentence. */
+/** "About 25 credits" - the footer's price starts a line. */
 function sentenceStart(line: string): string {
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
@@ -404,10 +399,10 @@ export type AgentSetupState = {
    *
    * WHY IT IS A FIELD HERE rather than derived where it is needed. The predicate
    * already existed as `standUpDone()` below, but it reads `setup.data.isSetUp`,
-   * which is only present when the intake PANES were built — and the client's
-   * detail route builds panes for staff only. So for every client the old
-   * predicate answered "done" by omission, which is the one answer that cannot be
-   * right for the state both submit cores refuse on.
+   * which is only present when the intake PANES were built — and until
+   * 2026-09-10 the client's detail route built them for staff only. So for every
+   * client the old predicate answered "done" by omission, which is the one answer
+   * that cannot be right for the state both submit cores refuse on.
    *
    * IT MARKS AN OUTSTANDING STEP, not the raw predicate. Newsletter and blog v2
    * have stand-up runs too, and they answer the question a different way — both
@@ -635,23 +630,6 @@ function intakeFor(setup: AgentSetupState | null | undefined): AgentIntakeContex
 }
 
 /**
- * The platform mark, per kind. Explicit for every family, same reasoning as
- * `IntakeForm`: a trailing return would have drawn the Reddit mark on the
- * newsletter's data button.
- *
- * The newsletter has no platform - it is email, sent from the client's own tool
- * - so it takes an app icon rather than a brand mark.
- */
-function IntakeGlyph({ kind, className }: { kind: IntakeKind; className?: string }) {
-  if (kind === "x") return <XLogo className={className} />;
-  if (kind === "linkedin") return <LinkedInLogo className={className} />;
-  if (kind === "newsletter") return <Icon name="Mail" className={className} />;
-  if (kind === "blog") return <Icon name="PenLine" className={className} />;
-  if (kind === "reputation") return <Icon name="MessageSquare" className={className} />;
-  return <SocialPlatformMark platform="reddit" className={className} />;
-}
-
-/**
  * Is the company page saved? `ready` is a looser server predicate - for X, any
  * seat satisfies it, and seats are shared across agents - so it cannot decide
  * on its own whether the setup a person came here to do is finished.
@@ -724,16 +702,17 @@ function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
 /**
  * Control Room's link to this agent's data page (Albert, 2026-09-10: a link,
  * not the run dialog's data pane). The run form's own way in is a quiet text
- * link beside "More options".
+ * link beside "More options". The mark is the agent's own, in its colour: a
+ * family name is an identity AgentMark resolves ("x", "newsletter", …).
  */
-function AgentDataLink({ kind, href }: { kind: IntakeKind; href: string }) {
+function AgentDataLink({ kind, href, label }: { kind: IntakeKind; href: string; label: string }) {
   return (
     <Link
       href={href}
       className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
     >
-      <IntakeGlyph kind={kind} className="h-3 w-3" />
-      {INTAKE_LABEL[kind]} agent data
+      <AgentMark identity={kind} className="h-3 w-3" />
+      {label}
     </Link>
   );
 }
@@ -1327,7 +1306,7 @@ export function StaffAgentControls({
             <Badge tone="warning">Setup needed</Badge>
           </a>
         ) : intake && setup && intakeComplete(intake) ? (
-          <AgentDataLink kind={intake.kind} href={setup.href} />
+          <AgentDataLink kind={intake.kind} href={setup.href} label={setup.label} />
         ) : null}
       </div>
 
@@ -2585,14 +2564,14 @@ export function RunCustomAgentModal({
     // agents are documented to support, and they draft from their stored data
     // either way. The brief joins non-empty fields only, so an untouched form
     // produced an empty prompt and a refusal naming a requirement that does not
-    // exist. Fall back to the profile's first starting point (`quickStarts[0]`),
-    // which is what the legacy path's prompt needs; the engine reads the brief's
-    // fields, which stay empty.
+    // exist. Fall back to the profile's `defaultRequest`, which is what the
+    // legacy path's prompt needs; the engine reads the brief's fields, which
+    // stay empty.
     let prompt = buildCustomAgentPrompt(profile, fields);
-    if (!prompt && !profile.fields.some((field) => field.required) && profile.quickStarts[0]) {
+    if (!prompt && !profile.fields.some((field) => field.required) && profile.defaultRequest) {
       prompt = buildCustomAgentPrompt(profile, {
         ...fields,
-        [primaryField.key]: profile.quickStarts[0],
+        [primaryField.key]: profile.defaultRequest,
       });
     }
     if (!prompt) {
@@ -2857,14 +2836,11 @@ export function RunCustomAgentModal({
   // (2026-09-10, "reduce the number of elements"): the button already says the
   // gesture and the page header says what the agent makes. The data pane keeps
   // both, because it is a different task with its own instructions.
-  const shellTitle =
-    showData && intake
-      ? viewerIsClient && setup
-        ? setup.clientLabel
-        : `${INTAKE_LABEL[intake.kind]} agent data`
-      : inline
-        ? null
-        : runLabel;
+  // The agent's data page by this reader's name for it: "Your X details" for a
+  // client, "X agent data" for staff. One answer for the pane's title, the
+  // row's link and the setup refusal's link.
+  const dataLabel = setup ? (viewerIsClient ? setup.clientLabel : setup.label) : null;
+  const shellTitle = showData && intake ? dataLabel : inline ? null : runLabel;
   const shellDescription = showData
     ? companyOnFile(intake)
       ? "This is what the agent drafts from. Change or add anything; it applies to the next run."
@@ -2890,10 +2866,8 @@ export function RunCustomAgentModal({
       {...(showData
         ? {}
         : {
-            /* ONE calm line, no icon, no band (round 6). It was a Clock glyph,
-               two sentences and a third about settlement, over an orange CTA;
-               the price, the wait and the fact that leaving is safe are three
-               facts of the same size, so they read as one middot line.
+            /* ONE calm line, no icon, no band (round 6): the price, and since
+               2026-09-10 nothing else (see the note inside).
 
                The price is `per-run estimate × the count the reader can SEE`
                (quoteMultiplierFrom): a client who asks for three posts used to
@@ -2968,17 +2942,10 @@ export function RunCustomAgentModal({
               <p className="text-xs text-muted">{INTAKE_FIRST_STEP[intake.kind]}</p>
             )}
           </div>
-          {/* B2 (parity pass 2026-09). The inline form is the STAFF shortcut:
-              the panes are prefetched only on the staff branch of the agent
-              detail route (`isStaff ? agentIntakePane(...) : undefined`), so a
-              client reaches the same intake as a full page at
-              `AgentSetupState.href` instead, and this dialog collects it in
-              place. The owner accepts staff having a bit more context here —
-              but it has to be marked as staff context, not read as a step the
-              client also gets. The `viewerIsClient` test is belt-and-braces:
-              `intake` is already null for that reader today, and if a future
-              caller ever prefetches panes for a client, the frame would be a
-              lie rather than merely redundant. */}
+          {/* Every viewer gets these panes since 2026-09-10 (clients fill in
+              their setup on the agent's page). A client reads the form as their
+              own step; staff read it inside the staff frame, because for them
+              it is the client's data, collected in place (parity ruling B2). */}
           {viewerIsClient ? (
             <IntakeForm intake={intake} />
           ) : (
@@ -3101,7 +3068,7 @@ export function RunCustomAgentModal({
                   onClick={() => setPane("data")}
                   className="focus-ring ml-auto rounded-md text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
                 >
-                  {viewerIsClient && setup ? setup.clientLabel : `${INTAKE_LABEL[intake.kind]} agent data`}
+                  {dataLabel}
                 </button>
               )}
             </div>
@@ -3164,7 +3131,7 @@ export function RunCustomAgentModal({
                   onClick={() => setPane("data")}
                   className="focus-ring ml-1.5 cursor-pointer rounded-md underline"
                 >
-                  {viewerIsClient && setup ? setup.clientLabel : `Open ${INTAKE_LABEL[setupErrorKind]} agent data`}
+                  {dataLabel ?? `Open ${INTAKE_LABEL[setupErrorKind]} agent data`}
                 </button>
               ) : (
                 /* R16: the setup object's own href when the mount had one —
@@ -3176,7 +3143,7 @@ export function RunCustomAgentModal({
                     href={setup?.href ?? intakePageHref(selectedClientId, setupErrorKind)}
                     className="focus-ring ml-1.5 rounded-md underline"
                   >
-                    {viewerIsClient && setup ? setup.clientLabel : `Open ${INTAKE_LABEL[setupErrorKind]} agent data`}
+                    {dataLabel ?? `Open ${INTAKE_LABEL[setupErrorKind]} agent data`}
                   </a>
                 )
               ))}

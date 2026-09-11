@@ -565,11 +565,13 @@ function ScheduledRunCard({
     <div className="rounded-lg border border-border bg-surface p-3">
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          {/* The run's agent, in its own colour (the chips above keep their tint). */}
           <ContentPlatformMark
             platform={run.platform}
             identity={run.productName}
             icon={run.productIcon}
             className="h-4 w-4"
+            tone="brand"
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -1112,11 +1114,13 @@ function PastRunCard({
     <div className="rounded-lg border border-border bg-surface p-3" title={run.staffRef}>
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          {/* The run's agent, in its own colour (the chips above keep their tint). */}
           <ContentPlatformMark
             platform={run.platform}
             identity={run.productName}
             icon={run.productIcon}
             className="h-4 w-4"
+            tone="brand"
           />
         </div>
         <div className="min-w-0 flex-1">

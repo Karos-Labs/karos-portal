@@ -55,6 +55,19 @@ function form(viewerIsClient: boolean): string {
   );
 }
 
+function staffForm(agent: { id: string; key: string; name: string }): string {
+  return renderToStaticMarkup(
+    <RunCustomAgentModal
+      agent={agent as never}
+      clientId="c1"
+      engineDispatch={{} as never}
+      contextItems={[]}
+      viewerIsClient={false}
+      inline
+    />,
+  );
+}
+
 describe("the agent page's run form", () => {
   it("is the question, one quiet row and the button", () => {
     const html = form(true);
@@ -72,5 +85,21 @@ describe("the agent page's run form", () => {
     expect(form(true)).not.toContain("billed to the client");
     expect(form(false)).toContain("billed to the client");
     expect(form(false)).toMatch(/<button[^>]*>Reddit agent data<\/button>/);
+  });
+
+  // "More options" opens onto something, for staff too. The row was always
+  // drawn for staff, on the grounds that they always had the file library
+  // behind it, and since SCRUM-413 the reputation runner has no file slot.
+  it("draws no More options with nothing behind it", () => {
+    const html = staffForm({ id: "a-rep", key: "karos-reputation-runner", name: "Reputation Runner" });
+    expect(html).toContain("Direction for this run (optional)");
+    expect(html).not.toContain("More options");
+    expect(html).not.toContain("Staff only");
+  });
+
+  it("draws More options when the file library is behind it", () => {
+    const html = staffForm({ id: "a-gen", key: "some-agent", name: "Some Agent" });
+    expect(html).toContain("More options");
+    expect(html).toContain("Staff only");
   });
 });

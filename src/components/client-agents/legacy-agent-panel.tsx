@@ -77,11 +77,10 @@ export function LegacyAgentPanel({
    */
   engineDispatch: EngineDispatchMap;
   /**
-   * defaultRunBatchSize: the fresh dialog's VISIBLE batch default. Above 1
-   * the copy stops calling the run "one post" and prices the batch — kept so
-   * a future visible multi-output default cannot put a single-post sentence
-   * over a multi-output charge. 1 today for every agent, which renders the
-   * original single-post copy byte for byte.
+   * defaultRunBatchSize: the fresh form's VISIBLE batch default. Above 1 the
+   * refusal line stops calling the run "a post" and says "a batch", so a
+   * future multi-output default cannot put a single-post sentence over a
+   * multi-output run. 1 today for every agent.
    */
   batchSize?: number;
   /** Server-evaluated, already resolved to a paintable reason (F25/F131). */
@@ -139,22 +138,19 @@ export function LegacyAgentPanel({
 
       {/* NO BUTTON THAT OPENS A FORM (2026-09-10): the fields are the section
           and the form's own button is the run. It was a "Create a new post"
-          row whose Sparkles button opened the run dialog (see AgentSetupHero). */}
+          row whose Sparkles button opened the run dialog (see AgentSetupHero).
+          The price is on the form's own footer, for both readers. */}
       {gate.allowed || setupHere ? (
-        <section>
-          {/* The price is on the form's own footer, for both readers: staff
-              read whose credits move there, beside the button it describes. */}
-          <RunCustomAgentModal
-            agent={agent}
-            clientId={clientId}
-            engineDispatch={engineDispatch}
-            contextItems={contextItems}
-            viewerIsClient={viewerIsClient}
-            {...(setup ? { setup } : {})}
-            {...(setupHere ? { initialPane: "data" as const } : {})}
-            inline
-          />
-        </section>
+        <RunCustomAgentModal
+          agent={agent}
+          clientId={clientId}
+          engineDispatch={engineDispatch}
+          contextItems={contextItems}
+          viewerIsClient={viewerIsClient}
+          {...(setup ? { setup } : {})}
+          {...(setupHere ? { initialPane: "data" as const } : {})}
+          inline
+        />
       ) : (
         !(outageAnnounced && gate.code === "service_down") && (
           <section className="rounded-[var(--radius)] border border-warning/30 bg-warning/10 px-4 py-3">

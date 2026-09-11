@@ -665,8 +665,8 @@ describe("wiring", () => {
     // of the run form, and the form is drawn in the page now. A full-width
     // section has no neighbour to be crushed by, so what this guards instead is
     // that the crushable shape does not come back.
+    // (That the form is drawn inline is pinned in agent-page-no-gate.test.ts.)
     const panel = source("src/components/client-agents/legacy-agent-panel.tsx");
-    expect(panel).toMatch(/<RunCustomAgentModal[\s\S]*?\binline\b/);
     expect(panel).not.toContain("setRunning");
   });
 

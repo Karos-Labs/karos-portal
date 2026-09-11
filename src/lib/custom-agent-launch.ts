@@ -66,7 +66,13 @@ export interface AgentLaunchProfile {
   eyebrow: string;
   intro: string;
   fields: AgentBriefField[];
-  quickStarts: string[];
+  /**
+   * What an untouched form sends on the legacy agent-service path, whose submit
+   * refuses an empty brief. Not shown anywhere: the "Try:" chips it used to be
+   * the first of went on 2026-09-10, and the engine path reads the brief's own
+   * fields, which stay empty.
+   */
+  defaultRequest?: string;
   deliverables: string[];
   /**
    * The run's file slot. OPTIONAL since SCRUM-413 (2026-09-10): the reputation
@@ -199,11 +205,7 @@ const genericProfile: AgentLaunchProfile = {
       placeholder: "Must include, avoid, match, or verify…",
     },
   ],
-  quickStarts: [
-    "Create a production-ready first draft for our current priority.",
-    "Improve an existing asset using the attached references.",
-    "Research the opportunity and recommend the strongest next move.",
-  ],
+  defaultRequest: "Create a production-ready first draft for our current priority.",
   deliverables: ["A production-ready result", "Supporting rationale and sources when relevant"],
   attachments: generalAttachments,
 };
@@ -266,11 +268,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "Must-use quote, clips to avoid, captions, pacing, safe areas…",
         },
       ],
-      quickStarts: [
-        "Cut a product-launch short and preserve the founder's strongest claim.",
-        "Create a customer-outcome short from the clearest moment in the source.",
-        "Turn the source into a fast social teaser without changing the speaker's meaning.",
-      ],
+      defaultRequest: "Cut a product-launch short and preserve the founder's strongest claim.",
       deliverables: ["Edited short-form video", "Platform-ready caption and publishing notes"],
       attachments: {
         label: "Source footage",
@@ -368,11 +366,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "Offer details, dates, approved claims, visual constraints…",
         },
       ],
-      quickStarts: [
-        "Introduce our newest offer with a clear, save-worthy carousel.",
-        "Build trust with a founder story grounded in a real company moment.",
-        "Create a post around the customer problem our product solves best.",
-      ],
+      defaultRequest: "Introduce our newest offer with a clear, save-worthy carousel.",
       deliverables: ["On-brand social creative", "Caption, hashtags, and content rationale"],
       attachments: {
         label: "Creative inputs",
@@ -474,11 +468,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "A launch to build up to, a topic to hit.",
         },
       ],
-      quickStarts: [
-        "Build up to the launch we have coming.",
-        "Take an educational angle this time.",
-        "Turn the latest milestone into the post.",
-      ],
+      defaultRequest: "Build up to the launch we have coming.",
       deliverables: [
         "One post, ready to publish, with a linked source on every factual claim",
         "A suggested day to post it",
@@ -515,7 +505,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "A regulator to account for, a subject that is off the table.",
         },
       ],
-      quickStarts: [],
       deliverables: [
         "This client's LinkedIn foundation: lanes, signature series, cadence and compliance",
         "A seeded topic list, each row citing the document behind it",
@@ -546,11 +535,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "A launch to feature, a topic to hit.",
         },
       ],
-      quickStarts: [
-        "Lean into this week's update.",
-        "Pick an educational angle this time.",
-        "Turn the latest milestone into the post.",
-      ],
+      defaultRequest: "Lean into this week's update.",
       deliverables: [
         "One company-page post draft with its native asset (carousel, document, or image)",
         "A linked source on every factual claim",
@@ -607,11 +592,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "Phrases they use, topics to avoid, compliance constraints, CTA…",
         },
       ],
-      quickStarts: [
-        "Draft a thought-leadership post from a lesson the executive has genuinely earned.",
-        "Turn a recent company milestone into a credible first-person update.",
-        "Set up a founder-led LinkedIn system around this executive's expertise.",
-      ],
+      defaultRequest: "Draft a thought-leadership post from a lesson the executive has genuinely earned.",
       deliverables: ["Executive-voice LinkedIn draft", "Hook, CTA, and claim-safety rationale"],
       attachments: {
         label: "Executive source material",
@@ -682,11 +663,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "A launch to feature, a topic to hit, a seat to focus on.",
         },
       ],
-      quickStarts: [
-        "Lean into this week's announcement.",
-        "Draft for one person's seat.",
-        "React to what happened in the industry this week.",
-      ],
+      defaultRequest: "Lean into this week's announcement.",
       deliverables: ["One post draft, on the avenue the request calls for", "A linked source on every news, quote, and reply post"],
       attachments: {
         label: "Extra material for this run (optional)",
@@ -721,11 +698,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           placeholder: "A subreddit to prioritise, a question type to look for.",
         },
       ],
-      quickStarts: [
-        "Find the freshest question you can answer well.",
-        "Prioritise the subreddits where we have the most standing.",
-        "Look for a question our product genuinely answers, value first.",
-      ],
+      defaultRequest: "Find the freshest question you can answer well.",
       deliverables: [
         "One reply drafted against a live thread, with the thread link and the subreddit's promo verdict",
         "A why-this-is-safe note and the gate results, so you can post it with confidence",
@@ -749,11 +722,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "cta", label: "Primary call to action", type: "text", placeholder: "The one action the issue should earn" },
         { key: "tone", label: "Editorial tone", type: "text", placeholder: "e.g. founder note, sharp industry briefing, customer education" },
       ],
-      quickStarts: [
-        "Create a monthly roundup built around the most useful customer takeaway.",
-        "Turn the attached announcements into one coherent, reader-first issue.",
-        "Draft an educational issue that leads naturally to our primary offer.",
-      ],
+      defaultRequest: "Create a monthly roundup built around the most useful customer takeaway.",
       deliverables: ["Complete newsletter copy", "Subject-line options and rendered issue when supported"],
       attachments: {
         label: "Issue sources",
@@ -785,11 +754,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "point_of_view", label: "Brand point of view and proof", type: "textarea", placeholder: "What can this client credibly say that ranking pages cannot?" },
         { key: "sources", label: "Required sources or internal links", type: "textarea", placeholder: "URLs, studies, product pages, claims to verify…" },
       ],
-      quickStarts: [
-        "Write a durable explainer that answers a high-intent customer question better than current results.",
-        "Create a comparison article grounded in our real differentiation.",
-        "Set up a blog system around the topics our audience asks before buying.",
-      ],
+      defaultRequest: "Write a durable explainer that answers a high-intent customer question better than current results.",
       deliverables: ["Sourced long-form article", "SEO metadata and answer-engine structure"],
       attachments: generalAttachments,
     },
@@ -807,11 +772,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "proof", label: "Proof and objections", type: "textarea", placeholder: "Testimonials, metrics, guarantees, objections to answer…" },
         { key: "references", label: "Reference URLs", type: "textarea", placeholder: "One URL per line: existing site, inspiration, offer details…" },
       ],
-      quickStarts: [
-        "Build a focused demo-booking page for our highest-intent audience.",
-        "Create a launch page that explains the offer and removes the main objections.",
-        "Improve our existing landing page around one clear conversion goal.",
-      ],
+      defaultRequest: "Build a focused demo-booking page for our highest-intent audience.",
       deliverables: ["Complete page source and static build", "Conversion copy and build instructions"],
       attachments: {
         label: "Brand and page assets",
@@ -843,11 +804,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "market", label: "Market, language, and geography", type: "text", placeholder: "e.g. English, US + UK, B2B SaaS" },
         { key: "competitors", label: "Known search competitors", type: "textarea", placeholder: "Domains or brands, one per line" },
       ],
-      quickStarts: [
-        "Audit our SEO and AI-answer visibility, then rank fixes by business impact.",
-        "Find the highest-value content gaps against the competitors listed below.",
-        "Diagnose why our priority pages are not ranking or being cited.",
-      ],
+      defaultRequest: "Audit our SEO and AI-answer visibility, then rank fixes by business impact.",
       deliverables: ["Prioritized search and answer-visibility audit", "Evidence, fixes, and implementation roadmap"],
       attachments: {
         label: "Search evidence",
@@ -868,11 +825,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "known_issues", label: "Known issues or hypotheses", type: "textarea", placeholder: "Drop-off points, support complaints, design concerns…" },
         { key: "devices", label: "Priority devices", type: "text", placeholder: "e.g. mobile Safari first, then desktop" },
       ],
-      quickStarts: [
-        "Audit our primary conversion journey for usability, accessibility, and trust gaps.",
-        "Review the mobile experience and prioritize the five highest-impact fixes.",
-        "Compare the current flow with the attached research and validate our hypotheses.",
-      ],
+      defaultRequest: "Audit our primary conversion journey for usability, accessibility, and trust gaps.",
       deliverables: ["Evidence-backed UX and accessibility findings", "Prioritized fixes with implementation guidance"],
       attachments: {
         label: "Research and screens",
@@ -908,11 +861,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "budget", label: "Budget and target economics", type: "text", placeholder: "Monthly spend, target CPA/ROAS, margin constraints" },
         { key: "constraints", label: "Claims, compliance, and creative constraints", type: "textarea", placeholder: "Approved claims, prohibited language, asset requirements…" },
       ],
-      quickStarts: [
-        "Build a paid acquisition plan around our offer and target CPA.",
-        "Create campaign angles and ad concepts for the audience below.",
-        "Audit the attached performance export and recommend the next budget moves.",
-      ],
+      defaultRequest: "Build a paid acquisition plan around our offer and target CPA.",
       deliverables: ["Campaign strategy and structure", "Ad angles, creative briefs, and testing plan"],
       attachments: {
         label: "Campaign evidence and creative",
@@ -933,11 +882,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "offer", label: "Offer and primary CTA", type: "text", placeholder: "What should they do or buy?" },
         { key: "must_include", label: "Required messages and constraints", type: "textarea", placeholder: "Dates, product facts, compliance, links, exclusions…" },
       ],
-      quickStarts: [
-        "Build a launch sequence that moves the target segment to one clear action.",
-        "Create a welcome flow around the customer's first successful outcome.",
-        "Audit the current lifecycle and design the highest-impact missing flow.",
-      ],
+      defaultRequest: "Build a launch sequence that moves the target segment to one clear action.",
       deliverables: ["Lifecycle strategy and sequence map", "Complete campaign copy and testing plan"],
       attachments: generalAttachments,
     },
@@ -967,11 +912,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "competitors", label: "Competitive set and references", type: "textarea", placeholder: "Brands to differentiate from or learn from" },
         { key: "constraints", label: "Non-negotiables", type: "textarea", placeholder: "Elements to keep, legal constraints, rollout timing…" },
       ],
-      quickStarts: [
-        "Clarify our positioning against the competitors below and build a practical messaging system.",
-        "Refresh the brand without losing the equity in our strongest existing assets.",
-        "Define the voice and narrative for our next stage of growth.",
-      ],
+      defaultRequest: "Clarify our positioning against the competitors below and build a practical messaging system.",
       deliverables: ["Positioning and messaging system", "Brand direction with evidence and rollout guidance"],
       attachments: {
         label: "Brand evidence",
@@ -992,11 +933,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "economics", label: "Economics and constraints", type: "textarea", placeholder: "Price, landed cost, margin, inventory, target ACOS…" },
         { key: "competitors", label: "Competitor ASINs or brands", type: "textarea", placeholder: "One per line" },
       ],
-      quickStarts: [
-        "Build a commercially realistic launch plan for this product and marketplace.",
-        "Audit the listing and prioritize changes most likely to improve conversion.",
-        "Create an A+ content and PPC plan around the economics below.",
-      ],
+      defaultRequest: "Build a commercially realistic launch plan for this product and marketplace.",
       deliverables: ["Marketplace strategy or launch plan", "Listing, creative, and advertising recommendations"],
       attachments: {
         label: "Product and marketplace inputs",
@@ -1041,11 +978,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           helper: "Leave it empty and we cover every surface on your roster since the last run.",
         },
       ],
-      quickStarts: [
-        "Run the usual pulse across every surface.",
-        "Prioritise anything that looks urgent, then the rest.",
-        "Focus on the surface with the most new reviews.",
-      ],
+      defaultRequest: "Run the usual pulse across every surface.",
       deliverables: [
         "A reply drafted for each review worth answering",
         "Anything urgent, flagged and routed to your named contact",
@@ -1073,7 +1006,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           helper: "Everything else is derived from your own documents and your review history.",
         },
       ],
-      quickStarts: ["Set up reputation monitoring from what we already have."],
+      defaultRequest: "Set up reputation monitoring from what we already have.",
       deliverables: [
         "Your listings, found and confirmed per surface",
         "How a reply from you should sound",
@@ -1098,11 +1031,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "concerns", label: "Known risks or incidents", type: "textarea", placeholder: "Escalations, sensitive claims, recurring complaints…" },
         { key: "response_rules", label: "Response and approval rules", type: "textarea", placeholder: "What may be drafted, what requires legal review, what must never be claimed" },
       ],
-      quickStarts: [
-        "Audit recent reputation signals and prioritize the issues that need action.",
-        "Analyze review themes and draft responses within the rules below.",
-        "Build a monitoring and escalation plan for the surfaces listed below.",
-      ],
+      defaultRequest: "Audit recent reputation signals and prioritize the issues that need action.",
       deliverables: ["Reputation or review findings", "Response drafts, monitoring plan, and escalation rules"],
       attachments: generalAttachments,
     },
@@ -1119,11 +1048,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "comparison", label: "Comparison baseline", type: "text", placeholder: "Previous period, target, forecast, or benchmark" },
         { key: "notes", label: "Known anomalies and context", type: "textarea", placeholder: "Launches, tracking gaps, promotions, outages…" },
       ],
-      quickStarts: [
-        "Turn the attached exports into an executive performance report with next actions.",
-        "Explain the largest changes versus the previous period and recommend reallocations.",
-        "Build a concise dashboard narrative for the leadership review.",
-      ],
+      defaultRequest: "Turn the attached exports into an executive performance report with next actions.",
       deliverables: ["Decision-ready performance report", "Trends, anomalies, and prioritized next actions"],
       attachments: {
         label: "Performance exports",
@@ -1144,11 +1069,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         { key: "audience", label: "Target customer", type: "text", placeholder: "Buyer and use case" },
         { key: "competitors", label: "Known competitors", type: "textarea", placeholder: "One company or URL per line; the agent can discover more" },
       ],
-      quickStarts: [
-        "Map the competitive landscape and identify the clearest positioning whitespace.",
-        "Build a decision-ready intelligence report for the market defined below.",
-        "Turn the attached intelligence into a proposal and practical delivery scope.",
-      ],
+      defaultRequest: "Map the competitive landscape and identify the clearest positioning whitespace.",
       deliverables: ["Evidence-backed intelligence or scope", "Competitive map and prioritized recommendations"],
       attachments: generalAttachments,
     },

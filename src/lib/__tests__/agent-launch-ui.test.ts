@@ -132,7 +132,7 @@ describe("custom agent launch profiles", () => {
       const strings = [
         profile.eyebrow,
         profile.intro,
-        ...profile.quickStarts,
+        profile.defaultRequest ?? "",
         ...profile.deliverables,
         // Optional since SCRUM-413: the reputation runner has no file slot.
         profile.attachments?.label ?? "",

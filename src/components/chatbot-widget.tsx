@@ -1545,7 +1545,7 @@ export function ChatbotWidget({
                   no platform, and when focus was set by the copilot naming an
                   agent that is not on this client's roster. */}
               {focusAgentPlatform ? (
-                <SocialPlatformMark platform={focusAgentPlatform} className="h-3 w-3" />
+                <SocialPlatformMark platform={focusAgentPlatform} className="h-3 w-3" tone="brand" />
               ) : (
                 <Icon name="AtSign" className="h-3 w-3" />
               )}
@@ -1583,12 +1583,13 @@ export function ChatbotWidget({
                       )}
                     >
                       {/* AF-20: the platform this agent posts to, so tagging
-                          one says what you are about to get. An agent that
-                          targets no platform (Landing Builder) keeps the stored
-                          icon it has always had - the route sends null rather
-                          than a nearest guess. */}
+                          one says what you are about to get, in the agent's own
+                          colour like everywhere else. An agent that targets no
+                          platform (Landing Builder) gets its own mark from
+                          AgentMark - the route sends null rather than a nearest
+                          guess. */}
                       {a.platform ? (
-                        <SocialPlatformMark platform={a.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                        <SocialPlatformMark platform={a.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" tone="brand" />
                       ) : (
                         <AgentMark identity={a.displayName} icon={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
                       )}

@@ -115,10 +115,8 @@ describe("the run dialog's direction field", () => {
   it("points at no other box", () => {
     // The sentence that made it read as a duplicate. Asserted on the register
     // AND on the file, because a redirect could be re-typed at a call site.
-    for (const helper of [STEER_RUN_HELPER_WITH_KIND]) {
-      expect(helper).not.toMatch(/What should we cover next/i);
-      expect(helper).not.toMatch(/instead/i);
-    }
+    expect(STEER_RUN_HELPER_WITH_KIND).not.toMatch(/What should we cover next/i);
+    expect(STEER_RUN_HELPER_WITH_KIND).not.toMatch(/instead/i);
     expect(launch).not.toContain("What should we cover next");
   });
 
