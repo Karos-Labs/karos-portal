@@ -1813,8 +1813,19 @@ export interface ClientCompetitor {
   keyStrengths: string[];
   keyWeaknesses: string[];
   threatLevel?: "HIGH" | "MEDIUM" | "LOW";
-  /** "report" = imported from MD; "manual" = added by an employee */
-  source: "report" | "manual";
+  /**
+   * "report" = written by an analysis run (the Intel Report, a competitor
+   * re-analysis, a discovery backfill) and replaced by the next one;
+   * "manual" = added by a person; "lab" = imported from the client's karos-agents
+   * lab profile (`profile/competitor-tracking.json`) by
+   * `scripts/import-lab-client.ts`.
+   *
+   * `replaceReportCompetitors` deletes "report" rows only. A "lab" row survives
+   * every run and absorbs its analysis twin's findings without losing its
+   * curated name or tier (`planReportCompetitorReplacement`); it ranks with the
+   * auto-seeded pool rather than taking a pinned slot the way "manual" does.
+   */
+  source: "report" | "manual" | "lab";
   /**
    * Answers (across all engines) in which the AI answer-engines named this brand
    * during the most recent SEO/GEO visibility capture. Written by
