@@ -346,13 +346,14 @@ describe("managed product launch profiles", () => {
 
 
 /**
- * F38. The staff hub is the one surface that pairs an ARBITRARY agent with an
- * arbitrary client, so it is the one that can assemble a pair both submit cores
- * refuse. Until now that refusal arrived only after the whole brief had been
- * written and submitted. The eligibility rule the hub filters on is asserted
- * here; the source test below pins that the hub actually applies it.
+ * F38. The per-client binding rule, asked of a list of clients: an instance
+ * (an entry skill baked under one client's lab folder) runs for its own client
+ * and nobody else, and an unbound agent runs for everyone. Both submit cores
+ * refuse on this predicate and the client rosters filter on it. It was first
+ * asserted for the staff hub, the one surface that paired an ARBITRARY agent
+ * with an arbitrary client; the hub is deleted, and the rule is still the gate.
  */
-describe("staff hub client eligibility", () => {
+describe("per-client agent eligibility", () => {
   const CLIENTS = [
     { id: "c1", name: "Geektime", agentsRepoSlug: "geektime" },
     { id: "c2", name: "Karos Labs", agentsRepoSlug: "karoslabs" },
@@ -373,37 +374,9 @@ describe("staff hub client eligibility", () => {
 
   it("yields nobody for an instance whose client is not in the visible set", () => {
     // An employee sees only their assigned clients, so this is reachable
-    // without anything being wrong in the data — the Run button is disabled
-    // rather than offering a pair that cannot run.
+    // without anything being wrong in the data — and the answer is then nobody,
+    // never the nearest client that is visible.
     expect(eligibleFor("karos-linkedin-company-sitti")).toEqual([]);
-  });
-});
-
-describe("the hub applies that rule to the controls it paints", () => {
-  it("filters the picker, states the binding, and disables an unrunnable Run", () => {
-    const src = readFileSync(join(process.cwd(), "src/components/custom-agents.tsx"), "utf8");
-    const start = src.indexOf("export function CustomAgentsHub");
-    expect(start).toBeGreaterThan(-1);
-    // The next top-level declaration. The marker this used to slice on
-    // ("client-page section") is not in the file at all, so the slice ran to
-    // EOF and every assertion below was free to be answered by any component in
-    // it — including ones this test says nothing about.
-    const end = src.indexOf("\nfunction refusalNamesSetup", start);
-    // An end marker that has moved silently widens the slice to the rest of the
-    // file, and every assertion below would then be answered by code this test
-    // is not about.
-    expect(end, "custom-agents.tsx no longer has the slice end marker").toBeGreaterThan(start);
-    const hub = src.slice(start, end);
-
-    // The eligible set is computed per agent card...
-    expect(hub).toContain("agentKeyMatchesClientSlug(agent.key, c.agentsRepoSlug)");
-    // ...gates the Run control...
-    expect(hub).toContain("eligible.length === 0");
-    // ...names the binding on the card (F35)...
-    expect(hub).toContain("perClientAgentSlug(agent.key)");
-    // ...and the dialog receives the filtered list, never the raw one.
-    expect(hub).toContain("agentKeyMatchesClientSlug(runAgent.key, c.agentsRepoSlug)");
-    expect(hub).not.toMatch(/clients=\{clients\}/);
   });
 });
 

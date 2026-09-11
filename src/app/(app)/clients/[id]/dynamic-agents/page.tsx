@@ -10,7 +10,7 @@ import { ContactUsButton } from "@/components/contact-us-modal";
  * surface for the spec-driven agents an admin built in `/admin/agents/builder`.
  *
  * Deliberately kept SEPARATE from the existing `/clients/[id]/agents` roster
- * (custom-agents.tsx's CustomAgentsHub / ClientAgentRoster): that page's
+ * (`ClientAgentRoster`, components/client-agents/roster.tsx): that page's
  * launch-vs-run, scheduling, and umbrella-template machinery is built
  * specifically around `CustomAgent`/`ClientAgent`, which a `DynamicAgentSpec`
  * is not. Folding this in there would mean threading a second agent shape
