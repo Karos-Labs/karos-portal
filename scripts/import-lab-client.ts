@@ -42,18 +42,24 @@
  *
  * STORAGE IS SHARED. The logo + deliverable uploads go to
  * NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET (required for --apply), the one bucket
- * prep and production both use, whichever database is named. Deliverables are
- * filed under the target database's client id, but the logo path is keyed by
- * slug (client-logos/lab-<slug>/): a client's first import into the second
- * database uploads over the object the first database's record points at, and
- * the new download token leaves that record's logo URL dead — the stale-token
- * failure scripts/repair-stale-lab-import-tokens.ts describes.
+ * prep and production both use, whichever database is named. Their paths are
+ * not unique to a database either. The logo is keyed by slug
+ * (client-logos/lab-<slug>/). Deliverables are keyed by client id
+ * (lab-imports/<clientId>/...), and sync-prep-from-production.ts copies clients
+ * to prep under their production ids. The in-app importer writes those same
+ * deliverable paths too. So every upload goes through
+ * scripts/lib/storage-upload.ts, which never replaces an object: an upload
+ * lands only if nothing is at its path yet, and otherwise the object already
+ * there is reused with its own download token. Replacing it would mint a new
+ * token and leave every record holding the old one pointing at a dead URL —
+ * the stale-token failure scripts/repair-stale-lab-import-tokens.ts describes.
+ * A reused object keeps its bytes, even if the lab file has changed since.
  *
  * Reads Firebase credentials from .env.local (same pattern as
  * backfill-branding.ts).
  */
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -85,6 +91,7 @@ loadEnvFile(resolve(process.cwd(), ".env"));
 import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
 import type { Firestore } from "firebase-admin/firestore";
 import { getScriptFirestore, resolveScriptDatabaseId } from "./lib/firestore-db";
+import { uploadIfAbsent } from "./lib/storage-upload";
 
 // Pure portal helpers (client-safe modules — no server-only imports).
 import {
@@ -136,7 +143,7 @@ function initAdmin(): Firestore {
   return db;
 }
 
-// ── Storage upload (mirrors src/lib/storage.ts REST approach + URL shape) ────
+// ── Storage (uploads go through scripts/lib/storage-upload.ts) ───────────────
 function bucketName(): string {
   const b = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
   if (!b) throw new Error("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET is not set");
@@ -148,44 +155,6 @@ async function adminAccessToken(): Promise<string> {
   if (!cred) throw new Error("Admin credential unavailable for storage upload");
   const { access_token } = await cred.getAccessToken();
   return access_token;
-}
-
-async function uploadBytes(args: { bytes: Buffer; path: string; contentType: string }): Promise<{ url: string; path: string }> {
-  const { bytes, path, contentType } = args;
-  const bucket = bucketName();
-  const downloadToken = randomUUID();
-  const accessToken = await adminAccessToken();
-  const boundary = `b${downloadToken.replace(/-/g, "")}`;
-  const metaJson = JSON.stringify({
-    name: path,
-    contentType,
-    metadata: { firebaseStorageDownloadTokens: downloadToken },
-  });
-  const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metaJson}\r\n`),
-    Buffer.from(`--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`),
-    bytes,
-    Buffer.from(`\r\n--${boundary}--`),
-  ]);
-  const res = await fetch(
-    `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(bucket)}/o?uploadType=multipart`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
-      body,
-    },
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(`Storage upload failed (${res.status}): ${text}`);
-  }
-  return {
-    url: `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(path)}?alt=media&token=${downloadToken}`,
-    path,
-  };
 }
 
 // ── Constants (kept in step with src/lib/lab-outputs.ts + lab-output-actions) ─
@@ -308,7 +277,8 @@ async function main() {
   );
   console.log(
     `  storage:  ${bucket || "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET is not set"} — one bucket shared by prep and ` +
-      "production: the logo and deliverable uploads land there whichever database is named\n",
+      "production: the logo and deliverable uploads land there whichever database is named, and never " +
+      "replace an object already at their path\n",
   );
 
   const labRoot = resolve(labRootArg ?? join(homedir(), "karos-agents"));
@@ -378,17 +348,26 @@ async function main() {
   if (!logoUrl && logoCandidates.length > 0) {
     const logoFile = logoCandidates[0];
     const fileName = logoFile.split("/").pop()!;
+    const logoPath = `client-logos/lab-${slug}/${fileName}`;
     if (dryRun) {
-      console.log(`  would upload logo: ${fileName}`);
+      console.log(`  would upload logo: ${fileName} → ${logoPath} (an object already there is reused, not replaced)`);
     } else {
-      const uploaded = await uploadBytes({
+      // Keyed by slug, not by database: the object at this path may be the one
+      // the other database's client record already points at.
+      const uploaded = await uploadIfAbsent({
         bytes: readFileSync(logoFile),
-        path: `client-logos/lab-${slug}/${fileName}`,
+        path: logoPath,
         contentType: contentTypeFor(fileName),
+        bucket: bucketName(),
+        accessToken: await adminAccessToken(),
       });
       logoUrl = uploaded.url;
       logoStoragePath = uploaded.path;
-      console.log(`  ✓ logo uploaded (${fileName})`);
+      console.log(
+        uploaded.reused
+          ? `  ✓ logo already in the bucket (${logoPath}) — reused with its own download token, not replaced`
+          : `  ✓ logo uploaded (${fileName})`,
+      );
     }
   }
 
@@ -537,6 +516,7 @@ async function main() {
   const outputsDir = join(clientDir, "outputs");
   let assetsCreated = 0;
   let assetsSkipped = 0;
+  let filesReused = 0;
   if (existsSync(outputsDir)) {
     const alreadyImported = new Set<string>();
     if (db && !dryRun) {
@@ -593,12 +573,18 @@ async function main() {
             totalBytes += bytes.length;
             let url = `(dry-run)://${file.relPath}`;
             if (!dryRun) {
-              const uploaded = await uploadBytes({
+              // The same path importLabRunAction (the in-app importer) writes,
+              // under a client id prep shares with production after a sync: the
+              // object here may already back an asset in either database.
+              const uploaded = await uploadIfAbsent({
                 bytes,
                 path: `lab-imports/${clientId}/${runKey}/${group.key}/${file.relPath.split("/").pop()}`,
                 contentType: contentTypeFor(file.name),
+                bucket: bucketName(),
+                accessToken: await adminAccessToken(),
               });
               url = uploaded.url;
+              if (uploaded.reused) filesReused++;
             }
             hosted.push({ name: file.name, relPath: file.relPath, url, bytes: bytes.length });
             if (file === captionFile || (!captionFile && file === textFile)) {
@@ -670,7 +656,10 @@ async function main() {
       }
     }
   }
-  console.log(`  ✓ assets: ${assetsCreated} imported, ${assetsSkipped} skipped (already imported / empty)`);
+  console.log(
+    `  ✓ assets: ${assetsCreated} imported, ${assetsSkipped} skipped (already imported / empty)` +
+      (filesReused ? `; ${filesReused} file(s) were already in the bucket and were reused, not replaced` : ""),
+  );
 
   // ── 4b · Chain reflow ───────────────────────────────────────────────
   // The in-app importer (lab-output-actions.ts) calls reflowClientChain right
