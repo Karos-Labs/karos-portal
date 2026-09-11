@@ -1393,7 +1393,6 @@ export default async function ClientAgentDetailPage({
                 legacyRun
                   ? {
                       id: legacyRun.id,
-                      status: legacyRun.status === "running" ? "running" : "queued",
                       // Whether stopping it actually returns credits. `spendable`
                       // is resolved only for a billable actor, so it IS the
                       // "was this viewer charged" answer, already computed.

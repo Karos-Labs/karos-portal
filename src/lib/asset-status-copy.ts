@@ -101,6 +101,7 @@
  */
 
 import type { Asset } from "@/lib/types";
+import { CLIENT_ARCHIVE_NAME } from "@/lib/agent-intake-links";
 
 /**
  * The CLIENT register. Was a local `const STATUS_LABEL` in archive-view.tsx
@@ -269,7 +270,7 @@ export function publishHoldMessage(
     // blocks post 2 due today. That predecessor is approved and scheduled, so
     // nobody is "finishing" it. This wording is true under all four.
     return (
-      `${PUBLISH_HOLD_PREFIX} an earlier post in this format that isn't in your archive ` +
+      `${PUBLISH_HOLD_PREFIX} an earlier post in this format that isn't in ${CLIENT_ARCHIVE_NAME} ` +
       `yet. Your Karos team is getting it out. ${PUBLISH_HOLD_TAIL}`
     );
   }

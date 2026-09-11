@@ -376,7 +376,7 @@ describe("#90 — the archive link resolves for the viewer who is reading it", (
     // because that is about whose archive it is.
     expect(clientArchiveLink({ clientId: "c1", isStaff: false })).toEqual({
       href: "/calendar?view=archive",
-      label: "your archive",
+      label: "the archive",
       linkLabel: "Open archive",
     });
     expect(clientArchiveLink({ clientId: "c1", isStaff: true })).toEqual({

@@ -731,9 +731,12 @@ function AgentDataButton({
   ready,
   onOpen,
   href,
+  label = `${INTAKE_LABEL[kind]} agent data`,
 }: {
   kind: IntakeKind;
   ready: boolean;
+  /** The page's name for this reader: a client's is `setup.clientLabel`. */
+  label?: string;
   /** Opens the data pane of the form it sits in. */
   onOpen?: () => void;
   /** Or goes to the agent's own data page, when there is no form to open. */
@@ -745,7 +748,6 @@ function AgentDataButton({
       ? "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-foreground"
       : "border-warning/30 bg-warning/10 text-warning hover:border-warning/50 hover:bg-warning/15",
   );
-  const label = `${INTAKE_LABEL[kind]} agent data`;
   // The short visible text needs the platform back for anyone who cannot see
   // the glyph, and it stays inside the accessible name so voice control can
   // still say what it reads.
@@ -1515,7 +1517,7 @@ export function TestRunButton({ agentId, clientId }: { agentId: string; clientId
               <p className="text-sm text-foreground">Test run started</p>
               <p className="text-xs text-muted-2">
                 Real generation, real cost. The output is flagged TEST and will never reach the
-                client&apos;s Workspace, the calendar, or scheduling. Find it under Outputs &amp;
+                client&apos;s archive, the calendar, or scheduling. Find it under Outputs &amp;
                 Artifacts once it lands, with Promote/Dismiss actions.
               </p>
               <Button variant="subtle" onClick={close}>
@@ -2438,6 +2440,8 @@ export function RunCustomAgentModal({
     .filter((part): part is string => Boolean(part));
   const runLabel = runActionLabel(agent);
   const [moreOpen, setMoreOpen] = useState(false);
+  // What only staff get under More options: the run-type selector, the file library.
+  const staffExtras = !viewerIsClient && (staffOnlyFields.length > 0 || Boolean(profile.attachments));
   const moreOptionsId = useId();
   // A server-side setup gate can still fire when this dialog's `ready` was
   // stale, so the message needs its own way back to the data.
@@ -2693,9 +2697,9 @@ export function RunCustomAgentModal({
      * a promise, and a promise with no progress beside it is the one piece of
      * information a reader cannot check.
      *
-     * It now shows the run's actual stage, from the shell's watch, refreshed by
-     * the one poller that owns it. The estimate stays as CONTEXT beside real
-     * progress rather than as the only thing there is.
+     * It now shows the run's progress, from the shell's watch, refreshed by the
+     * one poller that owns it, and no estimate at all: the moving bar answers
+     * "how long" without a promise.
      *
      * AND IT IS NOT THE PERSISTENT HALF. Nobody watches a modal for half an
      * hour: the reader closes this and goes away, which is why the watch lives
@@ -2718,7 +2722,7 @@ export function RunCustomAgentModal({
               to see four acknowledged.
 
               CENTRED TEXT IS GONE with the tick that anchored it: a progress
-              ladder and a stage sentence are read left to right. */}
+              bar and a sentence are read left to right. */}
           {startedCount > 1 && (
             <p className="text-sm text-foreground">{startedCount} runs started · one post each</p>
           )}
@@ -2830,15 +2834,13 @@ export function RunCustomAgentModal({
   // the copy is built from those and makes no claim about the form's contents.
   //
   // A BACKSTOP, NOT A ROUTE, and worth stating because it reads like a route.
-  // No mount can reach it today: the agent library passes no `setup`;
-  // StaffAgentControls is staff-only and the detail route prefetches the panes
-  // for staff, so its `setup` always carries a kind; and LegacyAgentPanel — the
-  // one mount a CLIENT reaches — is handed `evaluateLegacyRunGate`'s verdict,
-  // which refuses on `setup_missing` and disables "Create a new post" with the
-  // reason painted and the form linked. Making this reachable would mean
-  // loosening that gate, which is correct as it stands, so it stays a backstop:
-  // if a future mount does skip the gate, the reader meets a true sentence and a
-  // way out rather than the submit core's refusal after writing a brief.
+  // No mount can reach it today: the agent library passes no `setup`, and the
+  // agent page prefetches the intake panes for every viewer, so the setup its
+  // three mounts pass (the setup hero, the staff empty state, LegacyAgentPanel)
+  // always carries a kind. LegacyAgentPanel also asks `evaluateLegacyRunGate`
+  // first, and shows its refusal with the link when a setup has no kind. If a
+  // future mount does skip both, the reader meets a true sentence and a way out
+  // rather than the submit core's refusal after writing a brief.
   if (setup && !setup.ready && !intake) {
     return (
       <Shell open onClose={onClose} title={agent.name}>
@@ -2890,7 +2892,13 @@ export function RunCustomAgentModal({
     <Shell
       open
       onClose={onClose}
-      title={showData && intake ? `${INTAKE_LABEL[intake.kind]} agent data` : runLabel}
+      title={
+        showData && intake
+          ? viewerIsClient && setup
+            ? setup.clientLabel
+            : `${INTAKE_LABEL[intake.kind]} agent data`
+          : runLabel
+      }
       {...(showData
         ? {
             description: companyOnFile(intake)
@@ -3041,6 +3049,7 @@ export function RunCustomAgentModal({
               kind={intake.kind}
               ready={intakeComplete(intake)}
               onOpen={() => setPane("data")}
+              {...(viewerIsClient && setup ? { label: setup.clientLabel } : {})}
             />
           </div>
         )}
@@ -3136,9 +3145,9 @@ export function RunCustomAgentModal({
             Nothing renders here when there is nothing behind it: a client on an
             intake-driven agent (Reddit, X, LinkedIn) has one field and no
             options, and a "More options" row that opens an empty panel is a
-            dead end. Staff always have something behind it (the library
-            picker), which is why they always get the row. */}
-        {(moreFields.length > 0 || !viewerIsClient) && (
+            dead end. The same holds for staff: the reputation runner has no
+            run-type selector and no file slot, so it gets no row either. */}
+        {(moreFields.length > 0 || staffExtras) && (
           <div className="space-y-2">
             {/* NO "Change" BUTTON (SCRUM-410). Lola: "the change button and More
                 options button do the exact same thing — remove change." She was
@@ -3184,7 +3193,7 @@ export function RunCustomAgentModal({
                     capability by construction: the upload route refuses clients
                     (api/clients/[id]/context/route.ts), so a client's picker
                     could only ever be an empty box telling them to ask us. */}
-                {!viewerIsClient && (
+                {staffExtras && (
                   <StaffOnlySection className="mt-4">
                     {staffOnlyFields.length > 0 && (
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -3226,14 +3235,9 @@ export function RunCustomAgentModal({
                   onClick={() => setPane("data")}
                   className="focus-ring ml-1.5 cursor-pointer rounded-md underline"
                 >
-                  Open {INTAKE_LABEL[setupErrorKind]} agent data
+                  {viewerIsClient && setup ? setup.clientLabel : `Open ${INTAKE_LABEL[setupErrorKind]} agent data`}
                 </button>
               ) : (
-                /* R16: the destination is the setup object's own href — the
-                   one `buildAgentSetup` resolved for THIS agent — not a route
-                   re-derived from the family. A mount that passed no setup has
-                   no data page to name, so the sentence stands alone rather
-                   than linking a guess. */
                 /* R16: the setup object's own href when the mount had one —
                    resolved for THIS agent — and otherwise the shared table's
                    answer for the family and the client chosen in the picker.
@@ -3243,7 +3247,7 @@ export function RunCustomAgentModal({
                     href={setup?.href ?? intakePageHref(selectedClientId, setupErrorKind)}
                     className="focus-ring ml-1.5 rounded-md underline"
                   >
-                    Open {INTAKE_LABEL[setupErrorKind]} agent data
+                    {viewerIsClient && setup ? setup.clientLabel : `Open ${INTAKE_LABEL[setupErrorKind]} agent data`}
                   </a>
                 )
               ))}

@@ -60,9 +60,10 @@ describe("an agent that IS set up", () => {
   // not-set-up page alone would have moved the complaint, not answered it.
   const PANEL = withoutComments(read("src/components/client-agents/legacy-agent-panel.tsx"));
 
-  it("draws the run form in the page, gated by the server's verdict", () => {
+  it("draws the run form in the page", () => {
+    // Which verdicts draw it is asserted on the render, in
+    // legacy-panel-setup-in-page.test.tsx.
     expect(PANEL).toMatch(/<RunCustomAgentModal[\s\S]*?\binline\b/);
-    expect(PANEL).toMatch(/gate\.allowed \?/);
     expect(PANEL).not.toMatch(/setRunning|onClick=\{\(\) => setRunning/);
   });
 

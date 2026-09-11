@@ -598,7 +598,7 @@ describe("the two rules themselves", () => {
     expect(offences("This usually takes a few minutes.")).toHaveLength(1);
     expect(offences("This takes about a minute.")).toHaveLength(1);
     expect(offences("It takes a few minutes to fill in, once.")).toEqual([]);
-    expect(offences("Drafts are ready in your archive.")).toEqual([]);
+    expect(offences("Drafts are ready in the archive.")).toEqual([]);
   });
 });
 

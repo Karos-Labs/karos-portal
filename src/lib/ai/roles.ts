@@ -227,13 +227,15 @@ export const AI_ROLES = {
     // it is recomputed against the merged file rather than carried over from
     // any one branch.
     // Shifted 187 → 188 by the credits rework (2026-09), which added one import
-    // above it. Re-pinned against the real file, per the rule above.
+    // above it, and back to 187 when the run-estimate import went (2026-09-10).
+    // Re-pinned against the real file, per the rule above.
     sites: ["src/app/api/clients/[id]/chat/route.ts:187"],
   },
   "chat.followups": {
     tier: "HAIKU",
     // Shifted 825 → 834 by the credits rework's copy change to the copilot's
-    // price appendix, which sits above this call.
+    // price appendix, which sits above this call, and to 833 when the
+    // run-estimate import went (2026-09-10).
     sites: ["src/app/api/clients/[id]/chat/route.ts:833"],
   },
   "insights.summary": {

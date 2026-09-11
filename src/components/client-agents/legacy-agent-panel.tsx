@@ -27,24 +27,23 @@ import type { LegacyRunGateResult } from "@/lib/client-agent-runs";
  * make a post, no way to change its pace, and no sign of anything it had ever
  * made.
  *
- * WHAT IT GETS: the two gestures that need no umbrella. "Create a new post" is
- * the standard priced custom-agent run - the same dialog, launch profile and
- * charge path the generic card uses, not a second implementation. "Adjust pace"
+ * WHAT IT GETS: the two gestures that need no umbrella. The run form, drawn in
+ * the page, is the standard priced custom-agent run - the same component,
+ * launch profile and charge path the other agent pages use, not a second
+ * implementation. "Adjust pace"
  * is the same paceOnly schedule modal the live card uses, and it is offered
  * because the schedule is exactly what this shape DOES have - it lives in
  * `SchedulePaceControl` below, which the page seats at the end of its status
  * line rather than in this panel's own column.
  *
- * IT ALSO GETS THE RUN BACK (F31). Pressing "Create a new post" here used to
- * produce no visible change whatsoever: the panel showed no run row and no
- * progress, and the page mounted no AutoRefresh for this branch, so a client sat
- * on a static page for the twenty minutes the run takes with no way to tell
- * whether anything had started - and, once F30's control was reachable again,
- * nothing to cancel from. The strip is the pieces that already exist, not a new
- * idiom: the same banner promise the umbrella panel makes, the ManagedJobProgress
- * strip the run rows use, and the same CancelRunControl. What the run PRODUCES
- * still arrives the umbrella way - under "What it has made for you" on the page
- * below, which links the Workspace.
+ * IT ALSO GETS THE RUN BACK (F31). Starting a run here used to produce no
+ * visible change whatsoever: the panel showed no run row and no progress, and
+ * the page mounted no AutoRefresh for this branch, so a client sat on a static
+ * page with no way to tell whether anything had started - and, once F30's
+ * control was reachable again, nothing to cancel from. The banner is the pieces
+ * that already exist: the progress bar every run surface uses and the same
+ * CancelRunControl. What the run PRODUCES still arrives the umbrella way -
+ * under "What it has made for you" on the page below, which links the archive.
  *
  * WHAT IT DOES NOT GET, deliberately: template rows, the week strip, per-template
  * feedback, notes. Every one of those reads the umbrella's registry or its slot
@@ -106,10 +105,10 @@ export function LegacyAgentPanel({
   noun?: string;
   /**
    * This agent's run that has not landed yet (F31). Resolved server-side from
-   * the client's own jobs, and deliberately just an id and a phase - the strip
-   * says a run is happening, never what it will contain.
+   * the client's own jobs, and deliberately just an id - the banner says a run
+   * is happening, never what it will contain.
    */
-  activeRun?: { id: string; status: "queued" | "running"; refunds: boolean } | null;
+  activeRun?: { id: string; refunds: boolean } | null;
   /**
    * The page has ALREADY said runs are paused, in its own banner.
    *
@@ -126,6 +125,12 @@ export function LegacyAgentPanel({
   viewerIsClient: boolean;
   viewer?: { name: string; email: string };
 }) {
+  // A delivered agent whose data has gone missing since (a later edit) is set
+  // up again HERE, in the same in-page form a new agent gets (Albert,
+  // 2026-09-10: clients fill setup on the agent page), not behind a link to
+  // another page. The form opens on its data; saving it re-evaluates the gate.
+  const setupHere = !gate.allowed && gate.code === "setup_missing" && Boolean(setup?.kind);
+
   return (
     <div className="space-y-6">
       {activeRun && (
@@ -149,12 +154,12 @@ export function LegacyAgentPanel({
           to just type it into the page and then run it." The fields were always
           known — the launch profile declares them — so they are the section
           now, and the form's own button is the run. */}
-      {gate.allowed ? (
+      {gate.allowed || setupHere ? (
         <section className="space-y-2">
           {/* A staff run is not charged to the person pressing it, so theirs
               says whose credits move. A client's price is on the form's own
               footer, beside the button it describes. */}
-          {!viewerIsClient && cost != null && (
+          {gate.allowed && !viewerIsClient && cost != null && (
             <p className="flex items-center gap-1 text-xs text-muted-2">
               <Icon name="Coins" className="h-3 w-3 text-muted-2" />
               {agent.priceIsEstimate ? "About" : "Costs"} {cost} credit
@@ -168,6 +173,7 @@ export function LegacyAgentPanel({
             contextItems={contextItems}
             viewerIsClient={viewerIsClient}
             {...(setup ? { setup } : {})}
+            {...(setupHere ? { initialPane: "data" as const } : {})}
             inline
           />
         </section>
