@@ -1928,16 +1928,44 @@ export async function upsertClientContextDoc(
 }
 
 /**
- * Atomically replace all context documents for a client.
- * Deletes all existing docs for the client, then writes the new set in one batch.
+ * Atomically replace the context documents one producer owns for a client.
+ *
+ * `owned` is the (docType, tier) pairs the producer writes — for the intel
+ * pipeline, CONTEXT_DOC_SET_CONTRACT in src/lib/intel/agent-onboarding.ts. Every
+ * existing row of this client at one of those pairs is deleted, duplicates
+ * included, and `docs` is written in their place, all in one batch.
+ *
+ * A row at any other pair is left exactly as it is. Those rows have writers of
+ * their own — the agent profiles (`x-agent-profile` & co., via
+ * upsertAgentProfileScope), `meeting-notes` (transcript ingest), a lab import's
+ * `client-guidelines` at tier internal — and the producer never writes them
+ * back. Until 2026-09-11 this deleted every row of the client, and each
+ * Regenerate lost those rows for good.
+ *
+ * Refuses, before anything is read or written, a row the next replace would not
+ * delete (another client's, or at a pair outside `owned`): written anyway, it
+ * would add one more duplicate on every run.
  */
 export async function replaceClientContextDocs(
   clientId: string,
   docs: Array<Omit<ClientContextDoc, "id">>,
+  owned: ReadonlyArray<Pick<ClientContextDoc, "docType" | "tier">>,
 ): Promise<void> {
+  const pairOf = (row: Pick<ClientContextDoc, "docType" | "tier">) => `${row.docType}::${row.tier}`;
+  const ownedPairs = new Set(owned.map(pairOf));
+  const strays = docs.filter((doc) => doc.clientId !== clientId || !ownedPairs.has(pairOf(doc)));
+  if (strays.length) {
+    throw new Error(
+      `replaceClientContextDocs(${clientId}) refused rows it would never delete: ` +
+        strays.map((doc) => `${pairOf(doc)} of client ${doc.clientId}`).join(", "),
+    );
+  }
+
   const existing = await col.clientContextDocs().where("clientId", "==", clientId).get();
   const batch = adminDb().batch();
-  for (const d of existing.docs) batch.delete(d.ref);
+  for (const d of existing.docs) {
+    if (ownedPairs.has(pairOf(d.data() as ClientContextDoc))) batch.delete(d.ref);
+  }
   for (const doc of docs) batch.set(col.clientContextDocs().doc(), doc);
   await batch.commit();
 }
