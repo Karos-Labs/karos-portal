@@ -24,12 +24,12 @@ import type { z as zType } from "zod";
  * The input may be a name, a bare domain, or a full pasted URL; URLs are parsed
  * so the row carries a real `url` (favicon + identity keys) instead of storing
  * the raw string as its display name. If the brand is ALREADY in the pool under
- * any identity key, no new row is created: a matching report row is promoted to
- * manual (the user explicitly wants it tracked — promotion locks a tracked-5
- * slot and counts as "added now" for the newest-first manual ordering), and a
- * matching manual row is left untouched. This is what prevents the classic
- * duplicate of "https://speedrun.a16z.com" (manual, raw) + "Speedrun by a16z"
- * (report, resolved).
+ * any identity key, no new row is created: a matching report or lab row is
+ * promoted to manual (the user explicitly wants it tracked — promotion locks a
+ * tracked-5 slot and counts as "added now" for the newest-first manual
+ * ordering), and a matching manual row is left untouched. This is what prevents
+ * the classic duplicate of "https://speedrun.a16z.com" (manual, raw) +
+ * "Speedrun by a16z" (report, resolved).
  */
 async function upsertManualCompetitor(
   clientId: string,
@@ -44,7 +44,7 @@ async function upsertManualCompetitor(
   const now = Date.now();
 
   if (hit) {
-    if (hit.source === "report") {
+    if (hit.source !== "manual") {
       await updateClientCompetitor(hit.id, {
         source: "manual",
         ...(hit.url || !parsed.url ? {} : { url: parsed.url }),

@@ -36,6 +36,14 @@ import type {
  *      generated documents.
  *   4. runAgentOnboarding — dispatch → await deliverables → compose → condense →
  *      ASSERT → write, through `replaceClientContextDocs`, which is not touched.
+ *   5. writeLabContextDocsFromResearch — the same second half for a LAB client
+ *      (`isLabProfileClient`), whose internal documents are curated in the
+ *      karos-agents lab and must survive the run. It writes the generated
+ *      `action-plan` row and the client-tier condensations of the lab's own
+ *      documents, row by row, and never deletes or replaces anything else. The
+ *      constraint holds per row there: each row it writes is a (docType, tier)
+ *      of the contract below with exactly the stored field set, gated by
+ *      `assertLabContextDocWriteShape` before the first write.
  *
  * A NOTE ON THE NUMBER 13. The ticket, D1 and this file's own predecessor all
  * say "the 13 context documents". The code says otherwise and the code wins:
@@ -160,22 +168,79 @@ export function assertContextDocSetShape(
   docs: readonly StoredContextDoc[],
   clientId: string,
 ): void {
+  const violations = contextDocViolations(docs, clientId, CONTEXT_DOC_SET_CONTRACT, outsideStoredSet);
+  if (violations.length) throw new ContextDocShapeError(violations);
+}
+
+const contractKey = (row: { docType: string; tier: string }) => `${row.docType}::${row.tier}`;
+
+const STORED_SET_KEYS: ReadonlySet<string> = new Set(CONTEXT_DOC_SET_CONTRACT.map(contractKey));
+
+function outsideStoredSet(key: string): string {
+  return `row ${key} is not part of the stored context-document set — the read path does not serve it`;
+}
+
+/**
+ * THE LAB-MODE WRITE SET: every (docType, tier) row a lab client's run may
+ * write, and nothing else.
+ *
+ * The generated `action-plan` (internal-only) is required — it is the one
+ * document that exists only because the research ran. The client-tier
+ * condensations are optional, exactly as they are in the full set: an empty one
+ * is dropped and the row the client already has stays. Every internal row is
+ * absent on purpose — the lab wrote those — and so is `client-guidelines` at
+ * any tier: the lab's is curated, and the composed one would replace it with
+ * the report's standing recommendations.
+ *
+ * A strict subset of CONTEXT_DOC_SET_CONTRACT, so a lab run can only ever write
+ * rows the read path already serves.
+ */
+export const LAB_CONTEXT_DOC_WRITE_CONTRACT: readonly ContextDocRowContract[] = [
+  { docType: "action-plan", tier: "internal-only", required: true },
+  ...INTERNAL_CONTEXT_DOC_TYPES.map(
+    (docType): ContextDocRowContract => ({ docType, tier: "client", required: false }),
+  ),
+];
+
+/**
+ * The gate for a lab client's run, called before the first write. The row
+ * rules are `assertContextDocSetShape`'s, word for word; what differs is which
+ * rows may appear, and that the set needs no internal row because it writes
+ * none.
+ */
+export function assertLabContextDocWriteShape(
+  docs: readonly StoredContextDoc[],
+  clientId: string,
+): void {
+  const violations = contextDocViolations(docs, clientId, LAB_CONTEXT_DOC_WRITE_CONTRACT, (key) =>
+    STORED_SET_KEYS.has(key)
+      ? `row ${key} belongs to the lab — a lab client's run writes only the action plan and the client-tier condensations`
+      : outsideStoredSet(key),
+  );
+  if (violations.length) throw new ContextDocShapeError(violations);
+}
+
+/**
+ * Every way `docs` misses `contract`. Shared by both gates so the row rules
+ * cannot drift apart: `outsideContract` words the one violation whose meaning
+ * depends on which set is being checked.
+ */
+function contextDocViolations(
+  docs: readonly StoredContextDoc[],
+  clientId: string,
+  contract: readonly ContextDocRowContract[],
+  outsideContract: (key: string) => string,
+): string[] {
   const violations: string[] = [];
 
-  const contractKeys = new Set(
-    CONTEXT_DOC_SET_CONTRACT.map((row) => `${row.docType}::${row.tier}`),
-  );
+  const contractKeys = new Set(contract.map(contractKey));
   const seen = new Set<string>();
   const allowedFields = new Set<string>(STORED_CONTEXT_DOC_FIELDS);
 
   for (const doc of docs) {
-    const key = `${doc.docType}::${doc.tier}`;
+    const key = contractKey(doc);
 
-    if (!contractKeys.has(key)) {
-      violations.push(
-        `row ${key} is not part of the stored context-document set — the read path does not serve it`,
-      );
-    }
+    if (!contractKeys.has(key)) violations.push(outsideContract(key));
     if (seen.has(key)) violations.push(`duplicate row ${key}`);
     seen.add(key);
 
@@ -208,14 +273,14 @@ export function assertContextDocSetShape(
     }
   }
 
-  for (const row of CONTEXT_DOC_SET_CONTRACT) {
+  for (const row of contract) {
     if (!row.required) continue;
-    if (!seen.has(`${row.docType}::${row.tier}`)) {
+    if (!seen.has(contractKey(row))) {
       violations.push(`required row ${row.docType}::${row.tier} is missing`);
     }
   }
 
-  if (violations.length) throw new ContextDocShapeError(violations);
+  return violations;
 }
 
 /* ── The two real agent deliverables ──────────────────────────────── */
@@ -618,12 +683,24 @@ export interface AgentOnboardingDeps {
     client: Client,
     options: { runSpecificContext?: string },
   ) => Promise<{
-    intelReport: { agentEngineRunId?: string; error?: string; skipped?: true; reason?: string };
-    seoGeo: { agentEngineRunId?: string; error?: string; skipped?: true; reason?: string };
+    intelReport: { jobId?: string; agentEngineRunId?: string; error?: string; skipped?: true; reason?: string };
+    seoGeo: { jobId?: string; agentEngineRunId?: string; error?: string; skipped?: true; reason?: string };
   }>;
   getDeliverable: (runId: string, kind: string) => Promise<unknown>;
   condense: (client: Client, docTypes: ContextDocType[], internal: Record<string, string>) => Promise<{ docType: ContextDocType; content: string }[]>;
   replaceDocs: (clientId: string, docs: StoredContextDoc[]) => Promise<void>;
+  /**
+   * Every stored row of one client, any tier (production: `listClientContextDocs`).
+   * A lab client's run reads the lab's own documents from here; the full
+   * replace never needs it.
+   */
+  listDocs: (clientId: string) => Promise<ClientContextDoc[]>;
+  /**
+   * Create or overwrite ONE row keyed on (clientId, docType, tier) — a lab
+   * client's only write (production: `upsertClientContextDoc`, the wrapper
+   * `refreshClientContextDocsAction` writes the client tier through).
+   */
+  upsertDoc: (doc: StoredContextDoc) => Promise<void>;
   /**
    * Project the freshly written documents (and the client's brand + profile)
    * into the agent-engine workspace the engine's tools read from. Optional and
@@ -676,6 +753,12 @@ export interface AgentResearchDeliverables {
   client: Client;
   intelReport: unknown;
   seoGeo: unknown;
+  /**
+   * The `jobs` documents the two dispatches created, when the dispatch said.
+   * `runIntelReportPipeline` materializes the SEO/GEO job through this id so the
+   * capture lands when the run does.
+   */
+  jobIds?: { intelReport?: string; seoGeo?: string };
 }
 
 /**
@@ -723,7 +806,15 @@ export async function dispatchAndAwaitResearch(
     awaitDeliverable(deps, seoGeoRunId, SEO_GEO_DELIVERABLE_KIND, deliverableTimeoutMs, pollIntervalMs),
   ]);
 
-  return { client, intelReport, seoGeo };
+  return {
+    client,
+    intelReport,
+    seoGeo,
+    jobIds: {
+      ...(dispatched.intelReport.jobId ? { intelReport: dispatched.intelReport.jobId } : {}),
+      ...(dispatched.seoGeo.jobId ? { seoGeo: dispatched.seoGeo.jobId } : {}),
+    },
+  };
 }
 
 /** The second half: compose the eight context documents and write them. */
@@ -787,6 +878,91 @@ export async function writeContextDocsFromResearch(
     // Best-effort by contract: the documents are already stored; what fails
     // here is only their copy in the engine workspace, and the engine has its
     // own mirror fallback for that.
+    await deps.projectDocs(clientId, docs).catch((err: unknown) => {
+      console.error(`[agent-onboarding] context-doc projection failed for ${clientId} (non-fatal):`, err);
+    });
+  }
+  return { docsWritten: docs.length };
+}
+
+/**
+ * The second half for a LAB client (`isLabProfileClient`): the lab curated this
+ * client's internal documents, so the research may add to them and may not
+ * replace them.
+ *
+ * Exactly two kinds of row are written, each through `upsertDoc` keyed on
+ * (clientId, docType, tier):
+ *
+ *   - the generated `action-plan`, tier internal-only. It is the one document
+ *     that exists only because the research ran; the lab has none.
+ *   - the client-tier condensations, refreshed from the lab's EXISTING internal
+ *     documents — the pass `refreshClientContextDocsAction` runs
+ *     (`refreshClientCondensedDocs` is `condenseDocs` over these same six types,
+ *     with the same rules), versions bumped and createdAt kept. One difference,
+ *     on purpose: a condensation that came back empty is dropped, as the full
+ *     run drops it, and the client keeps the copy it already had.
+ *
+ * Nothing else is touched. The internal documents, `client-guidelines` at
+ * whatever tier the lab import put it, meeting notes, agent profiles: no row is
+ * deleted and none is rewritten, which is the difference from
+ * `writeContextDocsFromResearch` and its delete-then-set.
+ */
+export async function writeLabContextDocsFromResearch(
+  research: AgentResearchDeliverables,
+  deps: Pick<AgentOnboardingDeps, "condense" | "listDocs" | "upsertDoc" | "projectDocs" | "now">,
+): Promise<{ docsWritten: number }> {
+  const { client, intelReport, seoGeo } = research;
+  const clientId = client.id;
+
+  const generated = composeContextDocsFromAgentReports({ client, intelReport: rec(intelReport), seoGeo: rec(seoGeo) });
+
+  const existing = await deps.listDocs(clientId);
+  const stored = (docType: string, tier: ContextDocTier) =>
+    existing.find((doc) => doc.docType === docType && doc.tier === tier);
+
+  // The condensation reads the lab's documents as they stand, never the
+  // research's composition of them.
+  const internalContents: Record<string, string> = {};
+  for (const docType of INTERNAL_CONTEXT_DOC_TYPES) {
+    const doc = stored(docType, "internal");
+    if (doc) internalContents[docType] = doc.content;
+  }
+  const missing = INTERNAL_CONTEXT_DOC_TYPES.filter((docType) => !internalContents[docType]?.trim());
+  if (missing.length) {
+    // Not generated in their place: the lab owns them. Re-importing is the fix.
+    console.warn(`[agent-onboarding] lab client ${clientId} has no internal ${missing.join(", ")}; no client-tier copy refreshed for them`);
+  }
+  const condensed = (await deps.condense(client, [...INTERNAL_CONTEXT_DOC_TYPES], internalContents)).filter(
+    (doc) => doc.content.trim().length > 0,
+  );
+
+  const now = deps.now();
+  const row = (docType: ContextDocType, tier: ContextDocTier, content: string): StoredContextDoc => {
+    const prev = stored(docType, tier);
+    return {
+      clientId,
+      docType,
+      tier,
+      content,
+      version: prev && Number.isInteger(prev.version) && prev.version > 0 ? prev.version + 1 : 1,
+      createdAt: prev && Number.isFinite(prev.createdAt) ? prev.createdAt : now,
+      updatedAt: now,
+    };
+  };
+  const docs: StoredContextDoc[] = [
+    row("action-plan", "internal-only", generated["action-plan"]),
+    ...condensed.map((doc) => row(doc.docType, "client", doc.content)),
+  ];
+
+  // The gate, before the first write. A lab run that tried to write an
+  // internal row, or a blank action plan, has touched nothing.
+  assertLabContextDocWriteShape(docs, clientId);
+
+  await Promise.all(docs.map((doc) => deps.upsertDoc(doc)));
+  if (deps.projectDocs) {
+    // Same posture as the full run: the rows are stored, and this is only
+    // their copy in the engine workspace. The production projection re-reads
+    // every stored row, so the engine sees the lab's documents beside these.
     await deps.projectDocs(clientId, docs).catch((err: unknown) => {
       console.error(`[agent-onboarding] context-doc projection failed for ${clientId} (non-fatal):`, err);
     });
@@ -861,7 +1037,13 @@ async function awaitDeliverable(
  * exactly one dispatch.
  */
 export async function agentOnboardingDeps(): Promise<AgentOnboardingDeps> {
-  const [{ getClient, replaceClientContextDocs }, { dispatchOnboardingResearchAgents }, { getAgentEngineDeliverable }, { condenseDocs }, { RESEARCH_ENGINE_RULES, METRICS_RULES }] =
+  const [
+    { getClient, replaceClientContextDocs, listClientContextDocs, upsertClientContextDoc },
+    { dispatchOnboardingResearchAgents },
+    { getAgentEngineDeliverable },
+    { condenseDocs },
+    { RESEARCH_ENGINE_RULES, METRICS_RULES },
+  ] =
     await Promise.all([
       import("@/lib/data"),
       import("@/lib/agent-engine/dispatch-research-agents"),
@@ -878,6 +1060,8 @@ export async function agentOnboardingDeps(): Promise<AgentOnboardingDeps> {
     getDeliverable: (runId, kind) => getAgentEngineDeliverable(runId, kind),
     condense: (client, docTypes, internal) => condenseDocs(client, docTypes, internal, rules),
     replaceDocs: (id, docs) => replaceClientContextDocs(id, docs),
+    listDocs: (id) => listClientContextDocs(id),
+    upsertDoc: (doc) => upsertClientContextDoc(doc),
     projectDocs: async (id) => {
       // Read the stored rows back rather than projecting the in-memory ones:
       // the projection wants Firestore ids and versions for provenance, and
