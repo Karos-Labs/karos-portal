@@ -145,15 +145,9 @@ export function LegacyAgentPanel({
         </div>
       )}
 
-      {/* NO BUTTON THAT OPENS A FORM (2026-09-10). This was a row reading
-          "Create a new post — makes one post now, it takes about 30 minutes"
-          beside an accent button with a Sparkles glyph, and the button's only
-          job was to open the run dialog. Albert: "I don't think it should be a
-          button on the page that says run the agent and then a pop-up comes up.
-          Each agent should know what input is needed, and they should be able
-          to just type it into the page and then run it." The fields were always
-          known — the launch profile declares them — so they are the section
-          now, and the form's own button is the run. */}
+      {/* NO BUTTON THAT OPENS A FORM (2026-09-10): the fields are the section
+          and the form's own button is the run. It was a "Create a new post"
+          row whose Sparkles button opened the run dialog (see AgentSetupHero). */}
       {gate.allowed || setupHere ? (
         <section className="space-y-2">
           {/* A staff run is not charged to the person pressing it, so theirs

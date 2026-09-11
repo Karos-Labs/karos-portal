@@ -67,9 +67,8 @@ describe("an agent that IS set up", () => {
     expect(PANEL).not.toMatch(/setRunning|onClick=\{\(\) => setRunning/);
   });
 
-  it("has no sparkle and no quoted duration", () => {
+  it("has no sparkle", () => {
     expect(PANEL).not.toContain("Sparkles");
-    expect(PANEL).not.toContain("RUN_ESTIMATE_SENTENCE");
   });
 
   it("shows what the run is doing when the engine has said", () => {
@@ -104,11 +103,8 @@ describe("the run form, drawn in the page", () => {
     expect(branch.slice(0, 4000)).toContain("outcomeOf(");
   });
 
-  it("quotes no run duration", () => {
-    // (The setup gate's "a few minutes to fill in" is the client's own typing
-    // time, not a promise about the run, and stays.)
-    expect(body).not.toMatch(/RUN_ESTIMATE|ready in|usually takes|takes about/);
-  });
+  // No run duration either: the client-copy sweep (client-copy-boundary.test.ts)
+  // fails on one anywhere a client reads, this form included.
 });
 
 describe("one name for the per-run steer", () => {

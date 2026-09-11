@@ -4,6 +4,7 @@ import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { TONE_COLORS } from "@/components/seo-geo/tones";
 import type { PresenceView, ScoreView } from "@/components/seo-geo/presenter";
+import { cn } from "@/lib/utils";
 
 /**
  * The shell all three readings share: an accented eyebrow, then the reading.
@@ -264,13 +265,11 @@ export function HomeStandingWidget({
       {/* Container-driven for the same reason as the KPI card above. */}
       {tileCount > 0 ? (
         <div
-          className={
-            tileCount >= 3
-              ? "grid gap-3 @2xl:grid-cols-3"
-              : tileCount === 2
-                ? "grid gap-3 @2xl:grid-cols-2"
-                : "grid gap-3"
-          }
+          className={cn(
+            "grid gap-3",
+            tileCount === 2 && "@2xl:grid-cols-2",
+            tileCount === 3 && "@2xl:grid-cols-3",
+          )}
         >
           {/* The score leads: it is the headline the two shares decompose. */}
           {visibilityScore && <ScoreMeter view={visibilityScore} />}
