@@ -11,7 +11,7 @@ import { NotificationBell, useNotificationDismissals } from "@/components/notifi
 import { unreadNotificationCount, type TaskAlert } from "@/lib/notification-rows";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { ClientRailAgentsNav, type RailAgent } from "@/components/client-rail-agents-nav";
-import { ClientRailAccountNav } from "@/components/client-rail-account-nav";
+import { ACCOUNT_CENTER_ICON, ClientRailAccountNav } from "@/components/client-rail-account-nav";
 import { ClientProfilePanel } from "@/components/client-profile-panel";
 import { BrandColorsSection } from "@/components/client-context-sections";
 import { NavLink, type RailNavItem as NavItem } from "@/components/rail-nav-link";
@@ -99,7 +99,7 @@ export function ClientRail({
     // a separate follow-up build. The label changes here first since it is
     // the name a client sees everywhere the destination is offered.
     label: "Account Center",
-    icon: "Settings",
+    icon: ACCOUNT_CENTER_ICON,
   };
 
   // Bar + sheet frame are shared with the staff shell's client-context mode -
@@ -247,7 +247,7 @@ export function ClientRail({
                 dismissals={dismissals}
               />
             </div>
-            <AccountMenu user={user} client={client} settingsHref={settingsItem.href} />
+            <AccountMenu user={user} client={client} />
           </div>
         </div>
       </aside>
@@ -337,7 +337,7 @@ export function ClientRail({
             onClick={() => setCompanyOpen(false)}
             className="focus-ring flex items-center gap-3 rounded-md px-2 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
           >
-            <Icon name="Settings" className="h-4 w-4 text-muted-2" />
+            <Icon name={settingsItem.icon} className="h-4 w-4 text-muted-2" />
             {settingsItem.label}
           </Link>
           {user.isGroupAdmin && (

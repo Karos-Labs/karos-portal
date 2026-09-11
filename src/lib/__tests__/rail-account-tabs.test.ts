@@ -90,12 +90,31 @@ describe("Account Center in the client rail", () => {
     expect(renamed, "one section, two names").toEqual([]);
   });
 
-  it("is mounted on the desktop rail", () => {
+  it("is mounted on the desktop rail, in both shells, and nowhere else offers it", () => {
     // The rows existing is not the fix; the fix is that they render. The rail
     // built its `settingsItem` for months while never placing it.
     const rail = read(join(SRC, "components/client-rail.tsx"));
-    expect(rail).toContain("ClientRailAccountNav");
     expect(rail).toMatch(/<ClientRailAccountNav\s+home=\{home\}\s*\/>/);
+    // The staff shell's client-context arm mounts the same group (parity), so
+    // the avatar menu could stop repeating the destination (2026-09-11).
+    const sidebar = read(join(SRC, "components/sidebar.tsx"));
+    expect(sidebar).toMatch(/<ClientRailAccountNav\s+home=\{clientHome!\}\s*\/>/);
+    const menu = code(join(SRC, "components/account-menu.tsx"));
+    expect(menu).not.toContain("Account Center");
+    expect(menu).not.toContain("settingsHref");
+  });
+
+  it("does not share the gear with its own Settings section", () => {
+    const nav = code(RAIL_NAV);
+    const icon = nav.match(/ACCOUNT_CENTER_ICON = "([^"]+)"/)?.[1];
+    expect(icon, "no exported icon").toBeTruthy();
+    expect(icon).not.toBe("Settings");
+    // The mobile sheets draw the same glyph from the same constant.
+    for (const rel of ["components/client-rail.tsx", "components/sidebar.tsx"]) {
+      expect(code(join(SRC, rel)), `${rel} spells its own Account Center icon`).toContain(
+        "ACCOUNT_CENTER_ICON",
+      );
+    }
   });
 
   it("marks no section row as current", () => {
