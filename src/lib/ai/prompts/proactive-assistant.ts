@@ -46,8 +46,6 @@ export interface AgentCatalogEntry {
   requiredInputs?: string[];
   /** Exact deliverables the agent produces (from the managed-product registry). */
   deliverables?: string[];
-  /** Typical wall-clock runtime, e.g. "~10–15 min". */
-  estimate?: string;
   /** Brief-field keys the agent accepts — the full input surface. */
   briefKeys?: string[];
   /**
@@ -126,7 +124,6 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
             a.consumesMedia ? `  accepts uploaded image/video media as input` : "",
             a.deliverables?.length ? `  produces: ${a.deliverables.join("; ")}` : "",
             [
-              a.estimate ? `runtime: ${a.estimate}` : "",
               a.briefKeys?.length ? `brief inputs: ${a.briefKeys.join(", ")}` : "",
               a.requiredInputs?.length ? `required inputs: ${a.requiredInputs.join(", ")}` : "",
             ]

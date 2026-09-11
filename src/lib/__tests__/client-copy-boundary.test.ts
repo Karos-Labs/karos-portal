@@ -505,6 +505,13 @@ function offences(shape: string, opts: { payload?: boolean; jsx?: boolean } = {}
   if (/\bKaros team (?:is reviewing|reviews|has approved|approves|confirms)\b|\bin review\b/i.test(text)) {
     out.push("tells a client we review or approve their work — say it is on its way");
   }
+  // Albert, 2026-09-10: "Audit everywhere we say it's ready in X minutes: it's
+  // never true." Measured, the agent's own work is 1.7 to 5.6 minutes and the
+  // old half hour was the human check after it. A run shows its progress
+  // instead of promising a time.
+  if (/\b(?:ready|done) in (?:about |under |~ ?)?(?:\d|a few|a couple|half)|\busually takes\b|\btakes about\b/i.test(text)) {
+    out.push("promises how long a run takes — show its progress instead");
+  }
   if (IS_PROSE.test(text) || opts.payload) {
     for (const token of STORED_ENUM_TOKENS) {
       if (new RegExp(`(^|[^A-Za-z0-9_])${token}([^A-Za-z0-9_]|$)`).test(text)) {
@@ -584,6 +591,14 @@ describe("the two rules themselves", () => {
     // The Reputation agent's subject, and a client reading their own drafts.
     expect(offences("Who should hear about an urgent review?")).toEqual([]);
     expect(offences("The next post, ready to review.")).toEqual([]);
+  });
+
+  it("reads a promised run time as an offence, and the client's own typing time as not one", () => {
+    expect(offences("Your post will be ready in 30 minutes.")).toHaveLength(1);
+    expect(offences("This usually takes a few minutes.")).toHaveLength(1);
+    expect(offences("This takes about a minute.")).toHaveLength(1);
+    expect(offences("It takes a few minutes to fill in, once.")).toEqual([]);
+    expect(offences("Drafts are ready in your archive.")).toEqual([]);
   });
 });
 

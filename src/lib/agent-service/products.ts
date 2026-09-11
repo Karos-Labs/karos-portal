@@ -7,7 +7,6 @@
  */
 import type { ManagedTaskType } from "@/lib/types";
 import type { AgentAttachmentProfile } from "@/lib/custom-agent-launch";
-import { RUN_ESTIMATE } from "@/lib/run-estimate";
 
 /**
  * C4 (SCRUM-212) capability-tag taxonomy, single-sourced here so every place
@@ -67,8 +66,6 @@ export interface ManagedProduct {
   color: string;
   /** @clientCopy Written into the prompt as "produces: …". */
   deliverables: string[];
-  /** @clientCopy Written into the prompt as "runtime: …". */
-  estimate: string;
   briefFields: BriefField[];
   inputFiles: AgentAttachmentProfile;
   /**
@@ -125,8 +122,8 @@ export interface ManagedProduct {
 }
 
 /**
- * The managed-product catalog. `name`, `tagline`, `description`, `deliverables`
- * and `estimate` are CLIENT copy, and the surface that makes them so is not a
+ * The managed-product catalog. `name`, `tagline`, `description` and
+ * `deliverables` are CLIENT copy, and the surface that makes them so is not a
  * screen: `managedCatalogEntries()` (agent-roster.ts) folds `tagline` and
  * `description` into the `AgentCatalogEntry` that `buildProactiveSystemAppendix`
  * writes into the copilot's system prompt — the same model a CLIENT_USER's dock
@@ -144,7 +141,6 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     icon: "Camera",
     color: "#E879F9",
     deliverables: ["Post visual per item", "caption.txt + about.txt per item", "Research trail (internal)"],
-    estimate: RUN_ESTIMATE,
     briefFields: [
       { key: "count", label: "Number of posts", type: "number", min: 1, max: 10, placeholder: "3", defaultValue: "3" },
       {
@@ -188,7 +184,6 @@ export const MANAGED_PRODUCTS: ManagedProduct[] = [
     icon: "LayoutTemplate",
     color: "#FBBF24",
     deliverables: ["Page source + static build", "Build/run README", "Design rationale (internal)"],
-    estimate: RUN_ESTIMATE,
     briefFields: [
       { key: "page_goal", label: "Page goal", type: "text", required: true, placeholder: "e.g. collect demo bookings" },
       { key: "offer", label: "Offer", type: "textarea", placeholder: "What the page promises, including important terms" },

@@ -23,7 +23,6 @@ const BASE_PROFILE: AgentLaunchProfile = {
   fields: [],
   quickStarts: [],
   deliverables: [],
-  estimate: "",
   attachments: { label: "", hint: "" },
 };
 

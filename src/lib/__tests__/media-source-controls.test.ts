@@ -30,7 +30,6 @@ const BASE_PROFILE: AgentLaunchProfile = {
   fields: [{ key: "request", label: "What should the agent accomplish?", type: "textarea", required: true }],
   quickStarts: [],
   deliverables: [],
-  estimate: "",
   attachments: { label: "Reference files", hint: "" },
 };
 

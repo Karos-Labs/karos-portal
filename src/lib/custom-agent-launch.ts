@@ -12,7 +12,6 @@ import { isPublishHold } from "@/lib/asset-status-copy";
 import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import type { CustomAgent } from "@/lib/types";
-import { RUN_ESTIMATE } from "@/lib/run-estimate";
 import {
   STEER_RUN_HELPER,
   STEER_RUN_HELPER_WITH_KIND,
@@ -70,7 +69,6 @@ export interface AgentLaunchProfile {
   fields: AgentBriefField[];
   quickStarts: string[];
   deliverables: string[];
-  estimate: string;
   /**
    * The run's file slot. OPTIONAL since SCRUM-413 (2026-09-10): the reputation
    * runner has none, because its only case — a screenshot of a review on a
@@ -208,7 +206,6 @@ const genericProfile: AgentLaunchProfile = {
     "Research the opportunity and recommend the strongest next move.",
   ],
   deliverables: ["A production-ready result", "Supporting rationale and sources when relevant"],
-  estimate: RUN_ESTIMATE,
   attachments: generalAttachments,
 };
 
@@ -276,7 +273,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Turn the source into a fast social teaser without changing the speaker's meaning.",
       ],
       deliverables: ["Edited short-form video", "Platform-ready caption and publishing notes"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Source footage",
         hint: "Select or upload the source clip. For files over 4 MB, paste a shareable link above.",
@@ -379,7 +375,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Create a post around the customer problem our product solves best.",
       ],
       deliverables: ["On-brand social creative", "Caption, hashtags, and content rationale"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Creative inputs",
         hint: "Product photos, campaign briefs, visual references, and approved source material are especially useful.",
@@ -489,7 +484,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "One post, ready to publish, with a linked source on every factual claim",
         "A suggested day to post it",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
         hint: "One-off references for this post. The page URL, off-limits, seats and news live in your LinkedIn agent data, not here.",
@@ -527,7 +521,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "This client's LinkedIn foundation: lanes, signature series, cadence and compliance",
         "A seeded topic list, each row citing the document behind it",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for setup (optional)",
         hint: "Anything about how this client sells and speaks that is not already in their onboarding documents.",
@@ -564,7 +557,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "One company-page post draft with its native asset (carousel, document, or image)",
         "A linked source on every factual claim",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
         hint: "One-off references for this post. The page URL, off-limits, seats, and news live in your LinkedIn agent data, not here.",
@@ -623,7 +615,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Set up a founder-led LinkedIn system around this executive's expertise.",
       ],
       deliverables: ["Executive-voice LinkedIn draft", "Hook, CTA, and claim-safety rationale"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Executive source material",
         hint: "A CV, bio, interview transcript, or past writing sample helps the agent match the person instead of writing generic brand copy.",
@@ -700,7 +691,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "React to what happened in the industry this week.",
       ],
       deliverables: ["One post draft, on the avenue the request calls for", "A linked source on every news, quote, and reply post"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
         hint: "One-off references for this run. Handles, off-limits, rosters, takes, and news live in your X agent data, not here.",
@@ -744,7 +734,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "One reply drafted against a live thread, with the thread link and the subreddit's promo verdict",
         "A why-this-is-safe note and the gate results, so you can post it with confidence",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Extra material for this run (optional)",
         hint: "One-off references for this reply. The account, its history, off-limits subreddits and your disclosure wording live in your Reddit agent data, not here.",
@@ -770,7 +759,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Draft an educational issue that leads naturally to our primary offer.",
       ],
       deliverables: ["Complete newsletter copy", "Subject-line options and rendered issue when supported"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Issue sources",
         hint: "Attach previous newsletters for voice, source articles for facts, and hero images for the final issue.",
@@ -807,7 +795,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Set up a blog system around the topics our audience asks before buying.",
       ],
       deliverables: ["Sourced long-form article", "SEO metadata and answer-engine structure"],
-      estimate: RUN_ESTIMATE,
       attachments: generalAttachments,
     },
   },
@@ -830,7 +817,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Improve our existing landing page around one clear conversion goal.",
       ],
       deliverables: ["Complete page source and static build", "Conversion copy and build instructions"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Brand and page assets",
         hint: "Logos, product images, brand guidelines, testimonials, and wireframes help the page ship closer to final.",
@@ -867,7 +853,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Diagnose why our priority pages are not ranking or being cited.",
       ],
       deliverables: ["Prioritized search and answer-visibility audit", "Evidence, fixes, and implementation roadmap"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Search evidence",
         hint: "Analytics exports, Search Console data, keyword lists, and previous audits make recommendations more specific.",
@@ -893,7 +878,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Compare the current flow with the attached research and validate our hypotheses.",
       ],
       deliverables: ["Evidence-backed UX and accessibility findings", "Prioritized fixes with implementation guidance"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Research and screens",
         hint: "Analytics, screenshots, recordings, support themes, and prior research help separate evidence from opinion.",
@@ -934,7 +918,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Audit the attached performance export and recommend the next budget moves.",
       ],
       deliverables: ["Campaign strategy and structure", "Ad angles, creative briefs, and testing plan"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Campaign evidence and creative",
         hint: "Performance exports, existing ads, product imagery, and the landing page brief help the agent make grounded decisions.",
@@ -960,7 +943,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Audit the current lifecycle and design the highest-impact missing flow.",
       ],
       deliverables: ["Lifecycle strategy and sequence map", "Complete campaign copy and testing plan"],
-      estimate: RUN_ESTIMATE,
       attachments: generalAttachments,
     },
   },
@@ -995,7 +977,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Define the voice and narrative for our next stage of growth.",
       ],
       deliverables: ["Positioning and messaging system", "Brand direction with evidence and rollout guidance"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Brand evidence",
         hint: "Current guidelines, identity files, customer research, sales material, and competitor references make the strategy specific.",
@@ -1021,7 +1002,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Create an A+ content and PPC plan around the economics below.",
       ],
       deliverables: ["Marketplace strategy or launch plan", "Listing, creative, and advertising recommendations"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Product and marketplace inputs",
         hint: "Product photos, cost sheets, listing exports, keyword data, and competitor references are high-value inputs.",
@@ -1075,7 +1055,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Anything urgent, flagged and routed to your named contact",
         "What we chose not to answer, and why",
       ],
-      estimate: RUN_ESTIMATE,
       // NO "Extra context" UPLOAD (SCRUM-413). Lola: remove the second box. It
       // took a screenshot of a review on a surface we do not watch — a real
       // but rare case, and a second box on a form she found cluttered. A
@@ -1104,7 +1083,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "How a reply from you should sound",
         "What gets escalated to a person instead of drafted",
       ],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Reference material (optional)",
         hint: "Past replies you were happy with, your escalation policy, anything your legal team has ruled on.",
@@ -1130,7 +1108,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Build a monitoring and escalation plan for the surfaces listed below.",
       ],
       deliverables: ["Reputation or review findings", "Response drafts, monitoring plan, and escalation rules"],
-      estimate: RUN_ESTIMATE,
       attachments: generalAttachments,
     },
   },
@@ -1152,7 +1129,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Build a concise dashboard narrative for the leadership review.",
       ],
       deliverables: ["Decision-ready performance report", "Trends, anomalies, and prioritized next actions"],
-      estimate: RUN_ESTIMATE,
       attachments: {
         label: "Performance exports",
         hint: "Attach current analytics, ad-platform, CRM, and sales exports. Name each file clearly so the agent can reconcile them.",
@@ -1178,7 +1154,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         "Turn the attached intelligence into a proposal and practical delivery scope.",
       ],
       deliverables: ["Evidence-backed intelligence or scope", "Competitive map and prioritized recommendations"],
-      estimate: RUN_ESTIMATE,
       attachments: generalAttachments,
     },
   },

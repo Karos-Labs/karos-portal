@@ -229,8 +229,8 @@ export function StrategyWarRoom({
         </div>
         <p className="text-xs text-muted-2">
           Three specialist agents are debating your Task Map live, proposing, critiquing, and
-          stress-testing against your analytics until they reach consensus. This takes about a
-          minute; leaving before it finishes discards the run.
+          stress-testing against your analytics until they reach consensus. Leaving before it
+          finishes discards the run.
         </p>
 
         {/* Console */}
