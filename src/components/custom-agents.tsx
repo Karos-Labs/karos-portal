@@ -24,13 +24,9 @@ import { ContactUsButton } from "@/components/contact-us-modal";
 import { JobStatusBadge } from "@/components/job-status";
 import { ManagedJobProgress } from "@/components/managed-job-progress";
 import {
-  createCustomAgentAction,
-  deleteCustomAgentAction,
   runCustomAgentAction,
   runCustomAgentTestAction,
   setClientCustomAgentsAction,
-  setCustomAgentEnabledAction,
-  updateCustomAgentAction,
 } from "@/lib/actions";
 import {
   configureClientAgentScheduleAction,
@@ -60,15 +56,12 @@ import { classifyJobError } from "@/lib/job-error-taxonomy";
 import { jobStatusLabel } from "@/lib/job-status-copy";
 import {
   type AgentBriefField,
-  agentKeyMatchesClientSlug,
   batchSizeFrom,
   buildCustomAgentPrompt,
   defaultRunBatchSize,
   initialAgentBrief,
   quoteMultiplierFrom,
   quoteIsEstimate,
-  isLinkedInAgentIdentity,
-  isXAgentIdentity,
   launchProfileFor,
   reseedAgentBrief,
   withEngineRunFields,
@@ -90,8 +83,6 @@ import {
   REDDIT_SETUP_REQUIRED_PREFIX,
   REPUTATION_SETUP_REQUIRED_PREFIX,
   X_SETUP_REQUIRED_PREFIX,
-  groupAgentsByParent,
-  isSupersededAgentKey,
 } from "@/lib/custom-agent-launch";
 import {
   engineProductIdForPair,
@@ -112,9 +103,9 @@ import { cn, formatDate, relativeTime } from "@/lib/utils";
  * `description` is NOT on it (F127). It is the lab repo's own skill manifest,
  * no surface that receives this summary reads it, and this module's whole
  * doctrine is that a field which crosses the boundary is readable from
- * view-source whether or not anything paints it. The staff agent LIBRARY still
- * shows it - that surface takes the full CustomAgent, which is the honest place
- * for manifest text to live.
+ * view-source whether or not anything paints it. The staff agent library that
+ * showed it (from the full CustomAgent, the honest place for manifest text) was
+ * deleted with CustomAgentsHub, so nothing paints it now.
  */
 export type RunnableAgentSummary = Pick<
   CustomAgent,
@@ -277,19 +268,6 @@ export interface ClientAgentScheduleRow {
   lastErrorAt?: number | null;
 }
 
-/**
- * The intake page an agent refuses to run without, by agent key - or null for
- * agents with no such gate. Used on the STAFF hub, where the client is chosen
- * inside the run dialog and per-agent readiness therefore cannot be resolved
- * before the card is drawn (the client page passes a resolved `agentSetup` map
- * instead). Names the gate; does not claim to know whether it is satisfied.
- */
-function intakeDrivenLabel(key: string): string | null {
-  if (isXAgentIdentity(key)) return "X agent data";
-  if (isLinkedInAgentIdentity(key)) return "LinkedIn agent data";
-  return null;
-}
-
 /** The dialog's dropdowns, built from the same bounds the server clamps to. */
 /**
  * The dropdown ranges, read from the SAME per-agent limits the server clamps
@@ -340,24 +318,6 @@ function briefQuoteLabel(
 }
 
 /**
- * The one-off SETUP price, or null when nobody has set one (§6.3).
- *
- * STAFF ONLY — it is deliberately absent from RunnableAgentSummary, so this
- * takes the full document and no client payload can carry it.
- *
- * "Is the field filled in" is the whole test here, and it is complete for
- * anything this app stored: every write of launchCreditCost goes through
- * `validateAgentInput` (lib/actions/custom-agent-actions.ts), which refuses
- * anything that is not a whole number greater than zero, and the repo import
- * never sets it at all. `evaluateLaunchGate` additionally rejects zero,
- * negatives and non-integers — that is its defence against rows this app did
- * not write, not a second rule this card has to keep in step with.
- */
-function agentLaunchCost(agent: Pick<CustomAgent, "launchCreditCost">): number | null {
-  return agent.launchCreditCost ?? null;
-}
-
-/**
  * The intake page an agent drafts from, when it has one (X e13, LinkedIn e10).
  *
  * Readiness is resolved PER AGENT on the server and handed down keyed by agent
@@ -386,10 +346,10 @@ function agentLaunchCost(agent: Pick<CustomAgent, "launchCreditCost">): number |
  * payload it cannot tell which of the three agents it is looking at, so all it
  * can offer is `label` and `href` — the name of the form and the way to it. A
  * surface that mounts the run dialog for a state with `ready: false` and NO
- * `kind` should therefore refuse before opening it, which is what all three
- * mounts do today (the library disables Run, StaffAgentControls paints "Run now
- * needs the {label}" beside the agent's own href, and LegacyAgentPanel disables
- * the run on `evaluateLegacyRunGate`'s `setup_missing` rung and links the form).
+ * `kind` should therefore refuse before opening it, which is what both run
+ * mounts do today (StaffAgentControls paints "Run now needs the {label}" beside
+ * the agent's own href, and LegacyAgentPanel disables the run on
+ * `evaluateLegacyRunGate`'s `setup_missing` rung and links the form).
  * That is why the dialog's own href gate is a backstop rather than a route.
  */
 export type AgentSetupState = {
@@ -464,16 +424,6 @@ export type AgentSetupState = {
   | { kind: "blog"; data: ComponentProps<typeof BlogAgentIntake> }
   | { kind: "reputation"; data: ComponentProps<typeof ReputationAgentIntake> }
 );
-
-function AgentChip({ agent, className }: { agent: Pick<RunnableAgentSummary, "key" | "name" | "icon">; className?: string }) {
-  return (
-    <AgentIdentity
-      identity={`${agent.key} ${agent.name}`}
-      icon={agent.icon}
-      className={className}
-    />
-  );
-}
 
 /* ═══════ intake-driven agents (X e13, LinkedIn e10, Reddit e15) ═══════ */
 
@@ -555,10 +505,11 @@ const INTAKE_LABEL: Record<IntakeKind, string> = {
    the one down here had no way of knowing when the other moved a route.
    Deleted by the flow audit (2026-09, R16). The one call site now reads
    `setup.href` — the same table's answer for this exact agent, resolved
-   server-side — and falls back to `intakePageHref` for the one mount that
-   cannot have a setup object: the staff hub's dialog picks its client INSIDE
-   the dialog, so no server render upstream could have resolved one for the
-   pair. Both come from the same table now. */
+   server-side — and falls back to `intakePageHref` for a mount that passed no
+   setup object. The fallback was written for the staff hub, whose dialog picked
+   its client INSIDE the dialog, so no server render upstream could have
+   resolved one for the pair; the hub is deleted, and the fallback still covers
+   any mount that omits `setup`. Both come from the same table now. */
 
 /**
  * What the agent drafts from, in the client's words - the run dialog says this
@@ -752,500 +703,6 @@ function AgentDataButton({
       <IntakeGlyph kind={kind} className="h-3 w-3" />
       {ready ? label : "Setup needed"}
     </button>
-  );
-}
-
-/* ═══════════════════ staff hub (/agents) ═══════════════════ */
-
-/** Admin-only Live/Paused flip, right on the agent card - no editor round-trip. */
-function AgentLiveToggle({ agentId, enabled }: { agentId: string; enabled: boolean }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-
-  return (
-    <button
-      type="button"
-      disabled={pending}
-      onClick={() =>
-        startTransition(async () => {
-          await setCustomAgentEnabledAction(agentId, !enabled);
-          router.refresh();
-        })
-      }
-      title={enabled ? "Pause this agent for clients" : "Make this agent live for clients"}
-      className="disabled:opacity-50"
-    >
-      <Badge tone={enabled ? "success" : "neutral"} className="cursor-pointer hover:opacity-80">
-        <Icon name={pending ? "Loader" : enabled ? "Zap" : "Pause"} className={cn("h-2.5 w-2.5", pending && "animate-spin")} />
-        {enabled ? "Live" : "Paused"}
-      </Badge>
-    </button>
-  );
-}
-
-/**
- * The "Custom agents" section of the staff Agents page: the stored-prompt
- * agent library. Admins import agents from the karos-agents repo catalog,
- * edit their instructions, and control which clients may fire them; anyone
- * on staff can run one for a client.
- */
-/**
- * One card on the library grid: a top-level agent, the steps nested under it, and
- * whether it is an orphan whose parentKey resolves to nothing.
- */
-interface LibraryEntry {
-  agent: CustomAgent;
-  children: CustomAgent[];
-  orphan: boolean;
-}
-
-/** How much of a blocked reason fits on a badge before it breaks the card. */
-const BLOCKED_LABEL_MAX = 44;
-
-/**
- * A manifest `blocked_reason` as a badge label: the first clause, capped.
- *
- * The stored values are prose (374 to 731 characters on the agents that carry
- * one), so this takes the lead sentence or clause — which in practice is the
- * useful part ("Reddit blocks datacenter egress", "In build, no pilot run yet") —
- * and the full text rides on the title attribute beside it.
- *
- * A missing reason says so rather than falling back to the bare word that caused
- * the confusion: an agent the manifest called blocked WITHOUT saying why is a gap
- * in the manifest, and naming it is more useful than hiding it.
- */
-function blockedLabel(reason: string | undefined): string {
-  const text = reason?.trim();
-  if (!text) return "Blocked (unspecified)";
-  // First sentence or clause, whichever comes first — the values open with the
-  // headline and then explain at length.
-  const lead = text.split(/(?<=[.:;])\s|\s[-—]\s/)[0]?.trim() || text;
-  const clipped = lead.length > BLOCKED_LABEL_MAX ? `${lead.slice(0, BLOCKED_LABEL_MAX - 1).trimEnd()}…` : lead;
-  return clipped;
-}
-
-/**
- * One sub-agent, as a row nested under its parent in the library.
- *
- * NESTED RATHER THAN HIDDEN, and that is the whole design decision. /agents is
- * the LIBRARY, not a roster: it is where an admin edits an agent's instructions
- * and toggles it live. Applying the client-side filter here would make the
- * LinkedIn setup prompt permanently uneditable — a worse failure than the clutter
- * it would tidy. So a step keeps every control it had and loses only its claim to
- * be a product: no price lines (a step is not sold separately), no platform
- * badges, no card of its own.
- *
- * Run is kept for staff. Firing a step by hand is exactly what an operator needs
- * when a client's setup half-failed, and the submit core applies the same gates
- * either way.
- */
-function SubAgentRow({
-  agent,
-  isAdmin,
-  serviceConfigured,
-  runnableFor,
-  onEdit,
-  onRun,
-}: {
-  agent: CustomAgent;
-  isAdmin: boolean;
-  serviceConfigured: boolean;
-  runnableFor: number;
-  onEdit: () => void;
-  onRun: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-2 border-t border-border/60 py-2 pl-3">
-      <span className="text-muted-2" aria-hidden="true">
-        <Icon name="CornerDownRight" className="h-3.5 w-3.5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-xs text-foreground">{agent.name}</p>
-        <p className="truncate font-mono text-[10px] text-muted-2">{agent.entrySkillDir}</p>
-      </div>
-      {isAdmin ? (
-        <AgentLiveToggle agentId={agent.id} enabled={agent.enabled} />
-      ) : (
-        <Badge tone={agent.enabled ? "success" : "neutral"}>
-          {agent.enabled ? "Live" : "Paused"}
-        </Badge>
-      )}
-      {isAdmin && (
-        <Button size="sm" variant="ghost" onClick={onEdit}>
-          <Icon name="Pencil" className="h-3.5 w-3.5" />
-          <span className="sr-only">Edit {agent.name}</span>
-        </Button>
-      )}
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={!agent.enabled || !serviceConfigured || runnableFor === 0}
-        title={
-          !serviceConfigured
-            ? "Agent service is not configured"
-            : !agent.enabled
-              ? "Enable this step first"
-              : runnableFor === 0
-                ? "No client is available to run this step for."
-                : "Run this step on its own"
-        }
-        onClick={onRun}
-      >
-        <Icon name="Play" className="h-3.5 w-3.5" />
-        <span className="sr-only">Run {agent.name}</span>
-      </Button>
-    </div>
-  );
-}
-
-export function CustomAgentsHub({
-  agents,
-  clients,
-  engineDispatch,
-  isAdmin,
-  serviceConfigured,
-  controlPlane,
-}: {
-  agents: CustomAgent[];
-  /**
-   * Control-plane facts for the agents agent-middleware knows, keyed by
-   * `CustomAgent.key`. Enrichment only: an agent absent from this map renders
-   * exactly as it did before, which is what keeps the unmigrated majority of
-   * the library visible and runnable.
-   */
-  controlPlane?: ReadonlyMap<string, { agentId: string; activePromptVersion: number | null; status: string }>;
-  /**
-   * The lab-repo slug rides along because the hub is the one surface that pairs
-   * an ARBITRARY agent with an arbitrary client: a per-client instance runs an
-   * entry skill baked under the folder its key names, and both submit cores
-   * refuse the wrong pair. Without the slug the hub can only offer every client
-   * and let the server refuse - after the whole brief has been written (F38).
-   */
-  clients: Array<{ id: string; name: string; agentsRepoSlug?: string | null }>;
-  /**
-   * The dispatch answer for every (client, agent) pair this hub can pair up,
-   * resolved server-side — see `EngineDispatchMap`. The hub is the surface that
-   * pairs an ARBITRARY agent with an arbitrary client, so it needs the whole
-   * matrix rather than one row of it.
-   */
-  engineDispatch: EngineDispatchMap;
-  isAdmin: boolean;
-  serviceConfigured: boolean;
-}) {
-  const [runAgent, setRunAgent] = useState<CustomAgent | null>(null);
-  const [editAgent, setEditAgent] = useState<CustomAgent | null>(null);
-  const [creating, setCreating] = useState(false);
-
-  // Parents carrying their own steps, then any orphan as its own card so a
-  // mistyped parentKey is visible instead of swallowed.
-  const { parents, orphans } = groupAgentsByParent(agents);
-  const libraryEntries: LibraryEntry[] = [
-    ...parents.map((entry) => ({ ...entry, orphan: false })),
-    ...orphans.map((agent) => ({ agent, children: [] as CustomAgent[], orphan: true })),
-  ];
-  // SUPERSEDED AGENTS ARE DROPPED, not archived. `groupAgentsByParent` splits on
-  // parentKey alone and a replaced agent has none — it was replaced, not absorbed
-  // — so without this filter e10 LinkedIn and v1 Reddit rendered as live products
-  // beside the agents that replaced them.
-  //
-  // This page briefly kept them in a "legacy" section so their prompts stayed
-  // editable. That is no longer the rule (Ben, 2026-08-05): a superseded agent is
-  // deleted from Firestore outright, so there is nothing to keep reachable and a
-  // section for it would only ever be empty. The filter stays as the belt to that
-  // braces — a doc that survives a deletion, or a key added to the predicate
-  // before its cleanup runs, must not reappear on the hub.
-  const activeEntries = libraryEntries.filter((e) => !isSupersededAgentKey(e.agent.key));
-
-  return (
-    <section className="mt-10">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-xl text-foreground">Custom agents</h2>
-          <p className="mt-0.5 text-sm text-muted">
-            Stored system prompts that fire a Claude session inside the karos-agents repo. Run
-            with a plain-language request.
-          </p>
-        </div>
-        {isAdmin && (
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
-              <Icon name="Plus" className="h-3.5 w-3.5" /> New agent
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {agents.length === 0 ? (
-        <div className="rounded-[var(--radius)] border border-dashed border-border px-6 py-10 text-center">
-          <p className="text-sm text-foreground">No custom agents yet</p>
-          <p className="mt-1 text-xs text-muted">
-            {isAdmin
-              ? "Create one in Agent Studio."
-              : "An admin can import agents from the karos-agents repo."}
-          </p>
-        </div>
-      ) : (
-        // ONE renderer, TWO grids. The card is the same either way — a legacy
-        // agent stays fully editable, which is the whole reason /agents does not
-        // simply hide it — so the only difference is which section it sits in.
-        (() => {
-        const renderEntry = ({ agent, children, orphan }: LibraryEntry) => {
-            // F38. The clients this agent can actually run for. An unbound agent
-            // keeps the whole list; a per-client instance keeps its own client,
-            // and keeps NONE when that client is absent from this staff member's
-            // visible set or has no lab slug on file.
-            const eligible = clients.filter((c) =>
-              agentKeyMatchesClientSlug(agent.key, c.agentsRepoSlug),
-            );
-            // F35. What the card must say out loud: which workspace an instance
-            // belongs to. Until now the only way to learn it was to write a
-            // brief and read the refusal.
-            const boundTo = perClientAgentSlug(agent.key);
-            // #111. Resolved once so the badge and the price line can never
-            // disagree about whether this agent has a setup price.
-            const launchCost = agentLaunchCost(agent);
-            return (
-            <div
-              key={agent.id}
-              /* round 6 (rule 3): was `transition-all hover:-translate-y-0.5
-                 hover:border-border-strong hover:shadow-lg`. `row-lift` is the
-                 portal's one hover for a bordered surface - one fill step plus
-                 the accent hairline, no motion and no shadow bloom. No
-                 `focus-ring`: this is a static container, not a target, and a
-                 focus style that can never paint is dead style. */
-              className="card-grad group relative flex min-h-52 flex-col overflow-hidden rounded-[var(--radius)] border border-border p-5 row-lift"
-            >
-              <span className="absolute inset-x-0 top-0 h-0.5 bg-foreground/40 opacity-45 transition-opacity group-hover:opacity-80" aria-hidden="true" />
-              <div className="flex items-start gap-3">
-                <AgentChip agent={agent} />
-                <div className="min-w-0 flex-1">
-                  <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">AI agent</p>
-                  <p className="truncate text-base font-medium">{agent.name}</p>
-                  <p className="mt-0.5 truncate font-mono text-[10px] text-muted-2">
-                    {agent.entrySkillDir}
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
-                  {/* Live/Paused: whether clients can currently launch or run
-                      this agent at all. Admins can flip it right here - a
-                      pause takes effect immediately (submitCustomAgentJob
-                      refuses a disabled agent) and turns the agent into
-                      "Coming Soon" on every client roster it was granted to. */}
-                  {isAdmin ? (
-                    <AgentLiveToggle agentId={agent.id} enabled={agent.enabled} />
-                  ) : (
-                    <Badge tone={agent.enabled ? "success" : "neutral"}>
-                      {agent.enabled ? "Live" : "Paused"}
-                    </Badge>
-                  )}
-                  {/* Intake-driven agents refuse a run whose client has not filled
-                      in their data page - and that gate could only be discovered
-                      by writing the whole brief and reading the refusal. The
-                      readiness itself depends on the client picked inside the
-                      dialog, so the hub names the gate rather than pretending to
-                      resolve it. */}
-                  {intakeDrivenLabel(agent.key) && (
-                    <Badge tone="neutral">
-                      Needs {intakeDrivenLabel(agent.key)}
-                    </Badge>
-                  )}
-                  {/* F35: the binding, stated. An instance's entry skill is
-                      baked under one client's lab folder, so this is a property
-                      of the agent, not of whoever is looking at it. */}
-                  {boundTo && <Badge tone="neutral">{boundTo} only</Badge>}
-                  {/* Control-plane lineage, for the agents that have one. An
-                      agent with a recorded prompt version runs on agent-engine
-                      with that version attached to every run; one without this
-                      badge runs on agent-service, which is most of them and is
-                      not a defect. Absent enrichment renders nothing at all,
-                      so a control plane that is down costs a badge, not a row. */}
-                  {(() => {
-                    const facts = controlPlane?.get(agent.key);
-                    if (!facts) return null;
-                    return (
-                      <>
-                        <Badge tone={facts.status === "active" ? "info" : "warning"}>
-                          {facts.activePromptVersion === null
-                            ? "Control plane · no prompt"
-                            : `Control plane · prompt v${facts.activePromptVersion}`}
-                        </Badge>
-                        {/* The same destination an engine-only agent's card
-                            offers. A library agent with a control-plane twin
-                            has prompt versions, a model and template bindings
-                            too; without this the only way to reach them was to
-                            know the console's URL. */}
-                        <Link
-                          href={`/admin/agents/control-plane?agent=${encodeURIComponent(facts.agentId)}`}
-                          className="text-xs underline decoration-dotted opacity-70 hover:text-neon hover:opacity-100"
-                        >
-                          Edit in Studio
-                        </Link>
-                      </>
-                    );
-                  })()}
-                  {/* No client blurb ⇒ every client surface for this agent is
-                      reading the keyed fallback rather than a line somebody
-                      wrote for it. NOT the manifest below — `agentBlurb` took
-                      the manifest out of the chain (F127/CD-G2). Flagged here,
-                      fixed in the editor. */}
-                  {!agent.clientBlurb?.trim() && <Badge tone="warning">No client blurb</Badge>}
-                  {/* #111. The library flagged an unwritten blurb and said
-                      nothing about an unset SETUP price, which is the stronger
-                      gate: it is the rung `evaluateLaunchGate` refuses on, so a
-                      client's self-serve Launch stays disabled until an admin
-                      types a number in the editor. Makes the UNSET STATE
-                      visible and nothing more — what the number should be is
-                      Daniel's call (#167), and inventing one here would be the
-                      F130 placeholder-pricing failure at the priciest SKU. */}
-                  {launchCost === null && <Badge tone="warning">Setup not priced</Badge>}
-                  {/* A step whose parentKey names no agent in the library. Shown
-                      as a top-level card ON PURPOSE rather than dropped: a
-                      swallowed orphan is an agent nobody can find or fix, and
-                      the usual cause is a typo in the field. */}
-                  {orphan && <Badge tone="warning">Step with no parent</Badge>}
-                  {!agent.enabled && <Badge tone="warning">Disabled</Badge>}
-                  {/* WHAT THE MANIFEST ACTUALLY SAID, not just that it said
-                      something. `status: "blocked"` is overloaded: on the Reddit
-                      agents it means Reddit blocks datacenter egress, and on the
-                      v2 skills it means "in build, no pilot run yet". A bare
-                      "Blocked in repo" in danger red read as a broken build to
-                      every operator who saw it, which is why this is now the
-                      reason, in warning tone.
-
-                      Shown for an ENABLED agent too, unlike before: the manifest
-                      status is a live fact about the skill, and an operator who
-                      has switched a blocked agent on is exactly the person who
-                      needs to remember why it was blocked.
-
-                      Truncated, because the real values run 374 to 731 characters
-                      and a badge that long destroys the card. The whole reason is
-                      on the title attribute, which is the only place it fits. */}
-                  {agent.source?.status === "blocked" && (
-                    <span title={agent.source.blocked_reason ?? "No reason recorded in the manifest."}>
-                      <Badge tone="warning">{blockedLabel(agent.source.blocked_reason)}</Badge>
-                    </span>
-                  )}
-                </div>
-              </div>
-              <p className="mt-3 line-clamp-2 text-xs leading-relaxed text-muted-2">
-                {agent.description || "No description."}
-              </p>
-              <div className="mt-3">
-                <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
-              </div>
-              <div className="mt-auto flex items-end justify-between gap-2 pt-4">
-                {/* BOTH prices, because only one of them gates anything. The
-                    per-run line read as "this agent is priced" while the setup
-                    price — the one the client's Launch button waits on — was
-                    invisible whether it was set or not. */}
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-2">
-                    {/* × the fresh dialog's visible batch default (1 today for
-                        every agent): what one untouched client press charges. */}
-                    {creditsLabel(
-                      agentRunCost(agent) *
-                        defaultRunBatchSize({ key: agent.key, name: agent.name }),
-                    )}{" "}
-                    per client run
-                  </p>
-                  {launchCost === null ? (
-                    <p className="mt-0.5 text-xs text-warning">
-                      Setup not priced. Clients cannot launch it themselves
-                    </p>
-                  ) : (
-                    <p className="mt-0.5 text-xs text-muted-2">
-                      {creditsLabel(launchCost)} one-time setup
-                    </p>
-                  )}
-                </div>
-                <div className="flex gap-1.5">
-                  {isAdmin && (
-                    <Button size="sm" variant="ghost" onClick={() => setEditAgent(agent)}>
-                      <Icon name="Pencil" className="h-3.5 w-3.5" /> Edit
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="subtle"
-                    // F38. No eligible client ⇒ every pair this dialog could
-                    // build is one the server refuses, so the refusal is stated
-                    // here instead of after the brief is written.
-                    disabled={!agent.enabled || !serviceConfigured || eligible.length === 0}
-                    title={
-                      !serviceConfigured
-                        ? "Agent service is not configured"
-                        : !agent.enabled
-                          ? "Enable this agent first"
-                          : eligible.length === 0
-                            ? boundTo
-                              ? `This agent runs only for the "${boundTo}" workspace, and no client you can see has that lab repo slug.`
-                              : "No client is available to run this agent for."
-                            : undefined
-                    }
-                    onClick={() => setRunAgent(agent)}
-                  >
-                    <Icon name="Play" className="h-3.5 w-3.5" /> Run
-                  </Button>
-                </div>
-              </div>
-              {/* The steps that belong to this agent. Structural, from each
-                  document's own parentKey — so an agent that grows a step later
-                  nests here with no change to this file. */}
-              {children.length > 0 && (
-                <div className="mt-4">
-                  <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
-                    Steps of this agent
-                  </p>
-                  <div className="mt-1">
-                    {children.map((child) => (
-                      <SubAgentRow
-                        key={child.id}
-                        agent={child}
-                        isAdmin={isAdmin}
-                        serviceConfigured={serviceConfigured}
-                        runnableFor={
-                          clients.filter((c) =>
-                            agentKeyMatchesClientSlug(child.key, c.agentsRepoSlug),
-                          ).length
-                        }
-                        onEdit={() => setEditAgent(child)}
-                        onRun={() => setRunAgent(child)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-            );
-        };
-        return <div className="grid gap-3 sm:grid-cols-2">{activeEntries.map(renderEntry)}</div>;
-        })()
-      )}
-
-      {runAgent && (
-        <RunCustomAgentModal
-          agent={runAgent}
-          // Only the clients this agent can draft for reach the picker, so a
-          // staff member cannot assemble a pair the submit core refuses.
-          clients={clients.filter((c) =>
-            agentKeyMatchesClientSlug(runAgent.key, c.agentsRepoSlug),
-          )}
-          engineDispatch={engineDispatch}
-          contextItems={[]}
-          viewerIsClient={false}
-          onClose={() => setRunAgent(null)}
-        />
-      )}
-      {(editAgent || creating) && (
-        <AgentEditorModal
-          agent={editAgent}
-          onClose={() => {
-            setEditAgent(null);
-            setCreating(false);
-          }}
-        />
-      )}
-    </section>
   );
 }
 
@@ -2299,7 +1756,7 @@ export function RunCustomAgentModal({
   agent: RunnableAgentSummary;
   /** Fixed client (client-page flow) … */
   clientId?: string;
-  /** … or a picker (staff hub flow). */
+  /** … or a picker (the deleted staff hub's flow; no mount passes one now). */
   clients?: Array<{ id: string; name: string }>;
   /**
    * Which (client, agent) pairs actually dispatch to agent-engine, resolved
@@ -2889,15 +2346,15 @@ export function RunCustomAgentModal({
   // the copy is built from those and makes no claim about the form's contents.
   //
   // A BACKSTOP, NOT A ROUTE, and worth stating because it reads like a route.
-  // No mount can reach it today: the agent library passes no `setup`;
-  // StaffAgentControls is staff-only and the detail route prefetches the panes
-  // for staff, so its `setup` always carries a kind; and LegacyAgentPanel — the
-  // one mount a CLIENT reaches — is handed `evaluateLegacyRunGate`'s verdict,
-  // which refuses on `setup_missing` and disables "Create a new post" with the
-  // reason painted and the form linked. Making this reachable would mean
-  // loosening that gate, which is correct as it stands, so it stays a backstop:
-  // if a future mount does skip the gate, the reader meets a true sentence and a
-  // way out rather than the submit core's refusal after writing a brief.
+  // No mount can reach it today: StaffAgentControls is staff-only and the
+  // detail route prefetches the panes for staff, so its `setup` always carries
+  // a kind; and LegacyAgentPanel — the one mount a CLIENT reaches — is handed
+  // `evaluateLegacyRunGate`'s verdict, which refuses on `setup_missing` and
+  // disables "Create a new post" with the reason painted and the form linked.
+  // Making this reachable would mean loosening that gate, which is correct as it
+  // stands, so it stays a backstop: if a future mount does skip the gate, the
+  // reader meets a true sentence and a way out rather than the submit core's
+  // refusal after writing a brief.
   if (setup && !setup.ready && !intake) {
     return (
       <Modal open onClose={onClose} title={agent.name}>
@@ -3288,283 +2745,6 @@ export function RunCustomAgentModal({
           </p>
         )}
 
-      </div>
-    </Modal>
-  );
-}
-
-/* ═══════════════════════ editor (admin) ═══════════════════════ */
-
-function AgentEditorModal({ agent, onClose }: { agent: CustomAgent | null; onClose: () => void }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const [name, setName] = useState(agent?.name ?? "");
-  const [key, setKey] = useState(agent?.key ?? "");
-  const [description, setDescription] = useState(agent?.description ?? "");
-  const [clientBlurb, setClientBlurb] = useState(agent?.clientBlurb ?? "");
-  const [icon, setIcon] = useState(agent?.icon ?? "Sparkles");
-  const [color, setColor] = useState(agent?.color ?? "#A3E635");
-  const [entrySkillDir, setEntrySkillDir] = useState(agent?.entrySkillDir ?? "");
-  const [skillRoots, setSkillRoots] = useState((agent?.skillRoots ?? []).join("\n"));
-  const [includeClientSkills, setIncludeClientSkills] = useState(agent?.includeClientSkills ?? true);
-  const [instructions, setInstructions] = useState(agent?.instructions ?? "");
-  const [creditCost, setCreditCost] = useState(agent?.creditCost != null ? String(agent.creditCost) : "");
-  const [launchCreditCost, setLaunchCreditCost] = useState(
-    agent?.launchCreditCost != null ? String(agent.launchCreditCost) : "",
-  );
-  const [stepModelsText, setStepModelsText] = useState(
-    Object.entries(agent?.stepModels ?? {})
-      .map(([step, model]) => `${step}: ${model}`)
-      .join("\n"),
-  );
-  const [enabled, setEnabled] = useState(agent?.enabled ?? true);
-
-  function parseStepModels(raw: string): Record<string, string> | null {
-    const entries: Array<[string, string]> = [];
-    for (const line of raw.split("\n")) {
-      const idx = line.indexOf(":");
-      if (idx === -1) continue;
-      const step = line.slice(0, idx).trim();
-      const model = line.slice(idx + 1).trim();
-      if (step && model) entries.push([step, model]);
-    }
-    return entries.length > 0 ? Object.fromEntries(entries) : null;
-  }
-
-  function save() {
-    setError(null);
-    const input = {
-      name,
-      key: key || name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
-      description,
-      clientBlurb,
-      icon,
-      color,
-      entrySkillDir,
-      skillRoots: skillRoots.split("\n").map((s) => s.trim()).filter(Boolean),
-      includeClientSkills,
-      instructions,
-      creditCost: creditCost.trim() === "" ? null : Number(creditCost),
-      launchCreditCost: launchCreditCost.trim() === "" ? null : Number(launchCreditCost),
-      stepModels: parseStepModels(stepModelsText),
-      enabled,
-    };
-    startTransition(async () => {
-      const result = agent
-        ? await updateCustomAgentAction(agent.id, input)
-        : await createCustomAgentAction(input);
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      router.refresh();
-      onClose();
-    });
-  }
-
-  function remove() {
-    startTransition(async () => {
-      const result = await deleteCustomAgentAction(agent!.id);
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      router.refresh();
-      onClose();
-    });
-  }
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={agent ? `Edit ${agent.name}` : "New custom agent"}
-      description="The instructions are the agent's system prompt. The run adds the client context and the user's request around them."
-      className="max-w-2xl"
-      footer={
-        <div className="flex items-center justify-between gap-3">
-          {agent ? (
-            confirmDelete ? (
-              <span className="flex items-center gap-2 text-xs">
-                Delete this agent?
-                <Button size="sm" variant="danger" onClick={remove} loading={pending}>
-                  Delete
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-                  Keep
-                </Button>
-              </span>
-            ) : (
-              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(true)}>
-                <Icon name="Trash2" className="h-3.5 w-3.5" /> Delete
-              </Button>
-            )
-          ) : (
-            <span />
-          )}
-          <Button variant="accent" onClick={save} loading={pending}>
-            {agent ? "Save changes" : "Create agent"}
-          </Button>
-        </div>
-      }
-    >
-      <div className="mt-4 space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <Label htmlFor="ae-name">Name</Label>
-            <Input id="ae-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Instagram Agent" />
-          </div>
-          <div>
-            <Label htmlFor="ae-key">Key</Label>
-            <Input id="ae-key" value={key} onChange={(e) => setKey(e.target.value)} placeholder="karos-instagram-agent" />
-          </div>
-        </div>
-        <div>
-          <Label htmlFor="ae-desc">Description (internal)</Label>
-          <Textarea id="ae-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
-          <p className="mt-1 text-xs text-muted-2">
-            The lab manifest blurb. Staff surfaces only. Clients never see this.
-          </p>
-        </div>
-        <div>
-          <Label htmlFor="ae-blurb">Client blurb</Label>
-          <Textarea
-            id="ae-blurb"
-            rows={2}
-            maxLength={300}
-            value={clientBlurb}
-            onChange={(e) => setClientBlurb(e.target.value)}
-            placeholder="Drafts a week of on-brand posts for your team to review and publish."
-          />
-          <p className="mt-1 text-xs text-muted-2">
-            What the client reads on the agent card and in the run dialog: 1–2 sentences, sentence
-            case, no product codes. Leave it empty and every client surface reads a generic keyed
-            line instead. The internal description above never reaches them.
-          </p>
-        </div>
-        <div>
-          <Label htmlFor="ae-entry">Entry skill dir (in karos-agents)</Label>
-          <Input
-            id="ae-entry"
-            value={entrySkillDir}
-            onChange={(e) => setEntrySkillDir(e.target.value)}
-            placeholder="products/live/instagram-agent"
-            className="font-mono text-xs"
-          />
-        </div>
-        <div>
-          <Label htmlFor="ae-roots">Extra skill roots (one per line, optional)</Label>
-          <Textarea
-            id="ae-roots"
-            rows={2}
-            value={skillRoots}
-            onChange={(e) => setSkillRoots(e.target.value)}
-            placeholder="skills/vendors/taste-skill"
-            className="font-mono text-xs"
-          />
-        </div>
-        <div>
-          <Label htmlFor="ae-instructions">Instructions (system prompt)</Label>
-          <Textarea
-            id="ae-instructions"
-            rows={8}
-            maxLength={12000}
-            value={instructions}
-            onChange={(e) => setInstructions(e.target.value)}
-            className="font-mono text-xs"
-          />
-          <p className="mt-1 text-right text-xs text-muted-2">{instructions.length.toLocaleString()} / 12,000</p>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div>
-            <Label htmlFor="ae-icon">Icon (lucide name)</Label>
-            <Input id="ae-icon" value={icon} onChange={(e) => setIcon(e.target.value)} />
-          </div>
-          <div>
-            <Label htmlFor="ae-color">Color</Label>
-            <Input id="ae-color" value={color} onChange={(e) => setColor(e.target.value)} placeholder="#A3E635" />
-          </div>
-          <div>
-            <Label htmlFor="ae-cost">Credits per run</Label>
-            <Input
-              id="ae-cost"
-              type="number"
-              min={0}
-              value={creditCost}
-              onChange={(e) => setCreditCost(e.target.value)}
-              placeholder={`${CREDIT_COSTS.customAgentRun} (default)`}
-            />
-            <p className="mt-1 text-xs text-muted-2">
-              What this agent charges a client per run, on its card and in the run dialog. Left
-              empty every agent prices the same, and a video edit costs what a single post does.
-            </p>
-          </div>
-        </div>
-        {/* §6.3. Until this is set the client's self-serve Launch button stays
-            disabled with a visible "pricing is being finalized" reason - gated
-            rather than provisional, because billing an invented number that
-            later changes is the F130 placeholder-pricing failure at the most
-            expensive SKU. Staff launches stay free and ARE the measurement runs;
-            the economics card on the client's agents page surfaces the measured
-            ratio and a suggested price to type in here. */}
-        <div className="sm:max-w-xs">
-          <Label htmlFor="ae-launch-cost">Credits for setup (one time)</Label>
-          <Input
-            id="ae-launch-cost"
-            type="number"
-            min={0}
-            value={launchCreditCost}
-            onChange={(e) => setLaunchCreditCost(e.target.value)}
-            placeholder="not priced yet"
-          />
-          <p className="mt-1 text-xs text-muted-2">
-            The one-off setup run that researches the brand and designs the template set. Must be
-            higher than the per-run price. Left empty, clients cannot launch this agent themselves
-            and staff run the setup for them.
-          </p>
-        </div>
-        <div>
-          <Label htmlFor="ae-step-models">Per-step model overrides (one per line, optional)</Label>
-          <Textarea
-            id="ae-step-models"
-            rows={3}
-            value={stepModelsText}
-            onChange={(e) => setStepModelsText(e.target.value)}
-            placeholder={"draft-post: claude-haiku-4-5\nresearch: claude-opus-4-8"}
-            className="font-mono text-xs"
-          />
-          <p className="mt-1 text-xs text-muted-2">
-            `step name: model id`, one per line. Only takes effect for a skill whose steps are
-            named subagents matching these names, and is a no-op otherwise. Leave empty to run the whole
-            job on the task type&apos;s single default model, as today.
-          </p>
-        </div>
-        <div className="flex items-center gap-4">
-          <label className="flex cursor-pointer items-center gap-2 text-xs">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="accent-neon" />
-            Enabled
-          </label>
-          <label className="flex cursor-pointer items-center gap-2 text-xs" title="Also load the client's emitted sub-skills (clients/<slug>/skills/)">
-            <input
-              type="checkbox"
-              checked={includeClientSkills}
-              onChange={(e) => setIncludeClientSkills(e.target.checked)}
-              className="accent-neon"
-            />
-            Use client&apos;s emitted skills
-          </label>
-        </div>
-
-        {agent?.source?.status === "blocked" && (
-          <p className="rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-muted">
-            <Icon name="TriangleAlert" className="mr-1 inline h-3.5 w-3.5 text-warning" />
-            The repo catalog marks this skill blocked. Review before enabling.
-          </p>
-        )}
-        {error && <p className="text-xs text-danger">{error}</p>}
       </div>
     </Modal>
   );
