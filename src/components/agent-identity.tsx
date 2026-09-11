@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
 
@@ -58,23 +59,64 @@ export function platformForIntegrationId(id: string): SocialPlatform | null {
 }
 
 /**
- * Non-social agents that appear in the landing page's channel row carry the
- * same lucide mark there and here. Checked only when no platform matched.
+ * EVERY AGENT IN ITS OWN COLOUR (Albert, 2026-09-10: "always have the agents
+ * be of their color"). A platform agent wears its platform's logo in the
+ * platform's colour; X and TikTok are black-and-white marks, so they take the
+ * ink (white on the dark ground, black on the light one). `knockout` is the
+ * white that shows through a logo's cut-outs: Reddit's Snoo, LinkedIn's "in",
+ * YouTube's play button.
  */
-function landingMarkFor(identity: string): string | null {
-  const value = identity.toLowerCase();
-  if (/landing/.test(value)) return "LayoutTemplate";
-  if (/newsletter/.test(value)) return "Mail";
-  if (/blog/.test(value)) return null; // "SEO-aware" blog taglines are not the SEO agent
-  if (/seo|(^|[\s_-])geo([\s_-]|$)/.test(value)) return "Search";
-  if (/rebrand/.test(value)) return "Sparkles";
-  if (/short|video|clip/.test(value)) return "Video";
-  return null;
-}
+const PLATFORM_BRAND: Record<SocialPlatform, { fill?: string; knockout?: ReactNode }> = {
+  x: {},
+  tiktok: {},
+  instagram: { fill: "#E4405F" },
+  linkedin: { fill: "#0A66C2", knockout: <rect x="2" y="2" width="20" height="20" fill="#fff" /> },
+  reddit: { fill: "#FF4500", knockout: <circle cx="12" cy="12" r="10.5" fill="#fff" /> },
+  facebook: { fill: "#0866FF", knockout: <circle cx="12" cy="12" r="11" fill="#fff" /> },
+  youtube: { fill: "#FF0000", knockout: <rect x="8.5" y="7.5" width="8" height="9" fill="#fff" /> },
+};
 
-export function SocialPlatformMark({ platform, className }: { platform: SocialPlatform; className?: string }) {
+/**
+ * The agents that are not a social platform: a glyph and a colour of their
+ * own, so they read by colour the way the platform agents read by their logos.
+ * Checked in order, only when no platform matched. ONE TABLE, so an agent's
+ * colour is changed here and nowhere else. The stored `CustomAgent.color` is
+ * not used: most agents carry a defaulted one, so it would paint half the
+ * roster the same amber.
+ */
+const FAMILY_MARKS: ReadonlyArray<{ match: RegExp; icon: string; color: string }> = [
+  { match: /landing/, icon: "LayoutTemplate", color: "#A78BFA" },
+  { match: /newsletter/, icon: "Mail", color: "#F5A524" },
+  // Before SEO: a blog tagline that says "SEO-aware" is not the SEO agent.
+  { match: /blog/, icon: "PenLine", color: "#34D399" },
+  { match: /seo|(^|[\s_-])geo([\s_-]|$)/, icon: "Globe", color: "#4F9CF9" },
+  { match: /reputation/, icon: "MessageSquare", color: "#F472B6" },
+  { match: /rebrand/, icon: "Sparkles", color: "#E879F9" },
+  { match: /short|video|clip/, icon: "Video", color: "#F87171" },
+];
+
+/** Staying in the ink is for a logo drawn ON a platform-coloured button. */
+export function SocialPlatformMark({
+  platform,
+  className,
+  tone = "brand",
+}: {
+  platform: SocialPlatform;
+  className?: string;
+  tone?: "brand" | "ink";
+}) {
+  const brand = tone === "brand" ? PLATFORM_BRAND[platform] : {};
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+    <svg
+      viewBox="0 0 24 24"
+      fill={brand.fill ?? "currentColor"}
+      aria-hidden="true"
+      className={className}
+      // The ink marks take the foreground, not the caller's muted text colour:
+      // X's colour is white (or black), not grey.
+      {...(tone === "brand" && !brand.fill ? { style: { color: "var(--foreground)" } } : {})}
+    >
+      {brand.knockout}
       <path d={PLATFORM_PATHS[platform]} />
     </svg>
   );
@@ -82,13 +124,17 @@ export function SocialPlatformMark({ platform, className }: { platform: SocialPl
 
 /**
  * The one mark for an agent, resolved from its identity string: the real
- * platform logo when the agent is a social agent, the landing-page mark for
- * the other channels, and the stored lucide icon as the fallback.
+ * platform logo when the agent is a social agent, its family's glyph and
+ * colour for the other channels, and the stored lucide icon as the fallback.
  */
 export function AgentMark({ identity, icon, className }: { identity: string; icon?: string; className?: string }) {
   const platform = socialPlatformsFor(identity)[0];
   if (platform) return <SocialPlatformMark platform={platform} className={className} />;
-  return <Icon name={landingMarkFor(identity) ?? icon ?? "Sparkles"} className={className} />;
+  const value = identity.toLowerCase();
+  const family = FAMILY_MARKS.find((f) => f.match.test(value));
+  // A heavier stroke than the app's 1.5: these sit beside filled logos.
+  if (family) return <Icon name={family.icon} className={className} strokeWidth={2} style={{ color: family.color }} />;
+  return <Icon name={icon ?? "Sparkles"} className={className} />;
 }
 
 /**
@@ -118,9 +164,9 @@ export function ContentPlatformMark({
 }
 
 /**
- * The agent avatar chip - the landing page hero treatment: the real mark in
- * light gray on a neutral dark rounded square. Agents spanning two platforms
- * (e.g. Instagram + TikTok social posts) stack both logos.
+ * The agent avatar chip: the agent's mark in its own colour on a neutral
+ * rounded square (see PLATFORM_BRAND / FAMILY_MARKS). Agents spanning two
+ * platforms (e.g. Instagram + TikTok social posts) stack both logos.
  */
 export function AgentIdentity({
   identity,

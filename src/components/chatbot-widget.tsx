@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "@/components/icon";
-import { SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
+import { AgentMark, SocialPlatformMark, type SocialPlatform } from "@/components/agent-identity";
 import { cn } from "@/lib/utils";
 import { ingestCustomUserTaskAction } from "@/lib/actions";
 import { renderSectionBody } from "@/lib/doc-render";
@@ -1590,7 +1590,7 @@ export function ChatbotWidget({
                       {a.platform ? (
                         <SocialPlatformMark platform={a.platform} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
                       ) : (
-                        <Icon name={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+                        <AgentMark identity={a.displayName} icon={a.icon} className="h-3.5 w-3.5 shrink-0 text-muted-2" />
                       )}
                       <span className="flex-1 truncate text-xs text-foreground">{a.displayName}</span>
                     </button>

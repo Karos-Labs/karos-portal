@@ -45,9 +45,9 @@ interface Props {
 
 /* ── Platform marks - one shared source (agent-identity) for the whole app ── */
 
-function PlatformMark({ id, className }: { id: string; className?: string }) {
+function PlatformMark({ id, className, tone }: { id: string; className?: string; tone?: "brand" | "ink" }) {
   const platform = platformForIntegrationId(id);
-  return platform ? <SocialPlatformMark platform={platform} className={className} /> : null;
+  return platform ? <SocialPlatformMark platform={platform} className={className} {...(tone ? { tone } : {})} /> : null;
 }
 
 /** Google's multicolor G - inherently multi-color, so it stays local rather than
@@ -121,7 +121,8 @@ function BrandedConnectButton({ platform, loading, onClick }: BrandButtonProps) 
           />
         </svg>
       ) : (
-        <PlatformMark id={platform.id} className="h-4 w-4" />
+        // White on the platform's own colour, like the label beside it.
+        <PlatformMark id={platform.id} className="h-4 w-4" tone="ink" />
       )}
       {loading ? "Connecting…" : `Connect with ${platform.name}`}
     </button>
@@ -429,7 +430,7 @@ function PlatformCard({
     >
       {/* Header */}
       <div className="flex items-start gap-3 p-4">
-        {/* Platform mark - the real brand logo, monochrome chip in our palette */}
+        {/* Platform mark - the real brand logo in its own colour, on a neutral chip */}
         <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
           <PlatformMark id={platform.id} className="h-5 w-5" />
         </div>
