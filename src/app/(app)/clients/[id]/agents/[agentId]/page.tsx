@@ -1497,10 +1497,8 @@ export default async function ClientAgentDetailPage({
                 nextRunLabel={nextRunLabel}
                 clientId={id}
                 agent={summary}
-                engineDispatch={engineDispatch}
                 {...(schedule ? { schedule } : {})}
                 {...(setup ? { setup } : {})}
-                contextItems={contextItems}
                 reviewCount={reviewCount}
                 reviewHref={agentRuns.find((run) => run.status === "review")?.href ?? `/clients/${id}/assets`}
                 {...(lastStaffRun ? { lastRunAt: lastStaffRun.createdAt } : {})}

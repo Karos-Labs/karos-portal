@@ -730,10 +730,14 @@ function AgentDataButton({
   kind,
   ready,
   onOpen,
+  href,
 }: {
   kind: IntakeKind;
   ready: boolean;
-  onOpen: () => void;
+  /** Opens the data pane of the form it sits in. */
+  onOpen?: () => void;
+  /** Or goes to the agent's own data page, when there is no form to open. */
+  href?: string;
 }) {
   const className = cn(
     "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
@@ -746,10 +750,19 @@ function AgentDataButton({
   // the glyph, and it stays inside the accessible name so voice control can
   // still say what it reads.
   const name = ready ? label : `${label}: setup needed`;
-  return (
-    <button type="button" onClick={onOpen} className={className} aria-label={name}>
+  const body = (
+    <>
       <IntakeGlyph kind={kind} className="h-3 w-3" />
       {ready ? label : "Setup needed"}
+    </>
+  );
+  return href ? (
+    <Link href={href} className={className} aria-label={name}>
+      {body}
+    </Link>
+  ) : (
+    <button type="button" onClick={onOpen} className={className} aria-label={name}>
+      {body}
     </button>
   );
 }
@@ -1291,10 +1304,8 @@ function refusalNamesSetup(refusal: string): boolean {
 export function StaffAgentControls({
   clientId,
   agent,
-  engineDispatch,
   schedule,
   setup,
-  contextItems,
   reviewCount = 0,
   reviewHref,
   lastRunAt,
@@ -1302,20 +1313,14 @@ export function StaffAgentControls({
 }: {
   clientId: string;
   agent: RunnableAgentSummary;
-  /** This client's dispatch answer for this agent, resolved server-side. */
-  engineDispatch: EngineDispatchMap;
   schedule?: ClientAgentScheduleRow;
   setup?: AgentSetupState;
-  contextItems: ContextItem[];
   /** Deliverables sitting in review for this agent - the staff queue. */
   reviewCount?: number;
   reviewHref: string;
   lastRunAt?: number;
   viewer?: { name: string; email: string };
 }) {
-  // The agent-data dialog: the data chip, and "Set schedule" before the data
-  // exists. It no longer opens on a run — there is no "Run now" here.
-  const [dataOpen, setDataOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
 
   const intake = intakeFor(setup);
@@ -1338,11 +1343,10 @@ export function StaffAgentControls({
           Staff controls
         </h2>
         <AgentPlatformBadges identity={`${agent.key} ${agent.name}`} />
-        {/* Two affordances, never both at once. Missing data is a CALL TO
-            ACTION and links the agent's own data page (CD-E1); data already on
-            file is an EDIT affordance and opens the dialog's inline pane, so a
-            staff member correcting one field does not lose the run they were
-            setting up. */}
+        {/* Two affordances, never both at once: missing data is a call to
+            action, data on file is an edit affordance. Both LINK the agent's
+            own data page (Albert, 2026-09-10). The chip used to open the run
+            dialog on its data pane, a popup doing what that page does. */}
         {blockedSetup ? (
           <a
             href={blockedSetup.href}
@@ -1351,8 +1355,8 @@ export function StaffAgentControls({
           >
             <Badge tone="warning">Setup needed</Badge>
           </a>
-        ) : intake && intakeComplete(intake) ? (
-          <AgentDataButton kind={intake.kind} ready onOpen={() => setDataOpen(true)} />
+        ) : intake && setup && intakeComplete(intake) ? (
+          <AgentDataButton kind={intake.kind} ready href={setup.href} />
         ) : null}
       </div>
 
@@ -1414,11 +1418,9 @@ export function StaffAgentControls({
         {/* NO "Run now" (Albert, 2026-09-10). The agent's page draws the run
             form itself in every state that can run, so a second way to run
             from the Control Room was a popup doing what the page does. */}
-        <Button
-          size="sm"
-          variant="subtle"
-          onClick={() => (scheduleNeedsData ? setDataOpen(true) : setScheduleOpen(true))}
-        >
+        {/* Opens even before the data exists: the schedule dialog says what
+            is missing and links the data page. */}
+        <Button size="sm" variant="subtle" onClick={() => setScheduleOpen(true)}>
           <Icon name="SlidersHorizontal" className="h-3.5 w-3.5" />
           {schedule ? "Manage schedule" : "Set schedule"}
         </Button>
@@ -1440,38 +1442,13 @@ export function StaffAgentControls({
         </p>
       )}
 
-      {dataOpen && (
-        <RunCustomAgentModal
-          agent={agent}
-          clientId={clientId}
-          engineDispatch={engineDispatch}
-          contextItems={contextItems}
-          viewerIsClient={false}
-          {...(setup ? { setup } : {})}
-          initialPane="data"
-          // AF-9. These controls only ever render inside the Control Room on an
-          // agent's own detail page, and that page is what the operator came to
-          // read — a redirect to the raw job record threw away the tab they had
-          // open and everything else on the agent with it.
-          stayOnPage
-          onClose={() => setDataOpen(false)}
-        />
-      )}
       {scheduleOpen && (
         <AgentScheduleModal
           agent={agent}
           clientId={clientId}
           {...(schedule ? { schedule } : {})}
-          {...(intake && (!companyOnFile(intake) || !standUpDone(intake))
-            ? {
-                setupNeeded: {
-                  kind: intake.kind,
-                  onOpenData: () => {
-                    setScheduleOpen(false);
-                    setDataOpen(true);
-                  },
-                },
-              }
+          {...(intake && setup && (!companyOnFile(intake) || !standUpDone(intake))
+            ? { setupNeeded: { kind: intake.kind, href: setup.href } }
             : {})}
           onClose={() => setScheduleOpen(false)}
         />
@@ -1890,7 +1867,7 @@ export function AgentScheduleModal({
   /** Client viewers: pace language only, no batch dial. */
   paceOnly?: boolean;
   /** Set when this agent drafts from intake and its company page is missing. */
-  setupNeeded?: { kind: IntakeKind; onOpenData: () => void };
+  setupNeeded?: { kind: IntakeKind; href: string };
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -2237,13 +2214,9 @@ export function AgentScheduleModal({
           <p className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
             Add the {INTAKE_LABEL[setupNeeded.kind]} agent data first. Every scheduled run drafts
             from it, so none can start until it is saved.{" "}
-            <button
-              type="button"
-              onClick={setupNeeded.onOpenData}
-              className="cursor-pointer underline"
-            >
-              Open {INTAKE_LABEL[setupNeeded.kind]} agent data →
-            </button>
+            <Link href={setupNeeded.href} className="underline">
+              Open {INTAKE_LABEL[setupNeeded.kind]} agent data
+            </Link>
           </p>
         )}
 
@@ -2273,7 +2246,6 @@ export function RunCustomAgentModal({
   viewerIsClient,
   setup,
   initialPane,
-  stayOnPage,
   inline = false,
   onClose = () => {},
 }: {
@@ -2303,23 +2275,6 @@ export function RunCustomAgentModal({
   setup?: AgentSetupState;
   /** "data" opens straight on the agent's data; so does a missing company page. */
   initialPane?: RunPane;
-  /**
-   * Keep a STAFF run's confirmation here instead of navigating to /jobs/<id>
-   * (AF-9).
-   *
-   * Albert on the post-run gesture: "when you click after run the agent, then it
-   * goes back to…". This dialog is only ever mounted from an agent's own detail
-   * page — the legacy panel and the Control Room's staff controls, which is the
-   * whole list — so for staff the successful press replaced the page they were
-   * reading with the raw job record, and every other thing they had open on that
-   * agent (the Control Room tab, the schedule, the outputs) was gone. The run
-   * itself is announced on the page they were already on: `running` on the status
-   * strip covers it now, and AutoRefresh polls it to completion.
-   *
-   * The job is not hidden — the confirmation links it. What changes is that
-   * following the link is a decision rather than a redirect.
-   */
-  stayOnPage?: boolean;
   /**
    * Draw IN THE PAGE rather than over it (Albert, 2026-09-10: "a huge ai button
    * and then a pop up once you click it").
@@ -2693,7 +2648,7 @@ export function RunCustomAgentModal({
         return;
       }
       // `inline` implies it: a form drawn in the page never navigates away.
-      if (viewerIsClient || stayOnPage || inline) {
+      if (viewerIsClient || inline) {
         // The page behind this dialog is the one that narrates the run now, so
         // the refresh is what makes it start doing so — the in-flight mark and
         // the poller both key off a job that only exists after this await.

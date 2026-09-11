@@ -12,12 +12,11 @@ import {
   type RunnableAgentSummary,
   type AgentSetupState,
 } from "@/components/custom-agents";
-import type { EngineDispatchMap } from "@/lib/agent-engine/engine-dispatch-map";
 import { AgentEconomicsCard } from "@/components/client-agents/agent-economics";
 import { OutputsHub } from "@/components/client-agents/outputs-hub";
 import { AGENT_HEALTH_LABEL, type AgentHealth } from "@/lib/agent-health";
 import type { AgentEconomics } from "@/lib/credit-reporting";
-import type { Asset, ContextItem } from "@/lib/types";
+import type { Asset } from "@/lib/types";
 
 type ControlRoomTab = "overview" | "telemetry" | "outputs";
 
@@ -43,10 +42,8 @@ export function ControlRoom({
   nextRunLabel,
   clientId,
   agent,
-  engineDispatch,
   schedule,
   setup,
-  contextItems,
   reviewCount,
   reviewHref,
   lastRunAt,
@@ -64,11 +61,8 @@ export function ControlRoom({
   nextRunLabel: string | null;
   clientId: string;
   agent: RunnableAgentSummary;
-  /** Forwarded to StaffAgentControls' run dialog - see `EngineDispatchMap` (T-B21). */
-  engineDispatch: EngineDispatchMap;
   schedule?: ClientAgentScheduleRow;
   setup?: AgentSetupState;
-  contextItems: ContextItem[];
   reviewCount: number;
   reviewHref: string;
   lastRunAt?: number;
@@ -122,10 +116,8 @@ export function ControlRoom({
             <StaffAgentControls
               clientId={clientId}
               agent={agent}
-              engineDispatch={engineDispatch}
               {...(schedule ? { schedule } : {})}
               {...(setup ? { setup } : {})}
-              contextItems={contextItems}
               reviewCount={reviewCount}
               reviewHref={reviewHref}
               {...(lastRunAt ? { lastRunAt } : {})}
