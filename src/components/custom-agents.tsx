@@ -44,6 +44,7 @@ import {
   creditsLabel,
   estimatedCreditsLabel,
   scheduledAgentWeeklyCost,
+  STAFF_RUN_PRICE_NOTE,
 } from "@/lib/credits";
 import { intakePageHref, type IntakeFamily } from "@/lib/agent-intake-links";
 import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
@@ -87,6 +88,7 @@ import {
   X_SETUP_REQUIRED_PREFIX,
   groupAgentsByParent,
   isSupersededAgentKey,
+  EMPTY_BRIEF_REQUEST,
 } from "@/lib/custom-agent-launch";
 import {
   engineProductIdForPair,
@@ -2564,14 +2566,14 @@ export function RunCustomAgentModal({
     // agents are documented to support, and they draft from their stored data
     // either way. The brief joins non-empty fields only, so an untouched form
     // produced an empty prompt and a refusal naming a requirement that does not
-    // exist. Fall back to the profile's `defaultRequest`, which is what the
-    // legacy path's prompt needs; the engine reads the brief's fields, which
-    // stay empty.
+    // exist. Fall back to EMPTY_BRIEF_REQUEST, which steers nothing: it is
+    // what the legacy path's prompt needs, and the engine reads the brief's
+    // fields, which stay empty.
     let prompt = buildCustomAgentPrompt(profile, fields);
-    if (!prompt && !profile.fields.some((field) => field.required) && profile.defaultRequest) {
+    if (!prompt && !profile.fields.some((field) => field.required)) {
       prompt = buildCustomAgentPrompt(profile, {
         ...fields,
-        [primaryField.key]: profile.defaultRequest,
+        [primaryField.key]: EMPTY_BRIEF_REQUEST,
       });
     }
     if (!prompt) {
@@ -2883,11 +2885,11 @@ export function RunCustomAgentModal({
                 {/* The price and nothing else (2026-09-10). No "ready in …": it
                     was never true, and the run's own bar answers "how long"
                     once it starts. No "you can leave this page" either: the
-                    progress says so, at the moment it matters. Staff read whose
-                    credits move, since theirs do not. */}
+                    progress says so, at the moment it matters. Staff read that
+                    their own run is free: the figure is the client's. */}
                 <p className="text-xs text-muted">
                   {sentenceStart(briefQuoteLabel(agent, visibleBriefValues))}
-                  {!viewerIsClient && " · billed to the client"}
+                  {!viewerIsClient && STAFF_RUN_PRICE_NOTE}
                 </p>
                 <div className="flex items-center gap-2">
                   {!inline && (
@@ -2970,6 +2972,11 @@ export function RunCustomAgentModal({
         tabIndex={-1}
         className="space-y-4 focus:outline-none"
         hidden={showData}
+        // The in-page form has no title any more, and this pane takes focus
+        // when the reader comes back from their data: it needs a name to be
+        // announced by, and the button's verb ("Create post") is it.
+        role="group"
+        aria-label={runLabel}
       >
         {!clientId && clients && (
           <div>

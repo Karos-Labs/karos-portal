@@ -172,8 +172,8 @@ export function OptionPicker({
       </ul>
       {error && <p className="mt-2 text-xs text-warning">{error}</p>}
       <p className="mt-2 text-[11px] text-muted-2">
-        The one you choose lands in {CLIENT_ARCHIVE_NAME}, ready to post. Mark it posted once it&rsquo;s up
-. That&rsquo;s what teaches this agent what you actually publish.
+        The one you choose lands in {CLIENT_ARCHIVE_NAME}, ready to post. Mark it posted once
+        it&rsquo;s up. That&rsquo;s what teaches this agent what you actually publish.
       </p>
     </div>
   );

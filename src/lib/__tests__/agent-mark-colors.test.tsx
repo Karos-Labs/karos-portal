@@ -28,14 +28,22 @@ describe("an agent's mark", () => {
   it("gives the agents with no platform a glyph and a colour of their own", () => {
     const seo = renderToStaticMarkup(<AgentMark identity="seo-geo-agent-v2 SEO & GEO Agent" icon="Bot" />);
     expect(seo).toContain("lucide-globe");
-    expect(seo).toContain("color:#4F9CF9");
+    // Two shades: the deeper on the light theme, the lighter on the dark one.
+    expect(seo).toContain("color:light-dark(#2563EB, #60A5FA)");
     // A blog tagline that says "SEO-aware" is still the blog agent.
     const blog = renderToStaticMarkup(<AgentMark identity="karos-blog-writer-v2 SEO-aware Blog Agent" />);
     expect(blog).toContain("lucide-pen-line");
-    // And an agent nobody has a colour for keeps its stored icon, in the ink.
-    const other = renderToStaticMarkup(<AgentMark identity="karos-campaign-orchestrator Campaign" icon="Megaphone" />);
-    expect(other).toContain("lucide-megaphone");
-    expect(other).not.toContain("color:#");
+    const campaign = renderToStaticMarkup(<AgentMark identity="karos-campaign-orchestrator Campaign" />);
+    expect(campaign).toContain("lucide-megaphone");
+    expect(campaign).toContain("color:light-dark(");
+  });
+
+  it("gives an agent outside the table a colour too, the same one every time", () => {
+    // A Dynamic Studio agent: its own stored icon, a colour picked from its name.
+    const once = renderToStaticMarkup(<AgentMark identity="Market Pulse" icon="Radar" />);
+    expect(once).toContain("lucide-radar");
+    expect(once).toContain("color:light-dark(");
+    expect(renderToStaticMarkup(<AgentMark identity="Market Pulse" icon="Radar" />)).toBe(once);
   });
 
   it("reaches the avatar tile every roster row and agent page draws", () => {

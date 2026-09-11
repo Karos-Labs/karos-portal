@@ -81,9 +81,12 @@ describe("the agent page's run form", () => {
     expect(html).toMatch(/<button[^>]*>Your Reddit details<\/button>/);
   });
 
-  it("puts the price in the footer for both readers, and says whose it is to staff", () => {
-    expect(form(true)).not.toContain("billed to the client");
-    expect(form(false)).toContain("billed to the client");
+  it("puts the price in the footer for both readers, and tells staff theirs is free", () => {
+    // A staff member's own run charges nobody (isBillableClientActor); the
+    // figure is the client's. "· billed to the client" said the opposite.
+    expect(form(true)).not.toContain("free for staff");
+    expect(form(false)).toContain("free for staff");
+    expect(form(false)).not.toContain("billed to the client");
     expect(form(false)).toMatch(/<button[^>]*>Reddit agent data<\/button>/);
   });
 

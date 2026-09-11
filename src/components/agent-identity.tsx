@@ -78,6 +78,15 @@ const PLATFORM_BRAND: Record<SocialPlatform, { fill?: string; knockout?: ReactNo
 };
 
 /**
+ * One colour in two shades: the deeper one on the light theme, the lighter one
+ * on the dark theme. `light-dark()` follows the page's `color-scheme`, which
+ * globals.css sets on <html> per theme, so a server-rendered mark needs no
+ * theme hook. No single shade could do both: the two themes' tiles are close
+ * enough in the middle that every hue tried fell under 3:1 on one of them.
+ */
+const shade = (light: string, dark: string) => `light-dark(${light}, ${dark})`;
+
+/**
  * The agents that are not a social platform: a glyph and a colour of their
  * own, so they read by colour the way the platform agents read by their logos.
  * Checked in order, only when no platform matched. ONE TABLE, so an agent's
@@ -86,15 +95,36 @@ const PLATFORM_BRAND: Record<SocialPlatform, { fill?: string; knockout?: ReactNo
  * roster the same amber.
  */
 const FAMILY_MARKS: ReadonlyArray<{ match: RegExp; icon: string; color: string }> = [
-  { match: /landing/, icon: "LayoutTemplate", color: "#A78BFA" },
-  { match: /newsletter/, icon: "Mail", color: "#F5A524" },
+  { match: /landing/, icon: "LayoutTemplate", color: shade("#7C3AED", "#A78BFA") },
+  { match: /newsletter/, icon: "Mail", color: shade("#B45309", "#FBBF24") },
   // Before SEO: a blog tagline that says "SEO-aware" is not the SEO agent.
-  { match: /blog/, icon: "PenLine", color: "#34D399" },
-  { match: /seo|(^|[\s_-])geo([\s_-]|$)/, icon: "Globe", color: "#4F9CF9" },
-  { match: /reputation/, icon: "MessageSquare", color: "#F472B6" },
-  { match: /rebrand/, icon: "Sparkles", color: "#E879F9" },
-  { match: /short|video|clip/, icon: "Video", color: "#F87171" },
+  { match: /blog/, icon: "PenLine", color: shade("#047857", "#34D399") },
+  { match: /seo|(^|[\s_-])geo([\s_-]|$)/, icon: "Globe", color: shade("#2563EB", "#60A5FA") },
+  { match: /reputation/, icon: "MessageSquare", color: shade("#DB2777", "#F472B6") },
+  { match: /campaign/, icon: "Megaphone", color: shade("#0F766E", "#2DD4BF") },
+  { match: /rebrand/, icon: "Sparkles", color: shade("#C026D3", "#E879F9") },
+  { match: /short|video|clip/, icon: "Video", color: shade("#DC2626", "#F87171") },
 ];
+
+/**
+ * Every other agent (a Dynamic Studio agent, a lab product with no row above)
+ * still gets a colour: one of these, picked from its name so it never changes
+ * between renders or pages. Hues the table above does not use.
+ */
+const OTHER_AGENT_COLORS = [
+  shade("#0369A1", "#38BDF8"),
+  shade("#4F46E5", "#818CF8"),
+  shade("#4D7C0F", "#A3E635"),
+  shade("#C2410C", "#FB923C"),
+  shade("#0E7490", "#22D3EE"),
+  shade("#E11D48", "#FB7185"),
+] as const;
+
+function otherAgentColor(identity: string): string {
+  let hash = 0;
+  for (const ch of identity) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return OTHER_AGENT_COLORS[hash % OTHER_AGENT_COLORS.length]!;
+}
 
 /**
  * `brand` is for an AGENT's icon (AgentMark, AgentIdentity, a run card's tile).
@@ -150,12 +180,16 @@ export function AgentMark({
   if (platform) return <SocialPlatformMark platform={platform} className={className} tone={tone} />;
   const value = identity.toLowerCase();
   const family = FAMILY_MARKS.find((f) => f.match.test(value));
-  if (!family) return <Icon name={icon ?? "Sparkles"} className={className} />;
+  const name = family?.icon ?? icon ?? "Sparkles";
+  if (tone === "ink") return <Icon name={name} className={className} />;
   // A heavier stroke than the app's 1.5 in colour: these sit beside filled logos.
-  return tone === "brand" ? (
-    <Icon name={family.icon} className={className} strokeWidth={2} style={{ color: family.color }} />
-  ) : (
-    <Icon name={family.icon} className={className} />
+  return (
+    <Icon
+      name={name}
+      className={className}
+      strokeWidth={2}
+      style={{ color: family?.color ?? otherAgentColor(value) }}
+    />
   );
 }
 

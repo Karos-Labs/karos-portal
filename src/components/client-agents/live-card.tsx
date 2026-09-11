@@ -20,6 +20,7 @@ import type { ClientAgentTemplate } from "@/lib/types";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
 import { cn } from "@/lib/utils";
 import { CLIENT_ARCHIVE_NAME, clientArchiveLink } from "@/lib/agent-intake-links";
+import { STAFF_RUN_PRICE_NOTE } from "@/lib/credits";
 
 /**
  * The parts of the LIVE client agent surface (Phase 3 §7.1 cards 4 and 5).
@@ -314,7 +315,7 @@ export function TemplateRows({
                   <Icon name="Coins" className="h-3 w-3 text-muted-2" />
                   {agent.runCostIsEstimate ? "about " : ""}
                   {agent.runCost} credit{agent.runCost === 1 ? "" : "s"}
-                  {!viewerIsClient && " · billed to the client"}
+                  {!viewerIsClient && STAFF_RUN_PRICE_NOTE}
                 </span>
               )}
               <Button size="sm" variant="ghost" onClick={() => onFeedback(template)}>

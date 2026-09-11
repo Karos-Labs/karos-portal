@@ -512,6 +512,12 @@ function offences(shape: string, opts: { payload?: boolean; jsx?: boolean } = {}
   if (/\b(?:ready|done) in (?:about |under |~ ?)?(?:\d|a few|a couple|half)|\busually takes\b|\btakes about\b/i.test(text)) {
     out.push("promises how long a run takes — show its progress instead");
   }
+  // A sentence split across JSX lines right before its full stop renders
+  // "…up . That's" (the line break collapses to a space). Twice on one branch
+  // (2026-09-10), in the archive sentence and the option picker's.
+  if (opts.jsx && /[A-Za-z0-9’'")] [.,](?=\s|$)/.test(text)) {
+    out.push("a space before a full stop or comma, from a JSX line break");
+  }
   if (IS_PROSE.test(text) || opts.payload) {
     for (const token of STORED_ENUM_TOKENS) {
       if (new RegExp(`(^|[^A-Za-z0-9_])${token}([^A-Za-z0-9_]|$)`).test(text)) {
@@ -591,6 +597,12 @@ describe("the two rules themselves", () => {
     // The Reputation agent's subject, and a client reading their own drafts.
     expect(offences("Who should hear about an urgent review?")).toEqual([]);
     expect(offences("The next post, ready to review.")).toEqual([]);
+  });
+
+  it("reads a JSX line break before a full stop as an offence", () => {
+    expect(offences("Mark it posted once it’s up\n. That’s what teaches it.", { jsx: true })).toHaveLength(1);
+    expect(offences("Mark it posted once\n  it’s up. That’s what teaches it.", { jsx: true })).toEqual([]);
+    expect(offences("Posts go to example .com next week")).toEqual([]);
   });
 
   it("reads a promised run time as an offence, and the client's own typing time as not one", () => {
@@ -945,9 +957,6 @@ describe("the launch-form copy a client reads", () => {
     p.intro,
     p.attachments?.hint,
     ...p.fields.flatMap((f) => [f.label, f.helper, f.placeholder, f.defaultValue]),
-    // Not on screen since the "Try:" chips went (2026-09-10), but it is what an
-    // untouched form sends, so it is still words the agent writes from.
-    p.defaultRequest,
   ]).filter((s): s is string => typeof s === "string" && s.length > 0);
 
   it("found the profile table", () => {

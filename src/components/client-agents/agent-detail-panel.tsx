@@ -16,6 +16,7 @@ import { noRunnableTemplateReason, visibleTemplates } from "@/lib/client-agent-r
 import { runClientAgentTemplateAction } from "@/lib/actions/client-agent-run-actions";
 import { OUTPUT_NOUN, type AgentArchetype } from "@/lib/agent-archetype";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
+import { STAFF_RUN_PRICE_NOTE } from "@/lib/credits";
 
 
 /**
@@ -222,7 +223,7 @@ export function AgentDetailPanel({
                     way. */}
                 {agent.runCostIsEstimate ? "About" : "Costs"} {agent.runCost} credit
                 {agent.runCost === 1 ? "" : "s"}
-                {!viewerIsClient && " · billed to the client"}
+                {!viewerIsClient && STAFF_RUN_PRICE_NOTE}
               </p>
             )}
           </div>
