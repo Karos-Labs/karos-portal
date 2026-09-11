@@ -129,6 +129,18 @@ export function AgentDetailPanel({
   // while the banner is up.
   useShowRunInPage(agent.activeRun?.id ?? null);
 
+  // Into the same watch the run form uses, so the corner dock carries a run
+  // once the reader leaves; the banner below claims it while it is up. Both
+  // ways to run from this page (Create and a format's Run now) come here.
+  function watchStarted(jobId: string) {
+    watchRun({
+      jobId,
+      agentName: agent.displayName,
+      noun,
+      href: viewerIsClient ? `/clients/${agent.clientId}` : `/jobs/${jobId}`,
+    });
+  }
+
   function createPost() {
     if (!runnableTemplate) return;
     setError(null);
@@ -144,16 +156,7 @@ export function AgentDetailPanel({
         setError(result.error);
         return;
       }
-      // Into the same watch the run form uses, so the corner dock carries it
-      // once the reader leaves; the banner below claims it while it is up.
-      if (result.jobId) {
-        watchRun({
-          jobId: result.jobId,
-          agentName: agent.displayName,
-          noun,
-          href: viewerIsClient ? `/clients/${agent.clientId}` : `/jobs/${result.jobId}`,
-        });
-      }
+      if (result.jobId) watchStarted(result.jobId);
       router.refresh();
     });
   }
@@ -313,6 +316,7 @@ export function AgentDetailPanel({
               setFeedback({ scope: "template", key: template.key, name: template.name })
             }
             onError={setError}
+            onRunStarted={watchStarted}
           />
         )}
       </section>

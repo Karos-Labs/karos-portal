@@ -19,7 +19,7 @@ import {
 import type { ClientAgentTemplate } from "@/lib/types";
 import type { ClientAgentCardRow, TemplateDetail } from "./types";
 import { cn } from "@/lib/utils";
-import { CLIENT_ARCHIVE_NAME } from "@/lib/agent-intake-links";
+import { CLIENT_ARCHIVE_NAME, clientArchiveLink } from "@/lib/agent-intake-links";
 
 /**
  * The parts of the LIVE client agent surface (Phase 3 §7.1 cards 4 and 5).
@@ -58,6 +58,7 @@ export function TemplateRows({
   viewerIsClient,
   onFeedback,
   onError,
+  onRunStarted,
 }: {
   agent: ClientAgentCardRow;
   templates: ClientAgentTemplate[];
@@ -71,13 +72,15 @@ export function TemplateRows({
   viewer?: { name: string; email: string };
   /**
    * A client's `postCount` is the archive set, which drops published work past
-   * its window - the same reason the page labels its own count "In your
-   * Workspace" rather than a lifetime total. The copy below must make the same
+   * its window - the same reason the page labels its own count "in your
+   * archive" rather than a lifetime total. The copy below must make the same
    * disclosure, so the two numbers never claim to be different things.
    */
   viewerIsClient?: boolean;
   onFeedback: (template: ClientAgentTemplate) => void;
   onError: (message: string | null) => void;
+  /** A format's "Run now" started a run: the page hands it to the run watch. */
+  onRunStarted?: (jobId: string) => void;
 }) {
   const router = useRouter();
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -108,8 +111,12 @@ export function TemplateRows({
         templateKey: template.key,
       });
       setBusyKey(null);
-      if (result.error) onError(result.error);
-      else router.refresh();
+      if (result.error) {
+        onError(result.error);
+        return;
+      }
+      if (result.jobId) onRunStarted?.(result.jobId);
+      router.refresh();
     });
   }
 
@@ -363,19 +370,23 @@ export function TemplateRows({
                 )}
                 {/* The cap is deliberate - this is a peek at a stream, not the
                     archive - but "newest 6 of 23" with no way to reach the
-                    other 17 is a dead end. The Workspace is where all of them
-                    already live, and it is the same href the page's archive
-                    section links, so the two cannot drift apart. */}
+                    other 17 is a dead end. A client's count is their archive
+                    set, so they go to their archive; staff count everything,
+                    drafts included, which only Assets lists. */}
                 {detail.postCount > detail.posts.length && (
                   /* round 6 (rule 3 + Ember): a quiet link, and no glyph after
                      the label. It was orange with a trailing ArrowRight - the
                      accent spent on an aside, and an arrow where the rule
                      allows only a row's own ChevronRight. */
                   <a
-                    href={`/clients/${agent.clientId}/assets`}
+                    href={
+                      viewerIsClient
+                        ? clientArchiveLink({ clientId: agent.clientId, isStaff: false }).href
+                        : `/clients/${agent.clientId}/assets`
+                    }
                     className="focus-ring inline-flex rounded-md text-[11px] text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
                   >
-                    See all in {CLIENT_ARCHIVE_NAME}
+                    See all in {viewerIsClient ? CLIENT_ARCHIVE_NAME : "Assets"}
                   </a>
                 )}
                 <p className="text-[11px] text-muted-2">
@@ -415,7 +426,7 @@ export function TemplateRows({
  * like, edit it if you want, and post it", which describes three controls that
  * do not exist anywhere in the portal yet. A client who read it would go
  * looking for them. It now names only what is real - the feedback button on
- * this card, and the Workspace where approved posts land - and makes no promise
+ * this card, and the archive where finished posts land - and makes no promise
  * about a future release, since a promise dated "soon" is the same defect one
  * release later.
  */

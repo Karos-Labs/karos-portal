@@ -206,6 +206,19 @@ describe("the run dialog's started panel", () => {
   });
 });
 
+describe("the agent page's other ways to start a run", () => {
+  it("hand the run to the same watch, a format's Run now included", () => {
+    // Create was watched and each format's Run now was not, so a per-format
+    // run vanished from sight the moment the reader left the page.
+    const panel = code("components/client-agents/agent-detail-panel.tsx");
+    const rows = code("components/client-agents/live-card.tsx");
+    expect(panel).toContain("watchRun({");
+    expect(panel).toContain("if (result.jobId) watchStarted(result.jobId);");
+    expect(panel).toContain("onRunStarted={watchStarted}");
+    expect(rows).toContain("if (result.jobId) onRunStarted?.(result.jobId);");
+  });
+});
+
 describe("the dock", () => {
   const layout = code("app/(app)/layout.tsx");
   const dock = code("components/run-progress-dock.tsx");

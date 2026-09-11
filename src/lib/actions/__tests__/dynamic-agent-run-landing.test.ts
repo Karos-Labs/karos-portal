@@ -114,12 +114,14 @@ describe("the run surface resolves in place instead of navigating", () => {
     expect(src).not.toContain("useRouter");
   });
 
-  it("says where the output lands, the way the six lab intakes do", () => {
+  it("shows the run's progress, the way the agent pages do", () => {
     // Not a raw job id ("Submitted, job {jobId}.") on a page the reader was
-    // being navigated off — the archive, named through the one helper that
-    // knows which archive route this reader can open.
-    expect(src).toContain("clientArchiveLink");
+    // being navigated off. The same bar and sentence as the agent pages' run
+    // form, and the run handed to the corner dock (2026-09-10).
     expect(src).toContain("Your run has started");
+    expect(src).toContain("<AgentRunProgress");
+    expect(src).toContain("runOutcomeSentence(outcome, !isStaff)");
+    expect(src).toMatch(/watch\(\{ jobId, agentName,/);
     expect(src).not.toContain("Submitted, job");
   });
 
