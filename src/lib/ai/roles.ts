@@ -229,20 +229,20 @@ export const AI_ROLES = {
     // Shifted 187 → 188 by the credits rework (2026-09), which added one import
     // above it, and back to 187 when the run-estimate import went (2026-09-10).
     // Re-pinned against the real file, per the rule above.
-    sites: ["src/app/api/clients/[id]/chat/route.ts:187"],
+    sites: ["src/app/api/clients/[id]/chat/route.ts:188"],
   },
   "chat.followups": {
     tier: "HAIKU",
     // Shifted 825 → 834 by the credits rework's copy change to the copilot's
     // price appendix, which sits above this call, and to 833 when the
     // run-estimate import went (2026-09-10).
-    sites: ["src/app/api/clients/[id]/chat/route.ts:833"],
+    sites: ["src/app/api/clients/[id]/chat/route.ts:838"],
   },
   "insights.summary": {
     tier: "HAIKU",
     sites: ["src/app/api/clients/[id]/insights/route.ts:25"],
   },
-  "agent_swarm.step": { tier: "HAIKU", sites: ["src/lib/agent-swarm.ts:284"] },
+  "agent_swarm.step": { tier: "HAIKU", sites: ["src/lib/agent-swarm.ts:294"] },
   "asset.title": { tier: "HAIKU", sites: ["src/lib/asset-titles.ts:51"] },
   "campaign.plan": { tier: "SONNET", sites: ["src/lib/campaign-engine.ts:266"] },
   "dynamic_agent.generate": {

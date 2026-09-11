@@ -25,6 +25,7 @@ import {
 } from "@/lib/data";
 import { listClientAgents, listClientAgentFeedback } from "@/lib/data-client-agents";
 import { findDuplicateReason, queueCapacitySkipNote } from "@/lib/task-dedup";
+import { isServedPlatform, servedPlatformKeys, unservedPlatformSkipNote, withoutAgentIds } from "@/lib/served-platforms";
 import {
   CLIENT_PRICE_ROWS,
   CREDIT_COSTS,
@@ -367,6 +368,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Unified roster: the managed lab products PLUS the client's assigned custom
   // agents (git-imported), so the copilot plans around the full agent set.
   const agentCatalog = buildAgentCatalog(customAgents);
+  // The channels an agent of this client's posts to: the prompt reasons about
+  // gaps on these only, and create_tasks drops a proposal for any other.
+  const servedPlatforms = servedPlatformKeys(customAgents);
 
   const socialIntegrations = integrations
     .filter((i) => i.platform !== "google")
@@ -619,6 +623,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     buildProactiveSystemAppendix({
       agents: agentCatalog,
       linkedSocialPlatforms,
+      servedPlatforms: [...servedPlatforms],
       integrations: socialIntegrations,
       scheduledNext14ByPlatform,
       scheduledNext7ByPlatform,
@@ -1012,7 +1017,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       // tasks (onboarding, approvals) pass through uncapped.
       let karosSlotsFree = Math.max(0, MAX_ACTIVE_TASKS - activeCount);
       let capSkipped = 0;
+      let unservedSkipped = 0;
       for (const t of withFocusDefault) {
+        // A channel no agent of this client's posts to gets no task of any
+        // kind, content or onboarding: nothing here can make anything for it
+        // (lib/served-platforms.ts, Albert 2026-09-11).
+        if (!isServedPlatform(t.platform, servedPlatforms)) {
+          unservedSkipped++;
+          continue;
+        }
         // Only an agentId the client actually has is a real executor link.
         const validCustomAgentId =
           t.agentId && customAgentsById.has(t.agentId) ? t.agentId : undefined;
@@ -1049,10 +1062,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const dupSkipped = dupReasons.length;
 
       if (freshTasks.length === 0) {
+        const unservedNote = unservedSkipped > 0 ? `${unservedPlatformSkipNote(unservedSkipped)}. ` : "";
         if (capSkipped > 0 && dupSkipped === 0) {
-          return `Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). No tasks created. Ask the user to complete or approve existing tasks first.`;
+          return `${unservedNote}Karos-managed queue is at capacity (${MAX_ACTIVE_TASKS} active tasks). No tasks created. Ask the user to complete or approve existing tasks first.`;
         }
-        return `No tasks created. ${capSkipped > 0 ? `${capSkipped} blocked by the Karos queue capacity and ` : ""}The rest duplicate existing work:\n${dupReasons.join("\n")}`;
+        if (dupSkipped === 0) return `No tasks created. ${unservedNote}`.trim();
+        return `No tasks created. ${unservedNote}${capSkipped > 0 ? `${capSkipped} blocked by the Karos queue capacity and ` : ""}The rest duplicate existing work:\n${dupReasons.join("\n")}`;
       }
 
       const now = Date.now();
@@ -1081,8 +1096,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           const weightDefault = { high: 80, medium: 50, low: 25 }[t.priority];
           return createClientTask({
             clientId,
-            title: t.title,
-            description: t.description,
+            // Names, never ids, in what the client reads (lib/served-platforms.ts).
+            title: withoutAgentIds(t.title, customAgents),
+            description: withoutAgentIds(t.description, customAgents),
             status: "pending",
             priority: t.priority as TaskPriority,
             source: t.source as TaskSource,
@@ -1100,6 +1116,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const notes = [
         dupSkipped > 0 ? `${dupSkipped} duplicate${dupSkipped !== 1 ? "s" : ""} skipped` : "",
         capSkipped > 0 ? queueCapacitySkipNote(capSkipped) : "",
+        unservedSkipped > 0 ? unservedPlatformSkipNote(unservedSkipped) : "",
       ].filter(Boolean);
       const skipNote = notes.length ? ` (${notes.join("; ")})` : "";
       return `Created ${count} task${count !== 1 ? "s" : ""} in your task board${skipNote}.`;

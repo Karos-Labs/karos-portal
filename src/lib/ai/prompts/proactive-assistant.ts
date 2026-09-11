@@ -84,6 +84,13 @@ export interface ProactiveSystemContext {
   agents: AgentCatalogEntry[];
   /** Social platform names with active OAuth connections, e.g. ["instagram", "linkedin"]. */
   linkedSocialPlatforms: string[];
+  /**
+   * Integration keys of the channels an agent of this client's actually posts
+   * to (lib/served-platforms.ts). A connected channel outside this set is
+   * never a content gap and never a task: nothing here can make anything for
+   * it (Albert, 2026-09-11: "we are not doing YouTube agents").
+   */
+  servedPlatforms: string[];
   /** Connected integrations with health, e.g. [{ platform: "linkedin", status: "expired" }]. */
   integrations: Array<{ platform: string; status: "active" | "expired" }>;
   /** Scheduled/approved calendar items in the NEXT 14 DAYS, per platform ("unassigned" bucket for platformless). */
@@ -140,10 +147,18 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
   const slotsFree = Math.max(0, ctx.maxActiveTasks - ctx.activeTaskCount);
 
   /* Content-gap detection — connected platforms vs the next-14-day calendar,
-     split by week so a "covered this week, empty next week" cliff is visible */
+     split by week so a "covered this week, empty next week" cliff is visible.
+     Only on the channels an agent posts to: a connected channel with no agent
+     is named as such, so the model neither invents a task for it nor wonders
+     why it went unmentioned. */
+  const served = new Set(ctx.servedPlatforms);
+  const servedList = ctx.servedPlatforms.length > 0 ? ctx.servedPlatforms.join(", ") : "(none yet)";
   const activeIntegrations = ctx.integrations.filter((i) => i.status === "active");
-  const expiredIntegrations = ctx.integrations.filter((i) => i.status === "expired");
+  const expiredIntegrations = ctx.integrations.filter((i) => i.status === "expired" && served.has(i.platform));
   const gapLines = activeIntegrations.map(({ platform }) => {
+    if (!served.has(platform)) {
+      return `• ${platform}: connected, but no agent posts there — NOT a content gap, never a task`;
+    }
     const total = ctx.scheduledNext14ByPlatform[platform] ?? 0;
     const week1 = ctx.scheduledNext7ByPlatform?.[platform] ?? total;
     const week2 = Math.max(0, total - week1);
@@ -162,9 +177,9 @@ ${unassignedCount > 0 ? `• ${unassignedCount} scheduled item${unassignedCount 
 ${expiredIntegrations.length > 0 ? `\n⚠ EXPIRED integrations needing re-authentication: ${expiredIntegrations.map((i) => i.platform).join(", ")} — create one client_managed "Re-authenticate <platform> connection" task each (priority: high, weight: 95). Do NOT create content tasks targeting an expired platform until it is reconnected.` : ""}
 
 GAP RULES:
-- A connected platform with NO scheduled content in the next 14 days is a critical gap → create a karos_managed task to fill it, linked to the right product: instagram/tiktok gaps → \`social_post\`; blog/website cadence gaps → \`blog_article\`. An EMAIL/newsletter cadence gap has no managed product — fill it by assigning the client's newsletter agent from AVAILABLE AI EXECUTION AGENTS by its \`agentId\`, and if they have none, do not invent a productType for it.
+- THE CHANNELS WE POST TO ARE EXACTLY: ${servedList}. A connected channel outside that list is NOT a gap and gets NO task of any kind, content or onboarding: nothing here makes anything for it, and the platform drops any task whose \`platform\` is outside the list.
+- A channel we post to with NO scheduled content in the next 14 days is a critical gap → create a karos_managed task to fill it, assigned to the agent that posts there: instagram/tiktok gaps → \`social_post\`; any other channel → that channel's agent from AVAILABLE AI EXECUTION AGENTS by its \`agentId\`. Blog/website cadence gaps → \`blog_article\`. An EMAIL/newsletter cadence gap has no managed product — fill it by assigning the client's newsletter agent by its \`agentId\`, and if they have none, do not invent a productType for it.
 - TikTok is video/short-form first: a TikTok content gap MUST be filled with a media-heavy \`social_post\` explicitly tailored for TikTok (short-form video / vertical clip concept, hook-led caption). Set \`platform: "tiktok"\`, name TikTok in the title, and give it a HIGH weight (≥75, priority high) — an empty TikTok calendar starves the client's highest-velocity channel.
-- For connected platforms the products don't post to natively (linkedin, twitter, youtube), fill gaps with \`blog_article\` / \`social_post\` source content the team repurposes — name the target platform in the title and set \`platform\`.
 - A platform with a healthy pipeline needs nothing — never pad the board when the calendar is already covered.`;
 
   /* Historical performance benchmarks — the self-improving feedback loop.
@@ -200,11 +215,12 @@ BENCHMARK RULES — you MUST apply these when proposing content tasks:
         .join(", ")
     : "";
 
-  /* Individual per-platform onboarding tasks for every unlinked social channel.
-     Keys are the CANONICAL integration platform keys (ClientIntegration.platform
-     and the create_tasks `platform` enum) — "twitter", never "x". */
+  /* Individual per-platform onboarding tasks for every unlinked social channel
+     an agent posts to — connecting a channel nothing posts to is the same
+     non-task as filling it. Keys are the CANONICAL integration platform keys
+     (ClientIntegration.platform and the create_tasks `platform` enum) —
+     "twitter", never "x". */
   const CANONICAL_PLATFORMS: Array<{ key: string; display: string }> = [
-    { key: "facebook",  display: "Facebook"    },
     { key: "instagram", display: "Instagram"   },
     { key: "linkedin",  display: "LinkedIn"    },
     { key: "twitter",   display: "X (Twitter)" },
@@ -213,7 +229,7 @@ BENCHMARK RULES — you MUST apply these when proposing content tasks:
   ];
   const linkedNorm = ctx.linkedSocialPlatforms.map((p) => p.toLowerCase());
   const missingPlatforms = CANONICAL_PLATFORMS.filter(
-    ({ key }) => !linkedNorm.includes(key),
+    ({ key }) => served.has(key) && !linkedNorm.includes(key),
   );
 
   const onboardingBlock = missingPlatforms.length > 0
@@ -237,16 +253,14 @@ HARD RULES for these onboarding tasks:
   /* Deterministic Scan & Refresh coverage contract — the non-negotiable
      checklist computed from live state, so required tasks never depend on the
      model re-deriving them. */
-  const GAP_PRODUCT_FOR_PLATFORM: Record<string, string> = {
-    instagram: "social_post",
-    tiktok: "social_post",
-    facebook: "social_post",
-    twitter: "social_post",
-    linkedin: "blog_article",
-    youtube: "blog_article",
-  };
+  // instagram/tiktok are the managed product's; every other channel we post
+  // to has its own agent, assigned by id from the registry above.
+  const gapExecutor = (platform: string) =>
+    platform === "instagram" || platform === "tiktok"
+      ? "productType: social_post"
+      : `agentId: the ${platform} agent from the registry`;
   const gapPlatforms = activeIntegrations.filter(
-    ({ platform }) => (ctx.scheduledNext14ByPlatform[platform] ?? 0) === 0,
+    ({ platform }) => served.has(platform) && (ctx.scheduledNext14ByPlatform[platform] ?? 0) === 0,
   );
   const contractLines = [
     ...missingPlatforms.map(
@@ -259,7 +273,7 @@ HARD RULES for these onboarding tasks:
     ),
     ...gapPlatforms.map(
       ({ platform }) =>
-        `□ karos_managed · fill the empty ${platform} calendar for the next 14 days · productType: ${GAP_PRODUCT_FOR_PLATFORM[platform] ?? "social_post"} · platform: ${platform} · weight 80`,
+        `□ karos_managed · fill the empty ${platform} calendar for the next 14 days · ${gapExecutor(platform)} · platform: ${platform} · weight 80`,
     ),
   ];
   const coverageContractBlock = `### SCAN & REFRESH COVERAGE CONTRACT — NON-NEGOTIABLE CHECKLIST
@@ -358,6 +372,8 @@ Every \`karos_managed\` task title must use execution-dispatch language. Describ
   "Evaluate the effectiveness of current social media efforts"
   "Explore opportunities for content repurposing"
   "Assess brand voice consistency across channels"
+
+NAMES, NEVER IDENTIFIERS, in a title or description: "via LinkedIn Agent", never "via Ji7p4nLTzDcbcKgDhtee" and never a productType. An id goes in the \`agentId\` / \`productType\` field and nowhere else; the client reads the text, and the platform rewrites any id it finds there.
 
 ### AVAILABLE AI EXECUTION AGENTS — THE COMPLETE CAPABILITY REGISTRY
 ${agentCatalogBlock}

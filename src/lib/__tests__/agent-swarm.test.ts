@@ -46,6 +46,9 @@ import {
 } from "@/lib/agent-swarm";
 import type { ClientTask } from "@/lib/types";
 
+/** Serves "linkedin", which SAMPLE_TASKS[0] targets: a channel no agent posts to is dropped at persist. */
+const LINKEDIN_AGENT = { id: "li_1", key: "karos-linkedin-writer-v2", name: "LinkedIn Agent", description: "d" };
+
 const SAMPLE_TASKS: SwarmTaskDraft[] = [
   { title: "Publish LinkedIn thought-leadership article on Trend X", description: "d1", priority: "high", productType: "landing_page", platform: "linkedin", weight: 80 },
   { title: "Produce TikTok short on customer win", description: "d2", priority: "medium", productType: "social_post", platform: "tiktok", weight: 60 },
@@ -64,11 +67,12 @@ const input: SwarmInput = {
     clientName: "Acme",
     category: "saas",
     gapSummary: "- linkedin: GAP",
+    servedPlatforms: ["linkedin"],
     brandingSummary: "Tone: bold",
     benchmarkSummary: "No data",
     stalenessSummary: "No agent staleness — every granted agent has run recently.",
     reviewBacklogSummary: "No review backlog.",
-    customAgents: [],
+    customAgents: [LINKEDIN_AGENT],
   },
 };
 
@@ -307,6 +311,40 @@ describe("runSwarm — campaign shift on a high-weight trend", () => {
   });
 });
 
+describe("persistSwarmTasks — the channels an agent posts to", () => {
+  it("drops a proposal for a channel nobody serves, and names the agent in what it keeps", async () => {
+    getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 0, tasks: [] });
+    const drafts: SwarmTaskDraft[] = [
+      {
+        title: "YouTube Shorts: quick wins",
+        description: "2-3 Shorts per week via Ji7p4nLTzDcbcKgDhtee",
+        priority: "high",
+        platform: "youtube",
+        customAgentId: "Ji7p4nLTzDcbcKgDhtee",
+        weight: 80,
+      },
+      {
+        title: "Three X posts via Ji7p4nLTzDcbcKgDhtee",
+        description: "Reactions to the week's news.",
+        priority: "high",
+        platform: "twitter",
+        customAgentId: "Ji7p4nLTzDcbcKgDhtee",
+        weight: 80,
+      },
+    ];
+    const result = await persistSwarmTasks("c1", "u1", drafts, [
+      { id: "Ji7p4nLTzDcbcKgDhtee", key: "karos-x-agent-v2", name: "X Agent", description: "d" },
+    ]);
+    expect(result.unservedSkipped).toBe(1);
+    expect(result.created).toBe(1);
+    expect(result.note).toContain("1 not added: no agent of yours posts to that channel");
+    expect(createClientTaskMock).toHaveBeenCalledTimes(1);
+    const written = createClientTaskMock.mock.calls[0]![0] as { title: string; metadata?: { platform?: string } };
+    expect(written.title).toBe("Three X posts via X Agent");
+    expect(written.metadata?.platform).toBe("twitter");
+  });
+});
+
 describe("persistSwarmTasks — dedup + capacity", () => {
   it("skips tasks that duplicate the live board", async () => {
     const existing: ClientTask = {
@@ -323,7 +361,7 @@ describe("persistSwarmTasks — dedup + capacity", () => {
     };
     getTaskBoardCapacityMock.mockResolvedValue({ activeCount: 1, tasks: [existing] });
 
-    const result = await persistSwarmTasks("c1", "u1", SAMPLE_TASKS);
+    const result = await persistSwarmTasks("c1", "u1", SAMPLE_TASKS, [LINKEDIN_AGENT]);
     expect(result.duplicatesSkipped).toBe(1);
     expect(result.created).toBe(2);
     expect(createClientTaskMock).toHaveBeenCalledTimes(2);
@@ -332,7 +370,7 @@ describe("persistSwarmTasks — dedup + capacity", () => {
   it("defers tasks beyond the active-task capacity", async () => {
     // Board already at the cap → no free slots.
     getTaskBoardCapacityMock.mockResolvedValue({ activeCount: MAX_CONSENSUS_TASKS, tasks: [] });
-    const result = await persistSwarmTasks("c1", "u1", SAMPLE_TASKS);
+    const result = await persistSwarmTasks("c1", "u1", SAMPLE_TASKS, [LINKEDIN_AGENT]);
     expect(result.created).toBe(0);
     expect(result.capSkipped).toBe(3);
     expect(createClientTaskMock).not.toHaveBeenCalled();
