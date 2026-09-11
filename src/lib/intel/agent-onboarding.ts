@@ -927,6 +927,11 @@ export async function writeLabContextDocsFromResearch(
     const doc = stored(docType, "internal");
     if (doc) internalContents[docType] = doc.content;
   }
+  const missing = INTERNAL_CONTEXT_DOC_TYPES.filter((docType) => !internalContents[docType]?.trim());
+  if (missing.length) {
+    // Not generated in their place: the lab owns them. Re-importing is the fix.
+    console.warn(`[agent-onboarding] lab client ${clientId} has no internal ${missing.join(", ")}; no client-tier copy refreshed for them`);
+  }
   const condensed = (await deps.condense(client, [...INTERNAL_CONTEXT_DOC_TYPES], internalContents)).filter(
     (doc) => doc.content.trim().length > 0,
   );
