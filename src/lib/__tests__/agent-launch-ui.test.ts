@@ -275,7 +275,7 @@ describe("custom agent launch profiles", () => {
       );
       // The footer must not go back to `runPriceLabel`, which knows only about
       // settlement.
-      expect(src).toContain("[briefQuoteLabel(agent, visibleBriefValues)]");
+      expect(src).toContain("sentenceStart(briefQuoteLabel(agent, visibleBriefValues))");
       const at = src.indexOf("function briefQuoteLabel");
       expect(at, "the footer's label helper moved").toBeGreaterThan(-1);
       const body = src.slice(at, at + 500);

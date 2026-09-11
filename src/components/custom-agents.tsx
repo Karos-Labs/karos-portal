@@ -722,50 +722,19 @@ function IntakeForm({ intake }: { intake: AgentIntakeContext }) {
 }
 
 /**
- * The way into an agent's data: warning-toned while the data is still missing,
- * quiet once it is on file. Opens the run dialog's data pane rather than
- * navigating - the data belongs with the agent.
+ * Control Room's link to this agent's data page (Albert, 2026-09-10: a link,
+ * not the run dialog's data pane). The run form's own way in is a quiet text
+ * link beside "More options".
  */
-function AgentDataButton({
-  kind,
-  ready,
-  onOpen,
-  href,
-  label = `${INTAKE_LABEL[kind]} agent data`,
-}: {
-  kind: IntakeKind;
-  ready: boolean;
-  /** The page's name for this reader: a client's is `setup.clientLabel`. */
-  label?: string;
-  /** Opens the data pane of the form it sits in. */
-  onOpen?: () => void;
-  /** Or goes to the agent's own data page, when there is no form to open. */
-  href?: string;
-}) {
-  const className = cn(
-    "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
-    ready
-      ? "border-border bg-surface-2 text-muted hover:border-border-strong hover:text-foreground"
-      : "border-warning/30 bg-warning/10 text-warning hover:border-warning/50 hover:bg-warning/15",
-  );
-  // The short visible text needs the platform back for anyone who cannot see
-  // the glyph, and it stays inside the accessible name so voice control can
-  // still say what it reads.
-  const name = ready ? label : `${label}: setup needed`;
-  const body = (
-    <>
+function AgentDataLink({ kind, href }: { kind: IntakeKind; href: string }) {
+  return (
+    <Link
+      href={href}
+      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-1 text-[11px] font-medium text-muted transition-colors hover:border-border-strong hover:text-foreground"
+    >
       <IntakeGlyph kind={kind} className="h-3 w-3" />
-      {ready ? label : "Setup needed"}
-    </>
-  );
-  return href ? (
-    <Link href={href} className={className} aria-label={name}>
-      {body}
+      {INTAKE_LABEL[kind]} agent data
     </Link>
-  ) : (
-    <button type="button" onClick={onOpen} className={className} aria-label={name}>
-      {body}
-    </button>
   );
 }
 
@@ -1358,7 +1327,7 @@ export function StaffAgentControls({
             <Badge tone="warning">Setup needed</Badge>
           </a>
         ) : intake && setup && intakeComplete(intake) ? (
-          <AgentDataButton kind={intake.kind} ready href={setup.href} />
+          <AgentDataLink kind={intake.kind} href={setup.href} />
         ) : null}
       </div>
 
@@ -2442,6 +2411,7 @@ export function RunCustomAgentModal({
   const [moreOpen, setMoreOpen] = useState(false);
   // What only staff get under More options: the run-type selector, the file library.
   const staffExtras = !viewerIsClient && (staffOnlyFields.length > 0 || Boolean(profile.attachments));
+  const hasMore = moreFields.length > 0 || staffExtras;
   const moreOptionsId = useId();
   // A server-side setup gate can still fire when this dialog's `ready` was
   // stale, so the message needs its own way back to the data.
@@ -2615,8 +2585,9 @@ export function RunCustomAgentModal({
     // agents are documented to support, and they draft from their stored data
     // either way. The brief joins non-empty fields only, so an untouched form
     // produced an empty prompt and a refusal naming a requirement that does not
-    // exist. Fall back to the first starting point: the same text the chips
-    // above insert, so the run is identical to clicking one.
+    // exist. Fall back to the profile's first starting point (`quickStarts[0]`),
+    // which is what the legacy path's prompt needs; the engine reads the brief's
+    // fields, which stay empty.
     let prompt = buildCustomAgentPrompt(profile, fields);
     if (!prompt && !profile.fields.some((field) => field.required) && profile.quickStarts[0]) {
       prompt = buildCustomAgentPrompt(profile, {
@@ -2881,31 +2852,33 @@ export function RunCustomAgentModal({
   // Lead the eye on once the setup that held up a run is done; anyone who came
   // to read or edit data they already have gets the quiet version.
   const continueToRun = openedForSetup && companyOnFile(intake);
+  // ROUND 6. A dialog's title is the gesture ("Create post", noun-aware) and its
+  // description what a run hands back. IN THE PAGE the run pane has neither
+  // (2026-09-10, "reduce the number of elements"): the button already says the
+  // gesture and the page header says what the agent makes. The data pane keeps
+  // both, because it is a different task with its own instructions.
+  const shellTitle =
+    showData && intake
+      ? viewerIsClient && setup
+        ? setup.clientLabel
+        : `${INTAKE_LABEL[intake.kind]} agent data`
+      : inline
+        ? null
+        : runLabel;
+  const shellDescription = showData
+    ? companyOnFile(intake)
+      ? "This is what the agent drafts from. Change or add anything; it applies to the next run."
+      : `We draft from this, so we ask for it before the first run: ${intake ? INTAKE_ASKS[intake.kind] : ""}.`
+    : inline
+      ? null
+      : deliverablesSentence(profile.deliverables);
 
   return (
-    // ROUND 6. The title is the gesture ("Create post", noun-aware) rather than
-    // the agent's name, which the page behind this dialog already carries, and
-    // the description slot now holds the one thing the deleted eyebrow/intro/
-    // deliverables box was worth to a client: what a run hands back. The blurb
-    // that used to open the body is gone with it - a client who pressed a button
-    // on this agent's own page does not need the agent re-introduced.
     <Shell
       open
       onClose={onClose}
-      title={
-        showData && intake
-          ? viewerIsClient && setup
-            ? setup.clientLabel
-            : `${INTAKE_LABEL[intake.kind]} agent data`
-          : runLabel
-      }
-      {...(showData
-        ? {
-            description: companyOnFile(intake)
-              ? "This is what the agent drafts from. Change or add anything; it applies to the next run."
-              : `We draft from this, so we ask for it before the first run: ${intake ? INTAKE_ASKS[intake.kind] : ""}.`,
-          }
-        : { description: deliverablesSentence(profile.deliverables) })}
+      {...(shellTitle ? { title: shellTitle } : {})}
+      {...(shellDescription ? { description: shellDescription } : {})}
       className={showData ? "max-w-3xl" : "max-w-2xl"}
       // Both panes hold work a mis-click must not throw away: the intake form
       // in one, the brief in the other. Escape, the close button and the pane's
@@ -2933,22 +2906,14 @@ export function RunCustomAgentModal({
                this deploy's settlement setting is. See `briefQuoteLabel`. */
             footer: (
               <div className="flex flex-wrap items-center justify-between gap-3">
+                {/* The price and nothing else (2026-09-10). No "ready in …": it
+                    was never true, and the run's own bar answers "how long"
+                    once it starts. No "you can leave this page" either: the
+                    progress says so, at the moment it matters. Staff read whose
+                    credits move, since theirs do not. */}
                 <p className="text-xs text-muted">
-                  {sentenceStart(
-                    [
-                      ...(viewerIsClient
-                        ? [briefQuoteLabel(agent, visibleBriefValues)]
-                        : []),
-                      // NO "ready in …" (2026-09-10). It said "ready in about 30
-                      // minutes" and was never measured; at "a few minutes" it
-                      // is closer on the agent's time and still wrong on the
-                      // word: a run goes to review before it reaches anyone, so
-                      // it is not READY when the agent finishes. The run's own
-                      // progress names that step once it starts, which is where
-                      // the reader can see it being true.
-                      "you can leave this page",
-                    ].join(" · "),
-                  )}
+                  {sentenceStart(briefQuoteLabel(agent, visibleBriefValues))}
+                  {!viewerIsClient && " · billed to the client"}
                 </p>
                 <div className="flex items-center gap-2">
                   {!inline && (
@@ -3039,21 +3004,6 @@ export function RunCustomAgentModal({
         className="space-y-4 focus:outline-none"
         hidden={showData}
       >
-        {intake && (
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Reaching the brief at all means the company page is on file, so
-                in practice this reads quiet. It still asks, because the flag it
-                asks about belongs to the caller and the tone must not lie if
-                that flag ever parts company with the rows shipped beside it. */}
-            <AgentDataButton
-              kind={intake.kind}
-              ready={intakeComplete(intake)}
-              onOpen={() => setPane("data")}
-              {...(viewerIsClient && setup ? { label: setup.clientLabel } : {})}
-            />
-          </div>
-        )}
-
         {!clientId && clients && (
           <div>
             <Label htmlFor="ca-client">Client</Label>
@@ -3096,40 +3046,10 @@ export function RunCustomAgentModal({
           </div>
         )}
 
-        {/* THE ONE QUESTION. No asterisk (fieldLabel), three rows, and the
-            quick starts under it as "Try:" chips rather than a labelled
-            fieldset of their own: a chip is an example of the answer, so it
-            belongs to the field it fills, not to a heading above it. */}
-        <div>
-          {briefFieldControl(primaryField)}
-          {profile.quickStarts.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-              <span className="text-[11px] text-muted-2">Try:</span>
-              {/* Three at most, and the first one carries weight beyond the
-                  chip: the submit's empty-brief fallback inserts
-                  `quickStarts[0]`, so an untouched intake-driven run sends
-                  exactly what pressing that chip would have sent. */}
-              {profile.quickStarts.slice(0, 3).map((quickStart) => (
-                <button
-                  key={quickStart}
-                  type="button"
-                  aria-pressed={fields[primaryField.key] === quickStart}
-                  onClick={() => setField(primaryField.key, quickStart)}
-                  className={cn(
-                    "focus-ring rounded-full border px-2.5 py-1 text-left text-[11px] transition-colors",
-                    // Selected is ink on the surface ladder, never orange: this
-                    // is a state, and the accent is the page's one CTA (B2).
-                    fields[primaryField.key] === quickStart
-                      ? "border-border-strong bg-surface-2 text-foreground"
-                      : "border-border text-muted hover:border-border-strong hover:text-foreground",
-                  )}
-                >
-                  {quickStart}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* THE ONE QUESTION. No asterisk (fieldLabel) and no "Try:" chips
+            under it any more (2026-09-10, "reduce the number of elements"):
+            the placeholder already shows what an answer looks like. */}
+        <div>{briefFieldControl(primaryField)}</div>
 
         {/* MEDIA, for the agents that make or carry it: where the visuals come
             from, then the files. One bordered block so the two controls read as
@@ -3141,48 +3061,57 @@ export function RunCustomAgentModal({
           </div>
         )}
 
-        {/* THE DEFAULTS, as one line, and ONE disclosure for everything else.
-            Nothing renders here when there is nothing behind it: a client on an
-            intake-driven agent (Reddit, X, LinkedIn) has one field and no
-            options, and a "More options" row that opens an empty panel is a
-            dead end. The same holds for staff: the reputation runner has no
-            run-type selector and no file slot, so it gets no row either. */}
-        {(moreFields.length > 0 || staffExtras) && (
-          <div className="space-y-2">
-            {/* NO "Change" BUTTON (SCRUM-410). Lola: "the change button and More
-                options button do the exact same thing — remove change." She was
-                exactly right: "Change" called the same setter the disclosure below
-                toggles, plus a focus hop. Two controls for one panel. The defaults
-                stay here as TEXT — seeing "The company page · 1 post" is worth
-                something on its own — and "More options" is the one way in. */}
-            {summaryParts.length > 0 && (
-              <p className="text-xs text-muted-2">{summaryParts.join(" · ")}</p>
-            )}
-            <div>
-              <button
-                type="button"
-                aria-expanded={moreOpen}
-                aria-controls={moreOptionsId}
-                onClick={() => setMoreOpen((open) => !open)}
-                className="focus-ring inline-flex items-center gap-1.5 rounded-md text-xs text-muted transition-colors hover:text-foreground"
-              >
-                {/* The caret BEFORE the label: this is a disclosure, and rule 3's
-                    "no glyph after a label" is about buttons that act. */}
-                <Icon
-                  name="ChevronDown"
-                  className={cn(
-                    "h-3.5 w-3.5 shrink-0 transition-transform motion-reduce:transition-none",
-                    !moreOpen && "-rotate-90",
+        {/* ONE ROW under the question (2026-09-10, "reduce the number of
+            elements"): the options disclosure, with the defaults it would
+            change read beside it, and the way to this agent's data, which
+            replaces the chip that sat above the question. The defaults stay
+            TEXT: SCRUM-410 took the "Change" button, a second control for one
+            panel. Nothing renders when nothing is behind either, because a
+            "More options" that opens an empty panel is a dead end (the
+            reputation runner has no run-type selector and no file slot). */}
+        {(hasMore || intake) && (
+          <div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              {hasMore && (
+                <button
+                  type="button"
+                  aria-expanded={moreOpen}
+                  aria-controls={moreOptionsId}
+                  onClick={() => setMoreOpen((open) => !open)}
+                  className="focus-ring inline-flex items-center gap-1.5 rounded-md text-xs text-muted transition-colors hover:text-foreground"
+                >
+                  {/* The caret BEFORE the label: this is a disclosure, and rule 3's
+                      "no glyph after a label" is about buttons that act. */}
+                  <Icon
+                    name="ChevronDown"
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0 transition-transform motion-reduce:transition-none",
+                      !moreOpen && "-rotate-90",
+                    )}
+                  />
+                  More options
+                  {summaryParts.length > 0 && (
+                    <span className="text-muted-2">· {summaryParts.join(" · ")}</span>
                   )}
-                />
-                More options
-              </button>
-              {/* Kept MOUNTED and hidden rather than unmounted: every answer in
-                  here is dialog state a client may have typed before collapsing
-                  the panel, and `hidden` takes it out of the tab order and the
-                  accessibility tree either way. No display utility on this
-                  element - a `grid` class would beat the browser's own
-                  [hidden] rule and the panel would never close. */}
+                </button>
+              )}
+              {intake && (
+                <button
+                  type="button"
+                  onClick={() => setPane("data")}
+                  className="focus-ring ml-auto rounded-md text-xs text-muted underline-offset-2 transition-colors hover:text-foreground hover:underline"
+                >
+                  {viewerIsClient && setup ? setup.clientLabel : `${INTAKE_LABEL[intake.kind]} agent data`}
+                </button>
+              )}
+            </div>
+            {hasMore && (
+              /* Kept MOUNTED and hidden rather than unmounted: every answer in
+                 here is dialog state a client may have typed before collapsing
+                 the panel, and `hidden` takes it out of the tab order and the
+                 accessibility tree either way. No display utility on this
+                 element - a `grid` class would beat the browser's own [hidden]
+                 rule and the panel would never close. */
               <div id={moreOptionsId} hidden={!moreOpen}>
                 <div className="grid gap-4 pt-3 sm:grid-cols-2">
                   {moreFields.map((field) => briefFieldControl(field))}
@@ -3220,7 +3149,7 @@ export function RunCustomAgentModal({
                   </StaffOnlySection>
                 )}
               </div>
-            </div>
+            )}
           </div>
         )}
 

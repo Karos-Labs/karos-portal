@@ -13,7 +13,6 @@ import { isCreditDenialMessage } from "@/lib/credits";
 import { normalizeLabSlug } from "@/lib/lab-outputs-shared";
 import type { CustomAgent } from "@/lib/types";
 import {
-  STEER_RUN_HELPER,
   STEER_RUN_HELPER_WITH_KIND,
   STEER_RUN_LABEL,
 } from "@/lib/intake-steer-copy";
@@ -544,7 +543,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           key: "request",
           label: STEER_RUN_LABEL,
           type: "textarea",
-          helper: STEER_RUN_HELPER,
           placeholder: "A launch to feature, a topic to hit.",
         },
       ],
@@ -681,7 +679,6 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           key: "request",
           label: STEER_RUN_LABEL,
           type: "textarea",
-          helper: STEER_RUN_HELPER,
           placeholder: "A launch to feature, a topic to hit, a seat to focus on.",
         },
       ],
@@ -717,11 +714,10 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           // Same name as every other per-run steer (SCRUM-411, and the shared
           // constant in lib/intake-steer-copy.ts). This was a fourth spelling of
           // the one field — "Anything to steer this run?" — and the only one
-          // without "(optional)", which is why its helper had to open by saying
-          // so. The helper stays Reddit's own: a Reddit run picks a THREAD.
+          // without "(optional)". No helper line (2026-09-10): "(optional)"
+          // already says a blank box is fine.
           label: STEER_RUN_LABEL,
           type: "textarea",
-          helper: "The agent picks the thread from the stored Reddit agent data either way.",
           placeholder: "A subreddit to prioritise, a question type to look for.",
         },
       ],

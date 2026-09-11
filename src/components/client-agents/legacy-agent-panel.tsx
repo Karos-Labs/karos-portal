@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { AgentRunProgress } from "@/components/client-agents/run-progress";
 import {
@@ -59,7 +58,6 @@ export function LegacyAgentPanel({
   clientId,
   agent,
   engineDispatch,
-  cost,
   batchSize = 1,
   gate,
   noun = "post",
@@ -78,12 +76,6 @@ export function LegacyAgentPanel({
    * legacy path drops was actually seen.
    */
   engineDispatch: EngineDispatchMap;
-  /**
-   * The price of ONE PRESS — the base × defaultRunBatchSize (which is 1 for
-   * every agent today, so today this IS the per-run base). Null for staff -
-   * quoting them a price they never pay would be a lie.
-   */
-  cost: number | null;
   /**
    * defaultRunBatchSize: the fresh dialog's VISIBLE batch default. Above 1
    * the copy stops calling the run "one post" and prices the batch — kept so
@@ -149,17 +141,9 @@ export function LegacyAgentPanel({
           and the form's own button is the run. It was a "Create a new post"
           row whose Sparkles button opened the run dialog (see AgentSetupHero). */}
       {gate.allowed || setupHere ? (
-        <section className="space-y-2">
-          {/* A staff run is not charged to the person pressing it, so theirs
-              says whose credits move. A client's price is on the form's own
-              footer, beside the button it describes. */}
-          {gate.allowed && !viewerIsClient && cost != null && (
-            <p className="flex items-center gap-1 text-xs text-muted-2">
-              <Icon name="Coins" className="h-3 w-3 text-muted-2" />
-              {agent.priceIsEstimate ? "About" : "Costs"} {cost} credit
-              {cost === 1 ? "" : "s"} · billed to the client
-            </p>
-          )}
+        <section>
+          {/* The price is on the form's own footer, for both readers: staff
+              read whose credits move there, beside the button it describes. */}
           <RunCustomAgentModal
             agent={agent}
             clientId={clientId}

@@ -100,6 +100,10 @@ export const STEER_RUN_LABEL = "Direction for this run (optional)";
 export const STEER_RUN_HELPER_WITH_KIND =
   "Steers this run only. Kind of post still decides the shape.";
 
-/** The same field on a profile with no "Kind of post" select to defer to. */
-export const STEER_RUN_HELPER =
-  "Steers this run only. The agent works from your stored agent data either way.";
+/*
+ * A profile with no "Kind of post" select has NO helper line (2026-09-10,
+ * "reduce the number of elements"). Its old one, "Steers this run only. The
+ * agent works from your stored agent data either way.", restated the label's
+ * "(optional)". The line above stays because it says something the label does
+ * not, and SCRUM-430 keeps it until agent-engine lets the note win.
+ */

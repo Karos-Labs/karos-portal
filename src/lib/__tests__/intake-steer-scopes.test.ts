@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   STEER_NEWS_BODY,
-  STEER_RUN_HELPER,
   STEER_RUN_HELPER_WITH_KIND,
   STEER_RUN_LABEL,
   STEER_STANDING_BODY,
@@ -116,7 +115,7 @@ describe("the run dialog's direction field", () => {
   it("points at no other box", () => {
     // The sentence that made it read as a duplicate. Asserted on the register
     // AND on the file, because a redirect could be re-typed at a call site.
-    for (const helper of [STEER_RUN_HELPER, STEER_RUN_HELPER_WITH_KIND]) {
+    for (const helper of [STEER_RUN_HELPER_WITH_KIND]) {
       expect(helper).not.toMatch(/What should we cover next/i);
       expect(helper).not.toMatch(/instead/i);
     }
@@ -139,12 +138,11 @@ describe("the run dialog's direction field", () => {
 
 /* ──────────────────────────────── the copy rules ────────────────────────── */
 
-describe("all five strings read as client copy", () => {
+describe("all four strings read as client copy", () => {
   const all = [
     STEER_STANDING_BODY,
     STEER_NEWS_BODY,
     STEER_RUN_LABEL,
-    STEER_RUN_HELPER,
     STEER_RUN_HELPER_WITH_KIND,
   ];
 

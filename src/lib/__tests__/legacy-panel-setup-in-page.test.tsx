@@ -52,7 +52,6 @@ function panel(setup: AgentSetupState): string {
       clientId="c1"
       agent={{ id: "a1", key: "karos-reddit-runner", name: "Reddit Runner" } as never}
       engineDispatch={{} as never}
-      cost={5}
       gate={GATE}
       noun="reply"
       setup={setup}

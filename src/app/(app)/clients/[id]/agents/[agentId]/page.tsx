@@ -1374,12 +1374,6 @@ export default async function ClientAgentDetailPage({
               agent={summary}
               engineDispatch={engineDispatch}
               noun={outputNoun}
-              // B5 (parity pass 2026-09): passed for BOTH readers now. It was
-              // `spendable !== undefined ? runCost : null`, i.e. billable
-              // client actors only, so the staff copy of this card was one line
-              // shorter than the client's and the band's height did not match.
-              // The panel renders the staff register of the same fact.
-              cost={runCost}
               batchSize={runBatchSize}
               gate={legacyGate}
               // The banner above already made the outage statement; the gate's

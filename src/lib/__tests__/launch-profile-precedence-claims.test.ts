@@ -62,7 +62,7 @@ describe("what a run dialog's helper text may claim", () => {
 
     // A sweep that stopped matching would pass over an empty list and say
     // nothing, which is the failure mode this floor exists to make loud.
-    expect(helpers.length).toBeGreaterThan(10);
+    expect(helpers.length).toBeGreaterThan(5);
 
     const claims = helpers
       .filter((h) => PRECEDENCE_CLAIM.test(h.text))
