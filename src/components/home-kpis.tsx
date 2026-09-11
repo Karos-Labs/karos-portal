@@ -65,13 +65,13 @@ function Sparkline({ counts }: { counts: number[] }) {
  * reads as a measured zero rather than as missing data, and the run of days is
  * continuous left to right.
  */
-function DailyBars({ counts }: { counts: number[] }) {
+function DailyBars({ counts, className }: { counts: number[]; className?: string }) {
   const max = Math.max(...counts);
   // Nothing at all is not a chart. Drawing thirty empty tracks under a zero
   // would be a picture of no information; the empty state says so in words.
   if (max === 0) {
     return (
-      <div className="mt-2.5 flex h-9 items-center rounded-md border border-dashed border-border px-2.5">
+      <div className={cn("flex h-9 items-center rounded-md border border-dashed border-border px-2.5", className)}>
         <p className="text-[11px] leading-snug text-muted-2">
           Nothing went live in the last {THROUGHPUT_WINDOW_DAYS} days.
         </p>
@@ -83,7 +83,7 @@ function DailyBars({ counts }: { counts: number[] }) {
   return (
     <>
       <div
-        className="mt-2.5 flex h-9 items-end gap-px"
+        className={cn("flex h-9 items-end gap-px", className)}
         role="img"
         aria-label={`Posts published each day over the last ${THROUGHPUT_WINDOW_DAYS} days, oldest first.`}
       >
@@ -123,17 +123,19 @@ function Delta({
   text,
   note,
   noBasis,
+  className,
 }: {
   pct: number | null;
   text: string;
   note?: string;
   noBasis?: string;
+  className?: string;
 }) {
   if (pct == null) {
-    return noBasis ? <p className="mt-0.5 text-xs text-muted-2">{noBasis}</p> : null;
+    return noBasis ? <p className={cn("text-xs text-muted-2", className)}>{noBasis}</p> : null;
   }
   return (
-    <p className={`mt-0.5 text-xs ${pct >= 0 ? "text-success" : "text-danger"}`}>
+    <p className={cn("text-xs", pct >= 0 ? "text-success" : "text-danger", className)}>
       <Icon name={pct >= 0 ? "ArrowUp" : "ArrowDown"} className="mr-1 inline h-3 w-3" />
       <span className="tabular">
         {pct >= 0 ? "+" : ""}
@@ -161,32 +163,45 @@ function Cell({
   label,
   href,
   children,
-  className,
+  layout = "tile",
 }: {
   icon: string;
   label: string;
   /** Somewhere that shows MORE about THIS number. See each call site. */
   href: string;
   children: React.ReactNode;
-  className?: string;
+  /**
+   * `strip` lays the eyebrow and the reading out on one line, for a cell that
+   * is alone on the card (Albert, 2026-09-11: the lone Published tile "takes
+   * the whole screen … it could be a small widget"). Same link, same chevron,
+   * a third of the height.
+   */
+  layout?: "tile" | "strip";
 }) {
+  const strip = layout === "strip";
   return (
     <Link
       href={href}
       className={cn(
-        "row-lift focus-ring block h-full rounded-md border border-border bg-surface-2 p-3.5",
-        className,
+        "row-lift focus-ring rounded-md border border-border bg-surface-2 p-3.5",
+        strip ? "flex flex-wrap items-center gap-x-5 gap-y-2" : "block h-full",
       )}
     >
-      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+      <p
+        className={cn(
+          "flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2",
+          strip && "shrink-0",
+        )}
+      >
         <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
         {/* Rule 1: ONE trailing chevron, static. It used to slide 2px on hover,
             which is a second hover event on a surface whose hover is already the
-            fill step plus `row-lift`'s hairline. */}
-        <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+            fill step plus `row-lift`'s hairline. In the strip it closes the row. */}
+        {!strip && <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />}
       </p>
       {children}
+      {strip && <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-2" />}
     </Link>
   );
 }
@@ -342,6 +357,7 @@ export function HomeKpisWidget({
             <Delta
               pct={audienceGrowthPct ?? null}
               text={audienceGrowthPct == null ? "" : `${audienceGrowthPct.toFixed(1)}%`}
+              className="mt-0.5"
             />
             <div className="mt-2">
               <Sparkline counts={series.map((p) => p.count)} />
@@ -349,19 +365,41 @@ export function HomeKpisWidget({
           </Cell>
         )}
 
-        {/* Content published — the cell the duplicated channel list vacated */}
-        <Cell icon="Send" label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`} href={contentHref}>
-          <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-            {throughput.count.toLocaleString()}
-          </p>
-          <Delta
-            pct={throughput.deltaPct}
-            text={`${throughput.deltaPct}%`}
-            note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
-            noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
-          />
-          <DailyBars counts={throughput.daily} />
-        </Cell>
+        {/* Content published — the cell the duplicated channel list vacated.
+            Alone on the card it is a strip: the number and its delta beside
+            the label, the thirty days on the right, one row high. */}
+        {showAudience ? (
+          <Cell icon="Send" label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`} href={contentHref}>
+            <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+              {throughput.count.toLocaleString()}
+            </p>
+            <Delta
+              pct={throughput.deltaPct}
+              text={`${throughput.deltaPct}%`}
+              note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
+              noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
+              className="mt-0.5"
+            />
+            <DailyBars counts={throughput.daily} className="mt-2.5" />
+          </Cell>
+        ) : (
+          <Cell icon="Send" label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`} href={contentHref} layout="strip">
+            <div className="flex items-baseline gap-2.5">
+              <p className="stat-number text-2xl font-semibold leading-none tracking-tight text-foreground">
+                {throughput.count.toLocaleString()}
+              </p>
+              <Delta
+                pct={throughput.deltaPct}
+                text={`${throughput.deltaPct}%`}
+                note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
+                noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
+              />
+            </div>
+            <div className="min-w-[10rem] flex-1 @md:max-w-xs">
+              <DailyBars counts={throughput.daily} />
+            </div>
+          </Cell>
+        )}
       </div>
     </Card>
   );

@@ -73,7 +73,8 @@ describe("rule 5 · one focus ring, defined once and applied by the primitives",
       "components/home-calendar-preview.tsx",
       "components/client-home-overview.tsx",
       "components/rail-nav-link.tsx",
-      "components/seo-geo-panel.tsx",
+      // The report's own focusable leaf (InfoTip) lives with the tiles now.
+      "components/seo-geo/tiles.tsx",
       "components/seo-geo/disclosure.tsx",
       "components/seo-geo/flag-button.tsx",
       "components/seo-geo/gap-list.tsx",
@@ -157,11 +158,14 @@ describe("rule 7 · Home's one orange CONTROL is the ladder's button", () => {
     // round 6, Albert 2026-09-06: pinned POSITIVELY, because the sweep that
     // stripped these was reading the accent ration as a ban on the colour. A
     // later pass that greys a meter fill or a sparkline fails here.
+    // Home's three readings are the report's own tiles (2026-09-11), whose
+    // presence and share meters are orange.
     const standing = code("components/home-standing.tsx");
-    expect(standing, "the share meters lost their orange fill").toContain(
-      'className="h-full rounded-full bg-neon"',
+    expect(standing, "Home stopped drawing the report's tiles").toContain(
+      'from "@/components/seo-geo/tiles"',
     );
-    expect(standing, "the share meters lost their tinted track").toContain("bg-neon/15");
+    const tiles = code("components/seo-geo/tiles.tsx");
+    expect(tiles.match(/color="var\(--neon\)"/g) ?? [], "a reading's meter went ink").toHaveLength(2);
     expect(standing, "the takeaway band lost its tint").toContain("bg-neon/[0.06]");
     const kpis = code("components/home-kpis.tsx");
     expect(kpis, "the sparkline lost its orange stroke").toContain('stroke="var(--neon)"');
@@ -173,11 +177,9 @@ describe("rule 7 · Home's one orange CONTROL is the ladder's button", () => {
     ]) {
       expect(code(rel), `${rel} lost its heading chip`).toContain("bg-neon/10");
     }
-    // Reporting's meters, and the client's own bar among the roster's.
+    // The client's own bar among the roster's (the presence and share meters
+    // are the shared tiles, counted above).
     const panel = code("components/seo-geo-panel.tsx");
-    expect(panel.match(/color="var\(--neon\)"/g) ?? [], "a Reporting meter went ink").toHaveLength(
-      2,
-    );
     expect(panel, "your bar lost its orange").toContain('b.isClient ? "var(--neon)"');
     // A coin beside a price is a sanctioned orange.
     expect(code("components/client-rail.tsx"), "the credits coin went grey").toContain(
@@ -197,15 +199,13 @@ describe("rule 7 · Home's one orange CONTROL is the ladder's button", () => {
 describe("rule 1 · a link ends in one static chevron, and a static box is not a link", () => {
   it("keeps the three SEO readings inert, under the card's one link (SCRUM-418)", () => {
     const standing = code("components/home-standing.tsx");
-    // Inverse of the round-6 assertion it replaced: see MeterTile's own note.
-    const at = standing.indexOf("function MeterTile(");
-    expect(at, "the shell the three readings share is gone").toBeGreaterThan(-1);
-    // Bounded by the next declaration, not by the next doc comment: `code()`
-    // strips comments, so a `/**` bound returns -1 and slices the whole file.
-    const shell = standing.slice(at, standing.indexOf("function ", at + 10));
-    expect(shell).not.toContain("<Link");
-    expect(shell).not.toContain("row-lift");
-    expect(shell).not.toContain("ChevronRight");
+    // The readings are the report's own tiles (2026-09-11), and none of them
+    // is a link: no Link, no row-lift, no trailing chevron in that module.
+    expect(standing).toContain('from "@/components/seo-geo/tiles"');
+    const tiles = code("components/seo-geo/tiles.tsx");
+    expect(tiles).not.toContain("<Link");
+    expect(tiles).not.toContain("row-lift");
+    expect(tiles).not.toContain("ChevronRight");
 
     // EXACTLY TWO links in the file, and neither is a metric: the card's single
     // header link, and the empty-roster prompt. That prompt is deliberately NOT

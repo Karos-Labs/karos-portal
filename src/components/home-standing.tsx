@@ -2,136 +2,23 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
-import { TONE_COLORS } from "@/components/seo-geo/tones";
+import { PresenceTile, RosterShare, ScoreTile, SurfaceTile } from "@/components/seo-geo/tiles";
 import type { PresenceView, ScoreView } from "@/components/seo-geo/presenter";
 import { cn } from "@/lib/utils";
 
-/**
- * The shell all three readings share: an accented eyebrow, then the reading.
+/*
+ * THE THREE READINGS ARE THE REPORT'S OWN TILES (Albert, 2026-09-11). This
+ * card used to draw them in a shell of its own: an orange icon eyebrow, a
+ * thick orange bar, a caption of its own. "Make it look the same as what it is
+ * in the reporting, and if they want the details they go there, because it's
+ * the exact same type of board." The score, the category presence and the
+ * share are now the components Account Center's Reporting tab renders
+ * (seo-geo/tiles.tsx), inside this card's frame; the report keeps the popover
+ * and the breakdown, and this card's one link is the way to them.
  *
- * NOT A LINK (SCRUM-418, Albert 2026-09-10). Round 6 made each tile a link
- * because the KPI cells lit up and these did not. But these three are readings
- * of one snapshot that all opened the same report, so per-tile links were three
- * controls doing one job; the card's single header link is the way in now. The
- * KPI card keeps per-cell links, because its cells really do go to different
- * places.
+ * NOT LINKS (SCRUM-418): three readings of one snapshot all opened the same
+ * report, so the card's header link is the one way in.
  */
-function MeterTile({
-  icon,
-  label,
-  children,
-}: {
-  icon: string;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-surface-2 p-3.5">
-      {/* No trailing chevron: the eyebrow ends at the label now, because the
-          glyph that used to close it was the promise this tile stopped
-          making. */}
-      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
-        <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
-        <span className="min-w-0 flex-1 truncate">{label}</span>
-      </p>
-      {children}
-    </div>
-  );
-}
-
-/**
- * One percentage as a headline and a meter.
- *
- * THE BAR IS ORANGE (round 6, Albert 2026-09-06). Round 6 briefly made it ink
- * on a grey track; the ruling put it back. The one-orange-per-screen rule is
- * about CONTROLS — a meter fill is data, and data keeps its accent. Losing the
- * link did not change that: this tile stopped being a control, which is
- * precisely the category the ration governs, and the fill was never in it.
- *
- * The track is the same accent at low alpha: the filled part is the number, and
- * the unfilled part is visibly the same measurement rather than background,
- * which matters most at the small values where an accent sliver on `surface-3`
- * read as an empty card.
- */
-function ShareMeter({
-  icon,
-  label,
-  caption,
-  pct,
-  emptyLine,
-}: {
-  icon: string;
-  label: string;
-  caption: string;
-  pct: number | null;
-  emptyLine: string;
-}) {
-  return (
-    <MeterTile icon={icon} label={label}>
-      {pct == null ? (
-        <p className="mt-2 text-sm text-muted-2">{emptyLine}</p>
-      ) : (
-        <>
-          <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-            {pct}
-            <span className="ml-0.5 text-lg font-medium text-muted-2">%</span>
-          </p>
-          <div className="mt-2.5 h-2 overflow-hidden rounded-full bg-neon/15">
-            <div
-              className="h-full rounded-full bg-neon"
-              style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-            />
-          </div>
-          <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{caption}</p>
-        </>
-      )}
-    </MeterTile>
-  );
-}
-
-/**
- * The visibility score, moved here from the KPI card by SCRUM-418.
- *
- * It is the same `ScoreView` the full report renders (`buildScoreViews`), so
- * this tile and Account Center's Reporting tab cannot quote different numbers
- * for one snapshot. It sits FIRST because it is the headline the two shares
- * below it decompose — and because it was the third link to this card's
- * destination, which is what made all three read as noise.
- *
- * ITS FILL KEEPS THE TONE SCALE while its two neighbours keep the orange, and
- * that difference is the point rather than an oversight: a share is a
- * measurement and takes the data accent, a score is a JUDGMENT and takes the
- * success/warning/info ink the rest of the app judges with. Orange never
- * signals status. The track is the band's own colour at low alpha for the
- * reason the report's meters use it: in light mode `surface-3` is a
- * three-point step off `surface-2`, which is no step, and the unfilled half of
- * the bar simply disappeared.
- */
-function ScoreMeter({ view }: { view: ScoreView }) {
-  const measured = view.value != null;
-  const color = TONE_COLORS[view.tone];
-  return (
-    <MeterTile icon="Radar" label="Visibility">
-      <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-        {measured ? view.value : "\u2013"}
-        {measured && <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>}
-      </p>
-      <div
-        className="mt-2.5 h-2 overflow-hidden rounded-full"
-        style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
-      >
-        <div
-          className="h-full rounded-full transition-[width]"
-          style={{
-            width: `${measured ? Math.min(100, Math.max(0, view.value as number)) : 0}%`,
-            background: color,
-          }}
-        />
-      </div>
-      <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{view.label}</p>
-    </MeterTile>
-  );
-}
 
 /**
  * Home's SEO & AI visibility widget (2026-08; renamed 2026-09).
@@ -271,25 +158,17 @@ export function HomeStandingWidget({
             tileCount === 3 && "@2xl:grid-cols-3",
           )}
         >
-          {/* The score leads: it is the headline the two shares decompose. */}
-          {visibilityScore && <ScoreMeter view={visibilityScore} />}
-          {presence && measured && (
-          <ShareMeter
-            icon="Search"
-            label="Named in category answers"
-            caption={presence.category.caption}
-            pct={presence.category.pct}
-            emptyLine={presence.category.emptyLine ?? "Not measured yet."}
-          />
-          )}
+          {/* The score leads: it is the headline the two shares decompose. A
+              tile inside this card, not a card of its own as on the report,
+              and without the breakdown: the details are the report's. */}
+          {visibilityScore && <ScoreTile view={visibilityScore} frame="tile" breakdown={false} />}
+          {/* The figure printed plain: the popover behind it on the report is
+              the detail this card sends the reader there for. */}
+          {presence && measured && <PresenceTile tile={presence.category} detail="plain" />}
           {!(presence && measured) ? null : presence.rosterShare ? (
-            <ShareMeter
-              icon="ChartPie"
-              label="Your share of the conversation"
-              caption={presence.rosterShare.caption}
-              pct={presence.rosterShare.pct}
-              emptyLine="Not measured yet."
-            />
+            <SurfaceTile>
+              <RosterShare share={presence.rosterShare} />
+            </SurfaceTile>
           ) : (
             /* No competitors tracked ⇒ there is no denominator, so this is a
                prompt to create one rather than a 100% that would be an artifact
