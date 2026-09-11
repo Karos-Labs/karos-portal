@@ -2,7 +2,7 @@
 
 import { type ComponentProps, useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Badge, Button, buttonClass, Input, Label, Select, Textarea } from "@/components/ui";
 import { Icon, LinkedInLogo, XLogo } from "@/components/icon";
 import {
@@ -52,7 +52,7 @@ import {
 } from "@/lib/credits";
 import { intakePageHref, type IntakeFamily } from "@/lib/agent-intake-links";
 import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
-import { useRunWatch } from "@/components/run-watch";
+import { useRunWatch, useShowRunInPage } from "@/components/run-watch";
 import { runOutcomeSentence } from "@/lib/run-progress";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { validateScheduleTiming } from "@/lib/scheduling";
@@ -2334,7 +2334,6 @@ export function RunCustomAgentModal({
   onClose?: () => void;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
   const Shell = inline ? InlinePanel : Modal;
   const [pending, startTransition] = useTransition();
   const [selectedClientId, setSelectedClientId] = useState(clientId ?? clients?.[0]?.id ?? "");
@@ -2385,6 +2384,9 @@ export function RunCustomAgentModal({
    * different things about one run.
    */
   const { runs: watchedRuns, watch: watchRun, outcomeOf } = useRunWatch();
+  // While the in-page form is showing a run's progress, the dock leaves that
+  // run alone; "Start another" or leaving the page hands it back to the dock.
+  useShowRunInPage(inline && started ? startedJobId : null);
   const intake = intakeFor(setup);
   const intakeReady = intake?.setup.ready ?? true;
   // The data opens on the company page being missing, not on the server gate:
@@ -2718,9 +2720,6 @@ export function RunCustomAgentModal({
             href: viewerIsClient
               ? `/clients/${selectedClientId}`
               : `/jobs/${result.jobId}`,
-            // In the page, this form becomes the run's progress, so the dock
-            // stays out of it until the reader leaves (see WatchedRun.origin).
-            ...(inline ? { origin: pathname } : {}),
           });
         }
         router.refresh();
@@ -2778,12 +2777,7 @@ export function RunCustomAgentModal({
               (the engine's current step, in client words), a full bar once the
               agent's part is done, and no bar for a run that stopped. No
               duration anywhere: the bar answers "how long" by moving. */}
-          {outcome !== "stopped" && (
-            <AgentRunProgress
-              headline={outcome === "working" ? (watched?.headline ?? "Starting the run") : "Done"}
-              working={outcome === "working"}
-            />
-          )}
+          <AgentRunProgress outcome={outcome} {...(watched?.headline ? { headline: watched.headline } : {})} />
 
           <p className="text-xs leading-relaxed text-muted">
             {runOutcomeSentence(outcome, viewerIsClient)}

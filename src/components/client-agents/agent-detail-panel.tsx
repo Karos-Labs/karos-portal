@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { AgentScheduleModal, CancelRunControl } from "@/components/custom-agents";
 import { AgentRunProgress } from "@/components/client-agents/run-progress";
-import { useRunWatch } from "@/components/run-watch";
+import { useRunWatch, useShowRunInPage } from "@/components/run-watch";
 import { ClientAgentFeedbackModal } from "./feedback-modal";
 import { OptionsRow, StaffSlotNotes, TemplateRows, WeekStrip } from "./live-card";
 import { SlotNoteModal } from "./slot-note-modal";
@@ -124,8 +124,10 @@ export function AgentDetailPanel({
     firstBlock?.reason ??
     noRunnableTemplateReason({ optionsMode: agent.optionsMode, hasTemplates: templates.length > 0 });
 
-  const pathname = usePathname();
   const { watch: watchRun } = useRunWatch();
+  // The run banner below is this page's view of the run; the dock skips it
+  // while the banner is up.
+  useShowRunInPage(agent.activeRun?.id ?? null);
 
   function createPost() {
     if (!runnableTemplate) return;
@@ -143,15 +145,13 @@ export function AgentDetailPanel({
         return;
       }
       // Into the same watch the run form uses, so the corner dock carries it
-      // once the reader leaves. `origin` keeps the dock off THIS page, where the
-      // banner below already shows it.
+      // once the reader leaves; the banner below claims it while it is up.
       if (result.jobId) {
         watchRun({
           jobId: result.jobId,
           agentName: agent.displayName,
           noun,
           href: viewerIsClient ? `/clients/${agent.clientId}` : `/jobs/${result.jobId}`,
-          origin: pathname,
         });
       }
       router.refresh();
@@ -168,8 +168,8 @@ export function AgentDetailPanel({
           {/* The same bar every run surface uses, so a run looks the same
               wherever it is watched. */}
           <AgentRunProgress
+            outcome="working"
             headline={`Making your ${agent.activeRun.templateName ?? "next"} ${noun}`}
-            working
           />
           {/* F30, restored. The cancel used to ride the generic run rows, and
               CD-G1 removed those from the client's branch - leaving a client

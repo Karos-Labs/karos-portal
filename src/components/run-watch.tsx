@@ -65,13 +65,14 @@ export interface WatchedRun {
   /** Set once the poller has an answer; absent until the first tick lands. */
   status?: string;
   /**
-   * The page a run was started ON, when it was started from a form drawn in
-   * the page. The dock skips a run while the reader is still on that page,
-   * because the form has already turned into the same progress in place; it
-   * shows it once they leave. Not persisted, so after a reload (the in-page
-   * view is gone) the dock shows it again.
+   * Some view on the page is showing this run right now (the in-page run form
+   * turned into its progress, or an agent page's run banner), so the dock
+   * skips it. Held only while that view is MOUNTED (`useShowRunInPage`): it
+   * used to be the page address the run started on, which kept hiding the run
+   * after "Start another" or a trip away and back — when nothing else on the
+   * page could show it. Never persisted.
    */
-  origin?: string;
+  shownInPage?: boolean;
   /** What the agent is doing now (RunProgressView.headline). Not persisted: the next tick refills it. */
   headline?: string;
   /** The agent's part is done and the run is parked (RunProgressView.agentDone). */
@@ -112,7 +113,7 @@ function load(): WatchedRun[] {
     );
     return rows.length === 0
       ? EMPTY
-      : rows.slice(0, MAX_WATCHED).map(({ headline: _h, origin: _o, ...rest }) => rest);
+      : rows.slice(0, MAX_WATCHED).map(({ headline: _h, shownInPage: _s, ...rest }) => rest);
   } catch {
     return EMPTY;
   }
@@ -157,6 +158,26 @@ function commit(next: WatchedRun[]) {
   for (const listener of listeners) listener();
 }
 
+function setShownInPage(jobId: string, on: boolean) {
+  const runs = getSnapshot();
+  const next = runs.map((r) =>
+    r.jobId === jobId && Boolean(r.shownInPage) !== on ? { ...r, shownInPage: on } : r,
+  );
+  if (next.some((r, i) => r !== runs[i])) commit(next);
+}
+
+/**
+ * Mark a run as on screen in this component for as long as it is mounted, so
+ * the dock does not show it a second time. Null claims nothing.
+ */
+export function useShowRunInPage(jobId: string | null | undefined) {
+  useEffect(() => {
+    if (!jobId) return;
+    setShownInPage(jobId, true);
+    return () => setShownInPage(jobId, false);
+  }, [jobId]);
+}
+
 /** Start watching a run. A run already watched is left as it is, not restarted. */
 function addWatch(run: Omit<WatchedRun, "status">) {
   const runs = getSnapshot();
@@ -172,11 +193,14 @@ function dropWatch(jobId: string) {
   if (next.length !== runs.length) commit(next.length === 0 ? EMPTY : next);
 }
 
-/** Which runs still need asking about. */
-// A run whose agent is done (parked at a gate) needs no more polling: nothing
-// changes for this reader until it shows up, which can be an hour away.
+/**
+ * Which runs still need asking about: everything not yet landed or stopped by
+ * its STATUS. A run parked at a gate (`agentDone`) is shown as done but still
+ * asked about — a rejection there turns into "stopped", and a watch that had
+ * stopped asking would keep saying "Done" about a run that produced nothing.
+ */
 const stillWorking = (runs: WatchedRun[]) =>
-  runs.filter((r) => !r.agentDone && (r.status === undefined || runOutcome(r.status) === "working"));
+  runs.filter((r) => r.status === undefined || runOutcome(r.status) === "working");
 
 /* ───────────────────────────────── the poller ──────────────────────────────── */
 

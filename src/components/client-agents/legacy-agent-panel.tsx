@@ -135,7 +135,7 @@ export function LegacyAgentPanel({
               Only legacy agent-service runs reach this banner (`legacyRun`
               filters on `external.taskType`), and those report no step, so the
               line names the output rather than a stage. */}
-          <AgentRunProgress headline={`Making your next ${noun}`} working />
+          <AgentRunProgress outcome="working" headline={`Making your next ${noun}`} />
           <CancelRunControl runId={activeRun.id} refunds={activeRun.refunds} />
         </div>
       )}

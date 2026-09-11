@@ -67,8 +67,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     status,
     inProgress: isJobInProgress(job, view),
     ...(agentDone ? { agentDone: true } : {}),
-    ...(run && !agentDone && runOutcome(status) === "working"
-      ? { headline: stepHeadline(run.currentStepId) }
+    // While working: the engine's current step in client words; a run with no
+    // engine behind it has no step to report, so it says it is working once it
+    // is (rather than "Starting the run" for the whole run).
+    ...(!agentDone && runOutcome(status) === "working"
+      ? {
+          headline: run
+            ? stepHeadline(run.currentStepId)
+            : status === "running"
+              ? "Working on it"
+              : stepHeadline(null),
+        }
       : {}),
   };
   return NextResponse.json(body);

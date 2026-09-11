@@ -27,7 +27,6 @@
  */
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 
 import { Icon } from "@/components/icon";
 import { AgentRunProgress } from "@/components/client-agents/run-progress";
@@ -78,10 +77,7 @@ function DockRow({
           works, full once the agent is done, none for a run that stopped. */}
       {outcome !== "stopped" && (
         <div className="mt-2">
-          <AgentRunProgress
-            headline={outcome === "working" ? (run.headline ?? "Starting the run") : "Done"}
-            working={outcome === "working"}
-          />
+          <AgentRunProgress outcome={outcome} {...(run.headline ? { headline: run.headline } : {})} />
         </div>
       )}
 
@@ -124,10 +120,9 @@ export function RunProgressDock({ viewerIsClient }: { viewerIsClient: boolean })
   // `watch()` is the only other thing that starts one and is not called again
   // on that path.
   useRestoreRunPolling(runs.length);
-  // Polling counts every run above; only the DRAWING skips a run whose own page
-  // is on screen, where the run form has already turned into its progress.
-  const pathname = usePathname();
-  const shown = runs.filter((run) => run.origin !== pathname);
+  // Polling counts every run above; only the DRAWING skips a run that a view
+  // on this page is showing right now (see WatchedRun.shownInPage).
+  const shown = runs.filter((run) => !run.shownInPage);
 
   if (shown.length === 0) return null;
 
