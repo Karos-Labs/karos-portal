@@ -71,10 +71,11 @@ export function generatedToday<T extends Pick<Asset, "createdAt">>(
  * sentence is what connects this widget, the calendar widget and the assets
  * page into one story instead of three lists a reader has to reconcile.
  *
- * IT NAMES THE REVIEW STEP, because leaving it out would make the sentence
- * false: nothing reaches a client's calendar until a person has approved it.
- * And it names Calendar rather than "your Workspace" - Workspace is retired
- * from both shells, and Calendar is what the rail actually says.
+ * It does not name the review step (a client is never told about it, the SOW
+ * rule Albert kept on 2026-09-10) and stays true without it: "once it has a
+ * date" is the condition, and nothing is dated on a client's calendar before it
+ * is approved. And it names Calendar rather than "your Workspace" - Workspace
+ * is retired from both shells, and Calendar is what the rail actually says.
  */
 export const GENERATED_TODAY_EXPLAINER =
   "Everything your agents made today shows up here. Once it has a date, it lives in your Calendar.";

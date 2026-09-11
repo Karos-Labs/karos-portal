@@ -30,8 +30,7 @@ const RUN_OUTCOME: Record<JobStatus, RunOutcome> = {
   queued: "working",
   running: "working",
   // `review` IS the landing. The deliverables exist from this point; what is
-  // outstanding is a human looking at them, which the copy names rather than
-  // dressing up as the run still running.
+  // outstanding is a human looking at them, which is not the run still running.
   review: "landed",
   approved: "landed",
   delivered: "landed",
@@ -103,17 +102,11 @@ const RUN_OUTCOME_COPY: Record<RunOutcome, { client: string; staff: string }> = 
     staff: "Still working. This updates on its own, and closing it does not stop the run.",
   },
   landed: {
-    // NO DESTINATION IN THIS SENTENCE, and that is deliberate even though the
-    // dock now has a link for a client. The archive holds APPROVED work only
-    // (F149) and `/jobs` is staff-gated, so for most of this run's life the
-    // only surface that shows it is Home's "Generated today" widget - and a
-    // SENTENCE that named a place would have to name a different one for each
-    // reader and each moment. The link says where; the sentence says what
-    // happens next, which is the same for everybody.
     // No review (the SOW rule Albert kept on 2026-09-10), no time (the old
-    // "30 minutes"), and no place it is not yet: the archive holds approved
-    // work only, and while a run waits at a gate nothing is materialized. Home's
-    // "Generated today" is where it appears first, hence the future tense.
+    // "30 minutes"), and no place it is not yet: the archive holds APPROVED
+    // work only (F149), `/jobs` is staff-gated, and while a run waits at a gate
+    // nothing is materialized. Home's "Generated today" is where it appears
+    // first, hence the future tense.
     client: "It will appear on your Home page.",
     staff: "It landed. The deliverables are on the run.",
   },

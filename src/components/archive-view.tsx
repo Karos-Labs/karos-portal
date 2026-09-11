@@ -342,7 +342,7 @@ export function ArchiveView({
         title={viewerIsClient ? "Nothing here yet" : "Nothing archived yet"}
         description={
           viewerIsClient
-            ? "Work your Karos team has approved shows up here, and stays for 30 days after you mark it posted."
+            ? "Finished work shows up here, and stays for 30 days after you mark it posted."
             : "Everything the agents produce lands here, organized per agent."
         }
         // R9: an empty region should offer the control that starts the task

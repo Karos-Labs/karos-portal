@@ -538,7 +538,7 @@ export function ReviewJobRow({
         <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted">{job.title}</p>
         <p className="mt-0.5 text-[11px] text-muted-2">
           {job.clientName ? `${job.clientName} · ` : ""}
-          {viewerIsClient ? "Your Karos team is reviewing it" : "Waiting for your review"} ·{" "}
+          {viewerIsClient ? "On its way" : "Waiting for your review"} ·{" "}
           {relativeTime(job.updatedAt)}
         </p>
       </div>

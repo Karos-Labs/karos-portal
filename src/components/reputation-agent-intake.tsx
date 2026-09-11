@@ -356,12 +356,12 @@ function HistoryBox({
           quietly went nowhere is worse than none. What a human actually edited
           before sending is the manager's signal, and it comes off the archive. */}
       <p className="mt-1 text-sm text-muted">
-        Once your Karos team has approved a reply, it appears in{" "}
+        Replies appear in{" "}
         <a href={archive.href} className="underline hover:text-foreground">
           {archive.label}
         </a>{" "}
-        ready to copy and post yourself. Anything we flagged as urgent is at the top of the report,
-        not in the replies.
+        as they are finished, ready to copy and post yourself. Anything we flagged as urgent is at
+        the top of the report, not in the replies.
       </p>
       <IntakeRunRows clientId={clientId} family="reputation" runs={runs} isStaff={isStaff} />
     </Card>

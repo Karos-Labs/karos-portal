@@ -14,10 +14,17 @@ import type { JobStatus } from "@/lib/types";
  */
 export { JOB_STATUS_META, jobStatusLabel, jobStatusMeta } from "@/lib/job-status-copy";
 
-export function JobStatusBadge({ status }: { status: JobStatus }) {
+export function JobStatusBadge({
+  status,
+  viewerIsClient = false,
+}: {
+  status: JobStatus;
+  /** A client reads "Done" where staff read "In review" / "Approved" (job-status-copy.ts). */
+  viewerIsClient?: boolean;
+}) {
   // `jobStatusMeta`, not a second `?? JOB_STATUS_META.queued` spelled here. This
   // badge's own copy of that fallback agreed with the module's, which is exactly
   // what made a THIRD copy (run-calendar's "Done") read as harmless.
-  const c = jobStatusMeta(status);
+  const c = jobStatusMeta(status, viewerIsClient);
   return <Badge tone={c.tone}>{c.label}</Badge>;
 }

@@ -253,7 +253,7 @@ function WhatLaunchDoes() {
       {[
         "We research your brand, your audience, and your market.",
         "Then we design the set of post formats this agent will produce for you.",
-        "Your Karos team confirms them, and the agent starts posting to its schedule.",
+        "Once they are set, the agent starts posting to its schedule.",
       ].map((line) => (
         <li key={line} className="flex gap-2">
           <Icon name="Check" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />

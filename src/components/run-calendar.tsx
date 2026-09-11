@@ -1075,7 +1075,7 @@ function PastRunCard({
   // `jobStatus: j.status` from a required field — but `CalendarRun` is shared with
   // the scheduled-run card, where the field genuinely is absent, so the branch
   // stays and says why.
-  const status = run.jobStatus ? jobStatusMeta(run.jobStatus) : NO_RUN_STATUS;
+  const status = run.jobStatus ? jobStatusMeta(run.jobStatus, viewerIsClient) : NO_RUN_STATUS;
   const inFlight = run.jobStatus === "queued" || run.jobStatus === "running";
 
   // Where "review this" actually goes. Staff get the run detail page the

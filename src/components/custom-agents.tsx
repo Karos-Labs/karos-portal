@@ -2796,7 +2796,8 @@ export function RunCustomAgentModal({
               sentence from the outcome one above: a client has nowhere to look
               at a deliverable still in review (the archive holds APPROVED work
               - F149), so naming a destination for them would be the phantom
-              again. Their sentence names the review step and stops there. */}
+              again. Their sentence says where it will appear, and never who
+              checks it. */}
           {!viewerIsClient && (
             <p className="text-xs leading-relaxed text-muted">
               The deliverables land in{" "}

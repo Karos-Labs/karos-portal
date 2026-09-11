@@ -28,15 +28,14 @@
 
 import type { JobStatus } from "@/lib/types";
 
-export const JOB_STATUS_META: Record<
-  JobStatus,
-  {
-    tone: "neutral" | "neon" | "warning" | "danger" | "info";
-    label: string;
-    /** lucide icon NAME (a string, not a component) — stays importable from server-only callers. */
-    icon: string;
-  }
-> = {
+type JobStatusMetaEntry = {
+  tone: "neutral" | "neon" | "warning" | "danger" | "info";
+  label: string;
+  /** lucide icon NAME (a string, not a component) — stays importable from server-only callers. */
+  icon: string;
+};
+
+export const JOB_STATUS_META: Record<JobStatus, JobStatusMetaEntry> = {
   queued: { tone: "neutral", label: "Queued", icon: "Loader" },
   running: { tone: "info", label: "Running", icon: "Loader" },
   review: { tone: "warning", label: "In review", icon: "Eye" },
@@ -78,14 +77,29 @@ export const JOB_STATUS_META: Record<
  * different question from an unrecognised one, answered in that file with its own
  * named constant rather than folded in here (a past run is not "Queued").
  */
-export function jobStatusMeta(status: string): (typeof JOB_STATUS_META)[JobStatus] {
-  return JOB_STATUS_META[status as JobStatus] ?? JOB_STATUS_META.queued;
+export function jobStatusMeta(status: string, viewerIsClient = false): JobStatusMetaEntry {
+  const meta = JOB_STATUS_META[status as JobStatus] ?? JOB_STATUS_META.queued;
+  return (viewerIsClient && CLIENT_JOB_STATUS_META[status as JobStatus]) || meta;
 }
+
+/**
+ * What a CLIENT reads instead, for the two states that would tell them about
+ * the human check. A client is never told their work is being reviewed or was
+ * approved (the portal-revamp SOW rule, "In review is removed. We are not
+ * reviewing anything", which Albert kept on 2026-09-10). Both read "Done": the
+ * agent's work is finished, and "Done" is what the progress strip says about
+ * the same run (run-progress.ts's `landed`). Every other state reads the same
+ * to both viewers.
+ */
+const CLIENT_JOB_STATUS_META: Partial<Record<JobStatus, JobStatusMetaEntry>> = {
+  review: { tone: "neon", label: "Done", icon: "CircleCheck" },
+  approved: { tone: "neon", label: "Done", icon: "CircleCheck" },
+};
 
 /**
  * The rendered label for one run state. Shorthand for a caller that paints its
  * own tone (the copilot's prompt builder has no tone at all).
  */
-export function jobStatusLabel(status: string): string {
-  return jobStatusMeta(status).label;
+export function jobStatusLabel(status: string, viewerIsClient = false): string {
+  return jobStatusMeta(status, viewerIsClient).label;
 }

@@ -149,8 +149,8 @@ export function IntakeFeedbackBox({
       <CardTitle>Feedback</CardTitle>
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not. In your own words, as much detail as you like.
-        It goes straight into the agent&apos;s next run. Once your Karos team has approved the drafts,
-        picking, editing and skipping happens on the drafts themselves, in{" "}
+        It goes straight into the agent&apos;s next run. Picking, editing and skipping happens on the
+        drafts themselves once they are in{" "}
         <a href={archive.href} className="underline hover:text-foreground">
           {archive.label}
         </a>

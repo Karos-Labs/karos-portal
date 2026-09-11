@@ -457,7 +457,7 @@ describe("an unrecognised run state has one answer", () => {
     // "Queued" — is a deliberate act.
     const cal = code(readFileSync(join(SRC, "components/run-calendar.tsx"), "utf8"));
     expect(cal.replace(/\s+/g, " ")).toContain(
-      "run.jobStatus ? jobStatusMeta(run.jobStatus) : NO_RUN_STATUS",
+      "run.jobStatus ? jobStatusMeta(run.jobStatus, viewerIsClient) : NO_RUN_STATUS",
     );
     expect(Object.values(JOB_STATUS_META).map((m) => m.label)).not.toContain("Done");
   });

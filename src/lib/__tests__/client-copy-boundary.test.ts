@@ -497,6 +497,14 @@ function offences(shape: string, opts: { payload?: boolean; jsx?: boolean } = {}
   if (/\b(?:your|the) Workspace\b/.test(text)) {
     out.push("\"your Workspace\" names no place work lands — use the nav's word");
   }
+  // Albert, 2026-09-10, keeping the portal-revamp SOW rule ("In review is
+  // removed. We are not reviewing anything"): a client is never told their work
+  // is being reviewed or approved by us. Say it is on its way. The shapes, not
+  // the word: customer reviews (the Reputation agent) and a client reading
+  // their own drafts ("ready to review") are different things.
+  if (/\bKaros team (?:is reviewing|reviews|has approved|approves|confirms)\b|\bin review\b/i.test(text)) {
+    out.push("tells a client we review or approve their work — say it is on its way");
+  }
   if (IS_PROSE.test(text) || opts.payload) {
     for (const token of STORED_ENUM_TOKENS) {
       if (new RegExp(`(^|[^A-Za-z0-9_])${token}([^A-Za-z0-9_]|$)`).test(text)) {
@@ -567,6 +575,15 @@ describe("the two rules themselves", () => {
     // And normalising must not INVENT one: a hyphen that ends the whole text, or
     // a bullet list, still reads clean.
     expect(offences("Trailing dash -", { jsx: true })).toEqual([]);
+  });
+
+  it("reads our review as an offence, and a customer's review as not one", () => {
+    expect(offences("Your Karos team is reviewing these.")).toHaveLength(1);
+    expect(offences("3 deliverables in review")).toHaveLength(1);
+    expect(offences("Once your Karos team has approved a reply, it appears here.")).toHaveLength(1);
+    // The Reputation agent's subject, and a client reading their own drafts.
+    expect(offences("Who should hear about an urgent review?")).toEqual([]);
+    expect(offences("The next post, ready to review.")).toEqual([]);
   });
 });
 
