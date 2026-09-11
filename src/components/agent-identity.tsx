@@ -100,15 +100,15 @@ const PLATFORM_BRAND: Record<SocialPlatform, { fill?: string; knockout?: ReactNo
  * would paint half the roster the same amber.
  */
 const FAMILY_MARKS: ReadonlyArray<{ match: RegExp; icon: string; color: string }> = [
-  { match: /\blanding\b/, icon: "LayoutTemplate", color: "var(--agent-landing)" },
-  { match: /\bnewsletter\b/, icon: "Mail", color: "var(--agent-newsletter)" },
+  { match: /\blanding\b/, icon: "LayoutTemplate", color: "landing" },
+  { match: /\bnewsletter\b/, icon: "Mail", color: "newsletter" },
   // Before SEO: a blog tagline that says "SEO-aware" is not the SEO agent.
-  { match: /\bblog\b/, icon: "PenLine", color: "var(--agent-blog)" },
-  { match: /\bseo\b|\bgeo\b/, icon: "Globe", color: "var(--agent-seo)" },
-  { match: /\breputation\b/, icon: "MessageSquare", color: "var(--agent-reputation)" },
-  { match: /\bcampaign\b/, icon: "Megaphone", color: "var(--agent-campaign)" },
-  { match: /\brebrand\b/, icon: "Sparkles", color: "var(--agent-rebrand)" },
-  { match: /\b(?:shorts?|video|clip)\b/, icon: "Video", color: "var(--agent-video)" },
+  { match: /\bblog\b/, icon: "PenLine", color: "blog" },
+  { match: /\bseo\b|\bgeo\b/, icon: "Globe", color: "seo" },
+  { match: /\breputation\b/, icon: "MessageSquare", color: "reputation" },
+  { match: /\bcampaign\b/, icon: "Megaphone", color: "campaign" },
+  { match: /\brebrand\b/, icon: "Sparkles", color: "rebrand" },
+  { match: /\b(?:shorts?|video|clip)\b/, icon: "Video", color: "video" },
 ];
 
 /**
@@ -119,7 +119,7 @@ const FAMILY_MARKS: ReadonlyArray<{ match: RegExp; icon: string; color: string }
 const OTHER_AGENT_COLOR_COUNT = 6;
 
 function otherAgentColor(identity: string): string {
-  return `var(--agent-hue-${(hashSeed(identity) % OTHER_AGENT_COLOR_COUNT) + 1})`;
+  return `hue-${(hashSeed(identity) % OTHER_AGENT_COLOR_COUNT) + 1}`;
 }
 
 /**
@@ -178,13 +178,15 @@ export function AgentMark({
   const family = FAMILY_MARKS.find((f) => f.match.test(value));
   const name = family?.icon ?? icon ?? "Sparkles";
   if (tone === "ink") return <Icon name={name} className={className} />;
-  // A heavier stroke than the app's 1.5 in colour: these sit beside filled logos.
+  // A heavier stroke than the app's 1.5 in colour: these sit beside filled
+  // logos. The colour is a `data-agent-color` rule in globals.css, where the
+  // tokens live and reverse for the light theme.
   return (
     <Icon
       name={name}
       className={className}
       strokeWidth={2}
-      style={{ color: family?.color ?? otherAgentColor(value) }}
+      data-agent-color={family?.color ?? otherAgentColor(value)}
     />
   );
 }

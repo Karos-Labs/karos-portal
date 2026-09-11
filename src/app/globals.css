@@ -522,3 +522,24 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Agent identity colours on a mark ──────────────────────────────────
+   `AgentMark` stamps `data-agent-color` on an agent's glyph; the colour comes
+   from the tokens above. Two reasons this is a rule and not an inline style:
+   the optimiser drops a custom property nothing in the stylesheet reads, and
+   an unlayered rule beats the caller's `text-*` utility (which sits in
+   @layer utilities), so a grey row cannot grey the mark. */
+[data-agent-color="landing"] { color: var(--agent-landing); }
+[data-agent-color="newsletter"] { color: var(--agent-newsletter); }
+[data-agent-color="blog"] { color: var(--agent-blog); }
+[data-agent-color="seo"] { color: var(--agent-seo); }
+[data-agent-color="reputation"] { color: var(--agent-reputation); }
+[data-agent-color="campaign"] { color: var(--agent-campaign); }
+[data-agent-color="rebrand"] { color: var(--agent-rebrand); }
+[data-agent-color="video"] { color: var(--agent-video); }
+[data-agent-color="hue-1"] { color: var(--agent-hue-1); }
+[data-agent-color="hue-2"] { color: var(--agent-hue-2); }
+[data-agent-color="hue-3"] { color: var(--agent-hue-3); }
+[data-agent-color="hue-4"] { color: var(--agent-hue-4); }
+[data-agent-color="hue-5"] { color: var(--agent-hue-5); }
+[data-agent-color="hue-6"] { color: var(--agent-hue-6); }

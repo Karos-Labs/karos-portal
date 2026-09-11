@@ -28,14 +28,15 @@ describe("an agent's mark", () => {
   it("gives the agents with no platform a glyph and a colour of their own", () => {
     const seo = renderToStaticMarkup(<AgentMark identity="seo-geo-agent-v2 SEO & GEO Agent" icon="Bot" />);
     expect(seo).toContain("lucide-globe");
-    // A token, so the light theme's deeper shade lives with the other tokens.
-    expect(seo).toContain("color:var(--agent-seo)");
+    // A rule on a data attribute, so the token lives in globals.css and
+    // reverses for the light theme with the rest.
+    expect(seo).toContain('data-agent-color="seo"');
     // A blog tagline that says "SEO-aware" is still the blog agent.
     const blog = renderToStaticMarkup(<AgentMark identity="karos-blog-writer-v2 SEO-aware Blog Agent" />);
     expect(blog).toContain("lucide-pen-line");
     const campaign = renderToStaticMarkup(<AgentMark identity="karos-campaign-orchestrator Campaign" />);
     expect(campaign).toContain("lucide-megaphone");
-    expect(campaign).toContain("color:var(--agent-campaign)");
+    expect(campaign).toContain('data-agent-color="campaign"');
   });
 
   it("matches a family on whole words only", () => {
@@ -50,7 +51,7 @@ describe("an agent's mark", () => {
     // A Dynamic Studio agent: its own stored icon, a colour picked from its name.
     const once = renderToStaticMarkup(<AgentMark identity="Market Pulse" icon="Radar" />);
     expect(once).toContain("lucide-radar");
-    expect(once).toContain("color:var(--agent-hue-");
+    expect(once).toContain('data-agent-color="hue-');
     expect(renderToStaticMarkup(<AgentMark identity="Market Pulse" icon="Radar" />)).toBe(once);
   });
 
@@ -70,7 +71,7 @@ describe("a platform logo that is not an agent's icon", () => {
     const chip = renderToStaticMarkup(<ContentPlatformMark platform="reddit" identity="Reddit Agent" />);
     expect(chip).toContain('fill="currentColor"');
     const family = renderToStaticMarkup(<ContentPlatformMark identity="seo-geo-agent-v2 SEO & GEO Agent" />);
-    expect(family).not.toContain("color:#");
+    expect(family).not.toContain("data-agent-color");
   });
 
   it("takes the colour where the tile is the agent's (a run card)", () => {
