@@ -19,17 +19,38 @@
  *      asset with the SAME meta.labRun keys the in-app importer writes, so
  *      the UI's lab-import screen shows these runs as already imported.
  *
- * Run:
- *   npx tsx scripts/import-lab-client.ts geektime            # dry run — prints the plan
- *   npx tsx scripts/import-lab-client.ts geektime --apply    # writes
- *   npx tsx scripts/import-lab-client.ts geektime --lab-root /path/to/karos-agents
+ * Run — name the database every time; the script refuses to guess:
+ *   FIRESTORE_DATABASE_ID=prep npx tsx scripts/import-lab-client.ts geektime                 # dry run — prints the plan
+ *   FIRESTORE_DATABASE_ID=prep npx tsx scripts/import-lab-client.ts geektime --apply         # writes to prep
+ *   FIRESTORE_DATABASE_ID="(default)" npx tsx scripts/import-lab-client.ts geektime --apply  # writes to PRODUCTION
+ *   FIRESTORE_DATABASE_ID=prep npx tsx scripts/import-lab-client.ts geektime --lab-root=/path/to/karos-agents
  *
- * DRY RUN IS THE DEFAULT ON PURPOSE. The credentials in .env.local point at
- * production Firestore. Read the printed plan first.
+ * DRY RUN IS THE DEFAULT ON PURPOSE. Read the printed plan first; its opening
+ * banner names the database and the storage bucket the run targets. A dry run
+ * never opens Firestore, so its plan lists everything as new — it cannot know
+ * what the named database already holds.
+ *
+ * DATABASE. One Firebase project, two databases: "(default)" is production,
+ * "prep" is prep, and the credentials in .env.local are for that one project.
+ * firebase-admin never reads FIRESTORE_DATABASE_ID itself: a bare
+ * getFirestore() opens "(default)" whatever that variable says, so this script
+ * used to write to production even when run as FIRESTORE_DATABASE_ID=prep.
+ * It now opens Firestore through scripts/lib/firestore-db.ts (SCRUM-374), which
+ * opens the named database and refuses — dry run included — when
+ * FIRESTORE_DATABASE_ID is unset or unrecognised. Production is never the
+ * fallback; it has to be named as "(default)".
+ *
+ * STORAGE IS SHARED. The logo + deliverable uploads go to
+ * NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET (required for --apply), the one bucket
+ * prep and production both use, whichever database is named. Deliverables are
+ * filed under the target database's client id, but the logo path is keyed by
+ * slug (client-logos/lab-<slug>/): a client's first import into the second
+ * database uploads over the object the first database's record points at, and
+ * the new download token leaves that record's logo URL dead — the stale-token
+ * failure scripts/repair-stale-lab-import-tokens.ts describes.
  *
  * Reads Firebase credentials from .env.local (same pattern as
- * backfill-branding.ts). Requires NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET for the
- * logo + deliverable uploads.
+ * backfill-branding.ts).
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
@@ -62,7 +83,8 @@ loadEnvFile(resolve(process.cwd(), ".env"));
 
 // ── Firebase Admin ───────────────────────────────────────────────────────────
 import { initializeApp, getApps, cert, type App } from "firebase-admin/app";
-import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import type { Firestore } from "firebase-admin/firestore";
+import { getScriptFirestore, resolveScriptDatabaseId } from "./lib/firestore-db";
 
 // Pure portal helpers (client-safe modules — no server-only imports).
 import {
@@ -105,7 +127,11 @@ function initAdmin(): Firestore {
   } else {
     app = getApps()[0]!;
   }
-  const db = getFirestore();
+  // Opens the database FIRESTORE_DATABASE_ID names, never a bare
+  // getFirestore() — that is "(default)", production, whatever the variable
+  // says. settings() merges into the instance's existing settings, so the
+  // database id survives it.
+  const db = getScriptFirestore(app);
   db.settings({ ignoreUndefinedProperties: true });
   return db;
 }
@@ -263,12 +289,26 @@ async function main() {
   const categoryArg = args.find((a) => a.startsWith("--category="))?.split("=")[1]
     ?? args.find((a) => a.startsWith("--industry="))?.split("=")[1];
   if (!slug) {
-    console.error("Usage: npx tsx scripts/import-lab-client.ts <slug> [--apply] [--lab-root=PATH] [--category=TEXT]");
+    console.error(
+      'Usage: FIRESTORE_DATABASE_ID=prep|"(default)" npx tsx scripts/import-lab-client.ts <slug> [--apply] [--lab-root=PATH] [--category=TEXT]',
+    );
     process.exit(1);
   }
 
+  // Resolved on a dry run too — a plan is never read without knowing which
+  // database it is for — and it throws, before anything else happens, when
+  // FIRESTORE_DATABASE_ID is unset or unrecognised. initAdmin opens this same
+  // database through getScriptFirestore.
+  const databaseId = resolveScriptDatabaseId();
+  const bucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+  console.log(apply ? "APPLYING lab-client import" : "DRY RUN — nothing is written. Pass --apply to write.");
   console.log(
-    apply ? "APPLYING lab-client import\n" : "DRY RUN — nothing is written. Pass --apply to write.\n",
+    `  database: ${databaseId === "(default)" ? "(default) — PRODUCTION" : databaseId}` +
+      (apply ? "" : " (a dry run does not open it, so the plan below lists everything as new)"),
+  );
+  console.log(
+    `  storage:  ${bucket || "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET is not set"} — one bucket shared by prep and ` +
+      "production: the logo and deliverable uploads land there whichever database is named\n",
   );
 
   const labRoot = resolve(labRootArg ?? join(homedir(), "karos-agents"));
