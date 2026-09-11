@@ -157,6 +157,27 @@ export interface Client {
    */
   agentsRepoSlug?: string;
   /**
+   * WHO OWNS THIS CLIENT'S PROFILE: its internal context documents, its brand
+   * and its tracked competitors.
+   *
+   * "lab" ⇒ the karos-agents lab does. `clients/<slug>/profile/*.md`,
+   * `profile/brand-colors.json`, `brand/logos/` and `profile/competitor-tracking.json`
+   * are hand-curated there and imported by `scripts/import-lab-client.ts`, which
+   * sets this field. The intel pipeline (onboarding, Regenerate, the schedule)
+   * then runs in its lab mode: it adds the Intel Report, the SEO/GEO capture and
+   * the action plan, refreshes the client-tier condensations from the lab's own
+   * documents, and never replaces those documents or re-derives the brand
+   * (`src/lib/lab-profile.ts`, `runIntelReportPipeline`).
+   *
+   * Absent ⇒ the portal's pipeline owns the profile and a Regenerate rewrites it,
+   * as it always has.
+   *
+   * Not inferred from `agentsRepoSlug`: every client the engine can run for has a
+   * slug (the research dispatch refuses a client without one), including every
+   * client whose documents the pipeline itself wrote.
+   */
+  profileSource?: "lab";
+  /**
    * CustomAgent ids this client's users may run themselves (billed in
    * credits). Managed by admins from the client settings page; absent/empty ⇒
    * the client sees no runnable agents.

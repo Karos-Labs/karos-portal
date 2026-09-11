@@ -41,6 +41,14 @@ and the rules for each token are documented in `src/app/globals.css`'s own heade
   recommendation" contract — canonical shape, invariants, and where the still-unbuilt
   engine-side mapping table needs to land — documented in
   `docs/routable-recommendation-contract.md` (SCRUM-210/C2).
+- **Lab-owned profiles** (2026-09): a client imported from the karos-agents lab by
+  `scripts/import-lab-client.ts` carries `profileSource: "lab"` (`src/lib/lab-profile.ts`).
+  The intel pipeline (`runIntelReportPipeline`: onboarding, Regenerate, the schedule) then
+  keeps its curated internal docs, its brand and its `source: "lab"` competitors, and writes
+  only the Intel Report, the SEO/GEO capture, the `action-plan` row and the client-tier
+  condensations. `agentsRepoSlug` alone does NOT mean lab-owned: every client the engine runs
+  for has one. Clients imported before the marker existed are marked with
+  `scripts/mark-lab-profile-client.ts`.
 - **Dynamic Agent Studio** (2026-08) is a deliberate, distinct reintroduction of an
   admin-authored agent builder — not the removed `lib/agents` engine. An admin composes a
   `dynamicAgentSpecs` doc (input schema + a step pipeline of AI/code steps) at

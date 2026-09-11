@@ -2,13 +2,15 @@ import "server-only";
 
 import type { Client } from "@/lib/types";
 import type { ParsedReport } from "@/lib/report-parser";
-import { getClient, upsertClientReport, replaceReportCompetitors } from "@/lib/data";
+import { getClient, getJob, upsertClientReport, replaceReportCompetitors } from "@/lib/data";
 import { buildClientReport } from "@/lib/report-parser";
 import { applyBrandingForClient } from "@/lib/branding";
+import { isLabProfileClient } from "@/lib/lab-profile";
 import {
   agentOnboardingDeps,
   dispatchAndAwaitResearch,
   writeContextDocsFromResearch,
+  writeLabContextDocsFromResearch,
 } from "./agent-onboarding";
 import { parsedReportFromDeliverable, rawMarkdownFromDeliverable } from "./deliverable-to-report";
 
@@ -34,6 +36,28 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+/**
+ * Materialize the run's seo-geo job, which is what writes `clientSeoGeo`
+ * (`materializeAgentEngineDeliverable` → `persistSeoGeoInsightsFromDeliverable`).
+ *
+ * Never throws, and never fails the run: the Intel Report is already stored,
+ * and a capture that does not land here still lands the next time the reconcile
+ * sweep or the Job page reaches the job — which is the only way it landed
+ * before. Loaded lazily, as the projection below is: materialize.ts brings the
+ * asset and calendar machinery with it, which nothing else here needs.
+ */
+async function landSeoGeoCapture(jobId: string | undefined): Promise<void> {
+  if (!jobId) return;
+  try {
+    const job = await getJob(jobId);
+    if (!job) return;
+    const { materializeAgentEngineDeliverable } = await import("@/lib/agent-engine/materialize");
+    await materializeAgentEngineDeliverable(job);
+  } catch (err) {
+    console.error(`[intel] SEO/GEO capture not materialized from job ${jobId} (non-fatal; the reconcile sweep retries):`, err);
+  }
+}
+
 /* ── Main pipeline ───────────────────────────────────────────────── */
 
 /**
@@ -43,7 +67,8 @@ function asRecord(value: unknown): Record<string, unknown> {
  *
  *   1. Dispatch `intel-report-agent` and `seo-geo-agent`, and wait for both
  *      deliverables.
- *   2. Store the Intel Report the first one produced.
+ *   2. Store the Intel Report the first one produced, and land the SEO/GEO
+ *      capture the second one produced.
  *   3. Compose the eight context documents from BOTH — fatal on failure — and
  *      refresh branding alongside, non-fatal.
  *
@@ -74,6 +99,26 @@ function asRecord(value: unknown): Record<string, unknown> {
  * of quietly falling back to an in-process report — there is no longer anything
  * to fall back TO, which is the point of a cutover.
  *
+ * ## Lab clients
+ *
+ * A client whose profile was imported from the karos-agents lab
+ * (`isLabProfileClient`: `profileSource: "lab"`) keeps it. The lab curated its
+ * internal documents, its brand and its competitors, and those are the source
+ * of truth; the research is not allowed to overwrite them. So for such a client
+ * step 3 changes and nothing else does:
+ *
+ *   - documents: only the generated action plan is written, and the client-tier
+ *     condensations are refreshed from the lab's own internal documents
+ *     (`writeLabContextDocsFromResearch`). No row is deleted or replaced.
+ *   - brand: `applyBrandingForClient` does not run. It re-derives the palette
+ *     from the website AND rewrites the internal branding-guidelines and
+ *     brand-voice documents, all three of which the lab owns.
+ *
+ * Its lab-imported competitors survive step 2 on their own, because
+ * `replaceReportCompetitors` never deletes a `source: "lab"` row. The Intel
+ * Report, the SEO/GEO capture and the projection into the engine workspace are
+ * the same for every client.
+ *
  * @param runSpecificContext Optional run-specific instructions entered at
  *   execution time. Forwarded to both agents as `customPrompt` — the shared
  *   wire field they already read — rather than compiled into a local prompt.
@@ -93,6 +138,11 @@ export async function runIntelReportPipeline(
   const { client, intelReport } = research;
   const deliverable = asRecord(intelReport);
 
+  // Who owns this client's profile, asked of the client as it is NOW: the copy
+  // above was read at dispatch, up to seventy minutes ago. A read that fails
+  // falls back to that copy rather than failing a run whose research is done.
+  const labProfile = isLabProfileClient((await deps.getClient(clientId).catch(() => null)) ?? client);
+
   // Step 2. Same three writes as before, from the same `ParsedReport` shape —
   // only its provenance changed.
   const now = Date.now();
@@ -101,7 +151,9 @@ export async function runIntelReportPipeline(
     now,
   });
 
-  // Atomically replace competitors: delete old + create new in one Firestore batch
+  // Atomically replace competitors: delete old + create new in one Firestore
+  // batch. Manual and lab rows are kept (and absorb their analysis twins)
+  // inside `replaceReportCompetitors`, for every caller, not only this one.
   await replaceReportCompetitors(
     clientId,
     parsed.competitorRows.map((row) => ({
@@ -125,26 +177,49 @@ export async function runIntelReportPipeline(
   };
   await upsertClientReport(reportData);
 
+  // The SEO/GEO capture, landed by this run rather than by whoever gets to the
+  // job next. `clientSeoGeo` is written only when the seo-geo job is
+  // materialized, and nothing on this path used to do that: it happened when the
+  // reconcile sweep or a view of the Job page reached the job, which on prep
+  // (no sweep) meant never, until somebody opened it. Same function, same
+  // idempotency: whichever of the three gets there first writes it, and the
+  // others find the job already materialized. After the competitor replacement
+  // on purpose — the capture's roster is read from the stored competitors.
+  await landSeoGeoCapture(research.jobIds?.seoGeo);
+
   // Step 3. Context documents are FATAL when they fail: those documents are the
   // ground truth every downstream agent consumes, so a run that silently skips
   // them must surface as failed (onboardingStatus: "failed"), not as "done".
   // Branding stays non-fatal — it is cosmetic relative to the intel outputs.
-  const [docsResult] = await Promise.allSettled([
-    writeContextDocsFromResearch(research, deps),
-    applyBrandingForClient(clientId, client)
-      .then((r) => {
-        console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryAccent ?? "no color"}`);
-      })
-      .catch((err: unknown) => {
-        console.error("[intel] Branding generation failed (non-fatal):", err);
-      }),
-  ]);
+  //
+  // A lab client's documents and brand are the lab's (see this function's own
+  // note): the run writes the action plan and the client-tier condensations, and
+  // branding does not run at all.
+  let docsResult: PromiseSettledResult<{ docsWritten: number }>;
+  if (labProfile) {
+    console.info(
+      `[intel] ${client.name} is a lab client: curated documents and brand kept; writing the action plan and client-tier condensations only`,
+    );
+    [docsResult] = await Promise.allSettled([writeLabContextDocsFromResearch(research, deps)]);
+  } else {
+    [docsResult] = await Promise.allSettled([
+      writeContextDocsFromResearch(research, deps),
+      applyBrandingForClient(clientId, client)
+        .then((r) => {
+          console.info(`[intel] Branding refreshed for ${client.name} (${r.source}): ${r.primaryAccent ?? "no color"}`);
+        })
+        .catch((err: unknown) => {
+          console.error("[intel] Branding generation failed (non-fatal):", err);
+        }),
+    ]);
+  }
 
   // Branding just rewrote the client's palette; the projection that ran inside
   // the doc pipeline read the client BEFORE that landed. Re-project brand and
   // profile now so the engine's `client/brand.json` is the palette the portal
   // shows — the intel report was describing a background the portal had
-  // already corrected. Best-effort, like everything on this side channel.
+  // already corrected. Best-effort, like everything on this side channel. (A
+  // lab client's brand did not move; this projects the lab's, as every run does.)
   try {
     const [{ projectClientToWorkspace }, freshClient] = await Promise.all([import("@/lib/agent-engine/context-doc-projection"), getClient(clientId)]);
     if (freshClient) await projectClientToWorkspace(freshClient, undefined);
