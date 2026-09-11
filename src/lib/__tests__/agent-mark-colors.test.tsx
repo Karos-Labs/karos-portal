@@ -28,21 +28,29 @@ describe("an agent's mark", () => {
   it("gives the agents with no platform a glyph and a colour of their own", () => {
     const seo = renderToStaticMarkup(<AgentMark identity="seo-geo-agent-v2 SEO & GEO Agent" icon="Bot" />);
     expect(seo).toContain("lucide-globe");
-    // Two shades: the deeper on the light theme, the lighter on the dark one.
-    expect(seo).toContain("color:light-dark(#2563EB, #60A5FA)");
+    // A token, so the light theme's deeper shade lives with the other tokens.
+    expect(seo).toContain("color:var(--agent-seo)");
     // A blog tagline that says "SEO-aware" is still the blog agent.
     const blog = renderToStaticMarkup(<AgentMark identity="karos-blog-writer-v2 SEO-aware Blog Agent" />);
     expect(blog).toContain("lucide-pen-line");
     const campaign = renderToStaticMarkup(<AgentMark identity="karos-campaign-orchestrator Campaign" />);
     expect(campaign).toContain("lucide-megaphone");
-    expect(campaign).toContain("color:light-dark(");
+    expect(campaign).toContain("color:var(--agent-campaign)");
+  });
+
+  it("matches a family on whole words only", () => {
+    // "Shortlist" is not a video agent; a name that merely contains a family
+    // word keeps its stored icon.
+    const html = renderToStaticMarkup(<AgentMark identity="Shortlist builder" icon="ListChecks" />);
+    expect(html).toContain("lucide-list-checks");
+    expect(html).not.toContain("lucide-video");
   });
 
   it("gives an agent outside the table a colour too, the same one every time", () => {
     // A Dynamic Studio agent: its own stored icon, a colour picked from its name.
     const once = renderToStaticMarkup(<AgentMark identity="Market Pulse" icon="Radar" />);
     expect(once).toContain("lucide-radar");
-    expect(once).toContain("color:light-dark(");
+    expect(once).toContain("color:var(--agent-hue-");
     expect(renderToStaticMarkup(<AgentMark identity="Market Pulse" icon="Radar" />)).toBe(once);
   });
 

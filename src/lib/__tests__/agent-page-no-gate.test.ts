@@ -102,7 +102,7 @@ describe("the run form, drawn in the page", () => {
   it("has one started state, driven by the watch", () => {
     expect(RUN.match(/if \(started\b/g) ?? []).toHaveLength(1);
     const branch = RUN.slice(RUN.indexOf("if (started) {"));
-    expect(branch.slice(0, 4000)).toContain("outcomeOf(");
+    expect(branch.slice(0, 4000)).toContain("watchedOutcome(");
   });
 
   // No run duration either: the client-copy sweep (client-copy-boundary.test.ts)

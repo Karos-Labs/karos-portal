@@ -59,6 +59,16 @@ export function isServedPlatform(platform: string | null | undefined, served: Re
   return !platform || served.has(integrationKey(platform));
 }
 
+/**
+ * Which proposals the channel rule applies to: content, and connecting a NEW
+ * channel. Re-authenticating one the client already connected is neither — a
+ * YouTube connected for analytics still needs its token renewed.
+ */
+export function proposalNeedsServedPlatform(task: { owner: string; title: string }): boolean {
+  if (task.owner === "karos_managed") return true;
+  return /\bconnect\b/i.test(task.title) && !/re-?auth/i.test(task.title);
+}
+
 /** What a skipped proposal leaves behind (client copy: the War Room prints it). */
 export function unservedPlatformSkipNote(skipped: number): string {
   return `${skipped} not added: no agent of yours posts to that channel`;

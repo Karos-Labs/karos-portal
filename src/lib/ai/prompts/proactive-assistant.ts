@@ -8,6 +8,7 @@
  */
 
 import { assetTypeLabel } from "@/lib/asset-type-copy";
+import { platformLabel } from "@/lib/integrations/platforms";
 
 /* ── Proactive context types ─────────────────────────────────────── */
 
@@ -154,7 +155,9 @@ export function buildProactiveSystemAppendix(ctx: ProactiveSystemContext): strin
   const served = new Set(ctx.servedPlatforms);
   const servedList = ctx.servedPlatforms.length > 0 ? ctx.servedPlatforms.join(", ") : "(none yet)";
   const activeIntegrations = ctx.integrations.filter((i) => i.status === "active");
-  const expiredIntegrations = ctx.integrations.filter((i) => i.status === "expired" && served.has(i.platform));
+  // Every expired connection, served or not: re-authenticating a channel the
+  // client already connected (for analytics, say) is not a content task.
+  const expiredIntegrations = ctx.integrations.filter((i) => i.status === "expired");
   const gapLines = activeIntegrations.map(({ platform }) => {
     if (!served.has(platform)) {
       return `• ${platform}: connected, but no agent posts there — NOT a content gap, never a task`;
@@ -215,22 +218,15 @@ BENCHMARK RULES — you MUST apply these when proposing content tasks:
         .join(", ")
     : "";
 
-  /* Individual per-platform onboarding tasks for every unlinked social channel
-     an agent posts to — connecting a channel nothing posts to is the same
-     non-task as filling it. Keys are the CANONICAL integration platform keys
-     (ClientIntegration.platform and the create_tasks `platform` enum) —
-     "twitter", never "x". */
-  const CANONICAL_PLATFORMS: Array<{ key: string; display: string }> = [
-    { key: "instagram", display: "Instagram"   },
-    { key: "linkedin",  display: "LinkedIn"    },
-    { key: "twitter",   display: "X (Twitter)" },
-    { key: "youtube",   display: "YouTube"     },
-    { key: "tiktok",    display: "TikTok"      },
-  ];
+  /* Individual per-platform onboarding tasks for every unlinked channel an
+     agent posts to — connecting a channel nothing posts to is the same
+     non-task as filling it. The list IS the served list (integration keys:
+     "twitter", never "x"), named by the registry, so a client with a Reddit
+     agent is asked to connect Reddit and nobody is asked to connect YouTube. */
   const linkedNorm = ctx.linkedSocialPlatforms.map((p) => p.toLowerCase());
-  const missingPlatforms = CANONICAL_PLATFORMS.filter(
-    ({ key }) => served.has(key) && !linkedNorm.includes(key),
-  );
+  const missingPlatforms = ctx.servedPlatforms
+    .filter((key) => !linkedNorm.includes(key))
+    .map((key) => ({ key, display: platformLabel(key) }));
 
   const onboardingBlock = missingPlatforms.length > 0
     ? `### SOCIAL PLATFORM ONBOARDING — "DEPENDING ON YOU" TASKS (MANDATORY, INDIVIDUAL)

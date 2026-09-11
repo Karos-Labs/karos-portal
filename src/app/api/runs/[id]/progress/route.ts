@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireClientAccess } from "@/lib/actions/_shared";
 import { readAgentEngineRunRecord } from "@/lib/agent-engine/read-run";
 import { isJobInProgress, reconciledJobStatus } from "@/lib/agent-engine/reconcile";
+import { getCurrentUser } from "@/lib/auth";
 import { getJob } from "@/lib/data";
 import { runOutcome, type RunProgressView } from "@/lib/run-progress";
 import { stepHeadline } from "@/lib/run-step-headline";
@@ -47,7 +48,10 @@ import { stepHeadline } from "@/lib/run-step-headline";
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const job = await getJob(id);
+  // The job and the session are independent reads, and this is hit every four
+  // seconds: `getCurrentUser` is cached per request, so the access check below
+  // finds it resolved. The run read waits for that check.
+  const [job] = await Promise.all([getJob(id), getCurrentUser()]);
   if (!job) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   try {

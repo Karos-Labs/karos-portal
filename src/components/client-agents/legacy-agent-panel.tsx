@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ContactUsButton } from "@/components/contact-us-modal";
 import { AgentRunProgress } from "@/components/client-agents/run-progress";
+import { useShowRunInPage } from "@/components/run-watch";
 import {
   AgentScheduleModal,
   CancelRunControl,
@@ -122,6 +123,9 @@ export function LegacyAgentPanel({
   // another page. The form opens on its data; saving it re-evaluates the gate.
   const setupHere = !gate.allowed && gate.code === "setup_missing" && Boolean(setup?.kind);
 
+  // The banner below is this page's view of the run; the dock leaves it alone
+  // while the banner is up.
+  useShowRunInPage(activeRun?.id ?? null);
   return (
     <div className="space-y-6">
       {activeRun && (
@@ -141,7 +145,11 @@ export function LegacyAgentPanel({
           row whose Sparkles button opened the run dialog (see AgentSetupHero).
           The price is on the form's own footer, for both readers. */}
       {gate.allowed || setupHere ? (
+        /* Keyed by the run: once the page knows about the run the form just
+           started, the banner above is its one view, and the form comes back
+           fresh for the next one rather than showing the same bar twice. */
         <RunCustomAgentModal
+          key={activeRun?.id ?? "idle"}
           agent={agent}
           clientId={clientId}
           engineDispatch={engineDispatch}

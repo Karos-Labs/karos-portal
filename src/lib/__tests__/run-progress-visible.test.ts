@@ -189,7 +189,10 @@ describe("the run dialog's started panel", () => {
     // One poller per run. When the dialog polled for itself, a reader who left
     // it open behind the dock had two intervals on one job.
     expect(dialog).toContain("watchRun({");
-    expect(dialog).toContain("useRunWatch()");
+    // One run, not the whole store: an idle form must not re-render on every
+    // tick of some other run.
+    expect(dialog).toContain("useRunWatchActions()");
+    expect(dialog).toContain("useWatchedRun(");
     expect(dialog).not.toContain("setInterval");
     expect(panel).not.toContain("fetch(");
   });

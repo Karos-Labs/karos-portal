@@ -30,6 +30,13 @@ export interface AgentBriefField {
   key: string;
   label: string;
   type: AgentBriefFieldType;
+  /**
+   * This box is the run's direction (the shared "Direction for this run
+   * (optional)" steer), not a topic it asks for. Declared here rather than
+   * read off the label, so a copy edit can never change what the engine is
+   * sent (see `requestSteersRun`).
+   */
+  steersRun?: true;
   required?: boolean;
   placeholder?: string;
   helper?: string;
@@ -438,6 +445,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         {
           key: "request",
           label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
           // WAS "it wins over everything else this run" — a precedence the
           // engine does not implement for this product. engine-field-contract
@@ -530,6 +538,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         {
           key: "request",
           label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
           placeholder: "A launch to feature, a topic to hit.",
         },
@@ -656,6 +665,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
         {
           key: "request",
           label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
           placeholder: "A launch to feature, a topic to hit, a seat to focus on.",
         },
@@ -690,6 +700,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           // without "(optional)". No helper line (2026-09-10): "(optional)"
           // already says a blank box is fine.
           label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
           placeholder: "A subreddit to prioritise, a question type to look for.",
         },
@@ -959,6 +970,7 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           // reputation run internally; to a client it is one more word to
           // learn for a field that works exactly like its siblings.
           label: STEER_RUN_LABEL,
+          steersRun: true,
           type: "textarea",
           placeholder: "A surface to prioritise, a complaint you already know about, a week you care about.",
           helper: "Leave it empty and we cover every surface on your roster since the last run.",
@@ -1399,7 +1411,7 @@ export function agentEngineProductAcceptsMediaAssets(engineProductId: string | u
  * so neither field the two boxes used to fill goes empty.
  */
 export function requestSteersRun(profile: AgentLaunchProfile): boolean {
-  return profile.fields.some((f) => f.key === "request" && f.label === STEER_RUN_LABEL);
+  return profile.fields.some((f) => f.key === "request" && f.steersRun === true);
 }
 
 /**

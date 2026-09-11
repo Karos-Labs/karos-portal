@@ -12,6 +12,8 @@ const run = vi.fn();
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/data", () => ({ getJob: (id: string) => job(id) }));
 vi.mock("@/lib/actions/_shared", () => ({ requireClientAccess: async () => undefined }));
+// The route resolves the session alongside the job read; the access check above is the mock that decides.
+vi.mock("@/lib/auth", () => ({ getCurrentUser: async () => null }));
 vi.mock("@/lib/agent-engine/read-run", () => ({ readAgentEngineRunRecord: (id: string) => run(id) }));
 
 import { GET } from "@/app/api/runs/[id]/progress/route";

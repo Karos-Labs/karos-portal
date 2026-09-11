@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   isServedPlatform,
+  proposalNeedsServedPlatform,
   servedPlatformKeys,
   unservedPlatformSkipNote,
   withoutAgentIds,
@@ -49,6 +50,14 @@ describe("the channels an agent posts to", () => {
   it("say why in the client's words", () => {
     expect(unservedPlatformSkipNote(2)).toBe("2 not added: no agent of yours posts to that channel");
   });
+
+  it("apply to content and to connecting a new channel, not to renewing one", () => {
+    expect(proposalNeedsServedPlatform({ owner: "karos_managed", title: "Produce 6 YouTube Shorts" })).toBe(true);
+    expect(proposalNeedsServedPlatform({ owner: "client_managed", title: "Connect YouTube account to Karos" })).toBe(true);
+    // A YouTube connected for analytics still needs its token renewed.
+    expect(proposalNeedsServedPlatform({ owner: "client_managed", title: "Re-authenticate youtube connection" })).toBe(false);
+    expect(proposalNeedsServedPlatform({ owner: "client_managed", title: "Approve the brand deck" })).toBe(false);
+  });
 });
 
 describe("what the client reads", () => {
@@ -93,6 +102,26 @@ describe("the copilot's prompt", () => {
   it("asks for names, never identifiers, in a title or description", () => {
     expect(buildProactiveSystemAppendix(base)).toContain("NAMES, NEVER IDENTIFIERS");
   });
+
+  it("still asks for a re-authentication on a channel nobody posts to", () => {
+    const appendix = buildProactiveSystemAppendix({
+      ...base,
+      integrations: [{ platform: "youtube", status: "expired" as const }],
+    });
+    expect(appendix).toContain("Re-authenticate youtube connection");
+  });
+
+  it("asks to connect exactly the channels an agent posts to, by the registry's name", () => {
+    const appendix = buildProactiveSystemAppendix({
+      ...base,
+      linkedSocialPlatforms: [],
+      servedPlatforms: ["reddit", "twitter"],
+      integrations: [],
+    });
+    expect(appendix).toContain("Connect Reddit account to Karos");
+    expect(appendix).toContain("Connect X (Twitter) account to Karos");
+    expect(appendix).not.toContain("Connect YouTube account");
+  });
 });
 
 describe("every writer and the calendar ask the rule", () => {
@@ -100,16 +129,18 @@ describe("every writer and the calendar ask the rule", () => {
 
   it("the copilot's create_tasks tool", () => {
     const route = src("app/api/clients/[id]/chat/route.ts");
-    expect(route).toContain("if (!isServedPlatform(t.platform, servedPlatforms)) {");
+    expect(route).toContain("if (proposalNeedsServedPlatform(t) && !isServedPlatform(t.platform, servedPlatforms)) {");
     expect(route).toContain("title: withoutAgentIds(t.title, customAgents),");
     expect(route).toContain("servedPlatforms: [...servedPlatforms],");
   });
 
-  it("the War Room's persist", () => {
-    const swarm = src("lib/agent-swarm.ts");
-    expect(swarm).toContain("if (!isServedPlatform(t.platform, served)) {");
-    expect(swarm).toContain("title: withoutAgentIds(t.title, customAgents),");
-    expect(swarm).toContain("CHANNELS WE POST TO:");
+  it("the War Room's prompt names the channels (its persist is exercised in agent-swarm.test.ts)", () => {
+    expect(src("lib/agent-swarm.ts")).toContain("CHANNELS WE POST TO:");
+  });
+
+  it("the cron that fires a War Room run on a sparse calendar", () => {
+    const cron = src("app/api/tasks/auto-generate/route.ts");
+    expect(cron).toContain("served.has(i.platform)");
   });
 
   it("the calendar, before it offers a proposal for approval", () => {

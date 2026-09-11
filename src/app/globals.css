@@ -74,6 +74,26 @@
   --danger: #d65a52;
   --info: #8ba1b7;
 
+  /* Agent identity colours (Albert, 2026-09-10: "always have the agents be of
+     their color"). One hue per agent family, plus six for agents outside the
+     families, so a roster reads by colour the way the platform agents read by
+     their logos. Outside the judgment scale on purpose: these say WHO an agent
+     is, never how it is doing. Light mode keeps each hue and deepens it. */
+  --agent-landing: #a78bfa;
+  --agent-newsletter: #fbbf24;
+  --agent-blog: #34d399;
+  --agent-seo: #60a5fa;
+  --agent-reputation: #f472b6;
+  --agent-campaign: #2dd4bf;
+  --agent-rebrand: #e879f9;
+  --agent-video: #f87171;
+  --agent-hue-1: #38bdf8;
+  --agent-hue-2: #818cf8;
+  --agent-hue-3: #a3e635;
+  --agent-hue-4: #fb923c;
+  --agent-hue-5: #22d3ee;
+  --agent-hue-6: #fb7185;
+
   --radius: 6px;           /* Ember squares things off */
 
   /* THE focus colour (round 6). Ink, not orange, and one token for the whole
@@ -358,6 +378,23 @@ body {
   --warning: #a8781e;
   --danger: #b04a43;
   --info: #5b7186;
+
+  /* Agent identity colours deepen the same way; every pair clears 3:1 on the
+     lightest and darkest tiles of its own theme. */
+  --agent-landing: #7c3aed;
+  --agent-newsletter: #b45309;
+  --agent-blog: #047857;
+  --agent-seo: #2563eb;
+  --agent-reputation: #db2777;
+  --agent-campaign: #0f766e;
+  --agent-rebrand: #c026d3;
+  --agent-video: #dc2626;
+  --agent-hue-1: #0369a1;
+  --agent-hue-2: #4f46e5;
+  --agent-hue-3: #4d7c0f;
+  --agent-hue-4: #c2410c;
+  --agent-hue-5: #0e7490;
+  --agent-hue-6: #e11d48;
 
   /* Elevation carries the weight here - see the note on the dark values. Warm
      charcoal rather than pure black in the shadow, so a card floats over paper

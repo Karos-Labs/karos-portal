@@ -70,12 +70,16 @@ export interface WatchedRun {
    * skips it. Held only while that view is MOUNTED (`useShowRunInPage`): it
    * used to be the page address the run started on, which kept hiding the run
    * after "Start another" or a trip away and back — when nothing else on the
-   * page could show it. Never persisted.
+   * page could show it. Never persisted (see `persist`).
    */
   shownInPage?: boolean;
   /** What the agent is doing now (RunProgressView.headline). Not persisted: the next tick refills it. */
   headline?: string;
-  /** The agent's part is done and the run is parked (RunProgressView.agentDone). */
+  /**
+   * The agent's part is done and the run is parked (RunProgressView.agentDone).
+   * Not persisted either: a reload asks again rather than painting "Done" off
+   * a value the gate may have rejected while the tab was closed.
+   */
   agentDone?: boolean;
 }
 
@@ -111,17 +115,20 @@ function load(): WatchedRun[] {
         // field stops being checked.
         ((r as WatchedRun).href === undefined || typeof (r as WatchedRun).href === "string"),
     );
-    return rows.length === 0
-      ? EMPTY
-      : rows.slice(0, MAX_WATCHED).map(({ headline: _h, shownInPage: _s, ...rest }) => rest);
+    return rows.length === 0 ? EMPTY : rows.slice(0, MAX_WATCHED).map(persistedFields);
   } catch {
     return EMPTY;
   }
 }
 
+/** What survives a reload: the run's identity and its last status, nothing a tick refills. */
+function persistedFields({ headline: _h, shownInPage: _s, agentDone: _d, ...rest }: WatchedRun): WatchedRun {
+  return rest;
+}
+
 function persist(runs: WatchedRun[]) {
   try {
-    sessionStorage.setItem(KEY, JSON.stringify(runs));
+    sessionStorage.setItem(KEY, JSON.stringify(runs.map(persistedFields)));
   } catch {
     // A tab with storage blocked still gets the watch for as long as it stays
     // on the page. Losing it on reload is a worse experience, not a broken one.
@@ -205,8 +212,19 @@ const stillWorking = (runs: WatchedRun[]) =>
 /* ───────────────────────────────── the poller ──────────────────────────────── */
 
 let timer: ReturnType<typeof setInterval> | null = null;
+/** The tick in flight, so a slow answer is never overtaken by the next tick's request for the same runs. */
+let inFlight: Promise<void> | null = null;
+let watchingVisibility = false;
 
-async function pollOnce() {
+function pollOnce(): Promise<void> {
+  if (inFlight) return inFlight;
+  inFlight = pollNow().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+async function pollNow() {
   const ids = stillWorking(getSnapshot()).map((r) => r.jobId);
   if (ids.length === 0) {
     if (timer) {
@@ -260,11 +278,54 @@ async function pollOnce() {
   if (changed) commit(next.length === 0 ? EMPTY : next);
 }
 
+/** A tab nobody is looking at asks nothing; it asks once the moment it is looked at again. */
+function tabHidden(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
 function ensurePolling() {
+  if (!watchingVisibility && typeof document !== "undefined") {
+    watchingVisibility = true;
+    document.addEventListener("visibilitychange", () => {
+      if (!tabHidden() && timer !== null) void pollOnce();
+    });
+  }
   if (timer !== null) return;
   if (stillWorking(getSnapshot()).length === 0) return;
   void pollOnce(); // answer immediately, then on the interval
-  timer = setInterval(() => void pollOnce(), TICK_MS);
+  timer = setInterval(() => {
+    if (!tabHidden()) void pollOnce();
+  }, TICK_MS);
+}
+
+/** The reader's question, answered from one watched run (the dock and the forms share it). */
+export function watchedOutcome(run: WatchedRun): RunOutcome | undefined {
+  if (run.agentDone) return "landed";
+  return run.status === undefined ? undefined : runOutcome(run.status);
+}
+
+/**
+ * One run, for the view that started it. Subscribes to THAT run only: the
+ * snapshot is the run object, which the poller keeps by reference while it
+ * learns nothing new, so a form idling on an agent page does not re-render on
+ * every tick of some other run.
+ */
+export function useWatchedRun(jobId: string | null | undefined): WatchedRun | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => (jobId ? (getSnapshot().find((r) => r.jobId === jobId) ?? null) : null),
+    () => null,
+  );
+}
+
+/** Start or stop watching, for a view that reads a single run through `useWatchedRun`. */
+export function useRunWatchActions(): Pick<RunWatchApi, "watch" | "forget"> {
+  const watch = useCallback((run: Omit<WatchedRun, "status">) => {
+    addWatch(run);
+    ensurePolling();
+  }, []);
+  const forget = useCallback((jobId: string) => dropWatch(jobId), []);
+  return useMemo(() => ({ watch, forget }), [watch, forget]);
 }
 
 /* ────────────────────────────────── the hook ───────────────────────────────── */
@@ -302,8 +363,7 @@ export function useRunWatch(): RunWatchApi {
       forget,
       outcomeOf: (jobId) => {
         const run = runs.find((r) => r.jobId === jobId);
-        if (run?.agentDone) return "landed";
-        return run?.status === undefined ? undefined : runOutcome(run.status);
+        return run ? watchedOutcome(run) : undefined;
       },
     }),
     [runs, watch, forget],

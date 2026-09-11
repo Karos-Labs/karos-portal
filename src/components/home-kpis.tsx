@@ -123,19 +123,17 @@ function Delta({
   text,
   note,
   noBasis,
-  className,
 }: {
   pct: number | null;
   text: string;
   note?: string;
   noBasis?: string;
-  className?: string;
 }) {
   if (pct == null) {
-    return noBasis ? <p className={cn("text-xs text-muted-2", className)}>{noBasis}</p> : null;
+    return noBasis ? <p className="text-xs text-muted-2">{noBasis}</p> : null;
   }
   return (
-    <p className={cn("text-xs", pct >= 0 ? "text-success" : "text-danger", className)}>
+    <p className={cn("text-xs", pct >= 0 ? "text-success" : "text-danger")}>
       <Icon name={pct >= 0 ? "ArrowUp" : "ArrowDown"} className="mr-1 inline h-3 w-3" />
       <span className="tabular">
         {pct >= 0 ? "+" : ""}
@@ -316,6 +314,15 @@ export function HomeKpisWidget({
   // href is part of the same test rather than a second one.
   const series = audienceSeries ?? [];
   const showAudience = series.length >= 2 && Boolean(audienceHref);
+  // Built once: the tile and the strip say the same thing about the delta.
+  const publishedDelta = (
+    <Delta
+      pct={throughput.deltaPct}
+      text={`${throughput.deltaPct}%`}
+      note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
+      noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
+    />
+  );
 
   return (
     <Card>
@@ -354,11 +361,12 @@ export function HomeKpisWidget({
             <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
               {(audienceTotal ?? 0).toLocaleString()}
             </p>
-            <Delta
-              pct={audienceGrowthPct ?? null}
-              text={audienceGrowthPct == null ? "" : `${audienceGrowthPct.toFixed(1)}%`}
-              className="mt-0.5"
-            />
+            <div className="mt-0.5">
+              <Delta
+                pct={audienceGrowthPct ?? null}
+                text={audienceGrowthPct == null ? "" : `${audienceGrowthPct.toFixed(1)}%`}
+              />
+            </div>
             <div className="mt-2">
               <Sparkline counts={series.map((p) => p.count)} />
             </div>
@@ -368,38 +376,34 @@ export function HomeKpisWidget({
         {/* Content published — the cell the duplicated channel list vacated.
             Alone on the card it is a strip: the number and its delta beside
             the label, the thirty days on the right, one row high. */}
-        {showAudience ? (
-          <Cell icon="Send" label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`} href={contentHref}>
-            <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-              {throughput.count.toLocaleString()}
-            </p>
-            <Delta
-              pct={throughput.deltaPct}
-              text={`${throughput.deltaPct}%`}
-              note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
-              noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
-              className="mt-0.5"
-            />
-            <DailyBars counts={throughput.daily} className="mt-2.5" />
-          </Cell>
-        ) : (
-          <Cell icon="Send" label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`} href={contentHref} layout="strip">
-            <div className="flex items-baseline gap-2.5">
-              <p className="stat-number text-2xl font-semibold leading-none tracking-tight text-foreground">
+        <Cell
+          icon="Send"
+          label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`}
+          href={contentHref}
+          layout={showAudience ? "tile" : "strip"}
+        >
+          {showAudience ? (
+            <>
+              <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
                 {throughput.count.toLocaleString()}
               </p>
-              <Delta
-                pct={throughput.deltaPct}
-                text={`${throughput.deltaPct}%`}
-                note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
-                noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
-              />
-            </div>
-            <div className="min-w-[10rem] flex-1 @md:max-w-xs">
-              <DailyBars counts={throughput.daily} />
-            </div>
-          </Cell>
-        )}
+              <div className="mt-0.5">{publishedDelta}</div>
+              <DailyBars counts={throughput.daily} className="mt-2.5" />
+            </>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-2.5">
+                <p className="stat-number text-2xl font-semibold leading-none tracking-tight text-foreground">
+                  {throughput.count.toLocaleString()}
+                </p>
+                {publishedDelta}
+              </div>
+              <div className="min-w-[10rem] flex-1 @md:max-w-xs">
+                <DailyBars counts={throughput.daily} />
+              </div>
+            </>
+          )}
+        </Cell>
       </div>
     </Card>
   );

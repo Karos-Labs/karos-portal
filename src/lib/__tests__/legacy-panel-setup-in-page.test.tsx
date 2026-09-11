@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /**
  * A delivered agent whose data went missing since is set up again ON its page
@@ -60,6 +62,16 @@ function panel(setup: AgentSetupState): string {
     />,
   );
 }
+
+describe("one view of a run on the legacy page", () => {
+  it("claims the run for the page and remounts the form once the banner is up", () => {
+    // The banner and the form's own started view showed the same run twice;
+    // "Start another" then handed it to the dock as a third copy.
+    const src = readFileSync(join(process.cwd(), "src/components/client-agents/legacy-agent-panel.tsx"), "utf8");
+    expect(src).toContain("useShowRunInPage(activeRun?.id ?? null);");
+    expect(src).toContain('key={activeRun?.id ?? "idle"}');
+  });
+});
 
 describe("a delivered agent with its data missing", () => {
   it("opens the data form in the page", () => {

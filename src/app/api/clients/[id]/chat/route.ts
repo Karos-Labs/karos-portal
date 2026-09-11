@@ -25,7 +25,13 @@ import {
 } from "@/lib/data";
 import { listClientAgents, listClientAgentFeedback } from "@/lib/data-client-agents";
 import { findDuplicateReason, queueCapacitySkipNote } from "@/lib/task-dedup";
-import { isServedPlatform, servedPlatformKeys, unservedPlatformSkipNote, withoutAgentIds } from "@/lib/served-platforms";
+import {
+  isServedPlatform,
+  proposalNeedsServedPlatform,
+  servedPlatformKeys,
+  unservedPlatformSkipNote,
+  withoutAgentIds,
+} from "@/lib/served-platforms";
 import {
   CLIENT_PRICE_ROWS,
   CREDIT_COSTS,
@@ -1019,10 +1025,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       let capSkipped = 0;
       let unservedSkipped = 0;
       for (const t of withFocusDefault) {
-        // A channel no agent of this client's posts to gets no task of any
-        // kind, content or onboarding: nothing here can make anything for it
-        // (lib/served-platforms.ts, Albert 2026-09-11).
-        if (!isServedPlatform(t.platform, servedPlatforms)) {
+        // A channel no agent of this client's posts to gets no content task
+        // and no onboarding task: nothing here can make anything for it
+        // (lib/served-platforms.ts, Albert 2026-09-11). Re-authenticating a
+        // channel the client already connected still goes through.
+        if (proposalNeedsServedPlatform(t) && !isServedPlatform(t.platform, servedPlatforms)) {
           unservedSkipped++;
           continue;
         }

@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { Icon } from "@/components/icon";
+import { hashSeed } from "@/lib/analytics";
+import { PLATFORM_REGISTRY } from "@/lib/integrations/platforms";
 import { cn } from "@/lib/utils";
 
 export type SocialPlatform = "instagram" | "x" | "tiktok" | "linkedin" | "reddit" | "facebook" | "youtube";
@@ -62,68 +64,62 @@ export function platformForIntegrationId(id: string): SocialPlatform | null {
 /**
  * EVERY AGENT IN ITS OWN COLOUR (Albert, 2026-09-10: "always have the agents
  * be of their color"). A platform agent wears its platform's logo in the
- * platform's colour; X and TikTok are black-and-white marks, so they take the
- * ink (white on the dark ground, black on the light one). `knockout` is the
+ * platform's colour, read off the integration registry so the mark, the
+ * connect button and the channel card cannot drift apart. X and TikTok are
+ * black-and-white marks (the registry says #000000), so they take the ink
+ * instead: white on the dark ground, black on the light one. `knockout` is the
  * white that shows through a logo's cut-outs: Reddit's Snoo, LinkedIn's "in",
  * YouTube's play button.
  */
+const REGISTRY_ID: Partial<Record<SocialPlatform, string>> = { x: "twitter" };
+
+function brandFill(platform: SocialPlatform): string | undefined {
+  const entry = PLATFORM_REGISTRY.find((p) => p.id === (REGISTRY_ID[platform] ?? platform));
+  return entry && entry.color.toUpperCase() !== "#000000" ? entry.color : undefined;
+}
+
 const PLATFORM_BRAND: Record<SocialPlatform, { fill?: string; knockout?: ReactNode }> = {
   x: {},
   tiktok: {},
-  instagram: { fill: "#E4405F" },
-  linkedin: { fill: "#0A66C2", knockout: <rect x="2" y="2" width="20" height="20" fill="#fff" /> },
-  reddit: { fill: "#FF4500", knockout: <circle cx="12" cy="12" r="10.5" fill="#fff" /> },
-  facebook: { fill: "#0866FF", knockout: <circle cx="12" cy="12" r="11" fill="#fff" /> },
-  youtube: { fill: "#FF0000", knockout: <rect x="8.5" y="7.5" width="8" height="9" fill="#fff" /> },
+  instagram: { fill: brandFill("instagram") },
+  linkedin: { fill: brandFill("linkedin"), knockout: <rect x="2" y="2" width="20" height="20" fill="#fff" /> },
+  reddit: { fill: brandFill("reddit"), knockout: <circle cx="12" cy="12" r="10.5" fill="#fff" /> },
+  // Not a channel any more (the registry dropped it), so it draws in the ink.
+  facebook: {},
+  youtube: { fill: brandFill("youtube"), knockout: <rect x="8.5" y="7.5" width="8" height="9" fill="#fff" /> },
 };
-
-/**
- * One colour in two shades: the deeper one on the light theme, the lighter one
- * on the dark theme. `light-dark()` follows the page's `color-scheme`, which
- * globals.css sets on <html> per theme, so a server-rendered mark needs no
- * theme hook. No single shade could do both: the two themes' tiles are close
- * enough in the middle that every hue tried fell under 3:1 on one of them.
- */
-const shade = (light: string, dark: string) => `light-dark(${light}, ${dark})`;
 
 /**
  * The agents that are not a social platform: a glyph and a colour of their
  * own, so they read by colour the way the platform agents read by their logos.
- * Checked in order, only when no platform matched. ONE TABLE, so an agent's
- * colour is changed here and nowhere else. The stored `CustomAgent.color` is
- * not used: most agents carry a defaulted one, so it would paint half the
- * roster the same amber.
+ * Checked in order, only when no platform matched, on whole words: "Shortlist
+ * builder" is not a video agent. ONE TABLE, so an agent's colour is changed
+ * here and nowhere else; the colours themselves are tokens in globals.css,
+ * which is where they reverse for the light theme. The stored
+ * `CustomAgent.color` is not used: most agents carry a defaulted one, so it
+ * would paint half the roster the same amber.
  */
 const FAMILY_MARKS: ReadonlyArray<{ match: RegExp; icon: string; color: string }> = [
-  { match: /landing/, icon: "LayoutTemplate", color: shade("#7C3AED", "#A78BFA") },
-  { match: /newsletter/, icon: "Mail", color: shade("#B45309", "#FBBF24") },
+  { match: /\blanding\b/, icon: "LayoutTemplate", color: "var(--agent-landing)" },
+  { match: /\bnewsletter\b/, icon: "Mail", color: "var(--agent-newsletter)" },
   // Before SEO: a blog tagline that says "SEO-aware" is not the SEO agent.
-  { match: /blog/, icon: "PenLine", color: shade("#047857", "#34D399") },
-  { match: /seo|(^|[\s_-])geo([\s_-]|$)/, icon: "Globe", color: shade("#2563EB", "#60A5FA") },
-  { match: /reputation/, icon: "MessageSquare", color: shade("#DB2777", "#F472B6") },
-  { match: /campaign/, icon: "Megaphone", color: shade("#0F766E", "#2DD4BF") },
-  { match: /rebrand/, icon: "Sparkles", color: shade("#C026D3", "#E879F9") },
-  { match: /short|video|clip/, icon: "Video", color: shade("#DC2626", "#F87171") },
+  { match: /\bblog\b/, icon: "PenLine", color: "var(--agent-blog)" },
+  { match: /\bseo\b|\bgeo\b/, icon: "Globe", color: "var(--agent-seo)" },
+  { match: /\breputation\b/, icon: "MessageSquare", color: "var(--agent-reputation)" },
+  { match: /\bcampaign\b/, icon: "Megaphone", color: "var(--agent-campaign)" },
+  { match: /\brebrand\b/, icon: "Sparkles", color: "var(--agent-rebrand)" },
+  { match: /\b(?:shorts?|video|clip)\b/, icon: "Video", color: "var(--agent-video)" },
 ];
 
 /**
  * Every other agent (a Dynamic Studio agent, a lab product with no row above)
- * still gets a colour: one of these, picked from its name so it never changes
- * between renders or pages. Hues the table above does not use.
+ * still gets a colour: one of six tokens, picked from its name so it never
+ * changes between renders or pages. Hues the table above does not use.
  */
-const OTHER_AGENT_COLORS = [
-  shade("#0369A1", "#38BDF8"),
-  shade("#4F46E5", "#818CF8"),
-  shade("#4D7C0F", "#A3E635"),
-  shade("#C2410C", "#FB923C"),
-  shade("#0E7490", "#22D3EE"),
-  shade("#E11D48", "#FB7185"),
-] as const;
+const OTHER_AGENT_COLOR_COUNT = 6;
 
 function otherAgentColor(identity: string): string {
-  let hash = 0;
-  for (const ch of identity) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return OTHER_AGENT_COLORS[hash % OTHER_AGENT_COLORS.length]!;
+  return `var(--agent-hue-${(hashSeed(identity) % OTHER_AGENT_COLOR_COUNT) + 1})`;
 }
 
 /**

@@ -112,12 +112,14 @@ export function HomeStandingWidget({
    */
   footer?: ReactNode;
 }) {
-  const measured = presence != null && hasStanding(presence);
+  // The presence, when there is one measured; null otherwise, so every read
+  // below narrows once instead of re-asking `presence && measured`.
+  const standing = presence != null && hasStanding(presence) ? presence : null;
   // Three readings, two of which are conditional, so the column count is
   // counted rather than hardcoded: a `grid-cols-3` holding two tiles leaves a
   // third of the card empty, and that gap reads as a metric that failed to
   // load.
-  const tileCount = (visibilityScore ? 1 : 0) + (measured ? 2 : 0);
+  const tileCount = (visibilityScore ? 1 : 0) + (standing ? 2 : 0);
 
   return (
     <Card>
@@ -164,10 +166,10 @@ export function HomeStandingWidget({
           {visibilityScore && <ScoreTile view={visibilityScore} frame="tile" breakdown={false} />}
           {/* The figure printed plain: the popover behind it on the report is
               the detail this card sends the reader there for. */}
-          {presence && measured && <PresenceTile tile={presence.category} detail="plain" />}
-          {!(presence && measured) ? null : presence.rosterShare ? (
+          {standing && <PresenceTile tile={standing.category} detail="plain" />}
+          {standing && (standing.rosterShare ? (
             <SurfaceTile>
-              <RosterShare share={presence.rosterShare} />
+              <RosterShare share={standing.rosterShare} />
             </SurfaceTile>
           ) : (
             /* No competitors tracked ⇒ there is no denominator, so this is a
@@ -203,7 +205,7 @@ export function HomeStandingWidget({
                 them.
               </p>
             </Link>
-          )}
+          ))}
         </div>
       ) : (
         /* Staff-only branch in practice: a client caller gates on hasStanding. */

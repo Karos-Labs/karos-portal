@@ -8,7 +8,7 @@ import { DynamicAgentIntakeForm } from "@/components/dynamic-agent-intake-form";
 import { INTAKE_ACTION_FAILED, intakeSave } from "@/lib/intake-save";
 import { IntakeRunError } from "@/components/intake-run-error";
 import { AgentRunProgress } from "@/components/client-agents/run-progress";
-import { useRunWatch, useShowRunInPage } from "@/components/run-watch";
+import { useRunWatchActions, useShowRunInPage, useWatchedRun, watchedOutcome } from "@/components/run-watch";
 import { runOutcomeSentence } from "@/lib/run-progress";
 
 /**
@@ -88,7 +88,8 @@ export function DynamicAgentRun({
   const [started, setStarted] = useState(false);
   const [startedJobId, setStartedJobId] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const { runs, watch, outcomeOf } = useRunWatch();
+  const { watch } = useRunWatchActions();
+  const watched = useWatchedRun(started ? startedJobId : null);
   useShowRunInPage(started ? startedJobId : null);
 
   function handleSubmit(inputs: Record<string, DynamicAgentInputValue>) {
@@ -115,8 +116,8 @@ export function DynamicAgentRun({
   }
 
   if (started) {
-    const outcome = (startedJobId && outcomeOf(startedJobId)) || "working";
-    const headline = runs.find((r) => r.jobId === startedJobId)?.headline;
+    const outcome = (watched && watchedOutcome(watched)) || "working";
+    const headline = watched?.headline;
     return (
       <Card>
         <CardTitle className="mb-3">Your run has started</CardTitle>

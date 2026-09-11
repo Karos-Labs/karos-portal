@@ -48,7 +48,7 @@ import {
 } from "@/lib/credits";
 import { intakePageHref, type IntakeFamily } from "@/lib/agent-intake-links";
 import { agentArchetype, OUTPUT_NOUN } from "@/lib/agent-archetype";
-import { useRunWatch, useShowRunInPage } from "@/components/run-watch";
+import { useRunWatchActions, useShowRunInPage, useWatchedRun, watchedOutcome } from "@/components/run-watch";
 import { runOutcomeSentence } from "@/lib/run-progress";
 import { scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { validateScheduleTiming } from "@/lib/scheduling";
@@ -2290,7 +2290,8 @@ export function RunCustomAgentModal({
    * store the dock reads, so the panel below and the corner card cannot say two
    * different things about one run.
    */
-  const { runs: watchedRuns, watch: watchRun, outcomeOf } = useRunWatch();
+  const { watch: watchRun } = useRunWatchActions();
+  const watched = useWatchedRun(started ? startedJobId : null);
   // While the in-page form is showing a run's progress, the dock leaves that
   // run alone; "Start another" or leaving the page hands it back to the dock.
   useShowRunInPage(inline && started ? startedJobId : null);
@@ -2660,8 +2661,7 @@ export function RunCustomAgentModal({
      * cannot disagree, and the copy says out loud that closing it does not stop
      * the run - the sentence a reader needs before they will believe it.
      */
-    const outcome = startedJobId ? (outcomeOf(startedJobId) ?? "working") : "working";
-    const watched = startedJobId ? watchedRuns.find((r) => r.jobId === startedJobId) : undefined;
+    const outcome = (watched && watchedOutcome(watched)) ?? "working";
     return (
       <Shell open onClose={onClose} title={agent.name}>
         <div className="mt-4 space-y-3">
