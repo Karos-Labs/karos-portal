@@ -35,7 +35,8 @@ import type {
  *      agent-engine deliverables (`intel-report`, `seo-geo-report`) to the eight
  *      generated documents.
  *   4. runAgentOnboarding — dispatch → await deliverables → compose → condense →
- *      ASSERT → write, through `replaceClientContextDocs`, which is not touched.
+ *      ASSERT → write, through `replaceClientContextDocs`, which replaces the
+ *      contract's rows and no others.
  *   5. writeLabContextDocsFromResearch — the same second half for a LAB client
  *      (`isLabProfileClient`), whose internal documents are curated in the
  *      karos-agents lab and must survive the run. It writes the generated
@@ -118,6 +119,12 @@ export interface ContextDocRowContract {
   required: boolean;
 }
 
+/**
+ * The (docType, tier) rows onboarding may write and, since 2026-09-11, the only
+ * rows its replace deletes — `agentOnboardingDeps` passes this as the scope. A
+ * pair added here is wiped and rewritten on every run; a row at any pair left
+ * out (the agent profiles, meeting notes) is never touched.
+ */
 export const CONTEXT_DOC_SET_CONTRACT: readonly ContextDocRowContract[] = [
   ...INTERNAL_CONTEXT_DOC_TYPES.map(
     (docType): ContextDocRowContract => ({ docType, tier: "internal", required: true }),
@@ -734,8 +741,11 @@ export interface AgentOnboardingOptions {
  * and `runOnboardPipeline` already treated a majority research failure as fatal
  * rather than generating "hallucination-bait". Same rule, new producer.
  *
- * The write itself goes through `replaceClientContextDocs` unchanged — same
- * function, same `clientContextDocs` collection, same batch delete-then-set.
+ * The write itself goes through `replaceClientContextDocs` — same function,
+ * same `clientContextDocs` collection, same one-batch delete-then-set — and the
+ * delete is scoped to CONTEXT_DOC_SET_CONTRACT's rows. A row at any other
+ * (docType, tier) belongs to another writer (the agent profiles, meeting notes)
+ * and comes through the run untouched.
  * Nothing in this module knows the collection name, which is the point: it
  * cannot move the read path even by accident.
  */
@@ -902,10 +912,12 @@ export async function writeContextDocsFromResearch(
  *     on purpose: a condensation that came back empty is dropped, as the full
  *     run drops it, and the client keeps the copy it already had.
  *
- * Nothing else is touched. The internal documents, `client-guidelines` at
- * whatever tier the lab import put it, meeting notes, agent profiles: no row is
- * deleted and none is rewritten, which is the difference from
- * `writeContextDocsFromResearch` and its delete-then-set.
+ * Nothing else is touched. The internal documents and `client-guidelines` at
+ * whatever tier the lab import put it: no row is deleted and none is
+ * rewritten. Meeting notes and agent profiles are no longer a point of
+ * difference from the full path either — `writeContextDocsFromResearch`'s
+ * delete-then-set is scoped to the onboarding contract now, so it leaves those
+ * rows alone too.
  */
 export async function writeLabContextDocsFromResearch(
   research: AgentResearchDeliverables,
@@ -1059,7 +1071,9 @@ export async function agentOnboardingDeps(): Promise<AgentOnboardingDeps> {
     dispatchResearchAgents: (client, dispatchOptions) => dispatchOnboardingResearchAgents(client, dispatchOptions),
     getDeliverable: (runId, kind) => getAgentEngineDeliverable(runId, kind),
     condense: (client, docTypes, internal) => condenseDocs(client, docTypes, internal, rules),
-    replaceDocs: (id, docs) => replaceClientContextDocs(id, docs),
+    // The contract is also the delete scope: rows at any other (docType, tier)
+    // — agent profiles, meeting notes — are not this run's to remove.
+    replaceDocs: (id, docs) => replaceClientContextDocs(id, docs, CONTEXT_DOC_SET_CONTRACT),
     listDocs: (id) => listClientContextDocs(id),
     upsertDoc: (doc) => upsertClientContextDoc(doc),
     projectDocs: async (id) => {
