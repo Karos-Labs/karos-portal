@@ -21,9 +21,7 @@ const BASE_PROFILE: AgentLaunchProfile = {
   eyebrow: "",
   intro: "",
   fields: [],
-  quickStarts: [],
   deliverables: [],
-  estimate: "",
   attachments: { label: "", hint: "" },
 };
 

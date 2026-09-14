@@ -18,7 +18,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 import { CREDIT_COSTS, creditsLabel } from "@/lib/credits";
 import { RefreshTaskMapButton } from "@/components/refresh-task-map-button";

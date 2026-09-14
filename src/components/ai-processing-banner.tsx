@@ -35,10 +35,10 @@ export function AiProcessingBanner({
       <div className="mb-4 flex items-center gap-2.5 rounded-md border border-neon/25 bg-neon-soft px-3.5 py-2.5 text-sm text-foreground">
         <Icon name="Loader" className="h-4 w-4 shrink-0 animate-spin text-neon" />
         <p>
-          <span className="font-medium">Karos Agents are building your workspace strategy</span>{" "}
+          <span className="font-medium">Karos Agents are building your workspace strategy.</span>{" "}
           <span className="text-muted">
             {isClientViewer
-              ? "this usually takes a few minutes. Your workspace updates on its own when it finishes."
+              ? "Your workspace updates on its own when it finishes."
               : "Regenerate and Refresh Task Map are locked until this finishes."}
           </span>
         </p>

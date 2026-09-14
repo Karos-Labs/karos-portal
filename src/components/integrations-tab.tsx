@@ -657,7 +657,7 @@ function PlatformCard({
         >
           <div className="overflow-hidden">
             <div className="space-y-3 border-t border-border px-4 pb-5 pt-4">
-              <p className="text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+              <p className="text-[11px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
                 Manual credentials
               </p>
 

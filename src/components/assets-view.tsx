@@ -205,7 +205,7 @@ export function AssetsView({
       )}
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-2 p-2">
-        <span className="px-1 text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">Filter</span>
+        <span className="px-1 text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">Filter</span>
         <select
           aria-label="Filter assets by status"
           value={status}

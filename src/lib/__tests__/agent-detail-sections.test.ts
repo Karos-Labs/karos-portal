@@ -659,10 +659,15 @@ describe("wiring", () => {
     const src = route();
     expect(src).toContain("@4xl:grid-cols-[minmax(0,1fr)_320px]");
     expect(src).not.toContain("lg:grid-cols-[minmax(0,1fr)_320px]");
-    // And the run card's label keeps a basis wide enough for its sentence:
-    // flex-1 is basis-0, which let it shrink to about 30px in that column.
+    // The run card's label used to need `basis-56 grow` so it could not shrink
+    // to about 30px beside its button in that column (flex-1 is basis-0). That
+    // row is GONE (2026-09-10): the label-and-button pair was a gate in front
+    // of the run form, and the form is drawn in the page now. A full-width
+    // section has no neighbour to be crushed by, so what this guards instead is
+    // that the crushable shape does not come back.
+    // (That the form is drawn inline is pinned in agent-page-no-gate.test.ts.)
     const panel = source("src/components/client-agents/legacy-agent-panel.tsx");
-    expect(panel).toContain("basis-56 grow");
+    expect(panel).not.toContain("setRunning");
   });
 
   it("says the outage once — the page banner, not the banner and the gate", () => {

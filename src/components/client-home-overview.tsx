@@ -331,17 +331,20 @@ export function ClientHomeOverview({
   }
 
   if (deliverablesInReview.length > 0) {
+    const drafts = `${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"}`;
     items.push({
       key: "drafts",
       tone: "info",
       icon: "Sparkles",
-      label: `${deliverablesInReview.length} deliverable${deliverablesInReview.length === 1 ? "" : "s"} in review`,
+      label: viewerIsClient ? `${drafts} on the way` : `${drafts} in review`,
       // Approval is staff-only by design (approveAssetAction calls
       // requireStaff so a client can't approve and arm auto-publish),
       // so for a client this row reports status rather than asking for a
-      // sign-off, and carries no destination — see `draftsHref`.
+      // sign-off, and carries no destination — see `draftsHref`. It does not
+      // say who is checking them either: a client is never told about the
+      // review (the SOW rule Albert kept on 2026-09-10).
       hint: viewerIsClient
-        ? "Your Karos team is reviewing these. They'll appear in the archive when ready."
+        ? `They'll appear in ${archive.label} when ready.`
         : "Waiting on your approval before they can be scheduled.",
       ...(draftsHref ? { href: draftsHref, action: "Review drafts" } : {}),
     });

@@ -789,7 +789,7 @@ export default async function ClientSettingsPage({
           section it is a headline OF rather than the top of the tab.
           `scroll-mt` keeps the heading clear of the sticky page chrome. */}
       <section id="visibility-scores" className="scroll-mt-24 space-y-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+        <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">
           Visibility scores
         </p>
         <SeoGeoScores insights={seoGeo} />

@@ -23,7 +23,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 // EXACT, NOT HEDGED, and that is a claim about these particular presses rather
 // than about the rework (credits rework, 2026-09). Almost every price this file

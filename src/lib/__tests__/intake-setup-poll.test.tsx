@@ -34,7 +34,7 @@ import { renderToStaticMarkup } from "react-dom/server";
  */
 
 vi.mock("server-only", () => ({}));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 import { fireWindowExpired, SETUP_FIRE_GRACE_MS } from "@/components/setup-fire-window";
 import { BlogAgentIntake } from "@/components/blog-agent-intake";

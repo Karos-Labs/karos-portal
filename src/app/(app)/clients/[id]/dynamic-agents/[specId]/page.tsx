@@ -34,6 +34,7 @@ export default async function ClientDynamicAgentRunPage({
           figure the submit core freezes onto this run's specSnapshot. */}
       <DynamicAgentRun
         specId={spec.id}
+        agentName={spec.name}
         clientId={client.id}
         inputSchema={spec.inputSchema}
         creditsCost={spec.creditsCost}

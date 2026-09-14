@@ -20,7 +20,8 @@
   Type — three faces, three jobs (§5):
     --font-serif  Spectral       display: h1-h3, pull quotes
     --font-sans   Hanken Grotesk body, UI, AND ALL NUMBERS
-    --font-mono   DM Mono        labels, eyebrows, ids, code — never numbers
+    --font-label  Hanken Grotesk labels and eyebrows, set in small caps (SCRUM-414)
+    --font-mono   DM Mono        ids, code, hashes — never numbers, never labels
 
   NUMBERS ARE SANS. A figure is set in Hanken with tabular digits (the
   .stat-number / .tabular helpers below), not in the mono. This is the rule
@@ -72,6 +73,26 @@
   --warning: #d9a13d;
   --danger: #d65a52;
   --info: #8ba1b7;
+
+  /* Agent identity colours (Albert, 2026-09-10: "always have the agents be of
+     their color"). One hue per agent family, plus six for agents outside the
+     families, so a roster reads by colour the way the platform agents read by
+     their logos. Outside the judgment scale on purpose: these say WHO an agent
+     is, never how it is doing. Light mode keeps each hue and deepens it. */
+  --agent-landing: #a78bfa;
+  --agent-newsletter: #fbbf24;
+  --agent-blog: #34d399;
+  --agent-seo: #60a5fa;
+  --agent-reputation: #f472b6;
+  --agent-campaign: #2dd4bf;
+  --agent-rebrand: #e879f9;
+  --agent-video: #f87171;
+  --agent-hue-1: #38bdf8;
+  --agent-hue-2: #818cf8;
+  --agent-hue-3: #a3e635;
+  --agent-hue-4: #fb923c;
+  --agent-hue-5: #22d3ee;
+  --agent-hue-6: #fb7185;
 
   --radius: 6px;           /* Ember squares things off */
 
@@ -125,6 +146,11 @@
   /* Swapping the mono face is THIS line plus the matching next/font/google
      declaration in src/app/layout.tsx — nothing else in the app names a face.
      Put JetBrains_Mono / --font-jetbrains back in both places to revert. */
+  /* Labels and eyebrows (SCRUM-414, Albert 2026-09-10). They were DM Mono,
+     which read as code on every agent page — part of the look he called slop.
+     Their own token, NOT a retarget of --font-mono: mono still does real work
+     for ids, commit hashes and code, where monospacing is the point. */
+  --font-label: var(--font-hanken), system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-dm-mono), ui-monospace, monospace;
   --font-serif: var(--font-spectral), Georgia, "Times New Roman", serif;
 }
@@ -225,10 +251,11 @@ body {
    DM Mono sets wider, and uppercase mono at 0.18em started to come apart into
    separate letters at 12px. */
 .eyebrow {
-  font-family: var(--font-mono);
+  font-family: var(--font-label);
   font-size: 12px;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   color: var(--neon);
 }
 
@@ -352,6 +379,23 @@ body {
   --danger: #b04a43;
   --info: #5b7186;
 
+  /* Agent identity colours deepen the same way; every pair clears 3:1 on the
+     lightest and darkest tiles of its own theme. */
+  --agent-landing: #7c3aed;
+  --agent-newsletter: #b45309;
+  --agent-blog: #047857;
+  --agent-seo: #2563eb;
+  --agent-reputation: #db2777;
+  --agent-campaign: #0f766e;
+  --agent-rebrand: #c026d3;
+  --agent-video: #dc2626;
+  --agent-hue-1: #0369a1;
+  --agent-hue-2: #4f46e5;
+  --agent-hue-3: #4d7c0f;
+  --agent-hue-4: #c2410c;
+  --agent-hue-5: #0e7490;
+  --agent-hue-6: #e11d48;
+
   /* Elevation carries the weight here - see the note on the dark values. Warm
      charcoal rather than pure black in the shadow, so a card floats over paper
      instead of over grey: rgba(26,26,26,...) is --foreground's own ink. */
@@ -443,6 +487,14 @@ body {
   animation: shimmer 1.8s ease-in-out infinite;
 }
 
+/* The run bar's "working" state (run-progress.tsx): a segment sweeping across
+   its track, which says working without claiming a percentage. */
+@keyframes run-bar-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.animate-run-bar-sweep { animation: run-bar-sweep 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+
 /* Respect reduced motion (§13) */
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-neon,
@@ -451,7 +503,8 @@ body {
   .animate-fade-up,
   .animate-fade-in,
   .animate-slide-in-right,
-  .animate-shimmer {
+  .animate-shimmer,
+  .animate-run-bar-sweep {
     animation: none;
   }
 
@@ -469,3 +522,24 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Agent identity colours on a mark ──────────────────────────────────
+   `AgentMark` stamps `data-agent-color` on an agent's glyph; the colour comes
+   from the tokens above. Two reasons this is a rule and not an inline style:
+   the optimiser drops a custom property nothing in the stylesheet reads, and
+   an unlayered rule beats the caller's `text-*` utility (which sits in
+   @layer utilities), so a grey row cannot grey the mark. */
+[data-agent-color="landing"] { color: var(--agent-landing); }
+[data-agent-color="newsletter"] { color: var(--agent-newsletter); }
+[data-agent-color="blog"] { color: var(--agent-blog); }
+[data-agent-color="seo"] { color: var(--agent-seo); }
+[data-agent-color="reputation"] { color: var(--agent-reputation); }
+[data-agent-color="campaign"] { color: var(--agent-campaign); }
+[data-agent-color="rebrand"] { color: var(--agent-rebrand); }
+[data-agent-color="video"] { color: var(--agent-video); }
+[data-agent-color="hue-1"] { color: var(--agent-hue-1); }
+[data-agent-color="hue-2"] { color: var(--agent-hue-2); }
+[data-agent-color="hue-3"] { color: var(--agent-hue-3); }
+[data-agent-color="hue-4"] { color: var(--agent-hue-4); }
+[data-agent-color="hue-5"] { color: var(--agent-hue-5); }
+[data-agent-color="hue-6"] { color: var(--agent-hue-6); }

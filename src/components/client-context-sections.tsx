@@ -207,7 +207,7 @@ export function CompetitorTrack({
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="flex min-w-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+        <p className="flex min-w-0 items-center gap-2 font-label text-[10px] uppercase tracking-[0.08em] text-muted">
           <span className="truncate">{title}</span>
           {/* "How many are we watching" is the first thing a person asks of a
               list they cannot see the bottom of. */}

@@ -1075,7 +1075,7 @@ export function resolveSetupLadder(ctx: SetupLadderContext): SetupStepView[] {
              */
             {
               waiting: true,
-              why: `Your Karos team is reviewing your first ${resultNoun}. It lands in your Workspace once approved.`,
+              why: `Your first ${resultNoun} is on its way. It will appear on your Home page.`,
             }
         : { blocked: true, status: afterStep("run") }),
     },

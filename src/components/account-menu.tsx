@@ -29,16 +29,19 @@ import type { AppUser, Client } from "@/lib/types";
  * other app, so the chevron reads as decoration and the navigation reads as an
  * accident.
  *
- * So: ONE control. The whole row is a `<button>` with `aria-expanded`, and the
- * cost that motivated the split is paid inside the menu instead — "Account
- * Center" is its FIRST row, so the destination is one click from the row it was
- * one click from before. The sub-line still names it, because the menu's first
- * row is the promise that line is making.
+ * So: ONE control. The whole row is a `<button>` with `aria-expanded`.
+ *
+ * NO ACCOUNT CENTER ROW (Albert, 2026-09-11: "it also appears here so idk if
+ * it makes sense"). Account Center is a rail group now, with its sections
+ * under it, in both shells (client-rail-account-nav.tsx) — so the row this
+ * menu carried was the same destination offered twice on one rail. This menu
+ * is the PERSON's: their team, their theme, support, sign out. The sub-line
+ * names the workspace, which is the one thing the header inside does not
+ * repeat.
  */
 export function AccountMenu({
   user,
   client,
-  settingsHref,
   staffExtras,
 }: {
   user: AppUser;
@@ -50,7 +53,6 @@ export function AccountMenu({
    * would force that shell to re-ship the join token to satisfy a type.
    */
   client: Pick<Client, "name">;
-  settingsHref: string;
   /**
    * ADDITIVE staff-only rows, rendered as their own bordered group under a
    * "STAFF" caption inside the dropdown (parity pass 2026-09, ruling D10).
@@ -113,12 +115,9 @@ export function AccountMenu({
         {avatar("h-8 w-8 text-[11px]")}
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-medium">{user.name}</p>
-          {/* Still names Account Center, and now it is a description of the
-              menu's first row rather than of where the row itself goes. The
-              client's own name is two inches up this same rail, on the brand
-              card. */}
+          {/* Whose workspace this is; the header inside repeats the person. */}
           <p className="truncate text-[10px] text-muted-2 transition-colors group-hover:text-muted">
-            {client.name} · Account Center
+            {client.name}
           </p>
         </div>
         {/* The row's only glyph, and it says "menu" — always drawn, never
@@ -141,19 +140,8 @@ export function AccountMenu({
               </div>
             </div>
 
-            {/* Actions. Account Center leads, and now it is the ONLY route to
-                the destination the row above names — a menu that buried it
-                behind a theme toggle would put back exactly the two-clicks-and-
-                a-guess this row was split apart to fix (and un-split, portal
-                feedback round 2, 2026-09). It stays first. */}
+            {/* Actions: the person's, not the workspace's (see the docblock). */}
             <div className="p-1">
-              <Link
-                href={settingsHref}
-                className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-foreground"
-              >
-                <Icon name="Settings" className="h-4 w-4 text-muted-2" />
-                Account Center
-              </Link>
               {/* TEAM — the same conditional row the mobile Company sheet has
                   carried all along (client-rail.tsx), now at desktop width too
                   (flow audit 2026-09, R11 · F14 · NN/g *Left-Side Vertical
@@ -184,7 +172,7 @@ export function AccountMenu({
             {/* Staff extras — fenced and captioned, never interleaved. */}
             {staffExtras && (
               <div className="border-t border-border p-1">
-                <p className="px-3 pb-1 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-2">
+                <p className="px-3 pb-1 pt-1 font-label text-[9px] uppercase tracking-[0.14em] text-muted-2">
                   Staff
                 </p>
                 {staffExtras}

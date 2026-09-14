@@ -17,8 +17,8 @@ import type { AgentReviewNotification } from "@/lib/types";
  * kept the admin link while the nav around it hid the destination.
  *
  * `viewerIsClient` could not simply be reused: it ALSO rewrites the row's
- * status line to "Your Karos team is reviewing it", and a staff member IS the
- * Karos team — that copy would hide work they own. The link behaviour therefore
+ * status line to the client's "On its way", and a staff member IS the Karos
+ * team — that copy would hide work they own. The link behaviour therefore
  * has its own prop, `allowJobDeepLinks`, and the two are pinned apart below.
  */
 
@@ -85,12 +85,13 @@ describe("a review row never leads where the surrounding nav does not go", () =>
     // must not also swap in the client's reassurance copy.
     const staffInClientView = renderRow({ viewerIsClient: false, deepLink: false });
     expect(staffInClientView).toContain("Waiting for your review");
-    expect(staffInClientView).not.toContain("Your Karos team is reviewing it");
+    expect(staffInClientView).not.toContain("On its way");
 
-    // And the client's line is untouched.
-    expect(renderRow({ viewerIsClient: true, deepLink: false })).toContain(
-      "Your Karos team is reviewing it",
-    );
+    // And the client's line names no review at all (the SOW rule Albert kept
+    // on 2026-09-10: a client is never told their work is being checked).
+    const client = renderRow({ viewerIsClient: true, deepLink: false });
+    expect(client).toContain("On its way");
+    expect(client).not.toMatch(/review/i);
   });
 
   it("only offers a hover affordance when the row is actually clickable", () => {

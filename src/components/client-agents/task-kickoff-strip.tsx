@@ -105,7 +105,7 @@ export function TaskKickoffStrip({
     // the one control that moves them forward, which on this page is the run /
     // setup / launch button below (round 6 rule 2).
     <section className="rounded-[var(--radius)] border border-info/30 bg-info/5 px-4 py-3.5">
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">
         Recommended task
       </p>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

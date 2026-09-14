@@ -84,7 +84,7 @@ export function IntakeRunRows({
                 <span className="text-muted-2">{stamp}</span>
               ))}
             {isStaff && r.href && <Badge tone="neutral">Internal</Badge>}
-            <JobStatusBadge status={r.status} />
+            <JobStatusBadge status={r.status} viewerIsClient={!isStaff} />
           </li>
         );
       })}

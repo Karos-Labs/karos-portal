@@ -29,7 +29,7 @@ export function DynamicAgentGuardrailReportCard({
 
   return (
     <div className="mb-6 space-y-3 rounded-[var(--radius)] border border-border bg-surface p-4">
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-2">Run checks</p>
+      <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted-2">Run checks</p>
 
       {guardrail ? <GuardrailRow guardrail={guardrail} /> : null}
       {dedupe ? <DedupeRow dedupe={dedupe} /> : null}

@@ -2,10 +2,8 @@ import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/utils";
-import { TONE_COLORS } from "@/components/seo-geo/tones";
 import { THROUGHPUT_WINDOW_DAYS, type ContentThroughput } from "@/lib/content-throughput";
 import type { FollowerPoint } from "@/lib/follower-tracking";
-import type { ScoreView } from "@/components/seo-geo/presenter";
 
 /**
  * A minimal inline sparkline — no charting dependency for a handful of points.
@@ -67,13 +65,13 @@ function Sparkline({ counts }: { counts: number[] }) {
  * reads as a measured zero rather than as missing data, and the run of days is
  * continuous left to right.
  */
-function DailyBars({ counts }: { counts: number[] }) {
+function DailyBars({ counts, className }: { counts: number[]; className?: string }) {
   const max = Math.max(...counts);
   // Nothing at all is not a chart. Drawing thirty empty tracks under a zero
   // would be a picture of no information; the empty state says so in words.
   if (max === 0) {
     return (
-      <div className="mt-2.5 flex h-9 items-center rounded-md border border-dashed border-border px-2.5">
+      <div className={cn("flex h-9 items-center rounded-md border border-dashed border-border px-2.5", className)}>
         <p className="text-[11px] leading-snug text-muted-2">
           Nothing went live in the last {THROUGHPUT_WINDOW_DAYS} days.
         </p>
@@ -85,7 +83,7 @@ function DailyBars({ counts }: { counts: number[] }) {
   return (
     <>
       <div
-        className="mt-2.5 flex h-9 items-end gap-px"
+        className={cn("flex h-9 items-end gap-px", className)}
         role="img"
         aria-label={`Posts published each day over the last ${THROUGHPUT_WINDOW_DAYS} days, oldest first.`}
       >
@@ -132,10 +130,10 @@ function Delta({
   noBasis?: string;
 }) {
   if (pct == null) {
-    return noBasis ? <p className="mt-0.5 text-xs text-muted-2">{noBasis}</p> : null;
+    return noBasis ? <p className="text-xs text-muted-2">{noBasis}</p> : null;
   }
   return (
-    <p className={`mt-0.5 text-xs ${pct >= 0 ? "text-success" : "text-danger"}`}>
+    <p className={cn("text-xs", pct >= 0 ? "text-success" : "text-danger")}>
       <Icon name={pct >= 0 ? "ArrowUp" : "ArrowDown"} className="mr-1 inline h-3 w-3" />
       <span className="tabular">
         {pct >= 0 ? "+" : ""}
@@ -163,76 +161,46 @@ function Cell({
   label,
   href,
   children,
-  className,
+  layout = "tile",
 }: {
   icon: string;
   label: string;
   /** Somewhere that shows MORE about THIS number. See each call site. */
   href: string;
   children: React.ReactNode;
-  className?: string;
+  /**
+   * `strip` lays the eyebrow and the reading out on one line, for a cell that
+   * is alone on the card (Albert, 2026-09-11: the lone Published tile "takes
+   * the whole screen … it could be a small widget"). Same link, same chevron,
+   * a third of the height.
+   */
+  layout?: "tile" | "strip";
 }) {
+  const strip = layout === "strip";
   return (
     <Link
       href={href}
       className={cn(
-        "row-lift focus-ring block h-full rounded-md border border-border bg-surface-2 p-3.5",
-        className,
+        "row-lift focus-ring rounded-md border border-border bg-surface-2 p-3.5",
+        strip ? "flex flex-wrap items-center gap-x-5 gap-y-2" : "block h-full",
       )}
     >
-      <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2">
+      <p
+        className={cn(
+          "flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-2",
+          strip && "shrink-0",
+        )}
+      >
         <Icon name={icon} className="h-3.5 w-3.5 shrink-0 text-neon" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
         {/* Rule 1: ONE trailing chevron, static. It used to slide 2px on hover,
             which is a second hover event on a surface whose hover is already the
-            fill step plus `row-lift`'s hairline. */}
-        <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />
+            fill step plus `row-lift`'s hairline. In the strip it closes the row. */}
+        {!strip && <Icon name="ChevronRight" className="h-3.5 w-3.5 shrink-0 text-muted-2" />}
       </p>
       {children}
+      {strip && <Icon name="ChevronRight" className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-2" />}
     </Link>
-  );
-}
-
-/**
- * The visibility score as a headline + meter, built from the SAME ScoreView the
- * full report renders (buildScoreViews), so this cell and Account Center's
- * Reporting tab cannot quote different numbers for one snapshot.
- *
- * SHAPED LIKE ITS TWO NEIGHBOURS as of 2026-09 — big numeral, meter, caption —
- * where it used to be a label/value row over a thin bar. Three cells side by
- * side, one of them arranged differently, made the card read as two KPIs and an
- * afterthought; the point of the row is that they are three readings of the same
- * kind. The meter stays because it is what makes the number mean anything at
- * this size: a bare 61 says nothing about whether 61 is good.
- *
- * The TRACK is the band's own colour at low alpha, not `surface-3`. In light
- * mode surface-3 is #e9e7df on a surface-2 cell of #eceae2 — a three-point step,
- * which is no step: the unfilled half of the meter simply disappeared and the
- * bar had no readable length. Same device the SEO share meters use.
- */
-function ScoreCell({ view }: { view: ScoreView }) {
-  const measured = view.value != null;
-  const color = TONE_COLORS[view.tone];
-  return (
-    <>
-      <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-        {measured ? view.value : "–"}
-        {measured && <span className="ml-1 text-sm font-medium text-muted-2">/ 100</span>}
-      </p>
-      <div
-        className="mt-2.5 h-2 overflow-hidden rounded-full"
-        style={{ background: `color-mix(in srgb, ${color} 18%, transparent)` }}
-      >
-        <div
-          className="h-full rounded-full transition-[width]"
-          style={{
-            width: `${measured ? Math.min(100, Math.max(0, view.value as number)) : 0}%`,
-            background: color,
-          }}
-        />
-      </div>
-      <p className="mt-1.5 text-[11px] leading-snug text-muted-2">{view.label}</p>
-    </>
   );
 }
 
@@ -254,11 +222,13 @@ function ScoreCell({ view }: { view: ScoreView }) {
  * (lib/content-output.ts) is deleted, not kept around unused — it was a
  * stopgap for exactly the gap D6 now answers, and nothing else read it.
  *
- * "Nothing else" is also why this card no longer prints all three
- * buildScoreViews meters (search score, AI readiness, AI visibility): the
- * caller passes only the "visibility" one now — "the overall Google/AI
- * visibility rank" is that score's own established label ("AI visibility
- * today"), not a new metric invented for this card.
+ * "Nothing else" is also why this card stopped printing all three
+ * buildScoreViews meters (search score, AI readiness, AI visibility), keeping
+ * only "visibility". SCRUM-418 has since moved that last one off this card
+ * entirely, onto the SEO & AI visibility card where its own two components
+ * already were — see `home-standing.tsx`. D6's ruling is not overturned by
+ * that: the score still has a home on this page, and this card still holds the
+ * followers half of D6.
  *
  * ── THE CHANNELS CELL IS GONE (2026-09) ──────────────────────────────────
  *
@@ -294,21 +264,20 @@ function ScoreCell({ view }: { view: ScoreView }) {
  *
  * The rule that replaced it is per cell, not per card: a cell links to the
  * screen that shows MORE ABOUT ITS OWN NUMBER, which is a different screen for
- * each of the three. Followers open the channel list they are summed from;
- * published content opens the posts themselves; the visibility score opens the
- * report it is a headline of. Two of those are not "the report", and that is
- * the point — sending all three there would be the same broken promise, made
- * three times.
+ * each. Followers open the channel list they are summed from; published
+ * content opens the posts themselves. Neither of those is "the report", and
+ * that is the point — sending both there would be the same broken promise,
+ * made twice.
+ *
+ * (Visibility left this card for the SEO one in SCRUM-418; see home-standing.)
  */
 export function HomeKpisWidget({
   audienceTotal,
   audienceGrowthPct,
   audienceSeries,
   throughput,
-  visibilityScore,
   audienceHref,
   contentHref,
-  visibilityHref,
 }: {
   /**
    * Real stored follower snapshots only — an empty (or absent) series hides the
@@ -327,8 +296,6 @@ export function HomeKpisWidget({
   audienceSeries?: FollowerPoint[];
   /** Live-deliverable throughput — see lib/content-throughput.ts. */
   throughput: ContentThroughput;
-  /** The one ScoreView D6 kept — null when there is no snapshot to score yet. */
-  visibilityScore: ScoreView | null;
   /**
    * The channel list. This total is the SUM of the per-channel follower counts,
    * and that list is the only screen in the product that breaks it back down,
@@ -341,14 +308,21 @@ export function HomeKpisWidget({
   audienceHref?: string;
   /** The published deliverables themselves, filtered to what this cell counted. */
   contentHref: string;
-  /** The Reporting tab, at its scores section — the working behind this meter. */
-  visibilityHref: string;
 }) {
   // A single point is a reading, not a trend — the sparkline needs two. And a
   // cell with nowhere to go is not a cell on this card (see `Cell`), so the
   // href is part of the same test rather than a second one.
   const series = audienceSeries ?? [];
   const showAudience = series.length >= 2 && Boolean(audienceHref);
+  // Built once: the tile and the strip say the same thing about the delta.
+  const publishedDelta = (
+    <Delta
+      pct={throughput.deltaPct}
+      text={`${throughput.deltaPct}%`}
+      note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
+      noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
+    />
+  );
 
   return (
     <Card>
@@ -377,47 +351,57 @@ export function HomeKpisWidget({
           the window, and this card lives in a column the 288px rail has already
           narrowed — so a 1024px window split it into cells too narrow for their
           own labels. `@xl` is 36rem of THIS grid, measured where the cells
-          actually are. Three cells (with audience) go straight to three
-          columns AT `@xl` rather than stepping through two first — two
-          columns would leave the third cell alone in a half-empty second row
-          for the entire `@xl`–`@4xl` range, not just avoid it above `@4xl`. */}
-      <div className={cn("grid gap-4", showAudience ? "@xl:grid-cols-3" : "@xl:grid-cols-2")}>
+          actually are. At most two cells now (SCRUM-418), so one step. With
+          follower ingestion still unwritten that is a single "Published" cell
+          today: a data gap, not a reason to move a metric back here. */}
+      <div className={cn("grid gap-4", showAudience && "@xl:grid-cols-2")}>
         {/* Audience — the D6 cell, real snapshots only; absent when there are none */}
         {showAudience && (
           <Cell icon="Users" label="Total followers" href={audienceHref as string}>
             <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
               {(audienceTotal ?? 0).toLocaleString()}
             </p>
-            <Delta
-              pct={audienceGrowthPct ?? null}
-              text={audienceGrowthPct == null ? "" : `${audienceGrowthPct.toFixed(1)}%`}
-            />
+            <div className="mt-0.5">
+              <Delta
+                pct={audienceGrowthPct ?? null}
+                text={audienceGrowthPct == null ? "" : `${audienceGrowthPct.toFixed(1)}%`}
+              />
+            </div>
             <div className="mt-2">
               <Sparkline counts={series.map((p) => p.count)} />
             </div>
           </Cell>
         )}
 
-        {/* Content published — the cell the duplicated channel list vacated */}
-        <Cell icon="Send" label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`} href={contentHref}>
-          <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
-            {throughput.count.toLocaleString()}
-          </p>
-          <Delta
-            pct={throughput.deltaPct}
-            text={`${throughput.deltaPct}%`}
-            note={`vs previous ${THROUGHPUT_WINDOW_DAYS} days`}
-            noBasis={throughput.count === 0 ? "Nothing posted yet" : "First measured window"}
-          />
-          <DailyBars counts={throughput.daily} />
-        </Cell>
-
-        {/* AI visibility — the one score D6 kept, of the three buildScoreViews returns */}
-        <Cell icon="Radar" label="Visibility" href={visibilityHref}>
-          {visibilityScore ? (
-            <ScoreCell view={visibilityScore} />
+        {/* Content published — the cell the duplicated channel list vacated.
+            Alone on the card it is a strip: the number and its delta beside
+            the label, the thirty days on the right, one row high. */}
+        <Cell
+          icon="Send"
+          label={`Published · ${THROUGHPUT_WINDOW_DAYS} days`}
+          href={contentHref}
+          layout={showAudience ? "tile" : "strip"}
+        >
+          {showAudience ? (
+            <>
+              <p className="stat-number mt-1.5 text-3xl font-semibold leading-none tracking-tight text-foreground">
+                {throughput.count.toLocaleString()}
+              </p>
+              <div className="mt-0.5">{publishedDelta}</div>
+              <DailyBars counts={throughput.daily} className="mt-2.5" />
+            </>
           ) : (
-            <p className="mt-2 text-sm text-muted-2">Not measured yet.</p>
+            <>
+              <div className="flex items-baseline gap-2.5">
+                <p className="stat-number text-2xl font-semibold leading-none tracking-tight text-foreground">
+                  {throughput.count.toLocaleString()}
+                </p>
+                {publishedDelta}
+              </div>
+              <div className="min-w-[10rem] flex-1 @md:max-w-xs">
+                <DailyBars counts={throughput.daily} />
+              </div>
+            </>
           )}
         </Cell>
       </div>

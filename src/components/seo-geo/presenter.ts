@@ -1308,7 +1308,7 @@ export function healRecommendations(
  *    approves, and there is exactly one change to make either way.
  *  • FALLBACK TWINS. Every id REC_COPY does not know resolves to the single
  *    REC_FALLBACK, so N unmapped findings render as N rows all reading "A
- *    technical finding your team is reviewing".
+ *    technical finding we are still mapping".
  *
  * WHY IT SHOWS UP AT APPROVAL. Each twin carries its own recId, and that is what
  * `approveSeoGeoRecommendation` stores — so one row turns green while its

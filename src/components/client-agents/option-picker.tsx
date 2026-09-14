@@ -7,6 +7,7 @@ import { Icon } from "@/components/icon";
 import { pickAgentSlotOptionAction } from "@/lib/actions/slot-option-actions";
 import { optionsLead, type ClientXOption } from "@/lib/x-options";
 import { normalizeDashes } from "@/lib/text-utils";
+import { CLIENT_ARCHIVE_NAME } from "@/lib/agent-intake-links";
 
 /**
  * Today's three options, and the one gesture that turns one of them into a post
@@ -70,7 +71,7 @@ export function OptionPicker({
   return (
     <div>
       <div className="mb-3">
-        <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">
+        <h2 className="font-label text-sm uppercase tracking-[0.1em] text-muted">
           Today&rsquo;s post
         </h2>
         {/* The count is a variable and a one-option day is expected, so the
@@ -171,8 +172,8 @@ export function OptionPicker({
       </ul>
       {error && <p className="mt-2 text-xs text-warning">{error}</p>}
       <p className="mt-2 text-[11px] text-muted-2">
-        The one you choose lands in your Workspace ready to post. Mark it posted once it&rsquo;s up
-. That&rsquo;s what teaches this agent what you actually publish.
+        The one you choose lands in {CLIENT_ARCHIVE_NAME}, ready to post. Mark it posted once
+        it&rsquo;s up. That&rsquo;s what teaches this agent what you actually publish.
       </p>
     </div>
   );
@@ -197,7 +198,7 @@ export function OptionPicked({ direction }: { direction: string | null }) {
         {direction ? <Badge tone="neutral">{direction}</Badge> : null}
       </div>
       <p className="mt-1 text-[11px] text-muted-2">
-        It&rsquo;s in your Workspace ready to post. Mark it posted once it&rsquo;s up.
+        It&rsquo;s in {CLIENT_ARCHIVE_NAME}, ready to post. Mark it posted once it&rsquo;s up.
       </p>
     </div>
   );

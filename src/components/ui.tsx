@@ -211,7 +211,7 @@ export function Badge({
            lines and overlapped the row beside it once the dashboard columns got
            narrow. The text block next to it already truncates; that is the
            element meant to absorb the pressure. */
-        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-[4px] border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em]",
+        "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-[4px] border px-2 py-0.5 font-label text-[10px] font-medium uppercase tracking-[0.08em]",
         tones[tone],
         className,
       )}
@@ -284,7 +284,7 @@ export function StatCard({
 }) {
   return (
     <Card className="min-w-0">
-      <p className="font-mono text-[10px] uppercase leading-snug tracking-[0.08em] text-muted [overflow-wrap:anywhere]">
+      <p className="font-label text-[10px] uppercase leading-snug tracking-[0.08em] text-muted [overflow-wrap:anywhere]">
         {label}
       </p>
       <p className="mt-1.5 font-mono text-2xl font-medium text-foreground">{value}</p>

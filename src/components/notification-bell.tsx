@@ -360,7 +360,7 @@ export function NotificationBell({
                   {reviewPendingRows.length > 0 && (
                     <>
                       <div className="bg-warning/5 px-4 py-1.5">
-                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-warning">
+                        <p className="text-[10px] font-label font-medium uppercase tracking-[0.14em] text-warning">
                           Ready for review ({reviewPendingRows.length})
                         </p>
                       </div>
@@ -374,7 +374,7 @@ export function NotificationBell({
                   {pendingRows.length > 0 && (
                     <>
                       <div className="bg-surface-2 px-4 py-1.5">
-                        <p className="text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted">
+                        <p className="text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted">
                           Pending tasks ({pendingRows.length})
                         </p>
                       </div>
@@ -538,7 +538,7 @@ export function ReviewJobRow({
         <p className="mt-0.5 line-clamp-2 break-words text-[11px] text-muted">{job.title}</p>
         <p className="mt-0.5 text-[11px] text-muted-2">
           {job.clientName ? `${job.clientName} · ` : ""}
-          {viewerIsClient ? "Your Karos team is reviewing it" : "Waiting for your review"} ·{" "}
+          {viewerIsClient ? "On its way" : "Waiting for your review"} ·{" "}
           {relativeTime(job.updatedAt)}
         </p>
       </div>

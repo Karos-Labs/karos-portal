@@ -83,7 +83,10 @@ describe("the day/week/month control holds only time ranges", () => {
   it("offers Archive as its own labelled control, saying what it holds", () => {
     const src = read(CALENDAR);
     expect(src).toMatch(/goToView\("archive"\)/);
-    expect(src).toContain("everything we&apos;ve delivered");
+    // Per reader since SCRUM-426: the client's side, and staff's (for whom the
+    // every-status queue is Assets).
+    expect(src).toContain("everything we've delivered");
+    expect(src).toContain("what the client sees");
   });
 
   it("gives the archive panel a way back to the calendar", () => {

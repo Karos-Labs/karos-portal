@@ -94,12 +94,28 @@ export function ClientAgentRosterRow({
   const lastMadeStamp = lastMade ? relativeTime(lastMade.at, now) : null;
   const nextLabel = nextAt != null ? rosterNextLabel(nextAt, now) : null;
 
-  // Below @2xl there is no room for three columns beside the name, so the same
+  // Below @4xl there is no room for three columns beside the name, so the same
   // three facts become one 11px line under it (Baymard's mobile fallback for a
   // comparison table). Same order, same words, one row tall. It carries no
   // "Last made" prefix: at 375px the line has room for about sixty characters
   // and the verb is the end of it, so the label would be paid for by truncating
   // the one part that says what pressing the row does.
+  //
+  // @4xl (896px), WAS @2xl (672px), AND 672 WAS 224px TOO EARLY. Everything to
+  // the right of the name is `shrink-0` — the status badge, then 144 + 80 + 112
+  // of fixed columns, the mark, the chevron, six gaps and the padding, about
+  // 630px of furniture — and the identity column is the only flexible child, so
+  // it absorbs the whole deficit alone. Measured at the old threshold it was
+  // 38px wide: the agent's NAME truncated to nothing on the row whose entire
+  // job is naming agents, and one pixel narrower it jumped back to 542px.
+  // Nobody saw it as a squeeze because every line in that column truncates —
+  // it surfaced as the staff note towering to 313px (see the note below).
+  //
+  // 896px is where the identity column clears 200px, which is the first width
+  // that fits a name plus a readable stretch of blurb. It is not a cosmetic
+  // number: a 13" laptop at default scaling gives this container 800px, and at
+  // 1024px in client context it landed on 672px exactly — the worst point on
+  // the curve was the most ordinary staff window.
   const metaLine = [
     lastMade ? `${lastMade.title} · ${lastMadeStamp}` : null,
     nextLabel ? `Next: ${nextLabel}` : null,
@@ -121,7 +137,7 @@ export function ClientAgentRosterRow({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <p className="min-w-0 truncate text-sm font-medium text-foreground">{displayName}</p>
-          <span className="@2xl:hidden">{badges}</span>
+          <span className="@4xl:hidden">{badges}</span>
         </div>
         {blurb && <p className="truncate text-xs leading-relaxed text-muted">{blurb}</p>}
         {/* A5: the same grey 11px line the client's copy is set in used to carry
@@ -129,22 +145,44 @@ export function ClientAgentRosterRow({
             otherwise identical to the client's. The mono marker says whose line
             this is before the sentence starts. */}
         {note && (
-          <p className="mt-1 flex items-baseline gap-1.5 text-[11px] text-muted-2">
-            <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.08em] text-muted-2">
+          // `line-clamp-2`, because this was the ONE line in this column with no
+          // ceiling. Its four siblings all `truncate`, so when the identity
+          // column was squeezed they lost characters and the row kept its
+          // height; the note wrapped instead, and a single 130-character
+          // operator sentence turned a `min-h-[64px]` row into a 313px tower of
+          // one or two words per line — the reported defect. Two lines is not a
+          // budget imposed on the sentence: at the widths this actually renders
+          // at, the whole note already fits in two.
+          //
+          // The clamp makes this a `-webkit-box`, so the marker can no longer be
+          // a flex child: it is inline with `mr-1.5`, and it reads better for
+          // it. The sentence now wraps under its own first line instead of
+          // hanging off a column beside the word INTERNAL.
+          //
+          // `title` because two lines is not always the whole note. Both writers
+          // join their parts with a middot — `rosterStatus` can carry two
+          // sentences at once, and `client-roster` appends the queue fact and
+          // the legacy-schedule fact after them — so a worst-case row is around
+          // 400 characters and the clamp would silently eat the tail. The
+          // shortened part is the LEGACY-SCHEDULE warning, which is the one an
+          // operator is least likely to already know. Same treatment
+          // jobs-list.tsx gives its truncated error and hold reasons.
+          <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-2" title={note}>
+            <span className="mr-1.5 font-label text-[9px] uppercase tracking-[0.08em] text-muted-2">
               Internal
             </span>
             {note}
           </p>
         )}
-        {metaLine && <p className="mt-1 truncate text-[11px] text-muted-2 @2xl:hidden">{metaLine}</p>}
+        {metaLine && <p className="mt-1 truncate text-[11px] text-muted-2 @4xl:hidden">{metaLine}</p>}
       </div>
-      <span className="hidden @2xl:flex">{badges}</span>
+      <span className="hidden @4xl:flex">{badges}</span>
       {/* The STAMP rides the label line, not the value line. A 144px column at
           12px holds about twenty-four characters, so with both on one line a
           long title truncates the stamp away, and "Last made" with no date under
           it says nothing. This way the date always survives and only the title
           is ever cut. */}
-      <div className="hidden w-36 shrink-0 @2xl:block @4xl:w-48">
+      <div className="hidden w-36 shrink-0 @4xl:block @5xl:w-48">
         {lastMade && (
           <>
             <p className="truncate text-[11px] leading-4 text-muted-2">
@@ -154,7 +192,7 @@ export function ClientAgentRosterRow({
           </>
         )}
       </div>
-      <div className="hidden w-20 shrink-0 @2xl:block">
+      <div className="hidden w-20 shrink-0 @4xl:block">
         {nextLabel && (
           <>
             <p className="text-[11px] leading-4 text-muted-2">Next</p>
@@ -163,7 +201,7 @@ export function ClientAgentRosterRow({
         )}
       </div>
       {verb && (
-        <span className="hidden w-28 shrink-0 text-right text-xs font-medium text-foreground @2xl:block">
+        <span className="hidden w-28 shrink-0 text-right text-xs font-medium text-foreground @4xl:block">
           {verb}
         </span>
       )}
@@ -178,7 +216,7 @@ export function ClientAgentRosterRow({
   );
 
   const className = cn(
-    "flex min-h-[64px] items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2 px-3 py-2.5 @2xl:gap-4 @2xl:px-4",
+    "flex min-h-[64px] items-center gap-3 rounded-[var(--radius)] border border-border bg-surface-2 px-3 py-2.5 @4xl:gap-4 @4xl:px-4",
     disabled
       ? "cursor-default opacity-60"
       : // Rule 3, in full: one fill step plus the accent hairline, both carried by
