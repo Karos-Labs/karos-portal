@@ -15,6 +15,7 @@ import { mintJobToken } from "@/lib/mcp/job-token";
 import { resolveAgentEngineProductId, resolveAgentEngineRunKind } from "@/lib/agent-engine/product-mapping";
 import { isAgentEnginePubSubConfigured } from "@/lib/agent-engine/pubsub-client";
 import { dispatchAgentEngineRun, isAgentEngineDispatchEnabled } from "@/lib/agent-engine/dispatch";
+import { webhookCallbackOrigin } from "@/lib/app-origin";
 
 /**
  * Shared core for submitting a managed (catalog) job to the external agent
@@ -138,11 +139,11 @@ export async function submitManagedJob(
   // Prefer a dedicated runtime var (plain env vars are readable at runtime on
   // Cloud Run; NEXT_PUBLIC_* can get inlined at build) and don't overload the
   // OAuth-facing APP_URL. Fall back to it for local/dev.
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
-  if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
-  }
-  const origin = appUrl.replace(/\/$/, "");
+  // SCRUM-332 (AU49) follow-up: one helper for what was four hand-written
+  // copies, one of which read a variable that is wired nowhere.
+  const callback = webhookCallbackOrigin();
+  if ("error" in callback) return { error: callback.error };
+  const origin = callback.origin;
 
   const contextFiles: AgentServiceContextFile[] = [];
   for (const itemId of input.contextItemIds ?? []) {
