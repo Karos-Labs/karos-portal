@@ -5,6 +5,14 @@
  * to production. It now opens Firestore through scripts/lib/firestore-db.ts
  * (SCRUM-374).
  *
+ * It also uploaded with an unconditional POST to the one bucket prep and
+ * production share, at paths that are not unique to a database: the logo is
+ * keyed by slug, and deliverables by a client id that a prep sync keeps. An
+ * import into the second database replaced objects the first database's records
+ * point at, killing those URLs. Uploads now go through
+ * scripts/lib/storage-upload.ts, which never replaces an object; its own test
+ * drives that against a fake bucket.
+ *
  * The CLI cases drive the real script in a child process whose environment is
  * an allowlist (no Firebase credentials, whatever the parent shell holds) and
  * whose cwd has no .env.local, against a throwaway lab checkout. Every case is
@@ -35,6 +43,8 @@ beforeAll(() => {
     join(labRoot, "clients", "fixture", "config.json"),
     JSON.stringify({ name: "Fixture Co", website: "https://fixture.example" }),
   );
+  mkdirSync(join(labRoot, "clients", "fixture", "brand", "logos"), { recursive: true });
+  writeFileSync(join(labRoot, "clients", "fixture", "brand", "logos", "logo.png"), "fixture logo");
 });
 
 afterAll(() => {
@@ -85,7 +95,16 @@ describe("scripts/import-lab-client.ts names its database or refuses", () => {
     expect(mode).toBe("DRY RUN — nothing is written. Pass --apply to write.");
     expect(database).toMatch(/^ {2}database: prep /);
     expect(storage).toMatch(/^ {2}storage: {2}fixture-bucket\.example — one bucket shared by prep and production/);
+    expect(storage).toMatch(/never replace an object already at their path$/);
     expect(result.output).toContain("Dry run complete for Fixture Co.");
+  }, 30_000);
+
+  it("plans the logo upload as one that reuses, never replaces, an object already at its path", () => {
+    const result = dryRun("prep");
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(
+      "  would upload logo: logo.png → client-logos/lab-fixture/logo.png (an object already there is reused, not replaced)",
+    );
   }, 30_000);
 
   it('calls "(default)" production by name', () => {
@@ -112,5 +131,18 @@ describe("scripts/import-lab-client.ts takes its Firestore from the shared helpe
     // That opt-in is for scripts that are production-only by design. An
     // importer is not: production has to be named, the same as prep.
     expect(src).not.toMatch(/allowDefaultProduction:\s*true/);
+  });
+});
+
+describe("scripts/import-lab-client.ts writes to storage only through uploadIfAbsent", () => {
+  const src = readFileSync(SCRIPT, "utf-8");
+
+  it("has no storage request or client of its own that could replace an object", () => {
+    // Its old private upload POSTed straight to storage.googleapis.com with no
+    // precondition. Every write now goes through the helper, whose behaviour
+    // scripts/lib/__tests__/storage-upload.test.ts pins.
+    expect(src).toMatch(/import\s*\{\s*uploadIfAbsent\s*\}\s*from\s*"\.\/lib\/storage-upload"/);
+    expect(src).not.toMatch(/storage\.googleapis\.com/);
+    expect(src).not.toMatch(/@google-cloud\/storage|firebase-admin\/storage/);
   });
 });
