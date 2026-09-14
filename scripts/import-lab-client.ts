@@ -10,11 +10,15 @@
  *      accent + brandingGuidelines from profile/brand-colors.json, logo
  *      uploaded from brand/logos/, agentsRepoSlug set for future UI imports.
  *   2. Imports profile/*.md as internal-tier clientContextDocs (skips doc
- *      types that already exist — the portal's regenerate pipeline owns them
- *      after that).
+ *      types that already exist). When it imports any, it marks the client
+ *      `profileSource: "lab"`: from then on the lab owns the documents, the
+ *      brand and these competitors, and the portal's intel pipeline adds the
+ *      Intel Report, the SEO/GEO capture and the action plan without replacing
+ *      them (see `Client.profileSource` and `runIntelReportPipeline`).
  *   3. Seeds clientCompetitors from profile/competitor-tracking.json (active
- *      competitors only, skipping names already present). Tier mapping keeps
- *      the tracked-5 selector surfacing the direct rivals first.
+ *      competitors only, skipping names already present) as `source: "lab"`
+ *      rows, which no analysis run deletes. Tier mapping keeps the tracked-5
+ *      selector surfacing the direct rivals first.
  *   4. Imports every outputs/<agent>/<run>/client/ deliverable as a draft
  *      asset with the SAME meta.labRun keys the in-app importer writes, so
  *      the UI's lab-import screen shows these runs as already imported.
@@ -73,6 +77,7 @@ import {
   type LabFile,
 } from "../src/lib/lab-outputs-shared";
 import { chainFamilyFor, orderKeyForLabItem, planClientChain, templateFromItemKey } from "../src/lib/post-chain";
+import { LAB_PROFILE_SOURCE } from "../src/lib/lab-profile";
 import { recommendedScheduleFields } from "../src/lib/scheduling";
 import { clampClientCategoryValue, clientCategoryValue } from "../src/lib/utils";
 import type {
@@ -415,6 +420,7 @@ async function main() {
   const profileDir = join(clientDir, "profile");
   let docsCreated = 0;
   let docsSkipped = 0;
+  const skippedDocTypes: ContextDocType[] = [];
   for (const [file, docType] of Object.entries(PROFILE_DOC_TYPES)) {
     const path = join(profileDir, file);
     if (!existsSync(path)) continue;
@@ -434,6 +440,7 @@ async function main() {
       .get();
     if (!existing.empty) {
       docsSkipped++;
+      skippedDocTypes.push(docType);
       continue;
     }
     const doc: Omit<ClientContextDoc, "id"> = {
@@ -449,6 +456,29 @@ async function main() {
     docsCreated++;
   }
   console.log(`  ✓ context docs: ${docsCreated} imported, ${docsSkipped} already present`);
+
+  // ── 2b · The lab owns this profile now ──────────────────────────────
+  // Only when this run actually brought lab documents in. A re-run that found
+  // every document already present (the usual reason to re-run: new outputs)
+  // leaves the field as it was, so a client whose documents the portal wrote
+  // is never frozen by an asset import.
+  if (docsCreated > 0) {
+    if (dryRun) {
+      console.log(
+        `  would mark the client profileSource: "${LAB_PROFILE_SOURCE}" if any of these documents is new to the portal ` +
+          "(the intel pipeline then keeps its documents, brand and competitors)",
+      );
+    } else if (db) {
+      await db.collection("clients").doc(clientId).set({ profileSource: LAB_PROFILE_SOURCE }, { merge: true });
+      console.log(`  ✓ profileSource: "${LAB_PROFILE_SOURCE}" (Regenerate keeps these documents, the brand and the lab's competitors)`);
+      if (skippedDocTypes.length > 0) {
+        console.warn(
+          `  ! ${skippedDocTypes.join(", ")} already existed and were NOT imported from the lab. The pipeline will keep ` +
+            "them as they are too; delete those rows and re-run to bring the lab's copies in.",
+        );
+      }
+    }
+  }
 
   // ── 3 · Competitors ────────────────────────────────────────────────
   const trackingPath = join(profileDir, "competitor-tracking.json");
@@ -479,7 +509,9 @@ async function main() {
         deepDive: false,
         keyStrengths: [],
         keyWeaknesses: [],
-        source: "report",
+        // "lab", not "report": a report row is deleted by the next analysis
+        // run, and these are the lab's curated rivals.
+        source: "lab",
         createdAt: now,
         updatedAt: now,
       };
@@ -693,7 +725,10 @@ async function main() {
   if (!dryRun) {
     console.log("  Next: open the client in the portal — sidebar Competitor Track, docs, and Archive should all be populated.");
     console.log("  Imported assets land as drafts (dated, chain-scheduled) — staff must still approve each one from /assets before a client can see it.");
-    console.log("  The first Intel/SEO-GEO run can be triggered from the client page (Regenerate) when you want measured AI-visibility data.");
+    console.log(
+      "  The first Intel/SEO-GEO run can be triggered from the client page (Regenerate) when you want measured AI-visibility data." +
+        " For a lab-owned profile it adds the Intel Report, the SEO/GEO capture and the action plan, and keeps the lab's documents, brand and competitors.",
+    );
   }
 }
 

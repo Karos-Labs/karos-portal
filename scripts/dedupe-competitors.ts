@@ -103,12 +103,17 @@ async function main() {
       groups++;
 
       const manuals = group.filter((r) => r.source === "manual");
+      const labRows = group.filter((r) => r.source === "lab");
       const byMentionsThenNewest = (a: Row, b: Row) =>
         (b.llmMentions ?? 0) - (a.llmMentions ?? 0) || b.createdAt - a.createdAt;
-      // Keeper: newest manual row if any (user intent), else best report row.
+      // Keeper: newest manual row if any (user intent), else the lab's row (the
+      // curated one — a report run never deletes it, so dropping it here would
+      // be the only way to lose it), else best report row.
       const keeper = manuals.length
         ? [...manuals].sort((a, b) => b.createdAt - a.createdAt)[0]
-        : [...group].sort(byMentionsThenNewest)[0];
+        : labRows.length
+          ? [...labRows].sort(byMentionsThenNewest)[0]
+          : [...group].sort(byMentionsThenNewest)[0];
       const losers = group.filter((r) => r !== keeper);
       const bestTwin = [...losers].sort(byMentionsThenNewest)[0];
 
