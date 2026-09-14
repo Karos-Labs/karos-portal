@@ -57,8 +57,14 @@ export function ApprovePanel({
   // eslint-disable-next-line react-hooks/purity -- initial values only; component mounts once per open
   const now = Date.now();
   const minDatetime = toLocalInputValue(now + 60_000);
+  // A draft that already holds a calendar slot (the one-post-a-day chain gives
+  // its drafts one) keeps it: the panel used to open on the AI's pick instead,
+  // so the modal read "Scheduled for Mon 11:00" above a form proposing another
+  // time. The slot is only a default when it is still ahead of us — a missed
+  // one falls through to the recommendation like before.
+  const held = asset.scheduledAt && asset.scheduledAt > now + 60_000 ? asset.scheduledAt : null;
   const recommended =
-    asset.recommendedAt && asset.recommendedAt > now + 60_000 ? asset.recommendedAt : null;
+    held ?? (asset.recommendedAt && asset.recommendedAt > now + 60_000 ? asset.recommendedAt : null);
   const [datetime, setDatetime] = useState(
     recommended ? toLocalInputValue(recommended) : minDatetime,
   );
@@ -76,8 +82,9 @@ export function ApprovePanel({
       .then((rec) => {
         if (cancelled || !rec) return;
         setAiRec(rec);
-        // Only auto-fill if the user hasn't already picked a custom time.
-        if (rec.at > Date.now() + 60_000) setDatetime(toLocalInputValue(rec.at));
+        // Offer the recommendation; take it only when the draft holds no slot of
+        // its own (a held slot stays the default, the AI's pick stays a click).
+        if (!held && rec.at > Date.now() + 60_000) setDatetime(toLocalInputValue(rec.at));
       })
       .catch(() => {})
       .finally(() => {
@@ -86,7 +93,7 @@ export function ApprovePanel({
     return () => {
       cancelled = true;
     };
-  }, [asset.id]);
+  }, [asset.id, held]);
 
   const suggestedAt = aiRec?.at ?? recommended;
   const suggestedReason = aiRec?.reason ?? asset.recommendedReason;
