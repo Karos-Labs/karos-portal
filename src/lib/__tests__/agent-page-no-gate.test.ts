@@ -80,7 +80,7 @@ describe("an agent that IS set up", () => {
 
 describe("the run form, drawn in the page", () => {
   const at = RUN.indexOf("export function RunCustomAgentModal(");
-  const body = RUN.slice(at, RUN.indexOf("function AgentEditorModal(", at));
+  const body = RUN.slice(at, RUN.indexOf("export function ClientAgentAccessCard(", at));
 
   it("never opens a dialog of its own", () => {
     // Every frame goes through the shell switch; a bare <Modal> left in here

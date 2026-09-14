@@ -17,6 +17,7 @@ import {
   approveSeoGeoRecommendation,
 } from "@/lib/data";
 import { logger } from "@/services/logger";
+import { logStructured } from "@/lib/telemetry/structured-log";
 import { getCurrentUser } from "@/lib/auth";
 import type { ContextDocTier } from "@/lib/types";
 import { requireStaff, requireAdmin, logActivity, logGenerationFailure } from "./_shared";
@@ -437,6 +438,22 @@ export async function refreshClientContextDocsAction(clientId: string): Promise<
   const { refreshClientCondensedDocs } = await import("@/lib/intel");
   const condensed = await refreshClientCondensedDocs(client, internalMap, rules);
 
+  // An empty condensation is condense.ts's "no client-tier copy this run" signal:
+  // every model attempt failed, or there was no internal doc to condense.
+  // Upserting one would replace the client's published copy with a blank row at
+  // a higher version, which client-documents.tsx then shows as unavailable. Skip
+  // it so the existing row stays exactly as it was, the same filter
+  // writeContextDocsFromResearch applies on the onboarding path.
+  const publishable = condensed.filter((doc) => doc.content.trim().length > 0);
+  const skipped = condensed.filter((doc) => doc.content.trim().length === 0).map((doc) => doc.docType);
+  if (skipped.length > 0) {
+    logStructured(
+      "WARNING",
+      `context-doc refresh: empty condensation for ${skipped.join(", ")} — client-tier copy left as it was`,
+      { event: "context_document.refresh_skipped", clientId, docTypes: skipped },
+    );
+  }
+
   const now = Date.now();
 
   // Fetch existing client-tier docs to preserve version counters and createdAt timestamps.
@@ -446,7 +463,7 @@ export async function refreshClientContextDocsAction(clientId: string): Promise<
   const existingByDocType = new Map(existingClientDocs.map((d) => [d.docType, d]));
 
   await Promise.all(
-    condensed.map((doc) => {
+    publishable.map((doc) => {
       const prev = existingByDocType.get(doc.docType);
       return upsertClientContextDoc({
         clientId,

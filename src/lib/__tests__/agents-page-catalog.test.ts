@@ -22,15 +22,6 @@ const PAGE = path.join(process.cwd(), "src/app/(app)/agents/page.tsx");
 const source = readFileSync(PAGE, "utf8");
 
 describe("/agents renders the engine catalog and nothing legacy", () => {
-  it("does not mount the lab-library hub", () => {
-    // Neither imported nor rendered. The name still appears in the page's own
-    // header comment, explaining where the hub went and why — a scan for the
-    // bare name would fail on the explanation, which is the wrong thing to
-    // forbid.
-    expect(source).not.toMatch(/import\s*\{[^}]*CustomAgentsHub/);
-    expect(source).not.toContain("<CustomAgentsHub");
-  });
-
   it("does not pay for the library read that only the hub needed", () => {
     // `listCustomAgents` fed the hub's rows and the per-key control-plane
     // enrichment behind its version badges. With the hub gone, keeping the call

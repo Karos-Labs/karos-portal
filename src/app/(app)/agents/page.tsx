@@ -21,9 +21,11 @@ import { EngineAgentCard } from "@/components/agents/engine-agent-card";
  * with stages, prompts and a Studio link, one without, and nothing on either
  * saying which one a person should press.
  *
- * The library itself is untouched. `CustomAgentsHub` still renders on a
- * client's own agents page, where a granted-agent roster is the point; what is
- * gone is the duplicate catalog beside the engine's.
+ * The library itself is untouched: the `customAgents` docs still feed a
+ * client's own agents page, where a granted-agent roster is the point
+ * (`ClientAgentRoster`). What is gone is the duplicate catalog beside the
+ * engine's. `CustomAgentsHub`, which drew it here and was never mounted
+ * anywhere else, has been deleted.
  */
 export default async function AgentsPage() {
   const user = await requireUser(["KAROS_ADMIN", "KAROS_EMPLOYEE"]);
