@@ -1304,44 +1304,6 @@ export function listableAgents<T extends AgentListingFields>(agents: readonly T[
 }
 
 /**
- * One parent with the steps that belong to it, for the admin library.
- *
- * Sub-agents are grouped under their parent rather than hidden, because /agents
- * is the LIBRARY and not a roster: it is where an admin edits an agent's
- * instructions and toggles it on. Hiding the setup step there would make its
- * prompt permanently uneditable, which is a worse failure than the clutter.
- *
- * A sub-agent whose `parentKey` matches no agent in the list is returned as an
- * ORPHAN rather than dropped. Silently swallowing it is how a typo'd parentKey
- * becomes an agent nobody can find or fix — the orphan is visible, editable, and
- * says what is wrong with it.
- */
-export function groupAgentsByParent<T extends AgentListingFields & { name: string }>(
-  agents: readonly T[],
-): { parents: Array<{ agent: T; children: T[] }>; orphans: T[] } {
-  const parents = agents.filter((a) => !isSubAgent(a));
-  const children = agents.filter((a) => isSubAgent(a));
-  const byKey = new Map(parents.map((p) => [p.key, p]));
-  const grouped = new Map<string, T[]>();
-  const orphans: T[] = [];
-  for (const child of children) {
-    const parentKey = child.parentKey!.trim();
-    if (!byKey.has(parentKey)) {
-      orphans.push(child);
-      continue;
-    }
-    grouped.set(parentKey, [...(grouped.get(parentKey) ?? []), child]);
-  }
-  return {
-    parents: parents.map((agent) => ({
-      agent,
-      children: (grouped.get(agent.key) ?? []).sort((a, b) => a.name.localeCompare(b.name)),
-    })),
-    orphans,
-  };
-}
-
-/**
  * The v2 writer's "Post as" options for ONE client: the company page, plus every
  * seat whose voice has been built.
  *
