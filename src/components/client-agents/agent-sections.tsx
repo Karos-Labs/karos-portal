@@ -5,7 +5,6 @@ import { formatDate, relativeTime } from "@/lib/utils";
 import { intakeRowHref } from "@/lib/agent-intake-links";
 import type { AgentInputsView, AgentSetupFact } from "@/lib/agent-detail-sections";
 import type { RosterStatus } from "@/lib/client-agents";
-import { RUN_ESTIMATE_SENTENCE } from "@/lib/run-estimate";
 
 /**
  * The dated, categorized bands of an agent's page (CD-K1).
@@ -155,7 +154,7 @@ export function AgentStatusLine({
       {running && (
         <p className="flex items-center gap-1.5 text-xs text-muted-2">
           <Icon name="LoaderCircle" className="h-3 w-3 animate-spin-slow" aria-hidden="true" />
-          Working on your next {noun}. This takes {RUN_ESTIMATE_SENTENCE}. You can leave this page.
+          Working on your next {noun}. You can leave this page.
         </p>
       )}
       {/* The operational truth beside the client-facing word. It sits UNDER the
@@ -210,7 +209,7 @@ export function AgentInputsSection({ view }: { view: AgentInputsView }) {
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-mono text-sm uppercase tracking-[0.1em] text-muted">
+        <h2 className="font-label text-sm uppercase tracking-[0.1em] text-muted">
           What it runs on
         </h2>
         <Badge tone={view.ready ? "success" : "warning"}>
@@ -359,7 +358,7 @@ export function AgentSetupSection({ facts }: { facts: AgentSetupFact[] }) {
   if (facts.length === 0) return null;
   return (
     <section>
-      <h2 className="mb-3 font-mono text-sm uppercase tracking-[0.1em] text-muted">
+      <h2 className="mb-3 font-label text-sm uppercase tracking-[0.1em] text-muted">
         How it&rsquo;s set up
       </h2>
       <dl className="grid gap-x-4 gap-y-2 rounded-[var(--radius)] border border-border bg-surface-2/50 px-3 py-2.5 sm:grid-cols-2">

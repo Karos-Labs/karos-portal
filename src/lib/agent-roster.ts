@@ -104,7 +104,6 @@ export function managedCatalogEntries(): AgentCatalogEntry[] {
     consumesMedia: p.consumesMedia,
     requiredInputs: p.requiredInputs,
     deliverables: p.deliverables,
-    estimate: p.estimate,
     briefKeys: p.briefFields.map((f) => f.key),
     kind: "managed" as const,
   }));

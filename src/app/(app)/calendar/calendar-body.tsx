@@ -47,6 +47,7 @@ import { integrationIsUsable } from "@/lib/integration-status";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { isBillableClientActor } from "@/lib/credits";
 import { computePlatformGaps, gapPlatformNames } from "@/lib/calendar-gaps";
+import { isServedPlatform, servedPlatformKeys } from "@/lib/served-platforms";
 import { MANAGED_PRODUCTS } from "@/lib/agent-service/products";
 import { PageHeader, EmptyState, Badge, buttonClass } from "@/components/ui";
 import { Icon } from "@/components/icon";
@@ -373,12 +374,22 @@ export async function CalendarBody({
   //    banner and the generator can never disagree about what's "sparse".
   // eslint-disable-next-line react-hooks/purity -- server component, no re-render concern
   const gapNow = Date.now();
+  // The channels an agent of this client's posts to (lib/served-platforms.ts).
+  // A proposal for any other channel is never offered for approval — its
+  // Approve would dispatch an agent to make something it cannot — and the
+  // sparse nudge does not count that channel as empty either.
+  const servedPlatforms = servedPlatformKeys(
+    customAgents.filter((a) => a.enabled && scopedClient?.customAgentIds?.includes(a.id)),
+  );
   const usablePlatforms = integrations
-    .filter((i) => i.platform !== "google" && integrationIsUsable(i))
+    .filter((i) => i.platform !== "google" && integrationIsUsable(i) && servedPlatforms.has(i.platform))
     .map((i) => i.platform);
   const gapPlatforms = gapPlatformNames(computePlatformGaps(assets, usablePlatforms, gapNow));
   const pendingSuggestionTasks = pendingTasksRaw.filter(
-    (t) => t.owner === "karos_managed" && t.source === "copilot",
+    (t) =>
+      t.owner === "karos_managed" &&
+      t.source === "copilot" &&
+      isServedPlatform(t.metadata?.platform as string | undefined, servedPlatforms),
   );
   // Inferred, never stored: a suggestion has no date field on the task itself
   // (it's a proposal, not scheduled content), so its calendar placement is

@@ -113,7 +113,9 @@ describe("the sentence under the strip", () => {
     // them to an empty page.
     const landed = runOutcomeSentence("landed", true);
     expect(landed).not.toMatch(/archive|Workspace|Assets|Jobs|calendar/i);
-    expect(landed).toMatch(/review/i);
+    // And no review (Albert, 2026-09-10: the SOW rule stands — a client is never
+    // told about the review step). This assertion used to REQUIRE the word.
+    expect(landed).not.toMatch(/review|approv/i);
   });
 
   it("names no stored status and reads as client copy", () => {
@@ -163,26 +165,34 @@ describe("the run dialog's started panel", () => {
 
   it("was sliced, so the assertions below are reading the right panel", () => {
     expect(panel.length).toBeGreaterThan(500);
-    expect(panel).toContain("<Modal open onClose={onClose}");
+    // `<Shell`, not `<Modal`: the same panel is drawn in the page when the run
+    // form is (`const Shell = inline ? InlinePanel : Modal`). This line is the
+    // marker that the slice found the started panel, and it still is one.
+    expect(panel).toContain("<Shell open onClose={onClose}");
   });
 
   it("is no longer a dead end: it shows the ladder and the outcome sentence", () => {
-    expect(panel).toContain("<ManagedJobProgress");
+    expect(panel).toContain("<AgentRunProgress");
     expect(panel).toContain("runOutcomeSentence(outcome, viewerIsClient)");
     // The tick that WAS the whole panel, and the centred layout it anchored.
     expect(panel).not.toContain("CircleCheck");
     expect(panel).not.toContain("text-center");
   });
 
-  it("keeps the estimate as context beside progress, not as the only answer", () => {
-    expect(panel).toMatch(/It usually takes \$\{RUN_ESTIMATE_SENTENCE\}/);
+  it("promises no duration: the moving bar answers how long", () => {
+    // It kept "It usually takes …" as context beside the ladder. Albert,
+    // 2026-09-10: every "ready in X minutes" is untrue — so none, anywhere here.
+    expect(panel).not.toMatch(/RUN_ESTIMATE|usually takes|minutes/);
   });
 
   it("registers the run with the shell's watch rather than polling itself", () => {
     // One poller per run. When the dialog polled for itself, a reader who left
     // it open behind the dock had two intervals on one job.
     expect(dialog).toContain("watchRun({");
-    expect(dialog).toContain("useRunWatch()");
+    // One run, not the whole store: an idle form must not re-render on every
+    // tick of some other run.
+    expect(dialog).toContain("useRunWatchActions()");
+    expect(dialog).toContain("useWatchedRun(");
     expect(dialog).not.toContain("setInterval");
     expect(panel).not.toContain("fetch(");
   });
@@ -196,6 +206,19 @@ describe("the run dialog's started panel", () => {
     expect(dialog).toMatch(/href: viewerIsClient/);
     expect(dialog).toMatch(/`\/clients\/\$\{selectedClientId\}`/);
     expect(dialog).toMatch(/`\/jobs\/\$\{result\.jobId\}`/);
+  });
+});
+
+describe("the agent page's other ways to start a run", () => {
+  it("hand the run to the same watch, a format's Run now included", () => {
+    // Create was watched and each format's Run now was not, so a per-format
+    // run vanished from sight the moment the reader left the page.
+    const panel = code("components/client-agents/agent-detail-panel.tsx");
+    const rows = code("components/client-agents/live-card.tsx");
+    expect(panel).toContain("watchRun({");
+    expect(panel).toContain("if (result.jobId) watchStarted(result.jobId);");
+    expect(panel).toContain("onRunStarted={watchStarted}");
+    expect(rows).toContain("if (result.jobId) onRunStarted?.(result.jobId);");
   });
 });
 
@@ -213,7 +236,9 @@ describe("the dock", () => {
 
   it("renders nothing when there is nothing in flight", () => {
     // A client with no run must not pay for an empty widget or a poll.
-    expect(dock).toContain("if (runs.length === 0) return null;");
+    // `shown`, not `runs`: a run whose own page is on screen is drawn there by
+    // the run form, so the dock renders nothing for it either.
+    expect(dock).toContain("if (shown.length === 0) return null;");
   });
 
   it("sits under a modal, so re-opening the dialog is not covered by it", () => {

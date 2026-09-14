@@ -434,12 +434,12 @@ function FeedbackBox({
     <Card className="p-5">
       <CardTitle>Feedback</CardTitle>
       {/* F28: the archive holds APPROVED work, so a fresh issue is not there
-          yet and a client sent looking for one finds an empty page. Name the
-          approval step, and link the archive rather than describing it. */}
+          yet and a client sent looking for one finds an empty page. "Once it is
+          in" says it arrives later without naming the approval step (see the
+          Reddit surface). */}
       <p className="mt-1 text-sm text-muted">
         Tell us what is working and what is not, in your own words. It goes straight into the next
-        issue. Once your Karos team has approved an issue, telling us whether you sent it happens on
-        the issue itself, in{" "}
+        issue. Telling us whether you sent an issue happens on the issue itself once it is in{" "}
         <a href={archive.href} className="underline hover:text-foreground">
           {archive.label}
         </a>

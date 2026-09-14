@@ -31,7 +31,14 @@ vi.mock("@/lib/agent-service/client", () => ({
   cancelAgentServiceJob: vi.fn().mockResolvedValue({ status: "cancelled" }),
 }));
 
-process.env.NEXT_PUBLIC_APP_URL = "https://portal.test";
+/**
+ * SCRUM-332 (AU49) follow-up: this line used to set `NEXT_PUBLIC_APP_URL`,
+ * and it was the ONLY place in the repo that ever set it. The submit path read
+ * that name, so these 24 tests passed against a variable no deploy config
+ * wires - the suite was supplying the very thing production could not, and
+ * that is why the defect survived. `APP_URL` is what is actually wired.
+ */
+process.env.APP_URL = "https://portal.test";
 
 const ADMIN_USER = {
   uid: "u-admin",

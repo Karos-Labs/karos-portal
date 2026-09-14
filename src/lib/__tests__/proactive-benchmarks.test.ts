@@ -11,6 +11,7 @@ function ctx(historicalBenchmarks?: HistoricalBenchmarks): ProactiveSystemContex
   return {
     agents: [],
     linkedSocialPlatforms: ["linkedin"],
+    servedPlatforms: ["linkedin"],
     integrations: [{ platform: "linkedin", status: "active" }],
     scheduledNext14ByPlatform: {},
     hasGmailIntegration: false,

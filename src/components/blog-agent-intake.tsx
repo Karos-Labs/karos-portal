@@ -361,12 +361,12 @@ function YourArticlesCard({
           nowhere would be worse than none. The archive is where a client's
           reaction is recorded today. */}
       <p className="mt-1 text-sm text-muted">
-        Once your Karos team has approved an article, it appears in{" "}
+        Articles appear in{" "}
         <a href={archive.href} className="underline hover:text-foreground">
           {archive.label}
         </a>{" "}
-        with everything you need to publish it: the page, a version that pastes into your editor,
-        and the title and description details your platform asks for.
+        as they are finished, with everything you need to publish them: the page, a version that
+        pastes into your editor, and the title and description details your platform asks for.
       </p>
       <IntakeRunRows clientId={clientId} family="blog" runs={runs} isStaff={isStaff} />
     </Card>

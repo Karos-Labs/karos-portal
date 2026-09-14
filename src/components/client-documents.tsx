@@ -934,8 +934,8 @@ export function RegenerateModal({
             highest priority if they conflict with global settings.
           </p>
           <p className="text-xs text-muted-2">
-            The run takes a few minutes and continues in the background. You can close this and
-            keep working. Regenerate stays locked until it finishes.
+            The run continues in the background. You can close this and keep working.
+            Regenerate stays locked until it finishes.
           </p>
           <div className="space-y-1.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-2">

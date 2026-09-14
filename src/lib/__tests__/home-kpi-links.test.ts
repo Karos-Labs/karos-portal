@@ -29,10 +29,6 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(__dirname, "..", "..", "..");
 const KPIS = readFileSync(join(ROOT, "src/components/home-kpis.tsx"), "utf8");
 const CLIENT_PAGE = readFileSync(join(ROOT, "src/app/(app)/clients/[id]/page.tsx"), "utf8");
-const SETTINGS_PAGE = readFileSync(
-  join(ROOT, "src/app/(app)/clients/[id]/settings/page.tsx"),
-  "utf8",
-);
 
 /**
  * Source with its comments taken out. Load-bearing for the header check below:
@@ -72,9 +68,22 @@ describe("every KPI cell", () => {
 
   it("is passed one at every call site", () => {
     const tags = cellTags(KPIS);
-    // Three cells today: followers, published content, visibility.
-    expect(tags.length).toBeGreaterThanOrEqual(3);
+    // TWO cells since SCRUM-418: followers and published content. Visibility
+    // left for the SEO card, where all three readings of that snapshot now sit
+    // under one link.
+    expect(tags.length).toBeGreaterThanOrEqual(2);
     for (const tag of tags) expect(tag, `a <Cell> with no href: ${tag}`).toContain("href=");
+  });
+
+  it("does not take the visibility score back", () => {
+    // The guard that replaces the two anchor tests below. A score on this card
+    // is a third link to the report from a card whose other cells go to two
+    // different places, which is the shape SCRUM-418 removed — and it would
+    // leave the SEO card quoting the same number two cards down.
+    const rendered = withoutComments(KPIS);
+    for (const gone of ["ScoreView", "visibilityScore", "visibilityHref", "TONE_COLORS"]) {
+      expect(rendered, `${gone} is back on the KPI card`).not.toContain(gone);
+    }
   });
 });
 
@@ -83,17 +92,23 @@ describe("where the client page sends each cell", () => {
     // The point of the round: "more about THIS number" is a different screen
     // per number, so one shared href would be the old broken promise again.
     //
-    // TWO CELLS, NOT THREE, since the review wave (2026-09): the followers cell
-    // has never rendered (nothing writes `clientFollowerSnapshots`) and the page
-    // stopped reading a collection to feed it, so `audienceHref` is not passed
-    // at all. The rule is about the cells that mount — a cell with nowhere to go
-    // is what this file exists to catch, and an absent cell has no reader to
-    // disappoint.
-    const props = ["contentHref", "visibilityHref"];
-    for (const prop of props) expect(CLIENT_PAGE).toContain(`${prop}=`);
-    const values = props.map((prop) => CLIENT_PAGE.match(new RegExp(`${prop}=\\{([^}]+)\\}`))?.[1]);
+    // ONE CELL MOUNTS TODAY. The followers cell has never rendered (nothing
+    // writes `clientFollowerSnapshots`) so `audienceHref` is not passed at all
+    // (review wave, 2026-09), and visibility left the card entirely for the SEO
+    // one (SCRUM-418). The rule is about the cells that mount — a cell with
+    // nowhere to go is what this file exists to catch, and an absent cell has
+    // no reader to disappoint.
+    //
+    // Read off the mount rather than hardcoded, so the distinctness check keeps
+    // biting when the follower cron lands and a second href appears.
+    // No `s` flag: the target is below es2018, and a negated class already
+    // spans newlines, so the flag was never doing anything here.
+    const mount = CLIENT_PAGE.match(/<HomeKpisWidget[^>]*\/>/)?.[0] ?? "";
+    expect(mount, "the KPI widget mount moved").not.toBe("");
+    const values = [...mount.matchAll(/(\w*Href)=\{([^}]+)\}/g)].map((m) => m[2]);
+    expect(values.length).toBeGreaterThanOrEqual(1);
     expect(values.every(Boolean)).toBe(true);
-    expect(new Set(values).size).toBe(props.length);
+    expect(new Set(values).size, "two KPI cells share one destination").toBe(values.length);
   });
 
   it("counts the published cell's link on a list that holds everything it counted", () => {
@@ -107,24 +122,7 @@ describe("where the client page sends each cell", () => {
     expect(value, "the published cell went back to a status filter").not.toContain("status=");
   });
 
-  it("anchors the visibility cell at a section the Reporting tab really renders", () => {
-    const hash = CLIENT_PAGE.match(/`\$\{reportHref\}#([a-z-]+)`/)?.[1];
-    expect(hash, "the visibility cell no longer carries an anchor").toBeTruthy();
-    expect(SETTINGS_PAGE, `nothing on the Reporting tab has id="${hash}"`).toContain(
-      `id="${hash}"`,
-    );
-  });
-
-  it("drops the anchor when there is no snapshot for the section to render", () => {
-    // settings/page.tsx writes `id="visibility-scores"` INSIDE its `seoGeo ? …`
-    // branch, so on an unmeasured account the fragment names nothing. The tab
-    // itself always renders (the panel's own empty state), so the cell keeps a
-    // destination and drops the hash rather than losing its link.
-    expect(CLIENT_PAGE).toMatch(
-      /const visibilityHref = seoGeo \? `\$\{reportHref\}#[a-z-]+` : reportHref;/,
-    );
-    expect(SETTINGS_PAGE).toMatch(/const reportingSection = seoGeo \? \(/);
-  });
+  // The two visibility-anchor tests went with the cell (SCRUM-418).
 
   it("mounts the widget once, so staff context and the client portal cannot diverge", () => {
     // Both branches of this page render the SAME `kpis` element; a second

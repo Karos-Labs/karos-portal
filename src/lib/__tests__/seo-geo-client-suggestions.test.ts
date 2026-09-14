@@ -243,7 +243,7 @@ describe("buildClientSuggestions — length and shape", () => {
   });
 
   it("drops an id it cannot name rather than printing the neutral fallback", () => {
-    // "A technical finding your team is reviewing" is an honest thing to say
+    // "A technical finding we are still mapping" is an honest thing to say
     // about a row Karos owns and a useless thing to hand a client as a task.
     const out = suggest([gap({ id: "GEO-999" }), gap({ id: "GEO-25" })]);
     expect(out.map((s) => s.id)).toEqual(["GEO-25"]);

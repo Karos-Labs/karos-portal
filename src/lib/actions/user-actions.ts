@@ -20,12 +20,13 @@ import { adminAuth } from "@/lib/firebase/admin";
 import { sendEmail, emailShell, html } from "@/lib/email";
 import type { AppUser, Role } from "@/lib/types";
 import { ownAccountSession, requireAdmin } from "./_shared";
+import { appLinkBase } from "@/lib/app-origin";
 
 /** Where a stuck signup should write. Same fallback as sendSupportEmailAction. */
 const SUPPORT_EMAIL = process.env.ADMIN_EMAIL ?? "hello@karoslabs.com";
 
 function signInUrl(): string {
-  const base = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+  const base = appLinkBase();
   return `${base}/login`;
 }
 

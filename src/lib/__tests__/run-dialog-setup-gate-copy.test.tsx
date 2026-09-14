@@ -44,7 +44,7 @@ vi.mock("@/lib/actions/external-job-actions", () => ({
   refreshJobStatusAction: vi.fn(),
   retryJobAction: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 // `Modal` portals into `document.body` and this suite runs in node. The subject
 // is the gate's own copy and its link, so the chrome around it is replaced by a
 // passthrough rather than the runner being given a DOM for one file — the
@@ -136,8 +136,12 @@ describe("the run dialog's setup gate, for an agent whose form was not prefetche
       const markup = gateMarkup(entry);
       const text = textOf(markup);
 
-      // Positive first: this is the gate, and it is rendering.
-      expect(text).toContain(`Set up the ${entry.setup.label} first.`);
+      // Positive first: this is the gate, and it is rendering — in the CLIENT's
+      // words, since it is rendered for a client. It used to print the internal
+      // label ("Set up the X agent data first."), the vocabulary `clientLabel`
+      // exists to keep off a client's screen.
+      expect(text).toContain(`${entry.setup.clientLabel} are needed first.`);
+      expect(text).not.toContain("agent data");
       expect(markup).toContain(`href="${entry.setup.href}"`);
       expect(text).toContain("It takes a few minutes to fill in, once.");
     });

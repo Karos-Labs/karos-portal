@@ -565,11 +565,13 @@ function ScheduledRunCard({
     <div className="rounded-lg border border-border bg-surface p-3">
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          {/* The run's agent, in its own colour (the chips above keep their tint). */}
           <ContentPlatformMark
             platform={run.platform}
             identity={run.productName}
             icon={run.productIcon}
             className="h-4 w-4"
+            tone="brand"
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -834,7 +836,7 @@ function PausedScheduleStrip({
   if (schedules.length === 0) return null;
   return (
     <div className="rounded-[var(--radius)] border border-border bg-surface-2/30 px-4 py-3">
-      <p className="mb-2 text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">
+      <p className="mb-2 text-[11px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">
         Paused schedules
       </p>
       <ul className="space-y-2">
@@ -1075,7 +1077,7 @@ function PastRunCard({
   // `jobStatus: j.status` from a required field — but `CalendarRun` is shared with
   // the scheduled-run card, where the field genuinely is absent, so the branch
   // stays and says why.
-  const status = run.jobStatus ? jobStatusMeta(run.jobStatus) : NO_RUN_STATUS;
+  const status = run.jobStatus ? jobStatusMeta(run.jobStatus, viewerIsClient) : NO_RUN_STATUS;
   const inFlight = run.jobStatus === "queued" || run.jobStatus === "running";
 
   // Where "review this" actually goes. Staff get the run detail page the
@@ -1112,11 +1114,13 @@ function PastRunCard({
     <div className="rounded-lg border border-border bg-surface p-3" title={run.staffRef}>
       <div className="flex items-start gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-foreground/[0.04] text-foreground/80">
+          {/* The run's agent, in its own colour (the chips above keep their tint). */}
           <ContentPlatformMark
             platform={run.platform}
             identity={run.productName}
             icon={run.productIcon}
             className="h-4 w-4"
+            tone="brand"
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -1419,11 +1423,24 @@ function WeekView({
           const dayPosts = postsByDay.get(key) ?? [];
           const daySuggestions = suggestionsByDay.get(key) ?? [];
           const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
+          // SCRUM-421: the row selects the day and opens its detail. It said so
+          // nowhere — no selected look, and the detail opened below the whole
+          // calendar — so the arrow read as a dropdown that did nothing. The
+          // row now shows it is the open day, in the grid's own selected style.
+          const isSelected = key === selectedKey;
           return (
-            <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+            <li
+              key={key}
+              className={cn(
+                "px-3 py-2.5",
+                isToday && "bg-foreground/[0.04]",
+                isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
+              )}
+            >
               <button
                 type="button"
                 onClick={() => onSelectDay(key)}
+                aria-pressed={isSelected}
                 className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
               >
                 <span className="text-xs font-semibold">{DAY_LABELS[d.getDay()]} {d.getDate()}</span>
@@ -1705,6 +1722,14 @@ export function RunCalendar({
   const [weekAnchor, setWeekAnchor] = useState(() => startOfWeek(anchorDay));
   const [dayAnchor, setDayAnchor] = useState(() => startOfDay(anchorDay));
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Opening a day shows its detail BELOW the calendar, often off-screen, which
+  // is how pressing a day row came to look like nothing happened (SCRUM-421).
+  const dayDetailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!selectedKey) return;
+    const still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    dayDetailRef.current?.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+  }, [selectedKey]);
   /**
    * The archive's three filters, HELD HERE (review wave, 2026-09).
    *
@@ -2300,8 +2325,11 @@ export function RunCalendar({
             >
               <Icon name="Archive" className="h-3.5 w-3.5" />
               Archive
+              {/* SCRUM-426: for staff, Archive is "what the client sees" — the
+                  work queue with every status is Assets. A client reads the
+                  sentence that describes it from their side. */}
               <span className="hidden text-[11px] font-normal text-muted-2 sm:inline">
-                · everything we&apos;ve delivered
+                {viewerIsClient ? "· everything we've delivered" : "· what the client sees"}
               </span>
             </button>
           )}
@@ -2312,7 +2340,7 @@ export function RunCalendar({
         {/* Day-of-week header - seven columns need width to mean anything */}
         <div className="hidden grid-cols-7 border-b border-border sm:grid">
           {DAY_LABELS.map((d) => (
-            <div key={d} className="py-1.5 text-center text-[10px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">{d}</div>
+            <div key={d} className="py-1.5 text-center text-[10px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">{d}</div>
           ))}
         </div>
 
@@ -2421,11 +2449,21 @@ export function RunCalendar({
             agendaDays.map(({ key, day, runs: dayRuns, posts: dayPosts, suggestions: daySuggestions }) => {
               const isToday = isCurrentMonth && day === today.getDate();
               const dayCount = dayRuns.length + dayPosts.length + daySuggestions.length;
+              // Same as the week list (SCRUM-421): the open day looks open.
+              const isSelected = key === selectedKey;
               return (
-                <li key={key} className={cn("px-3 py-2.5", isToday && "bg-foreground/[0.04]")}>
+                <li
+                  key={key}
+                  className={cn(
+                    "px-3 py-2.5",
+                    isToday && "bg-foreground/[0.04]",
+                    isSelected && "bg-neon-soft/40 ring-1 ring-inset ring-neon/40",
+                  )}
+                >
                   <button
                     type="button"
                     onClick={() => setSelectedKey(key)}
+                    aria-pressed={isSelected}
                     className="mb-1.5 flex min-h-[24px] w-full items-center gap-2 text-left"
                   >
                     <span className="text-xs font-semibold">
@@ -2556,7 +2594,7 @@ export function RunCalendar({
               equal weight in one row there was no way to tell that pressing
               "Completed run" does nothing. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+            <span className="text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">
               Runs
             </span>
             {ALL_CALENDAR_RUN_LEGEND_KEYS.map((key) => (
@@ -2568,7 +2606,7 @@ export function RunCalendar({
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="text-[10px] font-mono font-medium uppercase tracking-[0.12em] text-muted-2">
+            <span className="text-[10px] font-label font-medium uppercase tracking-[0.12em] text-muted-2">
               Posts
             </span>
           {(Object.keys(STATUS_FILTER_CHIP_CLASS) as CalendarFilterKey[])
@@ -2601,7 +2639,7 @@ export function RunCalendar({
 
       {/* Day detail */}
       {selectedKey && (
-        <div className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
+        <div ref={dayDetailRef} className="rounded-[var(--radius)] border border-border bg-surface-2/40 p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-semibold">{selectedLabel}</h3>
             <button onClick={() => setSelectedKey(null)} className="rounded-md p-1 text-muted-2 hover:bg-surface-2 hover:text-foreground" aria-label="Close">

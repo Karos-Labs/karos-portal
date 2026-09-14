@@ -3,6 +3,7 @@ import "server-only";
 import { sendEmail, esc } from "@/lib/email";
 import { classifyJobError } from "@/lib/job-error-taxonomy";
 import type { Client, Job } from "@/lib/types";
+import { appLinkBase } from "@/lib/app-origin";
 
 /**
  * Failure-alert recipients, from `ADMIN_EMAILS` (comma-separated).
@@ -24,9 +25,8 @@ export function alertRecipients(): string[] {
     .filter(Boolean);
 }
 
-function appUrl(): string {
-  return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-}
+/** SCRUM-332 (AU49) follow-up: one of five copies of this, now one function. */
+const appUrl = appLinkBase;
 
 function alertShell(opts: { heading: string; rows: Array<[string, string]>; link: string; linkLabel: string }): string {
   const rowsHtml = opts.rows

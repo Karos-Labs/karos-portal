@@ -23,7 +23,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/actions/control-plane-actions", () => ({
   dispatchControlPlaneAgentAction: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 
 import { EngineAgentCard } from "@/components/agents/engine-agent-card";
 import { mediaSourceHint } from "@/lib/custom-agent-launch";
@@ -140,7 +140,8 @@ describe("the run card only offers what the workflow behind it reads", () => {
    */
   function isBrandLogo(html: string): boolean {
     const first = /<svg[^>]*>/.exec(html.slice(html.indexOf("<svg")))?.[0] ?? "";
-    return first.includes('fill="currentColor"');
+    // Filled, in the ink or in the platform's own colour.
+    return /\sfill="(?!none")[^"]+"/.test(first);
   }
 
   it("gives a platform agent its own logo and a generic one its control-plane icon", () => {
@@ -153,7 +154,8 @@ describe("the run card only offers what the workflow behind it reads", () => {
     // variants share its logo without an entry each.
     expect(isBrandLogo(markup("linkedin-agent"))).toBe(true);
     expect(isBrandLogo(markup("reddit-agent"))).toBe(true);
-    // An agent with no single channel keeps whatever the control plane named.
+    // An agent with no single channel draws a glyph: its family's, else the
+    // one the control plane named.
     expect(isBrandLogo(markup("blog-agent", { icon: "FileText" }))).toBe(false);
     expect(isBrandLogo(markup("intel-report-agent"))).toBe(false);
   });

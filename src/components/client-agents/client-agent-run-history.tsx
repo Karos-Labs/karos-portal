@@ -44,7 +44,9 @@ export function ClientAgentRunHistory({ runs }: { runs: CustomAgentRunRow[] }) {
       </div>
       <ul className="space-y-2">
         {shown.map((run) => {
-          const meta = jobStatusMeta(run.status);
+          // Always the client's words, for staff too: this is the client's
+          // view of their runs, and staff read the real state in Control Room.
+          const meta = jobStatusMeta(run.status, true);
           return (
             <li
               key={run.id}

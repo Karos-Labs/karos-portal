@@ -37,6 +37,26 @@ import { cn } from "@/lib/utils";
  * does not actually mirror. `rail-account-tabs.test.ts` holds the two lists
  * together.
  *
+ * ── COLLAPSED OFF ITS OWN ROUTE (Albert, 2026-09-11) ──────────────────────
+ *
+ * "This should be collapsable." Five section rows under Home, AI agents and
+ * Calendar made the rail read as eight peers, on every page, for a group whose
+ * whole description is "everything that is not daily use". The sections now
+ * show only while the reader is IN Account Center, and the parent row folds
+ * them away everywhere else.
+ *
+ * NO TOGGLE CONTROL, on purpose. The parent row navigates; it does not also
+ * open and close. A row that both goes somewhere and toggles is two controls
+ * that look like one — the exact confusion the account menu's own identity
+ * row was un-split to remove (portal feedback round 2, 2026-09), and the
+ * reason the agents list above lost its disclosure. Opening the group is one
+ * click: the click that goes there. The chevron at the row's end says it is a
+ * group and whether it is open, and nothing else.
+ *
+ * ITS OWN ICON. It shared the gear with its Settings section, so the parent
+ * and one child looked like the same destination. `ACCOUNT_CENTER_ICON` is
+ * the one spelling; the mobile sheets and the staff shell read it from here.
+ *
  * ── WHY NO SUB-ROW IS EVER MARKED ACTIVE ─────────────────────────────────
  *
  * Deliberate, and it would be a bug to add. `SettingsTabs` moves between
@@ -56,6 +76,9 @@ import { cn } from "@/lib/utils";
  * which is what the test asserts, because these ids live in two files and only
  * one of them can be the source. Exported for that test.
  */
+/** Not the Settings gear: the group and its Settings section are two things. */
+export const ACCOUNT_CENTER_ICON = "Briefcase";
+
 export const ACCOUNT_CENTER_SECTIONS: readonly { id: string; label: string; icon: string }[] = [
   { id: "profile", label: "Profile", icon: "Building2" },
   { id: "competitors", label: "Competitors", icon: "Users" },
@@ -83,12 +106,30 @@ export function ClientRailAccountNav({ home }: { home: string }) {
             : "text-muted hover:bg-surface-2 hover:text-foreground",
         )}
       >
-        <Icon name="Settings" className="h-4 w-4 shrink-0 text-muted-2 group-hover:text-foreground" />
+        <Icon
+          name={ACCOUNT_CENTER_ICON}
+          className={cn(
+            "h-4 w-4 shrink-0",
+            onSettings ? "text-foreground" : "text-muted-2 group-hover:text-foreground",
+          )}
+        />
         <span className="flex-1 text-left">Account Center</span>
+        {/* A group's chevron, not a link's: it points down while the group is
+            open and right while it is folded, and it is static either way. */}
+        <Icon
+          name="ChevronDown"
+          aria-hidden="true"
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-2 transition-transform motion-reduce:transition-none",
+            !onSettings && "-rotate-90",
+          )}
+        />
       </Link>
 
       {/* Indented and rule-led, matching the agent roster directly above it, so
-          the rail reads as two groups with children rather than eight peers. */}
+          the rail reads as two groups with children rather than eight peers.
+          Only while the reader is in Account Center (see the docblock). */}
+      {onSettings && (
       <div className="ml-3 flex flex-col gap-0.5 border-l border-border pl-2">
         {ACCOUNT_CENTER_SECTIONS.map((section) => (
           <Link
@@ -104,6 +145,7 @@ export function ClientRailAccountNav({ home }: { home: string }) {
           </Link>
         ))}
       </div>
+      )}
     </div>
   );
 }

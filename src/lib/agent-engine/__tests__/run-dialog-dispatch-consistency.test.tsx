@@ -59,7 +59,7 @@ vi.mock("@/lib/actions/external-job-actions", () => ({
   refreshJobStatusAction: vi.fn(),
   retryJobAction: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }), usePathname: () => "/" }));
 // `Modal` portals into `document.body` and this suite runs in node, same as
 // run-dialog-setup-gate-copy.test.tsx. The subject is which FIELDS the dialog
 // paints, and those are the same children either way.

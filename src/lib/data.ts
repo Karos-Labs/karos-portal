@@ -86,7 +86,7 @@ import {
 } from "@/lib/crypto/token-cipher";
 import { randomUUID } from "node:crypto";
 import type { SeoGeoInsights } from "@/lib/seo-geo";
-import { competitorBrandKeys, looksLikeUrlInput } from "@/lib/competitor-input";
+import { planReportCompetitorReplacement } from "@/lib/competitor-replace";
 
 /* ----------------------------- helpers ----------------------------- */
 
@@ -1725,7 +1725,9 @@ export async function deleteClientCompetitor(id: string): Promise<void> {
  * Uses a single Firestore write batch so a partial failure cannot leave a mix
  * of old and new rows — either all rows are replaced or none are changed.
  *
- * Two merge rules keep the pool duplicate-free and measurement-stable:
+ * The merge rules that keep the pool duplicate-free and measurement-stable live
+ * in `planReportCompetitorReplacement` (competitor-replace.ts), where they can
+ * be proved without a database:
  *
  * 1. **Manual rows absorb their analysis twin.** An incoming row whose brand
  *    keys match an existing MANUAL row enriches that row in place (canonical
@@ -1733,7 +1735,10 @@ export async function deleteClientCompetitor(id: string): Promise<void> {
  *    analysis fields) and is NOT created as a report row — previously every
  *    analysis/report run minted a "Speedrun by a16z" twin next to the user's
  *    raw "https://speedrun.a16z.com" manual row.
- * 2. **The measured AI-visibility signal survives.** Incoming rows inherit
+ * 2. **Lab rows are never replaced.** A row imported from the client's lab
+ *    profile (`source: "lab"`) survives every run and absorbs its twin too,
+ *    keeping its curated name and tier.
+ * 3. **The measured AI-visibility signal survives.** Incoming rows inherit
  *    `llmMentions`/`llmMentionsAt` (and a missing `url`) from the old report
  *    row for the same brand, and old report rows the engines actually named
  *    (llmMentions > 0) that the new report dropped are retained — a standalone
@@ -1750,80 +1755,20 @@ export async function replaceReportCompetitors(
     .clientCompetitors()
     .where("clientId", "==", clientId)
     .get();
-  const reportDocs = existingAll.docs.filter(
-    (d) => (d.data() as ClientCompetitor).source === "report",
+  const plan = planReportCompetitorReplacement(
+    existingAll.docs.map((d) => ({ id: d.id, data: d.data() as Omit<ClientCompetitor, "id"> })),
+    rows,
+    Date.now(),
   );
-  const manualDocs = existingAll.docs.filter(
-    (d) => (d.data() as ClientCompetitor).source === "manual",
-  );
-
-  const oldRows = reportDocs.map((d) => d.data() as Omit<ClientCompetitor, "id">);
-  const oldByKey = new Map<string, Omit<ClientCompetitor, "id">>();
-  for (const r of oldRows) {
-    for (const k of competitorBrandKeys(r.company, r.url)) if (!oldByKey.has(k)) oldByKey.set(k, r);
-  }
-  const manualByKey = new Map<string, (typeof manualDocs)[number]>();
-  for (const d of manualDocs) {
-    const m = d.data() as ClientCompetitor;
-    for (const k of competitorBrandKeys(m.company, m.url)) if (!manualByKey.has(k)) manualByKey.set(k, d);
-  }
-  const manualKeyOf = (name: string, url?: string) =>
-    competitorBrandKeys(name, url).map((k) => manualByKey.get(k)).find(Boolean);
 
   const batch = adminDb().batch();
-
-  const carriedOld = new Set<Omit<ClientCompetitor, "id">>();
-  const merged: Array<Omit<ClientCompetitor, "id">> = [];
-  for (const row of rows) {
-    const manualDoc = manualKeyOf(row.company, row.url);
-    if (manualDoc) {
-      // Enrich the manual row in place; never mint a report twin beside it.
-      const m = manualDoc.data() as ClientCompetitor;
-      batch.set(
-        manualDoc.ref,
-        {
-          company: looksLikeUrlInput(m.company) && row.company ? row.company : m.company,
-          ...(m.url || !row.url ? {} : { url: row.url }),
-          ...(row.positioning ? { positioning: row.positioning } : {}),
-          ...(row.keyStrengths?.length ? { keyStrengths: row.keyStrengths } : {}),
-          ...(row.keyWeaknesses?.length ? { keyWeaknesses: row.keyWeaknesses } : {}),
-          ...(row.threatLevel ? { threatLevel: row.threatLevel } : {}),
-          marketTier: row.marketTier,
-          overlap: row.overlap,
-          updatedAt: Date.now(),
-        },
-        { merge: true },
-      );
-      continue;
-    }
-    const old = competitorBrandKeys(row.company, row.url)
-      .map((k) => oldByKey.get(k))
-      .find(Boolean);
-    if (!old) {
-      merged.push(row);
-      continue;
-    }
-    carriedOld.add(old);
-    merged.push({
-      ...row,
-      ...(!row.url && old.url ? { url: old.url } : {}),
-      ...(old.llmMentions !== undefined
-        ? { llmMentions: old.llmMentions, ...(old.llmMentionsAt !== undefined ? { llmMentionsAt: old.llmMentionsAt } : {}) }
-        : {}),
-    });
+  for (const { id, patch } of plan.updates) {
+    batch.set(col.clientCompetitors().doc(id), patch, { merge: true });
   }
-  // Measured survivors also skip re-creation when a manual row now covers them.
-  const survivors = oldRows.filter(
-    (r) =>
-      !carriedOld.has(r) &&
-      (r.llmMentions ?? 0) > 0 &&
-      !manualKeyOf(r.company, r.url),
-  );
-
-  for (const doc of reportDocs) {
-    batch.delete(doc.ref);
+  for (const id of plan.deletes) {
+    batch.delete(col.clientCompetitors().doc(id));
   }
-  for (const row of [...merged, ...survivors]) {
+  for (const row of plan.creates) {
     batch.set(col.clientCompetitors().doc(), row);
   }
   await batch.commit();

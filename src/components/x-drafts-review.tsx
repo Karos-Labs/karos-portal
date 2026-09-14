@@ -165,7 +165,7 @@ function DraftCard({
         {draft.posts.map((post, i) => (
           <div key={i} className="rounded-md border border-border bg-background p-4">
             {post.marker ? (
-              <p className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-muted">{post.marker}</p>
+              <p className="mb-1.5 font-label text-[10px] uppercase tracking-wider text-muted">{post.marker}</p>
             ) : null}
             <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">{post.text}</p>
             {post.marker && charLabel(post.chars) ? (

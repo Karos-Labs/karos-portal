@@ -33,7 +33,7 @@ const INTAKE_RUN_NOUN: Record<IntakeFamily, string> = {
 
 export const ALL_INTAKE_FAMILIES = Object.keys(INTAKE_RUN_NOUN) as IntakeFamily[];
 
-/** Plural, and always read after a possessive: "your {noun} land in your archive". */
+/** Plural, and always read after a possessive: "your {noun} land in the archive". */
 export function intakeRunNoun(family: IntakeFamily): string {
   return INTAKE_RUN_NOUN[family];
 }

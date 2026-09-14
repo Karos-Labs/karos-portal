@@ -982,7 +982,7 @@ export function TaskTicketModal({
           {/* Description */}
           {task.description && (
             <div>
-              <p className="mb-1 text-[11px] font-mono font-medium uppercase tracking-[0.14em] text-muted-2">Description</p>
+              <p className="mb-1 text-[11px] font-label font-medium uppercase tracking-[0.14em] text-muted-2">Description</p>
               <p className="text-sm leading-relaxed text-foreground">{task.description}</p>
             </div>
           )}

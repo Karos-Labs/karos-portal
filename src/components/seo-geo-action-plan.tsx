@@ -153,7 +153,7 @@ export function SeoGeoActionPlan({
                   snapshot.
                 </p>
               ) : (
-                <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.06em] text-muted-2">
+                <p className="mt-1 font-label text-[10px] uppercase tracking-[0.06em] text-muted-2">
                   {r.owner}
                 </p>
               )}

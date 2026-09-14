@@ -84,7 +84,9 @@ import {
   X_SETUP_REQUIRED_PREFIX,
   BATCH_SIZE_FIELD_KEY,
   agentKeyMatchesClientSlug,
+  launchProfileFor,
   perClientAgentSlug,
+  requestSteersRun,
 } from "@/lib/custom-agent-launch";
 import { refundJobCharge } from "@/lib/credit-reconcile";
 import { estimateAgentRunCredits } from "@/lib/credit-estimate";
@@ -93,6 +95,7 @@ import { maxPostsPerSubmission, scheduleLimitsFor } from "@/lib/scheduled-runs";
 import { logActivity } from "@/lib/actions/_shared";
 import { customRunStartedTitle } from "@/lib/activity-titles";
 import { mintJobToken } from "@/lib/mcp/job-token";
+import { webhookCallbackOrigin } from "@/lib/app-origin";
 import type {
   AppUser,
   Client,
@@ -408,11 +411,11 @@ export async function submitCustomAgentJob(
     return { error: "This run's price is not set up correctly — your Karos team can fix it." };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.APP_URL;
-  if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or APP_URL) must be set for webhook callbacks." };
-  }
-  const origin = appUrl.replace(/\/$/, "");
+  // SCRUM-332 (AU49) follow-up: one helper for what was four hand-written
+  // copies, one of which read a variable that is wired nowhere.
+  const callback = webhookCallbackOrigin();
+  if ("error" in callback) return { error: callback.error };
+  const origin = callback.origin;
 
   const contextFiles: AgentServiceContextFile[] = [];
   for (const itemId of input.contextItemIds ?? []) {
@@ -845,7 +848,12 @@ export async function submitCustomAgentJob(
       // fix is that the page and the server must agree on it — otherwise the
       // dialog paints a field the server builds its input without. Pinned by
       // the page/server consistency sweep in product-mapping.test.ts.
-      inputs: { ...toEngineRunInput(engineBriefValues, engineProductId), ...engineExtraInputs },
+      inputs: {
+        ...toEngineRunInput(engineBriefValues, engineProductId, {
+          requestSteersRun: requestSteersRun(launchProfileFor(agent)),
+        }),
+        ...engineExtraInputs,
+      },
       createdBy: user.uid,
     });
     if ("error" in dispatched) {
@@ -1114,11 +1122,11 @@ export async function submitDynamicAgentJob(
     return { error: "Agent not found." };
   }
 
-  const appUrl = process.env.AGENT_SERVICE_CALLBACK_URL ?? process.env.NEXT_PUBLIC_APP_URL;
-  if (!appUrl) {
-    return { error: "AGENT_SERVICE_CALLBACK_URL (or NEXT_PUBLIC_APP_URL) must be set for webhook callbacks." };
-  }
-  const origin = appUrl.replace(/\/$/, "");
+  // SCRUM-332 (AU49) follow-up: one helper for what was four hand-written
+  // copies, one of which read a variable that is wired nowhere.
+  const callback = webhookCallbackOrigin();
+  if ("error" in callback) return { error: callback.error };
+  const origin = callback.origin;
 
   // DECISION: specSnapshot is a deep clone taken right here, at job-creation
   // time — never the live spec at execution time. structuredClone (Node 18+)

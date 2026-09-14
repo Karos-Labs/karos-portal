@@ -111,7 +111,7 @@ export function VisibilityWork({
 }) {
   return (
     <section id="what-we-are-doing" className="scroll-mt-24 space-y-3">
-      <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+      <p className="font-label text-[10px] uppercase tracking-[0.08em] text-muted">
         What we are doing to improve your SEO and GEO
       </p>
       <Card>

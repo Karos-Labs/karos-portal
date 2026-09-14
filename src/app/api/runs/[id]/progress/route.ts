@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { requireClientAccess } from "@/lib/actions/_shared";
-import { readAgentEngineRun } from "@/lib/agent-engine/read-run";
+import { readAgentEngineRunRecord } from "@/lib/agent-engine/read-run";
 import { isJobInProgress, reconciledJobStatus } from "@/lib/agent-engine/reconcile";
+import { getCurrentUser } from "@/lib/auth";
 import { getJob } from "@/lib/data";
-import type { RunProgressView } from "@/lib/run-progress";
+import { runOutcome, type RunProgressView } from "@/lib/run-progress";
+import { stepHeadline } from "@/lib/run-step-headline";
 
 /**
  * The narrow "how is my run doing" endpoint, for the reader who started it.
@@ -37,11 +39,19 @@ import type { RunProgressView } from "@/lib/run-progress";
  *
  * WHAT CROSSES is `RunProgressView` and nothing else. Not `job.error` (an
  * internal string, and the client copy for a stopped run says what to do
- * instead), not the engine run id, not the deliverable ids.
+ * instead), not the engine run id, not the deliverable ids, and not engine step
+ * ids: the current step is turned into client words here.
+ *
+ * It reads the run doc only (`readAgentEngineRunRecord`), not the full view:
+ * the predicates below need `run`, the headline needs `run.currentStepId`, and
+ * this is hit every four seconds per watched run.
  */
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const job = await getJob(id);
+  // The job and the session are independent reads, and this is hit every four
+  // seconds: `getCurrentUser` is cached per request, so the access check below
+  // finds it resolved. The run read waits for that check.
+  const [job] = await Promise.all([getJob(id), getCurrentUser()]);
   if (!job) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   try {
@@ -50,13 +60,29 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
-  const view = job.agentEngineRunId ? await readAgentEngineRun(job.agentEngineRunId) : undefined;
+  const run = job.agentEngineRunId ? await readAgentEngineRunRecord(job.agentEngineRunId) : undefined;
+  const view = run ? { run } : undefined;
   // The WORD and the BOOLEAN come from the same mapping, so a run whose
   // `jobs` document has not caught up yet cannot be reported as still working
   // under a stopped spinner. See reconciledJobStatus.
+  const status = reconciledJobStatus(job, view);
+  const agentDone = run?.status === "awaiting_gate";
   const body: RunProgressView = {
-    status: reconciledJobStatus(job, view),
+    status,
     inProgress: isJobInProgress(job, view),
+    ...(agentDone ? { agentDone: true } : {}),
+    // While working: the engine's current step in client words; a run with no
+    // engine behind it has no step to report, so it says it is working once it
+    // is (rather than "Starting the run" for the whole run).
+    ...(!agentDone && runOutcome(status) === "working"
+      ? {
+          headline: run
+            ? stepHeadline(run.currentStepId)
+            : status === "running"
+              ? "Working on it"
+              : stepHeadline(null),
+        }
+      : {}),
   };
   return NextResponse.json(body);
 }

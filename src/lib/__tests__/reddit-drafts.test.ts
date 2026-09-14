@@ -410,7 +410,7 @@ describe("the Reddit intake follows them too", () => {
   });
 
   it("renders a run's state and date through the app's own helpers", () => {
-    expect(rows).toContain("<JobStatusBadge status={r.status} />");
+    expect(rows).toContain("<JobStatusBadge status={r.status} viewerIsClient={!isStaff} />");
     // Staff keep the generation date; a client gets the relative, outcome-worded
     // stamp instead (A3/A4 — four rows carrying one date is the batch tell).
     // intake-run-rows.test.ts owns that split; this pin only holds the
@@ -429,9 +429,11 @@ describe("the Reddit intake follows them too", () => {
   it("sends clients to the archive only for work that reaches it (F28)", () => {
     // F149 filters the client archive to approved, non-future items, so freshly
     // generated work is not there and a client sent looking for it finds an
-    // empty page. The copy names the approval step and links the destination —
-    // it no longer names the unit the work ships in.
-    expect(intake).toContain("Once your Karos team has approved the replies");
+    // empty page. The copy says the reply arrives there later and links the
+    // destination, without naming the approval step (a client is never told
+    // about it) or the unit the work ships in.
+    expect(intake.replace(/\s+/g, " ")).toContain("happens on the reply itself once it is in");
+    expect(intake).not.toContain("Karos team has approved");
     // The URL itself is no longer written here. This page is staff-reachable and
     // `?tab=` is read only by ProgressView, which TasksBody mounts only with a
     // client in scope — so a staff viewer at the flat /tasks got the

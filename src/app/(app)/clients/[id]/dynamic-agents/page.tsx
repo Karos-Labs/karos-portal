@@ -3,6 +3,7 @@ import { requireUser, requireVisibleClient } from "@/lib/auth";
 import { listDynamicAgentSpecs } from "@/lib/data";
 import { Badge, Card, CardTitle, EmptyState, PageHeader } from "@/components/ui";
 import { Icon } from "@/components/icon";
+import { AgentMark } from "@/components/agent-identity";
 import { ContactUsButton } from "@/components/contact-us-modal";
 
 /**
@@ -10,7 +11,7 @@ import { ContactUsButton } from "@/components/contact-us-modal";
  * surface for the spec-driven agents an admin built in `/admin/agents/builder`.
  *
  * Deliberately kept SEPARATE from the existing `/clients/[id]/agents` roster
- * (custom-agents.tsx's CustomAgentsHub / ClientAgentRoster): that page's
+ * (`ClientAgentRoster`, components/client-agents/roster.tsx): that page's
  * launch-vs-run, scheduling, and umbrella-template machinery is built
  * specifically around `CustomAgent`/`ClientAgent`, which a `DynamicAgentSpec`
  * is not. Folding this in there would mean threading a second agent shape
@@ -74,7 +75,7 @@ export default async function ClientDynamicAgentsPage({ params }: { params: Prom
                 href={`/clients/${client.id}/dynamic-agents/${spec.id}`}
                 className="flex items-center gap-2.5 rounded-md border border-border bg-surface-2 px-3 py-2.5 hover:border-border-strong"
               >
-                <Icon name={spec.icon || "Sparkles"} className="h-4 w-4 shrink-0 text-muted-2" />
+                <AgentMark identity={spec.name} icon={spec.icon || "Sparkles"} className="h-4 w-4 shrink-0 text-muted-2" />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-foreground">{spec.name}</p>
                   <p className="truncate text-xs text-muted-2">{spec.summary || spec.description}</p>

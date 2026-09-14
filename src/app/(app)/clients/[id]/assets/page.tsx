@@ -58,9 +58,12 @@ export default async function ClientAssetsPage({
       <PageHeader
         title="Assets"
         description={
+          // SCRUM-426: this is the staff work queue, every status; the client's
+          // own view is their archive, which shows approved work only. It used
+          // to call that "the client's library", a third name for one place.
           pendingCount > 0
-            ? `${pendingCount} draft${pendingCount === 1 ? "" : "s"} awaiting review. Approve to publish to ${client.name}.`
-            : `Deliverables for ${client.name}. Approved items appear in the client's library.`
+            ? `${pendingCount} draft${pendingCount === 1 ? "" : "s"} awaiting review. ${client.name} sees only what you approve, in their archive.`
+            : `Every deliverable for ${client.name}, in every status. ${client.name} sees only approved work, in their archive.`
         }
       />
       <AssetsView
