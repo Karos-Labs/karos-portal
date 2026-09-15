@@ -121,8 +121,12 @@ describe("the run dialog's direction field", () => {
   });
 
   it("keeps SCRUM-409's correction, which is a fact about the engine", () => {
-    // The shape is decided by "Kind of post"; the note does not override it.
-    // That is not a statement about the other boxes and it stays.
+    // The shape is decided by "Kind of post" in the ordinary case. Since
+    // SCRUM-430 the sentence also carries the one recorded exception (a note
+    // naming exactly one kind) — that relationship is pinned to the contract
+    // in launch-profile-precedence-claims.test.ts, not here. This test only
+    // asks that the select is still named and the scope is still per-run:
+    // neither is a statement about the other boxes, and both stay.
     expect(STEER_RUN_HELPER_WITH_KIND).toMatch(/Kind of post/);
     expect(STEER_RUN_HELPER_WITH_KIND).toMatch(/this run only/);
   });
