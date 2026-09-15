@@ -86,11 +86,31 @@ export const STEER_RUN_LABEL = "Direction for this run (optional)";
 /**
  * The per-run helper, with the redirect gone.
  *
- * It still says what the field does NOT do - Kind of post chooses the shape -
- * because that is SCRUM-409's correction and it is a fact about the engine
- * rather than about the other boxes. What it no longer does is tell the reader
- * that another box is the real one. A field whose own helper says that has
- * admitted it is a duplicate, and it is most of what "clashing" meant.
+ * It states the relationship between this field and Kind of post, and it may,
+ * because that relationship is now RECORDED rather than intended: agent-engine
+ * PR #120 (SCRUM-430, on main 2026-09-14) makes a note that names exactly one
+ * kind of post win over the select, on x-agent and linkedin-agent alike, and
+ * `engine-field-contract.ts` carries the line numbers. Before that PR this line
+ * read "Kind of post still decides the shape." — SCRUM-409's correction, true
+ * of the engine at the time — and the previous line before THAT promised "it
+ * wins over everything else this run", which was never true. The rule this
+ * file follows is the same in all three states: say what the engine does.
+ *
+ * THE CONDITION IS THE COPY. The engine does not read intent; it looks for a
+ * short list of phrases a person writes when they mean a mode ("react to",
+ * "this week's", "how to", "playbook", "ask the audience", "a poll" …) and
+ * yields only when the note carries cues for ONE mode. So the sentence names
+ * the three kinds in the words those cues use — a reaction to news, a lesson or
+ * how-to, a question for the audience — rather than saying "if you ask for
+ * one", which a reader would satisfy with wording the engine does not catch.
+ * A note that names no kind, or two, leaves the select in charge, which is
+ * what "unless" carries. `launch-profile-precedence-claims.test.ts` pins this
+ * string to the contract: it may claim the precedence only while both products
+ * that show it have one recorded.
+ *
+ * What it still does not do is tell the reader that another box is the real
+ * one. A field whose own helper says that has admitted it is a duplicate, and
+ * it is most of what "clashing" meant (SCRUM-411).
  *
  * NOT "above" (2026-09-10). The launch profile DECLARES Kind of post before this
  * field, but the form paints the primary field first and folds the rest into
@@ -98,12 +118,13 @@ export const STEER_RUN_LABEL = "Direction for this run (optional)";
  * hidden until opened.
  */
 export const STEER_RUN_HELPER_WITH_KIND =
-  "Steers this run only. Kind of post still decides the shape.";
+  "Steers this run only. Kind of post decides the shape, unless this note clearly asks for another kind: a reaction to news, a lesson or how-to, or a question for your audience.";
 
 /*
  * A profile with no "Kind of post" select has NO helper line (2026-09-10,
  * "reduce the number of elements"). Its old one, "Steers this run only. The
  * agent works from your stored agent data either way.", restated the label's
  * "(optional)". The line above stays because it says something the label does
- * not, and SCRUM-430 keeps it until agent-engine lets the note win.
+ * not — and since SCRUM-430 it sits on BOTH profiles that pair the note with
+ * Kind of post (LinkedIn post, X draft), because the engine treats them alike.
  */

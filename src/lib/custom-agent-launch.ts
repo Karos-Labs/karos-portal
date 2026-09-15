@@ -447,31 +447,26 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           label: STEER_RUN_LABEL,
           steersRun: true,
           type: "textarea",
-          // WAS "it wins over everything else this run" — a precedence the
-          // engine does not implement for this product. engine-field-contract
-          // records BOTH fields as read by linkedin-agent, independently:
-          // `requestedMode` through RUN_SCOPED_KEYS into 07b-select-content-mode,
-          // `customPrompt` as the run direction. The only precedence that table
-          // records anywhere is tiktok-agent's ("requestedTopic, only when
-          // customPrompt is absent"). So a client who chose a Kind of post and
-          // then wrote a note got the shape they chose — which is the exact
-          // thing the sentence promised would be overridden, and it is what was
-          // reported from outside (SCRUM-409: "it still chooses one of the three
-          // and chose Hot News even though the text under the note box says
-          // what you type wins").
+          // THREE STATES OF ONE SENTENCE, each true of the engine at the time.
+          // (1) "it wins over everything else this run" — never true; the
+          // engine read `requestedMode` and `customPrompt` independently, so a
+          // client who chose a Kind of post and wrote a note got the shape they
+          // chose (SCRUM-409, reported from outside: "it still chooses one of
+          // the three and chose Hot News even though the text under the note
+          // box says what you type wins"). (2) "Kind of post still decides the
+          // shape." — SCRUM-409's correction. (3) Now: the note wins WHEN it
+          // names exactly one kind, because agent-engine PR #120 (SCRUM-430)
+          // made it so, for linkedin-agent and x-agent both, and
+          // engine-field-contract records where. The helper carries the
+          // condition in the engine's own terms; see lib/intake-steer-copy.ts.
           //
-          // The X writer pairs these same two fields and has always said the
-          // honest thing ("The agent works from the stored X agent data either
-          // way"), as does the other LinkedIn profile in this file. This now
-          // matches its own siblings rather than describing an intention.
           // THE REDIRECT IS GONE (SCRUM-411). It sent the reader to "What
           // should we cover next?" for a standing steer - which is true, and
           // was also the sentence that made this field read as a duplicate of
           // that box: a field whose own helper names another box as the real
           // one has admitted it. Both boxes now state their own scope where the
           // reader is (see lib/intake-steer-copy.ts), so there is nothing to
-          // point at. The "Kind of post decides the shape" half stays: that is
-          // SCRUM-409's correction and it is a fact about the engine.
+          // point at.
           helper: STEER_RUN_HELPER_WITH_KIND,
           placeholder: "A launch to build up to, a topic to hit.",
         },
@@ -667,6 +662,12 @@ const profiles: Array<{ matches: (identity: string) => boolean; profile: AgentLa
           label: STEER_RUN_LABEL,
           steersRun: true,
           type: "textarea",
+          // Same line as the LinkedIn post dialog, since SCRUM-430: x-agent's
+          // 07b-select-content-mode reads `runDirection.modeOverride` before
+          // `intake.requestedMode` exactly as linkedin-agent's does
+          // (engine-field-contract, customPrompt -> x-agent). This profile had
+          // no helper before because it had nothing true to add; now it does.
+          helper: STEER_RUN_HELPER_WITH_KIND,
           placeholder: "A launch to feature, a topic to hit, a seat to focus on.",
         },
       ],
