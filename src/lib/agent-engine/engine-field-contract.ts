@@ -239,9 +239,22 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
     // consumes `.direction`/`.topicOverride`, or spreads
     // `runDirectionField(runDirection)` into a drafting step's input.
     readBy: [
-      { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts:71,208-209" },
+      // SCRUM-430 (agent-engine PR #120, on main 2026-09-14): for x-agent and
+      // linkedin-agent the note also carries a CONDITIONAL precedence over
+      // `requestedMode`. `readRunDirection` runs the instruction through
+      // `modeFromDirection` — a short list of phrases a person writes when they
+      // mean a content mode ("react to", "this week's", "how to", "playbook",
+      // "ask the audience", "a poll" …) — and sets `RunDirection.modeOverride`
+      // only when cues for EXACTLY ONE mode appear. 07b-select-content-mode
+      // then passes `modeOverride ?? intake.requestedMode` to
+      // `selectContentMode`, which honours any valid requested value, so a
+      // note that names a kind wins over the dialog's pick and the selection
+      // reports `source: "directed"`. A note that names no kind, or two, changes
+      // nothing: the dialog's pick (or the rotation) stands. The wording below
+      // is what `launch-profile-precedence-claims.test.ts` pins.
+      { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts:71,208-209; a note that names exactly one kind of post wins over requestedMode — packages/workflow/src/primitives/run-direction.ts:153-173 (MODE_CUES, modeFromDirection -> RunDirection.modeOverride) and create-x-agent-workflow.ts:415-419 (07b-select-content-mode: selectContentMode(recentModes, directed ?? intake.requestedMode); source \"directed\")" },
       { product: "instagram-agent", evidence: "agents/instagram-agent/src/workflow/create-instagram-agent-workflow.ts:387,656-657" },
-      { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts:183,398-399" },
+      { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts:183,398-399; a note that names exactly one kind of post wins over requestedMode — packages/workflow/src/primitives/run-direction.ts:153-173 (MODE_CUES, modeFromDirection -> RunDirection.modeOverride) and create-linkedin-agent-workflow.ts:562-566 (07b-select-content-mode: selectContentMode(recentDecisions.modes, directed ?? intake.requestedMode); source \"directed\")" },
       { product: "reddit-agent", evidence: "agents/reddit-agent/src/workflow/create-reddit-agent-workflow.ts:89,251-252" },
       { product: "blog-agent", evidence: "agents/blog-agent/src/workflow/create-blog-agent-workflow.ts:80,201-202" },
       { product: "newsletter-agent", evidence: "agents/newsletter-agent/src/workflow/create-newsletter-agent-workflow.ts:102,217-220" },
@@ -462,11 +475,14 @@ export const ENGINE_FIELD_CONTRACT: Record<WireFieldKey, FieldContractEntry> = {
 
   // agent-engine RFC-12 (2026-09): the content-mode rotation. Rendered as a
   // "Kind of post" select on the X draft and LinkedIn post dialogs; blank
-  // means the engine rotates and the key is not sent at all.
+  // means the engine rotates and the key is not sent at all. Since SCRUM-430
+  // it is the SECOND word on the mode, not the last: `runDirection.modeOverride`
+  // (a note naming exactly one kind) is consulted first — see the `customPrompt`
+  // rows for the two products, which carry the line numbers.
   requestedMode: {
     readBy: [
-      { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts (00-intake-check overlays wf.input.requestedMode; 07b-select-content-mode: selectContentMode(recentModes, intake.requestedMode))" },
-      { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (RUN_SCOPED_KEYS includes requestedMode; readRunConfig; 07b-select-content-mode)" },
+      { product: "x-agent", evidence: "agents/x-agent/src/workflow/create-x-agent-workflow.ts (00-intake-check overlays wf.input.requestedMode; :415-416 07b-select-content-mode: selectContentMode(recentModes, runDirection.modeOverride ?? intake.requestedMode) — applied when the note names no kind)" },
+      { product: "linkedin-agent", evidence: "agents/linkedin-agent/src/workflow/create-linkedin-agent-workflow.ts (RUN_SCOPED_KEYS includes requestedMode; readRunConfig; :562-563 07b-select-content-mode: selectContentMode(recentDecisions.modes, runDirection.modeOverride ?? intake.requestedMode) — applied when the note names no kind)" },
     ],
     sentButUnread: [],
   },
