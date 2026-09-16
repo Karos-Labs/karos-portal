@@ -2169,6 +2169,63 @@ export async function markIntegrationForReauth(clientId: string, platform: strin
   );
 }
 
+/**
+ * One integration by (clientId, platform), credentials decrypted STRICTLY —
+ * this is a consuming path (token refresh), so an undecryptable value fails
+ * loud like the publish cron does rather than being dropped. Null when the
+ * client never connected that platform.
+ */
+export async function getClientIntegration(
+  clientId: string,
+  platform: string,
+): Promise<ClientIntegration | null> {
+  const doc = await col.clientIntegrations().doc(`${clientId}_${platform}`).get();
+  if (!doc.exists) return null;
+  const row = withId<ClientIntegration>(doc);
+  return row.credentials ? { ...row, credentials: decryptCredentials(row.credentials) } : row;
+}
+
+/**
+ * Persist a refreshed token set (CN1, 2026-09). Writes ONLY the keys the
+ * provider rotated (`accessToken`, sometimes `refreshToken`, plus `expiresAt`);
+ * `{ merge: true }` deep-merges the nested `credentials` map, so a manual-paste
+ * field such as `pageId` or `organizationId` — and a `refreshToken` this call
+ * did not touch — survives without being rewritten. Each value is encrypted on
+ * its own (encryptCredentials), so nothing untouched is decrypted here.
+ *
+ * Deliberately NOT a read-modify-write of the whole map: re-sending the stored
+ * ciphertext would restore any key a concurrent writer changed between the read
+ * and the write, so a reconnect landing in that window would have its brand-new
+ * refresh token replaced by the dead one it just superseded. The read stays only
+ * to refuse an integration that does not exist.
+ *
+ * A successful refresh is proof the token set works again, so the dead-token
+ * markers (`status: "expired" | "reauthenticate"`, `expiredAt`) are cleared
+ * here rather than by each caller. Throws when the integration does not exist:
+ * refreshing a connection nobody made must not create one.
+ */
+export async function updateClientIntegrationCredentials(
+  clientId: string,
+  platform: string,
+  credentials: Record<string, string>,
+): Promise<void> {
+  const ref = col.clientIntegrations().doc(`${clientId}_${platform}`);
+  const existing = await ref.get();
+  if (!existing.exists) {
+    throw new Error(`No ${platform} integration to update for client ${clientId}`);
+  }
+  const { FieldValue } = await import("firebase-admin/firestore");
+  await ref.set(
+    {
+      credentials: encryptCredentials(credentials),
+      status: "active",
+      expiredAt: FieldValue.delete(),
+      updatedAt: Date.now(),
+    },
+    { merge: true },
+  );
+}
+
 /** Toggle whether the publish cron may auto-post to this platform (Publish Now always works). */
 export async function setIntegrationAutoPublish(
   clientId: string,
