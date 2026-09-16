@@ -1,0 +1,219 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1010" viewBox="0 0 1600 1010" font-family="Helvetica, Arial, sans-serif" font-size="15">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+    <marker id="arrO" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="1010" fill="#ffffff"/>
+  <text x="40" y="36" font-size="22" font-weight="bold" fill="#111">Karos — the flow, every step, and what each step writes and reads</text>
+
+  <!-- ROW A: onboarding -->
+  <text x="40" y="66" font-size="13" font-weight="bold" fill="#1d4ed8" letter-spacing="1">ONBOARDING — ONCE PER CLIENT</text>
+  <g stroke="#1d4ed8" stroke-width="1.5" fill="#eff6ff">
+    <rect x="40" y="76" width="300" height="80" rx="6"/>
+    <rect x="380" y="76" width="380" height="80" rx="6"/>
+    <rect x="800" y="76" width="580" height="80" rx="6"/>
+  </g>
+  <g fill="#111">
+    <text x="54" y="100" font-weight="bold">1  Sign up</text>
+    <text x="54" y="122">Name, email, website.</text>
+    <text x="54" y="142">The website starts everything.</text>
+    <text x="394" y="100" font-weight="bold">2  Study the business</text>
+    <text x="394" y="122">Site, market, competitors, how the audience talks,</text>
+    <text x="394" y="142">brand kit, search and AI-visibility baseline.</text>
+    <text x="814" y="100" font-weight="bold">3  Build the profile</text>
+    <text x="814" y="122">6 client documents + internal documents + checklist.</text>
+    <text x="814" y="142">Per platform: strategy map (problems × stages) + industry overlay of the craft rules.</text>
+  </g>
+  <g stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#arr)">
+    <path d="M340,116 L378,116"/>
+    <path d="M760,116 L798,116"/>
+    <path d="M1090,156 L1090,196 L140,196 L140,238"/>
+  </g>
+
+  <!-- loop back from what-works to step 5 -->
+  <g stroke="#c2410c" stroke-width="1.5" fill="none" marker-end="url(#arrO)" stroke-dasharray="6,4">
+    <path d="M1320,470 L1590,470 L1590,220 L362,220 L362,238"/>
+  </g>
+  <text x="1120" y="214" font-size="13" fill="#c2410c">what works → the next run</text>
+
+  <!-- ROW B: every run -->
+  <text x="170" y="232" font-size="13" font-weight="bold" fill="#c2410c" letter-spacing="1">EVERY RUN — MANUAL OR FROM THE CALENDAR</text>
+  <g stroke="#c2410c" stroke-width="1.5" fill="#fff7ed">
+    <rect x="40" y="240" width="200" height="110" rx="6"/>
+    <rect x="262" y="240" width="200" height="110" rx="6"/>
+    <rect x="484" y="240" width="200" height="110" rx="6"/>
+    <rect x="706" y="240" width="200" height="110" rx="6"/>
+    <rect x="928" y="240" width="200" height="110" rx="6"/>
+    <rect x="1150" y="240" width="200" height="110" rx="6"/>
+    <rect x="1372" y="240" width="200" height="110" rx="6"/>
+  </g>
+  <g fill="#111" font-size="14">
+    <text x="50" y="262" font-weight="bold">4  Run</text>
+    <text x="50" y="282">Client note, or a calendar</text>
+    <text x="50" y="300">slot: sequencing picks the</text>
+    <text x="50" y="318">stage, type and subject.</text>
+    <text x="50" y="336">≤ 2 questions, only if needed.</text>
+
+    <text x="272" y="262" font-weight="bold">5  Read</text>
+    <text x="272" y="282">Profile, craft layers</text>
+    <text x="272" y="300">(platform › industry › client),</text>
+    <text x="272" y="318">platform state, subject table,</text>
+    <text x="272" y="336">feedback, what-works.</text>
+
+    <text x="494" y="262" font-weight="bold">6  Research the platform</text>
+    <text x="494" y="282">Audience, competitors,</text>
+    <text x="494" y="300">trends, own account.</text>
+    <text x="494" y="318">First run: build platform</text>
+    <text x="494" y="336">state and the voice file.</text>
+
+    <text x="716" y="262" font-weight="bold">7  Decide</text>
+    <text x="716" y="282">Relevant × trending ×</text>
+    <text x="716" y="300">performing → one candidate</text>
+    <text x="716" y="318">with its goal, who it is for,</text>
+    <text x="716" y="336">why now.</text>
+
+    <text x="938" y="262" font-weight="bold">8  Vet</text>
+    <text x="938" y="282">Hard platform rules,</text>
+    <text x="938" y="300">direction fit, forbidden</text>
+    <text x="938" y="318">topics, no competitor</text>
+    <text x="938" y="336">promotion. Pass or hold.</text>
+
+    <text x="1160" y="262" font-weight="bold">9  Draft</text>
+    <text x="1160" y="282">Copy (+ visuals) in the voice.</text>
+    <text x="1160" y="300">Slop lint → humanizer pass →</text>
+    <text x="1160" y="318">craft checklist. Subject row</text>
+    <text x="1160" y="336">written as drafted.</text>
+
+    <text x="1382" y="262" font-weight="bold">10  Review</text>
+    <text x="1382" y="282">Approve, change, regenerate.</text>
+    <text x="1382" y="300">Outcome and edits recorded;</text>
+    <text x="1382" y="318">preferences derived.</text>
+    <text x="1382" y="336">Goal shown on the post.</text>
+  </g>
+  <g stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#arr)">
+    <path d="M240,295 L260,295"/>
+    <path d="M462,295 L482,295"/>
+    <path d="M684,295 L704,295"/>
+    <path d="M906,295 L926,295"/>
+    <path d="M1128,295 L1148,295"/>
+    <path d="M1350,295 L1370,295"/>
+    <path d="M1472,350 L1472,392 L230,392 L230,428"/>
+  </g>
+  <text x="600" y="386" font-size="13" fill="#333">approved → scheduled on the client's cadence</text>
+
+  <!-- ROW C: after posting -->
+  <text x="40" y="422" font-size="13" font-weight="bold" fill="#15803d" letter-spacing="1">AFTER POSTING</text>
+  <g stroke="#15803d" stroke-width="1.5" fill="#f0fdf4">
+    <rect x="40" y="430" width="380" height="80" rx="6"/>
+    <rect x="460" y="430" width="400" height="80" rx="6"/>
+    <rect x="900" y="430" width="420" height="80" rx="6"/>
+  </g>
+  <g fill="#111" font-size="14">
+    <text x="54" y="454" font-weight="bold">11  Post on the cadence</text>
+    <text x="54" y="474">Client posts (or auto-publish where allowed).</text>
+    <text x="54" y="494">Subject row marked posted.</text>
+    <text x="474" y="454" font-weight="bold">Ingest performance</text>
+    <text x="474" y="474">Per post: views, likes, comments, shares, saves, clicks.</text>
+    <text x="474" y="494">Per platform: followers. API where connected, else scrape.</text>
+    <text x="914" y="454" font-weight="bold">What works</text>
+    <text x="914" y="474">Outliers → why they worked → rules per type and stage.</text>
+    <text x="914" y="494">Updates the client craft layer and the platform state.</text>
+  </g>
+  <g stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#arr)">
+    <path d="M420,470 L458,470"/>
+    <path d="M860,470 L898,470"/>
+  </g>
+
+  <!-- ROW D: stores -->
+  <text x="40" y="562" font-size="13" font-weight="bold" fill="#525252" letter-spacing="1">THE STORES, PER CLIENT — W = written by step, R = read by step</text>
+  <g stroke="#737373" stroke-width="1.2" fill="#fafafa">
+    <rect x="40" y="572" width="180" height="120" rx="6"/>
+    <rect x="232" y="572" width="180" height="120" rx="6"/>
+    <rect x="424" y="572" width="180" height="120" rx="6"/>
+    <rect x="616" y="572" width="180" height="120" rx="6"/>
+    <rect x="808" y="572" width="180" height="120" rx="6"/>
+    <rect x="1000" y="572" width="180" height="120" rx="6"/>
+    <rect x="1192" y="572" width="180" height="120" rx="6"/>
+    <rect x="1384" y="572" width="180" height="120" rx="6"/>
+  </g>
+  <g fill="#111" font-size="13">
+    <text x="50" y="594" font-weight="bold">Profile documents</text>
+    <text x="50" y="614">6 client docs, internal docs,</text>
+    <text x="50" y="631">learned log, versions.</text>
+    <text x="50" y="660">W: 3, 6, 10 (corrections)</text>
+    <text x="50" y="677">R: 5</text>
+
+    <text x="242" y="594" font-weight="bold">Strategy + craft layers</text>
+    <text x="242" y="614">Problems × stages map;</text>
+    <text x="242" y="631">platform › industry › client.</text>
+    <text x="242" y="660">W: 3, what-works</text>
+    <text x="242" y="677">R: 4, 5, 8, 9</text>
+
+    <text x="434" y="594" font-weight="bold">Platform state</text>
+    <text x="434" y="614">Account, top posts, what</text>
+    <text x="434" y="631">works there, voice file.</text>
+    <text x="434" y="660">W: 6, ingest</text>
+    <text x="434" y="677">R: 5, 6</text>
+
+    <text x="626" y="594" font-weight="bold">Subject table</text>
+    <text x="626" y="614">Subject, type, stage, goal,</text>
+    <text x="626" y="631">status, per platform, dated.</text>
+    <text x="626" y="660">W: 9, 10, 11</text>
+    <text x="626" y="677">R: 4, 5, 6</text>
+
+    <text x="818" y="594" font-weight="bold">Feedback log</text>
+    <text x="818" y="614">Outcome, edits, reasons;</text>
+    <text x="818" y="631">derived preferences.</text>
+    <text x="818" y="660">W: 10</text>
+    <text x="818" y="677">R: 5, 8</text>
+
+    <text x="1010" y="594" font-weight="bold">Performance</text>
+    <text x="1010" y="614">Per-post metrics,</text>
+    <text x="1010" y="631">follower series.</text>
+    <text x="1010" y="660">W: ingest</text>
+    <text x="1010" y="677">R: what-works, reporting</text>
+
+    <text x="1202" y="594" font-weight="bold">What-works summary</text>
+    <text x="1202" y="614">Outliers, why, rules per</text>
+    <text x="1202" y="631">type and stage.</text>
+    <text x="1202" y="660">W: after posting</text>
+    <text x="1202" y="677">R: 5, 7, 9</text>
+
+    <text x="1394" y="594" font-weight="bold">Run records</text>
+    <text x="1394" y="614">Run, slot, goal, cost,</text>
+    <text x="1394" y="631">deliverable.</text>
+    <text x="1394" y="660">W: 4, 9</text>
+    <text x="1394" y="677">R: reporting</text>
+  </g>
+
+  <!-- ROW E: reporting -->
+  <text x="40" y="748" font-size="13" font-weight="bold" fill="#6d28d9" letter-spacing="1">REPORTING — WHAT THE CLIENT SEES</text>
+  <g stroke="#6d28d9" stroke-width="1.5" fill="#f5f3ff">
+    <rect x="40" y="758" width="1000" height="110" rx="6"/>
+    <rect x="1120" y="758" width="440" height="110" rx="6"/>
+  </g>
+  <g fill="#111" font-size="14">
+    <text x="54" y="782" font-weight="bold">Reporting systems</text>
+    <text x="54" y="804">Onboarding report · Search and AI-answer visibility (monthly) · Reputation: reviews and comments → sentiment, drafted replies, flags</text>
+    <text x="54" y="824">Audience per platform and growth · Post performance and the best post explained · Agent activity: produced, approved, posted</text>
+    <text x="54" y="846">Each system feeds the profile and the what-works summary as well as the page.</text>
+    <text x="1134" y="782" font-weight="bold">Home page</text>
+    <text x="1134" y="804">Where you stand · what performed and why ·</text>
+    <text x="1134" y="824">what the agents produced · what to do next ·</text>
+    <text x="1134" y="846">how each agent improves your presence.</text>
+  </g>
+  <g stroke="#333" stroke-width="1.5" fill="none" marker-end="url(#arr)">
+    <path d="M1040,813 L1118,813"/>
+  </g>
+
+  <!-- legend -->
+  <g font-size="13" fill="#333">
+    <text x="40" y="910">Solid arrows: the order of steps.  Dashed orange: the learning loop, closed after posting.  Every run reads the stores live; nothing is a snapshot from onboarding.</text>
+    <text x="40" y="932">Cadence: the client sets it in the calendar; sequencing (step 4) decides which stage, type and subject fill each slot. TikTok editing is on demand and skips sequencing.</text>
+    <text x="40" y="954">Craft layers: platform rules (ours, versioned) › industry overlay (built at step 3 for the client's sector) › client layer (what works for this client). Client overrides industry overrides platform, except hard rules.</text>
+  </g>
+</svg>
