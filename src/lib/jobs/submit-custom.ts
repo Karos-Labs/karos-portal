@@ -493,7 +493,17 @@ export async function submitCustomAgentJob(
       const seat = (await listClientSeats(input.clientId)).find((s) => s.id === v2Identity.seatId);
       if (seat) engineBriefValues = { ...engineBriefValues, requestedExecutiveName: seat.name };
     }
-    if (!isLinkedInSetupV2(agent.key) && isLinkedInV2Agent(agent.key)) {
+    // NEITHER RUNG APPLIES ON THE ENGINE PATH, the same carve-out the
+    // reputation branch below makes and for the same reason. agent-engine's
+    // `linkedin-agent` runs `00-channel-setup` as its own pre-flight: a run
+    // carries the filled form, the workflow records the charter if the channel
+    // has none and matches the executive by NAME, then drafts. Both rungs here
+    // read rows only the deleted agent-service webhook ever wrote (`liAgentState`
+    // "foundation", `seatVoiceProfiles`), so on this path they can never be
+    // satisfied — the client is refused forever for a press that cannot produce
+    // what is being asked for. The INTAKE rung above stays on both paths: the
+    // form is what the pre-flight resolves from.
+    if (!engineProductId && !isLinkedInSetupV2(agent.key) && isLinkedInV2Agent(agent.key)) {
       if (!(await hasLinkedInV2Setup(input.clientId))) {
         return {
           error: `${LINKEDIN_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the LinkedIn agent card, which stands up the lanes, the voice and the first topics. Nothing has run.`,
@@ -556,7 +566,15 @@ export async function submitCustomAgentJob(
         error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your send day and your compliance limits before it can write an issue. Nothing has run.`,
       };
     }
-    if (!isNewsletterSetupV2(agent.key) && !(await hasNewsletterV2Setup(input.clientId))) {
+    // And not on the engine path, where `newsletter-agent` stands its own
+    // workspace up on the run: `newsletterAgentState` "issue-index" is an
+    // agent-service row nothing writes any more, so waiting for one is waiting
+    // forever. Same carve-out as LinkedIn above and reputation below.
+    if (
+      !engineProductId &&
+      !isNewsletterSetupV2(agent.key) &&
+      !(await hasNewsletterV2Setup(input.clientId))
+    ) {
       return {
         error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the newsletter agent card, which builds the voice, the topic list and the issue numbering. Nothing has run.`,
       };
@@ -576,7 +594,9 @@ export async function submitCustomAgentJob(
         error: `${BLOG_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your own domains and your off-limits subjects before it can write. Nothing has run.`,
       };
     }
-    if (!isBlogSetupV2(agent.key) && !(await hasBlogV2Setup(input.clientId))) {
+    // Engine path exempt, exactly as the newsletter's index rung above:
+    // `blogAgentState` "post-index" is an agent-service row with no writer left.
+    if (!engineProductId && !isBlogSetupV2(agent.key) && !(await hasBlogV2Setup(input.clientId))) {
       return {
         error: `${BLOG_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the blog agent card, which builds the voice, the cluster map and the post numbering. Nothing has run.`,
       };

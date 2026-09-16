@@ -24,6 +24,7 @@ import {
   hasReputationV2Setup,
   isReputationSetupInlinedForClient,
 } from "@/lib/agent-service/reputation-agent-context";
+import { engineOwnsSetupForClient } from "@/lib/agent-engine/setup-ownership";
 import {
   agentKeyMatchesClientSlug,
   clientSafeRefusal,
@@ -488,7 +489,7 @@ export async function buildAgentSetup(
         // Keyed to the V2 predicate, matching the core: the e10 generation has no
         // stand-up run, so requiring one of them would block runs the server
         // would accept.
-        const [ready, standUpDone] = await Promise.all([
+        const [ready, foundationOnFile, engineOwns] = await Promise.all([
           hasLinkedInAgentIntake(clientId, agent.key),
           // The SETUP skill is exempt — it is the run that creates the foundation
           // row, so demanding one of it would refuse the only run that can ever
@@ -496,7 +497,15 @@ export async function buildAgentSetup(
           isLinkedInV2Agent(agent.key) && !isLinkedInSetupV2(agent.key)
             ? hasLinkedInV2Setup(clientId)
             : Promise.resolve(true),
+          // ...and so is the whole ENGINE path, the way the reputation card
+          // below is: agent-engine's `linkedin-agent` stands the channel up in
+          // its own `00-channel-setup` pre-flight, so the foundation row this
+          // asks for is never written for an engine-routed client and the card
+          // would demand a press that cannot produce it. The submit core carries
+          // the same carve-out, so the two still agree.
+          engineOwnsSetupForClient(clientId, agent.key),
         ]);
+        const standUpDone = foundationOnFile || engineOwns;
         const href = intakePageHref(clientId, "linkedin");
         const label = "LinkedIn agent data";
         const clientLabel = "LinkedIn agent details";
@@ -533,10 +542,17 @@ export async function buildAgentSetup(
         // (submitCustomAgentJob → hasNewsletterAgentIntake, then
         // hasNewsletterV2Setup), so `ready` answers with both or it would offer
         // a run the server refuses.
-        const [hasIntake, isSetUp] = await Promise.all([
+        //
+        // Unless the engine owns setup for this client, the carve-out the
+        // reputation card below already makes: on that path the issue index is
+        // the engine's own to stand up and the `newsletterAgentState` row this
+        // reads is never written, so `ready` would stay false forever.
+        const [hasIntake, indexOnFile, engineOwns] = await Promise.all([
           hasNewsletterAgentIntake(clientId),
           hasNewsletterV2Setup(clientId),
+          engineOwnsSetupForClient(clientId, agent.key),
         ]);
+        const isSetUp = indexOnFile || engineOwns;
         const href = intakePageHref(clientId, "newsletter");
         const label = "Newsletter agent data";
         const clientLabel = "Newsletter agent details";
@@ -567,10 +583,16 @@ export async function buildAgentSetup(
         // claims a post number in the index at step 01, so a run without one is
         // charged for and dies. The submit core gates on both, so a one-rung
         // answer here would offer a run the server refuses.
-        const [hasIntake, isSetUp] = await Promise.all([
+        //
+        // With the same engine carve-out as the newsletter above: the post
+        // index is the engine's to stand up, and the `blogAgentState` row this
+        // reads has had no writer since agent-service was deleted.
+        const [hasIntake, indexOnFile, engineOwns] = await Promise.all([
           hasBlogAgentIntake(clientId),
           hasBlogV2Setup(clientId),
+          engineOwnsSetupForClient(clientId, agent.key),
         ]);
+        const isSetUp = indexOnFile || engineOwns;
         const href = intakePageHref(clientId, "blog");
         const label = "Blog agent data";
         const clientLabel = "Blog agent details";

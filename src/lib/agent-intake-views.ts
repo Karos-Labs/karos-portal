@@ -35,7 +35,9 @@ import {
 } from "@/lib/data";
 import {
   BLOG_SETUP_V2_KEY,
+  BLOG_WRITER_V2_KEY,
   NEWSLETTER_SETUP_V2_KEY,
+  NEWSLETTER_WRITER_V2_KEY,
   REPUTATION_SETUP_KEY,
   agentKeyMatchesClientSlug,
   isUnlistedAgent,
@@ -48,11 +50,13 @@ import {
 } from "@/lib/custom-agent-launch";
 import {
   LINKEDIN_SETUP_V2_KEY,
+  LINKEDIN_WRITER_V2_KEY,
   hasLinkedInV2Setup,
   listLinkedInReadySeatIds,
 } from "@/lib/agent-service/linkedin-agent-context";
 import { hasNewsletterV2Setup } from "@/lib/agent-service/newsletter-agent-context";
 import { hasBlogV2Setup } from "@/lib/agent-service/blog-agent-context";
+import { engineOwnsSetupForClient } from "@/lib/agent-engine/setup-ownership";
 import { hasReputationV2Setup, isReputationSetupInlinedForClient } from "@/lib/agent-service/reputation-agent-context";
 import type { AgentProfileScopeFields } from "@/lib/data";
 import type { BlogAgentIntake, BlogIntakeView } from "@/components/blog-agent-intake";
@@ -526,7 +530,14 @@ export async function buildLinkedInAgentIntakeView(
     feedback,
     requests,
     readySeatIds,
-    isSetUp,
+    foundationOnFile,
+    // Does agent-engine own this client's LinkedIn setup? On that path
+    // `00-channel-setup` stands the channel up on the run itself, so neither
+    // the foundation row nor a seat's voice profile is ever written — and both
+    // of the reads above would otherwise keep the page asking for a press that
+    // cannot produce them, and the run dialog hiding every seat. Asked with the
+    // WRITER key because the writer is the run these two gates guard.
+    engineOwnsSetup,
     jobs,
     // The company stand-up and a seat's voice run are the SAME agent doc fired
     // with a different identity, so one figure answers for both controls.
@@ -545,9 +556,11 @@ export async function buildLinkedInAgentIntakeView(
     listLiDirectionRequests(clientId),
     listLinkedInReadySeatIds(clientId),
     hasLinkedInV2Setup(clientId),
+    engineOwnsSetupForClient(clientId, LINKEDIN_WRITER_V2_KEY),
     opts.jobs ?? listJobs({ clientId }),
     setupRunCredits(LINKEDIN_SETUP_V2_KEY, null),
   ]);
+  const isSetUp = foundationOnFile || engineOwnsSetup;
 
   // The company row out of the list this function already reads, not a second
   // query for it — see the same note in buildXAgentIntakeView above (review
@@ -560,7 +573,14 @@ export async function buildLinkedInAgentIntakeView(
     name: seat.name,
     slug: seat.slug,
     intake: toLiIntakeView(intakeBySeat.get(seat.id) ?? null),
-    voiceReady: ready.has(seat.id),
+    // `voiceReady` decides two things at once: the seat's own status line, and
+    // whether the run dialog offers that person as an identity at all
+    // (`withLinkedInIdentityOptions` keeps only ready seats). On the engine
+    // path the executive is matched by NAME inside the run, there is no
+    // `seatVoiceProfiles` row to wait for, and the submit core no longer gates
+    // on one — so a false here would hide from the dialog a seat the server
+    // would happily draft for.
+    voiceReady: ready.has(seat.id) || engineOwnsSetup,
   }));
 
   // The customAgents key is per client instance (karos-linkedin-company-<slug>),
@@ -663,13 +683,20 @@ export async function buildNewsletterAgentIntakeView(
   clientId: string,
   opts: { isStaff: boolean; jobs?: Job[]; viewerIsBilled?: boolean },
 ): Promise<NewsletterAgentIntakeProps> {
-  const [companyIntake, feedback, isSetUp, jobs, setupCost] = await Promise.all([
-    getAgentIntake(clientId, "newsletter", null),
-    listNewsletterDraftFeedback(clientId),
-    hasNewsletterV2Setup(clientId),
-    opts.jobs ?? listJobs({ clientId }),
-    setupRunCredits(NEWSLETTER_SETUP_V2_KEY, NEWSLETTER_RUN_CREDITS),
-  ]);
+  // `isSetUp` drives the setup band. On the engine path the issue index is the
+  // engine's own to stand up on the run, and the `newsletterAgentState` row
+  // this reads has had no writer since agent-service was deleted — so the band
+  // would ask forever for something no press can produce.
+  const [companyIntake, feedback, indexOnFile, engineOwnsSetup, jobs, setupCost] =
+    await Promise.all([
+      getAgentIntake(clientId, "newsletter", null),
+      listNewsletterDraftFeedback(clientId),
+      hasNewsletterV2Setup(clientId),
+      engineOwnsSetupForClient(clientId, NEWSLETTER_WRITER_V2_KEY),
+      opts.jobs ?? listJobs({ clientId }),
+      setupRunCredits(NEWSLETTER_SETUP_V2_KEY, NEWSLETTER_RUN_CREDITS),
+    ]);
+  const isSetUp = indexOnFile || engineOwnsSetup;
 
   // Matched on the agent NAME the way LinkedIn's and Reddit's are, so the four
   // v2 skills all report into one history — a client asking "when did you last
@@ -725,12 +752,16 @@ export async function buildBlogAgentIntakeView(
   clientId: string,
   opts: { isStaff: boolean; jobs?: Job[]; viewerIsBilled?: boolean },
 ): Promise<BlogAgentIntakeProps> {
-  const [companyIntake, isSetUp, jobs, setupCost] = await Promise.all([
+  // Same engine carve-out as the newsletter above: the post index is stood up
+  // by the run on that path, so `blogAgentState` never gains the row this reads.
+  const [companyIntake, indexOnFile, engineOwnsSetup, jobs, setupCost] = await Promise.all([
     getAgentIntake(clientId, "blog", null),
     hasBlogV2Setup(clientId),
+    engineOwnsSetupForClient(clientId, BLOG_WRITER_V2_KEY),
     opts.jobs ?? listJobs({ clientId }),
     setupRunCredits(BLOG_SETUP_V2_KEY, BLOG_RUN_CREDITS),
   ]);
+  const isSetUp = indexOnFile || engineOwnsSetup;
 
   // Matched on the agent NAME the way its three siblings are, so all three blog
   // skills report into one history — a client asking "when did you last work on
