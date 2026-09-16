@@ -3,6 +3,7 @@ import "server-only";
 import type { ClientIntegration } from "@/lib/types";
 import { OAUTH_CONFIGS } from "@/lib/integrations/oauth";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
+import { integrationNeedsReconnect } from "@/lib/integration-status";
 import {
   getClientIntegration,
   markIntegrationExpired,
@@ -226,6 +227,28 @@ function shortErrorCode(data: Record<string, unknown>): string | null {
   return typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? code : null;
 }
 
+/**
+ * The OAuth 2 error codes (RFC 6749 §5.2) that say THIS client's stored grant is
+ * dead. They are the only answers that may mark a channel expired.
+ *
+ * Everything else a token endpoint returns is a property of OUR app credentials
+ * or OUR request rate, not of one client's token: X and Reddit answer 429 when
+ * we are rate-limited, Google 403s `rate_limit_exceeded` against the
+ * refresh-token quota and 401s `invalid_client` when this app's client secret is
+ * stale, and a proxy or interstitial can hand back a non-JSON 200. Calling any
+ * of those a dead token would mark EVERY Google or X integration expired in a
+ * single cron tick — one rotated GOOGLE_CLIENT_SECRET and the whole fleet is
+ * skipped by `integrationIsUsable` until a human reconnects each channel, which
+ * could not work either, since the authorization_code exchange uses that same
+ * bad secret. They are `unavailable`: the next tick tries again.
+ */
+const CREDENTIAL_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "invalid_grant",
+  "invalid_request",
+  "unauthorized_client",
+  "invalid_scope",
+]);
+
 async function tokenRequest(
   platform: string,
   url: string,
@@ -237,23 +260,32 @@ async function tokenRequest(
   } catch (e) {
     throw new TokenRefreshError(platform, "unavailable", e instanceof Error ? e.name : "fetch failed");
   }
-  let data: Record<string, unknown> = {};
+  // null = the body was not JSON at all, so there is no refusal here to read.
+  let data: Record<string, unknown> | null = null;
   try {
-    data = (await res.json()) as Record<string, unknown>;
+    const parsed: unknown = await res.json();
+    if (parsed !== null && typeof parsed === "object") data = parsed as Record<string, unknown>;
   } catch {
-    // Non-JSON body: handled below by status / missing access_token.
+    // Non-JSON body: classified below, never as a dead token.
   }
-  if (res.status >= 500) throw new TokenRefreshError(platform, "unavailable", `HTTP ${res.status}`);
-  const accessToken = typeof data.access_token === "string" ? data.access_token : "";
-  if (!res.ok || !accessToken) {
-    const code = shortErrorCode(data);
-    throw new TokenRefreshError(platform, "rejected", `HTTP ${res.status}${code ? ` ${code}` : ""}`);
+  const accessToken = data && typeof data.access_token === "string" ? data.access_token : "";
+  if (res.ok && accessToken) {
+    return {
+      access_token: accessToken,
+      refresh_token: data && typeof data.refresh_token === "string" ? data.refresh_token : undefined,
+      expires_in: data?.expires_in,
+    };
   }
-  return {
-    access_token: accessToken,
-    refresh_token: typeof data.refresh_token === "string" ? data.refresh_token : undefined,
-    expires_in: data.expires_in,
-  };
+  const code = data ? shortErrorCode(data) : null;
+  // Permanent ONLY for a refusal of this grant: a recognized OAuth error code,
+  // or a bare 400 — the status a token endpoint reserves for a bad grant — whose
+  // JSON body named no code we know. TikTok answers some refusals with HTTP 200
+  // and an `error` field, which the code check catches on its own.
+  const refusedThisGrant =
+    (code !== null && CREDENTIAL_REFUSAL_CODES.has(code)) ||
+    (res.status === 400 && code === null && data !== null);
+  const detail = `HTTP ${res.status}${code ? ` ${code}` : data ? "" : " non-JSON"}`;
+  throw new TokenRefreshError(platform, refusedThisGrant ? "rejected" : "unavailable", detail);
 }
 
 function withExpiry(
@@ -345,7 +377,10 @@ export async function refreshIntegrationCredentials(
 
 /* ── Freshness with persistence ─────────────────────────────────────── */
 
-type IntegrationRef = Pick<ClientIntegration, "clientId" | "platform" | "credentials" | "updatedAt">;
+type IntegrationRef = Pick<
+  ClientIntegration,
+  "clientId" | "platform" | "credentials" | "updatedAt" | "status"
+>;
 
 /**
  * Process-local memory of refreshes, keyed by integration doc id, for two
@@ -366,9 +401,19 @@ type IntegrationRef = Pick<ClientIntegration, "clientId" | "platform" | "credent
  *
  * Cross-process races (publish cron and analytics sync on separate instances)
  * are handled at the point of rejection: see `performRefresh`.
+ *
+ * `refreshed` holds PLAINTEXT tokens, so it is not allowed to become a growing
+ * pile of every client this revision has ever published for: entries expire
+ * after REFRESHED_TTL_MS (its whole job is to bridge one cron tick's single
+ * up-front read) and the map is swept on every write, and disconnecting a
+ * channel drops its entry through `forgetRefreshedCredentials` so "disconnect"
+ * means the tokens are gone from this process too.
  */
 const inFlight = new Map<string, Promise<Record<string, string>>>();
 const refreshed = new Map<string, { credentials: Record<string, string>; refreshedAt: number }>();
+
+/** How long a refreshed set stays in memory. One cron tick, not one revision. */
+const REFRESHED_TTL_MS = 10 * MINUTE_MS;
 
 /** Tests only: forget every in-process refresh. */
 export function resetTokenRefreshStateForTests(): void {
@@ -380,20 +425,77 @@ function docKey(integration: Pick<ClientIntegration, "clientId" | "platform">): 
   return `${integration.clientId}_${integration.platform}`;
 }
 
-function newestKnownCredentials(integration: IntegrationRef): Record<string, string> {
-  const stored = integration.credentials ?? {};
-  const recent = refreshed.get(docKey(integration));
-  if (recent && recent.refreshedAt > (integration.updatedAt ?? 0)) {
-    return { ...stored, ...recent.credentials };
+/** Remember a refreshed set, and drop every entry whose TTL has run out. */
+function rememberRefreshed(key: string, credentials: Record<string, string>, now: number): void {
+  for (const [k, entry] of refreshed) {
+    if (now - entry.refreshedAt >= REFRESHED_TTL_MS) refreshed.delete(k);
   }
-  return stored;
+  refreshed.set(key, { credentials, refreshedAt: now });
+}
+
+/**
+ * Drop this process's decrypted copy of one integration's tokens. Called when
+ * the channel is disconnected: the Firestore doc is gone, and the plaintext
+ * must not outlive it in a long-running instance.
+ */
+export function forgetRefreshedCredentials(clientId: string, platform: string): void {
+  const key = `${clientId}_${platform}`;
+  refreshed.delete(key);
+  inFlight.delete(key);
+}
+
+/**
+ * The newest credentials this process knows for an integration, and whether they
+ * came from a refresh IT performed. The second half matters for the dead-token
+ * re-test below: the caller's copy of the row still says `expired` after a
+ * successful revival (the flag was cleared in Firestore, not in the array the
+ * cron read up front), so without it every later post on that channel would
+ * force another exchange — and X and TikTok burn a rotation each time.
+ */
+function newestKnownCredentials(
+  integration: IntegrationRef,
+  now: number,
+): { credentials: Record<string, string>; refreshedHere: boolean } {
+  const stored = integration.credentials ?? {};
+  const key = docKey(integration);
+  const recent = refreshed.get(key);
+  if (!recent) return { credentials: stored, refreshedHere: false };
+  if (now - recent.refreshedAt >= REFRESHED_TTL_MS) {
+    refreshed.delete(key);
+    return { credentials: stored, refreshedHere: false };
+  }
+  if (recent.refreshedAt > (integration.updatedAt ?? 0)) {
+    return { credentials: { ...stored, ...recent.credentials }, refreshedHere: true };
+  }
+  return { credentials: stored, refreshedHere: false };
+}
+
+/**
+ * True when an integration already flagged `expired` / `reauthenticate` is worth
+ * one more try: the platform has a refresh path and a refresh token is on
+ * record. The flag was set by a 401 on the ACCESS token, which says nothing
+ * about the refresh token sitting beside it — and before CN1 every short-lived
+ * channel earned that flag on its first cron tick, so honouring it blindly means
+ * the fix reaches none of the connections it was written for.
+ *
+ * The consumers widen their `integrationIsUsable` gate by this predicate, and
+ * `getFreshIntegrationCredentials` forces the refresh so the retry is real. A
+ * success clears the flag (`updateClientIntegrationCredentials`); a refusal
+ * re-marks it, so a genuinely dead channel costs one request per tick.
+ */
+export function integrationMayBeRevivable(
+  integration: Pick<ClientIntegration, "platform" | "credentials" | "status">,
+): boolean {
+  if (!integrationNeedsReconnect(integration)) return false;
+  return isRefreshablePlatform(integration.platform) && !!integration.credentials?.refreshToken;
 }
 
 /**
  * The credentials to call the platform with, refreshed first when
- * `needsRefresh` says so (or always, with `force`, after a 401 — the token
- * looked fine on paper and was not). Persists a successful refresh and clears
- * the dead-token markers via `updateClientIntegrationCredentials`.
+ * `needsRefresh` says so, when the integration carries a dead-token flag we are
+ * re-testing (`integrationMayBeRevivable`), or always with `force` — after a 401
+ * the token looked fine on paper and was not. Persists a successful refresh and
+ * clears the dead-token markers via `updateClientIntegrationCredentials`.
  *
  * Throws `TokenRefreshError`. When `permanent`, the integration has ALREADY
  * been marked expired here; the caller's own mark is idempotent.
@@ -403,8 +505,12 @@ export async function getFreshIntegrationCredentials(
   opts: { force?: boolean; now?: number } = {},
 ): Promise<Record<string, string>> {
   const now = opts.now ?? Date.now();
-  const current = newestKnownCredentials(integration);
-  if (!opts.force && !needsRefresh({ platform: integration.platform, credentials: current }, now)) {
+  const { credentials: current, refreshedHere } = newestKnownCredentials(integration, now);
+  const due =
+    opts.force === true ||
+    needsRefresh({ platform: integration.platform, credentials: current }, now) ||
+    (!refreshedHere && integrationMayBeRevivable({ ...integration, credentials: current }));
+  if (!due) {
     return current;
   }
   const key = docKey(integration);
@@ -415,6 +521,61 @@ export async function getFreshIntegrationCredentials(
   });
   inFlight.set(key, task);
   return task;
+}
+
+/**
+ * Providers that invalidate a refresh token the moment it is used. A rejection
+ * from one of these is ambiguous: either the grant really is dead, or another
+ * process (the analytics sync against the publish cron, two cron ticks, two
+ * Cloud Run instances) spent the same refresh token a few hundred milliseconds
+ * ago and we are the loser of that race, holding a channel whose token was just
+ * renewed.
+ */
+const ROTATING_REFRESH_PLATFORMS: ReadonlySet<string> = new Set(["twitter", "tiktok"]);
+
+/**
+ * Re-read delays, in milliseconds, while the winner's Firestore write lands.
+ * A single read with no backoff is what made this dangerous: a loser reading
+ * inside that ~100-500 ms window sees the OLD token, concludes the grant is
+ * dead and marks a HEALTHY channel expired — after which every consumer's
+ * `integrationIsUsable` gate skips it, so it never gets another refresh attempt
+ * and publishing silently stops until a human reconnects.
+ */
+const ADOPTION_RETRY_DELAYS_MS = [400, 900];
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The credentials another process rotated while we were being refused, or null
+ * when nothing moved and the grant really is dead.
+ *
+ * The signal is a stored TOKEN that differs from the one we just spent, not a
+ * moved `updatedAt` — an auto-publish toggle bumps `updatedAt` without touching
+ * a token, and adopting on that would hand the caller back the same dead set.
+ * For a rotating provider the read is retried across ADOPTION_RETRY_DELAYS_MS so
+ * a rejection that arrives before the winner's write does not kill the channel;
+ * for the others a rejection is a real revocation and one read is the answer.
+ */
+async function adoptCredentialsRotatedElsewhere(
+  integration: IntegrationRef,
+  current: Record<string, string>,
+): Promise<Record<string, string> | null> {
+  const { clientId, platform } = integration;
+  const delays = ROTATING_REFRESH_PLATFORMS.has(platform) ? ADOPTION_RETRY_DELAYS_MS : [];
+  for (let attempt = 0; ; attempt++) {
+    const stored = await getClientIntegration(clientId, platform).catch(() => null);
+    const storedCredentials = stored?.credentials;
+    if (
+      storedCredentials?.accessToken &&
+      (storedCredentials.accessToken !== current.accessToken ||
+        (!!storedCredentials.refreshToken &&
+          storedCredentials.refreshToken !== current.refreshToken))
+    ) {
+      return storedCredentials;
+    }
+    if (attempt >= delays.length) return null;
+    await sleep(delays[attempt]);
+  }
 }
 
 async function performRefresh(
@@ -433,19 +594,14 @@ async function performRefresh(
   } catch (e) {
     if (!(e instanceof TokenRefreshError)) throw e;
     if (e.permanent) {
-      // Another instance (analytics sync vs publish cron) may have used this
-      // refresh token first — for X and TikTok that is exactly what a rejection
-      // looks like. If Firestore now holds a different access token than the
-      // one we started from, that instance won and its credentials are good.
-      const stored = await getClientIntegration(clientId, platform).catch(() => null);
-      const storedAccess = stored?.credentials?.accessToken;
-      if (stored && storedAccess && storedAccess !== current.accessToken) {
-        refreshed.set(key, { credentials: stored.credentials, refreshedAt: stored.updatedAt ?? now });
+      const adopted = await adoptCredentialsRotatedElsewhere(integration, current);
+      if (adopted) {
+        rememberRefreshed(key, adopted, now);
         logStructured("INFO", "token refresh: adopted credentials rotated by another process", {
           ...logFields,
           code: e.code,
         });
-        return stored.credentials;
+        return adopted;
       }
       await markIntegrationExpired(clientId, platform).catch(() => {});
     }
@@ -476,7 +632,7 @@ async function performRefresh(
       error: e instanceof Error ? e.message : "unknown",
     });
   }
-  refreshed.set(key, { credentials: merged, refreshedAt: now });
+  rememberRefreshed(key, merged, now);
   logStructured("INFO", "token refreshed", {
     ...logFields,
     expiresAt: credentialExpiresAt(merged),
@@ -488,10 +644,16 @@ async function performRefresh(
 /**
  * Run one platform call with fresh credentials: refresh ahead of expiry, and
  * on a `TokenExpiredError` force ONE refresh and retry ONCE. A second 401
- * propagates as the original `TokenExpiredError`; so does a forced refresh
- * that fails, because the caller's existing branch (mark expired, report
- * "expired") is the right answer either way and the integration has already
- * been marked when the failure was permanent.
+ * propagates as the original `TokenExpiredError`; so does a forced refresh the
+ * provider REFUSED, because the caller's existing branch (mark expired, report
+ * "expired") is the right answer and the integration is already marked.
+ *
+ * A forced refresh that merely could not be ATTEMPTED — the token endpoint 503s,
+ * a bad deploy left TWITTER_CLIENT_SECRET unset — propagates as its own
+ * non-permanent `TokenRefreshError` instead. Rethrowing the platform's 401 there
+ * would tell every consumer to mark a channel dead whose refresh token is
+ * perfectly good and whose next tick would have recovered it, which is the same
+ * split the pre-call path already respects.
  *
  * A refresh failure BEFORE the first call propagates as `TokenRefreshError`
  * so the caller can tell a dead token set (`permanent`, mark expired) from a
@@ -512,7 +674,7 @@ export async function runWithFreshCredentials<T>(
     try {
       forced = await getFreshIntegrationCredentials(fresh, { ...opts, force: true });
     } catch (refreshError) {
-      if (refreshError instanceof TokenRefreshError) throw e;
+      if (refreshError instanceof TokenRefreshError && refreshError.permanent) throw e;
       throw refreshError;
     }
     return await run({ ...fresh, credentials: forced });

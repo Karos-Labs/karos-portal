@@ -2159,12 +2159,18 @@ export async function getClientIntegration(
 }
 
 /**
- * Persist a refreshed token set (CN1, 2026-09). MERGES into the stored
- * credentials map: the refresh flows only ever hand back the keys the provider
- * rotated (`accessToken`, sometimes `refreshToken`, plus `expiresAt`), and a
- * manual-paste field such as `pageId` or `organizationId` must survive. Each
- * value is encrypted on its own (encryptCredentials), so the merge is done on
- * the stored ciphertext map without decrypting the untouched keys.
+ * Persist a refreshed token set (CN1, 2026-09). Writes ONLY the keys the
+ * provider rotated (`accessToken`, sometimes `refreshToken`, plus `expiresAt`);
+ * `{ merge: true }` deep-merges the nested `credentials` map, so a manual-paste
+ * field such as `pageId` or `organizationId` — and a `refreshToken` this call
+ * did not touch — survives without being rewritten. Each value is encrypted on
+ * its own (encryptCredentials), so nothing untouched is decrypted here.
+ *
+ * Deliberately NOT a read-modify-write of the whole map: re-sending the stored
+ * ciphertext would restore any key a concurrent writer changed between the read
+ * and the write, so a reconnect landing in that window would have its brand-new
+ * refresh token replaced by the dead one it just superseded. The read stays only
+ * to refuse an integration that does not exist.
  *
  * A successful refresh is proof the token set works again, so the dead-token
  * markers (`status: "expired" | "reauthenticate"`, `expiredAt`) are cleared
@@ -2181,11 +2187,10 @@ export async function updateClientIntegrationCredentials(
   if (!existing.exists) {
     throw new Error(`No ${platform} integration to update for client ${clientId}`);
   }
-  const stored = (existing.data() as ClientIntegration).credentials ?? {};
   const { FieldValue } = await import("firebase-admin/firestore");
   await ref.set(
     {
-      credentials: { ...stored, ...encryptCredentials(credentials) },
+      credentials: encryptCredentials(credentials),
       status: "active",
       expiredAt: FieldValue.delete(),
       updatedAt: Date.now(),

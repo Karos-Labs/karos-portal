@@ -17,6 +17,7 @@ import { blockingPredecessor } from "@/lib/post-chain";
 import { fetchPlatformMetrics, fetchSeatMetrics } from "@/lib/integrations/analytics-providers";
 import { TokenExpiredError } from "@/lib/integrations/publishers";
 import {
+  integrationMayBeRevivable,
   isIntegrationDeadError,
   runWithFreshCredentials,
 } from "@/lib/integrations/token-refresh";
@@ -132,7 +133,14 @@ export async function GET(req: NextRequest) {
       // recorded as `unavailable` in the run report and no row is persisted.
       const byPlatform = new Map(
         integrations
-          .filter((i) => i.platform !== "google" && integrationIsUsable(i))
+          // A channel already flagged expired whose refresh token is on record is
+          // re-tested rather than skipped (integrationMayBeRevivable): the flag
+          // came from a 401 on the access token, and before CN1 every short-lived
+          // channel collected one on its first tick.
+          .filter(
+            (i) =>
+              i.platform !== "google" && (integrationIsUsable(i) || integrationMayBeRevivable(i)),
+          )
           .map((i) => [i.platform, i]),
       );
 
