@@ -73,7 +73,12 @@ import {
 import { canViewClient } from "@/lib/client-visibility";
 import { resolveContentIdentity } from "@/lib/agent-identity-map";
 import { listClientAgents } from "@/lib/data-client-agents";
-import { engagementScore, rankByEngagement } from "@/lib/analytics";
+import {
+  engagementScore,
+  keepCurrentMetricDefinitions,
+  metricsDefinitionVersion,
+  rankByEngagement,
+} from "@/lib/analytics";
 import { isAiProcessingLockActive } from "@/lib/constants";
 import { shouldReconcilePublished } from "@/lib/asset-lifecycle";
 import { computeBoardCapacity } from "@/lib/task-dedup";
@@ -1521,13 +1526,23 @@ export async function listClientMarketingAnalytics(
  * an out-of-order or replayed sync can't overwrite fresher metrics with stale
  * ones. The 0–100 `engagementScore` is (re)derived from the metrics here so the
  * denormalized ranking field can never drift from the numbers it summarizes.
+ *
+ * `metricsVersion` is stamped here for the same reason, and from the platform
+ * rather than the caller: it records WHICH definition of `impressions` these
+ * numbers are (analytics.ts's `metricsDefinitionVersion`), so nothing downstream
+ * has to guess whether a row predates a metric Meta redefined. A caller cannot
+ * pass one — a row's definition is a fact about the mapping that produced it.
  */
 export async function upsertClientMarketingAnalytics(
-  input: Omit<ClientMarketingAnalytics, "id" | "engagementScore" | "createdAt" | "updatedAt">,
+  input: Omit<
+    ClientMarketingAnalytics,
+    "id" | "engagementScore" | "metricsVersion" | "createdAt" | "updatedAt"
+  >,
 ): Promise<void> {
   const id = analyticsDocId(input.clientId, input.platform, input.assetId);
   const ref = col.clientMarketingAnalytics().doc(id);
   const score = engagementScore(input.metrics);
+  const metricsVersion = metricsDefinitionVersion(input.platform);
   await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const now = Date.now();
@@ -1536,7 +1551,7 @@ export async function upsertClientMarketingAnalytics(
       if ((existing.capturedAt ?? 0) > input.capturedAt) return; // a newer capture already landed
       tx.set(
         ref,
-        { ...input, id, engagementScore: score, updatedAt: now },
+        { ...input, id, engagementScore: score, metricsVersion, updatedAt: now },
         { merge: true },
       );
     } else {
@@ -1544,6 +1559,7 @@ export async function upsertClientMarketingAnalytics(
         ...input,
         id,
         engagementScore: score,
+        metricsVersion,
         createdAt: now,
         updatedAt: now,
       } satisfies ClientMarketingAnalytics);
@@ -1598,7 +1614,17 @@ export async function upsertClientInsightsCache(
  * floor) but reliably wins `bottom` — a post nobody has been shown yet gets
  * narrated to the client as their worst performer.
  *
- * `sampleSize` counts the rows that SURVIVE both filters, which is what
+ * SUPERSEDED METRIC DEFINITIONS ARE REFUSED TOO (2026-09, CN2). Ranking is by
+ * `engagementScore`, which divides by `metrics.impressions` — and what that field
+ * counts changed for both Meta platforms when Graph retired the metrics it was
+ * built from (`impressions` → `views`, `post_impressions` → `post_media_view`).
+ * Two definitions ranked against each other produce a step change that reads as
+ * a performance change, and this result is handed to the client-facing copilot,
+ * so it is the same failure mode as the mock rows above: a number narrated as
+ * measurement that does not mean what the reader assumes. The filter is per
+ * platform, so a Meta cutover costs nothing on channels that never changed.
+ *
+ * `sampleSize` counts the rows that SURVIVE all three filters, which is what
  * re-arms the "no performance analytics captured yet" fallbacks downstream —
  * those read `sampleSize > 0`, and a set that was all-mock, or is now all
  * zero-impression, used to sail past it with a non-zero count.
@@ -1607,9 +1633,10 @@ export async function getClientPerformanceBenchmarks(
   clientId: string,
   count = 5,
 ): Promise<PerformanceBenchmarks> {
-  const records = (await listClientMarketingAnalytics(clientId)).filter(
+  const measured = (await listClientMarketingAnalytics(clientId)).filter(
     (r) => r.source === "live" && r.metrics.impressions > 0,
   );
+  const records = keepCurrentMetricDefinitions(measured);
   const { top, bottom } = rankByEngagement(records, count);
   return { clientId, top, bottom, sampleSize: records.length };
 }

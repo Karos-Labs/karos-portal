@@ -111,12 +111,18 @@ async function fetchTwitterRaw(token: string, postId: string): Promise<RawPlatfo
 /**
  * A Graph Insights payload holds one entry per (metric, period) pair.
  *
- * `post_impressions` was lifetime-only, so a bare name lookup was unambiguous.
- * Its v25 replacement `post_media_view` reports windowed periods instead
- * (day / week / days_28), which would let a single day's bucket be reported as
- * the post's total. Prefer the widest window Meta returned, then the most
- * recent bucket inside it. Instagram's metrics are single lifetime values, so
- * this is a no-op for them.
+ * BOTH Meta fetchers below ask for lifetime figures, so one entry per metric is
+ * what we expect and this picker is normally a no-op: `fetchFacebookRaw` pins
+ * `period=lifetime` on its request, and Instagram's media insights are single
+ * lifetime values that take no period at all.
+ *
+ * It stays as insurance for the one metric whose period set is not lifetime-only.
+ * Meta's v25 insights reference gives `post_media_view` the periods lifetime /
+ * week / days_28 (`post_impressions`, the metric it replaces, was lifetime-only),
+ * so if a later version drops `lifetime` for it, the widest window returned is the
+ * closest thing to a post total left. The NEWEST bucket of that window is taken
+ * rather than a sum, deliberately: `week` and `days_28` buckets are rolling
+ * trailing totals, so they overlap and adding them up would multiply the figure.
  */
 interface GraphInsightEntry {
   name: string;
@@ -153,7 +159,10 @@ async function fetchInstagramRaw(token: string, mediaId: string): Promise<RawPla
   const metric = (name: string) => insightValue(insights.data, name);
   return {
     // `views` is what Meta reports since 2025-04-21 — it replaced `impressions`, which is
-    // unavailable for media created after 2024-07-02. The unified field stays `impressions`.
+    // unavailable for media created after 2024-07-02. The unified field stays `impressions`,
+    // but it counts something else than the pre-2026-09 rows did, so Instagram rows carry a
+    // bumped `metricsDefinitionVersion` too (analytics.ts) rather than silently continuing
+    // the old series.
     impressions: metric("views"),
     likes: counts.like_count ?? 0,
     comments: counts.comments_count ?? 0,
@@ -167,7 +176,15 @@ async function fetchInstagramRaw(token: string, mediaId: string): Promise<RawPla
 async function fetchFacebookRaw(token: string, postId: string): Promise<RawPlatformMetrics> {
   const base = metaGraphUrl(encodeURIComponent(postId));
   const [insightsRes, engagementRes] = await Promise.all([
-    fetch(`${base}/insights?metric=post_media_view,post_clicks&access_token=${encodeURIComponent(token)}`),
+    // `period=lifetime` is pinned so this stays a life-of-post total — comparable with
+    // the lifetime `post_impressions` rows already in `clientMarketingAnalytics` and with
+    // the reactions/comments/shares totals fetched beside it. Both metrics support it
+    // (v25 reference: post_clicks lifetime; post_media_view lifetime / week / days_28).
+    // Unpinned, a decayed post could divide lifetime engagements by a rolling window and
+    // clamp engagementRate to 1.0, promoting stale posts as top performers.
+    fetch(
+      `${base}/insights?metric=post_media_view,post_clicks&period=lifetime&access_token=${encodeURIComponent(token)}`,
+    ),
     fetch(`${base}?fields=reactions.summary(true),comments.summary(true),shares&access_token=${encodeURIComponent(token)}`),
   ]);
   assertNotExpired("facebook", insightsRes);
@@ -188,6 +205,11 @@ async function fetchFacebookRaw(token: string, postId: string): Promise<RawPlatf
     // `post_impressions` is marked obsolete above Graph API v25; `post_media_view` — "the number
     // of times your content was played or displayed" — is Meta's replacement for it. It feeds the
     // same unified impressions field in normalizePlatformMetrics, so the raw key keeps its name.
+    //
+    // It is NOT the same measurement: plays/displays of the post's media is narrower than the
+    // post appearing on a screen, so a Facebook series steps at this cutover (2026-09, CN2).
+    // Rows are stamped with `metricsDefinitionVersion("facebook")` for exactly that reason —
+    // see `metricsDefinitionVersion` in analytics.ts for who reads the marker.
     post_impressions: metric("post_media_view"),
     post_clicks: metric("post_clicks"),
     reactions: engagement.reactions?.summary?.total_count ?? 0,

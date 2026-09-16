@@ -5,6 +5,8 @@ import {
   engagementIsMockOrStale,
   engagementScore,
   hashSeed,
+  keepCurrentMetricDefinitions,
+  metricsDefinitionVersion,
   mulberry32,
   normalizePlatformMetrics,
   rankByEngagement,
@@ -300,5 +302,55 @@ describe("engagementIsMockOrStale", () => {
   it("holds when every row belongs to stale channels, live or not", () => {
     const records = [row("linkedin", "live"), row("facebook", "mock")];
     expect(engagementIsMockOrStale(records, ["linkedin", "facebook"])).toBe(true);
+  });
+});
+
+
+/**
+ * CN2 (2026-09): Graph v25 retired the two metrics `MarketingMetrics.impressions`
+ * was built from on Meta — IG `impressions` → `views`, Page `post_impressions` →
+ * `post_media_view` — so rows from either side of that cutover count different
+ * things while `engagementRate` divides by exactly this field. The marker is what
+ * keeps the two definitions from being ranked, averaged or trended together.
+ */
+describe("metric definition versions", () => {
+  const row = (platform: string, metricsVersion?: number) => ({ platform, metricsVersion });
+
+  it("marks both Meta platforms as redefined and leaves every other channel at 1", () => {
+    expect(metricsDefinitionVersion("facebook")).toBe(2);
+    expect(metricsDefinitionVersion("instagram")).toBe(2);
+    for (const p of ["linkedin", "twitter", "youtube", "tiktok", "unknown"]) {
+      expect(metricsDefinitionVersion(p)).toBe(1);
+    }
+  });
+
+  it("keeps only the newest definition of a platform that changed", () => {
+    const kept = keepCurrentMetricDefinitions([row("facebook"), row("facebook", 2), row("facebook", 1)]);
+    expect(kept).toEqual([row("facebook", 2)]);
+  });
+
+  it("treats a row written before the marker existed as version 1", () => {
+    // An unstamped row is pre-2026-09, i.e. the OLD definition — not an unknown one.
+    expect(keepCurrentMetricDefinitions([row("facebook"), row("instagram", 1)])).toEqual([
+      row("facebook"),
+      row("instagram", 1),
+    ]);
+  });
+
+  it("does not let a Meta cutover discard a platform whose metrics never changed", () => {
+    // The whole reason the filter is per platform rather than global.
+    const kept = keepCurrentMetricDefinitions([
+      row("linkedin", 1),
+      row("linkedin"),
+      row("facebook", 1),
+      row("facebook", 2),
+    ]);
+    expect(kept).toEqual([row("linkedin", 1), row("linkedin"), row("facebook", 2)]);
+  });
+
+  it("is a no-op on an empty set and on one consistent definition", () => {
+    expect(keepCurrentMetricDefinitions([])).toEqual([]);
+    const consistent = [row("tiktok", 1), row("tiktok", 1)];
+    expect(keepCurrentMetricDefinitions(consistent)).toEqual(consistent);
   });
 });
