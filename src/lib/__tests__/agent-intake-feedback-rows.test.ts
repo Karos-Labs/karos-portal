@@ -5,9 +5,17 @@ vi.mock("server-only", () => ({}));
 
 const D = vi.hoisted(() => ({
   getAgentIntake: vi.fn(),
+  // The builders ask which client this is now that agent-engine can own a
+  // channel's setup (agent-engine/setup-ownership.ts): a client with no lab
+  // slug — an unset mock included — is gated exactly as before, which is what
+  // every case in this file expects.
+  getClient: vi.fn(),
   getCustomAgentByKey: vi.fn(),
   listAgentIntake: vi.fn(),
   listClientSeats: vi.fn(),
+  // The LinkedIn builder asks which of this client's LinkedIn agents are
+  // engine-routed when the caller names none — see `engineOwnsLinkedInSetup`.
+  listCustomAgents: vi.fn(),
   listJobs: vi.fn(),
   listLiDraftFeedback: vi.fn(),
   listLiDirectionRequests: vi.fn(),
@@ -116,6 +124,7 @@ beforeEach(() => {
   D.getCustomAgentByKey.mockResolvedValue(null);
   D.listAgentIntake.mockResolvedValue([]);
   D.listClientSeats.mockResolvedValue([]);
+  D.listCustomAgents.mockResolvedValue([]);
   D.listJobs.mockResolvedValue([]);
   D.listLiDraftFeedback.mockResolvedValue([]);
   D.listLiDirectionRequests.mockResolvedValue([]);

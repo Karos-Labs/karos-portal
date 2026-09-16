@@ -472,6 +472,14 @@ describe("AgentSetupState carries the href card and the inline pane", () => {
         src,
         `${file} does not spell the cores' guard: v2 AND not the setup skill`,
       ).toMatch(/isLinkedInV2Agent\((?:agent\.)?key\)\s*&&\s*!isLinkedInSetupV2\((?:agent\.)?key\)/);
+      // AND THE ENGINE CARVE-OUT, which the core carries as `!engineProductId`
+      // (A3). agent-engine stands the channel up in its own `00-channel-setup`
+      // pre-flight, so for a client routed there the foundation row is never
+      // written — a surface still waiting for one is stricter than the core
+      // again, this time forever rather than until a press. Behaviour is pinned
+      // by engine-owned-setup.test.ts; this keeps the two surfaces named here
+      // from drifting back one at a time.
+      expect(src, `${file} does not exempt the engine path`).toMatch(/engineOwnsSetup/);
     }
   });
 

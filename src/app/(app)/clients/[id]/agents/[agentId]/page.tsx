@@ -153,6 +153,13 @@ async function agentIntakePane(
     return {
       linkedin: await buildLinkedInAgentIntakeView(clientId, {
         isStaff: opts.isStaff,
+        // WHICH LinkedIn agent this pane is about. The family has four keys and
+        // only the two v2 ones run on agent-engine, so the builder's "does the
+        // engine own setup" question has to be asked of this one rather than of
+        // a fixed key — an e10 instance keeps the stand-up that is still the
+        // portal's to fire. The family page, which names no agent, resolves it
+        // from the client's granted agents instead.
+        agentKey: agent.key,
         jobs: opts.jobs,
         ...billed,
         ...(opts.linkedinPageUrl ? { pageUrlSuggestion: opts.linkedinPageUrl } : {}),
