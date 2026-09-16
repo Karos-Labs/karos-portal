@@ -1,0 +1,133 @@
+# What the portal owes an agent
+
+**Status:** the standard · owner Shlomi · companion to `agent-engine/docs/AGENT-ARCHITECTURE.md`
+and `agent-middleware/docs/AGENT-ARCHITECTURE.md`
+**Rests on:** C7 (run context), D11 (the goal line), D15 (cadence is the client's), D23 (owners)
+
+The portal is the only one of the three repos a client ever sees. That gives it two jobs
+nobody else can do: hand a run everything the platform has learned before it starts, and
+show the client what came back — without showing them how the sausage was made.
+
+Read the engine's `AGENT-ARCHITECTURE.md` first; it defines the run. This file is what the
+portal must hold up at either end of it.
+
+---
+
+## 1. Before the run: give it the live context
+
+A run gets its context as **files in its workspace**, not as form fields. `toEngineRunInput`
+carries what the client typed; everything the platform *learned* travels the projection
+path — the same mechanism `context-doc-projection` already uses for C1's documents, but on
+every run rather than only at onboarding.
+
+Two writers project, and they do not overlap:
+
+| Projected by | Files |
+|---|---|
+| **agent-middleware**, at dispatch | `context/learning/<platform>/{platform-state,subject-window,feedback,what-works,strategy-map,craft}.json` and `context/learning/preferences.json` |
+| **the portal** | C1's `context/<docType>.json` and `client/competitors.json` |
+
+**Live at run time, never a snapshot.** A context assembled at submit and carried through a
+queue is stale by the time the run reads it, and the staleness is invisible.
+
+### 1.1 `slotStage` — the one field sequencing owns
+
+A calendar run carries `slotStage` (`attention` | `expertise` | `decide`) on its run input.
+A manual run does not, and the engine derives a stage from the account's recent history
+against the D32 mix. Cadence is the client's choice in the calendar, not a per-agent setting
+(D15); sequencing decides which post goes in each slot.
+
+Do not send `slotStage` on a manual run to "be helpful". The absence is information.
+
+---
+
+## 2. After the run: collect, then render
+
+`src/app/api/agent-engine/reconcile` materialises what a run produced. For an agent on the
+loop it must also call the middleware's `POST /runs/{run_id}/collect`, which is what folds
+the run's state files into the stores. A reconcile that materialises assets but never calls
+`collect` gives you an agent that produces and never learns — and it looks completely healthy
+from the outside.
+
+Review actions post to `POST /clients/{slug}/learning/feedback`; "add this to never-topics"
+posts to `PUT /clients/{slug}/learning/preferences`. Feedback that only lands in a
+Firestore field is feedback that never becomes a rule.
+
+---
+
+## 3. The goal line, and the meta that must never reach a client
+
+Every output states its point: **goal, who it is for, why now** (D11). The engine emits it;
+the portal renders it. Three shapes arrive, and each already has a renderer:
+
+| Shape | Agents | Read by |
+|---|---|---|
+| `- **Label:** value` bullets in the drafts markdown | x, linkedin | `src/lib/x-drafts.ts`, `src/lib/li-drafts.ts` — every such bullet is pushed onto the card |
+| a named slot in a JSON envelope | reddit (`whyThread`) | `envelopeToBatch` in `src/lib/reddit-drafts.ts` |
+| a structured `goalLine` field on the deliverable | instagram, the three TikTok agents | the asset card — the deliverable is a rendered PNG or mp4, with no markdown to hang a bullet on |
+
+`classifyXMetaBullet` weighs a bullet's URL against a reply/quote phrase to find a draft's
+reply target. The engine therefore strips URLs from the why-now bullet. If you add a meta
+bullet that legitimately carries a link, give it its own label — do not widen the classifier.
+
+**Internal meta never reaches the card.** Account-manager fields, revision counts and
+reviewer notes belong on the gate payload and the run report. `materialize`'s `metaFields`
+is the surface that leaks them; `formattingNotes` reached a client through it once. Client
+copy never mentions review or approval.
+
+---
+
+## 4. The catalog
+
+Three bands (D09), and an agent's band is a product decision, not a code detail:
+
+- **up and running** — X, LinkedIn, Reddit
+- **beta** — Instagram, and the three TikTok agents
+- **coming soon** — Rebrand, Newsletter/Blog, Landing page, Micro-influencers, Motion design, PR
+
+SEO/GEO and Reputation are **reporting, not agents** (D07). Campaign is **not an agent** — it
+is a button that runs the other agents around one launch, and it is never listed in the
+catalog (D40).
+
+TikTok is three cards with three different forms (D08): clipping takes a long video or "find
+podcasts in my niche"; editing takes the client's own video plus what to communicate, length,
+CTA and edit constraints, and is on demand, outside sequencing (D19); content design takes
+nothing, or a note about the topic, and ships as beta (D20).
+
+Adding a product id to the catalog without its form is how a client gets refused on every
+press.
+
+---
+
+## 5. Autopilot and publishing — what the UI may offer
+
+Per D35 and D38, and these are product rules, not defaults to tune:
+
+| Platform | Publishing |
+|---|---|
+| LinkedIn | draft-only; the person posts in one click. Karos staff are never a client's page admin |
+| Reddit | draft-only by hard product rule; no posting code path exists or may be added (D25) |
+| X | autopilot only behind the consent screen X requires; text only — no images sourced or created (D24) |
+| Instagram | autopilot offered; format and visuals chosen per post by performance, never by a fixed rotation (D17) |
+| TikTok | autopilot only after the Content Posting audit |
+| Google Business Profile, Pinterest | never |
+
+Every new client is manual.
+
+---
+
+## 6. When you add an agent
+
+1. A catalog card in the right band, with its form.
+2. The product id in the portal's product mapping, and the platform key it belongs to — a
+   TikTok agent is `tiktok`, whatever the product is called.
+3. Projection: nothing, if the platform already has it. The stores are keyed on the
+   platform, not the product, because a client has one account per platform and one subject
+   history on it.
+4. Reconcile: call `collect` for it.
+5. Rendering: pick the goal-line shape from §3 and use the renderer that already exists.
+6. A portal doc under `docs/<agent>-portal.md`, like the ones already there.
+
+If a step in that list feels like it does not apply, say why in the PR. Every one of them has
+been skipped once, and each time the symptom was the same: an agent that looked fine and
+quietly learned nothing.
