@@ -186,20 +186,35 @@ describe("fetchPlatformMetrics — Meta insights on the pinned Graph version", (
 
     const insightsUrl = urlsFetched().find((u) => u.includes("/insights"));
     expect(insightsUrl).toBe(
-      `https://graph.facebook.com/${META_GRAPH_VERSION}/page_post9/insights?metric=post_media_view,post_clicks&access_token=tok`,
+      `https://graph.facebook.com/${META_GRAPH_VERSION}/page_post9/insights?metric=post_media_view,post_clicks&period=lifetime&access_token=tok`,
     );
     expect(insightsUrl).not.toContain("post_impressions");
     for (const u of urlsFetched()) expect(u).toContain(`https://graph.facebook.com/${META_GRAPH_VERSION}/`);
   });
 
-  it("Facebook: post_media_view is windowed, so the widest period's newest bucket wins", async () => {
-    // Graph returns one entry per (metric, period). post_impressions was lifetime-only;
-    // its replacement is not, so a bare name lookup could report one day as the total.
+  it("Facebook: pins period=lifetime so impressions stay a life-of-post total", async () => {
+    // post_impressions was lifetime-only, so the rows already in Firestore are lifetime.
+    // post_media_view also offers week / days_28, and a rolling window divided into the
+    // lifetime reactions/comments/shares fetched beside it clamps engagementRate to 1.0.
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes("/insights")
+        ? jsonResponse({ data: [{ name: "post_media_view", period: "lifetime", values: [{ value: 800 }] }] })
+        : jsonResponse({ reactions: { summary: { total_count: 40 } } }),
+    );
+    await fetchPlatformMetrics("facebook", credentials(), asset({ platformPostId: "p1" }));
+    const insightsUrl = urlsFetched().find((u) => u.includes("/insights"));
+    expect(insightsUrl).toContain("&period=lifetime");
+  });
+
+  it("Facebook: if a later version drops lifetime, the widest window's newest bucket wins", async () => {
+    // Insurance only — the request above pins lifetime, so this shape is not expected.
+    // The newest bucket, never a sum: week and days_28 buckets are rolling trailing
+    // totals, so they overlap and adding them up would multiply the real figure.
     fetchMock.mockImplementation(async (url: string) =>
       url.includes("/insights")
         ? jsonResponse({
             data: [
-              { name: "post_media_view", period: "day", values: [{ value: 5 }, { value: 7 }] },
+              { name: "post_media_view", period: "week", values: [{ value: 200 }, { value: 300 }] },
               { name: "post_media_view", period: "days_28", values: [{ value: 400 }, { value: 950 }] },
               { name: "post_clicks", period: "lifetime", values: [{ value: 12 }] },
             ],

@@ -122,6 +122,57 @@ function rate(engagements: number, impressions: number): number {
   return clamp01(engagements / impressions);
 }
 
+/* ── Metric definitions (what `impressions` counts) ──────────────────── */
+
+/**
+ * How many times the mapping below has changed WHAT a platform's
+ * `MarketingMetrics.impressions` counts. Stamped onto every row
+ * `upsertClientMarketingAnalytics` writes, so a reader can tell two definitions
+ * apart instead of reading a step change as a performance change.
+ *
+ * Bump a platform's entry ONLY when its impressions (or the engagements divided
+ * by them) stop meaning what the earlier rows meant — never for a fix that makes
+ * the same definition more accurate. A bump retires that platform's history from
+ * ranking, so it is a deliberate cost, not a version stamp for its own sake.
+ *
+ * facebook / instagram → 2 (CN2, 2026-09): Meta retired both metrics the older
+ * rows were built from. IG `impressions` (times the media was rendered) became
+ * `views`; the Page post's lifetime `post_impressions` (times the post appeared
+ * on a screen) became `post_media_view` — plays or displays of the post's media,
+ * a narrower count. `engagementRate` divides by exactly this field, so rows from
+ * either side of the cutover are not on one scale.
+ *
+ * Every platform with no entry here is version 1: its mapping has never changed.
+ */
+const METRICS_DEFINITION_VERSIONS: Record<string, number> = { facebook: 2, instagram: 2 };
+
+/** The definition version rows captured for `platform` today are written under. */
+export function metricsDefinitionVersion(platform: string): number {
+  return METRICS_DEFINITION_VERSIONS[platform] ?? 1;
+}
+
+/** A stored analytics row, as far as the definition filter needs to know. */
+type Versioned = { platform: string; metricsVersion?: number };
+
+/**
+ * Drop rows whose metric definition has been superseded, PER PLATFORM: for each
+ * platform, only the newest `metricsVersion` present survives. Rows written
+ * before the marker existed have none and count as version 1.
+ *
+ * Per platform rather than globally on purpose — a Meta metric changing meaning
+ * is no reason to throw away a LinkedIn series that never changed. Callers that
+ * rank, average or trend stored rows run this first; `engagementScore` is
+ * comparable across networks, but only within one definition of each.
+ */
+export function keepCurrentMetricDefinitions<T extends Versioned>(records: T[]): T[] {
+  const newest = new Map<string, number>();
+  for (const r of records) {
+    const v = r.metricsVersion ?? 1;
+    newest.set(r.platform, Math.max(newest.get(r.platform) ?? v, v));
+  }
+  return records.filter((r) => (r.metricsVersion ?? 1) === newest.get(r.platform));
+}
+
 /**
  * Map a platform's native metrics payload onto the unified `MarketingMetrics`
  * shape. Each network names things differently; this switch is the ONLY place

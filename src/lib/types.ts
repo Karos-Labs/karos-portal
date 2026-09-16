@@ -2102,6 +2102,15 @@ export interface ClientMarketingAnalytics {
   engagementScore: number;
   /** Data provenance: "mock" until the live platform Insights APIs are wired in. */
   source: "mock" | "live";
+  /**
+   * Which generation of this platform's metric definitions produced `metrics`
+   * (see `metricsDefinitionVersion` in analytics.ts). Absent on every row written
+   * before 2026-09, which reads as 1. Callers that rank, average or trend rows
+   * run `keepCurrentMetricDefinitions` first so a metric Meta redefined mid-series
+   * — `impressions` → `views`, `post_impressions` → `post_media_view` — is not
+   * compared against its own older meaning.
+   */
+  metricsVersion?: number;
   /** Epoch millis when the upstream metrics were captured/fetched. */
   capturedAt: number;
   createdAt: number;
