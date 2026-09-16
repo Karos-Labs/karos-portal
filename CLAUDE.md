@@ -9,6 +9,11 @@ light mode that reverses every token except the orange. The scheme, its surface 
 and the rules for each token are documented in `src/app/globals.css`'s own header.
 
 ## Conventions
+- **Before you add or change an agent**, read [`docs/agent-architecture.md`](docs/agent-architecture.md):
+  what the portal owes a run at either end of it — projecting the live context before
+  dispatch, calling the middleware's `collect` on reconcile, rendering the goal line, and
+  keeping internal meta off the client's card. The engine and middleware repos each carry the
+  matching half.
 - **All Firestore access is server-side** through `src/lib/data.ts` (Admin SDK). The browser
   uses Firebase **only for auth**. `firestore.rules` denies all direct client access.
 - **Writes go through server actions** in `src/lib/actions/` (barrel: `src/lib/actions/index.ts` — the app's write API). Each
