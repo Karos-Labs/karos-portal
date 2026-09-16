@@ -45,12 +45,12 @@ Status: approved 2026-09-15 · Owner: Albert · Changes when: a decision is made
 | D37 | 2026-09-15 | Tomer owns opening the accounts and filing the platform applications listed in 03 section 8, in the order given there | CN2 to CN6 |
 | D38 | 2026-09-15 | LinkedIn stays draft-only for publishing; the person posts in one click. Karos staff never act as a client's page admin | CN5 |
 | D39 | 2026-09-15 | Every published post is charged exactly what it cost us, in credits. No separate per-post price, and no surcharge for autopilot | CN7, CN9, 07 |
+| D40 | 2026-09-15 | Campaign is not an agent, because it only runs the other agents. It becomes a feature: a button the client presses when they have something to launch, which runs the relevant agents to produce a set of posts around that one event. It is never listed as an agent in the catalog. The engine's campaign-orchestrator stays, because it is what the button will call | F1, catalog, engine |
 
 ## Open
 
 | Id | Question | Owner | Blocks | Proposed default until decided |
 |---|---|---|---|---|
-| O06 | The Campaign agent: keep it, hide it, or list it as coming soon. It is already built and every client has been granted it since 2026-09-07, but it is not in the catalog so nobody can run it. One brief becomes X, LinkedIn, Instagram, Reddit and blog drafts, all reviewed together in one go | Albert | F1 | Hidden until decided |
 | O09 | Where the subject table and the logs live. Firestore is the database the portal already runs on. Postgres would be a second one to run and pay for | Tomer, Shlomi | B1, B2 | Firestore |
 | O10 | How we read the numbers for a platform a client has not connected. A connected account gives us its own numbers; for the rest we would pay a scraping provider, and we have not picked one | Tomer, Shlomi | N6 | Connect where we can; scrape only what we cannot |
 | O11 | Who takes each item in 04, and how long each one is. Without it we cannot say what fits in a week | Tomer, Shlomi | all items | Not estimated yet |

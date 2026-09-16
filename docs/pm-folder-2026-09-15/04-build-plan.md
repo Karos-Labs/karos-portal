@@ -51,6 +51,7 @@ Ranked. "Where" says which codebase or service the work lives in: **portal** = t
 | N10 | Engine page per product (steps, inputs read, outputs emitted, where A1 and A2 land), written by the engine's owners; 04's engine rows cite an engine step id the way portal rows cite a file and line | engine (Tomer, Shlomi) |
 | N11 | 07 Pricing model rows renamed to the catalog's agents, one line naming the source of truth (repo constants vs the sheet) | Albert |
 | N12 | Billing and plan selection: a plan field on the client, the credit allowance and the monthly cap read from it instead of the single 2600 constant, a plan picker as the last onboarding step, and the payment system behind it. This is what unblocks the credits rework flag | portal |
+| N13 | Launch button: the client names one thing they are launching, and we run the relevant agents to produce a set of posts around it, reviewed together. Replaces the Campaign agent, which is unlisted (D40). The engine already fans out and reviews as one bundle; what is missing is the button, the shared brief and keeping it out of the agents catalog | portal (UI, brief) + engine (already fans out) |
 
 ## 3. The evidence we have
 
@@ -59,7 +60,7 @@ The Craft pages (sourced, dated, hard rules separated from heuristics), the huma
 ## 4. What Albert adds
 
 - Examples on the agent pages: two or three target outputs per agent, and one "must never ship" example.
-- Decisions: the five open items in 05. One is Albert's (the Campaign agent, O06), one is Albert with Tomer (O12), and three are Tomer and Shlomi's (O09, O10, O11).
+- Decisions: the four open items in 05. One is Albert with Tomer (O12); three are Tomer and Shlomi's (O09, O10, O11).
 - Accounts and applications only the company can open: X developer account on pay-per-use with a spend cap; Meta Business Verification and App Review; LinkedIn Community Management (registered entity, business email, the Karos Page's super admin); TikTok developer verification and the Content Posting audit; Google Business Profile API access (Karos's own profile verified 60+ days). Details and order in 03 Connectors section 8.
 - Owners and sizes per item with Tomer and Shlomi; Jira tickets from the ids here.
 - Pilot clients per platform for the blind tests and the first client layers.
