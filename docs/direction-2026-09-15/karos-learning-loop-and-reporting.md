@@ -243,4 +243,4 @@ Every item needed to get from §5 to §2–§4. Owner and size to be assigned by
 
 ### 6.3 Decisions
 
-Settled: D01 to D40 in 05. Open: O09, O10, O11 and O12, each with what it blocks.
+Settled: D01 to D41 in 05. Open: O09, O10 and O11, all with Tomer and Shlomi, each with what it blocks.

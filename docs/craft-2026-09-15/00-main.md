@@ -159,4 +159,4 @@ The SVG source is `flow.svg` in this folder.
 
 ## 10. Decisions
 
-All settled in 05 Decisions log: D29 (the three-layer model), D30 (humanizer), D31 (AI imagery, never of real people), D32 (default stage mix), D33 (no Reddit policy line at setup), D34 (overlays and pages stay internal). K11 (X text-only) is D24. Still open: O12, whether the Craft writing rules become the agent's instructions or stay a checklist.
+All settled in 05 Decisions log: D29 (the three-layer model), D30 (humanizer), D31 (AI imagery, never of real people), D32 (default stage mix), D33 (no Reddit policy line at setup), D34 (overlays and pages stay internal). K11 (X text-only) is D24. D41 settles that these writing rules are the agent's instructions, not a checklist applied afterwards.
