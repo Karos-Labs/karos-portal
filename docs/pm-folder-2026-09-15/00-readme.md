@@ -15,17 +15,14 @@ The Word files here are exports. The master is the markdown in the portal repo, 
 | 05 Decisions log | Every settled decision with its date. Every open one with its owner | Albert only |
 | 06 Agent Improve | The feedback workbook. One tab per agent, one row per finding, with a directive and a status | Testers log, Albert and Anna direct, developers close |
 | 07 Pricing model | The two plans and the unit economics | Albert |
-| 08 Start here | Repo, environments, how to test an agent | Developers |
 | 09 Glossary | The words that have two meanings | Albert |
-| Examples/ | Target, current and never-ship outputs, per agent | Albert |
 | Craft/ | Best practices per platform, how they layer per sector and per client, the humanizer, the strategy template | Albert, re-researched quarterly |
-| Archive/ | Superseded files, dated. Never edited | Nobody |
-
-Two files in Archive are still worth reading. The old one-pagers hold the technical per-agent facts, and the first system audit holds its 14 ranked gaps.
 
 ## Where to start
 
-Developers: 08, then 01, then 05. Read 04 and 02 before you pick up work. Testers: 08, then 06.
+Developers: 01, then 05. Read 04 and 02 before you pick up work. Setup, conventions and environments are in the repo, not here.
+
+Testers: 06, then the agent's page in 01. To test a run: sign in as staff, open the client, open the agent, press Run with a one-line note, then open the delivered post. Log one row per finding in 06. Severity is one question, would you post it as delivered. The pre-delivery checklist for that platform is section 10 of its Craft page.
 
 ## Who is who
 
@@ -43,7 +40,7 @@ Merges to main deploy to prep automatically. Production is promoted by hand, by 
 1. A decision lives in 05 and nowhere else. Other files link to its id.
 2. Every claim carries a source: a URL with a date, a file and line, or a decision id.
 3. A work item has one id, from 04, Craft or 03. That same id goes on the Jira ticket, the pull request and the feedback row. Jira holds the status, this folder holds the scope and the reason.
-4. Superseded means moved to Archive with the date in the name. Never delete.
+4. Superseded files come out of the folder. The repo's git history keeps them.
 5. If two files disagree, the lower number wins. 05 beats 04, 04 beats 02.
 
 ## Rituals
@@ -54,4 +51,4 @@ Merges to main deploy to prep automatically. Production is promoted by hand, by 
 
 ## Adding a platform or agent
 
-One page in 01, one page in Craft, one block in 03, one tab in 06, one folder in Examples. Then the ids in 04.
+One page in 01, one page in Craft, one block in 03, one tab in 06. Then the ids in 04.
