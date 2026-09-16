@@ -14,13 +14,20 @@ import "server-only";
  * a gate that waits for one waits forever: the client is told to press "Set it
  * up" for a row the press cannot produce.
  *
- * The engine does not need them. Each channel's setup is inlined into the
- * drafting workflow as its own pre-flight — `00-channel-setup` for LinkedIn
- * and Reddit, `00-roster-setup` for reputation (see the routing notes in
- * product-mapping.ts) — so a run carries the client's filled form, the
+ * The engine does not need them. For LinkedIn, Reddit and reputation that is
+ * documented on the engine side: setup is inlined into the drafting workflow as
+ * its own pre-flight — `00-channel-setup`, `00-roster-setup` (see the routing
+ * notes in product-mapping.ts) — so a run carries the client's filled form, the
  * workflow records what the channel is missing and then drafts. Setup and the
- * first post are one run, and there is nothing for the portal to ask for
- * first.
+ * first post are one run, and there is nothing for the portal to ask for first.
+ *
+ * For the newsletter and the blog the claim is narrower, and worth keeping
+ * narrow: product-mapping.ts calls both drafting only, so nothing here says
+ * they stand their index up first. What IS true is that their state rows have
+ * had no writer since agent-service was deleted and their setup keys have no
+ * engine route, so the gate is a permanent refusal rather than a wait. A run
+ * that genuinely still needs an index fails honestly engine-side and refunds —
+ * strictly better than refusing every run forever.
  *
  * ── WHAT THIS IS NOT ──────────────────────────────────────────────────────
  *

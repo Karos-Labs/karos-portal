@@ -566,10 +566,15 @@ export async function submitCustomAgentJob(
         error: `${NEWSLETTER_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your send day and your compliance limits before it can write an issue. Nothing has run.`,
       };
     }
-    // And not on the engine path, where `newsletter-agent` stands its own
-    // workspace up on the run: `newsletterAgentState` "issue-index" is an
-    // agent-service row nothing writes any more, so waiting for one is waiting
-    // forever. Same carve-out as LinkedIn above and reputation below.
+    // And not on the engine path — for the reason this repo can support, which
+    // is NOT that `newsletter-agent` inlines an index stand-up the way LinkedIn
+    // and reputation document theirs (product-mapping.ts calls this one
+    // drafting only). It is that `newsletterAgentState` "issue-index" is an
+    // agent-service row nothing writes any more AND `karos-newsletter-setup-v2`
+    // has no engine route for the "Set it up" press to reach, so this rung is a
+    // permanent refusal rather than a wait. A run that genuinely still needs an
+    // index now fails honestly engine-side and refunds the client, which is
+    // strictly better than refusing every run forever.
     if (
       !engineProductId &&
       !isNewsletterSetupV2(agent.key) &&
@@ -594,8 +599,10 @@ export async function submitCustomAgentJob(
         error: `${BLOG_SETUP_REQUIRED_PREFIX} first. Open this agent on your AI agents page and follow "Set it up" under "What it knows about you" — the agent needs your own domains and your off-limits subjects before it can write. Nothing has run.`,
       };
     }
-    // Engine path exempt, exactly as the newsletter's index rung above:
-    // `blogAgentState` "post-index" is an agent-service row with no writer left.
+    // Engine path exempt for the newsletter rung's reason above, not for a
+    // claim about what `blog-agent` does first: `blogAgentState` "post-index"
+    // is an agent-service row with no writer left, and `karos-blog-setup-v2`
+    // has no engine route either, so the press this asks for cannot land.
     if (!engineProductId && !isBlogSetupV2(agent.key) && !(await hasBlogV2Setup(input.clientId))) {
       return {
         error: `${BLOG_SETUP_REQUIRED_PREFIX} first. This agent has not been set up for ${client.name} yet. Press "Set it up" on the blog agent card, which builds the voice, the cluster map and the post numbering. Nothing has run.`,
