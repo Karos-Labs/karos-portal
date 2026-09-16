@@ -15,15 +15,23 @@ import {
   successPage,
   OAUTH_UNSUPPORTED_CHANNEL_MESSAGE,
 } from "@/lib/integrations/oauth-popup";
+import { expiresAtFromExpiresIn } from "@/lib/integrations/token-refresh";
 
 /* ── Token exchange ──────────────────────────────────────────────────── */
 
+/**
+ * `expires_in` is carried out of here (CN1): every provider sends it and it was
+ * being dropped, so nothing downstream could tell a two-hour X token from a
+ * sixty-day LinkedIn one and the refresh token sat unused until the first 401.
+ * It stays in the provider's own unit (seconds from now) — the handler turns it
+ * into the stored absolute `expiresAt`.
+ */
 async function exchangeCode(
   provider: string,
   code: string,
   redirectUri: string,
   codeVerifier: string | null,
-): Promise<{ accessToken: string; refreshToken?: string }> {
+): Promise<{ accessToken: string; refreshToken?: string; expiresIn?: unknown }> {
   const config = OAUTH_CONFIGS[provider]!;
   const appClientId = process.env[config.envClientId];
   if (!appClientId) throw new Error(`${config.envClientId} is not configured`);
@@ -47,8 +55,16 @@ async function exchangeCode(
       body,
     });
     if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
-    const data = (await res.json()) as { access_token: string; refresh_token?: string };
-    return { accessToken: data.access_token, refreshToken: data.refresh_token };
+    const data = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in?: unknown;
+    };
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+    };
   }
 
   if (provider === "linkedin" || provider === "linkedin_community") {
@@ -69,8 +85,16 @@ async function exchangeCode(
       }),
     });
     if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
-    const data = (await res.json()) as { access_token: string; refresh_token?: string };
-    return { accessToken: data.access_token, refreshToken: data.refresh_token };
+    const data = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in?: unknown;
+    };
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+    };
   }
 
   if (provider === "facebook" || provider === "instagram") {
@@ -92,8 +116,11 @@ async function exchangeCode(
     longUrl.searchParams.set("fb_exchange_token", short.access_token);
     const longRes = await fetch(longUrl.toString());
     if (!longRes.ok) throw new Error(`Long-lived token exchange failed (${longRes.status})`);
-    const long = (await longRes.json()) as { access_token: string };
-    return { accessToken: long.access_token };
+    const long = (await longRes.json()) as { access_token: string; expires_in?: unknown };
+    // Meta has no refresh token: the stored long-lived token IS what gets
+    // re-exchanged before it dies, so its expiry is the only thing telling the
+    // refresher when to act.
+    return { accessToken: long.access_token, expiresIn: long.expires_in };
   }
 
   if (
@@ -117,8 +144,16 @@ async function exchangeCode(
       }),
     });
     if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
-    const data = (await res.json()) as { access_token: string; refresh_token?: string };
-    return { accessToken: data.access_token, refreshToken: data.refresh_token };
+    const data = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in?: unknown;
+    };
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+    };
   }
 
   if (provider === "reddit") {
@@ -135,8 +170,16 @@ async function exchangeCode(
       body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri }),
     });
     if (!res.ok) throw new Error(`Token exchange failed (${res.status})`);
-    const data = (await res.json()) as { access_token: string; refresh_token?: string };
-    return { accessToken: data.access_token, refreshToken: data.refresh_token };
+    const data = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+      expires_in?: unknown;
+    };
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+    };
   }
 
   if (provider === "tiktok") {
@@ -162,13 +205,18 @@ async function exchangeCode(
     const data = (await res.json()) as {
       access_token?: string;
       refresh_token?: string;
+      expires_in?: unknown;
       error?: string;
       error_description?: string;
     };
     if (!data.access_token) {
       throw new Error(data.error_description ?? data.error ?? "Token exchange failed");
     }
-    return { accessToken: data.access_token, refreshToken: data.refresh_token };
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+    };
   }
 
   throw new Error(`Unsupported provider: ${provider}`);
@@ -352,7 +400,7 @@ export async function GET(
 
   try {
     const redirectUri = buildCallbackUrl(provider);
-    const { accessToken, refreshToken } = await exchangeCode(
+    const { accessToken, refreshToken, expiresIn } = await exchangeCode(
       provider,
       code,
       redirectUri,
@@ -363,6 +411,15 @@ export async function GET(
 
     const credentials: Record<string, string> = { accessToken };
     if (refreshToken) credentials.refreshToken = refreshToken;
+    // Absolute epoch millis, because a relative `expires_in` means nothing once
+    // it is at rest. Stored inside `credentials` so it rides the same encrypted
+    // map as the tokens and stays behind the sanitizer's allowlist; the
+    // refresher reads it back through `credentialExpiresAt`. Omitted entirely
+    // when a provider sends nothing usable — for a short-lived provider that
+    // absence reads as "refresh before the next call", which is the safe way
+    // round.
+    const expiresAt = expiresAtFromExpiresIn(expiresIn, Date.now());
+    if (expiresAt !== null) credentials.expiresAt = String(expiresAt);
 
     // "google_unified" isn't a real platform doc — it's one consent screen
     // covering four. Write the SAME token pair into each of the four real
