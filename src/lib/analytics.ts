@@ -135,16 +135,14 @@ function rate(engagements: number, impressions: number): number {
  * the same definition more accurate. A bump retires that platform's history from
  * ranking, so it is a deliberate cost, not a version stamp for its own sake.
  *
- * facebook / instagram → 2 (CN2, 2026-09): Meta retired both metrics the older
+ * instagram → 2 (CN2, 2026-09): Meta retired the metric the older
  * rows were built from. IG `impressions` (times the media was rendered) became
- * `views`; the Page post's lifetime `post_impressions` (times the post appeared
- * on a screen) became `post_media_view` — plays or displays of the post's media,
- * a narrower count. `engagementRate` divides by exactly this field, so rows from
- * either side of the cutover are not on one scale.
+ * `views`. `engagementRate` divides by exactly this field, so rows from either
+ * side of the cutover are not on one scale.
  *
  * Every platform with no entry here is version 1: its mapping has never changed.
  */
-const METRICS_DEFINITION_VERSIONS: Record<string, number> = { facebook: 2, instagram: 2 };
+const METRICS_DEFINITION_VERSIONS: Record<string, number> = { instagram: 2 };
 
 /** The definition version rows captured for `platform` today are written under. */
 export function metricsDefinitionVersion(platform: string): number {
@@ -206,12 +204,6 @@ export function normalizePlatformMetrics(
       // IG has no link clicks on organic posts; profile/website taps stand in.
       const clicks = num(raw.website_clicks) + num(raw.profile_visits);
       const engagements = num(raw.likes) + num(raw.comments) + num(raw.saves) + num(raw.shares);
-      return { impressions, clicks, engagementRate: rate(engagements, impressions), videoViewTime: 0 };
-    }
-    case "facebook": {
-      const impressions = num(raw.post_impressions);
-      const clicks = num(raw.post_clicks);
-      const engagements = num(raw.reactions) + num(raw.comments) + num(raw.shares);
       return { impressions, clicks, engagementRate: rate(engagements, impressions), videoViewTime: 0 };
     }
     case "twitter": {
